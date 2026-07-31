@@ -1,0 +1,10 @@
+node_modules
+*.log
+.DS_Store
+.superpowers/
+.playwright-mcp/
+.rodney/
+.claude/worktrees/
+sessions/
+.idea
+docs/

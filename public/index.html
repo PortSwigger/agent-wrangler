@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Wrangler</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <!-- Quicksand + Pixelify Sans: loaded globally so any style can select them via
+       its manifest `font` field; only applied where the --font var picks it up.
+       Pixelify Sans is a readable 8-bit/pixel face (the Pixel Cats style uses it). -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="favicon.svg" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0d1117" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+</head>
+<body>
+  <div id="system-banner" class="hidden"></div>
+  <nav id="nav-rail">
+    <div class="rail-zone rail-top">
+      <div class="layouts">
+        <button data-view="grid" class="active" title="Tasks" aria-label="Tasks">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+        </button>
+        <button data-view="history" title="History" aria-label="History">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+        </button>
+      </div>
+      <button id="find-sessions" title="Find &amp; attach a session" aria-label="Find &amp; attach a session">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <div class="rail-mid">
+        <div class="rail-sep"></div>
+        <button id="new-task" title="New task" aria-label="New task">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+        </button>
+        <button id="new-session" title="New session" aria-label="New session">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+        </button>
+        <button id="schedules-btn" title="Scheduled sessions" aria-label="Scheduled sessions">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="rail-zone rail-bottom">
+      <button id="usage-btn" title="Usage &amp; spend" aria-label="Usage &amp; spend">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16v-4"/><path d="M12 16V9"/><path d="M17 16v-7"/></svg>
+      </button>
+      <button id="settings-btn" title="Settings" aria-label="Settings">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <main>
+    <div id="grid"></div>
+    <!-- Slide-in working-tree diff, overlaying the #grid slot only (the terminal
+         #sidebar stays live). Kept as a #grid sibling so it inherits the same flex
+         column width; wired + rendered in diff-view.js. -->
+    <section id="diff-panel" class="diff-panel" hidden aria-hidden="true">
+      <div class="diff-inner">
+        <div class="diff-head">
+          <div class="diff-titles">
+            <div class="diff-mode" role="group" aria-label="Diff mode">
+              <button id="diff-mode-wt" class="diff-mode-btn on" type="button" data-mode="working-tree">Uncommitted</button>
+              <button id="diff-mode-branch" class="diff-mode-btn" type="button" data-mode="branch" title="Committed + uncommitted changes vs this branch's upstream, or vs its default branch if it hasn't been pushed yet">Full branch</button>
+            </div>
+            <span class="diff-sub" id="diff-sub"></span>
+          </div>
+          <div class="diff-head-acts">
+            <button id="diff-send" class="primary" type="button" hidden>Send to agent (0)</button>
+            <button id="diff-fullscreen" class="icon-ghost" type="button" title="Fullscreen"></button>
+            <button id="diff-close" class="icon-ghost" type="button" title="Close (Esc)"></button>
+          </div>
+        </div>
+        <div class="diff-content">
+          <nav class="diff-filelist" id="diff-filelist" aria-label="Changed files"></nav>
+          <div class="diff-filelist-handle" id="diff-filelist-handle"></div>
+          <div class="diff-body" id="diff-body"></div>
+        </div>
+      </div>
+    </section>
+    <div id="history" class="hidden"></div>
+    <div id="drag-handle" class="hidden"></div>
+    <aside id="sidebar" class="collapsed">
+      <div id="panel">
+        <div class="panel-empty">Select a session to see details and its live terminal.</div>
+      </div>
+      <div id="term-wrap">
+        <div id="term"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="modal" class="hidden">
+    <div class="modal-card">
+      <h3 id="m-title">Dispatch a new session</h3>
+      <!-- Scheduling-only "When" section, hidden in launch mode. The picker compiles
+           to a cron string (recurring) or an absolute instant (one-off) client-side. -->
+      <div id="m-when" class="when-box hidden">
+        <label for="m-sch-name">Schedule name</label>
+        <input id="m-sch-name" autocomplete="off" placeholder="e.g. Daily standup digest" />
+        <label>Action</label>
+        <!-- Two action kinds: dispatch a brand-new session, or act on an existing one
+             (resumed if dormant, messaged if live — the server decides at fire time).
+             The selection toggles which fields below show (#m-dispatch-fields vs
+             #m-session-fields). -->
+        <div id="m-sch-action" class="sched-action" role="tablist" aria-label="Schedule action">
+          <button type="button" class="sched-action-btn on" id="m-sch-action-dispatch" data-action="dispatch" aria-pressed="true">New session</button>
+          <button type="button" class="sched-action-btn" id="m-sch-action-session" data-action="session" aria-pressed="false">Existing session</button>
+        </div>
+        <label for="m-sch-cadence">When</label>
+        <select id="m-sch-cadence">
+          <option value="once">One-off</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly on…</option>
+        </select>
+        <div id="m-sch-at-row" class="when-row">
+          <label for="m-sch-at">Date &amp; time</label>
+          <input id="m-sch-at" type="datetime-local" />
+        </div>
+        <div id="m-sch-time-row" class="when-row hidden">
+          <label for="m-sch-time">Time</label>
+          <input id="m-sch-time" type="time" />
+        </div>
+        <div id="m-sch-weekdays-row" class="when-row hidden">
+          <label class="check-row" id="m-sch-weekdays-label"><input type="checkbox" id="m-sch-weekdays" /> Weekdays only (Mon–Fri)</label>
+        </div>
+        <div id="m-sch-days-row" class="when-row hidden">
+          <label>On days</label>
+          <div id="m-sch-days" class="when-days">
+            <button type="button" class="day-toggle" id="m-sch-day-0" data-day="0" aria-pressed="false">Sun</button>
+            <button type="button" class="day-toggle" id="m-sch-day-1" data-day="1" aria-pressed="false">Mon</button>
+            <button type="button" class="day-toggle" id="m-sch-day-2" data-day="2" aria-pressed="false">Tue</button>
+            <button type="button" class="day-toggle" id="m-sch-day-3" data-day="3" aria-pressed="false">Wed</button>
+            <button type="button" class="day-toggle" id="m-sch-day-4" data-day="4" aria-pressed="false">Thu</button>
+            <button type="button" class="day-toggle" id="m-sch-day-5" data-day="5" aria-pressed="false">Fri</button>
+            <button type="button" class="day-toggle" id="m-sch-day-6" data-day="6" aria-pressed="false">Sat</button>
+          </div>
+        </div>
+      </div>
+      <!-- Act on an existing session, shown when the schedule action is "session"
+           (hidden for dispatch and in launch mode). The dispatch fields below are
+           hidden in turn for this. -->
+      <div id="m-session-fields" class="hidden">
+        <label for="m-sch-target">Target session</label>
+        <select id="m-sch-target"></select>
+        <label for="m-sch-message" id="m-sch-message-label">Message (optional)</label>
+        <textarea id="m-sch-message" rows="4" placeholder="Resumes the session if it's dormant (delivering this as its first prompt), or sends it into the terminal if it's live."></textarea>
+      </div>
+      <div id="m-dispatch-fields">
+      <label>Task</label>
+      <select id="m-task"></select>
+      <div class="mode-cards" id="m-mode-cards">
+        <button type="button" class="mode-card" id="m-mode-standard" data-mode="standard">
+          <div class="mode-card-head" id="m-mode-standard-head">
+            <span class="mode-card-title" id="m-mode-standard-title">Standard</span>
+            <span class="mode-card-check" id="m-mode-standard-check">✓</span>
+          </div>
+          <div class="mode-card-desc" id="m-mode-standard-desc">Run the agent on a free-text prompt in any folder.</div>
+        </button>
+        <button type="button" class="mode-card" id="m-mode-workflow" data-mode="workflow">
+          <div class="mode-card-head" id="m-mode-workflow-head">
+            <span class="mode-card-title" id="m-mode-workflow-title">Workflow</span>
+            <span class="mode-card-check" id="m-mode-workflow-check">✓</span>
+          </div>
+          <div class="mode-card-desc" id="m-mode-workflow-desc">Issue to PR autopilot.</div>
+        </button>
+      </div>
+      <label id="m-intent-label">Intent / first prompt</label>
+      <textarea id="m-intent" rows="6" placeholder="What should the agent work on?"></textarea>
+      <label>Folder (cwd)</label>
+      <div class="combo">
+        <input id="m-cwd" placeholder="/Users/you/vcs/project" autocomplete="off" />
+        <div id="folder-suggest" class="suggest hidden"></div>
+      </div>
+      <label>Model</label>
+      <select id="m-model"></select>
+      <label>Effort</label>
+      <select id="m-effort"></select>
+      <label>Runtime</label>
+      <select id="m-runtime">
+        <option value="local">Local (host)</option>
+        <option value="devcontainer">Devcontainer</option>
+      </select>
+      <div class="worktree-box">
+        <div class="worktree-title">New worktree</div>
+        <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
+        <div id="m-worktree-msg" class="worktree-msg hidden"></div>
+        <div id="m-worktree-fields-wrap" class="worktree-fields-wrap">
+          <div id="m-worktree-fields" class="worktree-fields">
+            <label>Branch</label>
+            <input id="m-wt-branch" autocomplete="off" placeholder="auto from intent" />
+            <label>Worktree folder (full path)</label>
+            <input id="m-wt-folder" autocomplete="off" placeholder="/path/to/repo-worktree-branch" />
+          </div>
+        </div>
+      </div>
+      <div class="wf-worktree-note hidden" id="m-wf-worktree-note">
+        <span class="wf-worktree-check" id="m-wf-worktree-check">✓</span>
+        <span id="m-wf-worktree-text">A dedicated git worktree is created automatically.</span>
+      </div>
+      <label class="check-row hidden" id="m-wf-auto-merge-row"><input type="checkbox" id="m-wf-auto-merge" /> Auto-merge when checks pass</label>
+      </div>
+      <div id="m-subagent" class="hidden">
+        <h4>Prompt</h4><pre id="m-sa-prompt"></pre>
+        <h4>Tool calls</h4><div id="m-sa-tools"></div>
+        <h4>Result</h4><pre id="m-sa-result"></pre>
+      </div>
+      <div class="modal-actions">
+        <div class="quick-launch" id="m-quick-launch">
+          <button type="button" id="m-quick-1" class="ghost quick-launch-btn"></button>
+          <button type="button" id="m-quick-2" class="ghost quick-launch-btn"></button>
+        </div>
+        <button id="m-cancel" class="ghost">Cancel</button>
+        <button id="m-go" class="primary">Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="find-modal" class="hidden">
+    <div class="modal-card find-card">
+      <h3>Find &amp; attach a session</h3>
+      <p class="find-note">Claude sessions from your on-disk history that aren't on the board or in History — including ones running outside the wrangler. Attaching launches a <em>forked copy</em> (<code>claude --resume --fork-session</code>) in a fresh tmux you can use here; any original keeps running untouched.</p>
+      <div class="find-controls">
+        <input id="find-search" class="find-search" type="search" placeholder="Filter by folder or summary…" autocomplete="off" />
+        <span id="find-count" class="find-count"></span>
+      </div>
+      <div id="find-list" class="find-list"><div class="find-empty">Loading…</div></div>
+      <div class="modal-actions">
+        <button id="find-widen" class="ghost">Show last 30 days</button>
+        <button id="find-cancel" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="fork-modal" class="hidden">
+    <div class="modal-card">
+      <h3>Fork this session</h3>
+      <p class="fork-note">Branches a copy of the conversation (<code>claude --resume --fork-session</code>) into a new card. The original keeps running, untouched.</p>
+      <label>Title (optional)</label>
+      <input id="fk-name" placeholder="Defaults to the parent's label" autocomplete="off" />
+      <label>Initial prompt (optional)</label>
+      <textarea id="fk-prompt" rows="5" placeholder="First divergent instruction… (leave blank to just attach and type)"></textarea>
+      <div class="modal-actions">
+        <button id="fk-cancel" class="ghost">Cancel</button>
+        <button id="fk-go" class="primary">Fork</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="memory-modal" class="hidden">
+    <div class="modal-card" id="memory-card">
+      <div class="memory-head" id="memory-head">
+        <h3 id="memory-title">Task memory</h3>
+        <!-- Write · Split · Preview: toggles a mode-* class on #memory-card; the
+             editor (textarea) stays the literal-markdown buffer, the preview is a
+             read-only render of it. Last choice persisted in localStorage. -->
+        <div class="memory-mode" id="memory-mode" role="tablist" aria-label="Memory view mode">
+          <button id="memory-mode-write" data-mode="write" type="button">Write</button>
+          <button id="memory-mode-split" data-mode="split" type="button">Split</button>
+          <button id="memory-mode-preview" data-mode="preview" type="button">Preview</button>
+        </div>
+      </div>
+      <p class="memory-note" id="memory-note">Shared with the agent — for context that spans the repos this task touches, not a session scratchpad. Repo-specific context belongs in that repo's own CLAUDE.md instead. Editable in your own editor too.</p>
+      <div class="memory-body" id="memory-body">
+        <textarea id="memory-text" class="memory-text" rows="16" placeholder="Cross-repo context for this task — shared with the agent."></textarea>
+        <div id="memory-preview" class="memory-preview" aria-live="polite"></div>
+      </div>
+      <div class="modal-actions" id="memory-actions">
+        <button id="memory-close" class="ghost">Close</button>
+        <button id="memory-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="file-modal" class="hidden">
+    <div class="file-card" id="file-card">
+      <div class="file-head">
+        <div class="file-titles">
+          <h3 id="file-title">File</h3>
+          <div class="file-path" id="file-path"></div>
+        </div>
+        <div class="file-head-actions">
+          <button id="file-refresh" class="ghost" type="button">Refresh</button>
+          <button id="file-close" class="ghost" type="button">Close</button>
+        </div>
+      </div>
+      <div class="file-body memory-preview" id="file-body" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div id="snooze-modal" class="hidden">
+    <div class="modal-card">
+      <h3>Custom snooze</h3>
+      <label>Wake at</label>
+      <input id="sn-when" type="datetime-local" />
+      <label>Note for the agent</label>
+      <textarea id="sn-comment" rows="3" placeholder="Optional note for the agent on wake…"></textarea>
+      <div class="modal-actions">
+        <button id="sn-cancel" class="ghost">Cancel</button>
+        <button id="sn-go" class="primary">Snooze</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="schedules-modal" class="hidden">
+    <div class="modal-card sched-card">
+      <h3 id="schedules-title">Scheduled sessions</h3>
+      <p class="sched-note" id="schedules-note">Fire an action on a one-off or recurring schedule — launch a fresh session, or act on an existing one (resumed if it's dormant, messaged if it's live).</p>
+      <div id="schedules-list" class="sched-list"></div>
+      <div class="modal-actions" id="schedules-actions">
+        <button id="schedules-new" class="primary">New schedule</button>
+        <button id="schedules-close" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="usage-modal" class="hidden">
+    <div class="modal-card usage-card">
+      <div class="usage-head">
+        <h3 id="usage-title">Usage &amp; spend</h3>
+        <div class="usage-toggles">
+          <div class="seg" id="usage-granularity" role="group" aria-label="Time granularity"></div>
+          <div class="seg" id="usage-metric" role="group" aria-label="Metric"></div>
+          <div class="seg" id="usage-slice" role="group" aria-label="Slice by"></div>
+        </div>
+      </div>
+      <div class="usage-summary" id="usage-summary"></div>
+      <div class="usage-chart" id="usage-chart"></div>
+      <div class="usage-legend" id="usage-legend"></div>
+      <div class="modal-actions">
+        <button id="usage-close" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="hidden">
+    <div class="modal-card settings-card">
+      <h3 id="settings-title">Settings</h3>
+      <!-- Sections injected by settings.js: Appearance, Behavior, Shortcuts. -->
+      <div id="settings-body" class="settings-body"></div>
+      <div class="modal-actions">
+        <button id="settings-close" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="hidden">
+    <div class="modal-card">
+      <h3 id="confirm-title">Confirm</h3>
+      <p id="confirm-body" class="confirm-body"></p>
+      <div class="modal-actions">
+        <button id="confirm-cancel" class="ghost">Cancel</button>
+        <button id="confirm-extra" class="ghost hidden">Extra</button>
+        <button id="confirm-ok" class="primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+  <!-- Vendored (offline-safe, pinned) markdown-it UMD: sets window.markdownit for
+       the memory-preview renderer. Classic script so it's defined before app.js. -->
+  <script src="vendor/markdown-it.min.js"></script>
+  <!-- Vendored (offline-safe, pinned) xterm web-links addon: its UMD global IS the
+       class (window.WebLinksAddon = the constructor). Classic script so it's
+       defined before app.js, same as markdown-it above. -->
+  <script src="vendor/addon-web-links.min.js"></script>
+  <!-- Vendored (offline-safe, pinned) xterm clipboard addon: window.ClipboardAddon
+       is the namespace, .ClipboardAddon the class. Honors OSC 52 so tmux copy-mode
+       (a drag in a pane whose app doesn't grab the mouse — Codex, a plain shell)
+       actually reaches the system clipboard. js-base64 is bundled in. -->
+  <script src="vendor/addon-clipboard.min.js"></script>
+  <!-- Vendored (offline-safe, pinned) xterm unicode11 addon: window.Unicode11Addon
+       is the namespace, .Unicode11Addon the class. Its width tables agree with
+       tmux's glibc wcwidth on emoji like ✅ (width 2, vs xterm's default Unicode v6
+       tables which call it width 1) — without it, any line containing one drifts
+       xterm's drawing a column out of sync with tmux's cursor math and the tail
+       spills onto the next row. -->
+  <script src="vendor/addon-unicode11.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

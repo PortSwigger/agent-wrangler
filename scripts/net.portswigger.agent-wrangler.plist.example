@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<!--
+  Example launchd agent for agent-wrangler. Copy to
+  ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist, replace the
+  /ABSOLUTE/PATH/TO placeholders and YOUR_USERNAME, then load it with:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
+
+  Restart after changes with:
+
+    launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.portswigger.agent-wrangler</string>
+
+    <key>WorkingDirectory</key>
+    <string>/ABSOLUTE/PATH/TO/agent-wrangler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/ABSOLUTE/PATH/TO/agent-wrangler/scripts/wrangler-start.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>7777</string>
+        <!-- ~/.local/bin must be on PATH or dispatch/resume exit 127. -->
+        <key>PATH</key>
+        <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- The open-file limit is pinned in wrangler-start.sh (defaults to 256,
+         AW_MAX_FILES overrides). The scoped notes watcher is what keeps the fd
+         count bounded; before it, the watch grew until node-pty spawns failed
+         with "posix_spawnp failed" on every terminal attach until a restart. -->
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/wrangler/wrangler.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/wrangler/wrangler.err</string>
+</dict>
+</plist>

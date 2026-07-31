@@ -1,0 +1,9 @@
+Launch an isolated agent-wrangler dev instance, self-test the current changes against it, and hand me back an artifact to review — don't just tell me it works, show me.
+
+Scope: $ARGUMENTS if given, otherwise infer what to check from `git diff main...HEAD`.
+
+1. Use the run-dev skill to launch an isolated dev instance (own data dir, port, tmux socket).
+2. Dispatch one subagent to actually exercise the change against the running server. It should pick a browser-driving tool in this order: the `rodney` CLI if `command -v rodney` succeeds, else the chrome-devtools MCP, else the playwright MCP. It navigates to the relevant pages/features, exercises them, saves screenshots to files in its scratchpad dir, watches the console for errors, and returns ONLY a text manifest — file path, caption, what was checked, and pass/fail/notes per screenshot. It must never return raw image bytes/content back to you.
+3. As soon as the manifest comes back, tear the dev server down immediately per the run-dev skill's teardown steps (kill the server PID and its tmux socket) — the screenshots are already on disk, nothing further needs the server running.
+4. Dispatch a second subagent to build the review artifact, so the manifest and screenshots never bloat your own context. Give it the manifest and screenshot paths. It should load the artifact-design skill, write an HTML report (a checklist of what was verified, plus each screenshot embedded as a base64 data URI via a Bash/node one-liner — never via the Read tool, so the images never load into its context either), and return just the resulting file path plus a suggested title, description, and favicon emoji.
+5. Call the Artifact tool yourself on that file path to publish it for review. Do not read the manifest or screenshots into your own context at any point.

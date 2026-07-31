@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Pixel Cats wallpaper: a loose field of little 8-bit cats + hearts on a light
+     pastel wash. Pure vector rects so it stays crisp at any cover-scale;
+     shape-rendering=crispEdges keeps the pixel edges hard. The cat is one reusable
+     <g>: its body rects have no fill and inherit each <use>'s pastel color, while
+     eyes/nose/inner-ear/blush keep fixed tints. A big viewBox keeps each cat small
+     and detailed once background-size:cover scales the whole scene up. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" preserveAspectRatio="xMidYMid slice" shape-rendering="crispEdges">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#fff5ec"/>
+      <stop offset="0.5" stop-color="#eef7f0"/>
+      <stop offset="1" stop-color="#f0eafb"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.15" cy="0.12" r="0.5">
+      <stop offset="0" stop-color="#ffe0cf" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#ffe0cf" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.88" cy="0.9" r="0.55">
+      <stop offset="0" stop-color="#d7f0e2" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#d7f0e2" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- sitting pixel cat, 16w x 16h grid; body rects inherit the <use> fill -->
+    <g id="cat">
+      <!-- pointed ears -->
+      <rect x="3" y="0" width="1" height="1"/>
+      <rect x="2" y="1" width="3" height="2"/>
+      <rect x="12" y="0" width="1" height="1"/>
+      <rect x="11" y="1" width="3" height="2"/>
+      <!-- head -->
+      <rect x="2" y="3" width="12" height="5"/>
+      <rect x="1" y="4" width="14" height="3"/>
+      <!-- body taper + haunches -->
+      <rect x="3" y="8" width="10" height="3"/>
+      <rect x="2" y="11" width="12" height="4"/>
+      <rect x="3" y="15" width="3" height="1"/>
+      <rect x="10" y="15" width="3" height="1"/>
+      <!-- curled tail -->
+      <rect x="14" y="10" width="2" height="2"/>
+      <rect x="14" y="12" width="3" height="2"/>
+      <!-- fixed details: inner ears, eyes, nose, blush -->
+      <rect x="3" y="1" width="1" height="1" fill="#ffb3c8"/>
+      <rect x="12" y="1" width="1" height="1" fill="#ffb3c8"/>
+      <rect x="4" y="5" width="2" height="2" fill="#4a3a52"/>
+      <rect x="10" y="5" width="2" height="2" fill="#4a3a52"/>
+      <rect x="7" y="7" width="2" height="1" fill="#ef7d9d"/>
+      <rect x="2" y="7" width="2" height="1" fill="#ffaec4" opacity="0.7"/>
+      <rect x="12" y="7" width="2" height="1" fill="#ffaec4" opacity="0.7"/>
+    </g>
+
+    <!-- pixel heart, 7w x 6h grid -->
+    <g id="heart">
+      <rect x="1" y="0" width="2" height="1"/>
+      <rect x="4" y="0" width="2" height="1"/>
+      <rect x="0" y="1" width="7" height="2"/>
+      <rect x="1" y="3" width="5" height="1"/>
+      <rect x="2" y="4" width="3" height="1"/>
+      <rect x="3" y="5" width="1" height="1"/>
+    </g>
+
+    <!-- pixel sparkle, 5w x 5h grid -->
+    <g id="spark">
+      <rect x="2" y="0" width="1" height="1"/>
+      <rect x="2" y="1" width="1" height="1"/>
+      <rect x="0" y="2" width="5" height="1"/>
+      <rect x="2" y="3" width="1" height="1"/>
+      <rect x="2" y="4" width="1" height="1"/>
+    </g>
+  </defs>
+
+  <rect width="640" height="400" fill="url(#sky)"/>
+  <rect width="640" height="400" fill="url(#glowA)"/>
+  <rect width="640" height="400" fill="url(#glowB)"/>
+
+  <!-- hearts + sparkles tucked between the cats -->
+  <use href="#heart" transform="translate(110,38) scale(2)" fill="#ff9fb6"/>
+  <use href="#heart" transform="translate(430,46) scale(1.8)" fill="#c9b6f2"/>
+  <use href="#heart" transform="translate(255,176) scale(2)" fill="#ffc0d8"/>
+  <use href="#heart" transform="translate(585,182) scale(1.8)" fill="#ffb38f"/>
+  <use href="#heart" transform="translate(70,300) scale(1.8)" fill="#a8dcc0"/>
+  <use href="#heart" transform="translate(400,320) scale(2)" fill="#ff9fb6"/>
+  <use href="#spark" transform="translate(330,30) scale(2)" fill="#ffd9a8" opacity="0.9"/>
+  <use href="#spark" transform="translate(180,150) scale(1.8)" fill="#cdbdf2" opacity="0.9"/>
+  <use href="#spark" transform="translate(520,300) scale(2)" fill="#ffd0e0" opacity="0.9"/>
+  <use href="#spark" transform="translate(45,200) scale(1.6)" fill="#a8dcc0" opacity="0.85"/>
+  <use href="#spark" transform="translate(610,60) scale(1.8)" fill="#cdbdf2" opacity="0.85"/>
+
+  <!-- the cats: three loose rows, scale 3 (48px sprites) -->
+  <use href="#cat" transform="translate(28,34) scale(3)" fill="#ffcaa8"/>
+  <use href="#cat" transform="translate(178,30) scale(3)" fill="#aee0c0"/>
+  <use href="#cat" transform="translate(328,36) scale(3)" fill="#cfc0f0"/>
+  <use href="#cat" transform="translate(488,30) scale(3)" fill="#ffc0d8"/>
+  <use href="#cat" transform="translate(595,34) scale(3)" fill="#bcdcf5"/>
+
+  <use href="#cat" transform="translate(100,162) scale(3)" fill="#ffe39e"/>
+  <use href="#cat" transform="translate(255,166) scale(3)" fill="#bcdcf5"/>
+  <use href="#cat" transform="translate(408,160) scale(3)" fill="#ffcaa8"/>
+  <use href="#cat" transform="translate(560,166) scale(3)" fill="#cfc0f0"/>
+
+  <use href="#cat" transform="translate(28,296) scale(3)" fill="#cfc0f0"/>
+  <use href="#cat" transform="translate(178,300) scale(3)" fill="#ffc0d8"/>
+  <use href="#cat" transform="translate(328,294) scale(3)" fill="#aee0c0"/>
+  <use href="#cat" transform="translate(488,300) scale(3)" fill="#ffe39e"/>
+  <use href="#cat" transform="translate(600,296) scale(3)" fill="#ffcaa8"/>
+</svg>

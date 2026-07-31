@@ -1,0 +1,2137 @@
+:root {
+  --bg:#0d1117; --surface:#151b23; --surface-2:#1c2128;
+  --fg:#f0f6fc; --fg-muted:#9198a1; --fg-subtle:#656c76;
+  --border:#3d444d; --border-muted:#2a3038;
+  --green:#3fb950; --green-fg:#56d364;
+  --red:#f85149; --red-fg:#ff7b72;
+  --cyan:#39c5cf;
+  --purple:#d2a8ff; --purple-fg:#0d1117;
+  --blue:#4493f8; --blue-fg:#79c0ff;
+  /* Workflow accent — violet — for an issue→PR autopilot run's group box (its own
+     role so it never collides with --purple/--blue used elsewhere). */
+  --wf:#a371f7;
+  /* "just finished" alarm hue — its own role so a theme whose --cyan collides
+     with the selected ring (--blue) can move it without touching either. */
+  --just-finished:var(--cyan);
+  /* semantic roles layered on the palette so the light block can remap them */
+  --chrome:#11161d;        /* rails, headers, drag-handle */
+  /* Task panels (.task-cell) and the session-pane header (#panel) are frosted in
+     dark so the wallpaper shows through; both use 0.72 so the header matches the
+     task panels. They diverge in light (see body.light):
+     --tile-bg → transparent (unfiltered wallpaper), --card-bg → opaque --surface. Session/history CARDS
+     keep opaque --surface, so the header tracks the panels, not the cards. */
+  --tile-bg:rgba(21,27,35,0.5);
+  --card-bg:rgba(21,27,35,0.5);
+  /* terminal palette: a JS helper reads these and hands xterm its theme object,
+     so the canvas tracks the app theme. Authoring layer is CSS today; see the
+     spec for the future manifest. */
+  /* rgba so the dark wallpaper shows through: readTerminalTheme honors the rgba
+     prefix and makes the xterm canvas transparent, leaving #term's wrapper to
+     paint this one translucent backdrop over the body image. */
+  --term-bg:rgba(10,14,20,0.48); --term-fg:#c9d1d9; --term-cursor:#c9d1d9; --term-selection:#264f78;
+  --term-ansi-black:#484f58; --term-ansi-red:#ff7b72; --term-ansi-green:#3fb950;
+  --term-ansi-yellow:#d29922; --term-ansi-blue:#58a6ff; --term-ansi-magenta:#bc8cff;
+  --term-ansi-cyan:#39c5cf; --term-ansi-white:#b1bac4;
+  --term-ansi-bright-black:#6e7681; --term-ansi-bright-red:#ffa198; --term-ansi-bright-green:#56d364;
+  --term-ansi-bright-yellow:#e3b341; --term-ansi-bright-blue:#79c0ff; --term-ansi-bright-magenta:#d2a8ff;
+  --term-ansi-bright-cyan:#56d4dd; --term-ansi-bright-white:#f0f6fc;
+  --accent:#1f6feb;        /* primary action / active state */
+  --accent-fg:#fff;
+  --field-bg:#0d1117;      /* inputs */
+  --danger-bg:#2b1416; --danger-border:#5c2125; --danger-strong:#ff5c6c;
+  --pill-needs-bg:#3a0d0d; --pill-working-bg:#0d2818; --pill-idle-bg:#1c2128;
+  /* Snooze alarm hue — amber, its own role in the alarm hierarchy alongside
+     --red (needs-you) and --just-finished (cyan). */
+  --snooze:#d29922; --snooze-fg:#e3b341;
+  /* Container-runtime chip hue — teal/cyan, its own role distinct from
+     --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
+  --rt:#39c5cf; --rt-fg:#56d4dd;
+  --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
+  /* Ink for text sitting ON a filled status bar. Dark theme state colours are
+     bright, so the label is near-black; the light theme flips it to white. */
+  --bar-on:#0d1117;
+  --overlay:rgba(0,0,0,0.6);
+  --shadow:rgba(0,0,0,0.4);
+  /* Usage dashboard categorical palette — eight-hue dataviz default, stepped for the
+     dark chart surface; validated as a set (adjacent-pair CVD + normal-vision floors)
+     against --surface. Tasks colour in spend order from slot 1; a 7th+ task folds
+     into --usage-cat-other (never a cycled hue). */
+  --usage-cat-1:#3987e5; --usage-cat-2:#008300; --usage-cat-3:#d55181;
+  --usage-cat-4:#c98500; --usage-cat-5:#199e70; --usage-cat-6:#d95926;
+  --usage-cat-other:#768390;
+  /* UI font: themeable so a style can swap it (terminal keeps its own mono font).
+     Custom styles override via the manifest `font` field -> this var. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body.light {
+  --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eaeef2;
+  --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
+  --border:#d1d9e0; --border-muted:#e1e6eb;
+  --green:#1a7f37; --green-fg:#1a7f37;
+  --red:#cf222e; --red-fg:#cf222e;
+  --cyan:#0e7490;
+  --purple:#8250df; --purple-fg:#ffffff;
+  --blue:#0969da; --blue-fg:#0969da;
+  --wf:#8250df;
+  --chrome:#f0f3f6;
+  --card-bg:var(--surface); --tile-bg:rgba(246,248,250,0.5);
+  --term-bg:#f6f8fa; --term-fg:#1f2328; --term-cursor:#1f2328; --term-selection:#cce5ff;
+  --term-ansi-black:#24292f; --term-ansi-red:#cf222e; --term-ansi-green:#116329;
+  --term-ansi-yellow:#633c01; --term-ansi-blue:#0969da; --term-ansi-magenta:#8250df;
+  --term-ansi-cyan:#1b7c83; --term-ansi-white:#6e7781;
+  --term-ansi-bright-black:#57606a; --term-ansi-bright-red:#a40e26; --term-ansi-bright-green:#1a7f37;
+  --term-ansi-bright-yellow:#4d2d00; --term-ansi-bright-blue:#218bff; --term-ansi-bright-magenta:#a475f9;
+  --term-ansi-bright-cyan:#3192aa; --term-ansi-bright-white:#8c959f;
+  --accent:#0969da;
+  --accent-fg:#fff;
+  --field-bg:#ffffff;
+  --danger-bg:#fff0ee; --danger-border:#ffc9c2; --danger-strong:#cf222e;
+  --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
+  --snooze:#9a6700; --snooze-fg:#7d4e00;
+  /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
+  --rt:#0e7490; --rt-fg:#0e7490;
+  --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
+  --bar-on:#ffffff;
+  --overlay:rgba(0,0,0,0.35);
+  --shadow:rgba(0,0,0,0.18);
+  /* Light steps of the same eight hues, validated against the white chart surface
+     (three sit below 3:1 contrast — the always-present legend + values supply the
+     required relief). */
+  --usage-cat-1:#2a78d6; --usage-cat-2:#008300; --usage-cat-3:#e87ba4;
+  --usage-cat-4:#eda100; --usage-cat-5:#1baf7a; --usage-cat-6:#eb6834;
+  --usage-cat-other:#8c959f;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: row;
+  /* A style's wallpaper (set as background-image by the picker) is fixed and
+     covers; harmless when no image is set. Translucent surfaces let it show. */
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+#nav-rail {
+  flex: 0 0 auto;
+  width: 54px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px 5px;
+  background: var(--chrome);
+  border-right: 1px solid var(--border-muted);
+}
+.rail-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.rail-zone.hidden { display: none; }
+.rail-top { gap: 5px; }
+.rail-bottom { gap: 8px; }
+.rail-mid { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.rail-mid.hidden { display: none; }
+.rail-sep { width: 28px; height: 1px; background: var(--border-muted); margin: 3px 0; }
+.layouts { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+#nav-rail button {
+  width: 40px; height: 40px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: var(--fg-muted);
+}
+#nav-rail button:hover { background: var(--surface-2); color: var(--fg); }
+/* The active view matches the selected-session highlight (--blue), not --accent,
+   so the left rail's selection reads the same as the board's (amber in Jurassic
+   Park, blue in dark/light). */
+#nav-rail button.active {
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+#nav-rail .icon { width: 19px; height: 19px; display: block; }
+
+img.icon { width: 1em; height: 1em; object-fit: contain; vertical-align: middle; }
+
+button {
+  background: var(--surface-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+button:hover { background: var(--border-muted); }
+button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.ghost { background: transparent; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
+/* Workflow Launch ("Start workflow") echoes the workflow mode colour. */
+button.primary.wf { background: var(--wf); border-color: var(--wf); }
+button.primary.wf:hover { background: color-mix(in srgb, var(--wf) 85%, #fff); }
+/* Destructive confirm button (e.g. Stop & archive) — filled red, overriding the
+   accent .primary it shares markup with. */
+button.danger-strong { background: var(--red); border-color: var(--red); color: #fff; }
+button.danger-strong:hover { background: var(--danger-strong); border-color: var(--danger-strong); }
+
+main { flex: 1; display: flex; min-width: 0; min-height: 0; }
+
+/* History view — time buckets, each holding task tiles laid out as columns. */
+#history { flex: 1; min-width: 0; padding: 18px 22px; overflow-y: auto; background: transparent; }
+#history.hidden { display: none; }
+.hist-empty { color: var(--fg-subtle); font-size: 13px; max-width: 520px; line-height: 1.5; }
+.hist-head { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+.hist-head h2 { font-size: 16px; margin: 0; color: var(--fg); }
+.hist-head .hist-search { width: 240px; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 5px 9px; font-size: 12.5px; font-family: inherit; }
+.hist-head .hist-search:focus { outline: none; border-color: var(--accent); }
+.hist-count { font-size: 12px; color: var(--fg-subtle); white-space: nowrap; }
+
+/* Time-bucket header: label, a hairline rule, then the bucket's session count. */
+.hist-bucket { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--fg); }
+.hist-bucket:first-of-type { margin-top: 0; }
+.hist-bucket .rule { flex: 1; height: 1px; background: var(--border); }
+.hist-bucket .n { font-size: 10px; font-weight: 600; color: var(--fg-subtle); }
+/* "Show older" sits between bucket separators and echoes their rule-line rhythm
+   (same margin, same .rule/.n), but its label is a pill button — the one part of
+   the row that should read as clickable rather than a plain divider. */
+.hist-bucket--more { margin-top: 24px; }
+.hist-show-older { flex: none; padding: 4px 12px; background: color-mix(in srgb, var(--accent) 16%, transparent); border: none; border-radius: 999px; color: var(--accent); font-family: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+.hist-show-older:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+/* Task tiles flow as columns that fill the width, capped at 4 (the max() floors
+   each column at 1/4 of the row, so a wide screen never exceeds four) and
+   collapsing toward 1 below ~320px. */
+.hist-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(320px, calc((100% - 36px) / 4)), 1fr)); gap: 12px; align-items: start; }
+.hist-tile { background: var(--tile-bg); border: 1px solid var(--border-muted); border-radius: 10px; padding: 10px; }
+.hist-tile-head { display: flex; align-items: center; gap: 8px; margin: 0 0 9px 2px; }
+.hist-tile-head .badge { max-width: 75%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; padding: 2px 9px; border-radius: 999px; color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 16%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); }
+.hist-tile-head .badge.unassigned { color: var(--fg-muted); background: var(--surface-2); border-color: var(--border-muted); }
+.hist-tile-head .n { font-size: 10px; color: var(--fg-subtle); }
+.hist-stack { display: flex; flex-direction: column; gap: 7px; }
+
+/* Card — a smaller sibling of the board card: inset status stripe + body. */
+.hc { display: flex; background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px; overflow: hidden; }
+.hc:hover { border-color: var(--border); background: var(--surface-2); }
+.hc-stripe { flex: 0 0 4px; margin: 9px 0 9px 6px; border-radius: 4px; background: var(--border); }
+.hc-body { flex: 1; min-width: 0; padding: 9px 11px; }
+.hc-row1 { display: flex; align-items: center; gap: 8px; }
+.hc-desc { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc .chip.model { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: var(--purple); background: var(--surface-2); border: 1px solid var(--border-muted); }
+.hc-was { font-size: 10px; color: var(--fg-muted); margin-top: 3px; font-style: italic; }
+.hc-was b { color: var(--purple); font-style: normal; }
+.hc-dir { font-size: 11px; color: var(--fg-subtle); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-meta { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--fg-muted); }
+.hc-meta .sep { color: var(--border); }
+.hc-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 9px; }
+.hc-acts button { width: 26px; height: 26px; padding: 0; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.hist-resume { background: transparent; border-color: var(--accent); color: var(--blue-fg); }
+.hist-resume:hover { background: var(--surface-2); border-color: var(--accent); }
+.hist-fork { background: transparent; border-color: var(--border); color: var(--fg-muted); }
+.hist-fork:hover { color: var(--fg); border-color: var(--accent); background: var(--surface-2); }
+.hist-remove { background: transparent; border-color: var(--border); color: var(--fg-subtle); }
+.hist-remove:hover { color: var(--danger-strong); border-color: var(--danger-border); }
+
+/* Right-click menu on session cards. Floats on <body> above the board; JS sets
+   its fixed position. Mirrors the panel's action vocabulary (icon + label rows,
+   --danger for Archive) through the theme variables. */
+.context-menu {
+  position: fixed; z-index: 50; min-width: 162px; padding: 4px;
+  /* Themes can make every surface translucent (the frosted wallpaper look) —
+     even --bg. A floating menu needs to stay opaque, so stack the surface hue
+     several times so its residual transparency is negligible (~99.7% at a=0.72),
+     over the base, with a blur fallback. Keeps the theme's tint either way. */
+  background: var(--surface);
+  background:
+    linear-gradient(var(--surface), var(--surface)),
+    linear-gradient(var(--surface), var(--surface)),
+    linear-gradient(var(--surface), var(--surface)),
+    linear-gradient(var(--surface), var(--surface)),
+    var(--bg);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow); display: flex; flex-direction: column; gap: 1px;
+}
+.context-menu-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 9px;
+  background: transparent; border: 0; border-radius: 5px;
+  color: var(--fg-muted); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.context-menu-item:hover, .context-menu-item:focus-visible { background: var(--surface-2); color: var(--fg); outline: none; }
+.context-menu-item svg { width: 15px; height: 15px; flex: 0 0 auto; }
+/* Right-aligned toggle-state glyph (e.g. the auto-fix tick); margin-left:auto
+   pushes it to the row's far edge, padding keeps it off the very edge. */
+.context-menu-trailing { margin-left: auto; display: inline-flex; padding-left: 12px; }
+/* Ctrl+Cmd+<key> board-shortcut hint shown next to an Actions-menu row. */
+.kbd-hint { font-size: 11px; color: var(--fg-subtle); letter-spacing: .02em; white-space: nowrap; }
+.context-menu-item.danger { color: var(--red-fg); }
+.context-menu-item.danger:hover, .context-menu-item.danger:focus-visible { background: var(--danger-bg); color: var(--danger-strong); outline: none; }
+.context-menu-sep { height: 1px; margin: 3px 2px; background: var(--border-muted); }
+/* Non-interactive caption row (e.g. the font menu's "Terminal font · global"). */
+.context-menu-header { padding: 4px 9px 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-subtle); }
+
+#sidebar {
+  width: 46%;
+  min-width: 280px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border-muted);
+  /* Transparent so the wallpaper shows behind the detail pane; #panel and #term
+     paint their own single-layer frosted backdrops over it (a frosted --tile-bg
+     here would double under them). */
+  background: transparent;
+}
+#sidebar.collapsed { display: none; }
+
+/* In-app maximize: expand the agent window to fill the content area, hiding the
+   task board (the nav rail lives outside <main>, so it stays). Layout-only — no
+   colors — so it's theme-safe by construction. #history is defensive: hideSidebar
+   already drops maximize on the History switch. #diff-panel is a #grid sibling
+   (not a #grid descendant), so without it listed here it stayed visible and got
+   squashed side-by-side with the widened #sidebar instead of hiding like the rest
+   of the board — maximizing the terminal should hide the diff view entirely. */
+main.maximized #grid,
+main.maximized #history,
+main.maximized #diff-panel { display: none; }
+main.maximized #drag-handle { display: none; }
+main.maximized #sidebar {
+  flex: 1 1 auto;
+  width: auto !important; /* beat the inline drag-resize / restored width on #sidebar */
+}
+
+#drag-handle {
+  width: 6px;
+  flex: 0 0 auto;
+  cursor: col-resize;
+  background: var(--chrome);
+  border-left: 1px solid var(--border-muted);
+}
+#drag-handle:hover, #drag-handle.dragging { background: var(--accent); }
+#drag-handle.hidden { display: none; }
+body.dragging { user-select: none; cursor: col-resize; }
+
+/* Detail header — a "big sibling" of a grid card: a colored status stripe (same
+   vocabulary as .session-card::before) + a body of name/actions, status line,
+   folder·branch, and one muted meta row. Sizes to content, uncapped — the ONE
+   thing under it that could grow unbounded (the sub-agent zone) caps and scrolls
+   itself (.sess-subagents), so capping the header too just produced two nested
+   scroll regions for no benefit. */
+#panel { border-bottom: 1px solid var(--border-muted); background: var(--card-bg); }
+.panel-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 12px; }
+.sess-hdr { display: flex; }
+/* Inset, rounded stripe — same form as the board card's .session-card::before. */
+/* The panel header's status strip: a .card-bar-alike vertical bar carrying the
+   rotated status word (same vocabulary/fill-per-state as the board card's
+   .card-bar), replacing the old thin stripe + inline pill. No waitingFor text. */
+.sess-bar {
+  flex: 0 0 16px; margin: 9px 0 9px 6px; border-radius: 6px; background: var(--border);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.sess-bar.clickable { cursor: pointer; }
+.sess-bar > span {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase;
+  white-space: nowrap; color: var(--fg-muted);
+}
+.sess-hdr.needs-you .sess-bar { background: var(--red); }
+.sess-hdr.just-finished .sess-bar { background: var(--just-finished); }
+.sess-hdr.working .sess-bar { background: var(--green); }
+.sess-hdr.idle .sess-bar { background: var(--border); }
+.sess-hdr.unknown .sess-bar { background: var(--border-muted); }
+.sess-hdr.working .sess-bar > span,
+.sess-hdr.needs-you .sess-bar > span,
+.sess-hdr.just-finished .sess-bar > span { color: var(--bar-on); }
+/* The panel's sub-agent disclosure — expanded under the header, capped + scrollable. */
+.sess-subagents { margin-top: 8px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.sess-subagents-empty {
+  font-size: 11px; color: var(--fg-subtle); padding: 6px 0;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.sess-subagents-empty svg { width: 12px; height: 12px; }
+.sess-body { flex: 1; min-width: 0; padding: 9px 12px; }
+.sess-row1 { display: flex; align-items: center; gap: 8px; }
+.sess-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+/* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
+   the session-action menu. The eight inline icons collapsed into this one entry. */
+.sess-actions-btn { height: 28px; padding: 0 9px 0 8px; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500; }
+.sess-actions-btn:hover { color: var(--fg); background: var(--surface-2); }
+.sess-actions-btn svg { width: 16px; height: 16px; fill: currentColor; }
+/* Hairline between the Actions button and the inline window controls. */
+.sess-acts-divider { width: 1px; height: 18px; background: var(--border-muted); margin: 0 5px; }
+/* Window controls (fullscreen, close): ghost icon buttons — no border, lighter
+   resting colour than the Actions button, lifting to --fg + a surface tint on hover. */
+.sess-acts .icon-ghost { background: transparent; border: 0; color: var(--fg-subtle); width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; }
+.sess-acts .icon-ghost:hover { color: var(--fg); background: var(--surface-2); }
+.sess-acts .icon-ghost svg { width: 16px; height: 16px; }
+/* Active/toggled (maximize while maximized) — same --blue vocabulary as the rail. */
+.sess-acts .icon-ghost.active { color: var(--blue); }
+.sess-path { font-size: 11.5px; color: var(--fg-muted); margin-top: 7px; display: flex; align-items: center; gap: 6px; }
+.sess-path .pill { flex: 0 0 auto; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-loc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.pill.working { background: var(--pill-working-bg); color: var(--green-fg); }
+.pill.needs-you { background: var(--pill-needs-bg); color: var(--red-fg); }
+.pill.idle { background: var(--pill-idle-bg); color: var(--fg-muted); }
+.pill.unknown { background: var(--pill-idle-bg); color: var(--fg-subtle); }
+.pill.just-finished { background: color-mix(in srgb, var(--just-finished) 16%, transparent); color: var(--just-finished); }
+.sess-path .branch { flex: 0 0 auto; }
+.sess-more { flex: 0 0 auto; color: var(--fg-subtle); }
+/* Branch glyph + name, shared by the detail header and the task-view cards. */
+.branch { display: inline-flex; align-items: center; gap: 3px; color: var(--purple); }
+.branch.main { color: var(--blue-fg); }
+.branch-icon { width: 11px; height: 11px; flex: 0 0 auto; }
+.sess-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 5px; line-height: 1.5; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sess-meta-links { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+.sess-meta .sess-tok { color: var(--fg-subtle); }
+.rename-input { width: 100%; font-size: 15px; font-weight: 700; background: var(--field-bg); border: 1px solid var(--accent); border-radius: 6px; color: var(--fg); padding: 2px 6px; font-family: inherit; outline: none; }
+button.danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--red-fg); }
+button.danger:hover { background: var(--danger-bg); border-color: var(--danger-strong); }
+
+#term-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* #term is the backdrop wrapper: it paints --term-bg (rgba honored) and the
+   xterm canvas inside is made transparent for dark translucent themes (see
+   readTerminalTheme), so the cells AND the inset take this one bg uniformly —
+   no double-paint, no frame. The inset lives on .xterm, NOT here: FitAddon sizes
+   the grid off its parent's (#term's) height minus the *.xterm element's* own
+   padding — it never subtracts #term's. Padding on #term would be added back into
+   the available height, so it proposes one row too many and the bottom row (the
+   Claude footer) clips off the pane — and since the leftover px shifts with the
+   window height, it clipped only at some sizes. Putting the padding on .xterm is
+   the value FitAddon actually deducts, so the row count fits. */
+#term { flex: 1; min-height: 0; background: var(--term-bg); }
+#term .xterm { padding: 6px 8px; }
+/* xterm forces the viewport to overflow-y:scroll (an always-on bar) with an
+   unthemed default track, which reads as a pale strip on light/translucent themes.
+   Theme it: transparent track (term-bg shows through) + a subtle themed thumb. */
+.xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent; }
+.xterm-viewport::-webkit-scrollbar { width: 10px; }
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; }
+.term-note { padding: 18px 16px; color: var(--fg-muted); font-size: 13px; line-height: 1.5; max-width: 460px; }
+.term-note code { background: var(--surface); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 12px; }
+.term-note button { margin: 6px 0; background: var(--accent); border-color: var(--accent); color: var(--accent-fg); padding: 7px 12px; }
+.term-note .muted { color: var(--fg-subtle); font-size: 12px; }
+/* Shown in the terminal pane while a live session is being restarted (its tmux
+   killed and relaunched), so the dying "[exited]" pane is never surfaced — a small
+   spinner + label until the fresh pane attaches. */
+.term-restarting { display: flex; align-items: center; gap: 10px; }
+.term-restarting p { margin: 0; }
+.term-restarting .spinner { width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: term-spin 0.7s linear infinite; }
+@keyframes term-spin { to { transform: rotate(360deg); } }
+.term-exit { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 4px 0 10px; color: var(--red); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+
+/* Drag handle between the agent terminal and the shell terminal pane — mirrors #drag-handle. */
+.shell-term-drag-handle {
+  height: 6px; flex: 0 0 auto; cursor: row-resize;
+  background: var(--chrome); border-top: 1px solid var(--border-muted);
+}
+.shell-term-drag-handle:hover, .shell-term-drag-handle.dragging { background: var(--accent); }
+
+/* Shell terminal pane — plain-shell tmux attached below the agent terminal. */
+.shell-terminal-pane {
+  flex: 0 0 240px;
+  display: flex; flex-direction: column; min-height: 80px;
+}
+.shell-terminal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 4px 3px 10px; gap: 4px;
+  background: var(--card-bg); border-bottom: 1px solid var(--border-muted);
+  flex: 0 0 auto;
+}
+.shell-terminal-label { font-size: 11px; color: var(--fg-muted); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+.shell-terminal-close {
+  background: transparent; border: 0; color: var(--fg-subtle);
+  width: 24px; height: 24px; padding: 0; cursor: pointer; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.shell-terminal-close:hover { color: var(--fg); background: var(--surface-2); }
+.shell-terminal-close svg { width: 14px; height: 14px; }
+.shell-terminal-body { flex: 1; min-height: 0; background: var(--term-bg); }
+.shell-terminal-body .xterm { padding: 4px 8px; }
+.terminal-command-preview {
+  flex: 0 0 auto;
+  background: var(--surface-2); border-bottom: 1px solid var(--border-muted);
+  padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
+}
+.terminal-command-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--blue-fg);
+}
+
+#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden { display: none; }
+/* The native datetime picker chrome (calendar/spinners) follows color-scheme;
+   pin it per-theme so it isn't a stark white popup on the dark board. */
+#sn-when, #m-sch-at, #m-sch-time { color-scheme: dark; }
+body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme: light; }
+.confirm-body { font-size: 13px; color: var(--fg-muted); line-height: 1.55; white-space: pre-line; margin: 0; }
+.memory-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
+.memory-text { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; }
+
+/* Title + Write·Split·Preview toggle share the modal's first row. */
+.memory-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.memory-head h3 { margin: 0; }
+/* Segmented control: flush buttons (collapsed inner borders), active = accent —
+   the --accent/--accent-fg precedent from .suggest-item.active, not the --blue toggle. */
+.memory-mode { display: inline-flex; flex: 0 0 auto; }
+.memory-mode button {
+  padding: 4px 11px; font-size: 12px; border-radius: 0; border-right-width: 0;
+  background: var(--surface-2); color: var(--fg-muted);
+}
+.memory-mode button:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.memory-mode button:last-child { border-top-right-radius: 6px; border-bottom-right-radius: 6px; border-right-width: 1px; }
+.memory-mode button:hover { background: var(--border-muted); color: var(--fg); }
+.memory-mode button.active, .memory-mode button.active:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+/* Editor + preview live side by side; the mode-* class on #memory-card decides
+   which panes show and how wide the card is. Split needs the room, so it widens
+   past the default 560px (still under .modal-card's 92vw cap). */
+.memory-body { display: flex; gap: 14px; align-items: stretch; }
+#memory-card { transition: width 0.18s ease; }
+#memory-card.mode-split { width: 920px; }
+#memory-card.mode-write .memory-preview { display: none; }
+#memory-card.mode-preview .memory-text { display: none; }
+#memory-card.mode-write .memory-text,
+#memory-card.mode-preview .memory-preview { flex: 1 1 auto; width: 100%; }
+/* flex-basis 0 + min-width 0 so the two panes split evenly and can shrink. */
+#memory-card.mode-split .memory-text,
+#memory-card.mode-split .memory-preview { flex: 1 1 0; min-width: 0; width: auto; }
+@media (prefers-reduced-motion: reduce) { #memory-card { transition: none; } }
+
+/* Read-only render of the buffer. Bordered like the textarea (same field-bg) so
+   the two panes read as one surface; all colours via theme vars for dark/light. */
+.memory-preview {
+  min-height: 320px; max-height: 60vh; overflow: auto;
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 14px; color: var(--fg); font-size: 13px; line-height: 1.6; box-sizing: border-box;
+}
+.memory-preview > :first-child { margin-top: 0; }
+.memory-preview > :last-child { margin-bottom: 0; }
+.memory-preview h1, .memory-preview h2, .memory-preview h3,
+.memory-preview h4, .memory-preview h5, .memory-preview h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; }
+.memory-preview h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.memory-preview h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.memory-preview h3 { font-size: 1.15em; }
+.memory-preview p { margin: 0.6em 0; }
+.memory-preview ul, .memory-preview ol { margin: 0.6em 0; padding-left: 1.5em; }
+.memory-preview li { margin: 0.2em 0; }
+.memory-preview li > ul, .memory-preview li > ol { margin: 0.2em 0; }
+.memory-preview a { color: var(--blue-fg); text-decoration: none; }
+.memory-preview a:hover { text-decoration: underline; }
+.memory-preview strong { color: var(--fg); font-weight: 600; }
+.memory-preview em { font-style: italic; }
+.memory-preview code {
+  background: var(--surface-2); color: var(--blue-fg);
+  padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.memory-preview pre {
+  background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 6px;
+  padding: 10px 12px; overflow: auto; margin: 0.6em 0;
+}
+.memory-preview pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
+.memory-preview blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
+.memory-preview hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.memory-preview table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
+.memory-preview th, .memory-preview td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.memory-preview th { background: var(--surface-2); color: var(--fg); font-weight: 600; }
+.memory-preview img { max-width: 100%; }
+/* Frosted glass (matches .context-menu): keep the theme's translucent surface,
+   but blur the busy wallpaper/board behind so dialog text stays readable without
+   going dark/opaque. The shadow lifts it off the blurred backdrop. */
+.modal-card {
+  background: var(--surface);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 12px 32px var(--shadow);
+  border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 560px; max-width: 92vw;
+  /* #modal centers this with align-items:center, which — with no cap here —
+     let long content (e.g. a sub-agent's full prompt/result, #m-subagent)
+     grow the card taller than the viewport and overflow off both the top AND
+     bottom with no way to scroll it back into view (the Cancel button included).
+     Bounding height to the viewport minus a fixed margin keeps the whole card,
+     always, at least that far from the screen edges, and scrolls its own
+     content internally once it would otherwise exceed that. */
+  max-height: calc(100vh - 40px); overflow-y: auto;
+}
+
+/* Click-to-preview file modal: taller and wider than the standard .modal-card
+   so a rendered doc is comfortable to read. Colours via semantic vars only. */
+.file-card {
+  background: var(--surface);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 12px 32px var(--shadow);
+  border: 1px solid var(--border); border-radius: 10px;
+  width: min(90vw, max(560px, 50vw)); height: 100vh;
+  display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
+}
+.file-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.file-titles { min-width: 0; }
+.file-head h3 { margin: 0; color: var(--fg); }
+.file-path { font-size: 11px; color: var(--fg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; margin-top: 3px; }
+.file-head-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+/* Reuses .memory-preview for element styling (headings/code/tables/text) but
+   resets its field-inset CONTAINER chrome: drop the 60vh cap so the body fills
+   the full-height card, and the bordered-box look so the doc reads flush inside
+   the card's own 20px padding. */
+.file-body {
+  flex: 1 1 auto; overflow-y: auto; min-height: 0;
+  max-height: none; background: none; border: none; border-radius: 0; padding: 0;
+}
+.file-loading, .file-error { font-size: 13px; }
+.file-loading { color: var(--fg-muted); }
+.file-error { color: var(--red-fg); }
+
+.modal-card h3 { margin: 0 0 14px; color: var(--fg); }
+.modal-card label { display: block; font-size: 11px; text-transform: uppercase; color: var(--fg-subtle); margin: 10px 0 4px; }
+.modal-card input, .modal-card textarea, .modal-card select {
+  width: 100%; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg); padding: 7px 9px; font-size: 13px; font-family: inherit;
+  box-sizing: border-box;
+}
+.modal-card textarea { resize: vertical; max-width: 100%; }
+/* Mode selector: two cards (Standard / Workflow) replacing the old workflow
+   checkbox. Selection reads as border + faint tint + a filled check, coloured to
+   echo the mode (--accent vs --wf) before the form below adapts. Cards are real
+   <button>s for native focus/Enter/Space; override the base button chrome. */
+.mode-cards { display: flex; gap: 10px; margin: 10px 0 4px; }
+.mode-cards.hidden { display: none; }   /* review session is always Standard — selector hidden */
+.mode-card {
+  flex: 1; text-align: left; cursor: pointer; font: inherit;
+  background: transparent; border: 1.5px solid var(--border); border-radius: 8px;
+  padding: 12px; color: var(--fg);
+}
+.mode-card:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.mode-card-head { display: flex; align-items: center; justify-content: space-between; }
+.mode-card-title { font-size: 13px; font-weight: 700; }
+.mode-card-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.45; margin-top: 7px; }
+/* Check shows only on the selected card; its fill colour comes from the mode rules. */
+.mode-card-check {
+  width: 16px; height: 16px; border-radius: 50%; color: var(--accent-fg);
+  font-size: 10px; display: none; align-items: center; justify-content: center; flex: none;
+}
+.mode-card.selected .mode-card-check { display: inline-flex; }
+.mode-card[data-mode="standard"].selected,
+.mode-card[data-mode="standard"].selected:hover {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.mode-card[data-mode="standard"].selected .mode-card-check { background: var(--accent); }
+.mode-card[data-mode="workflow"].selected,
+.mode-card[data-mode="workflow"].selected:hover {
+  border-color: var(--wf); background: color-mix(in srgb, var(--wf) 12%, transparent);
+}
+.mode-card[data-mode="workflow"].selected .mode-card-check { background: var(--wf); }
+/* Workflow mode: the manual worktree box is hidden and this confirms the auto one. */
+.wf-worktree-note { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); margin-top: 14px; }
+.wf-worktree-note.hidden { display: none; }
+.wf-worktree-check {
+  width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--wf); color: var(--wf);
+  font-size: 9px; display: inline-flex; align-items: center; justify-content: center; flex: none;
+}
+/* Always-present bordered group so the modal height never jumps on toggle. */
+.worktree-box { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
+/* Workflow mode hides the whole box (there's no global .hidden rule). */
+.worktree-box.hidden { display: none; }
+.worktree-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; color: var(--fg-subtle); margin-bottom: 8px; }
+.worktree-box .check-row.hidden { display: none; }
+.modal-card label.check-row.hidden { display: none; }
+.modal-card label.check-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; text-transform: none; color: var(--fg); cursor: pointer; margin: 0;
+}
+.modal-card label.check-row input[type="checkbox"] { width: auto; margin: 0; }
+#m-wf-auto-merge-row { margin-top: 8px; }
+/* Fields slide in only when worktree mode is on. grid 0fr→1fr animates to the
+   exact content height (no magic max-height); the child clips during collapse,
+   so spacing lives as padding INSIDE the clip (a margin would leak when closed). */
+.worktree-fields-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.5s ease; }
+.worktree-fields-wrap.open { grid-template-rows: 1fr; }
+.worktree-fields { overflow: hidden; padding-top: 8px; }
+.worktree-fields label:first-child { margin-top: 0; }
+.modal-card .worktree-fields input:disabled { opacity: 0.45; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .worktree-fields-wrap { transition: none; } }
+.worktree-msg { font-size: 12px; margin-top: 6px; color: var(--fg-subtle); }
+.worktree-msg.hint { color: var(--accent); font-weight: 500; }   /* availability hint — stands out, not alarm-red */
+.worktree-msg.error { color: var(--danger-strong); font-weight: 500; }
+.worktree-msg.warn { color: var(--snooze-fg); font-weight: 500; }   /* will work, but reusing an existing branch/worktree — amber, not alarm-red */
+.worktree-msg.hidden { display: none; }
+.modal-card .combo { position: relative; }
+.modal-card .suggest {
+  position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 30;
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px var(--shadow);
+}
+.modal-card .suggest.hidden { display: none; }
+.modal-card .suggest-item {
+  padding: 7px 9px; font-size: 12px; color: var(--fg); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.modal-card .suggest-item:hover, .modal-card .suggest-item.active { background: var(--accent); color: var(--accent-fg); }
+.modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
+/* Quick-launch shortcuts sit at the bottom-left; margin-right:auto pushes Cancel/Launch to the right. */
+.quick-launch { display: flex; gap: 8px; margin-right: auto; }
+.quick-launch.hidden { display: none; }
+.quick-launch-btn { display: inline-flex; align-items: center; gap: 6px; }
+.quick-launch-btn .kbd {
+  font-size: 10px; color: var(--fg-subtle); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; line-height: 15px;
+}
+
+/* Find & resume other sessions */
+#find-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#find-modal.hidden { display: none; }
+.find-card { width: 620px; }
+.find-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
+.find-note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 11px; }
+.find-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.find-search { flex: 1 1 auto; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 6px 9px; font-size: 12.5px; font-family: inherit; }
+.find-search:focus { outline: none; border-color: var(--accent); }
+.find-count { flex: 0 0 auto; font-size: 11px; color: var(--fg-subtle); white-space: nowrap; }
+.find-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
+.find-empty { color: var(--fg-subtle); font-size: 13px; padding: 6px 2px; line-height: 1.5; }
+.find-row { display: flex; align-items: center; gap: 14px; background: var(--bg); border: 1px solid var(--border-muted); border-radius: 8px; padding: 9px 11px; }
+.find-row:hover { border-color: var(--border); background: var(--surface-2); }
+.find-main { flex: 1 1 auto; min-width: 0; }
+.find-desc { font-size: 13px; color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-dir { font-size: 11px; color: var(--fg-subtle); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-when { flex: 0 0 auto; font-size: 11px; color: var(--fg-muted); white-space: nowrap; }
+.find-resume { flex: 0 0 auto; background: transparent; border-color: var(--accent); color: var(--blue-fg); }
+.find-resume:hover { background: var(--surface-2); border-color: var(--accent); }
+
+/* Fork a session */
+#fork-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#fork-modal.hidden { display: none; }
+.fork-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 8px; }
+.fork-note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 11px; }
+
+/* Scheduled sessions panel */
+#schedules-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#schedules-modal.hidden { display: none; }
+.sched-card { width: 600px; }
+.sched-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
+.sched-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; }
+.sched-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 2px; line-height: 1.5; }
+
+/* Settings panel: a centered .modal-card, one scrolling body split into
+   Appearance / Behavior / Shortcuts sections (settings.js composes them; the
+   Appearance widgets themselves are rendered by theme.js/app.js and spliced in). */
+.settings-card { width: 560px; }
+.settings-body { display: flex; flex-direction: column; gap: 20px; max-height: 64vh; overflow-y: auto; }
+.settings-section-title {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--fg-muted); margin-bottom: 8px;
+}
+.settings-section + .settings-section { padding-top: 16px; border-top: 1px solid var(--border-muted); }
+.settings-list { display: flex; flex-direction: column; gap: 4px; }
+.settings-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 2px; }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 2px; border-bottom: 1px solid var(--border-muted);
+}
+.setting-row:last-child { border-bottom: 0; }
+.setting-copy { min-width: 0; }
+.setting-label { font-size: 13px; color: var(--fg); font-weight: 500; }
+.setting-help { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
+/* Toggle switch: an accent-filled track + sliding knob, off = muted surface. */
+.setting-toggle {
+  flex: 0 0 auto; position: relative; width: 38px; height: 22px; padding: 0;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+  cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease;
+}
+.setting-toggle:hover { border-color: var(--fg-subtle); }
+.setting-toggle.on { background: var(--accent); border-color: var(--accent); }
+.setting-knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--fg-muted); transition: transform 0.12s ease, background 0.12s ease;
+}
+.setting-toggle.on .setting-knob { transform: translateX(16px); background: var(--accent-fg); }
+
+/* Appearance section: each item (Theme, Terminal font size) gets the same
+   label/help styling as a Behavior row, then its own row of pills/segments. */
+.appearance-item { margin-bottom: 14px; }
+.appearance-item:last-child { margin-bottom: 0; }
+.appearance-item .setting-label, .appearance-item .setting-help { margin-bottom: 6px; }
+.theme-rows { display: flex; flex-wrap: wrap; gap: 6px; }
+.theme-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
+  font: inherit; font-size: 13px;
+}
+.theme-row:hover { background: var(--surface-2); color: var(--fg); }
+.theme-row.active {
+  color: var(--fg); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.theme-row .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+.fontsize-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.fontsize-opt {
+  padding: 5px 10px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px;
+  background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
+}
+.fontsize-opt:hover { background: var(--surface-2); color: var(--fg); }
+.fontsize-opt.active {
+  color: var(--fg); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Shortcuts section: a hand-maintained reference table, grouped by context. */
+.shortcuts-list { display: flex; flex-direction: column; gap: 14px; }
+.shortcuts-group-title {
+  font-size: 12px; font-weight: 600; color: var(--fg); margin-bottom: 4px;
+}
+.shortcut-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 3px 0; font-size: 12px;
+}
+.shortcut-keys {
+  flex: 0 0 auto; font-family: ui-monospace, monospace; color: var(--fg);
+  background: var(--surface-2); border-radius: 5px; padding: 1px 6px;
+}
+.shortcut-desc { color: var(--fg-muted); }
+.sched-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg); border: 1px solid var(--border-muted); border-radius: 8px; padding: 9px 11px;
+}
+.sched-row:hover { border-color: var(--border); background: var(--surface-2); }
+/* A disabled schedule dims to a muted, name-only-ish row (the --snooze-asleep cue). */
+.sched-row.disabled { opacity: 0.6; }
+.sched-enable { display: inline-flex; align-items: center; margin: 0; flex: 0 0 auto; cursor: pointer; }
+.sched-enable input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; }
+.sched-main { flex: 1 1 auto; min-width: 0; }
+.sched-name { font-size: 13px; font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+.sched-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The next-fire reads as the row's live cue — accent, like the worktree hint. */
+.sched-next { flex: 0 0 auto; font-size: 11px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.sched-next.off { color: var(--fg-subtle); font-weight: 500; }
+/* Overdue-skipped one-off: amber alarm pill, reusing the snooze palette. */
+.sched-badge {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+  color: var(--snooze-fg); border: 1px solid var(--snooze); border-radius: 4px; padding: 1px 5px;
+}
+.sched-actions { flex: 0 0 auto; display: flex; gap: 4px; }
+.sched-actions button {
+  background: transparent; border: 1px solid var(--border-muted); color: var(--fg-muted);
+  padding: 3px 8px; font-size: 12px; line-height: 1;
+}
+.sched-actions button:hover { color: var(--fg); border-color: var(--accent); background: var(--surface-2); }
+.sched-del:hover { color: var(--red); border-color: var(--red); }
+
+/* Usage & spend dashboard: a wide centered panel (schedules-panel pattern) holding
+   the toggles, a headline total, the inline-SVG stacked chart, and the legend. */
+#usage-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#usage-modal.hidden { display: none; }
+.usage-card { width: 820px; max-width: 94vw; }
+.usage-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.usage-head h3 { margin: 0; }
+.usage-toggles { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Segmented control: a bordered row of buttons, the active one accent-filled. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button {
+  background: transparent; border: none; border-left: 1px solid var(--border-muted);
+  color: var(--fg-muted); padding: 4px 11px; font-size: 12px; font-family: inherit; border-radius: 0; cursor: pointer;
+}
+.seg button:first-child { border-left: none; }
+.seg button:hover { background: var(--surface-2); color: var(--fg); }
+.seg button.active { background: var(--accent); color: var(--accent-fg); }
+.usage-summary { margin: 14px 0 6px; }
+.usage-total { font-size: 28px; font-weight: 700; color: var(--fg); line-height: 1.1; }
+.usage-sub { font-size: 12px; color: var(--fg-muted); margin-top: 3px; }
+.usage-est { font-size: 11px; color: var(--snooze-fg); margin-top: 4px; }
+.usage-chart { position: relative; margin-top: 6px; min-height: 300px; }
+.usage-empty { color: var(--fg-subtle); font-size: 13px; padding: 40px 2px; text-align: center; }
+.usage-svg { display: block; overflow: visible; }
+.usage-grid { stroke: var(--border-muted); stroke-width: 1; }
+.usage-baseline { stroke: var(--border); stroke-width: 1; }
+.usage-axis { fill: var(--fg-subtle); font-size: 10px; font-family: var(--font); }
+.usage-hit { fill: transparent; cursor: pointer; }
+.usage-bar:hover .usage-hit { fill: color-mix(in srgb, var(--fg) 6%, transparent); }
+/* Floating per-bucket breakdown tooltip. */
+.usage-tip {
+  position: absolute; pointer-events: none; z-index: 2; min-width: 150px; max-width: 220px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; box-shadow: 0 4px 16px var(--shadow); opacity: 0; transition: opacity 0.08s ease;
+  font-size: 12px;
+}
+.usage-tip.show { opacity: 1; }
+.usage-tip-head { font-weight: 600; color: var(--fg); margin-bottom: 5px; }
+.usage-tip-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.usage-tip-name { flex: 1 1 auto; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-tip-val { flex: 0 0 auto; color: var(--fg); font-variant-numeric: tabular-nums; }
+.usage-tip-total { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border-muted); display: flex; justify-content: space-between; color: var(--fg); font-weight: 600; }
+.usage-sw { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; }
+.usage-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.usage-leg {
+  display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px;
+  background: var(--bg); border: 1px solid var(--border-muted); border-radius: 999px;
+  color: var(--fg); font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.usage-leg:hover:not(:disabled) { border-color: var(--border); background: var(--surface-2); }
+.usage-leg.active { border-color: var(--accent); }
+.usage-leg.dim { opacity: 0.5; }
+.usage-leg:disabled { cursor: default; }
+.usage-leg-name { color: var(--fg); }
+.usage-leg-val { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+
+/* The scheduling "When" section inside the reused dispatch modal. */
+.when-box.hidden { display: none; }
+.when-row.hidden { display: none; }
+.when-days { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.day-toggle {
+  flex: 1 1 0; min-width: 40px; padding: 6px 0; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);
+}
+.day-toggle:hover { color: var(--fg); border-color: var(--border-muted); }
+.day-toggle.on, .day-toggle.on:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
+/* Action-kind selector (New session / Resume / Message) — a segmented row, same
+   visual language as the day toggles. */
+.sched-action { display: flex; gap: 6px; margin-top: 2px; }
+.sched-action-btn {
+  flex: 1 1 0; padding: 7px 0; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);
+}
+.sched-action-btn:hover { color: var(--fg); border-color: var(--border-muted); }
+.sched-action-btn.on, .sched-action-btn.on:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
+#m-session-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
+
+/* Persistent server-wide alert bar (currently: fd-watchdog leak warning). Fixed
+   at the very top so it can't be missed; body.system-banner-open pushes both
+   #nav-rail and main down by the same amount rather than overlapping them,
+   since body is a plain flex row with no reserved header space. */
+#system-banner {
+  position: fixed; top: 0; left: 0; right: 0; height: 30px; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  /* --snooze-fg is a same-lightness accent for use ALONGSIDE --snooze (see its
+     14%-tint usage elsewhere), not a text color meant to sit on a solid --snooze
+     fill — that pairing measures ~1.3:1 contrast, illegible. --bar-on is the
+     existing "ink for text on a filled status bar" role and does the job right
+     (~7.5:1 dark, ~4.9:1 light). */
+  background: var(--snooze); color: var(--bar-on);
+  font-size: 12px; font-weight: 600; gap: 14px;
+}
+#system-banner.hidden { display: none; }
+body.system-banner-open { padding-top: 30px; }
+.system-banner-dismiss {
+  padding: 2px 8px; border: 1px solid var(--bar-on); border-radius: 5px;
+  background: transparent; color: var(--bar-on); font: inherit; font-weight: 600;
+  cursor: pointer; opacity: 0.85;
+}
+.system-banner-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--bar-on) 15%, transparent); }
+
+#toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: var(--accent-fg); padding: 9px 16px; border-radius: 8px;
+  font-size: 13px; z-index: 30; box-shadow: 0 4px 16px var(--shadow); overflow: hidden;
+}
+#toast.err { background: var(--red); }
+#toast.hidden { display: none; }
+.toast-action {
+  margin-left: 12px; padding: 0; border: none; background: none;
+  color: var(--accent-fg); font: inherit; font-weight: 600; text-decoration: underline;
+  cursor: pointer;
+}
+.toast-action:hover { background: none; opacity: 0.8; }
+/* Depleting time-remaining bar along the toast's bottom edge; JS sets its
+   animation-duration and pauses play-state on hover. */
+.toast-progress {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+  background: var(--accent-fg); opacity: 0.5; transform-origin: left;
+  animation-name: toast-deplete; animation-timing-function: linear; animation-fill-mode: forwards;
+}
+@keyframes toast-deplete { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ── Task Grid ─────────────────────────────────────────────────────────── */
+/* Columns/rows are set inline by renderGrid (they depend on the task count). */
+#grid {
+  flex: 1; min-width: 0; display: grid;
+  gap: 12px; padding: 14px; background: transparent; overflow: hidden;
+}
+#grid.scrolling { overflow-y: auto; }
+#grid.hidden { display: none; }
+
+#new-task.armed { border: 1px dashed var(--blue); color: var(--blue-fg); }
+#new-task.drop { background: var(--surface-2); border: 1px dashed var(--blue); color: var(--blue-fg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 30%, transparent); }
+
+.task-cell {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  border: 1px dotted var(--border); border-radius: 10px;
+  background: var(--tile-bg); overflow: hidden;
+}
+.task-cell.drop-target { border-color: var(--blue); border-style: solid; background: color-mix(in srgb, var(--blue) 6%, transparent); }
+
+/* Ghost "＋ new task" drop targets in empty cells — shown only while a session
+   drag arms the grid. */
+.new-task-drop {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed transparent; border-radius: 10px;
+  color: transparent; font-size: 13px; user-select: none; pointer-events: none;
+}
+#grid.arming .new-task-drop { border-color: var(--border-muted); color: var(--fg-subtle); pointer-events: auto; }
+#grid.arming .new-task-drop:hover, .new-task-drop.drop {
+  border-color: var(--blue); color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+
+.task-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; background: rgba(0,0,0,0.08);
+  cursor: grab; user-select: none;
+}
+.task-name { font-weight: 700; color: var(--fg); font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-head .link-chip { font-size: 10px; }
+.task-head .link-chip .icon { width: 11px; height: 11px; }
+.task-new-sess { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
+.task-new-sess .icon { width: 15px; height: 15px; }
+.task-new-sess:hover { color: var(--blue-fg); background: transparent; }
+.task-name-input { flex: 1; font-size: 13px; font-weight: 700; background: var(--bg); border: 1px solid var(--blue); border-radius: 5px; color: var(--fg); padding: 1px 5px; font-family: inherit; outline: none; }
+
+.task-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.cell-empty-body { color: var(--fg-subtle); font-size: 11px; padding: 2px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.empty-new-sess {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; padding: 16px 9px; background: transparent;
+  border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--fg-subtle); font-size: 12px; font-family: inherit;
+}
+.empty-new-sess .icon { width: 22px; height: 22px; }
+.empty-new-sess:hover { color: var(--blue-fg); border-color: var(--blue); background: transparent; }
+/* Keyboard "new session" slot (Cmd+Shift+arrows): the lit target is the big
+   empty-state CTA on an empty tile, else a compact row appended after the cards.
+   Blue ring matching .session-card.selected. */
+.new-sess-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 6px 9px; background: transparent;
+  border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--fg-subtle); font-size: 12px; font-family: inherit; cursor: pointer; flex: 0 0 auto;
+}
+.new-sess-row .icon { width: 16px; height: 16px; }
+.new-sess-row:hover { color: var(--blue-fg); border-color: var(--blue); }
+.new-sess-row.selected { color: var(--blue-fg); border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+.empty-new-sess.selected { color: var(--blue-fg); border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+
+/* Focus mode is a column: the focused tile takes the height, the switcher strip
+   is a fixed band pinned at the bottom. */
+#grid.focus-mode { display: flex; flex-direction: column; }
+#grid.focus-mode .task-cell { flex: 1; min-height: 0; }
+#grid.focus-mode .task-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+  align-content: start;
+  /* Grid's default align-items:stretch would force every item in a row to the
+     row's tallest (e.g. a solo card sharing a row with a parent + its spine) —
+     each card should size to its own content, same convention as .hist-cols. */
+  align-items: start;
+}
+/* The active cards flow across the auto-fit columns; the snooze divider and the
+   asleep rows below it must span the full width so they read as a separator and
+   an inline list, not stray grid cells. */
+#grid.focus-mode .snooze-divider,
+#grid.focus-mode .snoozed-row { grid-column: 1 / -1; }
+#grid.focus-mode .todo-divider,
+#grid.focus-mode .todo-row,
+#grid.focus-mode .todo-zone { grid-column: 1 / -1; }
+/* Bottom switcher strip: one-click jump to another task without leaving focus.
+   Wraps onto multiple rows, scrolling once it exceeds tray-pills' max-height. */
+.focus-switcher {
+  flex: 0 0 auto;
+  /* In the normal board #grid is display:grid — span every column so the tray is a
+     full-width strip, not a one-column cell. Inert under focus-mode's flex #grid. */
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 8px 2px 2px;
+}
+/* Restore-all + one pill per minimised task, all wrapping and scrolling together.
+   min-width:0 lets this box shrink so overflow scrolls inside it instead of pushing
+   the strip past the board (the flex min-width trap that let pills run off-screen). */
+.tray-pills {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+/* task name left · session dots right */
+.switcher-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  background: var(--pill-idle-bg);
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.switcher-pill:hover { border-color: var(--border); }
+.switcher-pill .switcher-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switcher-dots { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; }
+/* One dot per session. Reuses shared status hues so theme overrides flow through;
+   idle is a neutral grey, never blank. No animation. */
+.switcher-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.switcher-dot.needs-you { background: var(--red); }
+.switcher-dot.working { background: var(--green); }
+.switcher-dot.just-finished { background: var(--just-finished); }
+/* Clears the whole minimised set. Sits first among the pills, wrapping and scrolling
+   with them; blue accent so it still reads as an action, not a task, despite sharing
+   their flow. */
+.tray-restore-all {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
+  color: var(--blue-fg);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tray-restore-all:hover { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 25%, transparent); }
+.task-actions-btn { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
+.task-actions-btn .icon { width: 15px; height: 15px; }
+.task-actions-btn:hover { color: var(--blue-fg); background: transparent; }
+.empty-hint { font-size: 11px; }
+
+.session-card {
+  position: relative;
+  z-index: 1; /* above the child spine below it (see .worker-row::before/::after),
+    so a selected/alarm ring's box-shadow — which spills into the gap where the
+    spine's trunk starts — never gets cut across by the trunk line. */
+  background: var(--surface); border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 8px 10px 8px 30px; cursor: pointer;
+}
+/* State colour is an inset rounded bar carrying the status as a rotated label.
+   It reads bottom-to-top so it doesn't curve at the card corners and acts as a
+   deliberate indicator, tracking the session state independent of the current
+   (selected) and alarm treatments layered on top. Filled for live states;
+   hollow for dormant (see below). */
+.card-bar {
+  position: absolute; left: 6px; top: 6px; bottom: 6px; width: 16px;
+  border-radius: 6px; background: var(--border);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.card-bar > span {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase;
+  white-space: nowrap; color: var(--fg-muted);
+}
+.session-card:hover { background: var(--surface-2); }
+.session-card.idle .card-bar { background: var(--border); }
+.session-card.unknown .card-bar { background: var(--border-muted); }
+.session-card.working .card-bar { background: var(--green); }
+.session-card.just-finished .card-bar { background: var(--just-finished); }
+.session-card.needs-you .card-bar { background: var(--red); }
+/* Filled live bars carry near-black/white ink (per theme) for contrast; idle,
+   unknown and dormant keep muted text on their grey/hollow ground. */
+.session-card.working .card-bar > span,
+.session-card.needs-you .card-bar > span,
+.session-card.just-finished .card-bar > span { color: var(--bar-on); }
+/* Dormant: no live tmux. A hollow bar reads "nothing running here, click to
+   resume"; the name dims to match. Wins over the frozen `idle` status class. */
+.session-card.dormant .card-bar { background: transparent; border: 1px solid var(--border); }
+.session-card.dormant .card-bar > span { color: var(--fg-subtle); }
+.session-card.dormant .card-name { color: var(--fg-muted); }
+
+/* ── Workflow run (issue→PR autopilot): a violet group box wrapping the
+   orchestrator card + its workers' spine. One reorderable unit on the board (it
+   carries the orchestrator's data-sid); the nested card isn't separately
+   draggable. Colours go through --wf so dark/light/themes all track. ── */
+.workflow-box {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 9px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--wf) 45%, transparent);
+  background: color-mix(in srgb, var(--wf) 9%, var(--surface));
+  cursor: default;
+}
+.workflow-head {
+  display: flex; align-items: center; gap: 8px; padding: 1px 3px 2px;
+  user-select: none;
+}
+.workflow-head[role="button"] { cursor: pointer; }
+.workflow-head[role="button"]:hover .wf-count,
+.workflow-head[role="button"]:hover .wf-chevron { color: var(--wf); }
+.wf-ico { display: inline-flex; color: var(--wf); }
+.wf-ico svg { width: 13px; height: 13px; display: block; }
+.wf-title {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--wf);
+}
+.wf-spacer { flex: 1 1 auto; }
+.wf-count { font-size: 10px; color: var(--fg-subtle); }
+.wf-chevron { font-size: 10px; color: var(--fg-subtle); width: 10px; text-align: center; }
+/* The orchestrator card reads as the run's lead: a violet-tinted frame + faint
+   ring. Yield entirely to an alarm state (needs-you / just-finished / snooze) so
+   their rings still win. */
+.session-card.wf-orchestrator:not(.needs-you):not(.just-finished):not(.snooze-alarm) {
+  border-color: color-mix(in srgb, var(--wf) 42%, var(--border-muted));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--wf) 16%, transparent);
+}
+/* Worker spine: compact rows hanging off the orchestrator, joined by a per-row
+   square elbow connector (see .worker-row::before/::after below) rather than a
+   flat rail, so the line reads as genuinely attached to each child. */
+.workflow-spine {
+  --line-color: var(--wf);
+  display: flex; flex-direction: column; gap: 6px;
+  margin-left: 13px; padding-left: 14px;
+}
+/* Generic nested-child spine (any non-workflow parent, e.g. a review's source
+   session): identical layout/connector to .workflow-spine, differing only in
+   --line-color — no wrapping box, header, or collapse (see cards.js childSpineHtml).
+   Uses --border, not --border-muted: --border-muted is tuned as a card BORDER,
+   meant to read against an opaque card surface right behind it, not as a
+   floating line over the page background/wallpaper — confirmed too low-contrast
+   to see in practice on a themed (wallpaper) board. --border keeps this neutral
+   (still far more muted than --wf) while actually being visible. */
+.child-spine {
+  --line-color: var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+  margin-left: 13px; padding-left: 14px;
+}
+/* Wraps a plain parent card + its .child-spine into one .task-body child (see
+   cards.js childGroupHtml) — keeps them a single grid item under
+   #grid.focus-mode's multi-column .task-body grid, where two independent
+   top-level siblings can otherwise land in different columns/rows. No
+   border/background/padding of its own: under the normal board's
+   single-column flex .task-body this changes nothing visually. */
+.child-group {
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* Live "agent team" spine: the lead's team members, each a full Claude in its own
+   pane of the lead's tmux session. Same connector layout/language as .child-spine
+   (neutral --border line, reuses .worker-row rows) — a team member is NOT a
+   wrangler session, so its row (.worker-row.team-row) carries no data-sid, isn't
+   draggable, and opens no card menu (see cards.js teammateRowHtml, app.js). */
+.team-spine {
+  --line-color: var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+  margin-left: 13px; padding-left: 14px;
+}
+/* The member's dot is tinted by its Claude --agent-color (identity, set inline as
+   --agent-accent from a name→var map — no hardcoded hex), not by status. Status
+   reads from the one-word .worker-status + a brightness throb while working
+   (reusing the card bar's bar-throb, wall-clock phased via --throb-delay). */
+.team-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent-accent, var(--border)); flex: none; }
+.team-row.working .team-dot { animation: bar-throb 1.1s ease-in-out infinite; animation-delay: var(--throb-delay, 0s); }
+.team-type { font-size: 10px; color: var(--fg-subtle); flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .team-row.working .team-dot { animation: none; }
+}
+/* Sub-agents attach to a card (and, identically, the panel — see app.js renderPanel)
+   as a zone: a faint divider (mirrors .todo-divider, robot icon instead of the todo
+   zone's plain text pill) followed by plain flat rows — deliberately NOT the
+   .worker-row elbow-connector spine used by workflow/child sessions, so a read-only
+   artifact reads as a simple list rather than something that could be mistaken for
+   a nested session. See cards.js subagentZoneHtml/subagentDividerHtml/subagentRowHtml. */
+.subagent-divider {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--fg-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 2px 2px 0;
+}
+.subagent-divider::before, .subagent-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
+.subagent-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent);
+  padding: 1px 8px; border-radius: 999px;
+}
+.subagent-label svg { width: 11px; height: 11px; }
+.subagent-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+  cursor: pointer;
+}
+.subagent-row:hover { background: var(--surface-2); }
+/* The card's own wrapper around its rows (the panel uses .sess-subagents for the
+   same purpose) — inter-row gap lives HERE now, not on .subagent-row itself (that
+   used to double up with .sess-subagents' own `gap`, over-spacing panel rows by
+   2x). margin-top is deliberately bigger than the 6px inter-row gap: breathing
+   room under the pills row, not just another row-sized gap. margin-bottom is
+   negative to close the 2px gap between .session-card's 8px bottom padding and
+   .card-bar's 6px bottom inset — without it, the last row's bottom edge sits 2px
+   above the bar's, which reads as almost-but-not-quite aligned. */
+.subagent-zone { margin-top: 12px; margin-bottom: -2px; display: flex; flex-direction: column; gap: 6px; }
+/* Leads each row: which agent type ran it (agentType tooltip), muted so the
+   status pill and name stay the visual focus. */
+.subagent-agent-icon { display: inline-flex; color: var(--fg-subtle); flex: none; }
+.subagent-agent-icon svg { width: 12px; height: 12px; }
+/* Widened into a small pill rather than a plain circle — reads more like a
+   status indicator, less like a bullet point. */
+.subagent-dot { width: 16px; height: 8px; border-radius: 999px; background: var(--border); flex: none; }
+.subagent-row.running .subagent-dot { background: var(--green); }
+.subagent-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; font-weight: 500; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subagent-updated {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; color: var(--fg-subtle); flex: none;
+}
+.subagent-updated svg { width: 10px; height: 10px; }
+.subagent-cost { font-size: 10px; color: var(--fg-subtle); min-width: 38px; text-align: right; flex: none; }
+/* The show/hide pill on a card, and the Recent/All pill in the panel's divider,
+   are .card-tag chips (always paired with that class in the markup) that happen
+   to be <button>s — NOT a parallel pill style. Sizing/fill/icon-size all come
+   from .card-tag for free; .subagent-pill only ever adds what's genuinely
+   different about a chip that's also a toggle: the two interactive states below.
+   (An earlier version duplicated .card-tag's own properties here by hand, drifted
+   out of sync with it, and had to be found and fixed — composing on .card-tag
+   instead of copying it is what keeps that from recurring.) The one longhand
+   override — padding-right, tightened from .card-tag's 7px to 6px — mainly
+   matters for the two pills ending in an icon (+/-) rather than text, where a
+   full symmetric pad read as a gap, not an edge; applied to all three uses of
+   this class for one consistent pill rather than fragmenting further.
+   background is the other longhand override: --surface-2 and --surface (the
+   card's own background) sit only ~7 RGB units apart in dark mode, so
+   .card-tag's usual fill was reading as no pill at all on a card — nudged
+   slightly toward --fg (lightens in dark mode, darkens in light mode, so it
+   stays a small nudge rather than a fixed color in either theme) for the
+   contrast .card-tag chips get for free elsewhere from having non-chip content
+   around them. Scoped to this pill only, not .card-tag itself. */
+.subagent-pill { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
+.subagent-toggle-icon { display: inline-flex; }
+/* Same tinted-fill convention as .card-tag.automerge: a light accent wash over
+   the base chip fill, with --blue-fg (this codebase's readable-on-a-tint accent
+   text, e.g. .hist-resume) rather than --accent-fg (reserved for solid-accent
+   buttons — it's a stark white, too low-contrast on a mostly-neutral tint). */
+.subagent-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
+/* The card's pill disables itself when no sub-agents are currently recent (see
+   subagentPillHtml) — toggling it on would show nothing. aria-disabled, not
+   :disabled — the button stays clickable so the click can fall through to the
+   card's own focus behavior instead of doing nothing. */
+.subagent-pill[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+/* Sub-agent detail modal (a read-only mode of #modal). */
+#m-subagent h4 { margin: 12px 0 4px; color: var(--fg-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+#m-subagent pre { white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 0; }
+#m-subagent .sa-tool-list { margin: 0; padding-left: 20px; max-height: 200px; overflow: auto; }
+#m-subagent .sa-tool-list .sa-tool-name { font-weight: 600; }
+#m-subagent .sa-tool-list .sa-tool-target { color: var(--fg-muted); }
+.worker-row {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+  cursor: pointer;
+}
+.worker-row:hover { background: var(--surface-2); }
+/* The elbow: each row draws its own vertical segment reaching up through the gap
+   above it — to the parent card's own bottom edge for the first row (the 8px
+   .workflow-box/.task-body gap), or the previous row's continuation otherwise
+   (the 6px inter-row gap) — down to its own vertical center, then a SQUARE
+   (no border-radius) turn into a short horizontal tick meeting the row's left
+   edge. `left:-14px` puts the trunk 1px left of the parent's .card-bar's exact
+   center (left:6px, width:16px → center at 14px) — measured against a real
+   render, dead-center reads very slightly off from the bar visually, 1px left
+   reads truer. Width is 11px, short of the naive 13 (14 - 27, per the spine's
+   13px margin + 14px padding inset) — the tip's containing block is the row's
+   PADDING edge, 1px inside its actual border, plus a bit of rendering slop
+   beyond that pure box-model gap; 11px was arrived at by measuring two real
+   renders (13 wide overshot the border by ~2.5px, 10 wide undershot it by
+   ~1.5px) and interpolating, not by recomputing the box model further. */
+.worker-row::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+  pointer-events: none;
+}
+/* The first row reaches through the taller 8px gap above it (to the parent
+   card's bottom edge) instead of the 6px inter-row gap. top/height get the
+   same +1 the width comment above explains (this box's containing block is
+   the row's padding edge, 1px inside its actual border), so the line reaches
+   the card's true outer edge instead of stopping 1px short of it. */
+.worker-row:first-child::before {
+  top: -9px;
+  height: calc(50% + 9px);
+}
+/* Non-last rows continue a plain vertical segment from the elbow's midpoint down
+   through the following gap to the next row, so the trunk reads as one
+   continuous line between elbows. Starts at exactly 50% — the same point
+   ::before's border-bottom ends at — not 50%+6px, else a gap opens up between
+   the elbow and this segment. The last row's line stops at its own turn. */
+.worker-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
+.worker-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+.worker-row.working .worker-dot { background: var(--green); }
+.worker-row.needs-you .worker-dot { background: var(--red); }
+.worker-row.just-finished .worker-dot { background: var(--just-finished); }
+.worker-row.dormant .worker-dot { background: transparent; border: 1px solid var(--border); }
+.worker-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; font-weight: 500; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.worker-row.dormant .worker-name { color: var(--fg-muted); }
+.worker-cost { font-size: 10px; color: var(--fg-subtle); min-width: 38px; text-align: right; flex: none; }
+
+/* ── History workflow box: reuses the board's .workflow-box / .workflow-head /
+   .wf-* classes (above) for visual parity, plus the History-specific bits — full
+   archived cards stacked inside (not the board's compact spine, so each stays
+   resumable), the issue + outcome chip in the header, and the run badge /
+   orchestrator accent on the cards. All via --wf + semantic vars → dark/light
+   track. ── */
+.hist-wf { gap: 7px; }
+/* Child stacks (workflow workers and generic children alike) use the board's
+   per-row elbow connector (see .worker-row::before/::after above), not a flat
+   rail — same indent/geometry, reused verbatim because .hc shares .worker-row's
+   1px border (the magic numbers below depend on that). Only --line-color and
+   the row gap differ from the board: History cards are full-size and stack
+   with the same 7px gap `.hist-wf`/`.hist-stack` use elsewhere, so the
+   first-child reach (crossing that outer gap) is tuned to 7, not the board's 8. */
+.hist-wf-workers,
+.hist-children {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-left: 13px; padding-left: 14px;
+}
+.hist-wf-workers { --line-color: var(--wf); }
+.hist-children { --line-color: var(--border); } /* see .child-spine above: --border, not --border-muted */
+.hist-wf-workers > .hc,
+.hist-children > .hc {
+  /* .hc's own `overflow: hidden` (it clips .hc-stripe's square corners against
+     the card's rounded ones) would also clip these connector pseudo-elements —
+     they sit at left:-14px, entirely outside .hc's own border box, in the gap
+     to its left. Undo it only for a nested row; a top-level/orchestrator .hc
+     keeps the clip, since .hc-stripe never reaches this card's own edges either
+     way (it's inset by margin), so nothing else depends on the clip here. */
+  position: relative;
+  overflow: visible;
+}
+.hist-wf-workers > .hc::before,
+.hist-children > .hc::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+  pointer-events: none;
+}
+.hist-wf-workers > .hc:first-child::before,
+.hist-children > .hc:first-child::before {
+  top: -8px;
+  height: calc(50% + 8px);
+}
+.hist-wf-workers > .hc:not(:last-child)::after,
+.hist-children > .hc:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
+/* The orchestrator card reads as the run's lead — a violet-tinted frame + stripe. */
+.hc.wf-orchestrator {
+  border-color: color-mix(in srgb, var(--wf) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--wf) 6%, var(--surface));
+}
+.hc.wf-orchestrator .hc-stripe { background: color-mix(in srgb, var(--wf) 60%, transparent); }
+/* Small run badge by a solo run's desc (a workflow with no boxed worker). */
+.hc-wf-badge { display: inline-flex; flex: 0 0 auto; color: var(--wf); }
+.hc-wf-badge svg { width: 13px; height: 13px; display: block; }
+/* Issue + outcome chip in the box header; the issue ellipsises if the row tightens. */
+.wf-issue {
+  flex: 0 1 auto; min-width: 0;
+  font-size: 11px; font-weight: 600; color: var(--fg-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wf-outcome {
+  flex: 0 0 auto; white-space: nowrap;
+  font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border-muted);
+}
+.wf-outcome--active { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 14%, transparent); border-color: color-mix(in srgb, var(--blue) 32%, transparent); }
+.wf-outcome--success { color: var(--green-fg); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 32%, transparent); }
+.wf-outcome--warning { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 14%, transparent); border-color: color-mix(in srgb, var(--snooze) 32%, transparent); }
+.wf-outcome--danger { color: var(--red-fg); background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 32%, transparent); }
+
+/* needs-you is two things: the STATE (red stripe above, persists until you
+   reply) and the ALARM below (flash + ring + glow, an attention-grab). The
+   alarm clears the moment you acknowledge the session by focusing/selecting it
+   (`.focused`/`.selected`, see app.js focusedSessionIds); the stripe stays.
+   Like .selected, the ring is the box-shadow alone (border transparent): a
+   coloured border + same-coloured shadow ring are concentric strokes at
+   different corner radii and the mismatch feathers the corners. */
+.session-card.needs-you {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--red), 0 0 12px color-mix(in srgb, var(--red) 35%, transparent);
+  animation: needs-you-flash 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.session-card.needs-you.focused,
+.session-card.needs-you.selected { animation: none; }
+.session-card.needs-you.focused { border-color: var(--border-muted); box-shadow: none; }
+/* ...but a selected needs-you card must still read as selected. The .focused
+   calm-down above is more specific than .selected, so without this the open card
+   shows no blue ring and you can't tell what you're looking at. Win it back at
+   higher specificity. */
+.session-card.needs-you.focused.selected,
+.session-card.needs-you.selected {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+@keyframes needs-you-flash {
+  0%, 100% { box-shadow: 0 0 0 2px var(--red), 0 0 4px color-mix(in srgb, var(--red) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--red), 0 0 20px color-mix(in srgb, var(--red) 70%, transparent); }
+}
+/* A child session's compact spine row gets the exact same halo vocabulary as a
+   top-level card — waiting/focused/awoken/done all read the same whether a
+   session is nested or not, so a child is never quietly out of view. It CANNOT
+   reuse the card's box-shadow ring by putting it on the row itself, though: a
+   worker-row draws its own parent-to-child join line on ::before/::after (see
+   above), and both box-shadow AND outline on the row's own box are unreliably
+   ordered against that join line — confirmed empirically (pixel-sampled at
+   device-pixel-ratio 1, not just eyeballed) that outline still leaves a
+   complete gap in the ring exactly where the elbow crosses it, not merely a
+   high-DPI antialiasing artifact. The fix is a real trailing element instead
+   of a row-level property: `.worker-ring`, a genuine last DOM child (see
+   cards.js workerRowHtml), rendered after `::before` in normal paint order
+   regardless of DPR or browser — no outline-specific behaviour to rely on. It
+   carries its own box-shadow ring + glow, matching the card exactly (the glow
+   was previously ruled out for the same reason outline was needed — a soft
+   box-shadow bloom is still a box-shadow, and got notched when it lived on the
+   row itself; here it's a separate element ordered after the join line, so it
+   doesn't). Transparent/no-shadow by default so idle rows are untouched. */
+.worker-ring {
+  position: absolute; inset: -1px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+.worker-row.needs-you {
+  border-color: transparent;
+}
+.worker-row.needs-you .worker-ring {
+  box-shadow: 0 0 0 2px var(--red), 0 0 4px color-mix(in srgb, var(--red) 20%, transparent);
+  animation: needs-you-flash-row 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.worker-row.needs-you.focused .worker-ring,
+.worker-row.needs-you.selected .worker-ring { animation: none; }
+.worker-row.needs-you.focused { border-color: var(--border-muted); }
+.worker-row.needs-you.focused .worker-ring { box-shadow: none; }
+/* Same win-back-at-higher-specificity fix as .session-card.needs-you.selected
+   above — otherwise the acknowledged (.focused) calm-down beats .worker-row.selected
+   and an open needs-you child row shows no blue ring at all. */
+.worker-row.needs-you.focused.selected .worker-ring,
+.worker-row.needs-you.selected .worker-ring {
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+@keyframes needs-you-flash-row {
+  0%, 100% { box-shadow: 0 0 0 2px var(--red), 0 0 4px color-mix(in srgb, var(--red) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--red), 0 0 20px color-mix(in srgb, var(--red) 70%, transparent); }
+}
+
+/* "just finished" (working→idle) is the cyan twin of needs-you: the same two
+   layers — a persistent state (cyan stripe above) plus an alarm (flash + ring +
+   glow) — so a self-stopped agent grabs your eye too. Colour carries the
+   hierarchy: red shouts "blocked", cyan says "done, look at me". Unlike needs-you
+   it clears all the way to idle on acknowledgement — the click drops it from the
+   justFinished set (app.js), so no stripe lingers; the .focused/.selected
+   silencers just cover the frame before that removal propagates to a re-render. */
+.session-card.just-finished {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--just-finished), 0 0 12px color-mix(in srgb, var(--just-finished) 35%, transparent);
+  animation: just-finished-flash 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.session-card.just-finished.focused,
+.session-card.just-finished.selected { animation: none; }
+@keyframes just-finished-flash {
+  0%, 100% { box-shadow: 0 0 0 2px var(--just-finished), 0 0 4px color-mix(in srgb, var(--just-finished) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--just-finished), 0 0 20px color-mix(in srgb, var(--just-finished) 70%, transparent); }
+}
+/* .worker-ring, not outline — see the long comment on .worker-row.needs-you
+   above for why. */
+.worker-row.just-finished { border-color: transparent; }
+.worker-row.just-finished .worker-ring {
+  box-shadow: 0 0 0 2px var(--just-finished), 0 0 4px color-mix(in srgb, var(--just-finished) 20%, transparent);
+  animation: just-finished-flash-row 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.worker-row.just-finished.focused .worker-ring,
+.worker-row.just-finished.selected .worker-ring { animation: none; }
+@keyframes just-finished-flash-row {
+  0%, 100% { box-shadow: 0 0 0 2px var(--just-finished), 0 0 4px color-mix(in srgb, var(--just-finished) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--just-finished), 0 0 20px color-mix(in srgb, var(--just-finished) 70%, transparent); }
+}
+
+/* Snooze "awake" alarm: the amber twin of needs-you/just-finished. Always wins
+   the flashing animation when a snooze fires (you deliberately set the timer),
+   while the status stripe (::before) still reflects the real status underneath.
+   Placed after the needs-you/just-finished rules so it wins at equal specificity. */
+.session-card.snooze-alarm {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--snooze), 0 0 12px color-mix(in srgb, var(--snooze) 35%, transparent);
+  animation: snooze-flash 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.session-card.snooze-alarm.focused,
+.session-card.snooze-alarm.selected { animation: none; }
+.session-card.snooze-alarm.selected {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+@keyframes snooze-flash {
+  0%, 100% { box-shadow: 0 0 0 2px var(--snooze), 0 0 4px color-mix(in srgb, var(--snooze) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--snooze), 0 0 20px color-mix(in srgb, var(--snooze) 70%, transparent); }
+}
+/* .worker-ring, not outline — see the long comment on .worker-row.needs-you
+   above for why. */
+.worker-row.snooze-alarm { border-color: transparent; }
+.worker-row.snooze-alarm .worker-ring {
+  box-shadow: 0 0 0 2px var(--snooze), 0 0 4px color-mix(in srgb, var(--snooze) 20%, transparent);
+  animation: snooze-flash-row 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+.worker-row.snooze-alarm.focused .worker-ring,
+.worker-row.snooze-alarm.selected .worker-ring { animation: none; }
+.worker-row.snooze-alarm.selected .worker-ring {
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+@keyframes snooze-flash-row {
+  0%, 100% { box-shadow: 0 0 0 2px var(--snooze), 0 0 4px color-mix(in srgb, var(--snooze) 20%, transparent); }
+  50% { box-shadow: 0 0 0 3px var(--snooze), 0 0 20px color-mix(in srgb, var(--snooze) 70%, transparent); }
+}
+
+/* Asleep sessions: a faint full-width divider, then minimized name-only rows that
+   sink to the bottom of the tile. Greyed via opacity; one click still opens them. */
+.snooze-divider {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--fg-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 2px 2px 0;
+}
+.snooze-divider::before, .snooze-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
+.snooze-label { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, transparent); padding: 1px 8px; border-radius: 999px; }
+.snoozed-row {
+  position: relative; display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px 5px 30px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+}
+
+.snoozed-row .snoozed-name { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snooze-chip { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, transparent); padding: 1px 6px; border-radius: 999px; }
+.snooze-chip svg { width: 11px; height: 11px; }
+/* Wake control: a quiet icon button at the row's left, showing a moon at rest and
+   swapping to the sun (brightening to the snooze amber) on hover so it reads as
+   "wake this up" without opening the session. */
+/* Sit in the same column as the session card's .card-bar stripe (left:6px,
+   width:16px) so the wake icon lines up vertically with the cards' status bar. */
+.snooze-wake { position: absolute; left: 6px; width: 16px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; padding: 1px 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+.snooze-wake svg { width: 14px; height: 14px; }
+.snooze-wake .wake-moon, .snooze-wake .wake-sun { display: inline-flex; }
+.snooze-wake .wake-sun { display: none; }
+.snooze-wake:hover .wake-moon { display: none; }
+.snooze-wake:hover .wake-sun { display: inline-flex; }
+.snooze-wake:hover { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, transparent); }
+
+/* ── TODO zone: below the snoozed rows — a faint divider, dashed compact rows,
+   and a "+ todo" add affordance. Mirrors the snooze block but lighter. ── */
+.todo-divider {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--fg-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 2px 2px 0;
+}
+.todo-divider::before, .todo-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
+.todo-label { color: var(--purple); background: color-mix(in srgb, var(--purple) 35%, transparent); padding: 1px 8px; border-radius: 999px; }
+.todo-row {
+  position: relative; display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px 5px 30px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+}
+.todo-row .todo-text { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
+.todo-tooltip {
+  position: fixed; z-index: 60; display: none; pointer-events: none;
+  font-size: 12px; line-height: 1.4; color: var(--fg);
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; box-shadow: 0 4px 16px var(--shadow);
+  white-space: normal; overflow-wrap: anywhere;
+}
+.todo-tooltip.show { display: block; }
+.todo-spawn { position: absolute; left: 6px; width: 16px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; padding: 1px 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+.todo-spawn svg { width: 13px; height: 13px; }
+.todo-spawn .todo-tick, .todo-spawn .todo-play { display: inline-flex; }
+.todo-spawn .todo-play { display: none; }
+.todo-spawn:hover .todo-tick { display: none; }
+.todo-spawn:hover .todo-play { display: inline-flex; }
+.todo-spawn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.todo-del { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+.todo-del svg { width: 13px; height: 13px; }
+.todo-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
+.todo-zone { display: flex; margin: 2px 2px 0; }
+.todo-zone:empty { display: none; }
+
+/* The detail-header bar now carries a status word (like the card's .card-bar), so
+   it throbs via BRIGHTNESS (keeping the word legible) rather than the old opacity
+   pulse — reusing the card's bar-throb keyframes so panel and card breathe alike.
+   Working is wall-clock phased (--throb-delay) so frequent re-renders resume mid-cycle. */
+.sess-hdr.working .sess-bar,
+.sess-hdr.needs-you .sess-bar,
+.sess-hdr.just-finished .sess-bar {
+  animation: bar-throb 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+/* The board card's status bar carries a label, so it throbs via BRIGHTNESS (not
+   opacity) to keep the word legible while the bar breathes. One 1.1s period
+   peaking at mid-cycle — the same period as the needs-you/just-finished alarm
+   rings — so bar and ring pulse in lockstep. Working is wall-clock phased. */
+.session-card.working .card-bar,
+.session-card.needs-you .card-bar,
+.session-card.just-finished .card-bar {
+  animation: bar-throb 1.1s ease-in-out infinite;
+  animation-delay: var(--throb-delay, 0s);
+}
+@keyframes bar-throb {
+  0%, 100% { filter: brightness(0.7); }
+  50% { filter: brightness(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sess-hdr.working .sess-bar,
+  .sess-hdr.needs-you .sess-bar,
+  .sess-hdr.just-finished .sess-bar { animation: none; filter: none; }
+  .session-card.working .card-bar,
+  .session-card.needs-you .card-bar,
+  .session-card.just-finished .card-bar { animation: none; filter: none; }
+  .session-card.needs-you, .session-card.just-finished { animation: none; }
+  .worker-row.needs-you .worker-ring,
+  .worker-row.just-finished .worker-ring,
+  .worker-row.snooze-alarm .worker-ring { animation: none; }
+  .session-card.snooze-alarm { animation: none; box-shadow: 0 0 0 2px var(--snooze); }
+  .worker-row.snooze-alarm .worker-ring { box-shadow: 0 0 0 2px var(--snooze); }
+}
+
+/* Current: the session you're attached to. Ring + tint + lift + chip, layered
+   over whatever state stripe the card carries; wins over a cleared alarm. The
+   ring is the box-shadow alone (border goes transparent) — a coloured border and
+   a same-coloured shadow ring are two concentric strokes at slightly different
+   corner radii, and the mismatch feathers the rounded corners. */
+.session-card.selected {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--blue) 18%, var(--surface));
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+/* The child row's twin — same ring, so a focused worker/child row reads exactly
+   like a focused top-level card instead of only showing a status dot.
+   .worker-ring, not outline — see the long comment on .worker-row.needs-you. */
+.worker-row.selected {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--blue) 18%, var(--surface));
+}
+.worker-row.selected .worker-ring {
+  box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+/* While reordering, the dragged card is hidden and a single dashed placeholder
+   (sized to the card) slides to the slot it would land in. */
+.session-card.dragging-hidden, .snoozed-row.dragging-hidden, .todo-row.dragging-hidden { display: none; }
+.session-placeholder {
+  border: 1px dashed var(--blue);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  flex: 0 0 auto;
+}
+/* Tile-sized counterpart for task reordering: the dragged tile is pulled from
+   the grid and this dashed gap shows where it will land as the board repacks. */
+.task-placeholder {
+  border: 1px dashed var(--blue);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  min-height: 0; min-width: 0;
+  pointer-events: none; /* let dragover/drop fall through to #grid */
+}
+
+/* Name + agent identity icon, pinned to opposite ends so the icon reads as
+   "whose session is this" without crowding the name (which truncates). */
+.card-name-row { display: flex; align-items: center; gap: 8px; }
+.card-name { font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+.agent-ico { flex: 0 0 auto; display: inline-flex; color: var(--fg-subtle); }
+.agent-ico svg { width: 14px; height: 14px; }
+/* Selected card lifts the agent glyph out of the subtle grey to full strength. */
+.session-card.selected .agent-ico { color: var(--fg); }
+.card-loc { font-size: 11px; color: var(--fg-muted); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
+.card-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Folder + branch share one line, each truncating its own text. When the card
+   gets too narrow for the folder plus a usefully-wide branch, the branch wraps
+   onto its own line (stacking) so each gets the full width rather than both
+   shrinking to stubs. flex-basis:0 + min-width makes the wrap threshold the
+   branch's min width, not its (long) content. */
+.card-loc { flex-wrap: wrap; }
+.card-loc .branch { flex: 1 1 0; min-width: 8em; }
+.card-loc .branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta { display: flex; align-items: center; gap: 4px; row-gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.card-tag svg { width: 10px; height: 10px; }
+/* Right-aligned chip on the meta line (worktree marker). Purple ties it to the
+   branch colour so a worktree session reads as a branch-side concept. */
+.card-tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: none; background: var(--surface-2); color: var(--fg-muted); line-height: normal; display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; white-space: nowrap; }
+.card-tag.wt { color: var(--purple-fg); background: var(--purple); }
+/* Green ties the pill to its meaning — this session merges its PR once checks go green.
+   A solid --green fill reads too low-contrast against --green-fg text (they're close in
+   lightness, unlike --purple/--purple-fg on .wt); a tinted wash matches .wf-outcome--success. */
+.card-tag.automerge { color: var(--green-fg); background: color-mix(in srgb, var(--green) 18%, var(--surface-2)); }
+.card-tag.runtime-dc { color: var(--rt-fg); background: color-mix(in srgb, var(--rt) 18%, var(--surface-2)); }
+/* The dc chip doubles as a bring-up indicator (see devcontainerChip in cards.js):
+   'starting' keeps the dc cyan but reuses the card bar's brightness throb to read
+   as in-progress; a fatal `devcontainer up` failure switches to the danger red so
+   it reads as an alert, not a normal chip. */
+.card-tag.runtime-dc--starting { animation: bar-throb 1.4s ease-in-out infinite; animation-delay: var(--throb-delay, 0s); }
+.card-tag.runtime-dc--failed { color: var(--red-fg); background: color-mix(in srgb, var(--red) 18%, var(--surface-2)); }
+@media (prefers-reduced-motion: reduce) { .card-tag.runtime-dc--starting { animation: none; } }
+/* Blue reads as an in-progress/transient state — the session's tmux is being torn
+   down and relaunched. Same tinted-wash convention as .card-tag.automerge. */
+.card-tag.restarting { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); }
+
+/* Read-only Jira-link chip on a task tile head and the session panel. Accent
+   tint (the actionable/link colour) so it reads as clickable in both themes;
+   --accent + --surface-2 both resolve on :root and body.light. */
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 7px;
+  line-height: normal;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-fg);
+  text-decoration: none;
+}
+/* On the solid accent pill the Jira mark's brand blue would vanish, so override
+   its fill to the on-accent colour — the diamond shape still reads as Jira.
+   Sized to the chip's cap height, not a full .icon glyph. */
+.link-chip .icon { width: 12px; height: 12px; flex: 0 0 auto; fill: var(--accent-fg); }
+.link-chip:hover { background: color-mix(in srgb, var(--accent) 80%, var(--fg)); }
+/* CI status dot inside a pr chip. green/red/amber on the accent pill all read
+   in both themes; reusing the shared status hues (--green/--red/--snooze)
+   rather than minting pr-only vars keeps the palette single-sourced. */
+.pr-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+.pr-passing { background: var(--green); }
+.pr-failing { background: var(--red); }
+.pr-pending { background: var(--snooze); }
+/* CI green but blocked on a review (informational, --blue) vs changes requested
+   — an action item like a failure, given its own hue (--purple) so it reads
+   distinct from a red check failure. */
+.pr-awaiting-review { background: var(--blue); }
+.pr-changes-requested { background: var(--purple); }
+/* Merge conflicts with the base branch — same severity tier as a check failure. */
+.pr-dirty { background: var(--red); }
+/* One-shot pulse when a PR's checks fail — themed off --red, no hardcoded hex. */
+.pr-dot--alert { animation: pr-dot-flash 1s ease-in-out 3; }
+@keyframes pr-dot-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%      { box-shadow: 0 0 6px 2px var(--red); }
+}
+
+/* Overflow badge — sits next to the first link chip in the task header. */
+.link-overflow {
+  font-size: 10px; padding: 1px 5px; border-radius: 999px; line-height: normal;
+  background: var(--surface-2); color: var(--fg-muted); flex: 0 0 auto; cursor: pointer;
+  border: none; font-family: inherit; font-weight: 600;
+}
+.link-overflow:hover { background: var(--border); color: var(--fg); }
+.link-overflow-menu {
+  position: fixed;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px; display: flex; flex-direction: column; gap: 4px;
+  box-shadow: 0 4px 12px var(--shadow); z-index: 200; min-width: max-content;
+}
+.link-overflow-menu .link-chip { font-size: 10px; }
+
+/* Session-card link chips sit in the meta row, right-aligned like the worktree tag. */
+.card-meta-links { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.card-meta .link-chip { font-size: 10px; border: none; line-height: normal; }
+.card-meta .link-chip .icon { width: 10px; height: 10px; }
+
+.session-card.expanded { height: auto; padding: 14px 16px 14px 34px; border-radius: 10px; }
+.session-card.expanded .card-name { font-size: 15px; }
+.session-card.expanded .card-meta { margin-top: 10px; }
+
+/* Responsive compression: shrink padding/type when the area narrows; never reflow. */
+@media (max-width: 1100px) {
+  #grid { gap: 8px; padding: 10px; }
+  .task-body { padding: 6px; gap: 6px; }
+  .session-card { padding: 6px 8px 6px 28px; }
+  .card-name { font-size: 12px; }
+}
+
+/* ── Working-tree diff panel ────────────────────────────────────────────────
+   A slide-in over the #grid slot: it's a #grid flex sibling, so `flex: 1 1 0`
+   makes it inherit the board column's exact width automatically (tracking a
+   drag-resized #sidebar for free) — no absolute geometry to keep in sync. While
+   open, main.diffing hides #grid behind it and the terminal #sidebar stays live.
+   The inner element slides in via translateX, clipped by the panel's overflow so
+   it never spills onto the sidebar; gated behind reduced-motion. */
+.diff-panel { flex: 1 1 0; min-width: 0; display: flex; overflow: hidden; }
+.diff-panel[hidden] { display: none; }
+main.diffing #grid { display: none; }
+/* The diff view's own fullscreen: mirrors main.maximized but hides the session
+   panel instead of the board, so the diff fills the whole content area. No width
+   override needed — #diff-panel's flex:1 1 0 just grows into the space #sidebar
+   and #drag-handle leave behind once they're gone. */
+main.diff-fullscreen #sidebar,
+main.diff-fullscreen #drag-handle { display: none; }
+/* Same backdrop as the terminal, and the same way: --term-bg is an rgba on dark
+   themes, and #grid is display:none while diffing (not just hidden behind this),
+   so there's nothing underneath to protect — painting --term-bg directly lets the
+   body wallpaper show through exactly like #term does over #sidebar's transparent
+   background. Set on the OUTER panel only — .diff-inner (which fully covers it,
+   even mid-slide, since it's what's animating) stays background:none, or a
+   translucent --term-bg on both would stack two layers and double-darken the
+   wallpaper (confirmed live: ~78%-opaque term-bg squared reads as near-solid black). */
+.diff-panel {
+  background: var(--term-bg);
+}
+.diff-inner {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border-muted);
+  transform: translateX(100%); transition: transform .22s ease;
+}
+.diff-panel.open .diff-inner { transform: translateX(0); }
+@media (prefers-reduced-motion: reduce) { .diff-inner { transition: none; } }
+
+/* An overlay, not an independent surface color — .diff-panel already carries the
+   real (possibly translucent) backdrop, so this only needs to darken it slightly
+   for separation, same theme-agnostic film as .task-head. A named theme color
+   (--chrome) here would fight the panel's own tint instead of sitting on it. */
+.diff-head {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  padding: 10px 14px; background: rgba(0,0,0,0.08);
+  border-bottom: 1px solid var(--border-muted);
+}
+.diff-titles { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
+.diff-title { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; }
+/* Working-tree vs full-branch toggle — same segmented-pill language as
+   .sched-action-btn, sized down to fit the diff panel's slim header row. */
+.diff-mode { display: flex; gap: 4px; flex: 0 0 auto; }
+.diff-mode-btn {
+  padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);
+}
+.diff-mode-btn:hover { color: var(--fg); border-color: var(--border-muted); }
+.diff-mode-btn.on, .diff-mode-btn.on:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
+.diff-sub { font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-head-acts { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.diff-head-acts .primary { font-size: 12px; padding: 5px 12px; }
+.diff-head-acts .primary:disabled { opacity: .55; cursor: not-allowed; }
+.diff-head .icon-ghost {
+  background: transparent; border: 0; color: var(--fg-subtle); width: 28px; height: 28px;
+  padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; cursor: pointer;
+}
+.diff-head .icon-ghost:hover { color: var(--fg); background: var(--surface-2); }
+.diff-head .icon-ghost svg { width: 16px; height: 16px; }
+.diff-head .icon-ghost.active { color: var(--blue); }
+
+/* Row containing the (fullscreen-only) file list nav alongside the scrollable
+   diff body — takes over the flex-row role .diff-inner used to have. */
+.diff-content { flex: 1; min-width: 0; display: flex; overflow: hidden; }
+.diff-body { flex: 1; min-width: 0; overflow: auto; padding: 16px; padding-bottom: 24px; }
+
+/* Persistent left-hand file nav, shown only in the diff panel's own fullscreen
+   (mirrors .diff-head's translucent overlay look). Always rendered regardless of
+   file count; visibility is fullscreen-gated only. Width is user-resizable via
+   .diff-filelist-handle — flex:0 0 auto (not a flex-basis shorthand) so JS's
+   inline style.width is the only thing driving its size. */
+.diff-filelist {
+  display: none; flex: 0 0 auto; width: 330px; overflow-y: auto;
+  background: rgba(0,0,0,.04);
+}
+main.diff-fullscreen .diff-filelist { display: block; }
+/* Drag-to-resize handle between the file nav and the diff body — same visual
+   language as the board's own #drag-handle (thin themed strip, accent on
+   hover/drag), carrying the border that used to sit on .diff-filelist itself. */
+.diff-filelist-handle {
+  display: none; width: 6px; flex: 0 0 auto; cursor: col-resize;
+  background: var(--chrome); border-right: 1px solid var(--border-muted);
+}
+main.diff-fullscreen .diff-filelist-handle { display: block; }
+.diff-filelist-handle:hover, .diff-filelist-handle.dragging { background: var(--accent); }
+.diff-filelist-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 12px; background: transparent; border: 0;
+  text-align: left; cursor: pointer;
+}
+.diff-filelist-row:hover { background: var(--surface-2); }
+/* Full-row tint (not just an accent line) — this IS the selection, not a subtle
+   marker. Explicit background override: these rows are real <button> elements,
+   so the generic `button.active` rule (used elsewhere for toggle-style buttons)
+   would otherwise fill them with a plain --accent instead of this tint. */
+.diff-filelist-row.active { background: color-mix(in srgb, var(--blue) 18%, transparent); }
+.diff-filelist-row.active .diff-file-path { color: var(--blue-fg); font-weight: 600; }
+/* Folder header row — not interactive, just the hierarchy's structure. Path
+   case is left as-is (GitHub doesn't uppercase folder names either). Its own
+   padding-left is set inline per-row (indentation depth); this rule covers
+   everything else. */
+.diff-filelist-dir {
+  padding: 5px 12px; font-size: 11px; font-weight: 700; color: var(--fg-subtle);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Status dot — the rail is too narrow for fileHeaderEl's full text badge, so
+   the file nav gets a colored dot instead (title/aria-label carry the word). */
+.diff-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.diff-dot-modified { background: var(--blue); }
+.diff-dot-added { background: var(--green); }
+.diff-dot-deleted { background: var(--red); }
+.diff-dot-renamed { background: var(--purple); }
+.diff-dot-untracked { background: var(--fg-subtle); }
+
+.diff-notice { padding: 20px 18px; color: var(--fg-muted); font-size: 13px; line-height: 1.5; }
+.diff-notice-error { color: var(--red-fg); }
+.diff-truncated {
+  margin: 8px 12px 0; padding: 8px 12px; font-size: 12px; color: var(--fg-muted);
+  background: color-mix(in srgb, var(--snooze) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--snooze) 30%, transparent); border-radius: 6px;
+}
+
+/* GitHub-style file "card": its own opaque surface + border + rounded corners,
+   floating over .diff-panel's translucent wallpaper-revealing backdrop, with a
+   gap to the next card instead of a plain inline separator. overflow:hidden
+   both clips children to the rounded corners AND scopes .diff-file-head's
+   position:sticky to within this card's own box — it sticks to the diff body's
+   scroll while its card is in view, then hands off to the next card's header,
+   same multi-file sticky behavior GitHub has. */
+.diff-file {
+  margin-bottom: 16px; border: 1px solid var(--border-muted); border-radius: 8px;
+  overflow: hidden; background: var(--surface);
+}
+.diff-file-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border-muted);
+}
+/* Brief pulse on a nav-click landing (flashFileHead in diff-view.js) — "to" ends
+   on the same var(--surface-2) the header already sits on, so removing the
+   class post-animation is seamless. Gated out entirely for reduced motion in JS. */
+@keyframes diff-file-flash {
+  from { background: color-mix(in srgb, var(--blue) 35%, var(--surface-2)); }
+  to { background: var(--surface-2); }
+}
+.diff-file-head.diff-flash { animation: diff-file-flash 900ms ease-out; }
+.diff-file-path {
+  flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600;
+  color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.diff-arrow { color: var(--fg-subtle); }
+.diff-badge {
+  flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.diff-badge-modified { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 16%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); }
+.diff-badge-added, .diff-badge-untracked { color: var(--green-fg); background: color-mix(in srgb, var(--green) 16%, transparent); border: 1px solid color-mix(in srgb, var(--green) 35%, transparent); }
+.diff-badge-deleted { color: var(--red-fg); background: color-mix(in srgb, var(--red) 16%, transparent); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
+.diff-badge-renamed { color: var(--purple); background: color-mix(in srgb, var(--purple) 22%, transparent); border: 1px solid color-mix(in srgb, var(--purple) 40%, transparent); }
+
+.diff-hunk-head {
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--fg-muted);
+  padding: 3px 14px; background: color-mix(in srgb, var(--blue) 8%, transparent);
+  border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.diff-line {
+  display: flex; align-items: flex-start; cursor: pointer;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.45;
+}
+.diff-line-add { background: color-mix(in srgb, var(--term-ansi-green) 14%, transparent); }
+.diff-line-del { background: color-mix(in srgb, var(--term-ansi-red) 14%, transparent); }
+/* A line inside a selected/active multi-line comment range. Accent tint layered over
+   the add/del background (the tint is translucent, so a +/- line keeps its green/red
+   underneath), with an accent left rail marking the span edge. Theme vars only. */
+.diff-line.selected, .diff-line.drag-selecting { background: color-mix(in srgb, var(--accent) 16%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.diff-line-add.selected, .diff-line-add.drag-selecting { background: color-mix(in srgb, var(--accent) 16%, color-mix(in srgb, var(--term-ansi-green) 14%, transparent)); }
+.diff-line-del.selected, .diff-line-del.drag-selecting { background: color-mix(in srgb, var(--accent) 16%, color-mix(in srgb, var(--term-ansi-red) 14%, transparent)); }
+/* While a click-and-drag range selection is in progress, kill native text
+   selection over the diff so dragging paints the row highlight instead of
+   smearing a text selection across the code. Theme-agnostic; cleared on mouseup. */
+.diff-body.drag-selecting { user-select: none; }
+.diff-line-add .diff-sign, .diff-line-add .diff-gutter { color: var(--term-ansi-green); }
+.diff-line-del .diff-sign, .diff-line-del .diff-gutter { color: var(--term-ansi-red); }
+.diff-gutter {
+  flex: 0 0 auto; width: 42px; padding: 0 8px; text-align: right;
+  color: var(--fg-subtle); user-select: none;
+}
+.diff-sign { flex: 0 0 12px; text-align: center; user-select: none; color: var(--fg-subtle); }
+.diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 12px; color: var(--fg); }
+.diff-binary { padding: 8px 14px; font-size: 12px; font-style: italic; color: var(--fg-muted); }
+
+/* Inline comment box, attached below a line (indented past the gutters). */
+.diff-editor {
+  margin: 4px 12px 8px 78px; padding: 8px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+}
+.diff-editor-text {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: var(--field-bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px;
+}
+.diff-editor-text:focus { outline: none; border-color: var(--accent); }
+.diff-editor-loc { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.diff-editor-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.diff-editor-acts button { font-size: 12px; padding: 4px 12px; }
+
+/* A saved (batched) draft shown under its line, with edit/delete affordances. */
+.diff-draft {
+  margin: 4px 12px 6px 78px; padding: 7px 10px; display: flex; align-items: flex-start; gap: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+}
+.diff-draft-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.diff-draft-loc { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.diff-draft-text { font-size: 12.5px; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.diff-draft-acts { flex: 0 0 auto; display: flex; gap: 8px; }
+.diff-draft-acts button { background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px; color: var(--fg-muted); cursor: pointer; }
+.diff-draft-acts button:hover { color: var(--fg); text-decoration: underline; }
+.diff-draft-del:hover { color: var(--danger-strong); }

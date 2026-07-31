@@ -1,0 +1,195 @@
+# CLAUDE.md
+
+Developer notes for the wrangler's internals. The README is the user-facing
+overview; this file is **only the non-obvious, durable things you'd get wrong
+without being told** — invariants, footguns, gotchas, commands. If a fact is
+easily recovered by reading the code, it does not belong here. Point to the code;
+don't re-derive it.
+
+## Mental model
+
+- `~/.agent-wrangler/mappings.json` keys each session by its **card id** (a stable
+  board handle — also the `sessionId` variable and map key) and stores the real
+  conversation id separately as `entry.liveSessionId`. **The card id is never a
+  conversation id — never `--resume` it.** Nearly every per-session field (snooze,
+  workflow, PR toggles, …) is **keyed on the card id, never the live id.**
+- `buildGraph` (`server/state-reader.js`) is the single source of truth for what's
+  attachable. **A mapped tmux is attachable only with a live pane** — `remain-on-exit`
+  keeps exited panes around so failures stay readable, but a dead pane re-offers
+  Resume rather than trapping the session on a corpse. Two WebSockets
+  (`server/index.js`): `/ws` (control) and `/pty` (one per terminal, a `node-pty`
+  running `tmux attach`). Closing a `/pty` detaches that one client only — it never
+  kills the tmux session, so switching/co-attaching is cheap and safe.
+
+## Invariants & footguns
+
+- **Agents are adapters, and the import direction is one-way.** `server/agents/*`
+  (`claude.js`, `codex.js`, behind `index.js`'s registry) is a **leaf** — it must
+  never import `session-manager`/`state-reader`/`tmux-scraper`/`index` (those import
+  *from* it). It may import the `mcp/client-config` leaf, never the MCP *server*.
+- **Resume is `--resume <liveSessionId>` and fails OPEN — guard it.** `claude
+  --resume <id>` only finds the conversation from the project bucket of its *launch*
+  cwd; given an id not bucketed there it **silently starts a fresh empty session**
+  (looks like a "cleared" card; transcript is fine on disk, just orphaned). So
+  resolve the launch dir by the **live id** (`resolveResumeDir`), and if the
+  transcript is missing everywhere **refuse** rather than replace a lost session with
+  a blank one. Codex has no preset id — its `liveSessionId` is *discovered*
+  post-launch (recency under `~/.codex/sessions/`) and isn't cwd-bucketed, so it's
+  skipped by the guard. Legacy pre-split entries have no `liveSessionId`; keep the
+  card-id fallback.
+- **Codex specifics.** Pane-scraped status (working/idle only, no needs-you), `cx_`
+  tmux prefix (Claude `cc_`), cost is an *estimate* shown with `~`, offered only when
+  the `codex` binary is on PATH.
+- **A session's cost includes its dispatched sub-agents. Never trust the inline
+  `toolUseResult.usage` when a `subagents/*.jsonl` transcript exists** — it reflects a
+  single settle, not every turn, and undercounts a multi-turn sub-agent ~5–25×. Cost
+  the background transcript per-turn (`transcript-reader.js`); the inline usage is a
+  last-resort lower bound only. `scripts/cost-report.mjs` deliberately duplicates this
+  so the report and live board agree.
+- **A fork's transcript REPLAYS the parent's whole history — bound every cost scan by
+  `usageSince(entry)`.** `--fork-session` copies every parent line into the fork's own
+  jsonl (same uuids, `message.id`s and timestamps; only the per-line `sessionId` is
+  rewritten), so **there is no on-disk marker for a copied line** and costing from byte
+  0 bills the parent twice (was ~14% of all spend). The cut is the fork's `createdAt` —
+  every copied line predates it. Dedup does NOT save you: per-`message.id` is per-file
+  and a fork IS a new file. **Three scanners must agree** — `transcript-reader.js`,
+  `usage-report.js`, `scripts/cost-report.mjs`. Bounds *spend only*: summary/
+  lastActivity stay inherited (the `[FORK]` label leans on them). Background
+  sub-agents are never copied (their dir is keyed on the fork's own id) so the bound
+  must not touch them; the inline `Agent`/`Task` pairs *are* copied, so it must.
+  Plain `--resume` grows the file in place — only a deliberate fork replays. Codex is
+  exempt: its rollout has only a *cumulative* total, so a time bound can't work.
+- **One instance per `DATA_DIR` — enforced.** Two servers sharing a `DATA_DIR`
+  clobber each other's `mappings.json`/`tasks.json` (whole-snapshot writes). **A
+  different `PORT` does NOT isolate — only `AW_DATA_DIR` does.** `main()` takes a
+  per-dir lock (`server/instance-lock.js`); a duplicate refuses to start.
+- **Stripped launch env.** Every launch is prefixed with `env -u CLAUDECODE` *and
+  every inherited `CLAUDE_CODE_*`* (`withCleanClaudeEnv`), or a wrangler started from
+  inside a Claude session makes its spawned sessions look nested and **silently drops
+  their transcripts → unresumable.**
+- **`node-pty` is pinned EXACTLY to `1.2.0-beta.14` — do NOT "upgrade" to `1.1.0`
+  stable.** 1.1.0 leaks ~3 fds per `tmux attach` teardown on macOS; the beta (PR #931)
+  is the fix and is node-pty's de-facto release channel.
+- **The memory watcher MUST stay scoped to `tasks/*/memory.md`** (`watchIgnored`).
+  chokidar 4 opens one fd per watched file; widening the watch leaked fds unboundedly
+  until **`posix_spawnp failed` on every terminal attach** (only a restart clears it).
+  Don't widen the watch without widening the filter.
+- **The fd-leak canary is `server/fd-watchdog.js`, not a low `ulimit`.** Don't re-add
+  a low `ulimit` as a canary: Node self-raises its soft limit to the hard limit at
+  startup, so a low ceiling is really a whole-tree hard cap and **kills innocent child
+  MCP servers** that need a brief fd burst (`chrome-devtools-mcp` opens ~270 at start).
+  The `ulimit -n ${AW_MAX_FILES:-16384}` is just a blast-radius backstop.
+- **CSRF/origin gate — the request-acceptance control (distinct from MCP's *advisory*
+  identity).** Every browser-reachable surface routes through `server/origin-check.js`:
+  the WS upgrade + `POST /mcp` must pass `isAllowedOrigin`, and the sensitive GET
+  `/file` must pass `isAllowedHost` (a *separate* DNS-rebinding defense). **A new
+  browser-reachable endpoint must be wired into this gate** or it's an open RCE/exfil
+  surface. Deliberate asymmetry: **absent `Origin` is ALLOWED** (non-browser callers
+  send none; a browser always sends it) but **absent `Host` is REJECTED**. Caller
+  *identity* (the MCP `X-AW-Session` header / Codex Bearer token, `extractCaller`) is
+  **advisory only, not auth** — this gate, not the identity, is what accepts a request.
+- **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
+  content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
+  **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
+  keyed on the card id.
+- **`tileSpan` (`public/layout.js`) takes TWO child counts and they must stay
+  distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
+  subtracted to get the top-level active count; `childRowCount` (only rows currently
+  *drawn*) feeds the lighter secondary weight. Defaulting one to the other previously
+  made collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
+  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
+  session-scoped, so it rides `taskStore.snapshot()` directly; don't go looking for it
+  in `buildGraph`.
+- **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
+  launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
+  `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).
+- **Mandatory skills need an always-on nudge — discovery isn't reliable.** Meta-skills
+  (`server/agent-skills.js`) are resolved install-relative so they're cwd-independent.
+  A skill that MUST run at session start (task-memory) opts into a sidecar `WRANGLER.md`
+  whose text is force-injected (`--append-system-prompt` / Codex `developer_instructions`);
+  a plain discoverable skill does not reliably self-invoke. Most skills should have none.
+
+## How subsystems hang together (pointers, not mechanics)
+
+- **Worktree dispatch adopts as well as creates.** `classifyWorktreeTarget` (asks `git
+  worktree list`, not `fs`) → `new` / `existing-branch` / `adopt` / refusals
+  `branch-in-use`|`folder-blocked`. Precedence is load-bearing: **adopt before
+  branch-in-use.** `entry.worktree.repoRoot` is load-bearing — it's how the branch is
+  found after the dir is deleted; cleanup is *offered, never automatic*, and deleting
+  the dir doesn't break resume (transcript lives under `~/.claude`).
+- **Branch naming = a placeholder + an agent rename.** `slugFromIntent` is the
+  deterministic dispatch-time name; an autopilot run renames via the `name_branch` MCP
+  tool once it understands the issue. **Branch only — the dir is NOT moved** (the live
+  shell sits in it), which is inert because modern entries store `repoRoot`.
+- **Per-task memory follows the session, not the launch.** Canonical file
+  `~/.agent-wrangler/memory/tasks/<taskId>/memory.md`; the agent reads a fixed
+  `AW_TASK_MEMORY` per-session **symlink** the server repoints on every reassignment
+  (Claude re-resolves it per file access, so a running session follows a mid-flight
+  repoint). Injected at **dispatch/resume/fork, keyed on card id — keep the three in
+  sync.** `memory-store` rejects non-segment ids (path-traversal guard).
+- **Suspend reclaims RAM by reusing the dormant state.** Idle ≥ `suspendIdleHours`
+  (default 8, on) tears down tmux but keeps the entry (one-click resumable); never
+  touches working/needs-you/attached. `config.json suspendEnabled:false` is the global
+  kill switch. **Footgun: a background process started *outside* the agent's tracking
+  is killed when the timer fires** (a Bash-tool `run_in_background` shell is exempted).
+- **A live background shell blocks silent teardown.** Killing a pane kills live jobs
+  outright (Claude then shows an ambiguous "No completion record" on next resume).
+  Auto-suspend *prevents* (excludes `hasBackgroundShell` sessions); manual archive
+  *warns* (3-way dialog: kill jobs / archive anyway / cancel); the `archive_session`
+  MCP tool takes the safe kill-jobs-first path unconditionally.
+- **PR watching.** Auto-attach is a launch-injected Claude hook (not polled;
+  only catches agent-run `gh pr create`). The 60 s poll auto-removes merged/closed
+  links and drives a check-watch. **`checkStatus` is mergeability-gated
+  (`mergeStateStatus == CLEAN`), NOT rollup-derived** — an all-green rollup can still
+  be unmergeable, so never report "passing" off the rollup alone. `autoFixPrChecks`
+  (default on) gates the pane nudge; `autoMergeOnPass` (default **off**) squash-merges
+  on a passing transition. All `gh` invocation stays in the `pr-status.js` leaf.
+- **Autopilot workflows = a skill + a thin tracking layer.** The whole issue→PR arc
+  lives in the in-repo `issue-to-pr` skill (loaded via `--plugin-dir` only when the
+  `workflow` flag is set — through `buildLaunch`/`buildResume`, **not** `buildFork`).
+  The wrangler only stamps `entry.workflow` and exposes the `workflow_phase` MCP tool;
+  **resume must carry the flag** or a long run loses the skill.
+- **Child sessions = a generic `parentSession` (card id) link.** Nesting is **opt-in**
+  (`spawn_session` `nest:true`), never inferred from the caller's state. A workflow
+  worker is just a child whose parent is an orchestrator. On the board a worker renders
+  in a violet `.workflow-box`, any other child in a plain child-spine; **nesting is one
+  level deep** (a grandchild whose parent is absorbed is promoted, never dropped).
+- **Sub-agents are read-only artifacts read off disk, never sessions** (no tmux, no
+  card id). Discriminator: a `subagents/` dir ⇒ emit from the files; no dir ⇒ emit the
+  parent's `tool_use` pairs — **never both, or every modern sub-agent double-counts.**
+- **Archive cascade.** Archiving a session with live descendants (transitive
+  `parentSession` closure) offers to cascade in one handler call; the `archive_session`
+  MCP `archive_children` defaults true. The worktree-deletion offer is withheld while
+  another tracked session still points at the same cwd.
+- **Schedules = a saved action + a when; the `DATA_DIR` lock makes one scheduler**, so
+  no double-fire. Two action kinds: `dispatch` (new session) and `session` (act on an
+  existing card id, branching on liveness). `markFired` advances a cron to the next
+  occurrence **strictly after now**, so a slot missed during downtime fires **once — no
+  backlog**. Recurring + worktree forces `worktreeAuto` (else the 2nd fire hits
+  `branch-in-use`).
+
+## Ops & conventions
+
+- launchd service `net.portswigger.agent-wrangler` needs `~/.local/bin` on `PATH`
+  (else dispatch/resume exit 127). Restart:
+  `launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler`.
+- **Devcontainer sessions (ops).** A `runtime:'devcontainer'` session needs three
+  things the host path doesn't: **`AW_BIND_HOST=0.0.0.0`** (the default `127.0.0.1`
+  bind is unreachable from the container, so the in-container agent can't reach `/mcp`
+  — widens exposure on a shared machine); **`@devcontainers/cli`** on PATH (a
+  `package.json` dep; `wrangler-start.sh` puts `node_modules/.bin` on the launchd PATH
+  so panes resolve `devcontainer`); and the container's **claude pinned / auto-update
+  disabled** (`DISABLE_AUTOUPDATER=1`) or a mid-life self-update breaks its own
+  `bin/claude` symlink (dead pane, exit 127). Per-repo template concern; the wrangler
+  injects nothing.
+- **Deps auto-reconcile on startup** (`scripts/sync-deps.sh` runs `npm ci` when
+  `package-lock.json`'s hash changed). So a dep change needs a **restart** to take
+  effect; `node server/index.js` directly skips this.
+- **No hardcoded hex in markup/JS** — front-end colour goes through the semantic CSS
+  variables in `public/styles.css` and must work in dark *and* light. The terminal is
+  themed via `--term-*` vars read by a JS helper. See `docs/superpowers/specs/`.
+- **Isolated dev instance:** use the `run-dev` skill. Load-bearing: a fresh
+  `AW_DATA_DIR` never scans the default socket (your live board is safe), and **never
+  name a shell var `TMUX`** (it breaks `tmux ls`).
+- No unnecessary code comments; match the existing dense "explain *why*" style.
+  `npm test` runs `node --test`.

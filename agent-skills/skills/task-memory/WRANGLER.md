@@ -1,0 +1,1 @@
+Before your first action this session, read the file at AW_TASK_MEMORY for shared cross-repo task context — do this even if the task looks unrelated to memory. See the task-memory skill for how to add to it.

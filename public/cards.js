@@ -1,0 +1,502 @@
+// Pure HTML builders for the board's cards, tiles, workflow boxes, snoozed rows and
+// TODO zones. Every function returns a string and has no side effects — the view
+// state each one reads (selection, flash sets, collapse set, the derived status
+// helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
+// app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
+//   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
+//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID }
+import {
+  CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
+  CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
+  PLUS_ICON, MINUS_ICON,
+  agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
+} from './icons.js';
+import {
+  esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl,
+} from './util.js';
+import { wakeLabel } from './snooze.js';
+import { isWorkflowRun, computeAbsorption } from './workflow.js';
+
+export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle' };
+
+// Sub-agents finished within this window still show under the default "Recent" filter
+// (a starting point — not tuned against real usage yet).
+export const SUBAGENT_RECENT_MS = 5 * 60 * 1000;
+
+// A running sub-agent has no "last update" timestamp of its own (it's still
+// updating), so it sorts as the most recent thing there is — ahead of any
+// finished entry, however recently that one ended.
+function subAgentRecency(a) {
+  return a.status === 'running' ? Infinity : (a.endedAt ?? a.startedAt ?? 0);
+}
+
+// The default "Recent" filter (not "Active" — it includes sub-agents that already finished, so "Active" would overclaim): still running, or finished within the recent window.
+// "Show finished" (showFinished) reveals everything — legacy entries (always
+// completed) included, so they only ever appear under "Show finished". Always
+// returned in reverse-chronological order (most recently updated first, so an
+// active sub-agent naturally rises to the top) — a fresh sorted copy, never the
+// caller's own array.
+export function visibleSubAgents(subAgents, { showFinished, now }) {
+  const list = Array.isArray(subAgents) ? subAgents : [];
+  const filtered = showFinished
+    ? list
+    : list.filter((a) => a.status === 'running' || (a.endedAt != null && now - a.endedAt <= SUBAGENT_RECENT_MS));
+  return [...filtered].sort((a, b) => subAgentRecency(b) - subAgentRecency(a));
+}
+
+// One sub-agent as a plain flat row (no connector line — see the todo zone, whose
+// divider/row visual language this mirrors). NOT a session: carries
+// data-subagent-id (+ its owning card id), never data-sid, so a click opens the
+// detail modal rather than selecting a session. A robot icon (agentType tooltip)
+// leads, then the status dot — widened into a small pill shape rather than a
+// plain circle (.subagent-row.running colours it, see styles.css) — carrying its
+// own running/completed tooltip since there's no verbal "run"/"done" word.
+export function subagentRowHtml(sa, sid) {
+  const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `$${sa.usd.toFixed(2)}` : '';
+  // endedAt is bumped on every transcript line while running (see
+  // transcript-reader.js scanSubLine), not just at completion, so it already IS
+  // "last updated" for both states — startedAt is only a fallback for a legacy
+  // running entry, which has no endedAt yet.
+  const updated = timeAgo(sa.endedAt ?? sa.startedAt);
+  return `<div class="subagent-row ${esc(sa.status)}" data-subagent-id="${esc(sa.id)}" data-owner-sid="${esc(sid)}" title="${esc(sa.label)}" role="button" tabindex="0">
+    <span class="subagent-agent-icon" title="${esc(sa.agentType)}">${ROBOT_ICON}</span>
+    <span class="subagent-dot" title="${sa.status === 'running' ? 'running' : 'completed'}"></span>
+    <span class="subagent-name">${esc(sa.label)}</span>
+    ${updated ? `<span class="subagent-updated" title="last updated">${CLOCK_ICON}${esc(updated)}</span>` : ''}
+    <span class="subagent-cost">${esc(cost)}</span>
+  </div>`;
+}
+
+// The zone's divider, matching .todo-divider's visual language (a faint rule +
+// label pill) but with the robot icon in place of the todo zone's plain text pill,
+// and an optional extra control (the panel's own Recent/All pill) after it.
+export function subagentDividerHtml(extra = '') {
+  return `<div class="subagent-divider"><span class="subagent-label">${ROBOT_ICON}sub-agents</span>${extra}</div>`;
+}
+
+// The card's own show/hide toggle for the whole zone (distinct from the panel's
+// Recent/All filter — see subagentZoneHtml). State lives in ctx.subagentShown (a
+// Set of card ids), persisted like collapsedWorkflows. Rendered only when the
+// session has any sub-agents at all; disabled (not clickable) when none are
+// currently recent — toggling it on would show nothing, since the card's zone
+// only ever renders the Recent filter. Label is recent/total so the count itself
+// hints at why it may be disabled.
+export function subagentPillHtml(s, ctx) {
+  const list = Array.isArray(s.subAgents) ? s.subAgents : [];
+  if (!list.length) return '';
+  const now = ctx.now || Date.now();
+  const recentCount = visibleSubAgents(list, { showFinished: false, now }).length;
+  const disabled = recentCount === 0;
+  const shown = !disabled && ctx.subagentShown?.has(s.sessionId);
+  const title = disabled ? 'No recent sub-agents' : `${shown ? 'Hide' : 'Show'} sub-agents`;
+  // +/- rather than a rotating chevron — a direction-of-rotation glyph reads as
+  // "which way is open?"; a plain +/- doesn't need that interpretation at all.
+  const toggleIcon = `<span class="subagent-toggle-icon">${shown ? MINUS_ICON : PLUS_ICON}</span>`;
+  // card-tag + subagent-pill, always together: card-tag is the chip look (same
+  // as every other card meta chip), subagent-pill only adds the toggle states.
+  // aria-disabled, not the native `disabled` attribute: a disabled button
+  // suppresses its click event entirely (no bubbling), which would swallow the
+  // click instead of letting it fall through to the card's own focus behavior,
+  // like clicking any other inert part of the card.
+  return `<button class="card-tag subagent-pill${shown ? ' showing' : ''}"${disabled ? ' aria-disabled="true"' : ''} data-sid="${esc(s.sessionId)}" title="${esc(title)}">${ROBOT_ICON}${recentCount}/${list.length}${toggleIcon}</button>`;
+}
+
+// The card's sub-agent zone: only rendered once its pill is toggled on (§subagentPillHtml),
+// and then only the Recent filter (fixed — the card has no Show-finished control of its
+// own, that lives on the panel). Nothing renders when toggled off, or toggled on with
+// no currently-active rows — an idle session with no recent activity keeps a clean card.
+// No divider/heading here (unlike the panel's zone) — the pill right above it already
+// says "sub-agents", so repeating the label on the card would be pure redundancy.
+export function subagentZoneHtml(s, ctx) {
+  const list = Array.isArray(s.subAgents) ? s.subAgents : [];
+  if (!list.length || !ctx.subagentShown?.has(s.sessionId)) return '';
+  const rows = visibleSubAgents(list, { showFinished: false, now: ctx.now || Date.now() });
+  if (!rows.length) return '';
+  // .subagent-zone (not just bare rows) gives this its own top/bottom margins,
+  // independent of each row's inter-row gap — see styles.css: extra breathing
+  // room above the first row, and a negative bottom margin so the LAST row's
+  // bottom edge lines up exactly with .card-bar's bottom edge (both measured
+  // from the card's own padding-box bottom, which they'd otherwise miss by the
+  // 2px difference between the card's 8px bottom padding and the bar's 6px inset).
+  return `<div class="subagent-zone">${rows.map((sa) => subagentRowHtml(sa, s.sessionId)).join('')}</div>`;
+}
+
+// Readable dot tooltip per PR readiness status (the raw word reads oddly).
+export const PR_DOT_TITLE = {
+  passing: 'checks passed — ready to merge',
+  failing: 'checks failing',
+  pending: 'checks pending',
+  'awaiting-review': 'checks passed — awaiting review',
+  'changes-requested': 'changes requested',
+};
+
+// Read-only link chips for a task tile / session card / panel: jira (key, links
+// to the issue) and pr (#number, links to the PR, with a CI status dot the
+// server polls). All mutation is via MCP — there's deliberately no add/remove
+// affordance here. Reads ctx.flashingPr so the one-shot failure flash survives
+// re-renders.
+export function linkChipsHtml(links, ctx = {}) {
+  if (!Array.isArray(links) || !links.length) return '';
+  const flashingPr = ctx.flashingPr || new Set();
+  return links.map((l) => {
+    const isPr = l.type === 'pr';
+    const icon = isPr ? PR_ICON : (l.type === 'jira' ? JIRA_ICON : '');
+    const label = esc(isPr ? (l.number != null ? `#${l.number}` : l.url) : (l.key || l.url || 'link'));
+    // `dirty` (merge conflicts) takes precedence over checkStatus in the dot: a
+    // dirty PR can't be merged regardless of CI, and dirty is orthogonal to
+    // checkStatus's own vocabulary (a DIRTY PR often still shows `pending`).
+    const dot = isPr && l.dirty
+      ? `<span class="pr-dot pr-dirty${flashingPr.has(l.url) ? ' pr-dot--alert' : ''}" title="merge conflicts — needs a rebase"></span>`
+      : isPr && l.checkStatus && l.checkStatus !== 'none'
+      ? `<span class="pr-dot pr-${esc(l.checkStatus)}${flashingPr.has(l.url) ? ' pr-dot--alert' : ''}" title="${esc(PR_DOT_TITLE[l.checkStatus] || l.checkStatus)}"></span>`
+      : '';
+    const inner = `${icon}${label}${dot}`;
+    const href = l.url ? safeHttpUrl(l.url) : null;
+    const cls = `link-chip${l._muted ? ' link-chip--muted' : ''}`;
+    return href
+      ? `<a class="${cls}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`
+      : `<span class="${cls}">${inner}</span>`;
+  }).join('');
+}
+
+// The devcontainer chip doubles as a bring-up indicator. While the container is
+// still coming up, classify() (server-side) surfaces a transient hint as
+// `waitingFor`: 'starting container' rides a `working` status (a normal working
+// session carries no waitingFor, so on a devcontainer node this is unambiguously
+// the bring-up hint), and a fatal `devcontainer up` failure rides `needs-you` as
+// 'container bring-up failed'. main removed the generic waitingFor card line; this
+// is the one place it earns a chip, scoped tightly to the bring-up window so an
+// ordinary needs-you prompt on a running container still just reads "⬢ dc".
+export function devcontainerChip(s) {
+  if (s.status === 'working' && s.waitingFor) {
+    return `<span class="card-tag runtime-dc runtime-dc--starting" title="${esc(s.waitingFor)}">⬢ ${esc(s.waitingFor)}</span>`;
+  }
+  if (s.status === 'needs-you' && s.waitingFor === 'container bring-up failed') {
+    return '<span class="card-tag runtime-dc runtime-dc--failed" title="Devcontainer bring-up failed">⬢ bring-up failed</span>';
+  }
+  return '<span class="card-tag runtime-dc" title="Running inside the repo devcontainer">⬢ dc</span>';
+}
+
+export function sessionCardHtml(s, ctx, { expanded, wf } = {}) {
+  const state = ctx.cardState(s);
+  const estimated = s.agent === 'codex';
+  const cost = typeof s.usd === 'number' && s.usd > 0
+    ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
+    : '';
+  // Dormant (no live tmux) gets the hollow "resume" bar and a dimmed name; the
+  // server reports a frozen `idle` for it, so the bar word/treatment is what
+  // tells these apart, not the status class. A restarting card is only briefly
+  // unmanaged (tmux down between kill and relaunch) — keep its live skin so it
+  // doesn't flicker to the dormant look, and show a small badge instead.
+  const dormant = (s.managed || s.restarting) ? '' : ' dormant';
+  const agentName = s.agent || 'claude';
+  const wtTag = isWorktree(s);
+  const wt = wtTag
+    ? '<span class="card-tag wt" title="Running in a git worktree">⌥ wt</span>'
+    : '';
+  const automerge = s.autoMergeOnPass
+    ? `<span class="card-tag automerge" title="Automatically merges the PR when checks pass">${MERGE_ICON}auto-merge</span>`
+    : '';
+  const runtimeChip = s.runtime === 'devcontainer' ? devcontainerChip(s) : '';
+  const restarting = s.restarting
+    ? '<span class="card-tag restarting" title="Tmux is being killed and relaunched">restarting</span>'
+    : '';
+  const age = s.lastActivity
+    ? `<span class="card-tag">${CLOCK_ICON}${esc(timeAgo(s.lastActivity))}</span>`
+    : '';
+  const costEl = cost
+    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}">${DOLLAR_ICON}${esc(cost)}</span>`
+    : '';
+  // Card ring yields to the "new session" slot's ring while the keyboard selection
+  // sits on a slot — the terminal stays open underneath, but only one thing is lit.
+  const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
+  const metaLinks = s.links?.length
+    ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
+    : '';
+  const tokenChip = expanded && s.tokens
+    ? `<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`
+    : '';
+  // The show/hide pill; the zone itself renders INSIDE the card (below), not as
+  // a sibling after it — otherwise it's unclear which card a zone belongs to
+  // once a tile holds more than one. Shown whenever the session has any
+  // sub-agents, expanded or not.
+  const subAgentPill = subagentPillHtml(s, ctx);
+  const subAgentZone = subagentZoneHtml(s, ctx);
+  // The bar word is the full status/phase; clip to 6 chars (matching the existing
+  // 6-char words like RESUME/UNREAD) with the full label on hover when truncated.
+  const bw = ctx.barWord(s);
+  const bwShown = bw.length > 6 ? bw.slice(0, 6) : bw;
+  const bwTitle = bw.length > 6 ? ` title="${esc(bw)}"` : '';
+  // The orchestrator card sits inside a workflow box that owns drag/reorder for the
+  // whole run, so the card itself isn't independently draggable; `wf-orchestrator`
+  // tints its frame violet to read as the run's lead.
+  const wfCls = wf ? ' wf-orchestrator' : '';
+  const draggable = wf ? 'false' : 'true';
+  return `<div class="session-card ${state}${dormant}${selected}${expanded ? ' expanded' : ''}${wfCls}" data-sid="${esc(s.sessionId)}" draggable="${draggable}" role="button" tabindex="0"${throbDelayStyle(state)}>
+    <span class="card-bar"${bwTitle}><span>${esc(bwShown)}</span></span>
+    <div class="card-name-row">
+      <span class="card-name">${esc(s.label)}</span>
+      <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
+    </div>
+    <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
+    <div class="card-meta">${age}${costEl}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${metaLinks}</div>
+    ${subAgentZone}
+  </div>`;
+}
+
+// The status word for a worker's spine row — no longer shown as a visible label
+// (the dot's colour already carries it, see .worker-dot rules in styles.css); it
+// survives only as the dot's tooltip. Same vocabulary as the card bar, plus
+// 'done' for a self-finished worker (the cyan just-finished state) and 'resume'
+// for a dormant one.
+export function workerStatusWord(s, ctx) {
+  if (!s.managed && !s.restarting) return 'resume';
+  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (ctx.justFinished.has(s.sessionId)) return 'done';
+  return STATUS_WORDS[s.status] || s.status || '';
+}
+
+// One worker on its run's spine: a status dot (coloured by state, same vocabulary
+// as the card bar, carried as its tooltip), the worker's name, and cost. Carries
+// data-sid so a click opens it like any card; not independently draggable — it
+// rides with its run, reordered only by dragging the whole workflow box. Mirrors
+// sessionCardHtml's `selected` ring so a focused child session reads exactly like
+// a focused top-level one — cardState() already supplies the same
+// needs-you/just-finished/snooze-alarm vocabulary to both (see styles.css).
+export function workerRowHtml(s, ctx) {
+  const state = ctx.cardState(s);
+  // Same restarting exemption as the top-level card (sessionCardHtml): a worker/child
+  // row being restarted is only briefly unmanaged — don't flicker it to the dormant skin.
+  const dormant = (s.managed || s.restarting) ? '' : ' dormant';
+  const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
+  const estimated = s.agent === 'codex';
+  const cost = typeof s.usd === 'number' && s.usd > 0 ? `${estimated ? '~' : ''}$${s.usd.toFixed(2)}` : '';
+  return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+    <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
+    <span class="worker-name">${esc(s.label)}</span>
+    <span class="worker-cost">${esc(cost)}</span>
+    <span class="worker-ring" aria-hidden="true"></span>
+  </div>`;
+}
+
+// A workflow run as the violet group box: a header (icon + "Workflow" + worker
+// count + a collapse chevron), the orchestrator card, then the spine of its worker
+// rows. The header toggles collapse (client-only, in ctx.collapsedWorkflows) — folding
+// the spine away while the run itself stays visible. A solo run (no workers yet)
+// shows no spine and no chevron; there is nothing to collapse. data-sid on the box
+// is the orchestrator's, so the box drags/reorders as one unit in its place.
+export function workflowBoxHtml(orch, workers, ctx, { focusMode } = {}) {
+  const n = workers.length;
+  const collapsed = n > 0 && ctx.collapsedWorkflows.has(orch.sessionId);
+  const count = n === 0 ? 'solo' : `${n} worker${n > 1 ? 's' : ''}`;
+  const chevron = n > 0 ? `<span class="wf-chevron">${collapsed ? '▸' : '▾'}</span>` : '';
+  const head = `<div class="workflow-head"${n > 0 ? ' role="button" tabindex="0"' : ''} title="${n > 0 ? (collapsed ? 'Show workers' : 'Hide workers') : 'Workflow run'}">
+      <span class="wf-ico">${WORKFLOW_ICON}</span>
+      <span class="wf-title">Workflow</span>
+      <span class="wf-spacer"></span>
+      <span class="wf-count">${esc(count)}</span>
+      ${chevron}
+    </div>`;
+  const spine = n > 0 && !collapsed
+    ? `<div class="workflow-spine">${workers.map((w) => workerRowHtml(w, ctx)).join('')}</div>`
+    : '';
+  return `<div class="workflow-box${collapsed ? ' collapsed' : ''}" data-sid="${esc(orch.sessionId)}" draggable="true">
+    ${head}
+    ${sessionCardHtml(orch, ctx, { expanded: focusMode, wf: true })}
+    ${spine}
+  </div>`;
+}
+
+// A plain (non-workflow) nested child spine: the parent renders as an ordinary
+// full card, immediately followed by this always-visible spine of compact rows —
+// no wrapping box, no "Workflow" header, no count, no collapse toggle. Reuses
+// workerRowHtml verbatim (same row markup as a workflow worker) — nesting reads
+// from position + the connector line's --line-color alone (see styles.css
+// .child-spine), not a distinct accent or class.
+function childSpineHtml(children, ctx) {
+  if (!children.length) return '';
+  return `<div class="child-spine">${children.map((c) => workerRowHtml(c, ctx)).join('')}</div>`;
+}
+
+// Claude Code assigns each "agent team" member a colour name (--agent-color).
+// Map the ones we have a semantic CSS var for (defined in both themes, see
+// styles.css) so the dot carries the member's identity; anything unmapped falls
+// back to the neutral border colour — never a hardcoded hex (CLAUDE.md).
+const AGENT_COLOR_VARS = {
+  blue: '--blue', green: '--green', red: '--red',
+  purple: '--purple', magenta: '--purple', pink: '--purple',
+  cyan: '--cyan', teal: '--cyan',
+};
+function agentAccentVar(color) {
+  return AGENT_COLOR_VARS[String(color || '').toLowerCase()] || '--border';
+}
+
+// One live "agent team" member on the lead's spine. NOT a wrangler session: it
+// shares the lead's tmux (its own pane), has no card id, and isn't attachable —
+// so it carries data-lead-sid (a click focuses the lead, attaching the shared
+// session) rather than data-sid. The dot is tinted by the member's Claude colour
+// (identity) and throbs while working; the one-word status reads working/idle
+// only (a team member writes no status file, so there's no needs-you signal).
+export function teammateRowHtml(t, leadSid, now) {
+  const status = t.status || 'unknown';
+  const word = STATUS_WORDS[status] || status;
+  const typeLabel = t.agentType && t.agentType !== t.name ? t.agentType : '';
+  const throb = status === 'working' ? `;--throb-delay:-${now % 1100}ms` : '';
+  const title = typeLabel ? `${t.name} · ${typeLabel}` : t.name;
+  // Rides on .worker-row for the spine connector + row layout; .team-row marks it
+  // as a non-session (own dot colour, no card-menu/attach — see app.js).
+  return `<div class="worker-row team-row ${esc(status)}" data-lead-sid="${esc(leadSid)}" style="--agent-accent:var(${agentAccentVar(t.color)})${throb}" title="${esc(title)}" role="button" tabindex="0">
+    <span class="team-dot"></span>
+    <span class="worker-name">${esc(t.name)}</span>
+    ${typeLabel ? `<span class="team-type">${esc(typeLabel)}</span>` : ''}
+    <span class="worker-status">${esc(word)}</span>
+  </div>`;
+}
+
+// The team spine under a lead: an always-visible spine (same connector language
+// as .child-spine) of the lead's live team members. Empty when the session runs
+// no team. Rendered for any lead, whether or not it is also a workflow.
+export function teamSpineHtml(lead, ctx) {
+  const team = lead.teammates || [];
+  if (!team.length) return '';
+  return `<div class="team-spine">${team.map((t) => teammateRowHtml(t, lead.sessionId, ctx.now)).join('')}</div>`;
+}
+
+// A parent card + its plain child-spine, wrapped in one element (mirrors
+// .workflow-box wrapping the orchestrator + its spine). Without this wrapper
+// the two would be independent top-level siblings of .task-body — harmless
+// under the normal board's single-column flex layout, but #grid.focus-mode
+// .task-body switches to a multi-column CSS grid (auto-fit), where every
+// top-level child is its own auto-placed grid item; the card and its spine
+// then land in whatever column the grid's row-major placement happens to put
+// them, visibly detaching a parent from its children. Wrapping them keeps
+// them one grid item regardless of column count. No border/background/padding
+// of its own (see .child-spine) — purely a grouping box, invisible in the
+// normal flex layout where it changes nothing.
+function childGroupHtml(card, s, children, ctx) {
+  const spine = childSpineHtml(children, ctx);
+  const team = teamSpineHtml(s, ctx);
+  return (spine || team) ? `<div class="child-group">${card}${spine}${team}</div>` : card;
+}
+
+// Assemble a tile's active cards, folding each parent + its present children
+// together. A child is pulled out of the flat flow and drawn on its parent's
+// spine; an orphan child (its parent not in this tile) falls back to a plain card
+// so it is never lost. An orchestrator parent (isWorkflowRun) keeps today's violet
+// workflow box; any other parent gets a plain always-visible child spine. Order
+// follows `active` — the parent's slot fixes where its group lands, and children
+// keep their order within the spine.
+//
+// Nesting renders one level deep (a box/card + its own spine of compact rows) —
+// a spine row has no room to draw its OWN nested spine. Chaining (a child of a
+// child — now possible per the child-sessions design §2) is still handled
+// correctly via workflow.js's computeAbsorption (recursive, cycle-safe): a
+// session only folds into its parent's spine when that parent itself renders
+// top-level. A grandchild whose immediate parent is itself absorbed elsewhere is
+// promoted to its own top-level card (with its own spine, if it has children)
+// instead of being silently dropped — every session in `active` renders exactly
+// once. The same helper feeds layout.js's tile-height weighting, so the rendered
+// spine and the height reserved for it can never drift apart.
+export function renderTileCards(active, ctx, opts = {}) {
+  const { absorbed, childrenByParent } = computeAbsorption(active);
+  return active.map((s) => {
+    if (absorbed.has(s.sessionId)) return ''; // drawn on its parent's spine
+    const children = childrenByParent.get(s.sessionId) || [];
+    // A live agent team hangs off the lead as its own spine, independent of the
+    // parentSession child spine (a lead can have both). The workflow box already
+    // wraps its own child spine, so a team is appended alongside it in one group.
+    if (isWorkflowRun(s)) {
+      const box = workflowBoxHtml(s, children, ctx, opts);
+      const team = teamSpineHtml(s, ctx);
+      return team ? `<div class="child-group">${box}${team}</div>` : box;
+    }
+    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode }), s, children, ctx);
+  }).join('');
+}
+
+// One asleep session: a greyed, name-only row with an amber wake-time chip.
+export function snoozedRowHtml(s) {
+  const label = wakeLabel(s.snooze.until, Date.now());
+  const wakeBtn = `<button class="snooze-wake" data-sid="${esc(s.sessionId)}" title="Wake now"><span class="wake-moon">${MOON_ICON}</span><span class="wake-sun">${WAKE_ICON}</span></button>`;
+  const wakeChip = `<span class="snooze-chip">${CLOCK_ICON}${esc(label)}</span>`;
+  return `<div class="snoozed-row" data-sid="${esc(s.sessionId)}" draggable="true">
+    ${wakeBtn}
+    <span class="snoozed-name">${esc(s.label)}</span>
+    ${wakeChip}
+  </div>`;
+}
+
+export function todoRowHtml(td, key) {
+  const spawn = `<button class="todo-spawn" title="Start a session from this TODO"><span class="todo-tick">${CHECK_ICON}</span><span class="todo-play">${SPAWN_ICON}</span></button>`;
+  const del = `<button class="todo-del" title="Delete TODO">${X_ICON}</button>`;
+  return `<div class="todo-row" data-todoid="${esc(td.id)}" data-todo-key="${esc(key)}" draggable="true">
+    ${spawn}<span class="todo-text">${esc(td.text)}</span>${del}
+  </div>`;
+}
+
+// The todo zone: divider + rows when todos exist, plus an empty anchor div the
+// context-menu's inline-add injects into. No visible "+ todo" button.
+export function todoZoneHtml(todos, key) {
+  if (!todos.length) return `<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
+  const rows = todos.map((td) => todoRowHtml(td, key)).join('');
+  return `<div class="todo-divider"><span class="todo-label">todo</span></div>${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
+}
+
+export function tileHtml(tile, ctx, { focusMode } = {}) {
+  const pos = focusMode ? '' : `grid-column:${tile.col + 1}; grid-row:${tile.rowStart + 1} / span ${tile.span};`;
+  if (tile.kind === 'placeholder') {
+    return `<div class="task-placeholder" style="${pos}"></div>`;
+  }
+  const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
+  const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
+  const cards = renderTileCards(active, ctx, { focusMode })
+    + (asleep.length ? `<div class="snooze-divider"><span class="snooze-label">snoozed</span></div>${asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
+  const todoKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
+  const todos = ctx.todosFor(todoKey);
+  const todoZone = todoZoneHtml(todos, todoKey);
+  // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
+  // The lit target must sit where nav lands it — the *end* of the body — so on a
+  // truly-empty tile we ring its big empty-state CTA, otherwise we append a compact
+  // highlighted row after the cards (the small header button stays a plain mouse
+  // affordance: ringing it read as nothing, since it sits at the top, not the end).
+  const showEmpty = !cards && !todos.length;
+  const slotSel = ctx.selectedNewSlot === todoKey;
+  const newSess = `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
+  const emptyBody = (hint) =>
+    `<div class="cell-empty-body"><button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button><span class="empty-hint">${hint}</span></div>`;
+  const slotRow = slotSel && !showEmpty
+    ? `<button class="new-sess-row selected" title="New session in this task">${ROBOT_ICON}<span>New session</span></button>`
+    : '';
+  // Hide the empty-body hint when there are only todos — the tile is not truly empty.
+  const body = (hint) => (cards || (todos.length ? '' : emptyBody(hint))) + slotRow + todoZone;
+  if (tile.kind === 'notask') {
+    return `<div class="task-cell no-task" data-entity="no-task" style="${pos}">
+      <div class="task-head" draggable="true">
+        <span class="task-name">Unassigned</span>
+        ${newSess}
+        <button class="task-actions-btn" title="Task actions">${KEBAB_ICON}</button>
+      </div>
+      <div class="task-body">${body('or drag sessions here to unassign')}</div>
+    </div>`;
+  }
+  const taskLinks = tile.task.links || [];
+  const linkBadge = taskLinks.length
+    ? linkChipsHtml([taskLinks[0]], ctx)
+      + (taskLinks.length > 1
+        ? `<button class="link-overflow" data-overflow-links="${esc(JSON.stringify(taskLinks.slice(1)))}">+${taskLinks.length - 1}</button>`
+        : '')
+    : '';
+  return `<div class="task-cell" data-taskid="${esc(tile.task.id)}" style="${pos}">
+    <div class="task-head" draggable="true">
+      <span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
+      ${linkBadge}
+      ${newSess}
+      <button class="task-actions-btn" title="Task actions">${KEBAB_ICON}</button>
+    </div>
+    <div class="task-body">${body('or drag a session here')}</div>
+  </div>`;
+}
+
+export function ghostHtml(g) {
+  return `<div class="new-task-drop" style="grid-column:${g.col + 1}; grid-row:${g.row + 1};">＋ new task</div>`;
+}

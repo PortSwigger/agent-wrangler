@@ -1,0 +1,428 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  STATUS_WORDS, PR_DOT_TITLE,
+  linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
+  workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
+  tileHtml, ghostHtml,
+  visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
+  subagentDividerHtml,
+} from './cards.js';
+
+// A render context matching app.js `cardCtx()`. Derived-status helpers are the real
+// shapes (a status word, a bar affordance, a snooze phase) so the builders exercise
+// the same branches they do on the board.
+function ctx(over = {}) {
+  return {
+    selectedSessionId: null,
+    selectedNewSlot: null,
+    flashingPr: new Set(),
+    collapsedWorkflows: new Set(),
+    activitySortedTasks: new Set(),
+    justFinished: new Set(),
+    cardState: (s) => s.status || 'idle',
+    barWord: (s) => (s.managed ? (STATUS_WORDS[s.status] || '?') : 'resume'),
+    phaseOf: (s) => (s.snooze && s.snooze.until ? 'asleep' : 'awake-none'),
+    todosFor: () => [],
+    ADHOC_ID: 'adhoc',
+    ...over,
+  };
+}
+
+const sess = (over = {}) => ({
+  sessionId: 's1', label: 'my session', cwd: '/home/me/repo', managed: true,
+  status: 'working', agent: 'claude', ...over,
+});
+
+test('linkChipsHtml: empty / non-array → empty string', () => {
+  assert.equal(linkChipsHtml(null, ctx()), '');
+  assert.equal(linkChipsHtml([], ctx()), '');
+  assert.equal(linkChipsHtml(undefined, ctx()), '');
+});
+
+test('linkChipsHtml: a PR link renders #number, an anchor, and a status dot', () => {
+  const html = linkChipsHtml([{ type: 'pr', number: 42, url: 'https://github.com/o/r/pull/42', checkStatus: 'passing' }], ctx());
+  assert.match(html, /#42/);
+  assert.match(html, /<a class="link-chip"/);
+  assert.match(html, /href="https:\/\/github.com\/o\/r\/pull\/42"/);
+  assert.match(html, /pr-dot pr-passing/);
+  assert.match(html, new RegExp(PR_DOT_TITLE.passing));
+});
+
+test('linkChipsHtml: no dot when checkStatus is none/absent', () => {
+  assert.doesNotMatch(linkChipsHtml([{ type: 'pr', number: 1, url: 'https://x/pull/1', checkStatus: 'none' }], ctx()), /pr-dot/);
+  assert.doesNotMatch(linkChipsHtml([{ type: 'pr', number: 1, url: 'https://x/pull/1' }], ctx()), /pr-dot/);
+});
+
+test('linkChipsHtml: flashingPr adds the one-shot alert modifier for that url', () => {
+  const url = 'https://x/pull/7';
+  const html = linkChipsHtml([{ type: 'pr', number: 7, url, checkStatus: 'failing' }], ctx({ flashingPr: new Set([url]) }));
+  assert.match(html, /pr-dot--alert/);
+});
+
+test('linkChipsHtml: dirty renders its own dot and takes precedence over checkStatus', () => {
+  const html = linkChipsHtml([{ type: 'pr', number: 3, url: 'https://x/pull/3', checkStatus: 'passing', dirty: true }], ctx());
+  assert.match(html, /pr-dot pr-dirty/);
+  assert.doesNotMatch(html, /pr-passing/);
+});
+
+test('linkChipsHtml: jira link uses its key; a non-http url renders as a span, not a link', () => {
+  const jira = linkChipsHtml([{ type: 'jira', key: 'ENT-9', url: 'https://jira/ENT-9' }], ctx());
+  assert.match(jira, /ENT-9/);
+  const unsafe = linkChipsHtml([{ type: 'jira', key: 'ENT-9', url: 'javascript:alert(1)' }], ctx());
+  assert.match(unsafe, /<span class="link-chip"/);
+  assert.doesNotMatch(unsafe, /<a /);
+});
+
+test('sessionCardHtml: escapes label, carries data-sid, marks selection', () => {
+  const html = sessionCardHtml(sess({ label: '<x>' }), ctx({ selectedSessionId: 's1' }));
+  assert.match(html, /data-sid="s1"/);
+  assert.match(html, /&lt;x&gt;/);
+  assert.match(html, /session-card [^"]*selected/);
+});
+
+test('sessionCardHtml: a slot selection suppresses the card ring', () => {
+  const html = sessionCardHtml(sess(), ctx({ selectedSessionId: 's1', selectedNewSlot: 'adhoc' }));
+  assert.doesNotMatch(html, /session-card [^"]*\bselected\b/);
+});
+
+test('sessionCardHtml: dormant (unmanaged) session gets the dormant class', () => {
+  assert.match(sessionCardHtml(sess({ managed: false }), ctx()), /session-card [^"]*dormant/);
+});
+
+test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
+  assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5 }), ctx()), /~1\.50/);
+  assert.match(sessionCardHtml(sess({ agent: 'claude', usd: 1.5 }), ctx()), /(?<!~)1\.50/);
+});
+
+test('sessionCardHtml: long bar word is clipped to 6 chars with a full-text title', () => {
+  const html = sessionCardHtml(sess(), ctx({ barWord: () => 'implementing' }));
+  assert.match(html, /title="implementing"/);
+  assert.match(html, /<span>implem<\/span>/);
+});
+
+// The devcontainer bring-up hint (dropped from the focus-mode activity line when we
+// adopted main's card redesign) is re-surfaced as a state on the dc chip.
+test('devcontainerChip: bring-up (working + waitingFor) shows the starting hint', () => {
+  const html = devcontainerChip({ runtime: 'devcontainer', status: 'working', waitingFor: 'starting container' });
+  assert.match(html, /runtime-dc--starting/);
+  assert.match(html, /⬢ starting container/);
+});
+
+test('devcontainerChip: a fatal bring-up failure reads as an alert', () => {
+  const html = devcontainerChip({ runtime: 'devcontainer', status: 'needs-you', waitingFor: 'container bring-up failed' });
+  assert.match(html, /runtime-dc--failed/);
+  assert.match(html, /⬢ bring-up failed/);
+});
+
+// A running container: an ordinary working session (no hint) OR a real needs-you
+// prompt both stay the plain "⬢ dc" chip — main removed the generic waitingFor line
+// and this must not resurrect it for non-bring-up prompts.
+test('devcontainerChip: a running container stays the plain dc chip', () => {
+  assert.match(devcontainerChip({ runtime: 'devcontainer', status: 'working', waitingFor: null }), /runtime-dc"[^>]*>⬢ dc/);
+  assert.match(devcontainerChip({ runtime: 'devcontainer', status: 'needs-you', waitingFor: 'which file?' }), /runtime-dc"[^>]*>⬢ dc/);
+});
+
+test('sessionCardHtml: the dc bring-up chip renders on the card meta line for a devcontainer session', () => {
+  const html = sessionCardHtml(sess({ runtime: 'devcontainer', status: 'working', waitingFor: 'starting container' }), ctx());
+  assert.match(html, /runtime-dc--starting/);
+  // A local session never gets a dc chip regardless of status/waitingFor.
+  assert.doesNotMatch(sessionCardHtml(sess({ status: 'working', waitingFor: 'starting container' }), ctx()), /runtime-dc/);
+});
+
+test('sessionCardHtml: the sub-agent zone nests INSIDE the card, not after it — so it always reads as belonging to this card', () => {
+  const s = sess({ subAgents: [{ id: 'r', agentType: 'a', label: 'L', kind: 'background', status: 'running', startedAt: null, endedAt: null, usd: null }] });
+  const html = sessionCardHtml(s, ctx({ subagentShown: new Set(['s1']) }));
+  const cardOpen = html.indexOf('<div class="session-card');
+  const cardClose = html.lastIndexOf('</div>');
+  const rowIdx = html.indexOf('data-subagent-id="r"');
+  assert.ok(rowIdx > cardOpen && rowIdx < cardClose, 'the row must sit between the card\'s own open and close tags');
+});
+
+test('workerStatusWord: dormant → resume; just-finished → done; else the status word', () => {
+  assert.equal(workerStatusWord(sess({ managed: false }), ctx()), 'resume');
+  assert.equal(workerStatusWord(sess({ status: 'needs-you' }), ctx()), STATUS_WORDS['needs-you']);
+  assert.equal(workerStatusWord(sess({ status: 'idle' }), ctx({ justFinished: new Set(['s1']) })), 'done');
+  assert.equal(workerStatusWord(sess({ status: 'working' }), ctx()), 'busy');
+});
+
+test('workerRowHtml: carries data-sid and the status word as the dot tooltip, not visible text', () => {
+  const html = workerRowHtml(sess({ label: 'w', status: 'working' }), ctx());
+  assert.match(html, /worker-row/);
+  assert.match(html, /data-sid="s1"/);
+  assert.match(html, /worker-dot" title="busy"/);
+  assert.doesNotMatch(html, /worker-status/);
+});
+
+test('workerRowHtml: renders a trailing worker-ring element as the halo — not row-level outline/box-shadow, which the join line paints over', () => {
+  const html = workerRowHtml(sess({ label: 'w', status: 'working' }), ctx());
+  assert.match(html, /<span class="worker-ring" aria-hidden="true"><\/span>\s*<\/div>$/);
+});
+
+test('workerRowHtml: marks selection like a top-level card, suppressed by a slot selection', () => {
+  const selected = workerRowHtml(sess(), ctx({ selectedSessionId: 's1' }));
+  assert.match(selected, /worker-row [^"]*selected/);
+  const slotted = workerRowHtml(sess(), ctx({ selectedSessionId: 's1', selectedNewSlot: 'adhoc' }));
+  assert.doesNotMatch(slotted, /worker-row [^"]*\bselected\b/);
+});
+
+test('workflowBoxHtml: solo run shows no chevron and no spine', () => {
+  const html = workflowBoxHtml(sess({ sessionId: 'orch' }), [], ctx());
+  assert.match(html, /wf-count">solo/);
+  assert.doesNotMatch(html, /wf-chevron/);
+  assert.doesNotMatch(html, /workflow-spine/);
+});
+
+test('workflowBoxHtml: workers render a spine; collapsed hides it but keeps the chevron', () => {
+  const orch = sess({ sessionId: 'orch' });
+  const workers = [sess({ sessionId: 'w1', label: 'w1' }), sess({ sessionId: 'w2', label: 'w2' })];
+  const open = workflowBoxHtml(orch, workers, ctx());
+  assert.match(open, /wf-count">2 workers/);
+  assert.match(open, /workflow-spine/);
+  assert.match(open, /▾/);
+  const collapsed = workflowBoxHtml(orch, workers, ctx({ collapsedWorkflows: new Set(['orch']) }));
+  assert.match(collapsed, /workflow-box collapsed/);
+  assert.doesNotMatch(collapsed, /workflow-spine/);
+  assert.match(collapsed, /▸/);
+});
+
+test('renderTileCards: a worker present under its run is folded into the spine, not drawn flat', () => {
+  const orch = sess({ sessionId: 'orch', workflow: { issue: 'ENT-1' } });
+  const worker = sess({ sessionId: 'w1', label: 'w1', parentSession: 'orch' });
+  const html = renderTileCards([orch, worker], ctx());
+  assert.equal(html.match(/data-sid="w1"/g).length, 1); // once, on the spine row
+  assert.match(html, /worker-row/);
+  assert.match(html, /workflow-box/);
+});
+
+test('renderTileCards: an orphan child (its parent absent) falls back to a plain card', () => {
+  const worker = sess({ sessionId: 'w1', label: 'w1', parentSession: 'gone' });
+  const html = renderTileCards([worker], ctx());
+  assert.match(html, /session-card/);
+  assert.doesNotMatch(html, /worker-row/);
+});
+
+test('renderTileCards: a child of a NON-workflow parent gets a plain always-visible spine, no box/header', () => {
+  const parent = sess({ sessionId: 'p1', label: 'reviewed session' });
+  const child = sess({ sessionId: 'c1', label: 'review', parentSession: 'p1' });
+  const html = renderTileCards([parent, child], ctx());
+  assert.equal(html.match(/data-sid="c1"/g).length, 1); // once, on the spine row
+  assert.match(html, /worker-row/);
+  assert.match(html, /child-spine/);
+  assert.doesNotMatch(html, /workflow-box/);
+  assert.doesNotMatch(html, /wf-title/); // no "Workflow" header
+  assert.doesNotMatch(html, /wf-chevron/); // no collapse toggle
+});
+
+test('renderTileCards: a plain parent + spine is wrapped in one .child-group element, not two independent siblings', () => {
+  // #grid.focus-mode .task-body is a multi-column CSS grid — two independent
+  // top-level siblings land in whatever column auto-placement happens to put
+  // them, visibly detaching a parent from its children. The wrapper keeps them
+  // one grid item regardless.
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const child = sess({ sessionId: 'c1', label: 'child', parentSession: 'p1' });
+  const html = renderTileCards([parent, child], ctx());
+  const groupMatch = html.match(/<div class="child-group">([\s\S]*)<\/div>\s*$/);
+  assert.ok(groupMatch, 'expected a single .child-group wrapper around the card + spine');
+  assert.match(groupMatch[1], /data-sid="p1"/);
+  assert.match(groupMatch[1], /child-spine/);
+});
+
+test('renderTileCards: a solo parent (no children) is NOT wrapped in a .child-group', () => {
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const html = renderTileCards([parent], ctx());
+  assert.doesNotMatch(html, /child-group/);
+});
+
+test('renderTileCards: a chained grandchild is never dropped — nesting is one level deep, so it promotes to its own top-level card', () => {
+  const orch = sess({ sessionId: 'orch', workflow: { issue: 'ENT-1' } });
+  const worker = sess({ sessionId: 'w1', label: 'w1', parentSession: 'orch' });
+  const grandchild = sess({ sessionId: 'gc1', label: 'gc1', parentSession: 'w1' });
+  const html = renderTileCards([orch, worker, grandchild], ctx());
+  // w1 is absorbed into orch's box (unchanged).
+  assert.equal(html.match(/data-sid="w1"/g).length, 1);
+  assert.match(html, /workflow-box/);
+  // gc1's immediate parent (w1) is itself nested, so gc1 renders as its own
+  // top-level card (not a compact worker-row) rather than being silently lost.
+  assert.equal(html.match(/data-sid="gc1"/g).length, 1);
+  const gc1Row = html.split('\n').find((line) => line.includes('data-sid="gc1"'));
+  assert.match(gc1Row, /session-card/);
+  assert.doesNotMatch(gc1Row, /worker-row/);
+});
+
+test('renderTileCards: a 3-level chain nests the great-grandchild under the (promoted) grandchild\'s own spine', () => {
+  const orch = sess({ sessionId: 'orch', workflow: { issue: 'ENT-1' } });
+  const worker = sess({ sessionId: 'w1', label: 'w1', parentSession: 'orch' });
+  const grandchild = sess({ sessionId: 'gc1', label: 'gc1', parentSession: 'w1' });
+  const greatGrandchild = sess({ sessionId: 'ggc1', label: 'ggc1', parentSession: 'gc1' });
+  const html = renderTileCards([orch, worker, grandchild, greatGrandchild], ctx());
+  // Every session appears exactly once, EXCEPT orch — a workflow box carries the
+  // orchestrator's data-sid on both the box wrapper (for drag/reorder) and its
+  // nested card, which is pre-existing, unrelated behavior.
+  for (const id of ['w1', 'gc1', 'ggc1']) {
+    assert.equal(html.match(new RegExp(`data-sid="${id}"`, 'g'))?.length, 1, `${id} should render exactly once`);
+  }
+  assert.match(html, /child-spine/); // ggc1 nests under gc1's own plain spine
+});
+
+test('snoozedRowHtml: greyed name-only row with a wake button and data-sid', () => {
+  const html = snoozedRowHtml(sess({ snooze: { until: Date.now() + 3600_000 } }));
+  assert.match(html, /snoozed-row/);
+  assert.match(html, /data-sid="s1"/);
+  assert.match(html, /snooze-wake/);
+});
+
+test('todoRowHtml / todoZoneHtml: rows escape text; empty zone is just the anchor', () => {
+  const row = todoRowHtml({ id: 't1', text: '<b>do</b>' }, 'adhoc');
+  assert.match(row, /data-todoid="t1"/);
+  assert.match(row, /&lt;b&gt;do&lt;\/b&gt;/);
+  assert.equal(todoZoneHtml([], 'adhoc'), '<div class="todo-zone" data-todo-key="adhoc"></div>');
+  const zone = todoZoneHtml([{ id: 't1', text: 'x' }], 'adhoc');
+  assert.match(zone, /todo-divider/);
+  assert.match(zone, /data-todoid="t1"/);
+});
+
+test('tileHtml: placeholder tile renders a bare placeholder div', () => {
+  assert.match(tileHtml({ kind: 'placeholder', col: 0, rowStart: 0, span: 1 }, ctx()), /task-placeholder/);
+});
+
+test('tileHtml: notask tile is the Unassigned cell and reads todos from ADHOC_ID', () => {
+  let askedFor = null;
+  const c = ctx({ todosFor: (k) => { askedFor = k; return []; } });
+  const html = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, c);
+  assert.match(html, /task-cell no-task/);
+  assert.match(html, /Unassigned/);
+  assert.equal(askedFor, 'adhoc');
+});
+
+test('tileHtml: task tile shows the escaped name, its first link and a +N overflow', () => {
+  const tile = {
+    kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [],
+    task: { id: 'T1', name: 'My <task>', links: [
+      { type: 'jira', key: 'ENT-1', url: 'https://j/ENT-1' },
+      { type: 'pr', number: 2, url: 'https://x/pull/2' },
+    ] },
+  };
+  const html = tileHtml(tile, ctx());
+  assert.match(html, /data-taskid="T1"/);
+  assert.match(html, /My &lt;task&gt;/);
+  assert.match(html, /ENT-1/);
+  assert.match(html, /link-overflow[^>]*>\+1/);
+});
+
+test('tileHtml: both tile kinds carry the actions kebab (sort/focus/minimise/memory/delete now live in its menu)', () => {
+  const task = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
+  const notask = { kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] };
+  assert.match(tileHtml(task, ctx()), /task-actions-btn"/);
+  assert.match(tileHtml(notask, ctx()), /task-actions-btn"/);
+});
+
+test('tileHtml: asleep sessions sink under a snoozed divider', () => {
+  const tile = {
+    kind: 'task', col: 0, rowStart: 0, span: 1,
+    sessions: [sess({ sessionId: 'a', snooze: { until: 1 } })],
+    task: { id: 'T1', name: 'T', links: [] },
+  };
+  const html = tileHtml(tile, ctx());
+  assert.match(html, /snooze-divider/);
+  assert.match(html, /snoozed-row/);
+});
+
+test('ghostHtml: an empty grid cell renders the new-task drop target', () => {
+  assert.match(ghostHtml({ col: 1, row: 2 }), /new-task-drop/);
+  assert.match(ghostHtml({ col: 1, row: 2 }), /grid-column:2; grid-row:3;/);
+});
+
+const NOW = 1_000_000_000_000;
+const mkSa = (o) => ({ id: o.id || 'x', agentType: o.agentType || 'a', label: o.label || 'L', kind: o.kind || 'background', status: o.status || 'completed', startedAt: null, endedAt: o.endedAt ?? null, usd: o.usd ?? null });
+
+test('visibleSubAgents default (Active): running OR finished within RECENT_MS', () => {
+  const list = [
+    mkSa({ id: 'run', status: 'running' }),
+    mkSa({ id: 'recent', status: 'completed', endedAt: NOW - 60_000 }),
+    mkSa({ id: 'old', status: 'completed', endedAt: NOW - SUBAGENT_RECENT_MS - 1 }),
+    mkSa({ id: 'legacy', kind: 'legacy', status: 'completed', endedAt: NOW - SUBAGENT_RECENT_MS - 1 }),
+  ];
+  const ids = visibleSubAgents(list, { showFinished: false, now: NOW }).map((a) => a.id);
+  assert.deepEqual(ids, ['run', 'recent']);
+});
+
+test('visibleSubAgents showFinished reveals everything including old + legacy', () => {
+  const list = [mkSa({ id: 'old', status: 'completed', endedAt: NOW - 1e9 }), mkSa({ id: 'legacy', kind: 'legacy', endedAt: null })];
+  assert.equal(visibleSubAgents(list, { showFinished: true, now: NOW }).length, 2);
+});
+
+test('visibleSubAgents tolerates null/undefined', () => {
+  assert.deepEqual(visibleSubAgents(null, { showFinished: false, now: NOW }), []);
+});
+
+test('visibleSubAgents: reverse-chronological — running first (no matter how old it started), then most-recently-finished', () => {
+  const list = [
+    mkSa({ id: 'finished-earlier', status: 'completed', endedAt: NOW - 1000 }),
+    mkSa({ id: 'running', status: 'running', startedAt: NOW - 1e9 }),
+    mkSa({ id: 'finished-later', status: 'completed', endedAt: NOW - 500 }),
+  ];
+  const ids = visibleSubAgents(list, { showFinished: true, now: NOW }).map((a) => a.id);
+  assert.deepEqual(ids, ['running', 'finished-later', 'finished-earlier']);
+});
+
+test('subagentZoneHtml renders nothing when the card is not toggled shown', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ id: 'r', status: 'running' })] };
+  assert.equal(subagentZoneHtml(s, { subagentShown: new Set(), now: NOW }), '');
+});
+
+test('subagentZoneHtml renders nothing when shown but the Active filter is empty', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ status: 'completed', endedAt: NOW - 1e9 })] };
+  assert.equal(subagentZoneHtml(s, { subagentShown: new Set(['c1']), now: NOW }), '');
+});
+
+test('subagentZoneHtml rows carry data-subagent-id and NOT data-sid, once shown, with no redundant heading', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ id: 'r', status: 'running' })] };
+  const html = subagentZoneHtml(s, { subagentShown: new Set(['c1']), now: NOW });
+  assert.doesNotMatch(html, /subagent-divider/);
+  assert.match(html, /data-subagent-id="r"/);
+  assert.match(html, /data-owner-sid="c1"/);
+  assert.doesNotMatch(html, /data-sid=/);
+});
+
+test('subagentZoneHtml only ever shows the Active filter — old rows never appear even when shown', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ id: 'old', status: 'completed', endedAt: NOW - 1e9 })] };
+  assert.equal(subagentZoneHtml(s, { subagentShown: new Set(['c1']), now: NOW }), '');
+});
+
+test('subagentPillHtml: no sub-agents → empty; reflects the show/hide toggle when active', () => {
+  assert.equal(subagentPillHtml({ sessionId: 'c1', subAgents: [] }, { subagentShown: new Set() }), '');
+  const s = { sessionId: 'c1', subAgents: [mkSa({ status: 'running' })] };
+  const hidden = subagentPillHtml(s, { subagentShown: new Set(), now: NOW });
+  assert.doesNotMatch(hidden, /showing/);
+  assert.doesNotMatch(hidden, /disabled/);
+  const shown = subagentPillHtml(s, { subagentShown: new Set(['c1']), now: NOW });
+  assert.match(shown, /class="card-tag subagent-pill showing"/);
+});
+
+test('subagentPillHtml: label is active\\/total', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ id: 'a', status: 'running' }), mkSa({ id: 'b', status: 'completed', endedAt: NOW - 1e9 })] };
+  assert.match(subagentPillHtml(s, { subagentShown: new Set(), now: NOW }), />1\/2</);
+});
+
+test('subagentPillHtml: disabled (and never "showing") when nothing is currently active', () => {
+  const s = { sessionId: 'c1', subAgents: [mkSa({ status: 'completed', endedAt: NOW - 1e9 })] };
+  const html = subagentPillHtml(s, { subagentShown: new Set(['c1']), now: NOW });
+  assert.match(html, /<button class="card-tag subagent-pill" aria-disabled="true"/);
+  assert.match(html, />0\/1</);
+});
+
+test('subagentRowHtml shows the label and cost when present; status reads off the dot alone, no verbal word', () => {
+  const html = subagentRowHtml(mkSa({ id: 'r', label: 'my agent', agentType: 'general-purpose', status: 'running', usd: 0.42 }), 'c1');
+  assert.match(html, /my agent/);
+  assert.match(html, /\$0\.42/);
+  assert.doesNotMatch(html, />run</);
+  assert.doesNotMatch(html, />done</);
+  assert.match(html, /class="subagent-agent-icon" title="general-purpose"/);
+  assert.match(html, /class="subagent-dot" title="running"/);
+});
+
+test('subagentDividerHtml carries the label and any extra control passed in', () => {
+  assert.match(subagentDividerHtml(), /subagent-label/);
+  assert.match(subagentDividerHtml('<button id="x"></button>'), /<button id="x">/);
+});
