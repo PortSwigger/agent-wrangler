@@ -8,3 +8,9 @@ node_modules
 sessions/
 .idea
 docs/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
