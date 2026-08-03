@@ -36,8 +36,10 @@ the model to fit the work:
 
 ## Placement
 
-The new session joins your current task by default. Pass `into: "<taskId>"` to put
-it on a different task.
+The new session joins your current task by default — to keep it there, just omit
+`into`. Only pass `into: "<taskId>"` when you have a real task id sourced from the
+`list_tasks` tool, for a *different* task. An id not sourced from `list_tasks` does
+not error: the session silently lands in Unassigned and has to be moved by hand.
 
 ## Nesting
 

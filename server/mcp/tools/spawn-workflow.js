@@ -34,7 +34,11 @@ export const spawnWorkflowTool = {
     model: z.string().optional().describe('Model override for the run. Defaults to your own model (when launching the same agent).'),
     agent: z.string().optional().describe('Agent to launch (claude or codex). Defaults to claude.'),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
-    into: z.string().optional().describe('Task id to put the run on. Defaults to your current task.'),
+    into: z.string().optional().describe(
+      'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '
+      + 'silently lands the run in Unassigned instead of erroring. Defaults to your current '
+      + 'task; omit to keep it there.',
+    ),
   },
   async handler({ deps, caller }, args = {}) {
     const rawIssue = (args.issue ?? '').trim();
