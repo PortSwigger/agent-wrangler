@@ -59,6 +59,20 @@ don't re-derive it.
   must not touch them; the inline `Agent`/`Task` pairs *are* copied, so it must.
   Plain `--resume` grows the file in place — only a deliberate fork replays. Codex is
   exempt: its rollout has only a *cumulative* total, so a time bound can't work.
+- **The usage cache IS the long-term spend record — Claude Code deletes transcripts
+  past ~30 days (`cleanupPeriodDays`).** So `usage-scan-cache.json` outlives its
+  sources: `resolveClaudeTranscript` (`usage-report.js`) falls back to the *computed*
+  transcript path — no directory listing — **solely to keep the cache key stable** once
+  the file is gone, so the entry survives `scanAllDaily`'s eviction loop (a key not in
+  `seenClaudeFiles` is deleted, which is how a whole month of real spend was lost).
+  **Don't reduce it back to listing-only, and keep the fallback LAST** (ahead of the
+  single-file-in-bucket heuristic it would displace a live file and evict *its* entry).
+  The fallback is deliberately gated on already holding a cache entry — nothing cached
+  means nothing to recover, and a phantom path would just inflate `failedFiles`. An
+  unref'd ~daily `scanAllDaily` sweep in `main()` (with a first run minutes after
+  startup, since restarts reset the interval) is what guarantees a session gets cached
+  inside the window even if the panel is never opened. `scripts/cost-report.mjs` has no
+  cache, so it still can't see deleted history.
 - **One instance per `DATA_DIR` — enforced.** Two servers sharing a `DATA_DIR`
   clobber each other's `mappings.json`/`tasks.json` (whole-snapshot writes). **A
   different `PORT` does NOT isolate — only `AW_DATA_DIR` does.** `main()` takes a

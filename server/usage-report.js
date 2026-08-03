@@ -297,12 +297,40 @@ function buildClaudeIndex(projectsDir) {
   return { byUuid, byBucket };
 }
 const bucketName = (cwd) => (cwd || '').replace(/[/.]/g, '-');
-function resolveClaudeTranscript(cardId, entry, index) {
+function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
   for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
     if (index.byUuid.has(id)) return index.byUuid.get(id);
   }
   const files = index.byBucket.get(bucketName(entry.cwd));
   if (files && files.length === 1) return files[0];
+  return deletedClaudeTranscript(cardId, entry, projectsDir);
+}
+
+// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and that used
+// to take the dashboard's history with it: the vanished file drops out of the listing
+// above, so it never reaches seenClaudeFiles and scanAllDaily's eviction loop then
+// deletes the very cache entry already holding its costed days. A transcript's path is
+// COMPUTABLE without a listing, so resolve to that same key and the cached result
+// survives as the permanent record (claudeDailyCached hands it back once the file is
+// unreadable). Reads claudeFileCache, which scanAllDaily loads before it resolves
+// anything.
+//
+// Gated on actually HOLDING a cache entry: resolving unconditionally would point every
+// never-scanned entry at a phantom path and read-fail it, permanently inflating
+// failedFiles (the UI's "totals may be understated" note) with unactionable noise.
+// Nothing cached means nothing to recover, so stay unresolved exactly as before.
+//
+// LAST, after both live-listing resolutions — never ahead of the single-file-in-bucket
+// heuristic, tempting as an exact id match looks. An entry whose liveSessionId names a
+// deleted file inside a bucket holding one LIVE jsonl resolves to that live file today;
+// jumping the queue would displace it, drop it from seenClaudeFiles and evict its own
+// still-recoverable cache entry.
+function deletedClaudeTranscript(cardId, entry, projectsDir) {
+  const bucket = bucketName(entry.cwd);
+  for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
+    const file = path.join(projectsDir, bucket, `${id}.jsonl`);
+    if (claudeFileCache && claudeFileCache.has(file)) return file;
+  }
   return null;
 }
 
@@ -407,7 +435,21 @@ function subDirSignature(subDir) {
 
 async function claudeDailyCached(file, since = 0) {
   let st;
-  try { st = fs.statSync(file); } catch { return claudeDaily(file, since); } // let claudeDaily's own catch report the read failure
+  try {
+    st = fs.statSync(file);
+  } catch {
+    // The file is gone (Claude Code's retention sweep). Re-reading it can only fail, so
+    // a cached result for the same bound IS the historical record from here on — hand it
+    // back, and the caller marking it seen keeps it out of the eviction loop. Checked
+    // before subDirSignature: the cached result already folds in sub-agent spend, and
+    // that dir may or may not have been deleted alongside the parent.
+    const gone = claudeFileCache.get(file);
+    if (gone && (gone.since || 0) === since) {
+      usageFileCacheStats.hits += 1;
+      return gone.result;
+    }
+    return claudeDaily(file, since); // never cached before deletion: unrecoverable, so let claudeDaily's own catch report the read failure
+  }
   const sessionId = path.basename(file, '.jsonl');
   const subSig = subDirSignature(path.join(path.dirname(file), sessionId, 'subagents'));
   const cached = claudeFileCache.get(file);
@@ -490,7 +532,7 @@ export async function scanAllDaily({
     const agent = entry.agent || 'claude';
     const task = taskInfoFor(cardId, entry, assignments, taskNameById);
     if (agent === 'claude') {
-      const file = resolveClaudeTranscript(cardId, entry, index);
+      const file = resolveClaudeTranscript(cardId, entry, index, projectsDir);
       if (!file) continue;
       seenClaudeFiles.add(file);
       const cd = await claudeDailyCached(file, usageSince(entry));

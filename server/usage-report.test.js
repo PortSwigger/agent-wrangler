@@ -436,6 +436,66 @@ test('evicts a cache entry whose transcript is no longer referenced', async () =
   assert.equal(stats.misses, 2, 'the entry was evicted while unreferenced, so re-adding it counted as a fresh read');
 });
 
+// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and the dashboard
+// is the only surviving record of what they cost. So a costed, cached file must keep its
+// history when it vanishes — on the scan that notices it's gone, on every LATER scan (the
+// eviction loop is the failure mode that lost a whole month of real spend), and across a
+// restart, where the answer has to come back off the persisted disk cache.
+test('keeps a deleted transcript\'s cached history across rescans and a restart', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f0f0f0f0-f0f0-f0f0-f0f0-f0f0f0f0f0f0';
+  const file = claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1000, output_tokens: 2000 }, '2026-07-10T12:00:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 500, output_tokens: 100 }, '2026-07-12T09:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, {
+    entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } },
+    tasks: [{ id: 't1', name: 'Alpha' }], assignments: { card1: 't1' },
+  });
+
+  const scanned = async (label) => {
+    const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+    assert.equal(r.failedFiles, 0, `${label}: a deleted-but-cached file is not a failed read`);
+    assert.equal(r.totals.tokens.input, 1500, `${label}: totals intact`);
+    return Object.fromEntries(activeBuckets(r).map((b) => [b.key, b.total.tokens.input]));
+  };
+  const expected = { '2026-07-10': 1000, '2026-07-12': 500 };
+  assert.deepEqual(await scanned('while the file exists'), expected);
+
+  fs.rmSync(file); // the retention sweep
+
+  assert.deepEqual(await scanned('the scan that notices the file is gone'), expected);
+  assert.deepEqual(await scanned('a later scan, after the eviction loop has run once'), expected);
+
+  _resetUsageFileCache(); // a restart: in-memory state wiped, the disk cache kept
+  assert.deepEqual(await scanned('after a restart, reloaded from the disk cache'), expected);
+  const stats = _usageFileCacheStats();
+  assert.equal(stats.hits, 1, 'the vanished file was served from the cache, not read');
+  assert.equal(stats.misses, 0);
+
+  const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+  assert.deepEqual(r.tasks.map((t) => t.name), ['Alpha'], 'still attributed to its task');
+});
+
+// The other half: a transcript deleted before anything ever costed it is genuinely
+// unrecoverable, and must degrade exactly as it did before the deterministic-path
+// fallback existed — no spend, no crash, and NOT a phantom read that inflates the
+// failedFiles banner (every long-archived session on a real board looks like this).
+test('a transcript deleted before it was ever scanned stays unresolved', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f1f1f1f1-f1f1-f1f1-f1f1-f1f1f1f1f1f1';
+  writeStores(d.dataDir, { entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.usd, 0);
+  assert.equal(r.totals.tokens.input, 0);
+  assert.equal(r.failedFiles, 0, 'an unresolved session is skipped, not reported as a broken file');
+  assert.deepEqual(r.tasks, []);
+  assert.equal(_usageFileCacheStats().misses, 0, 'no phantom path was read');
+});
+
 // A fork's transcript is a verbatim replay of the parent's history plus its own turns
 // (see transcript-reader.js scanLine). The per-transcript-file dedup below does NOT
 // catch it — a fork is a genuinely new file — so without a fork bound the dashboard
