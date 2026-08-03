@@ -496,6 +496,31 @@ test('a transcript deleted before it was ever scanned stays unresolved', async (
   assert.equal(_usageFileCacheStats().misses, 0, 'no phantom path was read');
 });
 
+// A cache entry costed under a DIFFERENT fork bound can't be served (the bound is stored
+// but is not part of the key — the key is the file, which two card ids can share), so
+// resolving to the vanished path would only produce a read that fails. Same outcome as
+// never having cached it: unresolved, and never a phantom failed read.
+test('a deleted transcript cached under a different fork bound is not resurrected', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f2f2f2f2-f2f2-f2f2-f2f2-f2f2f2f2f2f2';
+  const file = path.join(d.projectsDir, '-work-proj', `${sid}.jsonl`); // the file itself is already gone
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 2,
+    claude: { [file]: { size: 100, subSig: '', since: Date.parse('2026-07-01T00:00:00.000Z'), result: {
+      daily: { '2026-07-10': { 'claude-opus': { input: 1000, output: 1000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } } },
+      sub: {}, failed: false,
+    } } },
+    codex: {},
+  }));
+  // The entry is NOT a fork, so its bound is 0 — it can never match the cached entry's.
+  writeStores(d.dataDir, { entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 0, 'a result costed under another bound is not claimed');
+  assert.equal(r.failedFiles, 0, 'and it is not turned into a phantom failed read either');
+});
+
 // A fork's transcript is a verbatim replay of the parent's history plus its own turns
 // (see transcript-reader.js scanLine). The per-transcript-file dedup below does NOT
 // catch it — a fork is a genuinely new file — so without a fork bound the dashboard

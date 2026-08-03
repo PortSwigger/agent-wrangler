@@ -315,10 +315,14 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
 // unreadable). Reads claudeFileCache, which scanAllDaily loads before it resolves
 // anything.
 //
-// Gated on actually HOLDING a cache entry: resolving unconditionally would point every
-// never-scanned entry at a phantom path and read-fail it, permanently inflating
-// failedFiles (the UI's "totals may be understated" note) with unactionable noise.
-// Nothing cached means nothing to recover, so stay unresolved exactly as before.
+// Gated on actually holding a cache entry claudeDailyCached will SERVE — same file, same
+// fork bound — because resolving unconditionally would point every never-scanned entry at
+// a phantom path and read-fail it, permanently inflating failedFiles (the UI's "totals
+// may be understated" note) with unactionable noise. Nothing servable means nothing to
+// recover, so stay unresolved exactly as before. The bound is recomputed here rather than
+// threaded through: `since` is stored on the entry but is NOT part of the cache key (the
+// key is the file, and two card ids can share one), so presence alone wouldn't tell us
+// the hit will land.
 //
 // LAST, after both live-listing resolutions — never ahead of the single-file-in-bucket
 // heuristic, tempting as an exact id match looks. An entry whose liveSessionId names a
@@ -327,9 +331,11 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
 // still-recoverable cache entry.
 function deletedClaudeTranscript(cardId, entry, projectsDir) {
   const bucket = bucketName(entry.cwd);
+  const since = usageSince(entry); // exactly what scanAllDaily will pass to claudeDailyCached
   for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
     const file = path.join(projectsDir, bucket, `${id}.jsonl`);
-    if (claudeFileCache && claudeFileCache.has(file)) return file;
+    const cached = claudeFileCache && claudeFileCache.get(file);
+    if (cached && (cached.since || 0) === since) return file;
   }
   return null;
 }
