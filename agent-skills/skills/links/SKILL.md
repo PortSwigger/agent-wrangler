@@ -37,5 +37,11 @@ branch, confirm first. The board polls the PR's CI status and shows it on the
 card, and **auto-removes** the link once the PR is merged or closed — you do not
 need to clean those up yourself.
 
+**Attach on creation, don't wait to be asked.** When you run `gh pr create`,
+treat "create the PR" and "attach the PR link" as one step — call `get_links`
+then `set_links` right away, before reporting the PR back to the user. A PR you
+created but didn't link is invisible on the board (no CI status, no
+auto-removal on merge/close). Scope defaults to `"session"` as above.
+
 (Other link types — GitHub issues, arbitrary URLs — may be added over time; check
 the current `set_links` schema for what it accepts.)
