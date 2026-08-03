@@ -37,6 +37,7 @@ import { routeControlMessage } from './control/router.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
+import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 
 const open = openModule.default || openModule;
@@ -592,6 +593,21 @@ async function main() {
     fireDueSnoozeWakesTick().catch(() => {});
   }, 30000);
   schedulePoll.unref();
+
+  // Keep the Usage dashboard's per-file scan cache populated even if nobody ever opens
+  // the panel: Claude Code deletes its transcripts past ~30 days and a costed day only
+  // outlives that deletion if it was cached first (usage-report.js
+  // resolveClaudeTranscript). Daily is well inside that window. Unlike prPoll there is
+  // no in-flight guard and none is needed — a sweep overlapping a panel-triggered scan
+  // is a no-op by construction (both walk the same mappings, so both build a complete
+  // seen-set before the eviction loop). The first run is a few minutes after listen,
+  // not a whole day: a service restarted more often than the interval (a laptop
+  // rebooting) would otherwise never sweep at all, which is the case this exists for.
+  const usageSweep = () => scanAllDaily().catch(() => {});
+  const usageWarm = setTimeout(usageSweep, 5 * 60 * 1000);
+  usageWarm.unref();
+  const usagePoll = setInterval(usageSweep, 24 * 60 * 60 * 1000);
+  usagePoll.unref();
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle

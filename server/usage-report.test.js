@@ -436,6 +436,145 @@ test('evicts a cache entry whose transcript is no longer referenced', async () =
   assert.equal(stats.misses, 2, 'the entry was evicted while unreferenced, so re-adding it counted as a fresh read');
 });
 
+// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and the dashboard
+// is the only surviving record of what they cost. So a costed, cached file must keep its
+// history when it vanishes — on the scan that notices it's gone, on every LATER scan (the
+// eviction loop is the failure mode that lost a whole month of real spend), and across a
+// restart, where the answer has to come back off the persisted disk cache.
+test('keeps a deleted transcript\'s cached history across rescans and a restart', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f0f0f0f0-f0f0-f0f0-f0f0-f0f0f0f0f0f0';
+  const file = claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1000, output_tokens: 2000 }, '2026-07-10T12:00:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 500, output_tokens: 100 }, '2026-07-12T09:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, {
+    entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } },
+    tasks: [{ id: 't1', name: 'Alpha' }], assignments: { card1: 't1' },
+  });
+
+  const scanned = async (label) => {
+    const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+    assert.equal(r.failedFiles, 0, `${label}: a deleted-but-cached file is not a failed read`);
+    assert.equal(r.totals.tokens.input, 1500, `${label}: totals intact`);
+    return Object.fromEntries(activeBuckets(r).map((b) => [b.key, b.total.tokens.input]));
+  };
+  const expected = { '2026-07-10': 1000, '2026-07-12': 500 };
+  assert.deepEqual(await scanned('while the file exists'), expected);
+
+  fs.rmSync(file); // the retention sweep
+
+  assert.deepEqual(await scanned('the scan that notices the file is gone'), expected);
+  assert.deepEqual(await scanned('a later scan, after the eviction loop has run once'), expected);
+
+  _resetUsageFileCache(); // a restart: in-memory state wiped, the disk cache kept
+  assert.deepEqual(await scanned('after a restart, reloaded from the disk cache'), expected);
+  const stats = _usageFileCacheStats();
+  assert.equal(stats.hits, 1, 'the vanished file was served from the cache, not read');
+  assert.equal(stats.misses, 0);
+
+  const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+  assert.deepEqual(r.tasks.map((t) => t.name), ['Alpha'], 'still attributed to its task');
+});
+
+// The other half: a transcript deleted before anything ever costed it is genuinely
+// unrecoverable, and must degrade exactly as it did before the deterministic-path
+// fallback existed — no spend, no crash, and NOT a phantom read that inflates the
+// failedFiles banner (every long-archived session on a real board looks like this).
+test('a transcript deleted before it was ever scanned stays unresolved', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f1f1f1f1-f1f1-f1f1-f1f1-f1f1f1f1f1f1';
+  writeStores(d.dataDir, { entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.usd, 0);
+  assert.equal(r.totals.tokens.input, 0);
+  assert.equal(r.failedFiles, 0, 'an unresolved session is skipped, not reported as a broken file');
+  assert.deepEqual(r.tasks, []);
+  assert.equal(_usageFileCacheStats().misses, 0, 'no phantom path was read');
+});
+
+const readCache = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'usage-scan-cache.json'), 'utf8'));
+
+// The cache outlives its transcript, so its resolution is the ceiling on every view that
+// can ever be built from deleted history. Pin it at per-hour, per-model, RAW TOKENS: an
+// hourly breakdown stays possible, and spend can be re-priced later because nothing was
+// pre-costed into $. Coarsening or pre-costing this is unrecoverable, not just lossy.
+test('caches raw per-model tokens at hour resolution, so any coarser view is derivable', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1';
+  const file = claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 100, output_tokens: 1 }, '2026-07-10T09:15:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 20, output_tokens: 1 }, '2026-07-10T09:45:00.000Z'), // same hour
+    turn('m3', 'claude-sonnet', { input_tokens: 3, output_tokens: 1 }, '2026-07-10T14:05:00.000Z'), // same day, later hour
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 123, 'the day view still sums every hour');
+
+  const entry = readCache(d.dataDir).claude[file];
+  assert.deepEqual(Object.keys(entry.result.daily).sort(), ['2026-07-10T09', '2026-07-10T14'],
+    'distinct hours are kept apart; turns within one hour merge');
+  assert.deepEqual(entry.result.daily['2026-07-10T09'], {
+    'claude-opus': { input: 120, output: 2, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 },
+  }, 'raw per-model token counts, not costed dollars');
+  assert.equal(Object.keys(entry.result.daily['2026-07-10T14'])[0], 'claude-sonnet', 'models stay separable per hour');
+});
+
+// Bumping the cache version DISCARDS the whole blob, and for a transcript Claude Code has
+// already deleted that blob is the only record of the spend that exists — so the hour-key
+// bump has to read the old day-keyed shape rather than throw it away. This is the exact
+// shape of the ~270 real entries (June included) on a live board at the time of the bump.
+test('reads a legacy day-keyed cache entry instead of discarding the history', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2';
+  const file = path.join(d.projectsDir, '-work-proj', `${sid}.jsonl`); // transcript long since deleted
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 2, // the pre-hour-bucket shape: keys are bare days
+    claude: { [file]: { size: 100, subSig: '', since: 0, result: {
+      daily: { '2026-07-10': { 'claude-opus': { input: 4000, output: 500, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } } },
+      sub: {}, failed: false,
+    } } },
+    codex: {},
+  }));
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 4000, 'v2 history survives the version bump');
+  assert.equal(activeBuckets(r)[0].key, '2026-07-10', 'a bare day key still lands on its day');
+  assert.equal(r.failedFiles, 0);
+});
+
+// A cache entry costed under a DIFFERENT fork bound can't be served (the bound is stored
+// but is not part of the key — the key is the file, which two card ids can share), so
+// resolving to the vanished path would only produce a read that fails. Same outcome as
+// never having cached it: unresolved, and never a phantom failed read.
+test('a deleted transcript cached under a different fork bound is not resurrected', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'f2f2f2f2-f2f2-f2f2-f2f2-f2f2f2f2f2f2';
+  const file = path.join(d.projectsDir, '-work-proj', `${sid}.jsonl`); // the file itself is already gone
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 2,
+    claude: { [file]: { size: 100, subSig: '', since: Date.parse('2026-07-01T00:00:00.000Z'), result: {
+      daily: { '2026-07-10': { 'claude-opus': { input: 1000, output: 1000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } } },
+      sub: {}, failed: false,
+    } } },
+    codex: {},
+  }));
+  // The entry is NOT a fork, so its bound is 0 — it can never match the cached entry's.
+  writeStores(d.dataDir, { entries: { card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 0, 'a result costed under another bound is not claimed');
+  assert.equal(r.failedFiles, 0, 'and it is not turned into a phantom failed read either');
+});
+
 // A fork's transcript is a verbatim replay of the parent's history plus its own turns
 // (see transcript-reader.js scanLine). The per-transcript-file dedup below does NOT
 // catch it — a fork is a genuinely new file — so without a fork bound the dashboard

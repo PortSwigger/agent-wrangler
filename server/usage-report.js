@@ -37,6 +37,14 @@ const WINDOW_BUCKETS = { day: 30, week: 12, month: 12 };
 // ---- UTC bucket math (all periods are UTC, like cost-report.mjs) ----------
 const DAY_MS = 86_400_000;
 const dayKeyOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+// The per-file cache buckets raw totals per UTC HOUR, not per day. It has to: the cache
+// outlives its transcript (resolveClaudeTranscript), so whatever resolution it keeps is
+// the finest ANY view can ever be recreated at once Claude Code deletes the source — a
+// day bucket would make an hourly breakdown of deleted history permanently impossible.
+// Aggregating up is free and lossless (`2026-07-10T14` → day by dayOfKey), which is also
+// why a legacy day-keyed cache entry needs no migration: its key is already its own day.
+const hourKeyOf = (ms) => new Date(ms).toISOString().slice(0, 13);
+const dayOfKey = (key) => key.slice(0, 10);
 
 function weekStartMs(ms) {
   const d = new Date(ms);
@@ -197,10 +205,10 @@ async function forEachJsonLine(file, onEntry) {
   }
 }
 
-// ---- Claude transcript scan (day-bucketed) --------------------------------
-// Sum every agent-*.jsonl under a session's subagents/ dir into per-day per-model
+// ---- Claude transcript scan (hour-bucketed) -------------------------------
+// Sum every agent-*.jsonl under a session's subagents/ dir into per-hour per-model
 // totals (modern async sub-agents own their transcript), with per-file message.id
-// dedup — the day-bucketed mirror of cost-report.mjs backgroundSubTotals. `any`
+// dedup — the hour-bucketed mirror of cost-report.mjs backgroundSubTotals. `any`
 // marks that background transcripts EXIST (so they, not the parent's inline
 // aggregate, are the cost source — analyze()'s precedence).
 async function backgroundSubDaily(subDir) {
@@ -219,7 +227,7 @@ async function backgroundSubDaily(subDir) {
         const msg = e.message;
         if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
           if (msg.id) seen.add(msg.id);
-          addUsage((daily[dayKeyOf(ts)] ||= {}), msg.model, msg.usage);
+          addUsage((daily[hourKeyOf(ts)] ||= {}), msg.model, msg.usage);
         }
       });
     } catch { failed = true; } // a broken sub-agent file surfaces as a partial marker, not a silent drop
@@ -227,14 +235,17 @@ async function backgroundSubDaily(subDir) {
   return { any: true, daily, failed };
 }
 
-// Parse one Claude transcript into per-day per-model totals (parent turns) and the
-// same for its sub-agents, then fold the sub-agent spend into the parent's day so a
-// day's total reflects work done on the session's behalf. message.id dedup per
+// Parse one Claude transcript into per-hour per-model totals (parent turns) and the
+// same for its sub-agents, then fold the sub-agent spend into the parent's hour so a
+// bucket's total reflects work done on the session's behalf. message.id dedup per
 // transcript (multi-block turns repeat the same usage); an id-less line is counted.
+// The `daily` property name predates the switch to hour keys and is kept deliberately:
+// it is part of the persisted cache shape, and renaming it would either strand or
+// discard every already-cached entry — the one thing this cache must never do.
 async function claudeDaily(file, since = 0) {
-  const parent = {}; // dayKey -> totalsByModel
+  const parent = {}; // hourKey -> totalsByModel
   const seen = new Set();
-  const inlineSubs = []; // legacy fallback: { dayKey, model, usage } on tool_result lines
+  const inlineSubs = []; // legacy fallback: { hourKey, model, usage } on tool_result lines
   let failed = false;
   try {
     await forEachJsonLine(file, (e) => {
@@ -244,37 +255,44 @@ async function claudeDaily(file, since = 0) {
       // dedup-by-file below can't see it (a fork IS a new file) — skip everything
       // before the fork's launch. Mirrors transcript-reader.js scanLine's bound.
       if (since > 0 && ts < since) return;
-      const day = dayKeyOf(ts);
+      const hour = hourKeyOf(ts);
       const msg = e.message;
       if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
         if (msg.id) seen.add(msg.id);
-        addUsage((parent[day] ||= {}), msg.model, msg.usage);
+        addUsage((parent[hour] ||= {}), msg.model, msg.usage);
       }
       const tur = e.toolUseResult;
       if (tur && typeof tur === 'object' && tur.usage && tur.agentType) {
-        inlineSubs.push({ day, model: tur.resolvedModel, usage: tur.usage });
+        inlineSubs.push({ hour, model: tur.resolvedModel, usage: tur.usage });
       }
     });
   } catch { failed = true; } // partial/failed read is flagged upstream, never swallowed into a silent $0
   const sessionId = path.basename(file, '.jsonl');
   const bg = await backgroundSubDaily(path.join(path.dirname(file), sessionId, 'subagents'));
-  const sub = {}; // dayKey -> totalsByModel (sub-agents only)
-  if (bg.any) for (const [day, t] of Object.entries(bg.daily)) mergeInto((sub[day] ||= {}), t);
-  else for (const s of inlineSubs) addUsage((sub[s.day] ||= {}), s.model, s.usage);
-  for (const [day, t] of Object.entries(sub)) mergeInto((parent[day] ||= {}), t);
+  const sub = {}; // hourKey -> totalsByModel (sub-agents only)
+  if (bg.any) for (const [hour, t] of Object.entries(bg.daily)) mergeInto((sub[hour] ||= {}), t);
+  else for (const s of inlineSubs) addUsage((sub[s.hour] ||= {}), s.model, s.usage);
+  for (const [hour, t] of Object.entries(sub)) mergeInto((parent[hour] ||= {}), t);
   return { daily: parent, sub, failed: failed || bg.failed };
 }
 
-// Collapse a session's per-day per-model totals into normalized per-day bags the
+// Collapse a session's per-hour per-model totals into normalized per-day bags the
 // rollup sums directly. usd/tokens are linear in the per-model totals, so summing
-// bags across days equals costing the summed totals — no precision surprise.
-function normalizeClaudeDays({ daily, sub }) {
+// hours into a day then costing equals costing each hour and summing — no precision
+// surprise. dayOfKey is what makes this indifferent to the source resolution, so a
+// legacy day-keyed cache entry (pre-hour-buckets) flows through here untouched
+// instead of needing a migration or, worse, being discarded.
+function normalizeClaudeDays(scan) {
+  const byDay = {};
+  const subByDay = {};
+  for (const [key, totals] of Object.entries(scan.daily)) mergeInto((byDay[dayOfKey(key)] ||= {}), totals);
+  for (const [key, totals] of Object.entries(scan.sub)) mergeInto((subByDay[dayOfKey(key)] ||= {}), totals);
   const out = {};
-  for (const [day, totals] of Object.entries(daily)) {
+  for (const [day, totals] of Object.entries(byDay)) {
     out[day] = {
       usd: costUsd(totals),
       estimatedUsd: 0,
-      subAgentUsd: costUsd(sub[day] || {}),
+      subAgentUsd: costUsd(subByDay[day] || {}),
       tokens: tokensOf(totals),
       byModel: byModelOf(totals),
       costByType: costUsdByType(totals), // $ split by token type; sums to usd (Claude pricing)
@@ -297,12 +315,46 @@ function buildClaudeIndex(projectsDir) {
   return { byUuid, byBucket };
 }
 const bucketName = (cwd) => (cwd || '').replace(/[/.]/g, '-');
-function resolveClaudeTranscript(cardId, entry, index) {
+function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
   for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
     if (index.byUuid.has(id)) return index.byUuid.get(id);
   }
   const files = index.byBucket.get(bucketName(entry.cwd));
   if (files && files.length === 1) return files[0];
+  return deletedClaudeTranscript(cardId, entry, projectsDir);
+}
+
+// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and that used
+// to take the dashboard's history with it: the vanished file drops out of the listing
+// above, so it never reaches seenClaudeFiles and scanAllDaily's eviction loop then
+// deletes the very cache entry already holding its costed days. A transcript's path is
+// COMPUTABLE without a listing, so resolve to that same key and the cached result
+// survives as the permanent record (claudeDailyCached hands it back once the file is
+// unreadable). Reads claudeFileCache, which scanAllDaily loads before it resolves
+// anything.
+//
+// Gated on actually holding a cache entry claudeDailyCached will SERVE — same file, same
+// fork bound — because resolving unconditionally would point every never-scanned entry at
+// a phantom path and read-fail it, permanently inflating failedFiles (the UI's "totals
+// may be understated" note) with unactionable noise. Nothing servable means nothing to
+// recover, so stay unresolved exactly as before. The bound is recomputed here rather than
+// threaded through: `since` is stored on the entry but is NOT part of the cache key (the
+// key is the file, and two card ids can share one), so presence alone wouldn't tell us
+// the hit will land.
+//
+// LAST, after both live-listing resolutions — never ahead of the single-file-in-bucket
+// heuristic, tempting as an exact id match looks. An entry whose liveSessionId names a
+// deleted file inside a bucket holding one LIVE jsonl resolves to that live file today;
+// jumping the queue would displace it, drop it from seenClaudeFiles and evict its own
+// still-recoverable cache entry.
+function deletedClaudeTranscript(cardId, entry, projectsDir) {
+  const bucket = bucketName(entry.cwd);
+  const since = usageSince(entry); // exactly what scanAllDaily will pass to claudeDailyCached
+  for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
+    const file = path.join(projectsDir, bucket, `${id}.jsonl`);
+    const cached = claudeFileCache && claudeFileCache.get(file);
+    if (cached && (cached.since || 0) === since) return file;
+  }
   return null;
 }
 
@@ -322,10 +374,17 @@ function taskInfoFor(cardId, entry, assignments, taskNameById) {
 // ---- per-file scan cache ---------------------------------------------------
 // scanAllDaily used to re-read and re-parse EVERY transcript on EVERY call —
 // wasteful once most sessions are closed and will never change again. Cache the
-// (raw, pre-costing) per-day totals per transcript file, keyed on whether that
+// (raw, pre-costing) per-hour totals per transcript file, keyed on whether that
 // file has actually changed since it was last read, so a scan only does real
 // work for sessions that changed since the last look. Persisted to disk so a
 // server restart doesn't force one giant re-scan either.
+//
+// Two properties make this fit to be the permanent record it becomes once the source
+// transcript is deleted: totals are RAW TOKENS PER MODEL, not costed $ (so history can
+// be re-priced when rates change, and a pricing bug is fixable retroactively), and they
+// are bucketed per HOUR (so day / week / month views are all derivable, and an hourly
+// one stays possible). Neither is recoverable later — coarsening or pre-costing here
+// silently throws away history that no longer exists anywhere else.
 //
 // Deliberately NOT byte-offset/incremental tailing within a changed file — a
 // file that changed at all is reparsed in full via the existing claudeDaily/
@@ -333,7 +392,13 @@ function taskInfoFor(cardId, entry, assignments, taskNameById) {
 // the last CONFIRMED newline (not "current file size"), else a torn line from a
 // concurrently-written active session gets silently skipped forever — not
 // worth the complexity here.
-const USAGE_CACHE_VERSION = 2; // 2: per-file results are fork-bounded (v1 blobs were unbounded)
+const USAGE_CACHE_VERSION = 3; // 3: hour-bucketed keys (2: fork-bounded results; v1 was unbounded)
+// v2 is READ but never written: its day keys are a coarser case of the same shape, which
+// dayOfKey already handles. Accepting it is load-bearing, not politeness — a version
+// mismatch DISCARDS the whole blob, and for any transcript Claude Code has since deleted
+// that blob is the only surviving record of the spend. Bumping without this would destroy
+// exactly the history the fallback above exists to protect.
+const READABLE_CACHE_VERSIONS = new Set([USAGE_CACHE_VERSION, 2]);
 const USAGE_CACHE_FILE = 'usage-scan-cache.json';
 const STAT_YIELD_EVERY = 100;
 
@@ -353,7 +418,7 @@ function usageCacheFilePath(dataDir) {
 function loadUsageFileCaches(dataDir) {
   if (claudeFileCache && codexFileCache) return;
   const disk = readJsonOrLoud(usageCacheFilePath(dataDir), USAGE_CACHE_FILE);
-  if (disk && disk.version === USAGE_CACHE_VERSION) {
+  if (disk && READABLE_CACHE_VERSIONS.has(disk.version)) {
     claudeFileCache = new Map(Object.entries(disk.claude || {}));
     codexFileCache = new Map(Object.entries(disk.codex || {}));
   } else {
@@ -407,7 +472,21 @@ function subDirSignature(subDir) {
 
 async function claudeDailyCached(file, since = 0) {
   let st;
-  try { st = fs.statSync(file); } catch { return claudeDaily(file, since); } // let claudeDaily's own catch report the read failure
+  try {
+    st = fs.statSync(file);
+  } catch {
+    // The file is gone (Claude Code's retention sweep). Re-reading it can only fail, so
+    // a cached result for the same bound IS the historical record from here on — hand it
+    // back, and the caller marking it seen keeps it out of the eviction loop. Checked
+    // before subDirSignature: the cached result already folds in sub-agent spend, and
+    // that dir may or may not have been deleted alongside the parent.
+    const gone = claudeFileCache.get(file);
+    if (gone && (gone.since || 0) === since) {
+      usageFileCacheStats.hits += 1;
+      return gone.result;
+    }
+    return claudeDaily(file, since); // never cached before deletion: unrecoverable, so let claudeDaily's own catch report the read failure
+  }
   const sessionId = path.basename(file, '.jsonl');
   const subSig = subDirSignature(path.join(path.dirname(file), sessionId, 'subagents'));
   const cached = claudeFileCache.get(file);
@@ -490,7 +569,7 @@ export async function scanAllDaily({
     const agent = entry.agent || 'claude';
     const task = taskInfoFor(cardId, entry, assignments, taskNameById);
     if (agent === 'claude') {
-      const file = resolveClaudeTranscript(cardId, entry, index);
+      const file = resolveClaudeTranscript(cardId, entry, index, projectsDir);
       if (!file) continue;
       seenClaudeFiles.add(file);
       const cd = await claudeDailyCached(file, usageSince(entry));
