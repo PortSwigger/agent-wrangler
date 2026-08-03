@@ -36,8 +36,14 @@ the model to fit the work:
 
 ## Placement
 
-The new session joins your current task by default. Pass `into: "<taskId>"` to put
-it on a different task.
+The new session joins your current task by default — to keep it there, just omit
+`into`. Only pass `into: "<taskId>"` when you have a real Agent Wrangler **board**
+task id (the `t_...` form) for a *different* task; discover valid ids via the
+`list_tasks` tool.
+
+`into` is a different namespace from your own TodoList / `TaskCreate` ids (`#11`,
+`#12`, ...). Passing one of those — or any id that isn't a real board task — does
+not error: the session silently lands in Unassigned and has to be moved by hand.
 
 ## Nesting
 
