@@ -37,6 +37,14 @@ const WINDOW_BUCKETS = { day: 30, week: 12, month: 12 };
 // ---- UTC bucket math (all periods are UTC, like cost-report.mjs) ----------
 const DAY_MS = 86_400_000;
 const dayKeyOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+// The per-file cache buckets raw totals per UTC HOUR, not per day. It has to: the cache
+// outlives its transcript (resolveClaudeTranscript), so whatever resolution it keeps is
+// the finest ANY view can ever be recreated at once Claude Code deletes the source — a
+// day bucket would make an hourly breakdown of deleted history permanently impossible.
+// Aggregating up is free and lossless (`2026-07-10T14` → day by dayOfKey), which is also
+// why a legacy day-keyed cache entry needs no migration: its key is already its own day.
+const hourKeyOf = (ms) => new Date(ms).toISOString().slice(0, 13);
+const dayOfKey = (key) => key.slice(0, 10);
 
 function weekStartMs(ms) {
   const d = new Date(ms);
@@ -197,10 +205,10 @@ async function forEachJsonLine(file, onEntry) {
   }
 }
 
-// ---- Claude transcript scan (day-bucketed) --------------------------------
-// Sum every agent-*.jsonl under a session's subagents/ dir into per-day per-model
+// ---- Claude transcript scan (hour-bucketed) -------------------------------
+// Sum every agent-*.jsonl under a session's subagents/ dir into per-hour per-model
 // totals (modern async sub-agents own their transcript), with per-file message.id
-// dedup — the day-bucketed mirror of cost-report.mjs backgroundSubTotals. `any`
+// dedup — the hour-bucketed mirror of cost-report.mjs backgroundSubTotals. `any`
 // marks that background transcripts EXIST (so they, not the parent's inline
 // aggregate, are the cost source — analyze()'s precedence).
 async function backgroundSubDaily(subDir) {
@@ -219,7 +227,7 @@ async function backgroundSubDaily(subDir) {
         const msg = e.message;
         if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
           if (msg.id) seen.add(msg.id);
-          addUsage((daily[dayKeyOf(ts)] ||= {}), msg.model, msg.usage);
+          addUsage((daily[hourKeyOf(ts)] ||= {}), msg.model, msg.usage);
         }
       });
     } catch { failed = true; } // a broken sub-agent file surfaces as a partial marker, not a silent drop
@@ -227,14 +235,17 @@ async function backgroundSubDaily(subDir) {
   return { any: true, daily, failed };
 }
 
-// Parse one Claude transcript into per-day per-model totals (parent turns) and the
-// same for its sub-agents, then fold the sub-agent spend into the parent's day so a
-// day's total reflects work done on the session's behalf. message.id dedup per
+// Parse one Claude transcript into per-hour per-model totals (parent turns) and the
+// same for its sub-agents, then fold the sub-agent spend into the parent's hour so a
+// bucket's total reflects work done on the session's behalf. message.id dedup per
 // transcript (multi-block turns repeat the same usage); an id-less line is counted.
+// The `daily` property name predates the switch to hour keys and is kept deliberately:
+// it is part of the persisted cache shape, and renaming it would either strand or
+// discard every already-cached entry — the one thing this cache must never do.
 async function claudeDaily(file, since = 0) {
-  const parent = {}; // dayKey -> totalsByModel
+  const parent = {}; // hourKey -> totalsByModel
   const seen = new Set();
-  const inlineSubs = []; // legacy fallback: { dayKey, model, usage } on tool_result lines
+  const inlineSubs = []; // legacy fallback: { hourKey, model, usage } on tool_result lines
   let failed = false;
   try {
     await forEachJsonLine(file, (e) => {
@@ -244,37 +255,44 @@ async function claudeDaily(file, since = 0) {
       // dedup-by-file below can't see it (a fork IS a new file) — skip everything
       // before the fork's launch. Mirrors transcript-reader.js scanLine's bound.
       if (since > 0 && ts < since) return;
-      const day = dayKeyOf(ts);
+      const hour = hourKeyOf(ts);
       const msg = e.message;
       if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
         if (msg.id) seen.add(msg.id);
-        addUsage((parent[day] ||= {}), msg.model, msg.usage);
+        addUsage((parent[hour] ||= {}), msg.model, msg.usage);
       }
       const tur = e.toolUseResult;
       if (tur && typeof tur === 'object' && tur.usage && tur.agentType) {
-        inlineSubs.push({ day, model: tur.resolvedModel, usage: tur.usage });
+        inlineSubs.push({ hour, model: tur.resolvedModel, usage: tur.usage });
       }
     });
   } catch { failed = true; } // partial/failed read is flagged upstream, never swallowed into a silent $0
   const sessionId = path.basename(file, '.jsonl');
   const bg = await backgroundSubDaily(path.join(path.dirname(file), sessionId, 'subagents'));
-  const sub = {}; // dayKey -> totalsByModel (sub-agents only)
-  if (bg.any) for (const [day, t] of Object.entries(bg.daily)) mergeInto((sub[day] ||= {}), t);
-  else for (const s of inlineSubs) addUsage((sub[s.day] ||= {}), s.model, s.usage);
-  for (const [day, t] of Object.entries(sub)) mergeInto((parent[day] ||= {}), t);
+  const sub = {}; // hourKey -> totalsByModel (sub-agents only)
+  if (bg.any) for (const [hour, t] of Object.entries(bg.daily)) mergeInto((sub[hour] ||= {}), t);
+  else for (const s of inlineSubs) addUsage((sub[s.hour] ||= {}), s.model, s.usage);
+  for (const [hour, t] of Object.entries(sub)) mergeInto((parent[hour] ||= {}), t);
   return { daily: parent, sub, failed: failed || bg.failed };
 }
 
-// Collapse a session's per-day per-model totals into normalized per-day bags the
+// Collapse a session's per-hour per-model totals into normalized per-day bags the
 // rollup sums directly. usd/tokens are linear in the per-model totals, so summing
-// bags across days equals costing the summed totals — no precision surprise.
-function normalizeClaudeDays({ daily, sub }) {
+// hours into a day then costing equals costing each hour and summing — no precision
+// surprise. dayOfKey is what makes this indifferent to the source resolution, so a
+// legacy day-keyed cache entry (pre-hour-buckets) flows through here untouched
+// instead of needing a migration or, worse, being discarded.
+function normalizeClaudeDays(scan) {
+  const byDay = {};
+  const subByDay = {};
+  for (const [key, totals] of Object.entries(scan.daily)) mergeInto((byDay[dayOfKey(key)] ||= {}), totals);
+  for (const [key, totals] of Object.entries(scan.sub)) mergeInto((subByDay[dayOfKey(key)] ||= {}), totals);
   const out = {};
-  for (const [day, totals] of Object.entries(daily)) {
+  for (const [day, totals] of Object.entries(byDay)) {
     out[day] = {
       usd: costUsd(totals),
       estimatedUsd: 0,
-      subAgentUsd: costUsd(sub[day] || {}),
+      subAgentUsd: costUsd(subByDay[day] || {}),
       tokens: tokensOf(totals),
       byModel: byModelOf(totals),
       costByType: costUsdByType(totals), // $ split by token type; sums to usd (Claude pricing)
@@ -356,10 +374,17 @@ function taskInfoFor(cardId, entry, assignments, taskNameById) {
 // ---- per-file scan cache ---------------------------------------------------
 // scanAllDaily used to re-read and re-parse EVERY transcript on EVERY call —
 // wasteful once most sessions are closed and will never change again. Cache the
-// (raw, pre-costing) per-day totals per transcript file, keyed on whether that
+// (raw, pre-costing) per-hour totals per transcript file, keyed on whether that
 // file has actually changed since it was last read, so a scan only does real
 // work for sessions that changed since the last look. Persisted to disk so a
 // server restart doesn't force one giant re-scan either.
+//
+// Two properties make this fit to be the permanent record it becomes once the source
+// transcript is deleted: totals are RAW TOKENS PER MODEL, not costed $ (so history can
+// be re-priced when rates change, and a pricing bug is fixable retroactively), and they
+// are bucketed per HOUR (so day / week / month views are all derivable, and an hourly
+// one stays possible). Neither is recoverable later — coarsening or pre-costing here
+// silently throws away history that no longer exists anywhere else.
 //
 // Deliberately NOT byte-offset/incremental tailing within a changed file — a
 // file that changed at all is reparsed in full via the existing claudeDaily/
@@ -367,7 +392,13 @@ function taskInfoFor(cardId, entry, assignments, taskNameById) {
 // the last CONFIRMED newline (not "current file size"), else a torn line from a
 // concurrently-written active session gets silently skipped forever — not
 // worth the complexity here.
-const USAGE_CACHE_VERSION = 2; // 2: per-file results are fork-bounded (v1 blobs were unbounded)
+const USAGE_CACHE_VERSION = 3; // 3: hour-bucketed keys (2: fork-bounded results; v1 was unbounded)
+// v2 is READ but never written: its day keys are a coarser case of the same shape, which
+// dayOfKey already handles. Accepting it is load-bearing, not politeness — a version
+// mismatch DISCARDS the whole blob, and for any transcript Claude Code has since deleted
+// that blob is the only surviving record of the spend. Bumping without this would destroy
+// exactly the history the fallback above exists to protect.
+const READABLE_CACHE_VERSIONS = new Set([USAGE_CACHE_VERSION, 2]);
 const USAGE_CACHE_FILE = 'usage-scan-cache.json';
 const STAT_YIELD_EVERY = 100;
 
@@ -387,7 +418,7 @@ function usageCacheFilePath(dataDir) {
 function loadUsageFileCaches(dataDir) {
   if (claudeFileCache && codexFileCache) return;
   const disk = readJsonOrLoud(usageCacheFilePath(dataDir), USAGE_CACHE_FILE);
-  if (disk && disk.version === USAGE_CACHE_VERSION) {
+  if (disk && READABLE_CACHE_VERSIONS.has(disk.version)) {
     claudeFileCache = new Map(Object.entries(disk.claude || {}));
     codexFileCache = new Map(Object.entries(disk.codex || {}));
   } else {

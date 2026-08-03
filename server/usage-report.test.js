@@ -496,6 +496,60 @@ test('a transcript deleted before it was ever scanned stays unresolved', async (
   assert.equal(_usageFileCacheStats().misses, 0, 'no phantom path was read');
 });
 
+const readCache = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'usage-scan-cache.json'), 'utf8'));
+
+// The cache outlives its transcript, so its resolution is the ceiling on every view that
+// can ever be built from deleted history. Pin it at per-hour, per-model, RAW TOKENS: an
+// hourly breakdown stays possible, and spend can be re-priced later because nothing was
+// pre-costed into $. Coarsening or pre-costing this is unrecoverable, not just lossy.
+test('caches raw per-model tokens at hour resolution, so any coarser view is derivable', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1';
+  const file = claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 100, output_tokens: 1 }, '2026-07-10T09:15:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 20, output_tokens: 1 }, '2026-07-10T09:45:00.000Z'), // same hour
+    turn('m3', 'claude-sonnet', { input_tokens: 3, output_tokens: 1 }, '2026-07-10T14:05:00.000Z'), // same day, later hour
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 123, 'the day view still sums every hour');
+
+  const entry = readCache(d.dataDir).claude[file];
+  assert.deepEqual(Object.keys(entry.result.daily).sort(), ['2026-07-10T09', '2026-07-10T14'],
+    'distinct hours are kept apart; turns within one hour merge');
+  assert.deepEqual(entry.result.daily['2026-07-10T09'], {
+    'claude-opus': { input: 120, output: 2, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 },
+  }, 'raw per-model token counts, not costed dollars');
+  assert.equal(Object.keys(entry.result.daily['2026-07-10T14'])[0], 'claude-sonnet', 'models stay separable per hour');
+});
+
+// Bumping the cache version DISCARDS the whole blob, and for a transcript Claude Code has
+// already deleted that blob is the only record of the spend that exists — so the hour-key
+// bump has to read the old day-keyed shape rather than throw it away. This is the exact
+// shape of the ~270 real entries (June included) on a live board at the time of the bump.
+test('reads a legacy day-keyed cache entry instead of discarding the history', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2';
+  const file = path.join(d.projectsDir, '-work-proj', `${sid}.jsonl`); // transcript long since deleted
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 2, // the pre-hour-bucket shape: keys are bare days
+    claude: { [file]: { size: 100, subSig: '', since: 0, result: {
+      daily: { '2026-07-10': { 'claude-opus': { input: 4000, output: 500, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } } },
+      sub: {}, failed: false,
+    } } },
+    codex: {},
+  }));
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 4000, 'v2 history survives the version bump');
+  assert.equal(activeBuckets(r)[0].key, '2026-07-10', 'a bare day key still lands on its day');
+  assert.equal(r.failedFiles, 0);
+});
+
 // A cache entry costed under a DIFFERENT fork bound can't be served (the bound is stored
 // but is not part of the key — the key is the file, which two card ids can share), so
 // resolving to the vanished path would only produce a read that fails. Same outcome as

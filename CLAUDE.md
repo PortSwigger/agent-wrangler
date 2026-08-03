@@ -73,6 +73,14 @@ don't re-derive it.
   startup, since restarts reset the interval) is what guarantees a session gets cached
   inside the window even if the panel is never opened. `scripts/cost-report.mjs` has no
   cache, so it still can't see deleted history.
+- **Because it's the record, the cache's resolution is a one-way door: raw tokens per
+  model, per UTC *hour*.** Never pre-cost to `$` (rates change; history must stay
+  re-priceable) and never coarsen to days — both throw away detail that no longer exists
+  anywhere else. `dayOfKey` collapses hour→day at read time, so `rollup` is unaffected.
+  **A cache-version bump must keep READING old versions** (`READABLE_CACHE_VERSIONS`), not
+  just mismatch-and-discard: for a deleted transcript, discarding the blob *is* deleting
+  the spend record. v2's bare day keys survive precisely because `dayOfKey` treats them
+  as their own day.
 - **One instance per `DATA_DIR` — enforced.** Two servers sharing a `DATA_DIR`
   clobber each other's `mappings.json`/`tasks.json` (whole-snapshot writes). **A
   different `PORT` does NOT isolate — only `AW_DATA_DIR` does.** `main()` takes a
