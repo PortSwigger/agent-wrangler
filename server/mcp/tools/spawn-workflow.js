@@ -35,9 +35,9 @@ export const spawnWorkflowTool = {
     agent: z.string().optional().describe('Agent to launch (claude or codex). Defaults to claude.'),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
     into: z.string().optional().describe(
-      'Board task id (t_..., discover via list_tasks) to put the run on. NOT your TodoList/'
-      + 'TaskCreate id — passing one of those silently lands the run in Unassigned instead of '
-      + 'erroring. Defaults to your current task; omit to keep it there.',
+      'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '
+      + 'silently lands the run in Unassigned instead of erroring. Defaults to your current '
+      + 'task; omit to keep it there.',
     ),
   },
   async handler({ deps, caller }, args = {}) {

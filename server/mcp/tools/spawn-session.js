@@ -29,9 +29,9 @@ export const spawnSessionTool = {
     agent: z.string().optional().describe('Agent to launch (claude or codex). Defaults to claude.'),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the new session (--add-dir).'),
     into: z.string().optional().describe(
-      'Board task id (t_..., discover via list_tasks) to put the new session on. NOT your '
-      + 'TodoList/TaskCreate id — passing one of those silently lands the session in Unassigned '
-      + 'instead of erroring. Defaults to your current task; omit to keep it there.',
+      'Task id to put the new session on, sourced from list_tasks. An id not sourced from '
+      + 'list_tasks silently lands the session in Unassigned instead of erroring. Defaults to '
+      + 'your current task; omit to keep it there.',
     ),
     worktree: z.boolean().optional().describe('Launch in a fresh git worktree off cwd.'),
     worktree_branch: z.string().optional().describe('Branch for the worktree (default: derived from intent).'),
