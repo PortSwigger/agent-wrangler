@@ -43,12 +43,5 @@ then `set_links` right away, before reporting the PR back to the user. A PR you
 created but didn't link is invisible on the board (no CI status, no
 auto-removal on merge/close). Scope defaults to `"session"` as above.
 
-**Once linked, inbound CI status is informational only.** After a PR is
-attached, the board's own polling handles status monitoring. If a
-checks-passed/checks-failed notification comes through for a linked PR, treat
-it as an update to read, not a trigger to act — don't proactively fetch logs,
-diagnose the failure, or push a fix. Only dig in if the user explicitly asks
-you to.
-
 (Other link types — GitHub issues, arbitrary URLs — may be added over time; check
 the current `set_links` schema for what it accepts.)
