@@ -1,9 +1,9 @@
 import { latestHistory, latestTasks, send, setPendingSelect } from './app.js';
 import { toast } from './toast.js';
 import { openFork } from './modals.js';
-import { groupHistory, fmtDuration, filterHistory } from './history-group.js';
+import { groupHistory, fmtDuration, filterHistory, filterArchivedTasks } from './history-group.js';
 import { isWorkflowRun } from './workflow.js';
-import { WORKFLOW_ICON } from './icons.js';
+import { WORKFLOW_ICON, ARCHIVE_ICON } from './icons.js';
 import { esc, timeAgo, truncate } from './util.js';
 
 // Current History filter text. Module-scoped (not in the DOM) so it survives the
@@ -74,6 +74,25 @@ function histCard(h, { wf = false, orchestrator = false } = {}) {
     </div>`;
 }
 
+// The task-archive marker card: the whole task was set aside (taskStore.
+// archiveTask), not just one session — visually distinct from histCard (tinted
+// --purple, see styles.css .hc.task-archived) so it reads as "about this task"
+// rather than another session row. Just one action: restore the task tile.
+function histTaskArchiveCard(task) {
+  const tid = esc(task.id);
+  const meta = `<span title="${esc(fmtWhen(task.archivedAt))}">${esc(timeAgo(task.archivedAt) || '—')}</span>`;
+  return `<div class="hc task-archived" data-taskid="${tid}">
+      <div class="hc-stripe"></div>
+      <div class="hc-body">
+        <div class="hc-row1"><span class="hc-task-badge" title="Whole task archived">${ARCHIVE_ICON}</span><div class="hc-desc">${esc(task.name)}</div></div>
+        <div class="hc-meta">${meta}</div>
+      </div>
+      <div class="hc-acts">
+        <button class="hist-task-restore" data-taskid="${tid}" title="Restore task to the board">↩</button>
+      </div>
+    </div>`;
+}
+
 // Kinds the workflow_phase MCP tool can stamp; anything else (or absent) reads as
 // neutral. Each tints the outcome chip via its own CSS class (semantic theme vars).
 const OUTCOME_KINDS = new Set(['neutral', 'active', 'warning', 'success', 'danger']);
@@ -131,6 +150,7 @@ function histChildStack(unit) {
 function renderUnit(u) {
   if (u.kind === 'workflow') return histWorkflowBox(u);
   if (u.kind === 'children') return histChildStack(u);
+  if (u.kind === 'task-archive') return histTaskArchiveCard(u.task);
   return histCard(u.session, { wf: isWorkflowRun(u.session) });
 }
 
@@ -156,9 +176,16 @@ function toggleHistWorkflowCollapse(sessionId) {
 // ignores it entirely and shows every match, since search spans all of history.
 let weeksShown = 0;
 
+// Archived tasks (taskStore.archiveTask) — a task-archive marker card can be
+// the only thing in History (an empty task, archived), so the empty-state
+// check below can't key on latestHistory (sessions) alone.
+function archivedTasks() {
+  return (latestTasks.tasks || []).filter((t) => t.archivedAt);
+}
+
 export function renderHistory() {
   const el = document.getElementById('history');
-  if (!latestHistory.length) {
+  if (!latestHistory.length && !archivedTasks().length) {
     el.innerHTML = `<div class="hist-empty">No archived sessions yet. Archiving a session from the board stops its process and moves it here, where you can resume it later.</div>`;
     return;
   }
@@ -221,13 +248,16 @@ function renderGrid() {
   const grid = document.getElementById('hist-grid');
   if (!grid) return;
   const filtered = filterHistory(latestHistory, histQuery);
-  const groups = groupHistory(filtered, latestTasks, Date.now());
+  const archived = archivedTasks();
+  const filteredArchived = filterArchivedTasks(archived, histQuery);
+  const groups = groupHistory(filtered, latestTasks, Date.now(), filteredArchived);
   const q = histQuery.trim();
+  const total = latestHistory.length + archived.length;
   const countEl = document.getElementById('hist-count');
-  if (countEl) countEl.textContent = q ? `${filtered.length} of ${latestHistory.length}` : `${latestHistory.length} archived`;
+  if (countEl) countEl.textContent = q ? `${filtered.length + filteredArchived.length} of ${total}` : `${total} archived`;
 
   if (!groups.length) {
-    grid.innerHTML = `<div class="hist-empty">No sessions match your filter.</div>`;
+    grid.innerHTML = `<div class="hist-empty">Nothing matches your filter.</div>`;
     return;
   }
 
@@ -250,7 +280,7 @@ function renderGrid() {
     html += `<div class="hist-bucket hist-bucket--more">
       <span class="rule"></span>
       <button class="hist-show-older" type="button">Show older ↓</button>
-      <span class="n">${remaining} older session${remaining > 1 ? 's' : ''}</span>
+      <span class="n">${remaining} older item${remaining > 1 ? 's' : ''}</span>
       <span class="rule"></span>
     </div>`;
   }
@@ -265,6 +295,11 @@ function renderGrid() {
     }));
   grid.querySelectorAll('.hist-fork').forEach((b) =>
     b.addEventListener('click', () => openFork(b.dataset.sid)));
+  grid.querySelectorAll('.hist-task-restore').forEach((b) =>
+    b.addEventListener('click', () => {
+      send({ type: 'task-unarchive', taskId: b.dataset.taskid });
+      toast('Task restored');
+    }));
   grid.querySelectorAll('.hist-remove').forEach((b) =>
     b.addEventListener('click', () => {
       const h = latestHistory.find((x) => x.sessionId === b.dataset.sid);

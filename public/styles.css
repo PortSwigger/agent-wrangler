@@ -232,6 +232,8 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .hist-fork:hover { color: var(--fg); border-color: var(--accent); background: var(--surface-2); }
 .hist-remove { background: transparent; border-color: var(--border); color: var(--fg-subtle); }
 .hist-remove:hover { color: var(--danger-strong); border-color: var(--danger-border); }
+.hist-task-restore { background: transparent; border-color: var(--border); color: var(--fg-muted); }
+.hist-task-restore:hover { color: var(--purple); border-color: var(--purple); background: var(--surface-2); }
 
 /* Right-click menu on session cards. Floats on <body> above the board; JS sets
    its fixed position. Mirrors the panel's action vocabulary (icon + label rows,
@@ -1479,6 +1481,17 @@ body.system-banner-open { padding-top: 30px; }
 /* Small run badge by a solo run's desc (a workflow with no boxed worker). */
 .hc-wf-badge { display: inline-flex; flex: 0 0 auto; color: var(--wf); }
 .hc-wf-badge svg { width: 13px; height: 13px; display: block; }
+/* Task-archive marker card: the whole task was set aside, not one session —
+   tinted --purple (already the "about this task" hue, see .hc-was b above)
+   rather than --wf (workflow) or a new role, so it stays visually distinct
+   from both without adding a third accent for one small card. */
+.hc.task-archived {
+  border-color: color-mix(in srgb, var(--purple) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--purple) 6%, var(--surface));
+}
+.hc.task-archived .hc-stripe { background: color-mix(in srgb, var(--purple) 60%, transparent); }
+.hc-task-badge { display: inline-flex; flex: 0 0 auto; color: var(--purple); }
+.hc-task-badge svg { width: 13px; height: 13px; display: block; }
 /* Issue + outcome chip in the box header; the issue ellipsises if the row tightens. */
 .wf-issue {
   flex: 0 1 auto; min-width: 0;
