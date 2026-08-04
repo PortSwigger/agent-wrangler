@@ -122,6 +122,21 @@ don't re-derive it.
   the one exception to "carried via `buildGraph`"** — it's task-scoped, not
   session-scoped, so it rides `taskStore.snapshot()` directly; don't go looking for it
   in `buildGraph`.
+- **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
+  be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
+  (`public/cards.js`) carry `data-sid` + `draggable="true"` and stand in for
+  whatever they wrap; the card/box nested inside is rendered `draggable="false"`
+  (`wf`/`nested` in `sessionCardHtml`/`workflowBoxHtml`) so it never starts its
+  own drag one DOM level too deep. `public/app.js` must match this at all four
+  sites: the drag-source wiring selector, `dragAfterElement`'s `:scope >` hit-test
+  list, the drop handler's `body.children` order-reconstruction walk, and
+  `.dragging-hidden` in `styles.css`. Miss any one and a wrapped parent silently
+  drops out of the reordered array (ranks `Infinity` in `orderSessions`, sinks to
+  the bottom on every unrelated drag in its task) or throws on drop (`insertBefore`
+  needs the hit-tested element to be a direct child of `.task-body`) — this was a
+  live bug (a parent-with-children could never be dragged, and any drag in its
+  task permanently dropped it from `sessionOrder`), not a "sessions with children
+  sink last" feature.
 - **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
   launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
   `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).

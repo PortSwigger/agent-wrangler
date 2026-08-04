@@ -222,10 +222,22 @@ test('renderTileCards: a plain parent + spine is wrapped in one .child-group ele
   const parent = sess({ sessionId: 'p1', label: 'parent' });
   const child = sess({ sessionId: 'c1', label: 'child', parentSession: 'p1' });
   const html = renderTileCards([parent, child], ctx());
-  const groupMatch = html.match(/<div class="child-group">([\s\S]*)<\/div>\s*$/);
-  assert.ok(groupMatch, 'expected a single .child-group wrapper around the card + spine');
-  assert.match(groupMatch[1], /data-sid="p1"/);
+  const groupMatch = html.match(/<div class="child-group" data-sid="p1" draggable="true">([\s\S]*)<\/div>\s*$/);
+  assert.ok(groupMatch, 'expected a single .child-group wrapper, carrying the parent\'s data-sid + draggable, around the card + spine');
   assert.match(groupMatch[1], /child-spine/);
+  // The card nested inside yields drag/reorder to the wrapper — same split as a
+  // workflow box's orchestrator card — so it must not also be independently
+  // draggable (double-registering the drag source app.js wires up).
+  assert.match(groupMatch[1], /session-card [^"]*" data-sid="p1" draggable="false"/);
+});
+
+test('renderTileCards: a workflow run with a live team is wrapped in a .child-group too, and its .workflow-box yields drag to the wrapper', () => {
+  const orch = sess({ sessionId: 'orch', workflow: { issue: 'ENT-1' }, teammates: [{ name: 't1', color: 'blue' }] });
+  const html = renderTileCards([orch], ctx());
+  const groupMatch = html.match(/<div class="child-group" data-sid="orch" draggable="true">([\s\S]*)<\/div>\s*$/);
+  assert.ok(groupMatch, 'expected a single .child-group wrapper, carrying the run\'s data-sid + draggable, around the box + team spine');
+  assert.match(groupMatch[1], /team-spine/);
+  assert.match(groupMatch[1], /workflow-box[^"]*" data-sid="orch" draggable="false"/);
 });
 
 test('renderTileCards: a solo parent (no children) is NOT wrapped in a .child-group', () => {
@@ -256,12 +268,15 @@ test('renderTileCards: a 3-level chain nests the great-grandchild under the (pro
   const grandchild = sess({ sessionId: 'gc1', label: 'gc1', parentSession: 'w1' });
   const greatGrandchild = sess({ sessionId: 'ggc1', label: 'ggc1', parentSession: 'gc1' });
   const html = renderTileCards([orch, worker, grandchild, greatGrandchild], ctx());
-  // Every session appears exactly once, EXCEPT orch — a workflow box carries the
-  // orchestrator's data-sid on both the box wrapper (for drag/reorder) and its
-  // nested card, which is pre-existing, unrelated behavior.
-  for (const id of ['w1', 'gc1', 'ggc1']) {
+  // w1/ggc1 render exactly once — folded into a spine, only the compact row
+  // carries their data-sid. orch and gc1 are the two top-level parents here
+  // (gc1 promoted, plus its own child), so each carries its data-sid on BOTH
+  // the wrapper (.workflow-box / .child-group — the drag/reorder unit) and its
+  // nested, non-draggable card — the same split, deliberate for both.
+  for (const id of ['w1', 'ggc1']) {
     assert.equal(html.match(new RegExp(`data-sid="${id}"`, 'g'))?.length, 1, `${id} should render exactly once`);
   }
+  assert.equal(html.match(/data-sid="gc1"/g)?.length, 2, 'gc1 renders on both its .child-group wrapper and its nested card');
   assert.match(html, /child-spine/); // ggc1 nests under gc1's own plain spine
 });
 

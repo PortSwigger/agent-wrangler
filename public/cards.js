@@ -177,7 +177,7 @@ export function devcontainerChip(s) {
   return '<span class="card-tag runtime-dc" title="Running inside the repo devcontainer">⬢ dc</span>';
 }
 
-export function sessionCardHtml(s, ctx, { expanded, wf } = {}) {
+export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   const estimated = s.agent === 'codex';
   const cost = typeof s.usd === 'number' && s.usd > 0
@@ -229,9 +229,12 @@ export function sessionCardHtml(s, ctx, { expanded, wf } = {}) {
   const bwTitle = bw.length > 6 ? ` title="${esc(bw)}"` : '';
   // The orchestrator card sits inside a workflow box that owns drag/reorder for the
   // whole run, so the card itself isn't independently draggable; `wf-orchestrator`
-  // tints its frame violet to read as the run's lead.
+  // tints its frame violet to read as the run's lead. `nested` is the plain-parent
+  // equivalent: whenever childGroupHtml is about to wrap this card in a
+  // `.child-group` (it has children and/or a live team), the GROUP becomes the
+  // drag unit instead — same reasoning as `wf`, just without the violet tint.
   const wfCls = wf ? ' wf-orchestrator' : '';
-  const draggable = wf ? 'false' : 'true';
+  const draggable = (wf || nested) ? 'false' : 'true';
   return `<div class="session-card ${state}${dormant}${selected}${expanded ? ' expanded' : ''}${wfCls}" data-sid="${esc(s.sessionId)}" draggable="${draggable}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="card-bar"${bwTitle}><span>${esc(bwShown)}</span></span>
     <div class="card-name-row">
@@ -284,8 +287,11 @@ export function workerRowHtml(s, ctx) {
 // rows. The header toggles collapse (client-only, in ctx.collapsedWorkflows) — folding
 // the spine away while the run itself stays visible. A solo run (no workers yet)
 // shows no spine and no chevron; there is nothing to collapse. data-sid on the box
-// is the orchestrator's, so the box drags/reorders as one unit in its place.
-export function workflowBoxHtml(orch, workers, ctx, { focusMode } = {}) {
+// is the orchestrator's, so the box drags/reorders as one unit in its place —
+// UNLESS `nested` (the run also has a live team, so renderTileCards wraps this
+// box in its own `.child-group`; that outer wrapper becomes the drag unit instead,
+// same as a plain parent's card yielding to childGroupHtml — see `nested` there).
+export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) {
   const n = workers.length;
   const collapsed = n > 0 && ctx.collapsedWorkflows.has(orch.sessionId);
   const count = n === 0 ? 'solo' : `${n} worker${n > 1 ? 's' : ''}`;
@@ -300,7 +306,7 @@ export function workflowBoxHtml(orch, workers, ctx, { focusMode } = {}) {
   const spine = n > 0 && !collapsed
     ? `<div class="workflow-spine">${workers.map((w) => workerRowHtml(w, ctx)).join('')}</div>`
     : '';
-  return `<div class="workflow-box${collapsed ? ' collapsed' : ''}" data-sid="${esc(orch.sessionId)}" draggable="true">
+  return `<div class="workflow-box${collapsed ? ' collapsed' : ''}" data-sid="${esc(orch.sessionId)}" draggable="${nested ? 'false' : 'true'}">
     ${head}
     ${sessionCardHtml(orch, ctx, { expanded: focusMode, wf: true })}
     ${spine}
@@ -373,10 +379,17 @@ export function teamSpineHtml(lead, ctx) {
 // them one grid item regardless of column count. No border/background/padding
 // of its own (see .child-spine) — purely a grouping box, invisible in the
 // normal flex layout where it changes nothing.
+// Carries the parent's own data-sid + draggable="true" — it is now the actual
+// drag/reorder unit in app.js (the card inside is rendered non-draggable via
+// `nested`, same split as .workflow-box/its orchestrator card). Without this,
+// the group has no data-sid at all: app.js's drop-handler DOM walk can't see it
+// (dropped from the reordered array entirely) and dragging the inner card alone
+// inserts the placeholder into the wrong parent — the two bugs behind a
+// parent-with-children silently sinking to the bottom of its task on any drag.
 function childGroupHtml(card, s, children, ctx) {
   const spine = childSpineHtml(children, ctx);
   const team = teamSpineHtml(s, ctx);
-  return (spine || team) ? `<div class="child-group">${card}${spine}${team}</div>` : card;
+  return (spine || team) ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${card}${spine}${team}</div>` : card;
 }
 
 // Assemble a tile's active cards, folding each parent + its present children
@@ -405,12 +418,14 @@ export function renderTileCards(active, ctx, opts = {}) {
     // A live agent team hangs off the lead as its own spine, independent of the
     // parentSession child spine (a lead can have both). The workflow box already
     // wraps its own child spine, so a team is appended alongside it in one group.
+    const hasTeam = (s.teammates?.length || 0) > 0;
     if (isWorkflowRun(s)) {
-      const box = workflowBoxHtml(s, children, ctx, opts);
+      const box = workflowBoxHtml(s, children, ctx, { ...opts, nested: hasTeam });
       const team = teamSpineHtml(s, ctx);
-      return team ? `<div class="child-group">${box}${team}</div>` : box;
+      return team ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${box}${team}</div>` : box;
     }
-    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode }), s, children, ctx);
+    const nested = children.length > 0 || hasTeam;
+    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode, nested }), s, children, ctx);
   }).join('');
 }
 
