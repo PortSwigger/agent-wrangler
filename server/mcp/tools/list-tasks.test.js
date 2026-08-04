@@ -157,6 +157,21 @@ test('list_tasks lists every task and keeps their folders distinct', async () =>
   assert.equal(t2.bestFolder, '/Users/x/vcs/acme-pipeline');
 });
 
+test('list_tasks excludes an archived task — it is off the board and not a valid spawn/assign target', async () => {
+  const out = await listTasksTool.handler({
+    deps: deps({
+      tasks: [
+        { id: 'T1', name: 'Live' },
+        { id: 'T2', name: 'Archived', archivedAt: 1000 },
+      ],
+      sessions: [{ sessionId: 'C1', cwd: '/Users/x/vcs/agent-wrangler' }],
+      assignments: { C1: 'T1' },
+    }),
+    caller: null,
+  });
+  assert.deepEqual(out.structuredContent.tasks.map((t) => t.id), ['T1']);
+});
+
 test('list_tasks ignores unassigned (adhoc) sessions — they belong to no task', async () => {
   const out = await listTasksTool.handler({
     deps: deps({

@@ -22,7 +22,10 @@ export const listTasksTool = {
     + 'belong to no task and are excluded. Read-only.',
   inputSchema: {},
   async handler({ deps }) {
-    const tasks = deps.taskStore.snapshot().tasks ?? [];
+    // Archived tasks are off the board (see taskStore.archiveTask) — exclude them
+    // so an agent can never spawn/assign into one via the `into`/task_id contract;
+    // assign_session's taskStore.assign() also refuses them as a second layer.
+    const tasks = (deps.taskStore.snapshot().tasks ?? []).filter((t) => !t.archivedAt);
     const sessionsByTask = new Map(tasks.map((t) => [t.id, []]));
     for (const s of deps.graph()?.sessions ?? []) {
       const bucket = sessionsByTask.get(deps.taskStore.taskFor(s.sessionId)?.id);
