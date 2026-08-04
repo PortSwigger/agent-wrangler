@@ -4193,7 +4193,9 @@ function connect() {
       toast(msg.unclean
         ? `Task archived${sessionsNote} — a background job may have been interrupted uncleanly`
         : `Task archived${sessionsNote}`, false, {
-        label: 'Restore',
+        // "Restore task", not plain "Restore" — it only brings the task tile
+        // back empty; any cascaded sessions stay archived, resumed individually.
+        label: 'Restore task',
         duration: 10000,
         onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId }),
       });
