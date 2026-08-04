@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
-  sessionsPerRow, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  MIN_COL_PX, GRID_CHROME_X_PX,
+  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { tileWeight } from './snooze.js';
@@ -14,7 +15,7 @@ const sess = (id, extra = {}) => ({ sessionId: id, snooze: {}, ...extra });
 const ADHOC = '__adhoc__';
 
 test('constants are exported positive numbers', () => {
-  for (const c of [MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW]) {
+  for (const c of [MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW, MIN_COL_PX, GRID_CHROME_X_PX]) {
     assert.equal(typeof c, 'number');
     assert.ok(c > 0);
   }
@@ -45,6 +46,18 @@ test('sessionsPerRow: never overestimates capacity relative to the grid\'s real 
   for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
     assert.ok(sessionsPerRow({ clientHeight }) <= rawFormula(clientHeight));
   }
+});
+
+test('columnsForWidth: floors to the readable-width columns that fit, never below one', () => {
+  // Room for exactly 3 columns of MIN_COL_PX, plus the grid's own horizontal chrome.
+  const wide = { clientWidth: 3 * MIN_COL_PX + GRID_CHROME_X_PX };
+  assert.equal(columnsForWidth(wide), 3);
+  // A partial extra column is floored away, not rounded up.
+  const partial = { clientWidth: 3 * MIN_COL_PX + Math.floor(MIN_COL_PX / 2) + GRID_CHROME_X_PX };
+  assert.equal(columnsForWidth(partial), 3);
+  // A narrow / zero-width grid still yields one column, never zero.
+  assert.equal(columnsForWidth({ clientWidth: 0 }), 1);
+  assert.equal(columnsForWidth({ clientWidth: MIN_COL_PX - 1 }), 1);
 });
 
 test('rowSpan: ceil(count/perRow), clamped to [1, MAX_SPAN]', () => {
@@ -102,6 +115,29 @@ test('computeLayout: 5–6 single-span tiles use 2 columns; 7+ go to 3', () => {
     assert.equal(scroll, false, `${n} tiles should fit without scroll`);
     assert.equal(cols, wantCols, `${n} tiles → ${wantCols} cols`);
   }
+});
+
+// A DELIBERATE, conditional reversal of the "2–3 tiles must NOT collapse into a single
+// column" rule above: that rule holds at any width where two columns actually fit, and
+// only a width cap of 1 overrides it.
+test('computeLayout: a maxCols cap of 1 stacks every tile into one column', () => {
+  const tiles = [1, 2, 3].map((n) => ({ id: `t${n}`, span: 1 }));
+  const { placed, cols } = computeLayout(tiles, 1);
+  assert.equal(cols, 1);
+  assert.deepEqual(placed.map((p) => p.col), [0, 0, 0]);
+  assert.deepEqual(placed.map((p) => p.rowStart), [0, 1, 2]);
+});
+
+// A cap of 1 forces tall columns, so a board that fit before may now exceed
+// MAX_FIT_ROWS — it must report scroll rather than silently overflowing. (Piece 2 of
+// this work revisits what a 1-column board SHOULD do here; the cap itself must at
+// least be honest about it.)
+test('computeLayout: a capped board that no longer fits reports scroll', () => {
+  const tiles = Array.from({ length: MAX_FIT_ROWS + 2 }, (_, i) => ({ id: `t${i}`, span: 1 }));
+  const { cols, rows, scroll } = computeLayout(tiles, 1);
+  assert.equal(cols, 1);
+  assert.equal(rows, MAX_FIT_ROWS + 2);
+  assert.equal(scroll, true);
 });
 
 test('computeLayout: a big early tile does not strand later tiles in the last column', () => {

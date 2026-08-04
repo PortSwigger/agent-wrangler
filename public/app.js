@@ -6,7 +6,7 @@ import {
 import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX } from './todo.js';
 import {
   MAX_ONSCREEN_ROWS,
-  sessionsPerRow, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption } from './workflow.js';
@@ -300,13 +300,15 @@ function applyGraph(graph) {
   // re-render it whenever it's open so toggles/edits/fires reflect at once.
   if (!document.getElementById('schedules-modal').classList.contains('hidden')) renderSchedules();
 
-  // Skip the board while maximized: it's display:none, so renderGrid would measure
-  // zero height and compute a collapsed layout (setMaximized re-renders on restore).
+  // Skip the board while maximized OR diffing: both make #grid display:none, so
+  // renderGrid would measure zero width/height and compute a collapsed layout — one
+  // column, since columnsForWidth floors a zero width to 1 (setMaximized and
+  // closeDiffPanel each re-render once #grid has real dimensions again).
   // Also skip while a card menu is open — replacing #grid's innerHTML resets any
   // scrolled task list's scrollTop to 0, and restoring it fires a real 'scroll'
   // event that would otherwise close the menu right back out from under the user
   // on every ~4s poll (closeCardMenu re-renders to catch up once it's dismissed).
-  if (currentView === 'grid' && !gridEditing() && !maximized && !cardMenuEl) renderGrid();
+  renderGridIfVisible();
   if (currentView === 'history') maybeRenderHistory();
   refreshFolderList();
 
@@ -507,6 +509,14 @@ function dragAfterElement(body, y) {
     if (y < rect.top + rect.height / 2) return card;
   }
   return null;
+}
+
+// True while the diff panel has #grid hidden (`main.diffing #grid { display: none }`).
+// Read off the DOM class, NOT isDiffPanelOpen(): closeDiffPanel clears its own state
+// immediately but keeps the class for the ~220ms slide-out, so only the class tracks
+// whether #grid is actually measurable.
+function gridHidden() {
+  return document.querySelector('main').classList.contains('diffing');
 }
 
 // True while a task name is being edited inline or a session is being dragged,
@@ -845,7 +855,7 @@ function renderGrid() {
   const { visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
   tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount) });
   const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
-  const canonical = computeLayout(tiles);
+  const canonical = computeLayout(tiles, columnsForWidth(el));
   let { placed, cols, rows, scroll } = canonical;
   // Mid-drag preview: swap the dragged tile and the hovered target WITHOUT
   // re-running computeLayout on the whole board — see localSwapPlacement for
@@ -2374,8 +2384,19 @@ export function setMaximized(on) {
   if (on) setDiffFullscreen(false);
   // Restoring un-hides #grid: re-render now that it has real dimensions again so
   // the board reflects current data at the correct size immediately, rather than
-  // showing a stale/collapsed layout until the next ~4s poll.
-  if (!on && currentView === 'grid' && !gridEditing()) renderGrid();
+  // showing a stale/collapsed layout until the next ~4s poll. Guarded, because
+  // setDiffFullscreen(true) calls this with `false` while main.diffing is set — #grid
+  // is hidden then, so measuring it would collapse the board to one column. This also
+  // inherits renderGridIfVisible's !cardMenuEl check, which this path did not have
+  // before; a menu can't survive into a restore anyway (closeCardMenu is bound to
+  // `resize`, and entering maximize hides #grid), so the two agree in practice.
+  if (!on) renderGridIfVisible();
+}
+
+// Every background re-render goes through here: the board's column count is now
+// width-derived, so rendering while #grid is hidden collapses it to one column.
+export function renderGridIfVisible() {
+  if (currentView === 'grid' && !gridEditing() && !maximized && !gridHidden() && !cardMenuEl) renderGrid();
 }
 
 // Shared by the panel's Fullscreen/Restore button and the Ctrl+Cmd+M shortcut.
@@ -2806,7 +2827,7 @@ window.addEventListener('resize', () => {
   if (currentView !== 'grid') return;
   clearTimeout(gridResizeTimer);
   gridResizeTimer = setTimeout(() => {
-    if (currentView === 'grid' && !gridEditing()) renderGrid();
+    renderGridIfVisible();
   }, 150);
 });
 
@@ -2851,6 +2872,9 @@ function hideSidebar() {
     handle.classList.remove('dragging');
     document.body.classList.remove('dragging');
     localStorage.setItem('cm-sidebar-w', sidebar.style.width);
+    // On mouseup, not mousemove: a full re-render per mouse event would rebuild every
+    // tile mid-drag.
+    renderGridIfVisible();
   });
 })();
 
