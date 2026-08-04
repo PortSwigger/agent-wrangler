@@ -1,4 +1,4 @@
-import { send, latestSessions, setMaximized } from './app.js';
+import { send, latestSessions, setMaximized, renderGridIfVisible } from './app.js';
 import { toast } from './toast.js';
 import { X_ICON, MAXIMIZE_ICON, MINIMIZE_ICON } from './icons.js';
 import {
@@ -151,6 +151,10 @@ export function closeDiffPanel() {
     // so #sidebar reappears at the same moment the diff view actually disappears
     // rather than mid-animation.
     if (diffFullscreen) setDiffFullscreen(false);
+    // #grid is measurable again only now the `diffing` class is gone. Its column count
+    // is width-derived, so re-render at real dimensions rather than leaving the board
+    // collapsed to one column until the next ~4s poll.
+    renderGridIfVisible();
   }, reducedMotion() ? 0 : 220);
 }
 

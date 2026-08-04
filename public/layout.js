@@ -41,6 +41,18 @@ export const MIN_SESSIONS_PER_ROW = 2;
 // 12px row-gaps a 3-row `repeat(3, 1fr)` bakes into every track (24). Re-measure
 // alongside CARD_STRIDE_PX/TILE_CHROME_PX if #grid's padding/gap change.
 export const GRID_CHROME_PX = 52;
+// The narrowest a task column stays readable before .card-name / .card-repo /
+// .branch-name start ellipsising (they have no min-width — see styles.css — so
+// nothing else stops a column shrinking). Judged by eye on one laptop board, NOT
+// measured off the box model: 420 collapsed to one column while two were still
+// comfortable, 380 felt right. Re-tune the same way if the card chrome changes.
+export const MIN_COL_PX = 380;
+// #grid's horizontal chrome (styles.css): 14px padding left+right. The 12px column
+// gaps are deliberately left out — that makes the cap optimistic by under 10px at
+// every breakpoint (6px at 2 columns, 9px at 4), well inside the tolerance of an
+// eye-tuned MIN_COL_PX, and folding them in would shift the 2-column breakpoint by
+// 12px and mean re-tuning it.
+export const GRID_CHROME_X_PX = 28;
 
 // How many session cards comfortably fit (no internal scroll) in one grid row,
 // for the current viewport. The basis is the nominal on-screen row height
@@ -52,6 +64,17 @@ export const GRID_CHROME_PX = 52;
 export function sessionsPerRow(gridEl) {
   const rowH = ((gridEl.clientHeight || 0) - GRID_CHROME_PX) / MAX_ONSCREEN_ROWS;
   return Math.max(MIN_SESSIONS_PER_ROW, Math.floor((rowH - TILE_CHROME_PX) / CARD_STRIDE_PX));
+}
+
+// How many readable-width columns fit the grid's CURRENT width — the horizontal
+// twin of sessionsPerRow, and for the same reason: the packer is otherwise blind to
+// the viewport, so 2 columns at 1600px and 2 at 400px look identical to it. Widening
+// the terminal (drag-to-resize shrinks #grid, a flex: 1 sibling of #sidebar) used to
+// split that narrow grid into two half-width columns and truncate every card; capping
+// by width stacks them into one full-width column instead.
+export function columnsForWidth(gridEl) {
+  const usable = (gridEl.clientWidth || 0) - GRID_CHROME_X_PX;
+  return Math.max(1, Math.floor(usable / MIN_COL_PX));
 }
 
 // Tile height (in grid rows) derived from how many sessions it holds.
@@ -68,7 +91,8 @@ export function rowSpan(sessionCount, perRow) {
 // Retries with one extra column if the greedy result still overflows MAX_FIT_ROWS:
 // a large-span tile early in the order can otherwise strand all subsequent tiles
 // in the last column while earlier columns sit nearly empty. Only once columns hit
-// MAX_COLS and rows still overflow does it fall back to the scrolling layout.
+// the cap (`maxCols`, at most MAX_COLS) and rows still overflow does it fall back to
+// the scrolling layout.
 //
 // First-fit, not next-fit: each tile goes into the leftmost column that still
 // has room under `target`, not just "the current column, advancing forward
@@ -80,7 +104,10 @@ export function rowSpan(sessionCount, perRow) {
 // instead. When no column has room under `target` (every column already full,
 // or a single tile's span alone exceeds it), the fallback is the least-loaded
 // column — the placement that minimizes the worst overflow.
-export function computeLayout(tiles) {
+// `maxCols` caps how wide the board may go — normally MAX_COLS, but app.js passes
+// columnsForWidth(#grid) so a narrow grid stacks into fewer (down to one) full-width
+// columns instead of splitting into unreadably narrow ones.
+export function computeLayout(tiles, maxCols = MAX_COLS) {
   const total = tiles.reduce((a, t) => a + t.span, 0);
   const maxSpan = Math.max(1, ...tiles.map((t) => t.span));
   const pack = (cols) => {
@@ -97,16 +124,17 @@ export function computeLayout(tiles) {
   };
   // Seed with the fewest columns that keep tiles a comfortable height
   // (≤ MAX_ONSCREEN_ROWS) so a small board uses big panels instead of prematurely
-  // splitting into a 3rd column — 5–6 tiles land as 2 wide columns, not 3. The
-  // square count (ceil√total) is the upper bound: it keeps big boards subdivided
-  // and stops 2–3 tiles collapsing into one tall column. They cross at 9 (3×3), so
-  // this only pulls 5–6 back to 2 and leaves the rest of the square behaviour intact.
+  // splitting into a 3rd column — 5–6 tiles land as 2 wide columns, not 3; the square
+  // count (ceil√total) keeps big boards subdivided. They cross at 9 (3×3).
+  // Don't delete the `Math.max(2, …)` floor to reach one column — it is the width cap
+  // that does that, so a WIDE board still can't collapse into one tall column.
   const squareCols = Math.ceil(Math.sqrt(total));
+  const cap = Math.max(1, Math.min(MAX_COLS, maxCols));
   const seed = Math.min(squareCols, Math.max(2, Math.ceil(total / MAX_ONSCREEN_ROWS)));
   let best;
-  for (let cols = Math.min(MAX_COLS, Math.max(1, seed)); ; cols++) {
+  for (let cols = Math.min(cap, Math.max(1, seed)); ; cols++) {
     best = pack(cols);
-    if (best.rows <= MAX_FIT_ROWS || cols >= MAX_COLS) break;
+    if (best.rows <= MAX_FIT_ROWS || cols >= cap) break;
   }
   // The square starting count can over-provision columns for a few dense tiles
   // (spans [2,1,3] pack into two columns of three, leaving a third empty — a
