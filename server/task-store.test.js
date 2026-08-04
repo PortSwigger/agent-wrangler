@@ -109,6 +109,70 @@ test('deleteTask returns null for an unknown id; restoreTask is a no-op when id 
   assert.equal(store.snapshot().tasks.length, 1);
 });
 
+test('archiveTask stamps archivedAt; unarchiveTask clears it; both no-op when already in that state', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Work' });
+  assert.equal(store.archiveTask(t.id, 1000), true);
+  assert.equal(store.snapshot().tasks[0].archivedAt, 1000);
+  assert.equal(store.archiveTask(t.id, 2000), false); // already archived
+  assert.equal(store.snapshot().tasks[0].archivedAt, 1000); // unchanged
+
+  assert.equal(store.unarchiveTask(t.id), true);
+  assert.equal(store.snapshot().tasks[0].archivedAt, undefined);
+  assert.equal(store.unarchiveTask(t.id), false); // not currently archived
+});
+
+test('archiveTask/unarchiveTask return false for an unknown id', () => {
+  const store = new TaskStore(tmpFile());
+  assert.equal(store.archiveTask('t_nope'), false);
+  assert.equal(store.unarchiveTask('t_nope'), false);
+});
+
+test('archiveTask survives a reload — the durable property that distinguishes it from deleteTask\'s in-memory-only snapshot', () => {
+  const file = tmpFile();
+  const store = new TaskStore(file);
+  const t = store.createTask({ name: 'Work' });
+  store.archiveTask(t.id, 1000);
+
+  const reloaded = new TaskStore(file);
+  assert.equal(reloaded.snapshot().tasks[0].archivedAt, 1000);
+});
+
+test('archiveTask leaves assignments, sessionOrder, todos, links, and order untouched', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Work' });
+  store.assign('s1', t.id);
+  store.addTodo(t.id, 'do the thing');
+  store.setLinks(t.id, [{ type: 'pr', url: 'https://x' }]);
+  const before = store.snapshot();
+
+  store.archiveTask(t.id);
+  const after = store.snapshot();
+  assert.deepEqual(after.assignments, before.assignments);
+  assert.deepEqual(after.sessionOrder, before.sessionOrder);
+  assert.deepEqual(after.todos, before.todos);
+  assert.deepEqual(after.order, before.order);
+  assert.deepEqual(store.getLinks(t.id), [{ type: 'pr', url: 'https://x' }]);
+});
+
+test('createTask counts only non-archived tasks against the cap', () => {
+  const store = new TaskStore(tmpFile());
+  for (let i = 0; i < 19; i++) store.createTask({ name: `T${i}` });
+  const snap = store.snapshot();
+  store.archiveTask(snap.tasks[0].id);
+  // One archived → back under the cap, so a 20th (live) task is allowed.
+  assert.doesNotThrow(() => store.createTask({ name: 'Fresh room' }));
+  assert.throws(() => store.createTask({ name: 'Over again' }), /limit/i);
+});
+
+test('assign refuses an archived task, same as an unknown one', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Work' });
+  store.archiveTask(t.id);
+  assert.equal(store.assign('s1', t.id), false);
+  assert.equal(store.snapshot().assignments['s1'], undefined);
+});
+
 test('reorderTask swaps two entries (tasks or the Ad-hoc sentinel)', () => {
   const store = new TaskStore(tmpFile());
   const a = store.createTask({ name: 'A' });

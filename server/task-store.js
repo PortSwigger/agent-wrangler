@@ -53,7 +53,12 @@ export class TaskStore {
     if (tasks.some((t) => typeof t.slot === 'number')) {
       tasks = [...tasks].sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
     }
-    this.tasks = tasks.map((t) => ({ id: t.id, name: t.name, links: Array.isArray(t.links) ? t.links : [] }));
+    this.tasks = tasks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      links: Array.isArray(t.links) ? t.links : [],
+      ...(t.archivedAt ? { archivedAt: t.archivedAt } : {}),
+    }));
     this.order = this._reconcileOrder(raw.order);
     this.assignments = raw.assignments && typeof raw.assignments === 'object' ? raw.assignments : {};
     this.sessionOrder = raw.sessionOrder && typeof raw.sessionOrder === 'object' ? raw.sessionOrder : {};
@@ -108,7 +113,9 @@ export class TaskStore {
   }
 
   createTask({ name = 'New task', sessionId } = {}) {
-    if (this.tasks.length >= MAX_TASKS) throw new Error(`Task limit reached (max ${MAX_TASKS}).`);
+    // Archived tasks stay in `this.tasks` forever (see archiveTask) so they must
+    // not count against the cap, or archiving old tasks can never free up room.
+    if (this.tasks.filter((t) => !t.archivedAt).length >= MAX_TASKS) throw new Error(`Task limit reached (max ${MAX_TASKS}).`);
     const task = { id: `t_${crypto.randomBytes(4).toString('hex')}`, name: (name || 'New task').trim() || 'New task', links: [] };
     this.tasks.push(task);
     this.order.push(task.id); // new tasks land at the very end (after Ad hoc)
@@ -135,7 +142,7 @@ export class TaskStore {
     if (!taskId) {
       delete this.assignments[sessionId];
       this._orderRemove(sessionId);
-    } else if (this.tasks.some((t) => t.id === taskId)) {
+    } else if (this.tasks.some((t) => t.id === taskId && !t.archivedAt)) {
       this.assignments[sessionId] = taskId;
       this._orderAppend(sessionId, taskId);
     } else return false;
@@ -333,6 +340,29 @@ export class TaskStore {
       if (!this.todos[ADHOC].length) delete this.todos[ADHOC];
     }
     if (snap.todos && snap.todos.length) this.todos[snap.task.id] = snap.todos.map((td) => ({ ...td }));
+    this._save();
+    return true;
+  }
+
+  // Archive a task in place: stamp archivedAt so the live board (currentOrder in
+  // app.js) filters it out — mirrors session-manager's archive() rather than
+  // deleteTask's splice-and-snapshot above. Everything else (assignments,
+  // sessionOrder, todos, links, its slot in `order`) stays untouched, so
+  // unarchiveTask is an exact, instant revert with no snapshot bookkeeping.
+  // No-op (false) for an unknown or already-archived id.
+  archiveTask(id, archivedAt = Date.now()) {
+    const task = this.tasks.find((t) => t.id === id);
+    if (!task || task.archivedAt) return false;
+    task.archivedAt = archivedAt;
+    this._save();
+    return true;
+  }
+
+  // Revert archiveTask. No-op (false) for an unknown or not-currently-archived id.
+  unarchiveTask(id) {
+    const task = this.tasks.find((t) => t.id === id);
+    if (!task || !task.archivedAt) return false;
+    delete task.archivedAt;
     this._save();
     return true;
   }
