@@ -601,7 +601,7 @@ function cardState(s) {
 // Which (still-existing) task a session belongs to, or null for No-task.
 function assignedTaskId(sessionId) {
   const id = latestTasks.assignments[sessionId];
-  return id && latestTasks.tasks.some((t) => t.id === id) ? id : null;
+  return id && latestTasks.tasks.some((t) => t.id === id && !t.archivedAt) ? id : null;
 }
 
 // Read-only link chips for a task tile / session card / panel: jira (key, links
@@ -745,7 +745,10 @@ function todosFor(bucketId) {
 // The combined display order (task ids + the Ad-hoc sentinel). Falls back to
 // tasks-then-Ad-hoc and tolerates a stale order missing freshly added ids.
 function currentOrder() {
-  const ids = latestTasks.tasks.map((t) => t.id);
+  // Archived tasks (taskStore.archiveTask) stay in latestTasks.tasks forever —
+  // filtering them out here is what actually drops them off the live board;
+  // they still resolve fine anywhere a lookup is scoped to an already-visible id.
+  const ids = latestTasks.tasks.filter((t) => !t.archivedAt).map((t) => t.id);
   const valid = new Set([...ids, ADHOC_ID]);
   const order = [...new Set((Array.isArray(latestTasks.order) ? latestTasks.order : []).filter((id) => valid.has(id)))];
   for (const id of ids) if (!order.includes(id)) order.push(id);
@@ -1451,6 +1454,7 @@ function openTaskActionsMenu(taskId, x, y) {
     ...(isAdhoc ? [] : [
       { sep: true },
       ...(taskMemoryEnabled ? [{ label: 'Task memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
+      { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
       { label: 'Delete task', icon: X_ICON, danger: true, run: () => deleteTask(taskId, task.name) },
     ]),
   ];
@@ -1495,6 +1499,32 @@ function deleteTask(taskId, name) {
   });
 }
 
+function archiveTaskFromCell(cell) {
+  archiveTask(cell.dataset.taskid, cell.querySelector('.task-name').textContent);
+}
+
+// Archive a task: sets it aside (durably — see taskStore.archiveTask) rather
+// than deleting it, and cascade-archives any of its currently-live sessions the
+// same way "Archive all" does for a session's descendant tree. Only that live
+// cascade is consequential enough to confirm; an empty task archives instantly
+// with the same delete-style Restore-toast UX. The final toast waits for the
+// server's task-archived reply (not fired optimistically here) since the
+// cascade's kill-jobs-first wait can take several seconds per session.
+async function archiveTask(taskId, name) {
+  const liveCount = latestSessions.filter((s) => assignedTaskId(s.sessionId) === taskId).length;
+  if (liveCount > 0) {
+    const result = await confirmDialog({
+      title: 'Archive this task?',
+      body: `"${name}" has ${liveCount} running session${liveCount > 1 ? 's' : ''}. Archiving the task archives ${liveCount > 1 ? 'them' : 'it'} too — stopped and moved into History, individually resumable later. The task itself can be restored from History at any time, exactly as it is now.`,
+      okLabel: 'Archive task',
+      danger: true,
+    });
+    if (result !== 'ok') return;
+    toast('Archiving task…');
+  }
+  send({ type: 'task-archive', taskId });
+}
+
 // A task with no sessions and no TODOs — the only thing in its tile is the
 // new-session slot, so the Delete hotkey can drop the task itself.
 function taskIsEmpty(taskId) {
@@ -1513,6 +1543,7 @@ function openTaskMenu(cell, x, y) {
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
       { sep: true },
+      { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTaskFromCell(cell) },
       { label: 'Delete task', icon: X_ICON, danger: true, run: () => deleteTaskFromCell(cell) },
     ] : []),
   ];
@@ -3430,7 +3461,7 @@ function populateTaskSelect(selectedId) {
   const sel = document.getElementById('m-task');
   if (!sel) return;
   sel.innerHTML = ['<option value="">Unassigned (no task)</option>']
-    .concat(latestTasks.tasks.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`))
+    .concat(latestTasks.tasks.filter((t) => !t.archivedAt).map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`))
     .join('');
   sel.value = selectedId && latestTasks.tasks.some((t) => t.id === selectedId) ? selectedId : '';
 }
@@ -4153,6 +4184,19 @@ function connect() {
       archivedToast(msg.sessionId, msg.unclean
         ? 'Archived — the background job may have been interrupted uncleanly'
         : 'Background jobs stopped — archived cleanly', worktree, archivedIds);
+    }
+    // The single toast for task-archive (no separate immediate one when the task
+    // had no live sessions — see archiveTask() — so this never double-fires).
+    else if (msg.type === 'task-archived') {
+      const n = msg.archivedSessions || 0;
+      const sessionsNote = n > 0 ? ` (${n} session${n > 1 ? 's' : ''})` : '';
+      toast(msg.unclean
+        ? `Task archived${sessionsNote} — a background job may have been interrupted uncleanly`
+        : `Task archived${sessionsNote}`, false, {
+        label: 'Restore',
+        duration: 10000,
+        onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId }),
+      });
     }
     else if (msg.type === 'worktree-removed') {
       if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
