@@ -1,3 +1,5 @@
+import { archiveCascade } from './archive.js';
+
 export const taskCreateHandler = {
   type: 'task-create',
   async handler(msg, ctx) {
@@ -36,6 +38,46 @@ export const taskRestoreHandler = {
       // Restore each session's memory link back to the recovered task file.
       for (const [sid, tid] of Object.entries(snap.assignments)) ctx.memoryStore.bindSession(sid, tid);
     }
+    await ctx.rebuild();
+  },
+};
+
+// Archive the whole task: stamp it (taskStore.archiveTask), then cascade-archive
+// every LIVE session directly assigned to it via the same archiveCascade helper
+// "Archive all" uses for a session's descendant tree — same safe kill-jobs-first
+// behavior per session, no reinvented teardown. Only DIRECT assignments cascade
+// (matches exactly how the live board buckets a task's tile, see app.js's byTask);
+// a nested child that isn't itself assigned to this task is unaffected — it just
+// stops rendering nested and reappears as its own top-level card, the same
+// non-cascading treatment deleteTask already gives an unassigned child.
+export const taskArchiveHandler = {
+  type: 'task-archive',
+  async handler(msg, ctx) {
+    if (!ctx.taskStore.archiveTask(msg.taskId)) {
+      await ctx.rebuild();
+      return;
+    }
+    const { assignments } = ctx.taskStore.snapshot();
+    const sessionIds = Object.entries(assignments)
+      .filter(([, tid]) => tid === msg.taskId)
+      .map(([sid]) => sid)
+      .filter((sid) => !ctx.sessionManager.isArchived(sid));
+    const { unclean } = await archiveCascade(sessionIds, ctx);
+    ctx.reply({ type: 'task-archived', taskId: msg.taskId, unclean, archivedSessions: sessionIds.length });
+    // Delayed like archive.js's own cascade rebuild: panes just got killed above,
+    // so an immediate rebuild risks broadcasting a still-dying tree mid-teardown.
+    setTimeout(() => ctx.rebuild().catch(() => {}), 600);
+  },
+};
+
+export const taskUnarchiveHandler = {
+  type: 'task-unarchive',
+  async handler(msg, ctx) {
+    // Deliberately does not resume any session the task-archive cascaded — that
+    // would auto-relaunch N tmux processes as a side effect of restoring a data
+    // record. The task tile just reappears (empty until sessions are
+    // individually resumed from History, same as they always were).
+    ctx.taskStore.unarchiveTask(msg.taskId);
     await ctx.rebuild();
   },
 };
