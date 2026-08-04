@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupHistory, fmtDuration, filterHistory } from './history-group.js';
+import { groupHistory, fmtDuration, filterHistory, filterArchivedTasks } from './history-group.js';
 
 const HOUR = 3600e3;
 const DAY = 24 * HOUR;
@@ -262,4 +262,85 @@ test('filterHistory matches a run by its workflow issue', () => {
     { sessionId: 'other', label: 'unrelated' },
   ];
   assert.deepEqual(filterHistory(h, 'ent-1234').map((x) => x.sessionId), ['orch']);
+});
+
+// archivedTask mirrors item()'s shape but for the 4th groupHistory argument —
+// {id, name, archivedAt} straight off a TaskStore snapshot's tasks array.
+function archivedTask(id, name, agoMs) {
+  return { id, name, archivedAt: NOW - agoMs };
+}
+
+test('groupHistory with no 4th argument behaves exactly as before (archived tasks are opt-in)', () => {
+  const history = [item('a', 1 * HOUR)];
+  const groups = groupHistory(history, ADHOC, NOW);
+  assert.equal(groups[0].tiles[0].units.length, 1);
+  assert.equal(groups[0].tiles[0].units[0].kind, 'card');
+});
+
+test('an archived task with no sessions gets its own tile with just the marker unit', () => {
+  const tasks = { tasks: [{ id: 't1', name: 'Old feature', archivedAt: NOW - 1 * HOUR }], order: ['t1', 'adhoc'], assignments: {} };
+  const groups = groupHistory([], tasks, NOW, [archivedTask('t1', 'Old feature', 1 * HOUR)]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, 'Last 4 hours');
+  const tile = groups[0].tiles[0];
+  assert.equal(tile.taskName, 'Old feature');
+  assert.equal(tile.unassigned, false);
+  assert.equal(tile.count, 1);
+  assert.deepEqual(tile.units.map((u) => u.kind), ['task-archive']);
+  assert.equal(tile.units[0].task.id, 't1');
+});
+
+test('a task archived alongside its cascade-archived sessions lands in the same tile, marker leading', () => {
+  const tasks = {
+    tasks: [{ id: 't1', name: 'Cascaded', archivedAt: NOW - 1 * HOUR }],
+    order: ['t1', 'adhoc'],
+    assignments: { s1: 't1', s2: 't1' },
+  };
+  const history = [item('s1', 1 * HOUR), item('s2', 1 * HOUR)];
+  const groups = groupHistory(history, tasks, NOW, [archivedTask('t1', 'Cascaded', 1 * HOUR)]);
+  assert.equal(groups.length, 1);
+  const tile = groups[0].tiles[0];
+  assert.equal(tile.count, 3); // marker + 2 sessions
+  assert.deepEqual(tile.units.map((u) => u.kind), ['task-archive', 'card', 'card']);
+  assert.equal(tile.units[0].task.id, 't1');
+});
+
+test('an archived task in a different time-bucket than its (earlier-archived) sessions gets its own bucket instance', () => {
+  const tasks = {
+    tasks: [{ id: 't1', name: 'Long-lived', archivedAt: NOW - 1 * HOUR }],
+    order: ['t1', 'adhoc'],
+    assignments: {},
+  };
+  // The session was archived weeks before the task itself was archived (e.g. a
+  // manually-archived session, unrelated to this task-archive event).
+  const history = [item('old', 30 * DAY, { task: { id: 't1', name: 'Long-lived' } })];
+  const groups = groupHistory(history, tasks, NOW, [archivedTask('t1', 'Long-lived', 1 * HOUR)]);
+  const recent = groups.find((g) => g.label === 'Last 4 hours');
+  const older = groups.find((g) => g.label === '4–5 weeks ago');
+  assert.deepEqual(recent.tiles[0].units.map((u) => u.kind), ['task-archive']);
+  assert.deepEqual(older.tiles[0].units.map((u) => u.kind), ['card']);
+});
+
+test('an archived task tile sorts among live task tiles by the board order, Unassigned still last', () => {
+  const tasks = {
+    tasks: [{ id: 't1', name: 'Alpha' }, { id: 't2', name: 'Archived beta', archivedAt: NOW - 1 * HOUR }],
+    order: ['t2', 'adhoc', 't1'],
+    assignments: { a: 't1' },
+  };
+  const history = [item('a', 1 * HOUR), item('u', 1 * HOUR)];
+  const [g] = groupHistory(history, tasks, NOW, [archivedTask('t2', 'Archived beta', 1 * HOUR)]);
+  assert.deepEqual(g.tiles.map((t) => t.taskName), ['Archived beta', 'Alpha', 'Unassigned']);
+});
+
+test('filterArchivedTasks: empty query returns all; matches by name case-insensitively; AND across tokens', () => {
+  const tasks = [{ id: 't1', name: 'Add search' }, { id: 't2', name: 'Theme rework' }];
+  assert.deepEqual(filterArchivedTasks(tasks, '').map((t) => t.id), ['t1', 't2']);
+  assert.deepEqual(filterArchivedTasks(tasks, 'THEME').map((t) => t.id), ['t2']);
+  assert.deepEqual(filterArchivedTasks(tasks, 'add search').map((t) => t.id), ['t1']);
+  assert.deepEqual(filterArchivedTasks(tasks, 'add nomatch').map((t) => t.id), []);
+});
+
+test('filterArchivedTasks: a null/missing name does not throw', () => {
+  assert.deepEqual(filterArchivedTasks([{ id: 't1' }], 'x'), []);
+  assert.deepEqual(filterArchivedTasks([{ id: 't1' }], ''), [{ id: 't1' }]);
 });
