@@ -1772,7 +1772,8 @@ body.system-banner-open { padding-top: 30px; }
 }
 /* While reordering, the dragged card is hidden and a single dashed placeholder
    (sized to the card) slides to the slot it would land in. */
-.session-card.dragging-hidden, .snoozed-row.dragging-hidden, .todo-row.dragging-hidden { display: none; }
+.session-card.dragging-hidden, .snoozed-row.dragging-hidden, .todo-row.dragging-hidden,
+.workflow-box.dragging-hidden, .child-group.dragging-hidden { display: none; }
 .session-placeholder {
   border: 1px dashed var(--blue);
   border-radius: 8px;

@@ -493,9 +493,15 @@ function removePlaceholder() {
 // to the end). Continuous across cards and the gaps between them, so the
 // placeholder tracks the cursor smoothly. The hidden source card is excluded.
 function dragAfterElement(body, y) {
-  // A workflow box is one reorderable unit standing in for its orchestrator card,
-  // so it counts here while the (non-draggable) card nested inside it does not.
-  const cards = [...body.querySelectorAll('.session-card[draggable="true"]:not(.dragging-hidden), .workflow-box:not(.dragging-hidden)')];
+  // A workflow box, or a .child-group wrapping a parent-with-children, is one
+  // reorderable unit standing in for its top-level session, so each counts here
+  // while the (non-draggable) card/box nested inside does not. `:scope >` keeps
+  // this to body's direct children only — without it, querySelectorAll also
+  // matches a still-draggable card/box buried inside another bucket's DOM subtree
+  // (there is none here, but nesting one level deep is exactly what .child-group
+  // does), and body.insertBefore(placeholder, after) requires `after` to be a
+  // direct child of body or it throws.
+  const cards = [...body.querySelectorAll(':scope > .session-card[draggable="true"]:not(.dragging-hidden), :scope > .workflow-box[draggable="true"]:not(.dragging-hidden), :scope > .child-group[draggable="true"]:not(.dragging-hidden)')];
   for (const card of cards) {
     const rect = card.getBoundingClientRect();
     if (y < rect.top + rect.height / 2) return card;
@@ -1559,10 +1565,20 @@ function wireGridDnd(el) {
 
   // A workflow box drags as one unit (its data-sid is the orchestrator's); the
   // orchestrator card nested inside is draggable="false" so it never starts its own
-  // drag — only the box does. A snoozed row carries the same data-sid + draggable
+  // drag — only the box does. A plain parent-with-children (or a workflow box that
+  // also has a live team) is wrapped one level further in a .child-group (cards.js
+  // childGroupHtml/renderTileCards), which is what carries data-sid + draggable
+  // there — the card/box nested inside is rendered non-draggable (`nested`) for the
+  // same reason the orchestrator card is. Without this, the card nested inside a
+  // .child-group would still be independently draggable, but sitting one DOM level
+  // too deep: the placeholder would land inside the wrapper instead of .task-body,
+  // and the wrapper itself (having no data-sid) would silently drop out of the
+  // reordered array the drop handler below reconstructs — the parent then ranks
+  // Infinity (orderSessions) and keeps sinking to the bottom on every unrelated
+  // drag in that task. A snoozed row carries the same data-sid + draggable
   // contract, so it gets identical wiring — its drop reassigns via task-assign and
   // the card stays snoozed (snooze lives on the mapping entry, untouched by assign).
-  el.querySelectorAll('.session-card[draggable="true"], .workflow-box, .snoozed-row[draggable="true"]').forEach((card) => {
+  el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"]').forEach((card) => {
     card.addEventListener('dragstart', (e) => {
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
@@ -1690,9 +1706,14 @@ function wireGridDnd(el) {
           const order = [];
           for (const node of body.children) {
             if (node === placeholderEl) order.push(p.sessionId);
-            // A workflow box is a direct child standing in for its orchestrator; its
-            // workers live nested inside and are never separate order entries.
-            else if (node !== draggedCard && (node.classList.contains('session-card') || node.classList.contains('workflow-box'))) order.push(node.dataset.sid);
+            // A workflow box, or a .child-group wrapping a parent-with-children, is
+            // a direct child standing in for its top-level session; its
+            // workers/child-spine live nested inside and are never separate order
+            // entries. Without the .child-group branch, a parent-with-children has
+            // no data-sid at this level and silently drops out of `order` on every
+            // drag in its task — it then ranks Infinity (orderSessions) and sinks to
+            // the bottom regardless of where it's actually dropped.
+            else if (node !== draggedCard && (node.classList.contains('session-card') || node.classList.contains('workflow-box') || node.classList.contains('child-group'))) order.push(node.dataset.sid);
           }
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
