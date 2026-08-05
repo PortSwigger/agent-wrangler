@@ -218,6 +218,32 @@ test('resumeEntry drops archivedAt, snooze, suspendedAt, and suspendPending — 
   assert.equal(e.suspendPending, undefined);
 });
 
+// viaTaskArchive is archive-only bookkeeping (see SessionManager.archive) — like
+// archivedAt/task/lastLabel, it must not survive a resume, or a session resumed
+// on its own would still look cascade-linked to a task it's no longer archived
+// under.
+test('resumeEntry drops viaTaskArchive and the task snapshot', () => {
+  const prev = { intent: 'fix', createdAt: 100, viaTaskArchive: 'T1', task: { id: 'T1', name: 'Login' }, lastLabel: 'Old label' };
+  const e = resumeEntry(prev, { short: 's', tmux: 'cc_s', cwd: '/w', agent: 'claude', resumeId: 'L', socket: '', now: 999 });
+  assert.equal(e.viaTaskArchive, undefined);
+  assert.equal(e.task, undefined);
+  assert.equal(e.lastLabel, undefined);
+});
+
+test('archive() stamps viaTaskArchive only when the caller passes it; isArchived reflects archivedAt', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm.map.set('s2', { short: 't', tmux: 'cc_t', cwd: '/repo', intent: 'y', createdAt: 1 });
+  assert.equal(sm.isArchived('s1'), false);
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' }, viaTaskArchive: 'T1' });
+  sm.archive('s2', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  assert.equal(sm.isArchived('s1'), true);
+  assert.equal(sm.entryFor('s1').viaTaskArchive, 'T1');
+  // Plain solo archive (no viaTaskArchive passed): the key is absent, not undefined.
+  assert.equal('viaTaskArchive' in sm.entryFor('s2'), false);
+});
+
 test('resumeEntry defaults a missing intent/createdAt and leaves workflow/parentSession undefined for a plain entry', () => {
   const e = resumeEntry(undefined, { short: 's', tmux: 'cc_s', cwd: '/w', agent: 'claude', resumeId: 'L', socket: '', now: 999 });
   assert.equal(e.intent, '(resumed)');

@@ -55,8 +55,8 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
     return errorResult(e?.message || 'Spawn failed');
   }
 
-  // assign is a no-op if the task was deleted meanwhile — the session just falls
-  // back to Ad-hoc, matching the /ws dispatch path.
+  // assign is a no-op if the task was archived (or is otherwise unknown) meanwhile
+  // — the session just falls back to Ad-hoc, matching the /ws dispatch path.
   if (taskId) deps.taskStore.assign(result.sessionId, taskId);
   await deps.rebuild();
 

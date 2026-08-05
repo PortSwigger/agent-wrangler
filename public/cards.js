@@ -501,7 +501,8 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
         ? `<button class="link-overflow" data-overflow-links="${esc(JSON.stringify(taskLinks.slice(1)))}">+${taskLinks.length - 1}</button>`
         : '')
     : '';
-  return `<div class="task-cell" data-taskid="${esc(tile.task.id)}" style="${pos}">
+  const restoredFlash = tile.task.id === ctx.restoredTaskId ? ' task-restored-flash' : '';
+  return `<div class="task-cell${restoredFlash}" data-taskid="${esc(tile.task.id)}" style="${pos}">
     <div class="task-head" draggable="true">
       <span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
       ${linkBadge}

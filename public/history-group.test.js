@@ -88,30 +88,26 @@ test('sessions within a tile are newest-first', () => {
   assert.deepEqual(g.tiles[0].units.map((u) => u.session.sessionId), ['b', 'a']);
 });
 
-test('a deleted task lands in Unassigned with wasName from the snapshot', () => {
+test('a session whose assigned task id no longer resolves lands in Unassigned', () => {
   const tasks = { tasks: [], order: ['adhoc'], assignments: {} };
   const history = [item('a', 1 * HOUR, { task: { id: 'gone', name: 'Test stabilisation' } })];
   const [g] = groupHistory(history, tasks, NOW);
   assert.equal(g.tiles.length, 1);
-  const tile = g.tiles[0];
-  assert.equal(tile.unassigned, true);
-  assert.equal(tile.units[0].session.wasName, 'Test stabilisation');
+  assert.equal(g.tiles[0].unassigned, true);
 });
 
-test('a still-assigned session groups under its live task name, not the snapshot', () => {
+test('a still-assigned session groups under its live task name, not the archive-time snapshot', () => {
   const tasks = { tasks: [{ id: 't1', name: 'Renamed Alpha' }], order: ['t1', 'adhoc'], assignments: { a: 't1' } };
   const history = [item('a', 1 * HOUR, { task: { id: 't1', name: 'Old Alpha' } })];
   const [g] = groupHistory(history, tasks, NOW);
   assert.equal(g.tiles[0].taskName, 'Renamed Alpha');
-  assert.equal(g.tiles[0].units[0].session.wasName, null);
 });
 
-test('never-assigned session goes to Unassigned with no wasName', () => {
+test('never-assigned session goes to Unassigned', () => {
   const tasks = { tasks: [], order: ['adhoc'], assignments: {} };
   const history = [item('a', 1 * HOUR)];
   const [g] = groupHistory(history, tasks, NOW);
   assert.equal(g.tiles[0].unassigned, true);
-  assert.equal(g.tiles[0].units[0].session.wasName, null);
 });
 
 test('filterHistory: empty query returns all', () => {
@@ -290,19 +286,60 @@ test('an archived task with no sessions gets its own tile with just the marker u
   assert.equal(tile.units[0].task.id, 't1');
 });
 
-test('a task archived alongside its cascade-archived sessions lands in the same tile, marker leading', () => {
+test('sessions cascade-archived with a task (viaTaskArchive) nest under its marker instead of rendering as flat cards', () => {
   const tasks = {
     tasks: [{ id: 't1', name: 'Cascaded', archivedAt: NOW - 1 * HOUR }],
     order: ['t1', 'adhoc'],
     assignments: { s1: 't1', s2: 't1' },
   };
-  const history = [item('s1', 1 * HOUR), item('s2', 1 * HOUR)];
+  const history = [
+    item('s1', 90 * 60e3, { viaTaskArchive: 't1' }),
+    item('s2', 70 * 60e3, { viaTaskArchive: 't1' }),
+  ];
   const groups = groupHistory(history, tasks, NOW, [archivedTask('t1', 'Cascaded', 1 * HOUR)]);
   assert.equal(groups.length, 1);
   const tile = groups[0].tiles[0];
-  assert.equal(tile.count, 3); // marker + 2 sessions
-  assert.deepEqual(tile.units.map((u) => u.kind), ['task-archive', 'card', 'card']);
+  assert.equal(tile.count, 3); // marker + 2 nested sessions
+  assert.deepEqual(tile.units.map((u) => u.kind), ['task-archive']); // no loose 'card' units — both nested
   assert.equal(tile.units[0].task.id, 't1');
+  // Nested sessions ride along with the marker regardless of their own
+  // archivedAt (both would've been in the same bucket here anyway), sorted
+  // newest-first like every other list.
+  assert.deepEqual(tile.units[0].nestedSessions.map((s) => s.sessionId), ['s2', 's1']);
+});
+
+test('an independently-archived session assigned to the same task (no viaTaskArchive) stays a flat sibling card, not nested', () => {
+  const tasks = {
+    tasks: [{ id: 't1', name: 'Mixed', archivedAt: NOW - 1 * HOUR }],
+    order: ['t1', 'adhoc'],
+    assignments: { cascaded: 't1', solo: 't1' },
+  };
+  const history = [
+    item('cascaded', 1 * HOUR, { viaTaskArchive: 't1' }),
+    item('solo', 90 * 60e3), // archived earlier, same bucket, but NOT part of the cascade
+  ];
+  const groups = groupHistory(history, tasks, NOW, [archivedTask('t1', 'Mixed', 1 * HOUR)]);
+  const tile = groups[0].tiles[0];
+  assert.deepEqual(tile.units.map((u) => u.kind), ['task-archive', 'card']);
+  assert.deepEqual(tile.units[0].nestedSessions.map((s) => s.sessionId), ['cascaded']);
+  assert.equal(tile.units[1].session.sessionId, 'solo');
+  assert.equal(tile.count, 3); // marker + 1 nested + 1 flat sibling
+});
+
+test('viaTaskArchive set but the task is no longer archived (restored task-only) falls through to normal flat placement', () => {
+  const tasks = {
+    tasks: [{ id: 't1', name: 'Restored' }], // no archivedAt — task is live again
+    order: ['t1', 'adhoc'],
+    assignments: { s1: 't1' },
+  };
+  // Still carries the old cascade flag, but there's no marker left to nest
+  // under since the task itself isn't in archivedTasks anymore.
+  const history = [item('s1', 1 * HOUR, { viaTaskArchive: 't1' })];
+  const groups = groupHistory(history, tasks, NOW, []);
+  const tile = groups[0].tiles[0];
+  assert.equal(tile.taskName, 'Restored');
+  assert.deepEqual(tile.units.map((u) => u.kind), ['card']);
+  assert.equal(tile.units[0].session.sessionId, 's1');
 });
 
 test('an archived task in a different time-bucket than its (earlier-archived) sessions gets its own bucket instance', () => {

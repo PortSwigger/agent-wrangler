@@ -331,6 +331,17 @@ test('buildGraph history record narrows workflow to orchestrator-only and carrie
   assert.equal(byId.plain.parentSession, null);
 });
 
+test('buildGraph history record carries viaTaskArchive, null when absent', async () => {
+  const mgr = makeArchiveManager([
+    { sessionId: 'cascaded', agent: 'claude', cwd: '/x', archivedAt: 2, viaTaskArchive: 'T1' },
+    { sessionId: 'solo', agent: 'claude', cwd: '/x', archivedAt: 1 },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.history.map((h) => [h.sessionId, h]));
+  assert.equal(byId.cascaded.viaTaskArchive, 'T1');
+  assert.equal(byId.solo.viaTaskArchive, null);
+});
+
 test('buildGraph carries suspendedAt onto the dormant board node', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'susp-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', suspendedAt: 1781000000000 },

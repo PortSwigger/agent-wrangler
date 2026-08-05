@@ -325,6 +325,13 @@ test('tileHtml: task tile shows the escaped name, its first link and a +N overfl
   assert.match(html, /link-overflow[^>]*>\+1/);
 });
 
+test('tileHtml: carries the restored-task halo class only when this tile is the just-restored task', () => {
+  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
+  assert.match(tileHtml(tile, ctx({ restoredTaskId: 'T1' })), /task-cell task-restored-flash"/);
+  assert.doesNotMatch(tileHtml(tile, ctx({ restoredTaskId: 'T2' })), /task-restored-flash/);
+  assert.doesNotMatch(tileHtml(tile, ctx()), /task-restored-flash/);
+});
+
 test('tileHtml: both tile kinds carry the actions kebab (sort/focus/minimise/memory/delete now live in its menu)', () => {
   const task = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
   const notask = { kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] };

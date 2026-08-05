@@ -64,51 +64,6 @@ test('assign sets and clears a session→task mapping; unknown task ignored', ()
   assert.equal(store.snapshot().assignments['sess-2'], undefined);
 });
 
-test('deleteTask drops the task and unassigns its sessions', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Doomed' });
-  store.assign('sess-1', t.id);
-  store.deleteTask(t.id);
-  const snap = store.snapshot();
-  assert.equal(snap.tasks.length, 0);
-  assert.equal(snap.assignments['sess-1'], undefined);
-});
-
-test('deleteTask returns a restore snapshot; restoreTask round-trips it', () => {
-  const store = new TaskStore(tmpFile());
-  store.createTask({ name: 'First' });
-  const t = store.createTask({ name: 'Doomed' }); // index 1
-  store.createTask({ name: 'Third' });
-  store.assign('s1', t.id);
-  store.assign('s2', t.id); // order: [s1, s2]
-
-  const snap = store.deleteTask(t.id);
-  assert.equal(snap.task.id, t.id);
-  assert.equal(snap.task.name, 'Doomed');
-  assert.equal(snap.index, 1);
-  assert.equal(snap.orderIndex, 2); // [adhoc, First, Doomed, Third]
-  assert.deepEqual(snap.assignments, { s1: t.id, s2: t.id });
-  assert.deepEqual(snap.order, ['s1', 's2']);
-  assert.equal(store.snapshot().tasks.length, 2);
-  assert.deepEqual(orderNames(store), ['adhoc', 'First', 'Third']);
-
-  assert.equal(store.restoreTask(snap), true);
-  const after = store.snapshot();
-  assert.deepEqual(after.tasks.map((x) => x.name), ['First', 'Doomed', 'Third']);
-  assert.deepEqual(orderNames(store), ['adhoc', 'First', 'Doomed', 'Third']);
-  assert.equal(after.assignments['s1'], t.id);
-  assert.equal(after.assignments['s2'], t.id);
-  assert.deepEqual(after.sessionOrder[t.id], ['s1', 's2']);
-});
-
-test('deleteTask returns null for an unknown id; restoreTask is a no-op when id exists', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Live' });
-  assert.equal(store.deleteTask('t_nope'), null);
-  assert.equal(store.restoreTask({ task: { id: t.id, name: 'Live' }, index: 0, assignments: {}, order: [] }), false);
-  assert.equal(store.snapshot().tasks.length, 1);
-});
-
 test('archiveTask stamps archivedAt; unarchiveTask clears it; both no-op when already in that state', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Work' });
@@ -128,7 +83,7 @@ test('archiveTask/unarchiveTask return false for an unknown id', () => {
   assert.equal(store.unarchiveTask('t_nope'), false);
 });
 
-test('archiveTask survives a reload — the durable property that distinguishes it from deleteTask\'s in-memory-only snapshot', () => {
+test('archiveTask survives a reload', () => {
   const file = tmpFile();
   const store = new TaskStore(file);
   const t = store.createTask({ name: 'Work' });
@@ -191,7 +146,7 @@ test('reorderTask swaps two entries (tasks or the Ad-hoc sentinel)', () => {
   assert.equal(store.reorderTask('t_nope', a.id), false);
 });
 
-test('reorderSession stores the supplied order; prunes on unassign & delete', () => {
+test('reorderSession stores the supplied order; prunes on unassign', () => {
   const file = tmpFile();
   const store = new TaskStore(file);
   const t = store.createTask({ name: 'Work' });
@@ -224,10 +179,6 @@ test('reorderSession stores the supplied order; prunes on unassign & delete', ()
   store.assign('s1', t2.id);
   assert.deepEqual(store.snapshot().sessionOrder[t.id], ['s3']);
   assert.deepEqual(store.snapshot().sessionOrder[t2.id], ['s1']);
-
-  // deleteTask drops the whole list
-  store.deleteTask(t.id);
-  assert.equal(store.snapshot().sessionOrder[t.id], undefined);
 });
 
 test('reorderSession orders the Ad-hoc bucket (unassigned sessions)', () => {
@@ -299,6 +250,19 @@ test('taskFor returns the assigned task {id,name}, or null when unassigned/unkno
   assert.equal(store.taskFor('s2'), null);
   store.unassign('s1');
   assert.equal(store.taskFor('s1'), null);
+});
+
+test('isAssignedToArchivedTask: true only for an assignment to a currently-archived task', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Alpha', sessionId: 's1' });
+  // Live task: false.
+  assert.equal(store.isAssignedToArchivedTask('s1'), false);
+  // Unassigned session: false.
+  assert.equal(store.isAssignedToArchivedTask('nobody'), false);
+  store.archiveTask(t.id);
+  assert.equal(store.isAssignedToArchivedTask('s1'), true);
+  store.unarchiveTask(t.id);
+  assert.equal(store.isAssignedToArchivedTask('s1'), false);
 });
 
 test('task links default to empty and round-trip via set/getLinks', () => {
@@ -451,39 +415,6 @@ test('moveTodo reassigns across buckets; keeps map sparse; no-op for same/unknow
   assert.equal(store.moveTodo('td_nope', ADHOC, a.id), false);
   assert.equal(store.moveTodo(td.id, ADHOC, 't_nope'), false);
   assert.deepEqual(new TaskStore(file).snapshot().todos[ADHOC].map((x) => x.id), [td.id]);
-});
-
-test('deleteTask moves todos onto adhoc and restoreTask round-trips them', () => {
-  const file = tmpFile();
-  const store = new TaskStore(file);
-  const t = store.createTask({ name: 'Doomed' });
-  store.addTodo(ADHOC, 'pre-existing', 1);
-  const td1 = store.addTodo(t.id, 'one', 2);
-  const td2 = store.addTodo(t.id, 'two', 3);
-
-  const snap = store.deleteTask(t.id);
-  assert.deepEqual(snap.todos.map((x) => x.id), [td1.id, td2.id]);
-  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.text), ['pre-existing', 'one', 'two']);
-  assert.equal(store.snapshot().todos[t.id], undefined);
-
-  assert.equal(store.restoreTask(snap), true);
-  const after = store.snapshot();
-  assert.deepEqual(after.todos[t.id].map((x) => x.id), [td1.id, td2.id]);
-  assert.deepEqual(after.todos[ADHOC].map((x) => x.text), ['pre-existing']);
-  assert.deepEqual(new TaskStore(file).snapshot().todos[t.id].map((x) => x.text), ['one', 'two']);
-});
-
-test('restoreTask: a todo added to adhoc during the restore window survives in adhoc', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Doomed' });
-  const a = store.addTodo(t.id, 'one');
-  const b = store.addTodo(t.id, 'two');
-  const snap = store.deleteTask(t.id);
-  const loose = store.addTodo(ADHOC, 'loose');
-  assert.equal(store.restoreTask(snap), true);
-  const after = store.snapshot();
-  assert.deepEqual(after.todos[t.id].map((x) => x.id), [a.id, b.id]);
-  assert.deepEqual(after.todos[ADHOC].map((x) => x.id), [loose.id]);
 });
 
 test('snapshot().todos is a deep copy (mutating it does not mutate the store)', () => {

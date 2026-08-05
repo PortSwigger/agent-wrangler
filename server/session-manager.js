@@ -352,6 +352,10 @@ export class SessionManager {
     // show "was: <name>" after the task is later deleted (which drops the live
     // assignment). Mirrors how cwd/intent are snapshotted above.
     if (snapshot.task) entry.task = { id: snapshot.task.id, name: snapshot.task.name };
+    // Set only when this session was swept up by a task-archive cascade (never by
+    // a solo archive or a session-descendant cascade) — the link History/restore
+    // use to know which sessions to nest under and bulk-restore with their task.
+    if (snapshot.viaTaskArchive) entry.viaTaskArchive = snapshot.viaTaskArchive;
     // Freeze the last known display label so History shows the name the user saw on
     // the board (typically the terminal title Claude set), not just the intent/cwd
     // fallback. Only stored here — not copied back to live sessions on resume, so

@@ -64,11 +64,6 @@ const terminalRegistry = new TerminalRegistry();
 // A const here, where fireDueSchedules makes the staleness call — tunable later.
 const STALE_MS = 12 * 60 * 60 * 1000;
 
-// Restore snapshots from recent task deletes, keyed by taskId. The client governs
-// the undo window via its toast; the server just keeps the snapshot ready until a
-// task-restore lands (or never — entries are tiny and bounded by the 8-task cap).
-const pendingTaskRestores = new Map();
-
 let lastGraph = null;
 const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, () => lastGraph);
 
@@ -484,7 +479,6 @@ controlWss.on('connection', (ws) => {
     taskStore,
     memoryStore,
     scheduleStore,
-    pendingTaskRestores,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,

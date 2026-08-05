@@ -17,7 +17,7 @@ const SHORTCUTS = [
       ['⌃⌘M', 'Maximize / restore the panel'],
       ['⌃⌘S', 'Snooze / unsnooze the selected session'],
       ['⌃⌘G', 'Toggle the working-tree diff panel'],
-      ['⌃⌘⌫ / Delete', 'Archive the selected session, or delete an empty task'],
+      ['⌃⌘⌫ / Delete', 'Archive the selected session'],
       ['Escape', 'Close the open dialog or panel'],
     ],
   },
