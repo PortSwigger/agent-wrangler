@@ -791,4 +791,4 @@ export function createWatcher() {
   return emitter;
 }
 
-export { CLAUDE_DIR, liveState, sessionLabel, withForkMark, readBranch };
+export { CLAUDE_DIR, liveState, sessionLabel, withForkMark, readBranch, deriveParentSession };

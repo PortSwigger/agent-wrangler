@@ -1,3 +1,5 @@
+import { deriveParentSession, sessionLabel } from '../../state-reader.js';
+
 // Self-lookup: answers "where am I in the hierarchy" for the CALLER only, in one
 // cheap call — no need to fetch list_sessions and scan for your own row. Reports
 // two DIFFERENT, independently-nullable relations (see the tool description for
@@ -10,9 +12,15 @@
 //     dispatched from the board UI has spawnedBy: null even if later nested.
 const MAX_CHAIN_DEPTH = 50;
 
-// Walk `field` (parentSession or spawnedBy) from `startId` up to root. Bounded by
-// depth AND a visited set — a chain shouldn't cycle, but this must never hang if
-// one does (same convention as public/workflow.js's absorbed-parent walk and
+// Walk `field` (parentSession or spawnedBy) from `startId` up to root, one raw
+// mapping entry at a time via sessionManager.entryFor (covers archived ancestors
+// too — deps.graph() only sees the live board). Every step goes through
+// deriveParentSession so a legacy pre-migration worker entry (workflow.parent,
+// no parentSession field) resolves the same way this chain and list_sessions'
+// buildGraph do — reading raw entry.parentSession directly here would silently
+// disagree with list_sessions for exactly that legacy shape. Bounded by depth
+// AND a visited set — a chain shouldn't cycle, but this must never hang if one
+// does (same convention as public/workflow.js's absorbed-parent walk and
 // archive.js's descendantsOf).
 function walkChain(sessionManager, taskStore, startId, field) {
   const chain = [];
@@ -22,8 +30,9 @@ function walkChain(sessionManager, taskStore, startId, field) {
     seen.add(id);
     const entry = sessionManager.entryFor(id);
     if (!entry) break;
-    chain.push({ sessionId: id, label: entry.name || null, task: taskStore.taskFor(id) ?? null });
-    id = entry[field] || null;
+    const label = sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: id.slice(0, 8) }) || null;
+    chain.push({ sessionId: id, label, task: taskStore.taskFor(id) ?? null });
+    id = deriveParentSession(entry)[field] || null;
   }
   return chain;
 }
@@ -39,22 +48,34 @@ export const getSessionInfoTool = {
     + 'who actually called spawn_session/spawn_workflow to launch you, walked to root — set once '
     + 'at launch, only for that launch path; null if you were dispatched directly from the board '
     + 'UI. Either can be set with the other null — do not assume one implies the other. The same '
-    + 'spawnedBy is also available at boot as the AW_SPAWNER_SESSION_ID env var, but only this '
-    + 'tool stays correct if you get re-nested after launch. Read-only.',
+    + 'spawnedBy is also available at boot (and after a resume) as the AW_SPAWNER_SESSION_ID env '
+    + 'var, but that var never reflects `parent`/nesting at all, and goes stale if you get '
+    + 're-nested after launch — this tool always reads live state. Read-only.',
   inputSchema: {},
   async handler({ deps, caller }) {
     if (!caller) return errorResult('No caller identity on this request — this tool answers for the calling session only.');
     const entry = deps.sessionManager.entryFor(caller);
     if (!entry) return errorResult('Caller session not found.');
 
+    // Source the caller's OWN label/parent/spawnedBy from the same graph row
+    // list_sessions reports, so the two tools can never disagree about the
+    // caller itself (buildGraph already applies the legacy-worker fallback and
+    // full label-resolution chain that a raw entry read alone would miss).
+    const graphRow = deps.graph?.()?.sessions?.find((s) => s.sessionId === caller);
+    const parent = graphRow ? (graphRow.parentSession ?? null) : deriveParentSession(entry).parentSession;
+    const spawnedBy = graphRow ? (graphRow.spawnedBy ?? null) : deriveParentSession(entry).spawnedBy;
+    const label = graphRow
+      ? (graphRow.label ?? null)
+      : sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: caller.slice(0, 8) }) || null;
+
     const structuredContent = {
       sessionId: caller,
-      label: entry.name || null,
+      label,
       task: deps.taskStore.taskFor(caller) ?? null,
-      parent: entry.parentSession || null,
-      parentChain: walkChain(deps.sessionManager, deps.taskStore, entry.parentSession, 'parentSession'),
-      spawnedBy: entry.spawnedBy || null,
-      spawnerChain: walkChain(deps.sessionManager, deps.taskStore, entry.spawnedBy, 'spawnedBy'),
+      parent,
+      parentChain: walkChain(deps.sessionManager, deps.taskStore, parent, 'parentSession'),
+      spawnedBy,
+      spawnerChain: walkChain(deps.sessionManager, deps.taskStore, spawnedBy, 'spawnedBy'),
     };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

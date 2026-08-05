@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getSessionInfoTool } from './get-session-info.js';
 
-function deps(entries, tasks = {}) {
+function deps(entries, { tasks = {}, graphSessions = null } = {}) {
   return {
     sessionManager: { entryFor: (id) => entries[id] ?? null },
     taskStore: { taskFor: (id) => tasks[id] ?? null },
+    graph: graphSessions ? () => ({ sessions: graphSessions }) : undefined,
   };
 }
 
@@ -38,7 +39,7 @@ test('get_session_info: nested-but-not-spawned session reports parent without sp
     deps: deps({
       S1: { name: 'Worker', parentSession: 'ORCH' },
       ORCH: { name: 'Orchestrator' },
-    }, { ORCH: { id: 'T1', name: 'Benchmark' } }),
+    }, { tasks: { ORCH: { id: 'T1', name: 'Benchmark' } } }),
     caller: 'S1',
   });
   assert.equal(out.structuredContent.parent, 'ORCH');
@@ -94,4 +95,45 @@ test('get_session_info never hangs on a cyclic chain', async () => {
     caller: 'S1',
   });
   assert.deepEqual(out.structuredContent.spawnerChain.map((c) => c.sessionId), ['S2', 'S1']);
+});
+
+// A legacy pre-migration worker entry carries `workflow: {parent: <id>}` instead
+// of a real `parentSession` field. buildGraph (and therefore list_sessions) folds
+// that into `parentSession` via deriveParentSession's legacy-worker fallback —
+// this tool must agree, not just read the raw (absent) field.
+test('get_session_info resolves a legacy worker\'s parentSession the same way list_sessions does', async () => {
+  const out = await getSessionInfoTool.handler({
+    deps: deps({
+      S1: { name: 'LegacyWorker', workflow: { parent: 'ORCH' } },
+      ORCH: { name: 'Orchestrator' },
+    }),
+    caller: 'S1',
+  });
+  assert.equal(out.structuredContent.parent, 'ORCH');
+  assert.deepEqual(out.structuredContent.parentChain, [{ sessionId: 'ORCH', label: 'Orchestrator', task: null }]);
+});
+
+// When the caller's row IS on the live graph, the caller's own label/parent/
+// spawnedBy must come from that row (not a raw re-derivation) so get_session_info
+// can never disagree with list_sessions about the caller itself.
+test('get_session_info sources the caller\'s own fields from the graph row when available', async () => {
+  const out = await getSessionInfoTool.handler({
+    deps: deps(
+      { S1: { name: 'RawName', parentSession: 'RAW_PARENT' } },
+      { graphSessions: [{ sessionId: 'S1', label: 'Graph-resolved label', parentSession: 'ORCH', spawnedBy: 'PREV' }] },
+    ),
+    caller: 'S1',
+  });
+  assert.equal(out.structuredContent.label, 'Graph-resolved label');
+  assert.equal(out.structuredContent.parent, 'ORCH');
+  assert.equal(out.structuredContent.spawnedBy, 'PREV');
+});
+
+test('get_session_info falls back to the raw entry when the caller is not (yet) on the graph', async () => {
+  const out = await getSessionInfoTool.handler({
+    deps: deps({ S1: { name: 'RawName', parentSession: 'RAW_PARENT' } }, { graphSessions: [] }),
+    caller: 'S1',
+  });
+  assert.equal(out.structuredContent.label, 'RawName');
+  assert.equal(out.structuredContent.parent, 'RAW_PARENT');
 });
