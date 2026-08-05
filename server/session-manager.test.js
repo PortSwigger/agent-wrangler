@@ -809,6 +809,17 @@ test('dispatch creates a nonexistent user-typed cwd (mkdir -p) so tmux does not 
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+test('_newSession cd\'s into the dir inside the pane command, not just via tmux -c', async () => {
+  // A tmux server with a deleted cwd ignores `-c` and starts panes in the dead dir,
+  // which kills a devcontainer launch outright (process.cwd() at CLI module load).
+  const sm = new SessionManager();
+  let args;
+  sm._tmux = async (_socket, a) => { args = args || a; return { stdout: '' }; };
+  await sm._newSession('cc_abc', "/tmp/aw dir'x", 'launch --me', '');
+  assert.deepEqual(args.slice(0, 6), ['new-session', '-d', '-s', 'cc_abc', '-c', "/tmp/aw dir'x"]);
+  assert.equal(args[6], `cd '/tmp/aw dir'\\''x' && launch --me`);
+});
+
 test('worktree dispatch does NOT create a nonexistent cwd (fails as a non-repo, no stray dir)', async () => {
   const sm = smForDispatch();
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-wt-cwd-'));

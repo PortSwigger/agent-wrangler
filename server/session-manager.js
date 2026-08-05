@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
-import { buildInnerCommand, withCleanClaudeEnv } from './agents/claude.js';
+import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
@@ -904,8 +904,18 @@ export class SessionManager {
 
   // Create a detached tmux session for `inner` on `socket`, keeping the pane
   // visible if the command exits immediately so its error message is readable.
+  // The redundant-looking `cd` is load-bearing: `-c dir` alone is NOT enough. A tmux
+  // SERVER whose own cwd has been deleted (the wrangler's install dir renamed after
+  // the server started, say) stops honouring `-c` and hands every new pane that dead
+  // directory instead — `pwd` prints literally ".". Claude limps along there; the
+  // devcontainer CLI calls process.cwd() at module load and dies before doing anything
+  // (`uv_cwd` ENOENT → instantly dead pane, no session), which is how this surfaced.
+  // cd'ing inside the pane command makes a launch independent of the tmux server's cwd,
+  // and a genuinely missing dir then fails loudly in the pane rather than silently
+  // launching the agent somewhere else. Every `inner` we build is an `&&`-chain or a
+  // single command, so prefixing with `&&` can't change its precedence.
   async _newSession(tmux, dir, inner, socket) {
-    await this._tmux(socket, ['new-session', '-d', '-s', tmux, '-c', dir, inner]);
+    await this._tmux(socket, ['new-session', '-d', '-s', tmux, '-c', dir, `cd ${shellQuote(dir)} && ${inner}`]);
     await this._tmux(socket, ['set-option', '-t', tmux, 'remain-on-exit', 'on']).catch(() => {});
     // Hide tmux's status bar: it's purely cosmetic here (nothing reads it) and
     // its row is better spent on Claude's TUI. Scoped per-session so it can't
