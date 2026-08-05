@@ -56,9 +56,9 @@ one," or asks you to "nest" it, that IS the explicit request the exception
 above refers to: set `nest: true`. Don't rationalize it away as generic
 phrasing for "spin off a new session" — "child" is literally the term the
 `nest` parameter itself uses ("Tag the new session as a child of you"), so if
-the user reaches for that word, match it. There is no tool to reparent a
-session after the fact — nesting is decided once, at spawn time — so this
-isn't cheaply fixable if you get it wrong.
+the user reaches for that word, match it.
 
 If unsure, and the user hasn't used language like this, leave it unset — the
-new session is a plain, independent top-level session on the board.
+new session is a plain, independent top-level session on the board. If you do
+get it wrong, `attach_session`/`detach_session` can reparent a session after
+the fact — see the `session-hierarchy` skill.
