@@ -92,6 +92,7 @@ test('codex launch injects the wrangler MCP server + bearer-token env keyed on t
   assert.match(cmd, /AW_MCP_TOKEN='BID'/);
   assert.match(cmd, /mcp_servers\.agent-wrangler\.url=/);
   assert.match(cmd, /mcp_servers\.agent-wrangler\.bearer_token_env_var=/);
+  assert.match(cmd, /mcp_servers\.agent-wrangler\.default_tools_approval_mode="approve"/);
 });
 
 test('matchContainerized: a devcontainer/docker exec wrapping codex matches; a plain host codex does not', () => {
