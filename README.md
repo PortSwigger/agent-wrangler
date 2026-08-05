@@ -28,6 +28,8 @@ otherwise it behaves exactly as a Claude-only board.
   one click, conversation intact.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
 
+![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
+
 ## Requirements
 
 - macOS, Node.js >= 20
@@ -132,6 +134,8 @@ capped at 6 chars to fit the chip) — and reuses the normal terminal states: th
 means *ready to review*; a genuine block flips the card to **needs-you** (red) with a
 `failed` chip, where it stops and asks you a question.
 
+![A workflow card that's completed its run, showing the Workflow header and a "done" phase chip](docs/images/workflow-phase.png)
+
 **No setup needed:** the wrangler loads the skill via `--plugin-dir` on every Workflow
 launch, resolving it from its own install — so it works from any worktree and against
 any target repo without a `~/.claude/skills` symlink.
@@ -141,6 +145,8 @@ any target repo without a `~/.claude/skills` symlink.
 The **clock button** on the nav rail opens the **Schedules** panel, where you can have
 the board run an action automatically — once at a chosen time, or on a recurring
 cadence. A schedule is **a saved action + a "when"**, and the action is one of two:
+
+![The Schedules panel listing a recurring nightly sweep, a weekly dependency check, and a one-off resume](docs/images/schedules-panel.png)
 
 - **New session** — dispatch a brand-new session. Carries the same payload as the
   New-session dialog (folder, prompt/issue, model, task, worktree, and the **Workflow**
@@ -228,6 +234,8 @@ translucent themes. The server compiles each manifest to CSS-var overrides and s
 manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
 example. All UI colours — including the xterm terminal — flow through these variables, so both
 built-in and custom styles re-theme the whole app live.
+
+![The Appearance section's theme picker, showing the built-in and drop-in custom styles](docs/images/theme-picker.png)
 
 ## License
 
