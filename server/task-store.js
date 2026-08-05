@@ -151,12 +151,24 @@ export class TaskStore {
   }
 
   // The task a session is currently assigned to, as {id, name}, or null. Used at
-  // archive time to snapshot the task name so History can still show it after the
-  // task is later deleted (which drops the assignment).
+  // archive time to snapshot the task name onto the session entry, so History's
+  // search can still match it by the name the task had back then, even after a
+  // later rename.
   taskFor(sessionId) {
     const id = this.assignments[sessionId];
     const task = id && this.tasks.find((t) => t.id === id);
     return task ? { id: task.id, name: task.name } : null;
+  }
+
+  // Whether sessionId is currently assigned to a task that is itself archived —
+  // the resume-time check that decides whether resuming this session ALONE
+  // (without its task) should fall back to Ad-hoc rather than leave a stale
+  // assignment that would resurrect it under the task's tile if that task is
+  // restored later. False for an unassigned session or a live task.
+  isAssignedToArchivedTask(sessionId) {
+    const id = this.assignments[sessionId];
+    const task = id && this.tasks.find((t) => t.id === id);
+    return Boolean(task?.archivedAt);
   }
 
   getLinks(taskId) {
@@ -296,57 +308,8 @@ export class TaskStore {
     return true;
   }
 
-  // Delete a task, returning a restore snapshot ({task, index, assignments,
-  // order, todos}) so the deletion can be reverted exactly, or null if unknown.
-  // Delete is fully reversible: nothing is killed, sessions just fall back to Ad hoc.
-  deleteTask(id) {
-    const index = this.tasks.findIndex((t) => t.id === id);
-    if (index < 0) return null;
-    const [task] = this.tasks.splice(index, 1);
-    const orderIndex = this.order.indexOf(id);
-    this.order = this.order.filter((x) => x !== id);
-    const assignments = {};
-    for (const [sid, tid] of Object.entries(this.assignments))
-      if (tid === id) {
-        assignments[sid] = tid;
-        delete this.assignments[sid];
-      }
-    const order = this.sessionOrder[id] || [];
-    delete this.sessionOrder[id];
-    // Don't destroy the task's TODOs — fall them back onto Ad-hoc, exactly as the
-    // freed sessions unassign there, so delete stays fully reversible.
-    const todos = this.todos[id] || [];
-    delete this.todos[id];
-    if (todos.length) (this.todos[ADHOC] || (this.todos[ADHOC] = [])).push(...todos);
-    this._save();
-    return { task: { ...task }, index, orderIndex, assignments, order: [...order], todos: todos.map((td) => ({ ...td })) };
-  }
-
-  // Revert a deleteTask: re-insert the task at its original position (in both
-  // `tasks` and `order`) and restore its assignments and session order. No-op if
-  // the id is already present.
-  restoreTask(snap) {
-    if (!snap || this.tasks.some((t) => t.id === snap.task.id)) return false;
-    this.tasks.splice(Math.min(snap.index, this.tasks.length), 0, { ...snap.task });
-    const oi = snap.orderIndex ?? this.order.length;
-    this.order.splice(Math.min(oi, this.order.length), 0, snap.task.id);
-    Object.assign(this.assignments, snap.assignments);
-    this.sessionOrder[snap.task.id] = [...snap.order];
-    // Pull the task's TODOs back out of Ad-hoc (where deleteTask parked them) and
-    // reinstate them on the recovered task — the inverse of the delete fallback.
-    const restoredIds = new Set((snap.todos || []).map((td) => td.id));
-    if (this.todos[ADHOC]) {
-      this.todos[ADHOC] = this.todos[ADHOC].filter((td) => !restoredIds.has(td.id));
-      if (!this.todos[ADHOC].length) delete this.todos[ADHOC];
-    }
-    if (snap.todos && snap.todos.length) this.todos[snap.task.id] = snap.todos.map((td) => ({ ...td }));
-    this._save();
-    return true;
-  }
-
   // Archive a task in place: stamp archivedAt so the live board (currentOrder in
-  // app.js) filters it out — mirrors session-manager's archive() rather than
-  // deleteTask's splice-and-snapshot above. Everything else (assignments,
+  // app.js) filters it out. Everything else (assignments,
   // sessionOrder, todos, links, its slot in `order`) stays untouched, so
   // unarchiveTask is an exact, instant revert with no snapshot bookkeeping.
   // No-op (false) for an unknown or already-archived id.

@@ -745,6 +745,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       createdAt: e.createdAt || null,
       model: e.model || null,
       task: e.task || null,
+      viaTaskArchive: e.viaTaskArchive || null,
       worktree: e.worktree ? { path: e.worktree.path, branch: e.worktree.branch } : null,
       // The autopilot run linkage, mirroring how board nodes carry `workflow` +
       // `parentSession` (same legacy `workflow.parent` fallback as the board — see

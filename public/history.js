@@ -1,4 +1,4 @@
-import { latestHistory, latestTasks, send, setPendingSelect } from './app.js';
+import { latestHistory, latestTasks, send, setPendingSelect, restoreTaskWithPrompt } from './app.js';
 import { toast } from './toast.js';
 import { openFork } from './modals.js';
 import { groupHistory, fmtDuration, filterHistory, filterArchivedTasks } from './history-group.js';
@@ -39,18 +39,15 @@ function histDesc(h) {
   if (h.cwd) return h.cwd.split('/').slice(-1)[0];
   return h.sessionId.slice(0, 8);
 }
-// One archived-session card: status stripe + body (desc/model, optional
-// "was:" note for a deleted task, dir, meta row) + stacked actions. `wf` shows a
-// small workflow badge by the desc (a solo autopilot run with no boxed worker);
-// `orchestrator` tints the card frame violet as the lead of a History workflow box.
+// One archived-session card: status stripe + body (desc/model, dir, meta row) +
+// stacked actions. `wf` shows a small workflow badge by the desc (a solo
+// autopilot run with no boxed worker); `orchestrator` tints the card frame
+// violet as the lead of a History workflow box.
 function histCard(h, { wf = false, orchestrator = false } = {}) {
   const sid = esc(h.sessionId);
   const model = h.model ? `<span class="chip model">${esc(h.model)}</span>` : '';
   const wfBadge = wf
     ? `<span class="hc-wf-badge" title="Autopilot workflow run">${WORKFLOW_ICON}</span>`
-    : '';
-  const was = h.wasName
-    ? `<div class="hc-was">was: <b>${esc(h.wasName)}</b> (deleted)</div>`
     : '';
   const dur = fmtDuration(h.archivedAt && h.createdAt ? h.archivedAt - h.createdAt : 0);
   const meta = [
@@ -62,7 +59,6 @@ function histCard(h, { wf = false, orchestrator = false } = {}) {
       <div class="hc-stripe"></div>
       <div class="hc-body">
         <div class="hc-row1">${wfBadge}<div class="hc-desc">${esc(histDesc(h))}</div>${model}</div>
-        ${was}
         <div class="hc-dir">📁 ${esc(h.cwd || '—')}</div>
         <div class="hc-meta">${meta}</div>
       </div>
@@ -77,19 +73,32 @@ function histCard(h, { wf = false, orchestrator = false } = {}) {
 // The task-archive marker card: the whole task was set aside (taskStore.
 // archiveTask), not just one session — visually distinct from histCard (tinted
 // --purple, see styles.css .hc.task-archived) so it reads as "about this task"
-// rather than another session row. Just one action: restore the task tile.
-function histTaskArchiveCard(task) {
+// rather than another session row. Its own restore button restores the task AND
+// everything still nested below it (restoreTaskWithPrompt in app.js — prompts
+// for task-only vs. task+sessions when there's anything nested, force-restores
+// silently when there isn't). Nested sessions (viaTaskArchive — a real recorded
+// link, not a time-bucket guess) render as full histCards indented beneath, each
+// keeping its own independent Resume/Fork/Delete — restoring one on its own
+// (without restoring the task) detaches it to Ad-hoc (see resumeHandler).
+function histTaskArchiveCard(task, nestedSessions = []) {
   const tid = esc(task.id);
+  const tname = esc(task.name);
   const meta = `<span title="${esc(fmtWhen(task.archivedAt))}">${esc(timeAgo(task.archivedAt) || '—')}</span>`;
-  return `<div class="hc task-archived" data-taskid="${tid}">
-      <div class="hc-stripe"></div>
-      <div class="hc-body">
-        <div class="hc-row1"><span class="hc-task-badge" title="Whole task archived">${ARCHIVE_ICON}</span><div class="hc-desc">${esc(task.name)}</div></div>
-        <div class="hc-meta">${meta}</div>
+  const nested = nestedSessions.length
+    ? `<div class="hc-task-nested">${nestedSessions.map((h) => histCard(h)).join('')}</div>`
+    : '';
+  return `<div class="hc-task-group">
+      <div class="hc task-archived" data-taskid="${tid}" data-taskname="${tname}">
+        <div class="hc-stripe"></div>
+        <div class="hc-body">
+          <div class="hc-row1"><span class="hc-task-badge" title="Whole task archived">${ARCHIVE_ICON}</span><div class="hc-desc">${tname}</div></div>
+          <div class="hc-meta">${meta}</div>
+        </div>
+        <div class="hc-acts">
+          <button class="hist-task-restore" data-taskid="${tid}" data-taskname="${tname}" title="Restore task to the board">↩</button>
+        </div>
       </div>
-      <div class="hc-acts">
-        <button class="hist-task-restore" data-taskid="${tid}" title="Restore task to the board">↩</button>
-      </div>
+      ${nested}
     </div>`;
 }
 
@@ -150,7 +159,7 @@ function histChildStack(unit) {
 function renderUnit(u) {
   if (u.kind === 'workflow') return histWorkflowBox(u);
   if (u.kind === 'children') return histChildStack(u);
-  if (u.kind === 'task-archive') return histTaskArchiveCard(u.task);
+  if (u.kind === 'task-archive') return histTaskArchiveCard(u.task, u.nestedSessions);
   return histCard(u.session, { wf: isWorkflowRun(u.session) });
 }
 
@@ -296,10 +305,7 @@ function renderGrid() {
   grid.querySelectorAll('.hist-fork').forEach((b) =>
     b.addEventListener('click', () => openFork(b.dataset.sid)));
   grid.querySelectorAll('.hist-task-restore').forEach((b) =>
-    b.addEventListener('click', () => {
-      send({ type: 'task-unarchive', taskId: b.dataset.taskid });
-      toast('Task restored');
-    }));
+    b.addEventListener('click', () => restoreTaskWithPrompt(b.dataset.taskid, b.dataset.taskname)));
   grid.querySelectorAll('.hist-remove').forEach((b) =>
     b.addEventListener('click', () => {
       const h = latestHistory.find((x) => x.sessionId === b.dataset.sid);

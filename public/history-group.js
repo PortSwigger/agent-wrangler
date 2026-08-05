@@ -132,14 +132,15 @@ function foldTile(tile) {
   // bucket) always leads — it's the event the sessions below it happened
   // alongside. Unlike a workflow box's worker count (a distinct label shown
   // elsewhere), the tile-head badge's whole job is "how many cards you'll see
-  // here", so the marker counts too, or the badge undercounts what's rendered.
-  if (tile.taskArchive) units.unshift({ kind: 'task-archive', task: tile.taskArchive });
+  // here", so the marker (and anything nested under it) counts too, or the
+  // badge undercounts what's rendered.
+  if (tile.taskArchive) units.unshift({ kind: 'task-archive', task: tile.taskArchive, nestedSessions: tile.nestedSessions || [] });
   return {
     taskId: tile.taskId,
     taskName: tile.taskName,
     unassigned: tile.unassigned,
     units,
-    count: sessions.length + (tile.taskArchive ? 1 : 0),
+    count: sessions.length + (tile.taskArchive ? 1 : 0) + (tile.nestedSessions ? tile.nestedSessions.length : 0),
   };
 }
 
@@ -148,20 +149,20 @@ function foldTile(tile) {
 // is injectable for testing. `archivedTasks` (already search-filtered by the
 // caller, like `history`) are tasks themselves set aside via taskStore.archiveTask
 // — each folds into its OWN tile (tileKey = its own id) in the bucket matching
-// its OWN archivedAt, so a task archived alongside its cascade-archived sessions
-// (near-identical timestamps) lands in the same tile as them. Returns ordered
-// buckets (newest-first; empties omitted):
+// its OWN archivedAt. Returns ordered buckets (newest-first; empties omitted):
 //   [{ key, label, count, older, tiles: [{ taskId, taskName, unassigned, units, count }] }]
 // `older` is true for the per-week buckets beyond a week (key `w<n>`) — the ones
 // the client paginates behind "Show older"; false for the fixed recent buckets.
 // Each tile's `units` is the ordered render-unit list from foldTile — an optional
-// leading `{ kind:'task-archive', task }` marker, then a `{ kind:'card', session }`
-// (the item plus a resolved `wasName`, the snapshotted task name when its task
-// was since DELETED — distinct from archived, which keeps the live task lookup
-// working), a `{ kind:'workflow', orch, workers, issue, outcome }` box folding an
+// leading `{ kind:'task-archive', task, nestedSessions }` marker (nestedSessions:
+// every session recorded — via viaTaskArchive, a real link, not a time-bucket
+// guess — as cascade-archived alongside THIS still-archived task, regardless of
+// its own archivedAt), then a `{ kind:'card', session }`, a
+// `{ kind:'workflow', orch, workers, issue, outcome }` box folding an
 // orchestrator + its present workers, or a `{ kind:'children', session, children }`
 // stack folding any other parent + its present non-workflow children. `count` is
-// the total cards in the tile (sessions, plus the task-archive marker if present).
+// the total cards in the tile (sessions, the task-archive marker if present, and
+// anything nested under it).
 // Tiles follow the board's task order; the Unassigned tile is always last.
 export function groupHistory(history, tasks, now, archivedTasks = []) {
   const taskList = (tasks && tasks.tasks) || [];
@@ -191,18 +192,35 @@ export function groupHistory(history, tasks, now, archivedTasks = []) {
     return { bucket, tile };
   };
 
-  for (const h of [...history].sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0))) {
+  // Sessions cascade-archived alongside a task that's STILL archived nest under
+  // that task's own marker (built in the archivedTasks loop below) instead of
+  // going through the normal per-item time-bucket placement below — a real
+  // recorded relationship (viaTaskArchive), not a time-bucket coincidence. A
+  // session whose task was later restored without it (viaTaskArchive still set,
+  // but its task no longer archived) falls through to normal placement, same as
+  // any other independently-archived session — there's no marker left to nest
+  // under.
+  const archivedTaskIds = new Set(archivedTasks.map((t) => t.id));
+  const cascadeByTask = new Map();
+  const rest = [];
+  for (const h of history) {
+    if (h.viaTaskArchive && archivedTaskIds.has(h.viaTaskArchive)) {
+      const list = cascadeByTask.get(h.viaTaskArchive) || [];
+      list.push(h);
+      cascadeByTask.set(h.viaTaskArchive, list);
+    } else {
+      rest.push(h);
+    }
+  }
+
+  for (const h of rest.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0))) {
     const liveTask = taskById.get(assignments[h.sessionId]);
     const { bucket, tile } = tileFor(bucketMetaFor(now - (h.archivedAt || 0)), liveTask ? liveTask.id : '__unassigned__', {
       taskId: liveTask ? liveTask.id : null,
       taskName: liveTask ? liveTask.name : 'Unassigned',
       unassigned: !liveTask,
     });
-    // wasName: only when the session has no live task but carries a snapshot — the
-    // task it was archived from has since been DELETED (an archived-but-present
-    // task still resolves via liveTask above, so this stays null for it).
-    const wasName = !liveTask && h.task && h.task.name ? h.task.name : null;
-    tile.sessions.push({ ...h, wasName });
+    tile.sessions.push(h);
     bucket.count += 1;
   }
 
@@ -213,7 +231,9 @@ export function groupHistory(history, tasks, now, archivedTasks = []) {
       unassigned: false,
     });
     tile.taskArchive = t;
-    bucket.count += 1;
+    tile.nestedSessions = (cascadeByTask.get(t.id) || [])
+      .sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+    bucket.count += 1 + tile.nestedSessions.length;
   }
 
   return [...bucketsByKey.values()]

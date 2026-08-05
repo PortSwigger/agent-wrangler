@@ -1,22 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { taskAssignHandler, taskCreateHandler, taskDeleteHandler, taskRestoreHandler, taskArchiveHandler, taskUnarchiveHandler } from './tasks.js';
+import os from 'node:os';
+import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchiveHandler } from './tasks.js';
 
 function ctx(overrides = {}) {
   const calls = {
-    assign: [], bind: [], rebuild: 0, deleteTask: [], restoreTask: [], syncNotes: [], createTask: [],
+    assign: [], bind: [], rebuild: 0, syncNotes: [], createTask: [],
   };
   return {
     calls,
     taskStore: {
       assign: (sid, taskId) => calls.assign.push({ sid, taskId }),
-      deleteTask: () => { calls.deleteTask.push(true); return overrides.snap ?? null; },
-      restoreTask: (snap) => { calls.restoreTask.push(snap); return overrides.restoreOk ?? false; },
       createTask: (opts) => { calls.createTask.push(opts); return overrides.createdTask ?? { id: 'T1' }; },
     },
     memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     sessionManager: { syncNotesToContainer: async (sid) => { calls.syncNotes.push(sid); } },
-    pendingTaskRestores: new Map(),
     graph: () => ({ sessions: overrides.sessions ?? [] }),
     rebuild: async () => { calls.rebuild += 1; },
     ...overrides.ctx,
@@ -82,23 +80,6 @@ test('task-create with no sessionId (plain "+ New task") does not touch taskStor
   const c = ctx();
   await taskCreateHandler.handler({ type: 'task-create' }, c);
   assert.deepEqual(c.calls.assign, []);
-});
-
-test('task-delete stashes the snapshot and points freed sessions at scratch', async () => {
-  const snap = { assignments: { S1: 'T1', S2: 'T1' } };
-  const c = ctx({ snap });
-  await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
-  assert.equal(c.pendingTaskRestores.get('T1'), snap);
-  assert.deepEqual(c.calls.bind, [{ sid: 'S1', taskId: null }, { sid: 'S2', taskId: null }]);
-});
-
-test('task-restore relinks each session back to the recovered task', async () => {
-  const snap = { assignments: { S1: 'T1', S2: 'T1' } };
-  const c = ctx({ snap, restoreOk: true });
-  c.pendingTaskRestores.set('T1', snap);
-  await taskRestoreHandler.handler({ type: 'task-restore', taskId: 'T1' }, c);
-  assert.equal(c.pendingTaskRestores.has('T1'), false);
-  assert.deepEqual(c.calls.bind, [{ sid: 'S1', taskId: 'T1' }, { sid: 'S2', taskId: 'T1' }]);
 });
 
 // A fuller ctx for task-archive: it calls the REAL archiveCascade (imported, not
@@ -167,9 +148,68 @@ test('task-archive: unknown/already-archived taskId (archiveTask returns false) 
   assert.equal(c.calls.rebuild, 1);
 });
 
-test('task-unarchive: calls taskStore.unarchiveTask and rebuilds', async () => {
+test('task-unarchive: calls taskStore.unarchiveTask, rebuilds, and acks task-unarchived', async () => {
   const c = archiveCtx();
   await taskUnarchiveHandler.handler({ type: 'task-unarchive', taskId: 'T1' }, c);
   assert.deepEqual(c.calls.unarchiveTask, ['T1']);
   assert.equal(c.calls.rebuild, 1);
+  assert.deepEqual(c.calls.reply, [{ type: 'task-unarchived', taskId: 'T1' }]);
+});
+
+test('task-unarchive: an unknown/not-archived taskId (unarchiveTask returns false) just rebuilds — no ack, no resume', async () => {
+  const c = archiveCtx();
+  c.taskStore.unarchiveTask = (id) => { c.calls.unarchiveTask.push(id); return false; };
+  await taskUnarchiveHandler.handler({ type: 'task-unarchive', taskId: 'GHOST' }, c);
+  assert.deepEqual(c.calls.reply, []);
+  assert.equal(c.calls.rebuild, 1);
+});
+
+test('task-unarchive: without restoreSessions, resumes nothing even if sessions are still cascade-archived', async () => {
+  const c = archiveCtx();
+  c.sessionManager.archivedEntries = () => [{ sessionId: 'S1', viaTaskArchive: 'T1' }];
+  c.sessionManager.resume = async () => { throw new Error('must not resume'); };
+  await taskUnarchiveHandler.handler({ type: 'task-unarchive', taskId: 'T1' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'task-unarchived', taskId: 'T1' }]);
+});
+
+// A fuller ctx for the restoreSessions:true path — taskUnarchiveHandler funnels
+// each cascaded session through the REAL resumeSession (imported, not injected),
+// so this must satisfy its whole contract (mirrors resume.test.js's handlerCtx).
+function unarchiveCtx({ archivedEntries = [] } = {}) {
+  const calls = { unarchiveTask: [], reply: [], rebuild: 0, resume: [], bind: [], unassign: [] };
+  const entriesById = new Map(archivedEntries.map((e) => [e.sessionId, e]));
+  return {
+    calls,
+    taskStore: {
+      unarchiveTask: (id) => { calls.unarchiveTask.push(id); return true; },
+      isAssignedToArchivedTask: () => false, // the task was just unarchived above
+      unassign: (sid) => calls.unassign.push(sid),
+      taskFor: () => null,
+    },
+    sessionManager: {
+      archivedEntries: () => archivedEntries,
+      entryFor: (sid) => entriesById.get(sid),
+      clearSnooze: () => true,
+      resume: async (sid, dir) => { calls.resume.push({ sid, dir }); return { tmux: 'cc_new' }; },
+    },
+    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
+    sessionFromGraph: () => null, // archived sessions are off the live graph
+    rebuild: async () => { calls.rebuild += 1; },
+    reply: (obj) => calls.reply.push(obj),
+  };
+}
+
+test('task-unarchive: restoreSessions resumes exactly the sessions cascaded with THIS task, sequentially, and none other', async () => {
+  const dir = os.tmpdir();
+  const c = unarchiveCtx({
+    archivedEntries: [
+      { sessionId: 'S1', viaTaskArchive: 'T1', cwd: dir },
+      { sessionId: 'S2', viaTaskArchive: 'T2', cwd: dir }, // a different task's cascade — must not resume
+      { sessionId: 'S3', cwd: dir }, // independently archived, no viaTaskArchive — must not resume
+      { sessionId: 'S4', viaTaskArchive: 'T1', cwd: dir },
+    ],
+  });
+  await taskUnarchiveHandler.handler({ type: 'task-unarchive', taskId: 'T1', restoreSessions: true }, c);
+  assert.deepEqual(c.calls.resume.map((r) => r.sid), ['S1', 'S4']);
+  assert.deepEqual(c.calls.reply, [{ type: 'task-unarchived', taskId: 'T1' }]);
 });

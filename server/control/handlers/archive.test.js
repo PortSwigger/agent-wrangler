@@ -166,6 +166,22 @@ test('archiveCascade: archives every id in order, using each session\'s OWN hasB
   assert.deepEqual(c.calls.archive.map((a) => a.sid), ['C1', 'ORCH']);
 });
 
+test('archiveCascade: viaTaskArchive stamps every archived session\'s snapshot, omitted entirely without it', async () => {
+  const sessions = [
+    { sessionId: 'C1', cwd: '/x', label: 'Child' },
+    { sessionId: 'C2', cwd: '/x', label: 'Child2' },
+  ];
+  const c = cascadeCtx(sessions);
+  await archiveCascade(['C1', 'C2'], c, { viaTaskArchive: 'T1' });
+  assert.deepEqual(c.calls.archive.map((a) => a.meta.viaTaskArchive), ['T1', 'T1']);
+
+  // Without the opt (the plain descendant-cascade path), the key is absent —
+  // not just falsy — so the snapshot shape is unchanged for every other caller.
+  const c2 = cascadeCtx(sessions);
+  await archiveCascade(['C1', 'C2'], c2);
+  assert.deepEqual(c2.calls.archive.map((a) => 'viaTaskArchive' in a.meta), [false, false]);
+});
+
 test('archive: cascade archives descendants first, then the target, in one handler call', async () => {
   const sessions = [
     { sessionId: 'ORCH', cwd: '/x', label: 'Orch' },

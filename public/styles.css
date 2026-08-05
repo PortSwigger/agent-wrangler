@@ -219,8 +219,6 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .hc-row1 { display: flex; align-items: center; gap: 8px; }
 .hc-desc { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc .chip.model { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: var(--purple); background: var(--surface-2); border: 1px solid var(--border-muted); }
-.hc-was { font-size: 10px; color: var(--fg-muted); margin-top: 3px; font-style: italic; }
-.hc-was b { color: var(--purple); font-style: normal; }
 .hc-dir { font-size: 11px; color: var(--fg-subtle); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc-meta { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--fg-muted); }
 .hc-meta .sep { color: var(--border); }
@@ -469,6 +467,10 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
 #modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden { display: none; }
+/* The confirm modal's optional third button — shown only when a caller passes
+   extraLabel (see confirmDialog in app.js). Without this, the button had no
+   CSS hiding it at all and rendered on every confirm dialog. */
+#confirm-extra.hidden { display: none; }
 /* The native datetime picker chrome (calendar/spinners) follows color-scheme;
    pin it per-theme so it isn't a stark white popup on the dark board. */
 #sn-when, #m-sch-at, #m-sch-time { color-scheme: dark; }
@@ -983,6 +985,14 @@ body.system-banner-open { padding-top: 30px; }
   background: var(--tile-bg); overflow: hidden;
 }
 .task-cell.drop-target { border-color: var(--blue); border-style: solid; background: color-mix(in srgb, var(--blue) 6%, transparent); }
+/* One-shot halo when a restored task lands back on the board (flashRestoredTask
+   in app.js) — a ring/glow rather than a background swap, since --tile-bg
+   already varies per theme. */
+@keyframes task-restored-flash {
+  from { box-shadow: 0 0 0 2px var(--blue), 0 0 16px 2px color-mix(in srgb, var(--blue) 45%, transparent); }
+  to { box-shadow: none; }
+}
+.task-cell.task-restored-flash { animation: task-restored-flash 1.8s ease-out; }
 
 /* Ghost "＋ new task" drop targets in empty cells — shown only while a session
    drag arms the grid. */
@@ -1427,14 +1437,17 @@ body.system-banner-open { padding-top: 30px; }
    with the same 7px gap `.hist-wf`/`.hist-stack` use elsewhere, so the
    first-child reach (crossing that outer gap) is tuned to 7, not the board's 8. */
 .hist-wf-workers,
-.hist-children {
+.hist-children,
+.hc-task-nested {
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
 }
 .hist-wf-workers { --line-color: var(--wf); }
 .hist-children { --line-color: var(--border); } /* see .child-spine above: --border, not --border-muted */
+.hc-task-nested { --line-color: var(--purple); } /* matches .hc.task-archived's own accent */
 .hist-wf-workers > .hc,
-.hist-children > .hc {
+.hist-children > .hc,
+.hc-task-nested > .hc {
   /* .hc's own `overflow: hidden` (it clips .hc-stripe's square corners against
      the card's rounded ones) would also clip these connector pseudo-elements —
      they sit at left:-14px, entirely outside .hc's own border box, in the gap
@@ -1445,7 +1458,8 @@ body.system-banner-open { padding-top: 30px; }
   overflow: visible;
 }
 .hist-wf-workers > .hc::before,
-.hist-children > .hc::before {
+.hist-children > .hc::before,
+.hc-task-nested > .hc::before {
   content: '';
   position: absolute;
   left: -14px;
@@ -1457,12 +1471,14 @@ body.system-banner-open { padding-top: 30px; }
   pointer-events: none;
 }
 .hist-wf-workers > .hc:first-child::before,
-.hist-children > .hc:first-child::before {
+.hist-children > .hc:first-child::before,
+.hc-task-nested > .hc:first-child::before {
   top: -8px;
   height: calc(50% + 8px);
 }
 .hist-wf-workers > .hc:not(:last-child)::after,
-.hist-children > .hc:not(:last-child)::after {
+.hist-children > .hc:not(:last-child)::after,
+.hc-task-nested > .hc:not(:last-child)::after {
   content: '';
   position: absolute;
   left: -14px;
@@ -1482,9 +1498,8 @@ body.system-banner-open { padding-top: 30px; }
 .hc-wf-badge { display: inline-flex; flex: 0 0 auto; color: var(--wf); }
 .hc-wf-badge svg { width: 13px; height: 13px; display: block; }
 /* Task-archive marker card: the whole task was set aside, not one session —
-   tinted --purple (already the "about this task" hue, see .hc-was b above)
-   rather than --wf (workflow) or a new role, so it stays visually distinct
-   from both without adding a third accent for one small card. */
+   tinted --purple rather than --wf (workflow) or a new role, so it stays
+   visually distinct from both without adding a third accent for one small card. */
 .hc.task-archived {
   border-color: color-mix(in srgb, var(--purple) 42%, var(--border-muted));
   background: color-mix(in srgb, var(--purple) 6%, var(--surface));
@@ -1492,6 +1507,9 @@ body.system-banner-open { padding-top: 30px; }
 .hc.task-archived .hc-stripe { background: color-mix(in srgb, var(--purple) 60%, transparent); }
 .hc-task-badge { display: inline-flex; flex: 0 0 auto; color: var(--purple); }
 .hc-task-badge svg { width: 13px; height: 13px; display: block; }
+/* Wraps a task-archive marker + the sessions cascade-archived alongside it
+   (.hc-task-nested, above) so the pair reads as one unit in .hist-stack. */
+.hc-task-group { display: flex; flex-direction: column; gap: 6px; }
 /* Issue + outcome chip in the box header; the issue ellipsises if the row tightens. */
 .wf-issue {
   flex: 0 1 auto; min-width: 0;

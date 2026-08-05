@@ -17,8 +17,6 @@ import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-defau
 import {
   taskCreateHandler,
   taskRenameHandler,
-  taskDeleteHandler,
-  taskRestoreHandler,
   taskArchiveHandler,
   taskUnarchiveHandler,
   taskAssignHandler,
@@ -50,8 +48,8 @@ import { usageHandler } from './usage.js';
 // The control-WS handler registry, mirroring server/mcp/tools. Adding a message
 // type = adding a module here. Each handler: { type, handler(msg, ctx) }, where
 // ctx bundles sessionManager/taskStore/memoryStore/scheduleStore/rebuild/reply/graph
-// + the graph-target resolvers (sessionFromGraph/tmuxFor/socketFor),
-// pendingTaskRestores, and runSchedule (the shared schedule-firing routine).
+// + the graph-target resolvers (sessionFromGraph/tmuxFor/socketFor) and
+// runSchedule (the shared schedule-firing routine).
 export const CONTROL_HANDLERS = [
   dispatchHandler,
   validateWorktreeHandler,
@@ -74,8 +72,6 @@ export const CONTROL_HANDLERS = [
   subagentsExpandedByDefaultHandler,
   taskCreateHandler,
   taskRenameHandler,
-  taskDeleteHandler,
-  taskRestoreHandler,
   taskArchiveHandler,
   taskUnarchiveHandler,
   taskAssignHandler,

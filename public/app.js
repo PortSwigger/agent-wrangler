@@ -563,6 +563,11 @@ function confirmDialog({ title = 'Confirm', body = '', okLabel = 'OK', danger = 
   if (extraLabel) {
     extra.textContent = extraLabel;
     extra.classList.toggle('danger-strong', extraDanger);
+  } else {
+    // Reset so a later dialog that omits extraLabel can't inherit stale text/
+    // styling left over from an earlier call that used the third button.
+    extra.textContent = '';
+    extra.classList.remove('danger-strong');
   }
   modal.classList.remove('hidden');
   ok.focus();
@@ -628,6 +633,16 @@ function assignedTaskId(sessionId) {
 // justFinished so linkChipsHtml reads it on every render — the flash survives
 // re-renders and we re-render again when the window closes (flashPr).
 const flashingPr = new Set();
+
+// The task tile to halo right after a task-unarchive lands us back on the
+// board (see the 'task-unarchived' WS handler) — a one-shot pulse so the
+// restore is visually obvious, same re-render-driven flash pattern as flashPr.
+let restoredTaskId = null;
+function flashRestoredTask(taskId) {
+  restoredTaskId = taskId;
+  renderGrid();
+  setTimeout(() => { restoredTaskId = null; renderGrid(); }, 1800);
+}
 
 // Workflow boxes the user has collapsed (hiding their worker spine), keyed on the
 // orchestrator card id. Client-only view state — like unread, it's a personal
@@ -746,7 +761,7 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks,
+    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
     justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
@@ -1471,7 +1486,6 @@ function openTaskActionsMenu(taskId, x, y) {
       { sep: true },
       ...(taskMemoryEnabled ? [{ label: 'Task memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
-      { label: 'Delete task', icon: X_ICON, danger: true, run: () => deleteTask(taskId, task.name) },
     ]),
   ];
   mountMenu(items, x, y);
@@ -1502,19 +1516,6 @@ function openSnoozeMenu(sessionId, x, y) {
   mountMenu(items, x, y);
 }
 
-function deleteTaskFromCell(cell) {
-  deleteTask(cell.dataset.taskid, cell.querySelector('.task-name').textContent);
-}
-
-function deleteTask(taskId, name) {
-  send({ type: 'task-delete', taskId });
-  toast(`Task "${name}" deleted`, false, {
-    label: 'Restore',
-    duration: 10000,
-    onClick: () => send({ type: 'task-restore', taskId }),
-  });
-}
-
 function archiveTaskFromCell(cell) {
   archiveTask(cell.dataset.taskid, cell.querySelector('.task-name').textContent);
 }
@@ -1541,11 +1542,28 @@ async function archiveTask(taskId, name) {
   send({ type: 'task-archive', taskId });
 }
 
-// A task with no sessions and no TODOs — the only thing in its tile is the
-// new-session slot, so the Delete hotkey can drop the task itself.
-function taskIsEmpty(taskId) {
-  if (latestSessions.some((s) => assignedTaskId(s.sessionId) === taskId)) return false;
-  return !((latestTasks.todos || {})[taskId] || []).length;
+// Restore a task from History (a later, deliberate action — unlike the toast's
+// immediate force-restore right after archiving). Counts sessions still
+// cascade-archived with this task (viaTaskArchive) fresh at click time, so a
+// session already resumed individually since the archive isn't double-counted
+// or double-resumed. Zero cascaded sessions skips the dialog entirely — there's
+// nothing to choose between.
+export async function restoreTaskWithPrompt(taskId, name) {
+  const cascadeCount = latestHistory.filter((h) => h.viaTaskArchive === taskId).length;
+  if (!cascadeCount) {
+    send({ type: 'task-unarchive', taskId, restoreSessions: false });
+    toast('Task restored');
+    return;
+  }
+  const result = await confirmDialog({
+    title: `Restore "${name}"?`,
+    body: `This task has ${cascadeCount} session${cascadeCount > 1 ? 's' : ''} that ${cascadeCount > 1 ? 'were' : 'was'} archived along with it. Restore ${cascadeCount > 1 ? 'them' : 'it'} too?`,
+    okLabel: 'Restore task + sessions',
+    extraLabel: 'Task only',
+  });
+  if (result === 'cancel') return;
+  send({ type: 'task-unarchive', taskId, restoreSessions: result === 'ok' });
+  toast(result === 'ok' ? 'Task and sessions restored' : 'Task restored');
 }
 
 function openTaskMenu(cell, x, y) {
@@ -1560,7 +1578,6 @@ function openTaskMenu(cell, x, y) {
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
       { sep: true },
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTaskFromCell(cell) },
-      { label: 'Delete task', icon: X_ICON, danger: true, run: () => deleteTaskFromCell(cell) },
     ] : []),
   ];
   mountMenu(items, x, y);
@@ -2785,15 +2802,7 @@ window.addEventListener('keydown', (e) => {
   if (key === 'm') { if (selectedSessionId) toggleMaximize(); return; }
   if (key === 's') { if (selectedSessionId) snoozeSelected(selectedSessionId); return; }
   if (key === 'g') { if (selectedSessionId) toggleDiffPanel(selectedSessionId); return; }
-  // The lit board target is the new-session slot when one is selected — it
-  // takes precedence over an open session (selecting a slot keeps the terminal
-  // open, so selectedSessionId is still set). On a real (non-Ad-hoc) task
-  // that's otherwise empty, Delete drops the task, mirroring its Delete button.
-  if (selectedNewSlot != null) {
-    if (selectedNewSlot === ADHOC_ID || !taskIsEmpty(selectedNewSlot)) return;
-    const task = latestTasks.tasks.find((t) => t.id === selectedNewSlot);
-    if (task) deleteTask(task.id, task.name);
-  } else if (selectedSessionId) archiveSession(selectedSessionId);
+  if (selectedSessionId) archiveSession(selectedSessionId);
 }, true);
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
@@ -4238,12 +4247,21 @@ function connect() {
       toast(msg.unclean
         ? `Task archived${sessionsNote} — a background job may have been interrupted uncleanly`
         : `Task archived${sessionsNote}`, false, {
-        // "Restore task", not plain "Restore" — it only brings the task tile
-        // back empty; any cascaded sessions stay archived, resumed individually.
         label: 'Restore task',
         duration: 10000,
-        onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId }),
+        // Force through, no dialog — this is an immediate undo of the action the
+        // user just took, so it restores the task AND every session it just
+        // cascaded. The deliberate "task only vs. task + sessions" choice only
+        // applies later, from History (see restoreTaskFromHistory).
+        onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId, restoreSessions: true }),
       });
+    }
+    // Nav signal for a task restore (toast or History): jump back to the board
+    // and halo the tile, decoupled from the slower per-session resumes a
+    // restoreSessions:true restore may still be doing in the background.
+    else if (msg.type === 'task-unarchived') {
+      setView('grid');
+      flashRestoredTask(msg.taskId);
     }
     else if (msg.type === 'worktree-removed') {
       if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });

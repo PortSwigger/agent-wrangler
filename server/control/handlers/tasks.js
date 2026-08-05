@@ -1,4 +1,5 @@
 import { archiveCascade, descendantsOf } from './archive.js';
+import { resumeSession } from './resume.js';
 
 export const taskCreateHandler = {
   type: 'task-create',
@@ -23,40 +24,13 @@ export const taskRenameHandler = {
   },
 };
 
-export const taskDeleteHandler = {
-  type: 'task-delete',
-  async handler(msg, ctx) {
-    const snap = ctx.taskStore.deleteTask(msg.taskId);
-    if (snap) {
-      ctx.pendingTaskRestores.set(msg.taskId, snap);
-      // Freed sessions fall back to Ad-hoc → point their memory at scratch.
-      for (const sid of Object.keys(snap.assignments)) ctx.memoryStore.bindSession(sid, null);
-    }
-    await ctx.rebuild();
-  },
-};
-
-export const taskRestoreHandler = {
-  type: 'task-restore',
-  async handler(msg, ctx) {
-    const snap = ctx.pendingTaskRestores.get(msg.taskId);
-    if (snap && ctx.taskStore.restoreTask(snap)) {
-      ctx.pendingTaskRestores.delete(msg.taskId);
-      // Restore each session's memory link back to the recovered task file.
-      for (const [sid, tid] of Object.entries(snap.assignments)) ctx.memoryStore.bindSession(sid, tid);
-    }
-    await ctx.rebuild();
-  },
-};
-
 // Archive the whole task: stamp it (taskStore.archiveTask), then cascade-archive
 // every LIVE session directly assigned to it via the same archiveCascade helper
 // "Archive all" uses for a session's descendant tree — same safe kill-jobs-first
 // behavior per session, no reinvented teardown. Only DIRECT assignments cascade
 // (matches exactly how the live board buckets a task's tile, see app.js's byTask);
 // a nested child that isn't itself assigned to this task is unaffected — it just
-// stops rendering nested and reappears as its own top-level card, the same
-// non-cascading treatment deleteTask already gives an unassigned child.
+// stops rendering nested and reappears as its own top-level card.
 export const taskArchiveHandler = {
   type: 'task-archive',
   async handler(msg, ctx) {
@@ -69,7 +43,7 @@ export const taskArchiveHandler = {
       .filter(([, tid]) => tid === msg.taskId)
       .map(([sid]) => sid)
       .filter((sid) => !ctx.sessionManager.isArchived(sid));
-    const { unclean } = await archiveCascade(sessionIds, ctx);
+    const { unclean } = await archiveCascade(sessionIds, ctx, { viaTaskArchive: msg.taskId });
     ctx.reply({ type: 'task-archived', taskId: msg.taskId, unclean, archivedSessions: sessionIds.length });
     // Delayed like archive.js's own cascade rebuild: panes just got killed above,
     // so an immediate rebuild risks broadcasting a still-dying tree mid-teardown.
@@ -80,12 +54,31 @@ export const taskArchiveHandler = {
 export const taskUnarchiveHandler = {
   type: 'task-unarchive',
   async handler(msg, ctx) {
-    // Deliberately does not resume any session the task-archive cascaded — that
-    // would auto-relaunch N tmux processes as a side effect of restoring a data
-    // record. The task tile just reappears (empty until sessions are
-    // individually resumed from History, same as they always were).
-    ctx.taskStore.unarchiveTask(msg.taskId);
+    if (!ctx.taskStore.unarchiveTask(msg.taskId)) {
+      await ctx.rebuild();
+      return;
+    }
     await ctx.rebuild();
+    // Sent right away, decoupled from the (potentially slow) per-session resumes
+    // below, so the client can navigate back to the board / halo the tile without
+    // waiting on N tmux relaunches. See resumeSession's own rebuild for the
+    // eventual per-session board update.
+    ctx.reply({ type: 'task-unarchived', taskId: msg.taskId });
+    // Only when the client explicitly asked to restore sessions too (the toast's
+    // forced restore, or History's "Restore task + sessions" choice) — otherwise
+    // this stays the original behavior: the task tile reappears empty, sessions
+    // resumed individually from History. Resolved fresh (not from the archive-time
+    // count) so a session already resumed individually since the task was archived
+    // isn't double-resumed. Sequential, not parallel — mirrors archiveCascade's own
+    // one-at-a-time teardown, avoiding a burst of simultaneous tmux launches.
+    if (msg.restoreSessions) {
+      const cascaded = ctx.sessionManager.archivedEntries()
+        .filter((e) => e.viaTaskArchive === msg.taskId)
+        .map((e) => e.sessionId);
+      for (const sessionId of cascaded) {
+        await resumeSession(sessionId, ctx);
+      }
+    }
   },
 };
 
