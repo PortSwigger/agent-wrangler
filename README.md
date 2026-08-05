@@ -2,9 +2,23 @@
 
 A local web app — a command center for all your Claude Code **and OpenAI Codex** sessions. It shows
 every session on a task board, monitors status/cost/tasks, and acts as the launcher and control plane
-for them. Status, cost, and sub-agents are shown at a glance; clicking a session opens its live
-terminal in a sidebar (or pops out to iTerm2). Codex is offered as an agent automatically when the
-`codex` binary is on your `PATH`; otherwise it behaves exactly as a Claude-only board.
+for them. Status, cost, and sub-agents are shown at a glance, and clicking a session opens its live
+terminal right there in the sidebar. Codex is offered as an agent automatically when the `codex`
+binary is on your `PATH`; otherwise it behaves exactly as a Claude-only board.
+
+## Highlights
+
+- **One board for every session** — dispatch, monitor, and jump into any Claude Code or Codex
+  session's live terminal from a single screen, whether you launched it here or elsewhere.
+- **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
+  needs-you flag the moment a session is blocked on you.
+- **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
+  run an issue → PR autopilot with no gates, in its own git worktree.
+- **Scheduling** — one-off or recurring sessions and nudges, evaluated in your timezone, safe
+  across restarts.
+- **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
+  one click, conversation intact.
+- **Themeable** — built-in dark/light plus drop-in custom styles.
 
 ## Requirements
 
@@ -12,7 +26,6 @@ terminal in a sidebar (or pops out to iTerm2). Codex is offered as an agent auto
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
   `gh auth login` once so it's authenticated)
-- iTerm2 (optional — only for the "pop out" button)
 
 ## Run
 
@@ -88,8 +101,8 @@ survive and each card just needs a manual Resume.
   transcript under `~/.claude/projects/`.
 - **Dispatch** ("+ New session") starts `claude` inside a detached tmux session named `cc_<short>`.
   The app records the `sessionId ↔ tmux` mapping in `~/.agent-wrangler/mappings.json`.
-- **Jump in** attaches that tmux session: in-browser via xterm.js over a WebSocket (`node-pty`
-  running `tmux attach`), or popped out to an iTerm2 window. Both share the same live tmux session.
+- **Jump in** attaches that tmux session in-browser via xterm.js over a WebSocket (`node-pty`
+  running `tmux attach`).
 - **Sessions not launched through the app** appear as read-only "external" entries — visible with
   status and cost, but without an attachable terminal until relaunched through the dashboard.
 
@@ -160,8 +173,8 @@ place and re-attaches — the conversation is restored from the transcript).
   timer entirely). The value is re-read live — no restart needed.
 - **Manual:** right-click a session → **Suspend**, or **snooze** it for ≥ 1 hour
   (a snooze that long also frees its RAM; a shorter snooze just hides it).
-- **Never auto-suspended:** a session that is working, awaiting you, has a terminal
-  attached (browser or iTerm2), or is running a foreground command.
+- **Never auto-suspended:** a session that is working, awaiting you, has a terminal attached, or
+  is running a foreground command.
 - **Caveat:** a *detached background* process (e.g. a `run_in_background` dev server)
   under an otherwise-idle session is killed when the timer fires. If you rely on one,
   set `suspendIdleHours: 0`, keep a terminal attached, or don't leave it idle that
