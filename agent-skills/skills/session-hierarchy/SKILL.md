@@ -1,0 +1,78 @@
+---
+name: session-hierarchy
+description: Use when a session needs to discover its own place in the Agent Wrangler hierarchy — its session id, who spawned it, whether/what it's nested under, and its task — via env vars and MCP tools, no filesystem access needed. Also use when deciding whether "parent" means board-nesting or launch lineage.
+---
+
+# Session hierarchy
+
+Agent Wrangler tracks **two different, independently-nullable relations** for a
+session. Don't conflate them — either can be set with the other null:
+
+- **`parent`** (`parentSession`) — who this session is nested under on the
+  board. This is what "**parent**"/"**child**" mean in Agent Wrangler's own
+  vocabulary. It's opt-in: set at spawn time via `spawn_session`'s `nest: true`
+  (see the `spawn-session` skill), or later via `attach_session`/
+  `detach_session`. A session can be re-nested after launch, so this can change
+  over a session's lifetime.
+- **`spawnedBy`** — who actually called `spawn_session`/`spawn_workflow` to
+  launch this session. Set once, at launch, only for that launch path. A
+  session dispatched directly from the board UI has `spawnedBy: null` even if
+  it's later nested under something.
+
+A session asking "what is my parent" wants `parent`, not `spawnedBy`. A session
+asking "who spawned me" wants `spawnedBy`, not `parent`. They frequently agree
+(a `spawn_session` call with `nest: true` sets both to the same id) but often
+don't — e.g. a board-dispatched session that's later attached under an
+orchestrator has a real `parent` and a null `spawnedBy`.
+
+## Fastest path: the env var (zero tool calls)
+
+If you were launched via `spawn_session`/`spawn_workflow`, your spawner's
+session id is already in your environment as `AW_SPAWNER_SESSION_ID` — no tool
+call needed. This is static at launch: it reflects `spawnedBy`, never `parent`,
+and won't update if you're attached/detached afterward. It's also simply
+**absent** if you were dispatched from the board UI rather than spawned by
+another session — that's expected, not an error; fall through to the tool
+below.
+
+## Definitive path: `get_session_info`
+
+Call the `get_session_info` MCP tool (no arguments — it answers for the calling
+session only) to get both relations, each walked to root:
+
+```
+get_session_info()
+```
+
+Returns:
+- `sessionId`, `label`, `task` — your own identity and task.
+- `parent` (immediate `parentSession` id, or `null`) and `parentChain` (your
+  nesting ancestors, nearest first, up to root — each with its own id/label/task).
+- `spawnedBy` (immediate id, or `null`) and `spawnerChain` (your launch-lineage
+  ancestors, nearest first, up to root).
+
+This is the only path that's guaranteed correct after a re-nesting — the env
+var is frozen at launch, this tool reads live state.
+
+## Looking up ANOTHER session's lineage
+
+`get_session_info` only answers for the caller. To check another session's
+`parent`/`spawnedBy` (but not its full chain), use `list_sessions` — every row
+now carries `parentSession` and `spawnedBy` alongside the existing id/label/
+task/status fields.
+
+## Known limitations
+
+- `parentChain`/`spawnerChain` only include sessions still known to the
+  wrangler (mapped, live or archived). A chain link pointing at a session no
+  longer tracked stops there rather than erroring.
+- Neither chain is deduplicated against the other — a session can appear in
+  both if `parent` and `spawnedBy` happen to trace through the same ids.
+
+## Falling back to the raw file
+
+If the tools are ever unavailable, both relations live in
+`~/.agent-wrangler/mappings.json`, keyed by session (card) id: `parentSession`
+and `spawnedBy` (either may be absent, not just `null`, on older entries).
+Walk either field by hand the same way — following it session-to-session until
+an id isn't a key in the file, which is root.

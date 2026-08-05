@@ -110,6 +110,13 @@ don't re-derive it.
   send none; a browser always sends it) but **absent `Host` is REJECTED**. Caller
   *identity* (the MCP `X-AW-Session` header / Codex Bearer token, `extractCaller`) is
   **advisory only, not auth** — this gate, not the identity, is what accepts a request.
+- **A new MCP tool is invisible to launched agents until it's in TWO places.**
+  `server/mcp/tools/index.js`'s `TOOLS` registers it on the server; separately,
+  `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched session's
+  `--allowedTools` grants without a per-call permission prompt (a non-interactive
+  agent that never gets a prompt answered effectively can't use a tool missing from
+  it). Registering without allow-listing ships a tool that works in tests and dies
+  silently in a real launch.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
@@ -187,10 +194,17 @@ don't re-derive it.
   The wrangler only stamps `entry.workflow` and exposes the `workflow_phase` MCP tool;
   **resume must carry the flag** or a long run loses the skill.
 - **Child sessions = a generic `parentSession` (card id) link.** Nesting is **opt-in**
-  (`spawn_session` `nest:true`), never inferred from the caller's state. A workflow
-  worker is just a child whose parent is an orchestrator. On the board a worker renders
-  in a violet `.workflow-box`, any other child in a plain child-spine; **nesting is one
-  level deep** (a grandchild whose parent is absorbed is promoted, never dropped).
+  (`spawn_session` `nest:true`, or later `attach_session`/`detach_session`), never
+  inferred from the caller's state. A workflow worker is just a child whose parent is
+  an orchestrator. On the board a worker renders in a violet `.workflow-box`, any
+  other child in a plain child-spine; **nesting is one level deep** (a grandchild
+  whose parent is absorbed is promoted, never dropped). **`parentSession` (board
+  nesting) and `spawnedBy` (who actually called spawn_session/spawn_workflow) are
+  separate, independently-nullable fields** — a `nest:true` spawn sets both to the
+  same id, but a board-dispatched session later `attach_session`'d under something
+  has a real `parentSession` and a null `spawnedBy`. `AW_SPAWNER_SESSION_ID` (env,
+  set at launch) and `get_session_info`/`list_sessions` (MCP) surface both — see the
+  `session-hierarchy` skill; never conflate the two into one "parent" concept.
 - **Sub-agents are read-only artifacts read off disk, never sessions** (no tmux, no
   card id). Discriminator: a `subagents/` dir ⇒ emit from the files; no dir ⇒ emit the
   parent's `tool_use` pairs — **never both, or every modern sub-agent double-counts.**

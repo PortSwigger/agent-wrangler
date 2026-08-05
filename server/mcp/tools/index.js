@@ -1,4 +1,5 @@
 import { listSessionsTool } from './list-sessions.js';
+import { getSessionInfoTool } from './get-session-info.js';
 import { listTasksTool } from './list-tasks.js';
 import { assignSessionTool } from './assign-session.js';
 import { getSessionActivityTool } from './get-session-activity.js';
@@ -18,4 +19,4 @@ import { createTerminalTool } from './create-terminal.js';
 
 // The MCP tool registry. Adding a capability = adding a module here. Each tool:
 // { name, description, inputSchema (zod raw shape), handler({deps, caller}, args) }.
-export const TOOLS = [listSessionsTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool];
+export const TOOLS = [listSessionsTool, getSessionInfoTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool];

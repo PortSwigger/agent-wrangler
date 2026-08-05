@@ -45,7 +45,7 @@ async function connect(deps, caller) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1');
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'list_sessions', 'list_tasks', 'name_branch', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_info', 'list_sessions', 'list_tasks', 'name_branch', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
   await server.close();
 });
 
