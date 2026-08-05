@@ -43,7 +43,8 @@ npm start          # serves http://localhost:7878 and opens your browser
 ```
 
 `npm start` auto-installs after a pull that changes dependencies, so you never
-need to remember `npm install`.
+need to remember `npm install`. That's the fastest way to try it out, but for everyday use we'd
+recommend running it as a background service instead (below) so it survives restarts and reboots.
 
 Environment variables:
 
@@ -77,6 +78,8 @@ with:
 ```bash
 launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ```
+
+## Snags
 
 **Sessions can't `ls`/`cp` files in Downloads, Documents, Desktop, etc.** This is macOS's file-access
 sandboxing (TCC), and it targets the `tmux` binary, not your terminal app — because the wrangler's tmux
@@ -197,6 +200,18 @@ ones you want with a single click.
 - green — working
 - grey — idle / unknown
 
+## Cost tracking
+
+Every card shows its running cost as a live dollar figure — including everything its sub-agents have
+spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
+computed from the actual transcript, not a rough estimate; the one exception is Codex, which only
+reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. Cost
+history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
+cleanup.
+
+For a longer view than the board — spend by month, by task, or by model — see `scripts/cost-report.mjs`,
+which recomputes directly from on-disk transcripts.
+
 ## Layout
 
 Two views, toggled from the nav rail: **Tasks** (the default board — sessions grouped under the tasks
@@ -205,8 +220,9 @@ you assign them to, plus an Ad-hoc lane) and **History** (archived sessions). A 
 
 ## Themes
 
-A palette button on the nav rail switches between built-in **dark** and **light** and any drop-in
-custom styles. A custom style is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
+The **settings button** (the gear icon on the nav rail) opens **Settings**, whose **Appearance**
+section switches between built-in **dark** and **light** and any drop-in custom styles. A custom style
+is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
 an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
 translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a
 manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
