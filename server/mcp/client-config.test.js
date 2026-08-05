@@ -22,6 +22,7 @@ test('codexMcpConfigArgs declares the http server and bearer-token env var', () 
   assert.deepEqual(args, [
     '-c', `mcp_servers.${MCP_SERVER_NAME}.url="http://127.0.0.1:7777/mcp"`,
     '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${MCP_TOKEN_ENV}"`,
+    '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
   ]);
 });
 

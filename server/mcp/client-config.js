@@ -38,6 +38,7 @@ export function codexMcpConfigArgs(port = serverPort()) {
   return [
     '-c', `mcp_servers.${MCP_SERVER_NAME}.url="${mcpUrl(port)}"`,
     '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${MCP_TOKEN_ENV}"`,
+    '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
   ];
 }
 
