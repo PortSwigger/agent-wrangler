@@ -1,9 +1,16 @@
-import { archiveCascade } from './archive.js';
+import { archiveCascade, descendantsOf } from './archive.js';
 
 export const taskCreateHandler = {
   type: 'task-create',
   async handler(msg, ctx) {
-    ctx.taskStore.createTask({ name: msg.name, sessionId: msg.sessionId });
+    const task = ctx.taskStore.createTask({ name: msg.name, sessionId: msg.sessionId });
+    // Dragging a parent-with-children onto "+ New task" seeds the task with just
+    // the parent (createTask's own contract); bring its family along too, or a
+    // child is left behind on the old task/Ad-hoc — same fix as taskAssignHandler.
+    if (msg.sessionId) {
+      const sessions = ctx.graph?.()?.sessions || [];
+      for (const child of descendantsOf(msg.sessionId, sessions)) ctx.taskStore.assign(child.sessionId, task.id);
+    }
     await ctx.rebuild();
   },
 };
@@ -85,9 +92,21 @@ export const taskUnarchiveHandler = {
 export const taskAssignHandler = {
   type: 'task-assign',
   async handler(msg, ctx) {
-    ctx.taskStore.assign(msg.sessionId, msg.taskId || null);
-    ctx.memoryStore.bindSession(msg.sessionId, msg.taskId || null);
-    await ctx.sessionManager.syncNotesToContainer(msg.sessionId).catch(() => {});
+    const taskId = msg.taskId || null;
+    // A parent's children are bucketed by their OWN assignment (assignedTaskId in
+    // app.js) — assigning only the dragged session leaves its family behind on the
+    // old task, rendering as orphaned top-level cards there. Move the whole
+    // transitive `parentSession` family in one go, same set archiveCascade/
+    // promoteSession treat as a unit, so nesting survives the move. One rebuild
+    // for the whole family, not one per session, so clients never see it split
+    // across two tiles mid-move.
+    const sessions = ctx.graph?.()?.sessions || [];
+    const ids = [msg.sessionId, ...descendantsOf(msg.sessionId, sessions).map((d) => d.sessionId)];
+    for (const id of ids) {
+      ctx.taskStore.assign(id, taskId);
+      ctx.memoryStore.bindSession(id, taskId);
+      await ctx.sessionManager.syncNotesToContainer(id).catch(() => {});
+    }
     await ctx.rebuild();
   },
 };

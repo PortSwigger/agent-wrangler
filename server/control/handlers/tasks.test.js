@@ -1,19 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { taskAssignHandler, taskDeleteHandler, taskRestoreHandler, taskArchiveHandler, taskUnarchiveHandler } from './tasks.js';
+import { taskAssignHandler, taskCreateHandler, taskDeleteHandler, taskRestoreHandler, taskArchiveHandler, taskUnarchiveHandler } from './tasks.js';
 
 function ctx(overrides = {}) {
-  const calls = { assign: [], bind: [], rebuild: 0, deleteTask: [], restoreTask: [], syncNotes: [] };
+  const calls = {
+    assign: [], bind: [], rebuild: 0, deleteTask: [], restoreTask: [], syncNotes: [], createTask: [],
+  };
   return {
     calls,
     taskStore: {
       assign: (sid, taskId) => calls.assign.push({ sid, taskId }),
       deleteTask: () => { calls.deleteTask.push(true); return overrides.snap ?? null; },
       restoreTask: (snap) => { calls.restoreTask.push(snap); return overrides.restoreOk ?? false; },
+      createTask: (opts) => { calls.createTask.push(opts); return overrides.createdTask ?? { id: 'T1' }; },
     },
     memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     sessionManager: { syncNotesToContainer: async (sid) => { calls.syncNotes.push(sid); } },
     pendingTaskRestores: new Map(),
+    graph: () => ({ sessions: overrides.sessions ?? [] }),
     rebuild: async () => { calls.rebuild += 1; },
     ...overrides.ctx,
   };
@@ -33,6 +37,51 @@ test('task-assign with no taskId unassigns and points memory at scratch', async 
   await taskAssignHandler.handler({ type: 'task-assign', sessionId: 'S1' }, c);
   assert.deepEqual(c.calls.assign, [{ sid: 'S1', taskId: null }]);
   assert.deepEqual(c.calls.bind, [{ sid: 'S1', taskId: null }]);
+});
+
+test('task-assign moves a dragged parent\'s whole transitive family to the new task', async () => {
+  const sessions = [
+    { sessionId: 'S1' }, // dragged parent
+    { sessionId: 'C1', parentSession: 'S1' }, // direct child
+    { sessionId: 'GC1', parentSession: 'C1' }, // chained grandchild
+    { sessionId: 'S2' }, // unrelated — must not move
+  ];
+  const c = ctx({ sessions });
+  await taskAssignHandler.handler({ type: 'task-assign', sessionId: 'S1', taskId: 'T2' }, c);
+  assert.deepEqual(c.calls.assign, [
+    { sid: 'S1', taskId: 'T2' }, { sid: 'C1', taskId: 'T2' }, { sid: 'GC1', taskId: 'T2' },
+  ]);
+  assert.deepEqual(c.calls.bind, [
+    { sid: 'S1', taskId: 'T2' }, { sid: 'C1', taskId: 'T2' }, { sid: 'GC1', taskId: 'T2' },
+  ]);
+  assert.deepEqual(c.calls.syncNotes, ['S1', 'C1', 'GC1']);
+  assert.equal(c.calls.rebuild, 1); // one rebuild for the whole family, not one per session
+});
+
+test('task-assign to Ad-hoc (no taskId) pushes null to the family too', async () => {
+  const sessions = [{ sessionId: 'S1' }, { sessionId: 'C1', parentSession: 'S1' }];
+  const c = ctx({ sessions });
+  await taskAssignHandler.handler({ type: 'task-assign', sessionId: 'S1' }, c);
+  assert.deepEqual(c.calls.assign, [{ sid: 'S1', taskId: null }, { sid: 'C1', taskId: null }]);
+});
+
+test('task-create seeded with a parent-with-children assigns the whole family to the new task', async () => {
+  const sessions = [
+    { sessionId: 'S1' },
+    { sessionId: 'C1', parentSession: 'S1' },
+    { sessionId: 'S2' }, // unrelated — must not move
+  ];
+  const c = ctx({ sessions, createdTask: { id: 'T9' } });
+  await taskCreateHandler.handler({ type: 'task-create', sessionId: 'S1' }, c);
+  assert.deepEqual(c.calls.createTask, [{ name: undefined, sessionId: 'S1' }]);
+  assert.deepEqual(c.calls.assign, [{ sid: 'C1', taskId: 'T9' }]); // createTask itself seeds S1
+  assert.equal(c.calls.rebuild, 1);
+});
+
+test('task-create with no sessionId (plain "+ New task") does not touch taskStore.assign', async () => {
+  const c = ctx();
+  await taskCreateHandler.handler({ type: 'task-create' }, c);
+  assert.deepEqual(c.calls.assign, []);
 });
 
 test('task-delete stashes the snapshot and points freed sessions at scratch', async () => {
