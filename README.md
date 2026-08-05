@@ -1,21 +1,29 @@
 # Agent Wrangler
 
-A local web app — a command center for all your Claude Code **and OpenAI Codex** sessions. It shows
-every session on a task board, monitors status/cost/tasks, and acts as the launcher and control plane
-for them. Status, cost, and sub-agents are shown at a glance, and clicking a session opens its live
-terminal right there in the sidebar. Codex is offered as an agent automatically when the `codex`
-binary is on your `PATH`; otherwise it behaves exactly as a Claude-only board.
+Agent Wrangler is the command center and control plane for every Claude Code **and OpenAI Codex**
+session you run — one board to dispatch, monitor, and step straight into any session's live terminal.
+It's also the channel agents use to coordinate with each other: spawning other agents and whole
+multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
+get on with it without you relaying every message by hand. It runs entirely on your own machine, under
+your control. Codex is offered as an agent automatically when the `codex` binary is on your `PATH`;
+otherwise it behaves exactly as a Claude-only board.
 
 ## Highlights
 
 - **One board for every session** — dispatch, monitor, and jump into any Claude Code or Codex
   session's live terminal from a single screen, whether you launched it here or elsewhere.
+- **A control plane for agents, not just for you** — sessions can spawn other agents and orchestrate
+  whole multi-agent workflows, hand tasks off to each other, and send one another messages directly —
+  real agent-to-agent coordination, not a one-way dashboard.
+- **Visualize your whole fleet, your way** — every agent and its sub-agents rendered on the board,
+  grouped under the tasks you assign them to, nested under parent sessions, or collapsed into workflow
+  boxes — organize it however makes sense to you.
 - **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
   needs-you flag the moment a session is blocked on you.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
   run an issue → PR autopilot with no gates, in its own git worktree.
-- **Scheduling** — one-off or recurring sessions and nudges, evaluated in your timezone, safe
-  across restarts.
+- **Scheduling** — one-off or recurring sessions and nudges — agents can even schedule their own
+  wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
