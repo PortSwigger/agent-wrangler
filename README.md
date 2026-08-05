@@ -1,6 +1,6 @@
 # Agent Wrangler
 
-Agent Wrangler is the command center and control plane for every Claude Code **and OpenAI Codex**
+Agent Wrangler is the command center and control plane for every Claude Code and OpenAI Codex
 session you run — one board to dispatch, monitor, and step straight into any session's live terminal.
 It's also the channel agents use to coordinate with each other: spawning other agents and whole
 multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
