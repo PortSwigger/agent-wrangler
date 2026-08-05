@@ -1,11 +1,14 @@
 import { z } from 'zod';
+import { descendantsOf } from '../../control/handlers/archive.js';
 
 // Move a session (default: the caller) onto a task, or back to Ad-hoc — the
 // session-to-session counterpart of dragging a card onto a task tile. Mirrors
 // the /ws task-assign handler (server/control/handlers/tasks.js): assign, then
 // rebind the AW_TASK_MEMORY symlink to the new task's memory file (or scratch,
 // for Ad-hoc) BEFORE rebuilding, so a running session's next file access already
-// sees the right memory — the same order dispatch/resume/fork keep it in.
+// sees the right memory — the same order dispatch/resume/fork keep it in. Also
+// cascades to the target's transitive parentSession family (same as the ws
+// handler) so a parent doesn't leave its children assigned to the old task.
 export const assignSessionTool = {
   name: 'assign_session',
   description:
@@ -29,8 +32,17 @@ export const assignSessionTool = {
       return errorResult(`Unknown task ${taskId} — check list_tasks for valid ids.`);
     }
     if (!taskId) deps.taskStore.assign(target, null);
-
     deps.memoryStore.bindSession(target, taskId);
+
+    // Move the target's whole transitive parentSession family along with it — a
+    // child left assigned to the old task would otherwise render as an orphaned
+    // top-level card there instead of staying nested (see taskAssignHandler).
+    const sessions = deps.graph?.()?.sessions || [];
+    for (const child of descendantsOf(target, sessions)) {
+      deps.taskStore.assign(child.sessionId, taskId);
+      deps.memoryStore.bindSession(child.sessionId, taskId);
+    }
+
     await deps.rebuild?.();
 
     const structuredContent = { target, task: deps.taskStore.taskFor(target) ?? null };
