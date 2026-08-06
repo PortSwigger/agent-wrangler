@@ -7,6 +7,13 @@ test('codexCostUsd prices gpt-5.5-codex tokens', () => {
   assert.ok(usd > 0);
 });
 
+test('codexCostUsd prices gpt-5.6-sol/terra/luna tokens', () => {
+  for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+    const usd = codexCostUsd({ [model]: { input: 1_000_000, output: 1_000_000, cacheRead: 0 } });
+    assert.ok(usd > 0, `${model} should have a positive cost`);
+  }
+});
+
 test('codexCostUsd unknown model still returns a number (default rate)', () => {
   const usd = codexCostUsd({ 'mystery-model': { input: 1_000_000, output: 0, cacheRead: 0 } });
   assert.equal(typeof usd, 'number');

@@ -71,6 +71,9 @@ export const codex = {
     { value: 'gpt-5.5', label: 'GPT-5.5 · frontier', default: true },
     { value: 'gpt-5.4', label: 'GPT-5.4 · everyday coding' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap' },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap' },
   ],
   efforts: [
     { value: 'minimal', label: 'Minimal' },
