@@ -1,10 +1,34 @@
 # Agent Wrangler
 
-A local web app — a command center for all your Claude Code **and OpenAI Codex** sessions. It shows
-every session on a task board, monitors status/cost/tasks, and acts as the launcher and control plane
-for them. Status, cost, and sub-agents are shown at a glance; clicking a session opens its live
-terminal in a sidebar (or pops out to iTerm2). Codex is offered as an agent automatically when the
-`codex` binary is on your `PATH`; otherwise it behaves exactly as a Claude-only board.
+Agent Wrangler is the command center and control plane for every Claude Code and OpenAI Codex
+session you run — one board to dispatch, monitor, and step straight into any session's live terminal.
+It's also the channel agents use to coordinate with each other: spawning other agents and whole
+multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
+get on with it without you relaying every message by hand. It runs entirely on your own machine, under
+your control. Codex is offered as an agent automatically when the `codex` binary is on your `PATH`;
+otherwise it behaves exactly as a Claude-only board.
+
+## Highlights
+
+- **One board for every session** — dispatch, monitor, and jump into any Claude Code or Codex
+  session's live terminal from a single screen, whether you launched it here or elsewhere.
+- **A control plane for agents, not just for you** — sessions can spawn other agents and orchestrate
+  whole multi-agent workflows, hand tasks off to each other, and send one another messages directly —
+  real agent-to-agent coordination, not a one-way dashboard.
+- **Visualize your whole fleet, your way** — every agent and its sub-agents rendered on the board,
+  grouped under the tasks you assign them to, nested under parent sessions, or collapsed into workflow
+  boxes — organize it however makes sense to you.
+- **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
+  needs-you flag the moment a session is blocked on you.
+- **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
+  run an issue → PR autopilot with no gates, in its own git worktree.
+- **Scheduling** — one-off or recurring sessions and nudges — agents can even schedule their own
+  wake-ups — evaluated in your timezone, safe across restarts.
+- **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
+  one click, conversation intact.
+- **Themeable** — built-in dark/light plus drop-in custom styles.
+
+![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
 
 ## Requirements
 
@@ -12,7 +36,6 @@ terminal in a sidebar (or pops out to iTerm2). Codex is offered as an agent auto
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
   `gh auth login` once so it's authenticated)
-- iTerm2 (optional — only for the "pop out" button)
 
 ## Run
 
@@ -22,7 +45,8 @@ npm start          # serves http://localhost:7878 and opens your browser
 ```
 
 `npm start` auto-installs after a pull that changes dependencies, so you never
-need to remember `npm install`.
+need to remember `npm install`. That's the fastest way to try it out, but for everyday use we'd
+recommend running it as a background service instead (below) so it survives restarts and reboots.
 
 Environment variables:
 
@@ -57,6 +81,8 @@ with:
 launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ```
 
+## Snags
+
 **Sessions can't `ls`/`cp` files in Downloads, Documents, Desktop, etc.** This is macOS's file-access
 sandboxing (TCC), and it targets the `tmux` binary, not your terminal app — because the wrangler's tmux
 server daemonizes and reparents under `launchd`, so there's no Terminal.app/iTerm2 in its process
@@ -88,8 +114,8 @@ survive and each card just needs a manual Resume.
   transcript under `~/.claude/projects/`.
 - **Dispatch** ("+ New session") starts `claude` inside a detached tmux session named `cc_<short>`.
   The app records the `sessionId ↔ tmux` mapping in `~/.agent-wrangler/mappings.json`.
-- **Jump in** attaches that tmux session: in-browser via xterm.js over a WebSocket (`node-pty`
-  running `tmux attach`), or popped out to an iTerm2 window. Both share the same live tmux session.
+- **Jump in** attaches that tmux session in-browser via xterm.js over a WebSocket (`node-pty`
+  running `tmux attach`).
 - **Sessions not launched through the app** appear as read-only "external" entries — visible with
   status and cost, but without an attachable terminal until relaunched through the dashboard.
 
@@ -108,6 +134,8 @@ capped at 6 chars to fit the chip) — and reuses the normal terminal states: th
 means *ready to review*; a genuine block flips the card to **needs-you** (red) with a
 `failed` chip, where it stops and asks you a question.
 
+![A workflow card that's completed its run, showing the Workflow header and a "done" phase chip](docs/images/workflow-phase.png)
+
 **No setup needed:** the wrangler loads the skill via `--plugin-dir` on every Workflow
 launch, resolving it from its own install — so it works from any worktree and against
 any target repo without a `~/.claude/skills` symlink.
@@ -117,6 +145,8 @@ any target repo without a `~/.claude/skills` symlink.
 The **clock button** on the nav rail opens the **Schedules** panel, where you can have
 the board run an action automatically — once at a chosen time, or on a recurring
 cadence. A schedule is **a saved action + a "when"**, and the action is one of two:
+
+![The Schedules panel listing a recurring nightly sweep, a weekly dependency check, and a one-off resume](docs/images/schedules-panel.png)
 
 - **New session** — dispatch a brand-new session. Carries the same payload as the
   New-session dialog (folder, prompt/issue, model, task, worktree, and the **Workflow**
@@ -160,8 +190,8 @@ place and re-attaches — the conversation is restored from the transcript).
   timer entirely). The value is re-read live — no restart needed.
 - **Manual:** right-click a session → **Suspend**, or **snooze** it for ≥ 1 hour
   (a snooze that long also frees its RAM; a shorter snooze just hides it).
-- **Never auto-suspended:** a session that is working, awaiting you, has a terminal
-  attached (browser or iTerm2), or is running a foreground command.
+- **Never auto-suspended:** a session that is working, awaiting you, has a terminal attached, or
+  is running a foreground command.
 - **Caveat:** a *detached background* process (e.g. a `run_in_background` dev server)
   under an otherwise-idle session is killed when the timer fires. If you rely on one,
   set `suspendIdleHours: 0`, keep a terminal attached, or don't leave it idle that
@@ -176,6 +206,23 @@ ones you want with a single click.
 - green — working
 - grey — idle / unknown
 
+## Cost tracking
+
+Every card shows its running cost as a live dollar figure — including everything its sub-agents have
+spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
+computed from the actual transcript, not a rough estimate; the one exception is Codex, which only
+reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. Cost
+history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
+cleanup.
+
+The **Usage & spend** button on the nav rail opens a longer view than the board's per-card figures —
+daily/weekly/monthly spend, sliced by task, model, or token type.
+
+![The Usage & spend panel showing a daily spend chart stacked by task over several weeks](docs/images/usage-chart.png)
+
+For a view outside the app too — spend by month, by task, or by model — see `scripts/cost-report.mjs`,
+which recomputes directly from on-disk transcripts.
+
 ## Layout
 
 Two views, toggled from the nav rail: **Tasks** (the default board — sessions grouped under the tasks
@@ -184,13 +231,16 @@ you assign them to, plus an Ad-hoc lane) and **History** (archived sessions). A 
 
 ## Themes
 
-A palette button on the nav rail switches between built-in **dark** and **light** and any drop-in
-custom styles. A custom style is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
+The **settings button** (the gear icon on the nav rail) opens **Settings**, whose **Appearance**
+section switches between built-in **dark** and **light** and any drop-in custom styles. A custom style
+is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
 an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
 translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a
 manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
 example. All UI colours — including the xterm terminal — flow through these variables, so both
 built-in and custom styles re-theme the whole app live.
+
+![The Appearance section's theme picker, showing the built-in and drop-in custom styles](docs/images/theme-picker.png)
 
 ## License
 
