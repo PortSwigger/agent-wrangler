@@ -50,12 +50,16 @@ export function costUsdByType(totals) {
 }
 
 // OpenAI / Codex pricing — USD per 1M tokens (developers.openai.com/api/docs/pricing,
-// verified 2026-06). Codex usually bills via a ChatGPT plan, so this yields an
+// verified 2026-08; gpt-5.6 rates reflect the Jul 30 2026 cut — Terra -20%, Luna -80%).
+// Codex usually bills via a ChatGPT plan, so this yields an
 // *estimated* API-equivalent cost, not real spend; the UI marks it with `~`.
 // Matched by substring, so the more specific row must precede the prefix it
 // extends (gpt-5.4-mini before gpt-5.4). Cached input is 10% of input. Unknown
 // models fall back to the first (flagship) row.
 const OPENAI_TABLE = [
+  { match: 'gpt-5.6-sol', input: 5, output: 30, cacheRead: 0.5 },
+  { match: 'gpt-5.6-terra', input: 2, output: 12, cacheRead: 0.2 },
+  { match: 'gpt-5.6-luna', input: 0.2, output: 1.2, cacheRead: 0.02 },
   { match: 'gpt-5.5', input: 5, output: 30, cacheRead: 0.5 },
   { match: 'gpt-5.4-mini', input: 0.75, output: 4.5, cacheRead: 0.075 },
   { match: 'gpt-5.4', input: 2.5, output: 15, cacheRead: 0.25 },
