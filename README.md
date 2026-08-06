@@ -215,7 +215,12 @@ reports a cumulative total rather than itemized turns, so its cost is shown with
 history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
 cleanup.
 
-For a longer view than the board — spend by month, by task, or by model — see `scripts/cost-report.mjs`,
+The **Usage & spend** button on the nav rail opens a longer view than the board's per-card figures —
+daily/weekly/monthly spend, sliced by task, model, or token type.
+
+![The Usage & spend panel showing a daily spend chart stacked by task over several weeks](docs/images/usage-chart.png)
+
+For a view outside the app too — spend by month, by task, or by model — see `scripts/cost-report.mjs`,
 which recomputes directly from on-disk transcripts.
 
 ## Layout
