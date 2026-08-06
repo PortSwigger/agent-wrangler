@@ -81,6 +81,35 @@ export async function launchCwd(sessionId, projectsDir) {
   return null;
 }
 
+// Where the transcript last recorded the agent actually being — the live end of
+// the same per-message `cwd` field launchCwd reads the head of. A session that
+// cd's into a sibling repo mid-conversation and stays there leaves entry.cwd (and
+// launchCwd) pointing at the frozen launch dir forever — this is the only place
+// that drift is recorded (Claude Code's own live status file under
+// ~/.claude/sessions freezes at launch too). Diff-view fallback ONLY — never use
+// this for resume, which must keep landing in the launch bucket.
+export async function lastCwd(sessionId, projectsDir) {
+  const transcript = await findTranscript(sessionId, projectsDir);
+  if (!transcript) return null;
+  let found = null;
+  try {
+    const text = await fsp.readFile(transcript, 'utf8');
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed);
+        if (typeof entry.cwd === 'string' && entry.cwd) found = entry.cwd;
+      } catch {
+        /* skip non-JSON line */
+      }
+    }
+  } catch {
+    /* transcript unreadable */
+  }
+  return found;
+}
+
 // Pick the directory to (re)launch `claude --resume` in. The recorded launch dir
 // wins — it owns the project bucket `--resume` reads. But archived sessions are
 // off the board (no graph cwd) and their original transcript may be gone, so fall

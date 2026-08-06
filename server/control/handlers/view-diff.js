@@ -1,4 +1,5 @@
 import { workingTreeDiff, branchDiff } from '../../git-diff.js';
+import { lastCwd } from '../../transcript-reader.js';
 
 // Return the session's read-only diff to the requesting client only (ctx.reply,
 // never broadcast). The directory is the worktree the agent runs in when the
@@ -25,8 +26,25 @@ export const viewDiffHandler = {
         ctx.reply({ type: 'diff', sessionId, reqId, mode, state: 'error', error: 'No working directory for this session.' });
         return;
       }
-      const result = mode === 'branch' ? await branchDiff(cwd) : await workingTreeDiff(cwd);
-      ctx.reply({ type: 'diff', sessionId, reqId, mode, ...result });
+      let result = mode === 'branch' ? await branchDiff(cwd) : await workingTreeDiff(cwd);
+      let drift = null;
+      // entry.cwd/worktree.path is frozen at launch (transcript-reader.js's
+      // launchCwd deliberately reads the FIRST transcript record, so --resume keeps
+      // finding its project bucket) — a session that cd's into a sibling repo and
+      // stays there strands that repo with no diff-view path to it. Only reach for
+      // the transcript's last recorded cwd when the launch dir itself isn't a repo
+      // — never override a real (if empty) diff in the launch dir with a stale one.
+      if (result.state === 'not-a-repo') {
+        const driftedCwd = await lastCwd(entry?.liveSessionId || sessionId, ctx.projectsDir);
+        if (driftedCwd && driftedCwd !== cwd) {
+          const driftedResult = mode === 'branch' ? await branchDiff(driftedCwd) : await workingTreeDiff(driftedCwd);
+          if (driftedResult.state !== 'not-a-repo') {
+            result = driftedResult;
+            drift = driftedCwd;
+          }
+        }
+      }
+      ctx.reply({ type: 'diff', sessionId, reqId, mode, ...result, cwd: drift || undefined });
     } catch (err) {
       ctx.reply({ type: 'diff', sessionId, reqId, mode, state: 'error', error: String(err.message || err) });
     }

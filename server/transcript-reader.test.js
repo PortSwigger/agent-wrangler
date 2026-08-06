@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { listResumable, resolveResumeDir, scanLine, findTranscript, subAgentsFrom, subagentDetail, analyze, analyzeLines, usageSince } from './transcript-reader.js';
+import { listResumable, resolveResumeDir, scanLine, findTranscript, launchCwd, lastCwd, subAgentsFrom, subagentDetail, analyze, analyzeLines, usageSince } from './transcript-reader.js';
 import { costUsd } from './pricing.js';
 
 const flat = (model, { input = 0, output = 0, cacheWrite5m = 0, cacheWrite1h = 0, cacheRead = 0 }) =>
@@ -340,6 +340,26 @@ test('findTranscript does not cache a miss, so a late-written transcript is foun
 
   const file = writeTranscript(dir, { sessionId: 'late', ageDays: 1 });
   assert.equal(await findTranscript('late', dir), file);
+});
+
+test('lastCwd returns the most recent cwd, not the launch cwd', async () => {
+  const dir = makeProjects();
+  const bucket = path.join(dir, 'bucket');
+  fs.mkdirSync(bucket, { recursive: true });
+  const file = path.join(bucket, 'drifted.jsonl');
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'user', cwd: '/launch/dir', message: { role: 'user', content: 'start' } }),
+    JSON.stringify({ type: 'assistant', cwd: '/launch/dir', message: { role: 'assistant', content: 'ok' } }),
+    JSON.stringify({ type: 'user', cwd: '/launch/dir/sibling-repo', message: { role: 'user', content: 'cd sibling-repo' } }),
+  ].join('\n') + '\n');
+
+  assert.equal(await lastCwd('drifted', dir), '/launch/dir/sibling-repo');
+  assert.equal(await launchCwd('drifted', dir), '/launch/dir');
+});
+
+test('lastCwd returns null when the transcript does not exist', async () => {
+  const dir = makeProjects();
+  assert.equal(await lastCwd('nope', dir), null);
 });
 
 test('reports cwd and summary from the transcript head', async () => {
