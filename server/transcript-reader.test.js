@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { listResumable, resolveResumeDir, scanLine, findTranscript, launchCwd, lastCwd, subAgentsFrom, subagentDetail, analyze, analyzeLines, usageSince } from './transcript-reader.js';
+import { listResumable, resolveResumeDir, scanLine, findTranscript, launchCwd, recentCwds, subAgentsFrom, subagentDetail, analyze, analyzeLines, usageSince } from './transcript-reader.js';
 import { costUsd } from './pricing.js';
 
 const flat = (model, { input = 0, output = 0, cacheWrite5m = 0, cacheWrite1h = 0, cacheRead = 0 }) =>
@@ -342,7 +342,7 @@ test('findTranscript does not cache a miss, so a late-written transcript is foun
   assert.equal(await findTranscript('late', dir), file);
 });
 
-test('lastCwd returns the most recent cwd, not the launch cwd', async () => {
+test('recentCwds orders distinct cwds most-recently-seen first', async () => {
   const dir = makeProjects();
   const bucket = path.join(dir, 'bucket');
   fs.mkdirSync(bucket, { recursive: true });
@@ -353,13 +353,33 @@ test('lastCwd returns the most recent cwd, not the launch cwd', async () => {
     JSON.stringify({ type: 'user', cwd: '/launch/dir/sibling-repo', message: { role: 'user', content: 'cd sibling-repo' } }),
   ].join('\n') + '\n');
 
-  assert.equal(await lastCwd('drifted', dir), '/launch/dir/sibling-repo');
+  assert.deepEqual(await recentCwds('drifted', dir), ['/launch/dir/sibling-repo', '/launch/dir']);
   assert.equal(await launchCwd('drifted', dir), '/launch/dir');
 });
 
-test('lastCwd returns null when the transcript does not exist', async () => {
+test('recentCwds puts a resume-reverted launch-dir line ahead of the drifted repo it followed, not in place of it', async () => {
+  // Mirrors the real regression: a dormant session resumed to deliver a diff
+  // comment writes fresh lines back at the launch dir before doing anything else,
+  // so the launch dir is newest but the real work is still the next distinct cwd.
   const dir = makeProjects();
-  assert.equal(await lastCwd('nope', dir), null);
+  const bucket = path.join(dir, 'bucket');
+  fs.mkdirSync(bucket, { recursive: true });
+  const file = path.join(bucket, 'resumed.jsonl');
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'user', cwd: '/launch/dir', message: { role: 'user', content: 'start' } }),
+    JSON.stringify({ type: 'user', cwd: '/launch/dir/sibling-repo', message: { role: 'user', content: 'cd sibling-repo' } }),
+    JSON.stringify({ type: 'assistant', cwd: '/launch/dir/sibling-repo', message: { role: 'assistant', content: 'made changes' } }),
+    // resume boundary: a freshly-launched process's Bash-tool tracking restarts
+    // from the launch dir, even though the conversation carries over.
+    JSON.stringify({ type: 'user', cwd: '/launch/dir', message: { role: 'user', content: 'review comments' } }),
+  ].join('\n') + '\n');
+
+  assert.deepEqual(await recentCwds('resumed', dir), ['/launch/dir', '/launch/dir/sibling-repo']);
+});
+
+test('recentCwds returns an empty array when the transcript does not exist', async () => {
+  const dir = makeProjects();
+  assert.deepEqual(await recentCwds('nope', dir), []);
 });
 
 test('reports cwd and summary from the transcript head', async () => {

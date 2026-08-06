@@ -1,5 +1,11 @@
 import { workingTreeDiff, branchDiff } from '../../git-diff.js';
-import { lastCwd } from '../../transcript-reader.js';
+import { recentCwds } from '../../transcript-reader.js';
+
+// Bound how many historical cwds a not-a-repo launch dir makes us shell out to git
+// for. Only reached once per request, and only when the primary dir failed the
+// repo check, but a session that's cd'd through many directories over a long life
+// shouldn't turn one diff-view poll into dozens of git invocations.
+const MAX_DRIFT_CANDIDATES = 8;
 
 // Return the session's read-only diff to the requesting client only (ctx.reply,
 // never broadcast). The directory is the worktree the agent runs in when the
@@ -32,15 +38,23 @@ export const viewDiffHandler = {
       // launchCwd deliberately reads the FIRST transcript record, so --resume keeps
       // finding its project bucket) — a session that cd's into a sibling repo and
       // stays there strands that repo with no diff-view path to it. Only reach for
-      // the transcript's last recorded cwd when the launch dir itself isn't a repo
-      // — never override a real (if empty) diff in the launch dir with a stale one.
+      // the transcript's recorded cwd history when the launch dir itself isn't a
+      // repo — never override a real (if empty) diff in the launch dir with a
+      // stale one. Try EVERY distinct historical cwd, not just the newest: a
+      // dormant session that just got resumed to deliver this same request (e.g.
+      // diff-comments waking it) writes fresh lines back at the launch dir before
+      // it does anything else, so the single most-recent cwd is often the launch
+      // dir itself — the real drifted repo is further back, at the next distinct
+      // value, not the tail.
       if (result.state === 'not-a-repo') {
-        const driftedCwd = await lastCwd(entry?.liveSessionId || sessionId, ctx.projectsDir);
-        if (driftedCwd && driftedCwd !== cwd) {
-          const driftedResult = mode === 'branch' ? await branchDiff(driftedCwd) : await workingTreeDiff(driftedCwd);
-          if (driftedResult.state !== 'not-a-repo') {
-            result = driftedResult;
-            drift = driftedCwd;
+        const candidates = await recentCwds(entry?.liveSessionId || sessionId, ctx.projectsDir);
+        for (const candidateCwd of candidates.slice(0, MAX_DRIFT_CANDIDATES)) {
+          if (candidateCwd === cwd) continue;
+          const candidateResult = mode === 'branch' ? await branchDiff(candidateCwd) : await workingTreeDiff(candidateCwd);
+          if (candidateResult.state !== 'not-a-repo') {
+            result = candidateResult;
+            drift = candidateCwd;
+            break;
           }
         }
       }
