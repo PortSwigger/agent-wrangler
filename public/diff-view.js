@@ -337,6 +337,13 @@ function renderDiff() {
   const frag = document.createDocumentFragment();
   if (sendError) frag.append(noticeEl(`Couldn't send comments: ${sendError}`, 'diff-notice-error'));
   if (persistError) frag.append(noticeEl(persistError, 'diff-notice-error'));
+  // Server only sets lastDiff.cwd when it fell back off the launch folder (which
+  // wasn't a repo) to wherever the transcript last recorded the agent cd'ing to —
+  // flag it so a diff from an unexpected folder doesn't read as the wrong session.
+  if (lastDiff.cwd) {
+    const folder = lastDiff.cwd.split('/').filter(Boolean).pop() || lastDiff.cwd;
+    frag.append(noticeEl(`Showing the diff from ${folder} — this session moved there mid-conversation, away from its launch folder.`));
+  }
 
   // Drafts whose span is gone from the current diff would render nowhere yet still
   // count/send — surface them in a dedicated, editable/deletable section at the top
