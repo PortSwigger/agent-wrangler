@@ -25,7 +25,7 @@ function ctx({ entry = null, node = null, projectsDir = undefined } = {}) {
 }
 
 // A projects/ tree like ~/.claude/projects: <bucket>/<liveSessionId>.jsonl, with
-// one cwd line per entry in `cwds` (in order — the last one is what lastCwd sees).
+// one cwd line per entry in `cwds` (in order — recentCwds sees them newest-last).
 function tempTranscript(liveSessionId, cwds) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-vd-transcripts-'));
   const bucket = path.join(dir, 'bucket');
@@ -122,6 +122,25 @@ test('view-diff: falls back to the transcript\'s drifted cwd when the launch cwd
   const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-vd-notrepo-'));
   const projectsDir = tempTranscript('LIVE1', [notARepo, repo]);
   const c = ctx({ entry: { cwd: notARepo, liveSessionId: 'LIVE1' }, projectsDir });
+
+  await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1' }, c);
+
+  assert.equal(c.sent[0].state, 'ok');
+  assert.equal(c.sent[0].cwd, repo);
+});
+
+test('view-diff: keeps finding the drifted repo after a resume reverts the newest transcript line back to the launch dir', async () => {
+  // Reproduces the diff-comments regression: submitting a comment on a dormant
+  // session resumes it, and the freshly-launched process's first lines land back
+  // at the launch dir (its own Bash-tool cwd tracking starts over there) even
+  // though the agent's real work is still in the repo it drifted to before going
+  // dormant. The newest line is the launch dir again; the real repo is the next
+  // distinct cwd back, not the tail.
+  const repo = tempRepo();
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\nCHANGED\n');
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-vd-notrepo-'));
+  const projectsDir = tempTranscript('LIVE3', [notARepo, repo, notARepo]);
+  const c = ctx({ entry: { cwd: notARepo, liveSessionId: 'LIVE3' }, projectsDir });
 
   await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1' }, c);
 

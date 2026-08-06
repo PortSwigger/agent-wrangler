@@ -81,33 +81,47 @@ export async function launchCwd(sessionId, projectsDir) {
   return null;
 }
 
-// Where the transcript last recorded the agent actually being — the live end of
-// the same per-message `cwd` field launchCwd reads the head of. A session that
-// cd's into a sibling repo mid-conversation and stays there leaves entry.cwd (and
-// launchCwd) pointing at the frozen launch dir forever — this is the only place
-// that drift is recorded (Claude Code's own live status file under
-// ~/.claude/sessions freezes at launch too). Diff-view fallback ONLY — never use
-// this for resume, which must keep landing in the launch bucket.
-export async function lastCwd(sessionId, projectsDir) {
+// Every directory the transcript recorded the agent being in, most-recently-seen
+// first (deduped — each repeat visit is folded into its first, i.e. newest,
+// occurrence). A session that cd's into a sibling repo mid-conversation and stays
+// there leaves entry.cwd (and launchCwd) pointing at the frozen launch dir forever
+// — this is the only place that drift is recorded (Claude Code's own live status
+// file under ~/.claude/sessions freezes at launch too). Diff-view fallback ONLY —
+// never use this for resume, which must keep landing in the launch bucket.
+//
+// Taking just the LAST line's cwd (an earlier version of this function) breaks
+// across a resume: a resumed process's Bash-tool cwd tracking is in-memory and
+// starts over from wherever it was launched (the frozen launch dir, per the rule
+// above), so the newest lines revert to the launch dir even though the agent's
+// real work is still sitting in the repo it drifted to before going dormant. The
+// caller must therefore be able to try older candidates too, not just the latest.
+export async function recentCwds(sessionId, projectsDir) {
   const transcript = await findTranscript(sessionId, projectsDir);
-  if (!transcript) return null;
-  let found = null;
+  if (!transcript) return [];
+  const seen = new Set();
+  const ordered = [];
   try {
     const text = await fsp.readFile(transcript, 'utf8');
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim();
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const trimmed = lines[i].trim();
       if (!trimmed) continue;
+      let entry;
       try {
-        const entry = JSON.parse(trimmed);
-        if (typeof entry.cwd === 'string' && entry.cwd) found = entry.cwd;
+        entry = JSON.parse(trimmed);
       } catch {
-        /* skip non-JSON line */
+        continue; // skip non-JSON line
+      }
+      const cwd = entry.cwd;
+      if (typeof cwd === 'string' && cwd && !seen.has(cwd)) {
+        seen.add(cwd);
+        ordered.push(cwd);
       }
     }
   } catch {
     /* transcript unreadable */
   }
-  return found;
+  return ordered;
 }
 
 // Pick the directory to (re)launch `claude --resume` in. The recorded launch dir
