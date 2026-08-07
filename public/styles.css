@@ -2132,15 +2132,19 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    math, tuned for .hc's shorter, single-purpose card) landed near the row's
    vertical MIDDLE instead of its title, reading as a disconnected tick rather
    than a bend into the row it belongs to. 19px matches .search-group-head's
-   own measured center. The box also now spans the full 14px gap (was 11px,
-   deliberately 3px short in the original) so the tick actually touches the
-   card instead of floating next to it. */
+   own measured center. The box deliberately OVERLAPS the card by 3px (width
+   17px, reaching past the row's own left border) rather than landing exactly
+   flush at 0 — at a fractional browser zoom (e.g. 125%) the tick's box and the
+   row's own border are independently rounded to the nearest device pixel, so
+   a flush 14px width left a visible 1px gap at some zoom levels though not
+   others. Overlapping is harmless (the row's own opaque background/border
+   painting on top hides the extra 3px) and can't gap at any zoom. */
 .search-children > .search-group::before {
   content: '';
   position: absolute;
   left: -14px;
   top: -6px;
-  width: 14px;
+  width: 17px;
   height: 25px;
   border-left: 2px solid var(--line-color);
   border-bottom: 2px solid var(--line-color);
