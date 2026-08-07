@@ -331,7 +331,12 @@ function groupNode(g) {
 // A hitless conversation row: browse mode's unit, and text mode's metadata-only
 // matches. Same .search-group frame as a hit group, but denser (.search-row) —
 // no snippet body, one meta line, and the actions inline on the head.
-function browseRowNode(g) {
+// `parentTitle` (browse only) is a breadcrumb for a session whose archived
+// parent exists but landed in a different time bucket — see search-browse.js —
+// so the relationship isn't silently lost just because it couldn't be nested.
+// `hideTaskChip` drops the redundant task chip for a row already rendered under
+// a task-group heading of the same name (see taskGroupHeadingNode).
+function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
   const card = document.createElement('div');
   card.className = 'search-group search-row';
 
@@ -344,8 +349,9 @@ function browseRowNode(g) {
   head.appendChild(title);
 
   head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
-  if (g.task) head.appendChild(chip(g.task, 'chip search-task'));
+  if (g.task && !hideTaskChip) head.appendChild(chip(g.task, 'chip search-task'));
   if (g.model) head.appendChild(chip(g.model, 'chip search-model'));
+  if (g.isWorkflow) head.appendChild(chip('⚙ workflow', 'chip search-wf'));
   if (g.archived) {
     const dur = fmtDuration(g.archivedAt && g.createdAt ? g.archivedAt - g.createdAt : 0);
     if (dur) head.appendChild(chip(`ran ${dur}`, 'chip search-dur'));
@@ -361,9 +367,20 @@ function browseRowNode(g) {
 
   const sub = document.createElement('div');
   sub.className = 'search-group-sub';
-  sub.textContent = `📁 ${g.cwd || '—'}${g.branch ? ` · ${g.branch}` : ''}`;
+  sub.textContent = `📁 ${g.cwd || '—'}${g.branch ? ` · ${g.branch}` : ''}${parentTitle ? ` · ↳ ${parentTitle}` : ''}`;
   card.appendChild(sub);
   return card;
+}
+
+// The archived children (one level deep — see foldSameBucketChildren) nested
+// under a parent row: an indented, left-ruled stack of full rows immediately
+// following the parent's own, each independently resumable/forkable/deletable
+// like any other row.
+function childrenNode(children, opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'search-children';
+  for (const c of children) wrap.appendChild(browseRowNode(c, opts));
+  return wrap;
 }
 
 // An archived-task row (the whole task was set aside — taskStore.archiveTask).
@@ -398,6 +415,53 @@ function taskRowNode(t) {
 
   card.appendChild(head);
   return card;
+}
+
+// The heading over a cluster of ≥2 same-task rows within one time bucket — the
+// "lightweight grouping" History had as a bordered tile, here just a label +
+// count line above the plain rows it groups. A single row for a task isn't
+// worth a heading (see foldTaskGroups): its own inline task chip already says
+// which task it's in.
+function taskGroupHeadingNode(name, count) {
+  const div = document.createElement('div');
+  div.className = 'search-task-heading';
+  const label = document.createElement('span');
+  label.textContent = `▦ ${name}`;
+  div.appendChild(label);
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = String(count);
+  div.appendChild(n);
+  return div;
+}
+
+// One row (browseRowNode) plus, if it has same-bucket archived children or a
+// cross-bucket parent breadcrumb, whatever search-browse.js attached to it.
+function sessionEntryNode(entry, opts) {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(browseRowNode(entry.group, { parentTitle: entry.parentTitle, ...opts }));
+  if (entry.children?.length) frag.appendChild(childrenNode(entry.children));
+  return frag;
+}
+
+// Render one buildBrowseBuckets row: a task-archive marker (+ its nested
+// cascade-archived sessions), a task-group cluster (heading + rows), or a lone
+// session (+ its own nested children / parent breadcrumb).
+function browseRowUnitNode(r) {
+  if (r.kind === 'task') {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(taskRowNode(r.task));
+    if (r.nested.length) frag.appendChild(childrenNode(r.nested));
+    return frag;
+  }
+  if (r.kind === 'task-group') {
+    const wrap = document.createElement('div');
+    wrap.className = 'search-task-cluster';
+    wrap.appendChild(taskGroupHeadingNode(r.taskName, r.entries.length));
+    for (const e of r.entries) wrap.appendChild(sessionEntryNode(e, { hideTaskChip: true }));
+    return wrap;
+  }
+  return sessionEntryNode(r);
 }
 
 // Archived tasks that belong in the current result set: only under the All /
@@ -451,7 +515,7 @@ function renderBrowse(msg) {
   const frag = document.createDocumentFragment();
   for (const b of buckets) {
     frag.appendChild(bucketHeadNode(b));
-    for (const r of b.rows) frag.appendChild(r.kind === 'task' ? taskRowNode(r.task) : browseRowNode(r.group));
+    for (const r of b.rows) frag.appendChild(browseRowUnitNode(r));
   }
   if (msg.truncated && !taskOnly) {
     const more = document.createElement('div');

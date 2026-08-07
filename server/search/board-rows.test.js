@@ -19,6 +19,11 @@ function entries() {
     }],
     // Transcript aged out of the index (no doc) — the History tail browse must keep.
     ['card-old', { liveSessionId: 'conv-gone', agent: 'claude', cwd: '/repos/old', lastLabel: 'Ancient migration', createdAt: 1_000_000, archivedAt: 3_000_000 }],
+    // An archived child, swept up in a task-archive cascade, of card-a.
+    ['card-child', {
+      liveSessionId: 'conv-child', agent: 'claude', cwd: '/repos/site', lastLabel: 'Review the login fix',
+      createdAt: 600_000, archivedAt: 700_000, parentSession: 'card-a', viaTaskArchive: 't1',
+    }],
     // Legacy pre-split entry: no liveSessionId, so its card id IS the conversation id.
     ['conv-legacy', { agent: 'claude', cwd: '/repos/legacy', intent: 'legacy intent\nsecond line', createdAt: 2_000_000, archivedAt: 2_500_000 }],
   ]);
@@ -36,8 +41,20 @@ test('buildCandidates: a doc with a board entry yields ONE joined row, never two
   assert.equal(r.worktreeBranch, 'aw/login');
   assert.equal(r.worktreePath, '/wt/login');
   assert.equal(r.workflowIssue, 'ENT-1');
+  assert.equal(r.taskId, 't1');
+  assert.equal(r.isWorkflow, true);
+  assert.equal(r.parentSession, null);
+  assert.equal(r.viaTaskArchive, null);
   assert.equal(r.title, 'Fix login'); // the doc's title wins on a joined row
   assert.equal(r.noTranscript, undefined); // only mappings-only rows carry it
+});
+
+test('buildCandidates: a cascade-archived child carries its parent link and task-archive marker', () => {
+  const rows = buildCandidates({ docs: DOCS, entries: entries(), live: new Map() });
+  const child = rows.find((r) => r.sessionId === 'conv-child');
+  assert.equal(child.parentSession, 'card-a');
+  assert.equal(child.viaTaskArchive, 't1');
+  assert.equal(child.isWorkflow, false);
 });
 
 test('buildCandidates: a mappings-only entry is synthesized with noTranscript and the label as title', () => {

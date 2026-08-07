@@ -41,6 +41,13 @@ function boardFieldsOf(cardId, e, live, docLastMs) {
     cardId,
     boardLabel: labelOf(e),
     task: (e.task && e.task.name) || '',
+    // The task snapshot's id, not just its name — lets the client group same-task
+    // rows even if two tasks happen to share a display name. Only ever set on an
+    // archived row (session-manager's archive() stamps `entry.task` from the live
+    // assignment at archive time); a live board row has no snapshot yet, so it's
+    // null and simply doesn't group — matching History, which only ever grouped
+    // archived sessions.
+    taskId: (e.task && e.task.id) || null,
     onBoard: live.has(cardId),
     archived: Boolean(e.archivedAt),
     model: e.model || null,
@@ -49,6 +56,20 @@ function boardFieldsOf(cardId, e, live, docLastMs) {
     worktreeBranch: e.worktree?.branch || '',
     worktreePath: e.worktree?.path || '',
     workflowIssue: e.workflow?.issue || '',
+    // Generic parent-session link (see CLAUDE.md's session-hierarchy note) — lets
+    // the client fold an archived child under its archived parent, mirroring the
+    // board's own nesting. Just the id: which card it points at is all the client
+    // folding logic needs.
+    parentSession: e.parentSession || null,
+    // Whether THIS session was itself an autopilot orchestrator — a boolean, not
+    // the `workflow` object (whose `phase.label` is agent-written text that would
+    // need the same untrusted-text handling as everything else search.js renders,
+    // for no rendering benefit over a boolean).
+    isWorkflow: Boolean(e.workflow),
+    // Set only when this session was swept up by a task-archive cascade (see
+    // session-manager's archive()) — the link the client uses to nest it under
+    // its task's archive marker rather than showing it as a loose row.
+    viaTaskArchive: e.viaTaskArchive || null,
     // Best recency signal available: the transcript's own tail, the entry's
     // lifecycle stamps, and the graph's live activity — whichever is newest.
     lastActivity: Math.max(docLastMs || 0, e.archivedAt || 0, e.createdAt || 0, live.get(cardId) || 0),
@@ -110,8 +131,9 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
 // The join subset a scan group gains from its candidate row — everything that
 // isn't already the group's own doc-derived shape (docIdx/title/cwd/branch/hits
 // stay the scan's). A doc-only candidate contributes just lastActivity.
-const BOARD_KEYS = ['cardId', 'boardLabel', 'task', 'onBoard', 'archived', 'model', 'createdAt',
-  'archivedAt', 'worktreeBranch', 'worktreePath', 'workflowIssue', 'lastActivity'];
+const BOARD_KEYS = ['cardId', 'boardLabel', 'task', 'taskId', 'onBoard', 'archived', 'model', 'createdAt',
+  'archivedAt', 'worktreeBranch', 'worktreePath', 'workflowIssue', 'parentSession', 'isWorkflow',
+  'viaTaskArchive', 'lastActivity'];
 export function boardFields(row) {
   const out = {};
   for (const k of BOARD_KEYS) if (row[k] !== undefined) out[k] = row[k];

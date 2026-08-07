@@ -103,3 +103,107 @@ test('rowTitle falls through boardLabel → title → cwd basename → id prefix
   assert.equal(rowTitle({ cwd: '/a/repo/', sessionId: 'abcdef123456' }), 'repo');
   assert.equal(rowTitle({ sessionId: 'abcdef123456' }), 'abcdef12');
 });
+
+// ── task grouping ────────────────────────────────────────────────────────────
+
+test('two same-task rows in one bucket cluster under a task-group heading', () => {
+  const [b] = buildBrowseBuckets(
+    [group('s1', 1 * HOUR, { taskId: 't1', task: 'Auth work' }), group('s2', 2 * HOUR, { taskId: 't1', task: 'Auth work' })],
+    [], NOW
+  );
+  assert.deepEqual(b.rows.map((r) => r.kind), ['task-group']);
+  assert.equal(b.rows[0].taskId, 't1');
+  assert.equal(b.rows[0].taskName, 'Auth work');
+  assert.deepEqual(b.rows[0].entries.map((e) => e.group.sessionId), ['s1', 's2']); // newest first
+});
+
+test('a lone session for a task stays a plain row — no heading for a singleton', () => {
+  const [b] = buildBrowseBuckets([group('s1', 1 * HOUR, { taskId: 't1', task: 'Auth work' })], [], NOW);
+  assert.deepEqual(b.rows.map((r) => r.kind), ['session']);
+});
+
+test('a task-group heading uses the newest snapshot name, even if an older one drifted', () => {
+  const [b] = buildBrowseBuckets(
+    [group('s1', 1 * HOUR, { taskId: 't1', task: 'Renamed task' }), group('s2', 2 * HOUR, { taskId: 't1', task: 'Old name' })],
+    [], NOW
+  );
+  assert.equal(b.rows[0].taskName, 'Renamed task');
+});
+
+test('same-task rows split across buckets do not cluster — grouping is per-bucket', () => {
+  const buckets = buildBrowseBuckets(
+    [group('s1', 1 * HOUR, { taskId: 't1', task: 'Auth work' }), group('s2', 2 * DAY, { taskId: 't1', task: 'Auth work' })],
+    [], NOW
+  );
+  assert.equal(buckets.length, 2);
+  assert.equal(buckets[0].rows[0].kind, 'session');
+  assert.equal(buckets[1].rows[0].kind, 'session');
+});
+
+// ── parent/child hierarchy ───────────────────────────────────────────────────
+
+test('a child in the same bucket as its parent nests under it, not as its own row', () => {
+  const [b] = buildBrowseBuckets(
+    [group('p', 2 * HOUR, { cardId: 'card-p' }), group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p' })],
+    [], NOW
+  );
+  assert.equal(b.rows.length, 1);
+  assert.equal(b.rows[0].kind, 'session');
+  assert.equal(b.rows[0].group.sessionId, 'p');
+  assert.deepEqual(b.rows[0].children.map((c) => c.sessionId), ['c']);
+});
+
+test('a grandchild promotes to top-level instead of nesting two deep', () => {
+  const [b] = buildBrowseBuckets(
+    [
+      group('p', 3 * HOUR, { cardId: 'card-p' }),
+      group('c', 2 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
+      group('gc', 1 * HOUR, { cardId: 'card-gc', parentSession: 'card-c' }),
+    ],
+    [], NOW
+  );
+  // p absorbs c; c is itself absorbed, so gc (parented on c) promotes to top-level.
+  assert.equal(b.rows.length, 2);
+  const p = b.rows.find((r) => r.group.sessionId === 'p');
+  const gc = b.rows.find((r) => r.group.sessionId === 'gc');
+  assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
+  assert.equal(gc.children, undefined);
+});
+
+test('a parent in a different bucket does not nest across the boundary — the child gets a breadcrumb instead', () => {
+  const buckets = buildBrowseBuckets(
+    [group('p', 2 * DAY, { cardId: 'card-p', boardLabel: 'Parent run' }), group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p' })],
+    [], NOW
+  );
+  const childBucket = buckets.find((bk) => bk.rows.some((r) => r.group?.sessionId === 'c'));
+  const row = childBucket.rows.find((r) => r.group.sessionId === 'c');
+  assert.equal(row.children, undefined);
+  assert.equal(row.parentTitle, 'Parent run');
+  const parentBucket = buckets.find((bk) => bk.rows.some((r) => r.group?.sessionId === 'p'));
+  assert.equal(parentBucket.rows[0].children, undefined); // the child isn't hoisted up to it either
+});
+
+test('an orphan child (parent not present at all) stays a loose row with no breadcrumb', () => {
+  const [b] = buildBrowseBuckets([group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-ghost' })], [], NOW);
+  assert.equal(b.rows[0].kind, 'session');
+  assert.equal(b.rows[0].parentTitle, undefined);
+});
+
+// ── task-archive nesting ─────────────────────────────────────────────────────
+
+test('sessions cascade-archived alongside an archived task nest under its marker, not as loose rows', () => {
+  const [b] = buildBrowseBuckets(
+    [group('s1', 1 * HOUR, { viaTaskArchive: 't1' }), group('s2', 2 * HOUR, { viaTaskArchive: 't1' })],
+    [task('t1', 'Retired feature', 30 * 60e3)],
+    NOW
+  );
+  assert.equal(b.rows.length, 1);
+  assert.equal(b.rows[0].kind, 'task');
+  assert.deepEqual(b.rows[0].nested.map((s) => s.sessionId), ['s1', 's2']); // newest first
+});
+
+test('a viaTaskArchive session whose task is not in the archived-tasks list falls through as a loose row', () => {
+  const [b] = buildBrowseBuckets([group('s1', 1 * HOUR, { viaTaskArchive: 't1' })], [], NOW);
+  assert.equal(b.rows.length, 1);
+  assert.equal(b.rows[0].kind, 'session');
+});

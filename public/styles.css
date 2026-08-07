@@ -2100,3 +2100,17 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Divider between real hits and the metadata-only matches appended after them. */
 .search-divider { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 11px; color: var(--fg-subtle); }
 .search-divider .rule { flex: 1; height: 1px; background: var(--border-muted); }
+
+/* Lightweight task grouping (History's tile heading, without the bordered tile):
+   a label line above the ≥2 rows it clusters within one time bucket. */
+.search-task-cluster { display: flex; flex-direction: column; gap: 6px; }
+.search-task-heading { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--purple); padding: 0 2px; }
+.search-task-heading .n { font-weight: 500; color: var(--fg-subtle); }
+
+/* Nested rows (a task-archive marker's cascade-archived sessions, or a parent's
+   same-bucket archived children): an indented, left-ruled stack right under the
+   row it belongs to — a plain rule reads as "part of the row above" without the
+   weight of a bordered box. */
+.search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 14px; padding-left: 12px; border-left: 2px solid var(--border-muted); }
+
+.search-wf { color: var(--wf); border-color: color-mix(in srgb, var(--wf) 35%, transparent); background: color-mix(in srgb, var(--wf) 14%, transparent); }
