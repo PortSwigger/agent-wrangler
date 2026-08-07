@@ -29,12 +29,12 @@ notification leaves mail unread indefinitely. That is still strictly better than
 where the message is lost with `delivered: true` returned to the sender — but it is not a
 delivery guarantee, and Phase 1 should not be described as one.
 
-**What covers it in Phase 1 is the unread pill plus the human.** The pill goes amber at the
+**What covers it in Phase 1 is the mail pill plus the human.** The pill goes amber at the
 same 30-minute point the Phase 2 nudge cycle would have escalated, and a human can push a
 message directly into the pane from the card — a path that bypasses the mailbox and
 therefore works even when the agent is ignoring its mail. Phase 1 does not remove the
 escalation; it replaces an automatic actor with a human one, and makes the signal visible
-either way. See *Board UI — the unread pill*.
+either way. See *Board UI — the mail pill*.
 
 ## Terminology
 
@@ -311,7 +311,7 @@ trade for addressed mail the recipient almost always needs.*
 
 ### Nudging unread mail **[Phase 2 — not built now]**
 
-*Deferred per the review. Phase 1 ships without any of this; the unread pill makes misses
+*Deferred per the review. Phase 1 ships without any of this; the mail pill makes misses
 visible, and unread age/count give the telemetry to decide whether it is needed at all.
 Retained here because the reasoning is worth keeping. Note that deferring it also removes
 Phase 1's dependency on server-side status-transition tracking, which does not exist and is
@@ -373,11 +373,27 @@ status across rebuilds. So:
   gate spuriously and nudge a working agent.
 - This is board-client-independent — the nudge cycle must work with no browser open.
 
-### Board UI — the unread pill **[Phase 1]**
+### Board UI — the mail pill **[Phase 1]**
+
+> **Call it `mail`, never `unread` — the name is already taken.** `public/app.js` has an
+> `unread` feature: a per-browser localStorage bookmark (`wrangler.unread`, "Mark unread" in
+> the card menu) that returns `'unread'` from `barWord()` (app.js:272-287) and **rewrites the
+> card's state to cyan `just-finished`** in `cardState()` (app.js:614-616). It is a human's
+> "come back to this" cue and has nothing to do with mail. Two independent "unread" concepts
+> would render on the same card. So: `s.mail`, `.mail-pill`, `--mail`, `MAIL_ICON`.
+> **Mail must never enter `barWord()`'s precedence chain and never touch `cardState()`** — it
+> is a standing fact about a mailbox, not a state of the session, and a card can legitimately
+> be human-bookmarked *and* hold unread mail simultaneously.
 
 **The pill ships in Phase 1.** With nudging deferred, it is the *only* mechanism telling
 anyone that mail is going unread, so it carries more weight here than it did in the original
 design and must not be phased out with the nudge cycle.
+
+**The server emits the amber boolean** (`s.mail = { unread, notifiedAt, amber, senders }`,
+carried on `buildGraph` and keyed on card id). The threshold stays single-sourced next to the
+mailbox, with no client clock drift and no dependency on render cadence — the board has no
+render timer of its own, only the ~4s rebuild. `notifiedAt` ships too, for the tooltip's age
+text.
 
 It is keyed on **unread age**, not on nudge state (which does not exist in Phase 1). Age is
 derivable with no new machinery — each message carries `at`, and the store records
@@ -395,10 +411,22 @@ escalated — the difference is only who acts on it.
 
 The pill shows the unread **count**, with age and senders in the tooltip.
 
-**In Phase 1 the human is the nudge.** A stale pill is actionable: message the session
-directly from the card. That path (`control/handlers/message.js`) bypasses the mailbox
-entirely and pushes straight into the pane, so it works regardless of whether the agent is
-ignoring its mail — which makes it a genuine escape hatch, not a workaround.
+**In Phase 1 the human is the nudge**, and the escape hatch is **the terminal, not a message
+composer**. An amber pill is actionable by opening the session's terminal (`openTerminal`,
+app.js:3316 — a live `/pty` attach) and typing directly into the pane. That bypasses the
+mailbox entirely and works regardless of whether the agent is reading its mail.
+
+Worth stating because it is easy to assume otherwise: **nothing in `public/` ever sends
+`{type:'message'}`**. `control/handlers/message.js` is real and works, but it is not wired to
+any board UI — there is no message composer. Do not describe one as available. The terminal
+attach is the actual affordance and is strictly more direct.
+
+**Sessions rendered as rows, not cards, have nowhere to put this.** `workerRowHtml` and
+`snoozedRowHtml` (`public/cards.js`) have no `.card-meta` — and every workflow worker and
+nested child is absorbed into a parent's spine, so this is a large fraction of sessions, and
+workers are the *headline* mail recipients (fan-in to an orchestrator). Resolution:
+- **spine rows** — a bare amber dot before `.worker-cost`, amber state only, no count;
+- **snoozed rows** — nothing. An asleep session not reading mail is not news.
 
 **This is also the Phase 2 trigger.** Unread age and count are exactly the telemetry needed
 to decide whether automatic nudging is worth building. If amber pills are rare, Phase 2 is
