@@ -2025,7 +2025,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-opt-sep { width: 1px; height: 16px; background: var(--border-muted); }
 .search-seg { display: inline-flex; border: 1px solid var(--border-muted); border-radius: 6px; overflow: hidden; }
 .search-seg button {
-  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted);
+  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted); border-radius: 0;
   color: var(--fg-muted); font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
 }
 .search-seg button:last-child { border-right: 0; }
