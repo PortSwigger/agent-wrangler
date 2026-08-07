@@ -282,10 +282,15 @@ body.dragging { user-select: none; cursor: col-resize; }
 }
 .sess-hdr.needs-you .sess-bar { background: var(--red); }
 .sess-hdr.just-finished .sess-bar { background: var(--just-finished); }
-.sess-hdr.working .sess-bar { background: var(--green); }
+/* job reuses working's exact green — no separate hue for now (see cards.js
+   STATUS_WORDS); the word ("JOB" vs "BUSY") carries the distinction, and job
+   stays out of the throb selector below so it's still visually calmer. */
+.sess-hdr.working .sess-bar,
+.sess-hdr.job .sess-bar { background: var(--green); }
 .sess-hdr.idle .sess-bar { background: var(--border); }
 .sess-hdr.unknown .sess-bar { background: var(--border-muted); }
 .sess-hdr.working .sess-bar > span,
+.sess-hdr.job .sess-bar > span,
 .sess-hdr.needs-you .sess-bar > span,
 .sess-hdr.just-finished .sess-bar > span { color: var(--bar-on); }
 /* The panel's sub-agent disclosure — expanded under the header, capped + scrollable. */
@@ -1034,7 +1039,8 @@ body.system-banner-open { padding-top: 30px; }
    idle is a neutral grey, never blank. No animation. */
 .switcher-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
 .switcher-dot.needs-you { background: var(--red); }
-.switcher-dot.working { background: var(--green); }
+.switcher-dot.working,
+.switcher-dot.job { background: var(--green); }
 .switcher-dot.just-finished { background: var(--just-finished); }
 /* Clears the whole minimised set. Sits first among the pills, wrapping and scrolling
    with them; blue accent so it still reads as an action, not a task, despite sharing
@@ -1085,12 +1091,17 @@ body.system-banner-open { padding-top: 30px; }
 .session-card:hover { background: var(--surface-2); }
 .session-card.idle .card-bar { background: var(--border); }
 .session-card.unknown .card-bar { background: var(--border-muted); }
-.session-card.working .card-bar { background: var(--green); }
+/* job reuses working's exact green — no separate hue for now (see cards.js
+   STATUS_WORDS); the word ("JOB" vs "BUSY") carries the distinction, and job
+   stays out of the throb selector below so it's still visually calmer. */
+.session-card.working .card-bar,
+.session-card.job .card-bar { background: var(--green); }
 .session-card.just-finished .card-bar { background: var(--just-finished); }
 .session-card.needs-you .card-bar { background: var(--red); }
 /* Filled live bars carry near-black/white ink (per theme) for contrast; idle,
    unknown and dormant keep muted text on their grey/hollow ground. */
 .session-card.working .card-bar > span,
+.session-card.job .card-bar > span,
 .session-card.needs-you .card-bar > span,
 .session-card.just-finished .card-bar > span { color: var(--bar-on); }
 /* Dormant: no live tmux. A hollow bar reads "nothing running here, click to
@@ -1331,7 +1342,8 @@ body.system-banner-open { padding-top: 30px; }
   pointer-events: none;
 }
 .worker-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
-.worker-row.working .worker-dot { background: var(--green); }
+.worker-row.working .worker-dot,
+.worker-row.job .worker-dot { background: var(--green); }
 .worker-row.needs-you .worker-dot { background: var(--red); }
 .worker-row.just-finished .worker-dot { background: var(--just-finished); }
 .worker-row.dormant .worker-dot { background: transparent; border: 1px solid var(--border); }

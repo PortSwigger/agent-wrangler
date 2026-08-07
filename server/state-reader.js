@@ -411,6 +411,15 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     let status = liveStatusDecision(s.status);
     const paneText = tmux ? await capture(tmux, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
     if (status === 'scrape') status = tmux ? classify(paneText).status : 'unknown';
+    // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
+    // live" — it covers both a still-blocking foreground command AND a detached
+    // run_in_background job the turn has already ended on; the file can't tell
+    // those apart, but the pane can (a still-blocking command keeps "esc to
+    // interrupt" visible). Trust the pane here rather than a 'shell' status that
+    // can go stale for as long as the job runs (verified against a real session:
+    // frozen 20+ minutes after the pane itself reached its idle prompt) — else a
+    // detached background job pins the card at "busy" for its entire lifetime.
+    if (s.status === 'shell' && tmux && classify(paneText).status === 'idle') status = 'idle';
     // A dropped API connection ends the turn with no permission request, so the
     // status file reports idle/unknown even though the response is incomplete —
     // surface it as needs-you instead of a silent "done" (see transcript-reader's
@@ -543,6 +552,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
     if (status === 'scrape') { const c = classify(paneText); status = c.status; scrapeWaitingFor = c.waitingFor || null; }
+    // Same override as the managed-session pass above: Claude's 'shell' status
+    // can go stale for as long as a detached background job runs, well past the
+    // pane's own idle prompt — trust the pane over it. `live.status` above is
+    // already mapped, so `rawStatus` is the only way to tell 'shell' from 'busy'.
+    if (live?.rawStatus === 'shell' && classify(paneText).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
     const apiErrorNeedsYou = Boolean(enr?.apiError) && status !== 'working' && status !== 'needs-you';

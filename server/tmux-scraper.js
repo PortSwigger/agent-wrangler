@@ -205,18 +205,22 @@ export function classify(paneText) {
 }
 
 // Each CLI renders its own footer text for "a background/async job is still
-// running", so detection is keyed by agent id. Claude's is bounded by middots on
-// both sides so it can't collide with an unrelated "Running N shell command…"
-// tool-call line elsewhere in the scrollback (verified against a real session:
-// the footer segment has middots, that line doesn't). Codex's "N background
-// terminal(s) running · /ps to view · /stop to close" is distinctive enough on
-// its own (verified against a real `codex` session). Killing the pane kills
-// these jobs regardless of agent; only Claude's CLI surfaces an ambiguous
-// message about it on the next resume ("No completion record was found") —
-// Codex degrades gracefully instead — but both leave the job dead all the same,
-// so both are worth the same suspend/archive caution.
+// running", so detection is keyed by agent id. Claude's requires a LEADING
+// middot (so it can't collide with an unrelated "Running N shell command…"
+// tool-call line elsewhere in the scrollback, which has no middot at all) but
+// deliberately does NOT require a trailing one: the footer is the last thing on
+// its line, so a narrow pane truncates it — verified against a real capture,
+// the trailing-middot form silently stopped matching once the pane was
+// narrower than the full "· N shell(s) · …" segment, while requiring only the
+// leading middot survives down to the word "shell(s)" itself being cut.
+// Codex's "N background terminal(s) running · /ps to view · /stop to close" is
+// distinctive enough on its own (verified against a real `codex` session).
+// Killing the pane kills these jobs regardless of agent; only Claude's CLI
+// surfaces an ambiguous message about it on the next resume ("No completion
+// record was found") — Codex degrades gracefully instead — but both leave the
+// job dead all the same, so both are worth the same suspend/archive caution.
 const BACKGROUND_SHELL_PATTERNS = {
-  claude: /·\s*\d+\s+shells?\s*·/,
+  claude: /·\s*\d+\s+shells?\b/,
   codex: /\d+\s+background terminals?\s+running/i,
 };
 

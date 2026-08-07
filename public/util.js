@@ -24,6 +24,16 @@ export function tildify(p) {
   return p ? p.replace(/^\/(?:Users|home)\/[^/]+/, '~') : '';
 }
 
+// The status a session actually shows, folding in the idle-but-a-background-job
+// -is-still-running case: 'job' is its own state — same green fill as 'working'
+// (no separate hue for now), but stays out of the throb animation and the word
+// reads "JOB" not "BUSY" (see STATUS_WORDS in cards.js), so it's still visually
+// calmer than the agent actually working. See hasBackgroundShell in
+// tmux-scraper.js for how the job itself is detected.
+export function displayStatus(s) {
+  return s.status === 'idle' && s.hasBackgroundShell ? 'job' : s.status;
+}
+
 export function timeAgo(ms) {
   if (!ms) return null;
   const s = Math.floor((Date.now() - ms) / 1000);
