@@ -13,7 +13,7 @@ delivery fix into a second system with several new race surfaces, and the nudge 
 is justified by a failure mode that has not been observed — only feared.
 
 **Phase 1 (build now).** Durable mailbox, fixed settle window, terse notification,
-`read_mail` + `list_mail`, unread pill, restart-safe settle runner, retention caps. This
+`read_mail` + `list_mail`, mail pill, restart-safe settle runner, retention caps. This
 alone fixes both measured failures: derailment by peer payload, and silent loss.
 
 **Phase 2 (build only on evidence).** Re-nudge state machine, server-side working→idle
@@ -30,11 +30,12 @@ where the message is lost with `delivered: true` returned to the sender — but 
 delivery guarantee, and Phase 1 should not be described as one.
 
 **What covers it in Phase 1 is the mail pill plus the human.** The pill goes amber at the
-same 30-minute point the Phase 2 nudge cycle would have escalated, and a human can push a
-message directly into the pane from the card — a path that bypasses the mailbox and
+same 30-minute point the Phase 2 nudge cycle would have escalated, and a human can open the
+session's terminal and type straight into the pane — a path that bypasses the mailbox and
 therefore works even when the agent is ignoring its mail. Phase 1 does not remove the
 escalation; it replaces an automatic actor with a human one, and makes the signal visible
-either way. See *Board UI — the mail pill*.
+either way. (Note: the escape hatch is the terminal attach, **not** a message composer —
+there isn't one. See *Board UI — the mail pill*.)
 
 ## Terminology
 
@@ -54,8 +55,9 @@ Two consequences worth stating plainly, because getting them backwards inverts t
   costs nothing and means nothing is in flight.
 - **Dormant sessions are woken by mail, and that is deliberate.** The ability to wake a
   dormant session by messaging it was added recently and is load-bearing for inter-agent
-  interoperability. This design **preserves it unchanged**. Nothing here holds mail back
-  waiting for a session to wake on its own.
+  interoperability. This design **preserves the capability**, though the wake moves from
+  send-time to settle-close — see the semantic-change table under *Delivery sequence*.
+  Nothing here holds mail back waiting for a session to wake on its own.
 
 ## Problem
 
@@ -112,8 +114,9 @@ keep the interjection, shrink and neutralise the payload.
 
 Caveat on exp7: `read_mail` did not exist during the test, so the agent flagged the
 notice as suspicious and surfaced it at the end of its turn rather than acting on it. It
-proves non-derailment; it does **not** prove the agent would have read the mail. That gap
-is what the re-nudge cycle exists to cover.
+proves non-derailment; it does **not** prove the agent would have read the mail. That gap is
+what the Phase 2 re-nudge cycle would cover; in Phase 1 it is covered by the mail pill and a
+human.
 
 ## Design
 
@@ -133,7 +136,8 @@ recipient pulls bodies with `read_mail`.
    recipient is woken first — **settle before waking**, so a relaunch happens once with
    the full batch rather than once per message.
 4. **Read.** The recipient calls `read_mail()`, which drains and marks read.
-5. **Nudge.** If mail stays unread, re-notify on a backoff, then escalate to the human.
+5. **Nudge.** *(Phase 2 only.)* If mail stays unread, re-notify on a backoff, then escalate.
+   In Phase 1 unread mail simply raises the mail pill, which goes amber at 30 minutes.
 
 Waking a **dormant** recipient is **retained deliberately** — but the *timing and error
 reporting change*, and that is a semantic change the spec must not paper over.
@@ -577,7 +581,7 @@ dropped, because a sender was told it was queued.
   the server was down fires on the first sweep after boot.**
 - **Transition tracking** — the server-side working→idle gate fires with no board client
   connected, and a status flap does not satisfy it.
-- **Unread pill** — appears on first unread; flips amber at the 30-minute threshold; clears on
+- **Mail pill** — appears on first unread; flips amber at the 30-minute threshold; clears on
   `read_mail`; `undeliverable` mail does not count toward it.
 - **Archive race** — sending to an already-archived session is refused and writes nothing;
   a session archived *during* its settle window is never resumed, its mail is marked
