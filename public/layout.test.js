@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
   MIN_COL_PX, GRID_CHROME_X_PX,
-  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { tileWeight } from './snooze.js';
@@ -46,6 +46,39 @@ test('sessionsPerRow: never overestimates capacity relative to the grid\'s real 
   for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
     assert.ok(sessionsPerRow({ clientHeight }) <= rawFormula(clientHeight));
   }
+});
+
+test('perRowForRows: at MAX_ONSCREEN_ROWS it agrees exactly with sessionsPerRow', () => {
+  for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
+    assert.equal(perRowForRows(clientHeight, MAX_ONSCREEN_ROWS), sessionsPerRow({ clientHeight }));
+  }
+});
+
+// The bug this exists to let a caller correct for: sessionsPerRow budgets
+// every tile's card capacity against the NOMINAL row height (available height
+// / MAX_ONSCREEN_ROWS). Once the packer genuinely needs more rows than that,
+// `1fr` divides the same available height across those extra rows too, so the
+// REAL row is shorter than the nominal one every tile's span was computed
+// against — confirmed against a live board (a 3-card tile sized for 1 row
+// under a 3-row nominal budget did not fit once the board packed into 4 real
+// rows). perRowForRows lets a caller re-derive perRow from the row count the
+// packer actually chose, so tile spans can be recomputed against reality.
+test('perRowForRows: more rows than MAX_ONSCREEN_ROWS yields a smaller perRow than the nominal', () => {
+  const clientHeight = 1107; // a real measured live-board grid height
+  const nominal = sessionsPerRow({ clientHeight });
+  const refined = perRowForRows(clientHeight, 4);
+  assert.ok(refined <= nominal);
+});
+
+test('perRowForRows: fewer rows than MAX_ONSCREEN_ROWS yields a LARGER perRow (more room per row)', () => {
+  const clientHeight = 1107;
+  const nominal = sessionsPerRow({ clientHeight });
+  const refined = perRowForRows(clientHeight, 1);
+  assert.ok(refined >= nominal);
+});
+
+test('perRowForRows: never below MIN_SESSIONS_PER_ROW, even for a pathologically dense pack', () => {
+  assert.equal(perRowForRows(1107, MAX_FIT_ROWS * 10), MIN_SESSIONS_PER_ROW);
 });
 
 test('columnsForWidth: floors to the readable-width columns that fit, never below one', () => {
