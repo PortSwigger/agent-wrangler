@@ -72,7 +72,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // launch dir up by the LIVE id: a modern Claude transcript lives under
   // entry.liveSessionId, not the card id, so passing the card id here found no
   // transcript and silently disabled this recovery (legacy entries fall back to
-  // the card id, which is their live id). Archived (History) sessions are off the
+  // the card id, which is their live id). Archived sessions are off the
   // board, so s is null; fall back to the cwd persisted in the mapping rather
   // than stranding the resume in ~.
   const dir = await resolveResumeDir(entry?.liveSessionId || sessionId, {

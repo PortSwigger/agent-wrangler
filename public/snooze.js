@@ -1,6 +1,7 @@
 // Pure snooze logic, split out of app.js so it can be unit-tested without a DOM.
 // The browser loads this as a module (it also pins exports onto window for the
-// classic app.js script); node imports it directly. See history-group.js.
+// classic app.js script); node imports it directly. See search-browse.js for the
+// same split-out-pure-logic pattern.
 
 const HOUR = 3600e3;
 

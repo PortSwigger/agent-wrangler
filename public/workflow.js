@@ -14,7 +14,7 @@ export function workflowPhaseLabel(workflow) {
 // child-sessions design) pointing at the orchestrator's card id, with no
 // `workflow` of its own — nesting under an orchestrator is what makes it a
 // worker specifically, as opposed to any other nested child (e.g. a review).
-// Split out as pure predicates so the grouping in app.js/cards.js/history-group.js
+// Split out as pure predicates so the grouping in app.js/cards.js
 // is unit-testable. `byId` is a Map<sessionId, session> over the candidate set,
 // needed to resolve whether a child's parent is itself an orchestrator.
 export function isWorkflowRun(s) {
@@ -34,9 +34,6 @@ export function isWorkflowWorker(s, byId) {
 // grandchild whose immediate parent is itself absorbed elsewhere promotes to its
 // own top-level slot instead — nesting renders only one level deep). Cycle-safe
 // (a `parentSession` chain shouldn't cycle, but this never hangs if one does).
-// history-group.js keeps its own independent copy for the same shape over
-// archived sessions — a deliberate duplicate for a different rendering context,
-// not something to unify here.
 export function computeAbsorption(sessions) {
   const present = new Set(sessions.map((s) => s.sessionId));
   const byId = new Map(sessions.map((s) => [s.sessionId, s]));

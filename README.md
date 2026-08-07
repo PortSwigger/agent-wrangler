@@ -226,8 +226,10 @@ which recomputes directly from on-disk transcripts.
 ## Layout
 
 Two views, toggled from the nav rail: **Tasks** (the default board — sessions grouped under the tasks
-you assign them to, plus an Ad-hoc lane) and **History** (archived sessions). A nav-rail button opens
-**find & attach**, which brings an on-disk session onto the board as a forked, resumable copy.
+you assign them to, plus an Ad-hoc lane) and **Search** — the single find-anything surface. Search
+browses recent and off-board conversations, runs full-text and metadata queries across every
+transcript, and lists archived sessions with resume/fork/delete/restore, so an on-disk session can be
+brought (back) onto the board from the same place you found it.
 
 ## Themes
 

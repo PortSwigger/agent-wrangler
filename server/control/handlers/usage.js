@@ -3,7 +3,7 @@ import { scanAllDaily, rollup } from '../../usage-report.js';
 // The Usage dashboard's data source. A request carries a granularity (day / week /
 // month); the reply is per-bucket, per-task $ + token totals for that granularity's
 // default window. Request/reply over the already-origin-gated control WS (like
-// subagent-detail / list-resumable), so no new HTTP surface is exposed.
+// subagent-detail / search), so no new HTTP surface is exposed.
 //
 // scanAllDaily reads EVERY on-disk transcript (O(all history)), so its result is
 // cached: a granularity toggle re-rolls the cached day bags in memory instead of

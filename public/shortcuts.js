@@ -1,7 +1,7 @@
 import { esc } from './util.js';
 
 // Static reference for the settings modal's Shortcuts section. Hand-maintained —
-// not wired to the actual key listeners (app.js, diff-view.js, history.js) — so
+// not wired to the actual key listeners (app.js, diff-view.js) — so
 // keep this in sync by hand whenever a binding changes there.
 const SHORTCUTS = [
   {
@@ -22,9 +22,9 @@ const SHORTCUTS = [
     ],
   },
   {
-    group: 'History',
+    group: 'Search',
     rows: [
-      ['/', 'Focus the history search field'],
+      ['/', 'Open the Search view and focus its input'],
     ],
   },
   {

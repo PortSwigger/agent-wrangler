@@ -65,9 +65,9 @@ export const taskUnarchiveHandler = {
     // eventual per-session board update.
     ctx.reply({ type: 'task-unarchived', taskId: msg.taskId });
     // Only when the client explicitly asked to restore sessions too (the toast's
-    // forced restore, or History's "Restore task + sessions" choice) — otherwise
+    // forced restore, or Search's "Restore task + sessions" choice) — otherwise
     // this stays the original behavior: the task tile reappears empty, sessions
-    // resumed individually from History. Resolved fresh (not from the archive-time
+    // resumed individually from Search. Resolved fresh (not from the archive-time
     // count) so a session already resumed individually since the task was archived
     // isn't double-resumed. Sequential, not parallel — mirrors archiveCascade's own
     // one-at-a-time teardown, avoiding a burst of simultaneous tmux launches.

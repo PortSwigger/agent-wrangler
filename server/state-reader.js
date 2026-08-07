@@ -349,8 +349,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     if (seen.has(s.sessionId)) continue;
     seen.add(s.sessionId);
 
-    // Archived sessions belong in History, never on the board — even if their
-    // process is still alive (the kill may lag or fail). Curation wins.
+    // Archived sessions belong in graph.history, never on the board — even if
+    // their process is still alive (the kill may lag or fail). Curation wins.
     if (sessionManager?.isArchived?.(s.sessionId)) continue;
 
     // Skip forked copies created by Resume: a tmux session we own but mapped to
@@ -362,7 +362,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     // The board is a curated view of wrangler-managed sessions only. A live
     // Claude is managed iff it has a mapping entry (launched/adopted by us) or
     // runs inside a tmux we own. Bare sessions started elsewhere are not shown
-    // automatically — they're brought in deliberately via find & attach.
+    // automatically — they're brought in deliberately via Search's Adopt.
     const managedSession = Boolean(sessionManager?.entryFor?.(s.sessionId)) || Boolean(forkOwner);
     if (!managedSession) continue;
 
@@ -499,7 +499,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
   // file under their owner id — chiefly a Resume fork, which runs under a new id
   // inside a tmux we own, so the main loop filters the fork out and the owned
   // tmux would otherwise go unrepresented. Only tmuxes we own qualify; foreign
-  // tmuxes started outside the wrangler stay off the board (find & attach
+  // tmuxes started outside the wrangler stay off the board (Search's Adopt
   // brings one in by resuming it into a tmux of our own).
   // Iterate PRIMARY panes only (team-member panes are folded into their lead's
   // `teammates` below, never their own node). `synthesized` dedupes by realSid so
@@ -728,8 +728,9 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     }
   }
 
-  // Archived sessions for the History view: a frozen snapshot from the mapping,
-  // recoverable via Resume. Kept lightweight (no transcript reads).
+  // Archived sessions (graph.history, rendered by Search's archived rows): a
+  // frozen snapshot from the mapping, recoverable via Resume. Kept lightweight
+  // (no transcript reads).
   const history = (sessionManager?.archivedEntries?.() || []).map((e) => {
     const parentFields = deriveParentSession(e);
     return {
@@ -751,7 +752,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       // `parentSession` (same legacy `workflow.parent` fallback as the board — see
       // deriveParentSession). An orchestrator record carries issue/phase; a child
       // (workflow worker or otherwise) carries `parentSession` pointing at its
-      // parent's card id. History folds runs off this, same as the board.
+      // parent's card id. Search's archived rows fold runs off this, same as the board.
       workflow: parentFields.workflow ? { issue: parentFields.workflow.issue ?? null, phase: parentFields.workflow.phase ?? null } : null,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
