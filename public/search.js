@@ -373,14 +373,12 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
 }
 
 // The archived children (one level deep — see foldSameBucketChildren) nested
-// under a parent row: History's own elbow-connector stack (ported verbatim in
-// styles.css), each child independently resumable/forkable/deletable like any
-// other row. `variant` tints the connector — 'task' (purple, cascade-archived
-// under a task marker) or 'wf' (the parent was itself an autopilot
-// orchestrator) — falling through to a neutral border for a plain parent/child.
-function childrenNode(children, variant, opts) {
+// under a parent row: an indented stack, each child independently
+// resumable/forkable/deletable like any other row. Nesting reads from the
+// indent alone (see styles.css) — no connector line.
+function childrenNode(children, opts) {
   const wrap = document.createElement('div');
-  wrap.className = variant ? `search-children search-children--${variant}` : 'search-children';
+  wrap.className = 'search-children';
   for (const c of children) wrap.appendChild(browseRowNode(c, opts));
   return wrap;
 }
@@ -419,17 +417,22 @@ function taskRowNode(t) {
   return card;
 }
 
-// The heading over a cluster of ≥2 same-task rows within one time bucket — the
-// "lightweight grouping" History had as a bordered tile, here just a label +
-// count line above the plain rows it groups. A single row for a task isn't
-// worth a heading (see foldTaskGroups): its own inline task chip already says
-// which task it's in.
+// The heading over a task's rows within one time bucket — either a cluster of
+// ≥2 same-task rows (see foldTaskGroups; a singleton stays headingless, its
+// own inline task chip already says which task it's in) or a task-archive
+// marker + its nested cascade-archived sessions, which always gets one since
+// the marker IS the task. Sticky (see styles.css) so it stays visible while
+// its own rows scroll past.
 function taskGroupHeadingNode(name, count) {
   const div = document.createElement('div');
   div.className = 'search-task-heading';
-  const label = document.createElement('span');
-  label.textContent = `▦ ${name}`;
-  div.appendChild(label);
+  // The pill carries the tint/shape; the outer div stays a plain full-width
+  // bar with a solid backdrop, since IT'S what needs to stay opaque while
+  // stuck — a translucent pill wouldn't cover the rows scrolling underneath.
+  const pill = document.createElement('span');
+  pill.className = 'search-task-pill';
+  pill.textContent = `▦ ${name}`;
+  div.appendChild(pill);
   const n = document.createElement('span');
   n.className = 'n';
   n.textContent = String(count);
@@ -442,7 +445,7 @@ function taskGroupHeadingNode(name, count) {
 function sessionEntryNode(entry, opts) {
   const frag = document.createDocumentFragment();
   frag.appendChild(browseRowNode(entry.group, { parentTitle: entry.parentTitle, ...opts }));
-  if (entry.children?.length) frag.appendChild(childrenNode(entry.children, entry.group.isWorkflow ? 'wf' : null));
+  if (entry.children?.length) frag.appendChild(childrenNode(entry.children));
   return frag;
 }
 
@@ -451,10 +454,12 @@ function sessionEntryNode(entry, opts) {
 // session (+ its own nested children / parent breadcrumb).
 function browseRowUnitNode(r) {
   if (r.kind === 'task') {
-    const frag = document.createDocumentFragment();
-    frag.appendChild(taskRowNode(r.task));
-    if (r.nested.length) frag.appendChild(childrenNode(r.nested, 'task'));
-    return frag;
+    const wrap = document.createElement('div');
+    wrap.className = 'search-task-cluster';
+    wrap.appendChild(taskGroupHeadingNode(r.task.name || r.task.id, 1 + r.nested.length));
+    wrap.appendChild(taskRowNode(r.task));
+    if (r.nested.length) wrap.appendChild(childrenNode(r.nested));
+    return wrap;
   }
   if (r.kind === 'task-group') {
     const wrap = document.createElement('div');

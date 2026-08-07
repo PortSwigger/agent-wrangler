@@ -2104,51 +2104,37 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Lightweight task grouping (History's tile heading, without the bordered tile):
    a label line above the ≥2 rows it clusters within one time bucket. */
 .search-task-cluster { display: flex; flex-direction: column; gap: 6px; }
-.search-task-heading { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--purple); padding: 0 2px; }
-.search-task-heading .n { font-weight: 500; color: var(--fg-subtle); }
+/* Sticky within its own cluster only: `position: sticky` detaches once the
+   cluster's own bottom scrolls past, and the next cluster's heading — later in
+   DOM order, so painted on top at the same sticky offset — visually replaces
+   it. #search is the scrolling ancestor (`overflow-y: auto`); an opaque
+   background is required since content keeps scrolling underneath while
+   stuck, over the page's own wallpaper. */
+.search-task-heading {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 2px; margin: 0 -2px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg);
+}
+/* The pill itself: tinted like the app's other chips (search-agent--claude,
+   search-task-flag, …) rather than a flat/arbitrary colour, so it reads as
+   part of the same badge language instead of a one-off. */
+.search-task-pill {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent);
+}
+.search-task-heading .n { font-weight: 500; color: var(--fg-subtle); font-size: 11px; }
 
 /* Nested rows (a task-archive marker's cascade-archived sessions, or a parent's
-   same-bucket archived children). History drew its tree connector as one
-   border-left+border-bottom "L" PER ROW, split into two elements per join — a
-   row's own ::before (the upper half) and its previous sibling's ::after (the
-   lower half) — that meet mid-gap. Ported verbatim at first, but on this
-   view's taller two-line row it visibly doubled: two independently-rounded
-   elements each drawing a stroke across the same few pixels shows as a seam
-   even when the colour matches exactly (confirmed — not a tuning problem,
-   the ::after/::before math genuinely overlaps by a full gap-width in
-   History's own numbers). Fixed structurally instead of by re-tuning offsets
-   again: ONE spine element for the whole stack (impossible to overlap with
-   itself), plus a short independent horizontal tick per row. `left: -14px` on
-   both keeps the same visual column History used. */
-.search-children { position: relative; display: flex; flex-direction: column; gap: 6px; margin-left: 13px; padding-left: 14px; --line-color: var(--border); }
-.search-children--task { --line-color: var(--purple); }
-.search-children--wf { --line-color: var(--wf); }
-.search-children::before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: -8px;
-  bottom: 0;
-  width: 2px;
-  background: var(--line-color);
-  pointer-events: none;
-}
-.search-children > .search-group {
-  /* .search-group's own `overflow: hidden` (clipping its border-radius) would
-     also clip the tick below — it sits at left:-14px, entirely outside its
-     border box, in the gap to its left. */
-  position: relative;
-  overflow: visible;
-}
-.search-children > .search-group::before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: 19px; /* .search-group-head's own measured vertical center */
-  width: 17px; /* overlaps the card by a few px so it can't gap at any zoom */
-  height: 2px;
-  background: var(--line-color);
-  pointer-events: none;
-}
+   same-bucket archived children). Three rounds of connector-line styling (a
+   History-verbatim port, a fixed-offset retune, a single-spine rebuild) each
+   fixed one rendering issue and surfaced another, so the line is gone —
+   indentation alone signals nesting now, same as most flat file-tree UIs. */
+.search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 13px; padding-left: 14px; }
 
 .search-wf { color: var(--wf); border-color: color-mix(in srgb, var(--wf) 35%, transparent); background: color-mix(in srgb, var(--wf) 14%, transparent); }
