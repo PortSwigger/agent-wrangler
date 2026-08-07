@@ -33,7 +33,8 @@ const VALID_STATUS = new Set(['board', 'archived', 'offboard']);
 // what every entry field is keyed on too — never the conversation id).
 function candidateRows(ctx, docs) {
   const live = new Map((ctx.graph()?.sessions || []).map((s) => [s.sessionId, s.lastActivity || 0]));
-  return buildCandidates({ docs, entries: ctx.sessionManager?.map || new Map(), live });
+  const taskFor = (cardId) => ctx.taskStore?.taskFor(cardId) || null;
+  return buildCandidates({ docs, entries: ctx.sessionManager?.map || new Map(), live, taskFor });
 }
 
 // Pure-ish core, split from the handler so tests can stub the scan and the doc

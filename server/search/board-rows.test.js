@@ -49,6 +49,39 @@ test('buildCandidates: a doc with a board entry yields ONE joined row, never two
   assert.equal(r.noTranscript, undefined); // only mappings-only rows carry it
 });
 
+test('buildCandidates: an on-board session with no archive-time snapshot falls back to the live task assignment', () => {
+  const rows = buildCandidates({
+    docs: DOCS,
+    entries: new Map([['card-live', { liveSessionId: 'conv-b', agent: 'claude', cwd: '/repos/api' }]]),
+    live: new Map(),
+    taskFor: (cardId) => (cardId === 'card-live' ? { id: 'live-t', name: 'Live task' } : null),
+  });
+  const b = rows.find((r) => r.sessionId === 'conv-b');
+  assert.equal(b.taskId, 'live-t');
+  assert.equal(b.task, 'Live task');
+});
+
+test('buildCandidates: an archive-time snapshot wins over the (possibly since-changed) live assignment', () => {
+  const rows = buildCandidates({
+    docs: DOCS, entries: entries(), live: new Map(),
+    taskFor: () => ({ id: 'reassigned', name: 'Reassigned elsewhere' }),
+  });
+  const a = rows.find((r) => r.sessionId === 'conv-a'); // fixture entry carries its own e.task
+  assert.equal(a.taskId, 't1');
+  assert.equal(a.task, 'Auth work');
+});
+
+test('buildCandidates: taskFor defaults to a no-op, so callers that never pass it keep task-less on-board rows', () => {
+  const rows = buildCandidates({
+    docs: DOCS,
+    entries: new Map([['card-live', { liveSessionId: 'conv-b', agent: 'claude', cwd: '/repos/api' }]]),
+    live: new Map(),
+  });
+  const b = rows.find((r) => r.sessionId === 'conv-b');
+  assert.equal(b.taskId, null);
+  assert.equal(b.task, '');
+});
+
 test('buildCandidates: a cascade-archived child carries its parent link and task-archive marker', () => {
   const rows = buildCandidates({ docs: DOCS, entries: entries(), live: new Map() });
   const child = rows.find((r) => r.sessionId === 'conv-child');

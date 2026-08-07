@@ -36,18 +36,23 @@ function labelOf(e) {
 // The board-join fields, split out so the handler can Object.assign them onto a
 // scan group without clobbering the group's own doc-derived title/cwd/branch.
 // `live` maps card id -> lastActivity for sessions currently in the graph.
-function boardFieldsOf(cardId, e, live, docLastMs) {
+// `taskFor(cardId)` resolves a session's CURRENT task assignment ({id, name} or
+// null) — needed because session-manager only stamps `entry.task` at archive
+// time (a frozen snapshot); an on-board session has no snapshot yet, so
+// without this every live session would be task-less and never group.
+function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
+  // Archived: trust the frozen snapshot (the name as it was AT archive time,
+  // per its own comment below) over the live assignment, which may have since
+  // been reassigned or cleared. Anything else (on-board, or a mapping with no
+  // snapshot): fall back to whatever it's assigned to right now.
+  const task = e.task || taskFor(cardId);
   return {
     cardId,
     boardLabel: labelOf(e),
-    task: (e.task && e.task.name) || '',
-    // The task snapshot's id, not just its name — lets the client group same-task
-    // rows even if two tasks happen to share a display name. Only ever set on an
-    // archived row (session-manager's archive() stamps `entry.task` from the live
-    // assignment at archive time); a live board row has no snapshot yet, so it's
-    // null and simply doesn't group — matching History, which only ever grouped
-    // archived sessions.
-    taskId: (e.task && e.task.id) || null,
+    task: (task && task.name) || '',
+    // The task's id, not just its name — lets the client group same-task rows
+    // even if two tasks happen to share a display name.
+    taskId: (task && task.id) || null,
     onBoard: live.has(cardId),
     archived: Boolean(e.archivedAt),
     model: e.model || null,
@@ -81,7 +86,7 @@ function boardFieldsOf(cardId, e, live, docLastMs) {
 // the current graph. Dead (tombstoned) docs are skipped exactly as the scan's
 // docMask skips them — their bytes describe a rewritten file — which also routes
 // their board entry through the mappings-only union below.
-export function buildCandidates({ docs = [], entries = new Map(), live = new Map() } = {}) {
+export function buildCandidates({ docs = [], entries = new Map(), live = new Map(), taskFor = () => null } = {}) {
   const byConversation = new Map();
   for (const [cardId, e] of entries) byConversation.set(e.liveSessionId || cardId, [cardId, e]);
 
@@ -103,7 +108,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
     const hit = byConversation.get(d.id);
     if (hit) {
       joined.add(d.id);
-      Object.assign(row, boardFieldsOf(hit[0], hit[1], live, lastMs));
+      Object.assign(row, boardFieldsOf(hit[0], hit[1], live, lastMs, taskFor));
     }
     rows.push(row);
   });
@@ -122,7 +127,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
       branch: '',
       lastTs: 0,
       noTranscript: true,
-      ...boardFieldsOf(cardId, e, live, 0),
+      ...boardFieldsOf(cardId, e, live, 0, taskFor),
     });
   }
   return rows;
