@@ -2126,22 +2126,30 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   position: relative;
   overflow: visible;
 }
+/* The bend sits at a FIXED offset (not 50% of the row) — .search-row's head
+   (title + chips) is a small fraction of the row's total height once the cwd
+   line and padding are counted, so a 50%-of-height bend (History's original
+   math, tuned for .hc's shorter, single-purpose card) landed near the row's
+   vertical MIDDLE instead of its title, reading as a disconnected tick rather
+   than a bend into the row it belongs to. 19px matches .search-group-head's
+   own measured center. The box also now spans the full 14px gap (was 11px,
+   deliberately 3px short in the original) so the tick actually touches the
+   card instead of floating next to it. */
 .search-children > .search-group::before {
   content: '';
   position: absolute;
   left: -14px;
   top: -6px;
-  width: 11px;
-  height: calc(50% + 6px);
+  width: 14px;
+  height: 25px;
   border-left: 2px solid var(--line-color);
   border-bottom: 2px solid var(--line-color);
 }
-.search-children > .search-group:first-child::before { top: -8px; height: calc(50% + 8px); }
 .search-children > .search-group:not(:last-child)::after {
   content: '';
   position: absolute;
   left: -14px;
-  top: 50%;
+  top: 19px;
   bottom: -6px;
   width: 2px;
   background: var(--line-color);
