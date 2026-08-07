@@ -393,6 +393,39 @@ status across rebuilds. So:
 anyone that mail is going unread, so it carries more weight here than it did in the original
 design and must not be phased out with the nudge cycle.
 
+#### Chosen design: `mail-mark`, two-tier
+
+![The mail pill in its stale state on a workflow card, with a stale worker dot on a spine row](2026-08-07-you-got-mail-pill.png)
+
+Of three candidates (`mail-chip`, a plain meta chip; `mail-mark`, two-tier; `mail-badge`, on
+the name row), **`mail-mark` is the decision**. It is the only one that answers both
+requirements structurally rather than by restraint:
+
+| state | treatment |
+|---|---|
+| **normal** | **not a chip at all** — bare envelope glyph + count, no background, `--fg-subtle`, matching `.subagent-updated`'s ambient-metadata register. `order: 1`, so it sits after the age and cost chips where routine information belongs. |
+| **stale** | **promoted** to a real `.card-tag` chip with the amber wash (`color-mix(in srgb, var(--mail) 18%, var(--surface-2))`, `--mail-fg` text) **and** `order: -1`, pinning it to the front of the meta row. |
+
+Why the promotion matters: `.card-meta` is `flex-wrap`, and a busy card — devcontainer,
+worktree, workflow, sub-agents, PR link — wraps it. A plain chip would leave the amber state's
+discoverability to source-order luck on exactly the cards most likely to be ignoring their
+mail. `order: -1` is free (the row is already flex) and makes it structural.
+
+The screenshot above shows the stale state on a workflow card (`✉6` first in the meta row,
+ahead of the age, cost, worktree and PR chips) and the spine-row treatment — the bare amber
+dot on *implement mailbox store*, sized 6px against `.worker-dot`'s 8px so it reads as
+secondary to status rather than as a second status dot.
+
+Costs accepted: visual order no longer matches DOM order in the meta row, one concept has two
+visual forms, and the normal state is quiet enough to miss at a glance. The last is intended —
+routine mail is not meant to compete with `working`/`needs-you`.
+
+**Do not make it a button in Phase 1.** The obvious next step is "click the pill to nudge",
+and `.subagent-pill` is the precedent for a `<button class="card-tag">` on a card. But there
+is no message-composer UI on the board at all, so an actionable pill silently expands this
+into a modal, a WS call site and a new interaction. Ship the `<span>`; the upgrade is a class
+change plus a handler if a composer ever lands.
+
 **The server emits the amber boolean** (`s.mail = { unread, notifiedAt, amber, senders }`,
 carried on `buildGraph` and keyed on card id). The threshold stays single-sourced next to the
 mailbox, with no client clock drift and no dependency on render cadence — the board has no
@@ -620,6 +653,7 @@ dropped, because a sender was told it was queued.
    threshold is a judgement call.
 3. **Nudge intervals 1 / 5 / 20 min** — the turn-boundary gate matters more than the numbers.
 4. **Archive retention** — retain the whole box until the card is purged, vs. drop on archive.
+   *(Pill design is no longer open — `mail-mark` is chosen, see Board UI.)*
 5. **Delivery-failed handling** — retry-then-escalate (recommended) vs. surfacing the failure
    back to the sender some other way.
 
