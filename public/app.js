@@ -679,7 +679,7 @@ function sortBucketSessions(sessions, bucketId) {
     : orderSessions(sessions, (latestTasks.sessionOrder || {})[bucketId]);
 }
 
-// Feeds tileSpan (layout.js) the two child-row counts it needs, both derived from
+// Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
 // exactly what renderTileCards (cards.js) draws: computeAbsorption decides which
 // sessions fold into a parent's spine (an orphan, or a chained grandchild whose
 // parent is itself absorbed, renders as its own top-level card instead and must
@@ -717,7 +717,19 @@ function childRowCounts(activeSessions) {
     if (!absorbed.has(s.sessionId)) visible += (s.teammates?.length || 0);
   }
   const workflowBoxCount = activeSessions.filter((s) => !absorbed.has(s.sessionId) && isWorkflowRun(s)).length;
-  return { visible, absorbed: absorbed.size, workflowBoxCount };
+  // Sub-agent zones (cards.js subagentZoneHtml) only ever render on a plain
+  // top-level card — an absorbed child draws as a workerRowHtml, which has no
+  // zone of its own — so this mirrors the exact render-time check: shown pill,
+  // has sub-agents, and at least one currently-recent row (an empty zone
+  // renders nothing, per subagentZoneHtml).
+  const now = Date.now();
+  let subagentRowCount = 0, subagentZoneCount = 0;
+  for (const s of activeSessions) {
+    if (absorbed.has(s.sessionId) || !isSubagentShown(s.sessionId)) continue;
+    const rows = visibleSubAgents(s.subAgents || [], { showFinished: false, now }).length;
+    if (rows > 0) { subagentRowCount += rows; subagentZoneCount += 1; }
+  }
+  return { visible, absorbed: absorbed.size, workflowBoxCount, subagentRowCount, subagentZoneCount };
 }
 
 // Per-card sub-agent zone visibility: which card ids currently show their zone at
@@ -860,15 +872,18 @@ function renderGrid() {
       const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
       const sessions = sortAsleepLast(ordered, phaseOf);
       const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
-      const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-      return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount) }];
+      const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
+      return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount) }];
     })
   );
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
   const adhocTodoCount = ((latestTasks.todos || {})[ADHOC_ID] || []).length;
-  const { visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-  tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount) });
+  const {
+    visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
+    subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount,
+  } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
+  tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount) });
   const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
   const canonical = computeLayout(tiles, columnsForWidth(el));
   let { placed, cols, rows, scroll } = canonical;

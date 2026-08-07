@@ -481,6 +481,33 @@ test('tileSpan: collapsing a workflow keeps paying for its box chrome, unlike it
   assert.ok(collapsed >= collapsedNoBox);
 });
 
+// A card's own expanded sub-agent zone (cards.js subagentZoneHtml) grows THAT
+// card past CARD_STRIDE_PX with no change to the tile's session count at all —
+// unlike childRowCount/workflowBoxCount, which only ever apply to sessions
+// folded into a spine or wrapped in workflow chrome. Verified against a live
+// board: a plain card with one shown sub-agent row measured 113.4px against a
+// sibling's 77.4px baseline.
+test('tileSpan: a card with a shown sub-agent zone weighs more than a bare card', () => {
+  const perRow = 2;
+  const plain = [sess('a')];
+  const bare = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 0, 0);
+  const withZone = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 1, 1);
+  assert.ok(withZone >= bare);
+});
+
+// Two cards each showing one sub-agent row must weigh more than one card
+// showing both rows — the zone's own margin chrome (SUBAGENT_ZONE_BASE_PX) is
+// a per-card cost, not a per-row one, so subagentZoneCount has to be tracked
+// separately from subagentRowCount rather than folded into a single count.
+test('tileSpan: sub-agent zone chrome is charged per card, not just per row', () => {
+  const perRow = 4; // wide enough that neither case's secondary weight hits the perRow cap
+  const oneCard = [sess('a')];
+  const twoCards = [sess('a'), sess('b')];
+  const oneZoneTwoRows = tileSpan(oneCard, perRow, 0, phaseOf, 0, 0, 0, 2, 1);
+  const twoZonesTwoRows = tileSpan(twoCards, perRow, 0, phaseOf, 0, 0, 0, 2, 2);
+  assert.ok(twoZonesTwoRows >= oneZoneTwoRows);
+});
+
 // A live-board regression, updated for the GRID_CHROME_PX fix: at a real
 // 1152px-tall grid, perRow is 3, not 4 — the previous "4" came from
 // clientHeight/MAX_ONSCREEN_ROWS ignoring #grid's own 52px of padding/row-gap

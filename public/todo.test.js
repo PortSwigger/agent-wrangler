@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TODO_STRIDE_PX, TODO_DIVIDER_PX, CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, ADHOC_ID,
+  SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
   todoKeyToTaskId, tileWeightWithTodos,
   tooltipPosition, TOOLTIP_MARGIN_PX, TOOLTIP_GAP_PX,
 } from './todo.js';
@@ -68,6 +69,24 @@ test('tileWeightWithTodos: N workflow boxes add N*WORKFLOW_BOX_CHROME_PX px, ind
 test('tileWeightWithTodos: zero workflow boxes add nothing over the child-row composition', () => {
   const base = { activeCount: 1, snoozedCount: 0, cardStride: 96, todoCount: 0, childRowCount: 2 };
   assert.equal(tileWeightWithTodos({ ...base, workflowBoxCount: 0 }), tileWeightWithTodos(base));
+});
+
+test('tileWeightWithTodos: N sub-agent rows across Z zones add N*ROW_STRIDE + Z*ZONE_BASE px', () => {
+  const stride = 96;
+  const base = tileWeightWithTodos({ activeCount: 2, snoozedCount: 0, cardStride: stride, todoCount: 0 });
+  const withZones = tileWeightWithTodos({
+    activeCount: 2, snoozedCount: 0, cardStride: stride, todoCount: 0, subagentRowCount: 3, subagentZoneCount: 2,
+  });
+  const expectedPx = 3 * SUBAGENT_ROW_STRIDE_PX + 2 * SUBAGENT_ZONE_BASE_PX;
+  assert.ok(Math.abs((withZones - base) * stride - expectedPx) < 1e-9);
+});
+
+test('tileWeightWithTodos: zero sub-agent rows/zones add nothing over the workflow-box composition', () => {
+  const base = { activeCount: 2, snoozedCount: 0, cardStride: 96, todoCount: 0, workflowBoxCount: 1 };
+  assert.equal(
+    tileWeightWithTodos({ ...base, subagentRowCount: 0, subagentZoneCount: 0 }),
+    tileWeightWithTodos(base),
+  );
 });
 
 test('tooltipPosition: anchors under the row with the gap when it fits', () => {

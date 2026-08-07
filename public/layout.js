@@ -307,13 +307,25 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 // box, border and header stay on screen either way (only the spine's rows
 // disappear); only removing the workflow run itself (or it having none at all)
 // should change it.
+//
+// `subagentRowCount`/`subagentZoneCount` are a FOURTH secondary term, and the
+// only one charged against a plain top-level card rather than an absorbed
+// child: a card whose sub-agent pill is toggled on renders its own
+// `.subagent-zone` (cards.js), growing that ONE card past CARD_STRIDE_PX with
+// no other change to the tile's session count. `subagentZoneCount` (how many
+// cards actually render a zone right now) and `subagentRowCount` (the total
+// rows across all of them) are summed separately because the zone's own
+// margins are a per-card one-time cost, not a per-row one — see todo.js's
+// SUBAGENT_ZONE_BASE_PX/SUBAGENT_ROW_STRIDE_PX.
 export function tileSpan(
   sessions, perRow, todoCount = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0,
 ) {
   const snoozedCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
   const topLevelActiveCount = sessions.length - snoozedCount - absorbedChildCount;
   const totalWeight = tileWeightWithTodos({
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, todoCount, childRowCount, workflowBoxCount,
+    subagentRowCount, subagentZoneCount,
   });
   const secondaryWeight = Math.min(totalWeight - topLevelActiveCount, perRow);
   return rowSpan(topLevelActiveCount + secondaryWeight, perRow);

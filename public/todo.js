@@ -48,6 +48,20 @@ export const CHILD_STRIDE_PX = 34;
 // well within the secondary-weight cap's existing slack.
 export const WORKFLOW_BOX_CHROME_PX = 52;
 
+// A card's expanded sub-agent zone (cards.js subagentZoneHtml) is chrome
+// tileSpan never budgeted for at all — unlike childRowCount/workflowBoxCount,
+// which cover absorbed sessions, a card's OWN zone can grow a plain top-level
+// card past its assumed CARD_STRIDE_PX and was overflowing the tile (verified
+// against a live board: a card with one shown sub-agent row measured 113.4px
+// against the normal 77.4px). Measured off .subagent-zone (styles.css): 12px
+// margin-top, -2px margin-bottom, each .subagent-row a fixed 26px with a 6px
+// inter-row gap — so N rows cost `4 + 32N` px (10 + 26N + 6(N-1) - 2). Charged
+// per card that actually renders a zone (subagentZoneHtml renders nothing for
+// a collapsed pill or a session with no currently-recent sub-agents), so the
+// caller sums both a row count and a zone-occurrence count across the tile.
+export const SUBAGENT_ROW_STRIDE_PX = 32; // row (26) + inter-row gap (6)
+export const SUBAGENT_ZONE_BASE_PX = 4;   // margin-top(12) + margin-bottom(-2) - one row's gap folded into the stride above
+
 // A todo-zone key (task.id or the ADHOC_ID sentinel) back to the taskId the server
 // expects on the wire: null for adhoc (the handler coerces null ⇒ adhoc), the real
 // id otherwise. Used at every send() and the DnD payload boundary.
@@ -74,10 +88,12 @@ export function tooltipPosition(anchor, tip, viewport) {
 // back to px, add todo/child px, divide back to units).
 export function tileWeightWithTodos({
   activeCount, snoozedCount, cardStride, todoCount = 0, childRowCount = 0, workflowBoxCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0,
 }) {
   const px = tileWeight({ activeCount, snoozedCount, cardStride }) * cardStride
     + (todoCount > 0 ? TODO_DIVIDER_PX + todoCount * TODO_STRIDE_PX : 0)
     + childRowCount * CHILD_STRIDE_PX
-    + workflowBoxCount * WORKFLOW_BOX_CHROME_PX;
+    + workflowBoxCount * WORKFLOW_BOX_CHROME_PX
+    + subagentRowCount * SUBAGENT_ROW_STRIDE_PX + subagentZoneCount * SUBAGENT_ZONE_BASE_PX;
   return px / cardStride;
 }
