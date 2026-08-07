@@ -427,9 +427,10 @@ function broadcast(obj) {
 
 async function rebuild() {
   await sessionManager.refreshAlive();
-  // Sweep cleanly-exited agents into History before building the graph, so a
-  // self-stopped session goes straight to History rather than flickering through
-  // a dormant Resume card. Carry the task snapshot so History can still show it.
+  // Sweep cleanly-exited agents into the archive before building the graph, so a
+  // self-stopped session goes straight there rather than flickering through a
+  // dormant Resume card. Carry the task snapshot so its archived row can still
+  // show it.
   const autoArchived = await sessionManager.reconcileExitedSessions((sid) => ({
     task: taskStore.taskFor(sid),
     label: lastGraph?.sessions?.find((s) => s.sessionId === sid)?.label,

@@ -6,9 +6,10 @@ import { stopContainer } from '../../runtimes/devcontainer.js';
 // counterpart to the board's "Stop & archive" action (server/control/handlers/
 // archive.js). An orchestrator uses it to CLOSE a worker session it spun off once
 // that worker has reported its work done. Archive (not remove): the process is
-// killed but the mapping is kept, so the session stays in History and is
-// resumable. The pre-stop snapshot (cwd/intent/label) is resolved through the
-// shared graph resolver so History shows it the same way the board does.
+// killed but the mapping is kept, so the session stays archived (findable in
+// Search) and resumable. The pre-stop snapshot (cwd/intent/label) is resolved
+// through the shared graph resolver so its archived row shows it the same way
+// the board does.
 //
 // Two deliberate divergences from the board handler: rebuild is awaited (a
 // synchronous MCP tool should reflect the result before returning, vs the
@@ -27,7 +28,7 @@ import { stopContainer } from '../../runtimes/devcontainer.js';
 export const archiveSessionTool = {
   name: 'archive_session',
   description:
-    'Stop and archive ANOTHER Agent Wrangler session — kill its process but keep it in History '
+    'Stop and archive ANOTHER Agent Wrangler session — kill its process but keep it archived '
     + '(resumable), the same as the board\'s "Stop & archive". Use it to close a worker session '
     + 'you spun off once it has reported its work done. Get the target id from list_sessions. You '
     + 'cannot archive yourself (finish and stop — that archives automatically). By default this '

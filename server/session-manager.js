@@ -327,7 +327,7 @@ export class SessionManager {
     return [...targets];
   }
 
-  // Set a session aside into History: keep its mapping (so it stays resumable)
+  // Set a session aside into the archive: keep its mapping (so it stays resumable)
   // but stamp when it was archived. A session discovered externally has no
   // mapping yet — adopt it (using the caller's snapshot) so it too can be
   // archived and later resumed.
@@ -348,17 +348,19 @@ export class SessionManager {
     // Drop a deferred-suspend intent: an archived session leaves the board, so a
     // pending teardown is moot (and would otherwise linger in the JSON).
     delete entry.suspendPending;
-    // Snapshot the task it was archived from ({id, name}) so History can still
-    // show "was: <name>" after the task is later deleted (which drops the live
-    // assignment). Mirrors how cwd/intent are snapshotted above.
+    // Snapshot the task it was archived from ({id, name}) so the archived listing
+    // (Search) can still show "was: <name>" after the task is later deleted (which
+    // drops the live assignment). Mirrors how cwd/intent are snapshotted above.
     if (snapshot.task) entry.task = { id: snapshot.task.id, name: snapshot.task.name };
     // Set only when this session was swept up by a task-archive cascade (never by
-    // a solo archive or a session-descendant cascade) — the link History/restore
-    // use to know which sessions to nest under and bulk-restore with their task.
+    // a solo archive or a session-descendant cascade) — the link the archived
+    // listing/restore use to know which sessions to nest under and bulk-restore
+    // with their task.
     if (snapshot.viaTaskArchive) entry.viaTaskArchive = snapshot.viaTaskArchive;
-    // Freeze the last known display label so History shows the name the user saw on
-    // the board (typically the terminal title Claude set), not just the intent/cwd
-    // fallback. Only stored here — not copied back to live sessions on resume, so
+    // Freeze the last known display label so the archived row (Search) shows the
+    // name the user saw on the board (typically the terminal title Claude set),
+    // not just the intent/cwd fallback. Only stored here — not copied back to
+    // live sessions on resume, so
     // a resumed session re-derives its label from the running agent.
     if (snapshot.label) entry.lastLabel = snapshot.label;
     this._save();
@@ -664,7 +666,7 @@ export class SessionManager {
     return [...this.map].filter(([, v]) => !v.archivedAt).map(([sessionId, v]) => ({ sessionId, ...v }));
   }
 
-  // Mapped sessions set aside into History, newest first.
+  // Archived mapped sessions (they feed graph.history), newest first.
   archivedEntries() {
     return [...this.map]
       .filter(([, v]) => v.archivedAt)
@@ -833,6 +835,49 @@ export class SessionManager {
     return { sessionId, tmux };
   }
 
+  // The card id whose conversation is `liveSessionId`, or null if no card owns it.
+  // Covers the legacy pre-split shape too, where the card id IS the conversation id
+  // (those entries carry no liveSessionId) — miss that and adopt would happily mint
+  // a SECOND card for a conversation that already has one.
+  cardForLive(liveSessionId) {
+    if (!liveSessionId) return null;
+    if (this.map.has(liveSessionId)) return liveSessionId;
+    for (const [cardId, e] of this.map) {
+      if (e.liveSessionId === liveSessionId) return cardId;
+    }
+    return null;
+  }
+
+  // Register a conversation that exists on disk but was never launched by us as a
+  // NEW card — the third and last way a card id is minted (dispatch, fork, adopt).
+  // Launches nothing: the entry lands dormant (tmux null) and the caller decides
+  // whether to resume() it, so a failed launch is a card the user can retry or
+  // remove rather than a half-created session.
+  //
+  // The conversation id goes in `liveSessionId`, never the map key: the card id is
+  // never a conversation id (see CLAUDE.md), and it's this split that makes a Codex
+  // rollout adoptable at all — _doResume reads `prev.liveSessionId` for a discover
+  // agent, and keying the card on the rollout id would look like the "no cached id"
+  // case and re-discover the wrong (most recent) rollout.
+  adopt({ liveSessionId, agent = 'claude', cwd = '', intent = '' } = {}) {
+    const existing = this.cardForLive(liveSessionId);
+    if (existing) return { sessionId: existing, adopted: false };
+    const sessionId = crypto.randomUUID();
+    this.map.set(sessionId, {
+      short: crypto.randomBytes(4).toString('hex'),
+      tmux: null,
+      cwd: cwd || null,
+      agent,
+      intent,
+      model: null,
+      effort: null,
+      createdAt: Date.now(),
+      liveSessionId,
+    });
+    this._save();
+    return { sessionId, adopted: true };
+  }
+
   // Re-copy the per-task notes into a live devcontainer session's container. Host
   // sessions follow a reassignment for free (the agent reads through the repointed
   // by-session symlink); a devcontainer session's notes were COPIED in at launch, so
@@ -990,7 +1035,7 @@ export class SessionManager {
 
   // Auto-archive sessions whose Claude agent exited cleanly inside an owned tmux:
   // a clean exit (pane_dead_status 0) is a deliberate /exit or self-stop, so set
-  // it aside into History (recoverable via Resume) and reap the corpse — orphan-
+  // it aside as archived (recoverable via Resume) and reap the corpse — orphan-
   // proof even in the resume-fork case via killForSession. Non-zero/unknown exits
   // are left for the dead-pane path to surface on the board. `snapshotFor` lets
   // the caller inject per-session archive snapshot fields (e.g. the task), since

@@ -178,61 +178,6 @@ button.danger-strong:hover { background: var(--danger-strong); border-color: var
 
 main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 
-/* History view — time buckets, each holding task tiles laid out as columns. */
-#history { flex: 1; min-width: 0; padding: 18px 22px; overflow-y: auto; background: transparent; }
-#history.hidden { display: none; }
-.hist-empty { color: var(--fg-subtle); font-size: 13px; max-width: 520px; line-height: 1.5; }
-.hist-head { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
-.hist-head h2 { font-size: 16px; margin: 0; color: var(--fg); }
-.hist-head .hist-search { width: 240px; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 5px 9px; font-size: 12.5px; font-family: inherit; }
-.hist-head .hist-search:focus { outline: none; border-color: var(--accent); }
-.hist-count { font-size: 12px; color: var(--fg-subtle); white-space: nowrap; }
-
-/* Time-bucket header: label, a hairline rule, then the bucket's session count. */
-.hist-bucket { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--fg); }
-.hist-bucket:first-of-type { margin-top: 0; }
-.hist-bucket .rule { flex: 1; height: 1px; background: var(--border); }
-.hist-bucket .n { font-size: 10px; font-weight: 600; color: var(--fg-subtle); }
-/* "Show older" sits between bucket separators and echoes their rule-line rhythm
-   (same margin, same .rule/.n), but its label is a pill button — the one part of
-   the row that should read as clickable rather than a plain divider. */
-.hist-bucket--more { margin-top: 24px; }
-.hist-show-older { flex: none; padding: 4px 12px; background: color-mix(in srgb, var(--accent) 16%, transparent); border: none; border-radius: 999px; color: var(--accent); font-family: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
-.hist-show-older:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-
-/* Task tiles flow as columns that fill the width, capped at 4 (the max() floors
-   each column at 1/4 of the row, so a wide screen never exceeds four) and
-   collapsing toward 1 below ~320px. */
-.hist-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(320px, calc((100% - 36px) / 4)), 1fr)); gap: 12px; align-items: start; }
-.hist-tile { background: var(--tile-bg); border: 1px solid var(--border-muted); border-radius: 10px; padding: 10px; }
-.hist-tile-head { display: flex; align-items: center; gap: 8px; margin: 0 0 9px 2px; }
-.hist-tile-head .badge { max-width: 75%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; padding: 2px 9px; border-radius: 999px; color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 16%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); }
-.hist-tile-head .badge.unassigned { color: var(--fg-muted); background: var(--surface-2); border-color: var(--border-muted); }
-.hist-tile-head .n { font-size: 10px; color: var(--fg-subtle); }
-.hist-stack { display: flex; flex-direction: column; gap: 7px; }
-
-/* Card — a smaller sibling of the board card: inset status stripe + body. */
-.hc { display: flex; background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px; overflow: hidden; }
-.hc:hover { border-color: var(--border); background: var(--surface-2); }
-.hc-stripe { flex: 0 0 4px; margin: 9px 0 9px 6px; border-radius: 4px; background: var(--border); }
-.hc-body { flex: 1; min-width: 0; padding: 9px 11px; }
-.hc-row1 { display: flex; align-items: center; gap: 8px; }
-.hc-desc { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hc .chip.model { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: var(--purple); background: var(--surface-2); border: 1px solid var(--border-muted); }
-.hc-dir { font-size: 11px; color: var(--fg-subtle); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hc-meta { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--fg-muted); }
-.hc-meta .sep { color: var(--border); }
-.hc-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 9px; }
-.hc-acts button { width: 26px; height: 26px; padding: 0; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
-.hist-resume { background: transparent; border-color: var(--accent); color: var(--blue-fg); }
-.hist-resume:hover { background: var(--surface-2); border-color: var(--accent); }
-.hist-fork { background: transparent; border-color: var(--border); color: var(--fg-muted); }
-.hist-fork:hover { color: var(--fg); border-color: var(--accent); background: var(--surface-2); }
-.hist-remove { background: transparent; border-color: var(--border); color: var(--fg-subtle); }
-.hist-remove:hover { color: var(--danger-strong); border-color: var(--danger-border); }
-.hist-task-restore { background: transparent; border-color: var(--border); color: var(--fg-muted); }
-.hist-task-restore:hover { color: var(--purple); border-color: var(--purple); background: var(--surface-2); }
-
 /* Right-click menu on session cards. Floats on <body> above the board; JS sets
    its fixed position. Mirrors the panel's action vocabulary (icon + label rows,
    --danger for Archive) through the theme variables. */
@@ -287,13 +232,13 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 
 /* In-app maximize: expand the agent window to fill the content area, hiding the
    task board (the nav rail lives outside <main>, so it stays). Layout-only — no
-   colors — so it's theme-safe by construction. #history is defensive: hideSidebar
-   already drops maximize on the History switch. #diff-panel is a #grid sibling
+   colors — so it's theme-safe by construction. #search is defensive: hideSidebar
+   already drops maximize on the Search switch. #diff-panel is a #grid sibling
    (not a #grid descendant), so without it listed here it stayed visible and got
    squashed side-by-side with the widened #sidebar instead of hiding like the rest
    of the board — maximizing the terminal should hide the diff view entirely. */
 main.maximized #grid,
-main.maximized #history,
+main.maximized #search,
 main.maximized #diff-panel { display: none; }
 main.maximized #drag-handle { display: none; }
 main.maximized #sidebar {
@@ -688,30 +633,6 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   border-radius: 4px; padding: 0 4px; line-height: 15px;
 }
 
-/* Find & resume other sessions */
-#find-modal {
-  position: fixed; inset: 0; background: var(--overlay);
-  display: flex; align-items: center; justify-content: center; z-index: 20;
-}
-#find-modal.hidden { display: none; }
-.find-card { width: 620px; }
-.find-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
-.find-note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 11px; }
-.find-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.find-search { flex: 1 1 auto; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 6px 9px; font-size: 12.5px; font-family: inherit; }
-.find-search:focus { outline: none; border-color: var(--accent); }
-.find-count { flex: 0 0 auto; font-size: 11px; color: var(--fg-subtle); white-space: nowrap; }
-.find-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
-.find-empty { color: var(--fg-subtle); font-size: 13px; padding: 6px 2px; line-height: 1.5; }
-.find-row { display: flex; align-items: center; gap: 14px; background: var(--bg); border: 1px solid var(--border-muted); border-radius: 8px; padding: 9px 11px; }
-.find-row:hover { border-color: var(--border); background: var(--surface-2); }
-.find-main { flex: 1 1 auto; min-width: 0; }
-.find-desc { font-size: 13px; color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-dir { font-size: 11px; color: var(--fg-subtle); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-when { flex: 0 0 auto; font-size: 11px; color: var(--fg-muted); white-space: nowrap; }
-.find-resume { flex: 0 0 auto; background: transparent; border-color: var(--accent); color: var(--blue-fg); }
-.find-resume:hover { background: var(--surface-2); border-color: var(--accent); }
-
 /* Fork a session */
 #fork-modal {
   position: fixed; inset: 0; background: var(--overlay);
@@ -1054,7 +975,7 @@ body.system-banner-open { padding-top: 30px; }
   align-content: start;
   /* Grid's default align-items:stretch would force every item in a row to the
      row's tallest (e.g. a solo card sharing a row with a parent + its spine) —
-     each card should size to its own content, same convention as .hist-cols. */
+     each card should size to its own content. */
   align-items: start;
 }
 /* The active cards flow across the auto-fit columns; the snooze divider and the
@@ -1338,7 +1259,7 @@ body.system-banner-open { padding-top: 30px; }
 .subagent-toggle-icon { display: inline-flex; }
 /* Same tinted-fill convention as .card-tag.automerge: a light accent wash over
    the base chip fill, with --blue-fg (this codebase's readable-on-a-tint accent
-   text, e.g. .hist-resume) rather than --accent-fg (reserved for solid-accent
+   text, e.g. .search-act--adopt) rather than --accent-fg (reserved for solid-accent
    buttons — it's a stark white, too low-contrast on a mostly-neutral tint). */
 .subagent-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
 /* The card's pill disables itself when no sub-agents are currently recent (see
@@ -1421,110 +1342,6 @@ body.system-banner-open { padding-top: 30px; }
 }
 .worker-row.dormant .worker-name { color: var(--fg-muted); }
 .worker-cost { font-size: 10px; color: var(--fg-subtle); min-width: 38px; text-align: right; flex: none; }
-
-/* ── History workflow box: reuses the board's .workflow-box / .workflow-head /
-   .wf-* classes (above) for visual parity, plus the History-specific bits — full
-   archived cards stacked inside (not the board's compact spine, so each stays
-   resumable), the issue + outcome chip in the header, and the run badge /
-   orchestrator accent on the cards. All via --wf + semantic vars → dark/light
-   track. ── */
-.hist-wf { gap: 7px; }
-/* Child stacks (workflow workers and generic children alike) use the board's
-   per-row elbow connector (see .worker-row::before/::after above), not a flat
-   rail — same indent/geometry, reused verbatim because .hc shares .worker-row's
-   1px border (the magic numbers below depend on that). Only --line-color and
-   the row gap differ from the board: History cards are full-size and stack
-   with the same 7px gap `.hist-wf`/`.hist-stack` use elsewhere, so the
-   first-child reach (crossing that outer gap) is tuned to 7, not the board's 8. */
-.hist-wf-workers,
-.hist-children,
-.hc-task-nested {
-  display: flex; flex-direction: column; gap: 6px;
-  margin-left: 13px; padding-left: 14px;
-}
-.hist-wf-workers { --line-color: var(--wf); }
-.hist-children { --line-color: var(--border); } /* see .child-spine above: --border, not --border-muted */
-.hc-task-nested { --line-color: var(--purple); } /* matches .hc.task-archived's own accent */
-.hist-wf-workers > .hc,
-.hist-children > .hc,
-.hc-task-nested > .hc {
-  /* .hc's own `overflow: hidden` (it clips .hc-stripe's square corners against
-     the card's rounded ones) would also clip these connector pseudo-elements —
-     they sit at left:-14px, entirely outside .hc's own border box, in the gap
-     to its left. Undo it only for a nested row; a top-level/orchestrator .hc
-     keeps the clip, since .hc-stripe never reaches this card's own edges either
-     way (it's inset by margin), so nothing else depends on the clip here. */
-  position: relative;
-  overflow: visible;
-}
-.hist-wf-workers > .hc::before,
-.hist-children > .hc::before,
-.hc-task-nested > .hc::before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: -6px;
-  width: 11px;
-  height: calc(50% + 6px);
-  border-left: 2px solid var(--line-color);
-  border-bottom: 2px solid var(--line-color);
-  pointer-events: none;
-}
-.hist-wf-workers > .hc:first-child::before,
-.hist-children > .hc:first-child::before,
-.hc-task-nested > .hc:first-child::before {
-  top: -8px;
-  height: calc(50% + 8px);
-}
-.hist-wf-workers > .hc:not(:last-child)::after,
-.hist-children > .hc:not(:last-child)::after,
-.hc-task-nested > .hc:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  bottom: -6px;
-  width: 2px;
-  background: var(--line-color);
-  pointer-events: none;
-}
-/* The orchestrator card reads as the run's lead — a violet-tinted frame + stripe. */
-.hc.wf-orchestrator {
-  border-color: color-mix(in srgb, var(--wf) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--wf) 6%, var(--surface));
-}
-.hc.wf-orchestrator .hc-stripe { background: color-mix(in srgb, var(--wf) 60%, transparent); }
-/* Small run badge by a solo run's desc (a workflow with no boxed worker). */
-.hc-wf-badge { display: inline-flex; flex: 0 0 auto; color: var(--wf); }
-.hc-wf-badge svg { width: 13px; height: 13px; display: block; }
-/* Task-archive marker card: the whole task was set aside, not one session —
-   tinted --purple rather than --wf (workflow) or a new role, so it stays
-   visually distinct from both without adding a third accent for one small card. */
-.hc.task-archived {
-  border-color: color-mix(in srgb, var(--purple) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--purple) 6%, var(--surface));
-}
-.hc.task-archived .hc-stripe { background: color-mix(in srgb, var(--purple) 60%, transparent); }
-.hc-task-badge { display: inline-flex; flex: 0 0 auto; color: var(--purple); }
-.hc-task-badge svg { width: 13px; height: 13px; display: block; }
-/* Wraps a task-archive marker + the sessions cascade-archived alongside it
-   (.hc-task-nested, above) so the pair reads as one unit in .hist-stack. */
-.hc-task-group { display: flex; flex-direction: column; gap: 6px; }
-/* Issue + outcome chip in the box header; the issue ellipsises if the row tightens. */
-.wf-issue {
-  flex: 0 1 auto; min-width: 0;
-  font-size: 11px; font-weight: 600; color: var(--fg-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.wf-outcome {
-  flex: 0 0 auto; white-space: nowrap;
-  font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
-  color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border-muted);
-}
-.wf-outcome--active { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 14%, transparent); border-color: color-mix(in srgb, var(--blue) 32%, transparent); }
-.wf-outcome--success { color: var(--green-fg); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 32%, transparent); }
-.wf-outcome--warning { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 14%, transparent); border-color: color-mix(in srgb, var(--snooze) 32%, transparent); }
-.wf-outcome--danger { color: var(--red-fg); background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 32%, transparent); }
 
 /* needs-you is two things: the STATE (red stripe above, persists until you
    reply) and the ALARM below (flash + ring + glow, an attention-grab). The
@@ -1847,7 +1664,7 @@ body.system-banner-open { padding-top: 30px; }
 .card-tag.wt { color: var(--purple-fg); background: var(--purple); }
 /* Green ties the pill to its meaning — this session merges its PR once checks go green.
    A solid --green fill reads too low-contrast against --green-fg text (they're close in
-   lightness, unlike --purple/--purple-fg on .wt); a tinted wash matches .wf-outcome--success. */
+   lightness, unlike --purple/--purple-fg on .wt); a tinted wash keeps it readable. */
 .card-tag.automerge { color: var(--green-fg); background: color-mix(in srgb, var(--green) 18%, var(--surface-2)); }
 .card-tag.runtime-dc { color: var(--rt-fg); background: color-mix(in srgb, var(--rt) 18%, var(--surface-2)); }
 /* The dc chip doubles as a bring-up indicator (see devcontainerChip in cards.js):
@@ -2167,3 +1984,107 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .diff-draft-acts button { background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px; color: var(--fg-muted); cursor: pointer; }
 .diff-draft-acts button:hover { color: var(--fg); text-decoration: underline; }
 .diff-draft-del:hover { color: var(--danger-strong); }
+
+/* ── Conversation search (search.js) ─────────────────────────────────────────
+   A no-session view: full-width column, its own scroll. Colour
+   comes entirely from the semantic vars, so it tracks dark and light without a
+   second block — the only role-specific hues are the two speaker accents, which
+   reuse --blue (you) and --wf (agent) rather than inventing a palette. */
+#search { flex: 1; min-width: 0; padding: 18px 22px; overflow-y: auto; background: transparent; display: flex; flex-direction: column; gap: 14px; }
+#search.hidden { display: none; }
+
+.search-head { display: flex; flex-direction: column; gap: 10px; }
+.search-head h2 { font-size: 16px; margin: 0; color: var(--fg); }
+.search-bar { display: flex; align-items: center; gap: 12px; }
+.search-input {
+  flex: 1; min-width: 0; max-width: 620px;
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--fg); padding: 9px 13px; font-size: 14px; font-family: inherit;
+}
+.search-input:focus { outline: none; border-color: var(--accent); }
+/* The timing readout is the point of the spike, so it sits beside the box rather
+   than buried under the results. Tabular figures stop it jittering as it updates
+   on every keystroke. */
+.search-timing { font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.search-opts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--fg-muted); }
+.search-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.search-opt input { accent-color: var(--accent); margin: 0; }
+.search-opt-sep { width: 1px; height: 16px; background: var(--border-muted); }
+.search-seg { display: inline-flex; border: 1px solid var(--border-muted); border-radius: 6px; overflow: hidden; }
+.search-seg button {
+  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted);
+  color: var(--fg-muted); font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
+}
+.search-seg button:last-child { border-right: 0; }
+.search-seg button:hover { color: var(--fg); background: var(--surface-2); }
+.search-seg button.on { background: var(--accent); color: var(--accent-fg); }
+.search-index { font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.search-reindex { background: none; border: 0; padding: 0; font: inherit; font-size: 11px; color: var(--fg-muted); cursor: pointer; text-decoration: underline; }
+.search-reindex:hover { color: var(--fg); }
+
+.search-results { display: flex; flex-direction: column; gap: 10px; padding-bottom: 24px; }
+.search-empty { color: var(--fg-subtle); font-size: 13px; padding: 24px 2px; max-width: 620px; line-height: 1.5; }
+.search-truncated { color: var(--fg-subtle); font-size: 11.5px; padding: 4px 2px 0; }
+
+.search-group { background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; overflow: hidden; }
+.search-group:hover { border-color: var(--border); }
+.search-group-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px 0; }
+.search-group-title { font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
+.search-group-sub { font-size: 11px; color: var(--fg-subtle); padding: 3px 12px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-spacer { flex: 1; }
+.search-group .chip { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-muted); background: var(--surface-2); color: var(--fg-muted); }
+.search-agent--claude { color: var(--blue-fg); border-color: color-mix(in srgb, var(--blue) 35%, transparent); background: color-mix(in srgb, var(--blue) 14%, transparent); }
+.search-agent--codex { color: var(--rt-fg); border-color: color-mix(in srgb, var(--rt) 35%, transparent); background: color-mix(in srgb, var(--rt) 14%, transparent); }
+.search-task { color: var(--purple); }
+.search-count { font-variant-numeric: tabular-nums; }
+/* Row actions use base button metrics, not the chip-sized ones the rest of a
+   result row uses — they're real controls, not metadata, and shouldn't read as
+   a lighter class of control. */
+.search-act { flex: 0 0 auto; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer; }
+.search-act:hover { border-color: var(--border); background: var(--surface-2); }
+/* Adopt is the one action here that CREATES something (a card + a live terminal),
+   so it takes an accent outline; the other two are pure navigation and stay
+   neutral. */
+.search-act--adopt { border-color: var(--accent); color: var(--blue-fg); }
+.search-act--adopt:hover { background: var(--surface-2); border-color: var(--accent); }
+.search-act:disabled { opacity: 0.55; cursor: default; }
+.search-act:disabled:hover { background: transparent; }
+
+/* One hit: a speaker-coloured spine, meta line, then the snippet. The spine is
+   what lets you scan a long result list for "things I said" without reading. */
+.search-hit { display: flex; flex-direction: column; gap: 3px; padding: 7px 12px 8px; border-top: 1px solid var(--border-muted); border-left: 3px solid transparent; }
+.search-hit--user { border-left-color: color-mix(in srgb, var(--blue) 55%, transparent); }
+.search-hit--assistant { border-left-color: color-mix(in srgb, var(--wf) 55%, transparent); }
+.search-hit-meta { display: flex; align-items: center; gap: 8px; }
+.search-hit .chip { font-size: 9.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border-muted); background: var(--surface-2); }
+.search-role--user { color: var(--blue-fg); }
+.search-role--assistant { color: var(--wf); }
+.search-when { font-size: 10.5px; color: var(--fg-subtle); }
+.search-snippet { font-size: 12.5px; line-height: 1.5; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.search-snippet mark { background: color-mix(in srgb, var(--snooze) 38%, transparent); color: var(--fg); border-radius: 3px; padding: 0 1px; }
+
+/* Browse mode (empty query) + text mode's metadata-only tail. Same .search-group
+   frame as a hit group, but a denser one-liner row — no snippet body — so a
+   hitless conversation reads lighter than a real match. Semantic vars only. */
+.search-bucket { display: flex; align-items: center; gap: 10px; margin: 14px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-muted); }
+.search-bucket:first-child { margin-top: 0; }
+.search-bucket .rule { flex: 1; height: 1px; background: var(--border-muted); }
+.search-bucket .n { font-size: 10px; font-weight: 600; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+
+.search-row { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.search-row .search-group-head { padding: 6px 12px; }
+.search-row .search-group-sub { padding: 0 12px 7px; }
+.search-row .search-act { padding: 3px 9px; font-size: 11.5px; }
+.search-act--icon { padding: 3px 7px; }
+.search-model { color: var(--purple); }
+.search-dur { font-variant-numeric: tabular-nums; }
+
+/* An archived task's row: tinted --purple like History's task-archive marker so
+   it reads "about this task", not another conversation. */
+.search-row--task .search-group-title { color: var(--purple); }
+.search-group .chip.search-task-flag { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 35%, transparent); background: color-mix(in srgb, var(--purple) 12%, transparent); }
+
+/* Divider between real hits and the metadata-only matches appended after them. */
+.search-divider { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 11px; color: var(--fg-subtle); }
+.search-divider .rule { flex: 1; height: 1px; background: var(--border-muted); }

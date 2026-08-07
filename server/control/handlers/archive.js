@@ -195,7 +195,8 @@ export const archiveHandler = {
       return;
     }
     // Set a session aside: stop its process but keep the (stamped) mapping so it
-    // stays resumable from History. Archive even if the process is already gone.
+    // stays resumable (archived; findable in Search). Archive even if the process
+    // is already gone.
     const s = ctx.sessionFromGraph(msg.sessionId);
     // "Kill jobs & archive" (the client's 3-way confirm when a background shell is
     // live): nudge the agent to stop it itself FIRST, then wait briefly before the

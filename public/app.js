@@ -14,7 +14,6 @@ import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
-import { groupHistory, fmtDuration } from './history-group.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, DOLLAR_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
@@ -33,13 +32,13 @@ import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, sub
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
-import { openFork, openCustomSnooze, onResumable, openMemory, onMemory, onMemoryChanged } from './modals.js';
+import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } from './modals.js';
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { renderHistory, resetHistorySearch, requestHistorySearchFocus } from './history.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
+import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
 
 let currentView = 'grid';
@@ -309,7 +308,6 @@ function applyGraph(graph) {
   // event that would otherwise close the menu right back out from under the user
   // on every ~4s poll (closeCardMenu re-renders to catch up once it's dismissed).
   renderGridIfVisible();
-  if (currentView === 'history') maybeRenderHistory();
   refreshFolderList();
 
   tryFulfillPending();
@@ -327,60 +325,30 @@ function applyGraph(graph) {
   }
 }
 
-// A full renderHistory rebuilds every archived card — with hundreds of them the
-// synchronous layout costs ~300ms. Status polls push a fresh graph constantly, so
-// re-rendering on every push (even when nothing History shows changed) made the
-// view janky. Skip the rebuild unless the signature changed. It covers BOTH the
-// history list AND the task data History groups by (a rename/reassign/reorder
-// changes tile placement with an unchanged history array). latestHistory is a new
-// array each push, so this is a value signature, not a reference check.
-let lastHistorySig = null;
-function historyRenderSig() {
-  const h = latestHistory
-    .map((x) => `${x.sessionId}:${x.archivedAt || 0}:${x.label || ''}:${x.cwd || ''}:${x.model || ''}:${x.parentSession || ''}:${(x.workflow && x.workflow.issue) || ''}`)
-    .join('|');
-  const taskSig = (latestTasks.tasks || []).map((x) => `${x.id}=${x.name}`).join(',');
-  const order = (latestTasks.order || []).join(',');
-  const assign = Object.entries(latestTasks.assignments || {}).map(([k, v]) => `${k}>${v}`).join(',');
-  return `${h}§${taskSig}§${order}§${assign}`;
-}
-function maybeRenderHistory() {
-  const sig = historyRenderSig();
-  if (sig === lastHistorySig) return;
-  lastHistorySig = sig;
-  renderHistory();
-}
-
 function setView(view) {
-  const leavingHistory = currentView === 'history' && view !== 'history';
   currentView = view;
   // The diff panel overlays the board, so leaving grid must dismiss it.
   if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
   document.querySelectorAll('.layouts button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const gridEl = document.getElementById('grid');
-  const histEl = document.getElementById('history');
   gridEl.classList.toggle('hidden', view !== 'grid');
   // #grid.focus-mode carries its own `display: flex`, which ties in CSS
   // specificity with #grid.hidden — leaving it set while grid is hidden lets
-  // the focused tile win the tie and render alongside History. renderGrid()
+  // the focused tile win the tie and render alongside Search. renderGrid()
   // re-adds it whenever focus mode is actually active.
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
-  histEl.classList.toggle('hidden', view !== 'history');
+  const searchEl = document.getElementById('search');
+  if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
   const mid = document.querySelector('.rail-mid');
   if (mid) mid.classList.toggle('hidden', view !== 'grid');
-  if (leavingHistory) resetHistorySearch();
   if (view === 'grid') renderGrid();
-  else if (view === 'history') {
-    // History is the no-session state: drop any open terminal/sidebar so it
-    // doesn't dangle behind the list.
+  else if (view === 'search') {
+    // Search is a no-session view: drop any open terminal so it doesn't dangle
+    // behind the results.
     if (selectedSessionId) deselectSession();
-    // Switching in always renders (hist-grid may be stale/empty) and focuses the
-    // filter; seed lastHistorySig so an immediately-following identical push skips.
-    requestHistorySearchFocus();
-    lastHistorySig = historyRenderSig();
-    renderHistory();
+    onEnterSearchView();
   }
-  // Mirror the view into the URL hash so a refresh re-lands here (History is a
+  // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
 }
@@ -1532,7 +1500,7 @@ async function archiveTask(taskId, name) {
   if (liveCount > 0) {
     const result = await confirmDialog({
       title: 'Archive this task?',
-      body: `"${name}" has ${liveCount} running session${liveCount > 1 ? 's' : ''}. Archiving the task archives ${liveCount > 1 ? 'them' : 'it'} too — stopped and moved into History, individually resumable later. The task itself can be restored from History at any time, exactly as it is now.`,
+      body: `"${name}" has ${liveCount} running session${liveCount > 1 ? 's' : ''}. Archiving the task archives ${liveCount > 1 ? 'them' : 'it'} too — stopped but individually resumable later. The task and its sessions can be found and restored under Search's Archived filter at any time, exactly as they are now.`,
       okLabel: 'Archive task',
       danger: true,
     });
@@ -1542,8 +1510,9 @@ async function archiveTask(taskId, name) {
   send({ type: 'task-archive', taskId });
 }
 
-// Restore a task from History (a later, deliberate action — unlike the toast's
-// immediate force-restore right after archiving). Counts sessions still
+// Restore an archived task, from Search's archived rows (a later, deliberate
+// action — unlike the toast's immediate force-restore right after archiving).
+// Counts sessions still
 // cascade-archived with this task (viaTaskArchive) fresh at click time, so a
 // session already resumed individually since the archive isn't double-counted
 // or double-resumed. Zero cascaded sessions skips the dialog entirely — there's
@@ -2229,8 +2198,9 @@ function worktreeCleanupAction(sessionId, worktree, archivedIds = [sessionId]) {
   return null;
 }
 
-// Archive a session: stop its process and move it to History. No confirm prompt —
-// the toast offers an immediate Resume, and it's recoverable from History anyway.
+// Archive a session: stop its process and set it aside. No confirm prompt — the
+// toast offers an immediate Resume, and it's recoverable from Search's Archived
+// filter anyway.
 // A worktree-backed session also gets a cleanup action on the toast.
 // EXCEPT when it has a live background job: killing the pane kills that job
 // outright, with no chance for the agent to wrap it up or report back — so this
@@ -2304,7 +2274,7 @@ async function archiveSession(sessionId) {
 // same `resume` message. Modeled on archiveSession's solo path, minus the
 // cascade/descendants branch — restart is scoped to exactly one session and never
 // touches its children (see the restart-session design). No archivedToast (the
-// session never leaves the board, so there's no History/Resume action to offer);
+// session never leaves the board, so there's no restore/Resume action to offer);
 // a live background job gets the same 3-way choice Archive uses, since killing the
 // pane to relaunch interrupts that job just as archiving would.
 async function restartSession(sessionId) {
@@ -2383,7 +2353,7 @@ let selectedNewSlot = null;
 // click (jump to the restored session once it's back) and by the URL hash on
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
-// Setter so split-out views (history.js) can arm a post-resume jump without
+// Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
 export function setPendingSelect(id) { pendingSelect = id; }
 
@@ -2496,7 +2466,7 @@ function wakeSession(sessionId) {
 }
 
 // Drop the current selection: close its terminal and hide the sidebar. Used by
-// the History view (no-session state) and when the selected session is archived.
+// the Search view (no-session state) and when the selected session is archived.
 export function deselectSession() {
   selectedSessionId = null;
   selectedNewSlot = null;
@@ -2517,19 +2487,24 @@ function hashSessionId() {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-// 'history' when the hash deep-links the History view, else null. Mutually
-// exclusive with a #session link (History carries no selection).
+// The view a hash deep-links (#view=search), else null. Mutually exclusive with
+// a #session link — that view carries no selection. Legacy #view=history
+// bookmarks resolve to Search (the view that replaced History); new hashes only
+// ever write search (syncHash writes from HASH_VIEWS).
+const HASH_VIEWS = ['search'];
 function hashView() {
-  return location.hash === '#view=history' ? 'history' : null;
+  const m = (location.hash || '').match(/^#view=(.+)$/);
+  if (m && m[1] === 'history') return 'search';
+  return m && HASH_VIEWS.includes(m[1]) ? m[1] : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
-// History wins over a selection (they're mutually exclusive). Cleared via
+// The view wins over a selection (they're mutually exclusive). Cleared via
 // replaceState so no bare "#" lingers. Skip writes that already match to avoid a
 // hashchange feedback loop.
 function syncHash() {
-  const target = currentView === 'history'
-    ? '#view=history'
+  const target = HASH_VIEWS.includes(currentView)
+    ? `#view=${currentView}`
     : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
   if (target) {
     if (location.hash !== target) location.hash = target;
@@ -2550,11 +2525,14 @@ function tryFulfillPending() {
 }
 
 window.addEventListener('hashchange', () => {
-  if (hashView() === 'history') { if (currentView !== 'history') setView('history'); return; }
+  const view = hashView();
+  // Re-sync even when the view didn't change, so a legacy alias in the hash
+  // (#view=history) is normalized to what syncHash would write.
+  if (view) { if (currentView !== view) setView(view); else syncHash(); return; }
   const id = hashSessionId();
   if (id === selectedSessionId) return;
   if (id) { pendingSelect = id; tryFulfillPending(); }
-  else if (currentView === 'history') setView('grid');
+  else if (currentView !== 'grid') setView('grid');
   else deselectSession();
 });
 
@@ -2772,7 +2750,7 @@ window.addEventListener('keydown', (e) => {
   // this was Ctrl+Cmd+D — macOS's "Look Up" chord that the OS consumed before the
   // browser ever saw the keydown, so no web handler could open the diff. Ctrl+Cmd+G
   // is NOT OS-reserved, but we keep the early swallow for consistency so the diff
-  // opens even in History view / a modal / while typing. The REST of the family
+  // opens even in Search view / a modal / while typing. The REST of the family
   // (n/t/b/r/m/s/delete/backspace) keep their original POST-gate preventDefault below,
   // so in those contexts they don't over-suppress the browser/OS shortcuts on those
   // same chords (they fall through the gate untouched).
@@ -2804,6 +2782,23 @@ window.addEventListener('keydown', (e) => {
   if (key === 'g') { if (selectedSessionId) toggleDiffPanel(selectedSessionId); return; }
   if (selectedSessionId) archiveSession(selectedSessionId);
 }, true);
+
+// `/` opens the Search view (which focuses its input on entry — see
+// onEnterSearchView; pressing it while already there just refocuses the box).
+// Guarded like the other global key listeners: inert while a modal or card menu
+// is open, and while typing — including the xterm helper textarea, which
+// isTypingTarget deliberately exempts for the chord family but which must
+// swallow a bare "/" (it's an ordinary character to type at an agent).
+window.addEventListener('keydown', (e) => {
+  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+  if (cardMenuEl) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  e.preventDefault();
+  if (currentView !== 'search') setView('search');
+  else onEnterSearchView();
+});
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
 // keyboard shortcut has no click position to anchor the duration picker at —
@@ -2848,11 +2843,11 @@ function hideSidebar() {
   document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('drag-handle').classList.add('hidden');
   // Single chokepoint for closePanel() and deselectSession() (the latter fires on
-  // the History switch), so dropping maximize here means we never land on an empty
+  // the Search switch), so dropping maximize here means we never land on an empty
   // maximized sidebar.
   setMaximized(false);
   // The diff is a supporting view of the session's terminal, so hiding the session
-  // panel (close / deselect / History switch) closes the diff too — it must never
+  // panel (close / deselect / Search switch) closes the diff too — it must never
   // outlive the session it belongs to. No-op when the diff is already closed.
   closeDiffPanel();
 }
@@ -4207,13 +4202,16 @@ export function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringif
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
+  // A #view=search deep link runs setView before this socket exists, so its
+  // index-status request is dropped. Re-issue it on open — which also refreshes
+  // the view after a reconnect.
+  ws.onopen = () => { if (currentView === 'search') onEnterSearchView(); };
   ws.onclose = () => { setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
-    else if (msg.type === 'resumable') onResumable(msg);
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
@@ -4252,11 +4250,11 @@ function connect() {
         // Force through, no dialog — this is an immediate undo of the action the
         // user just took, so it restores the task AND every session it just
         // cascaded. The deliberate "task only vs. task + sessions" choice only
-        // applies later, from History (see restoreTaskFromHistory).
+        // applies later, from Search's archived rows (see restoreTaskWithPrompt).
         onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId, restoreSessions: true }),
       });
     }
-    // Nav signal for a task restore (toast or History): jump back to the board
+    // Nav signal for a task restore (toast or Search): jump back to the board
     // and halo the tile, decoupled from the slower per-session resumes a
     // restoreSessions:true restore may still be doing in the background.
     else if (msg.type === 'task-unarchived') {
@@ -4284,6 +4282,11 @@ function connect() {
       }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
     }
     else if (msg.type === 'forked') { pendingSelect = msg.sessionId; tryFulfillPending(); }
+    // Search adopted an off-board conversation onto the board (or found it already
+    // had a card). The card id is minted server-side, so this reply is the first
+    // moment the view knows what to jump to — same deferred select as a fork.
+    else if (msg.type === 'adopted') { pendingSelect = msg.sessionId; tryFulfillPending(); onAdopted(msg); }
+    else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
     else if (msg.type === 'resume-needs-dir') {
       const forking = msg.action === 'fork';
       const verb = forking ? 'fork' : 'resume';
@@ -4301,6 +4304,8 @@ function connect() {
     else if (msg.type === 'styles') setCustomStyles(msg.styles);
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'usage') onUsage(msg);
+    else if (msg.type === 'search-results') onSearchResults(msg);
+    else if (msg.type === 'search-status') onSearchStatus(msg);
     else if (msg.type === 'memory') onMemory(msg);
     else if (msg.type === 'memory-changed') onMemoryChanged(msg);
     else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
@@ -4428,10 +4433,11 @@ onThemeChange(() => { if (current) current.term.options.theme = readTerminalThem
 initStyles();
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
-// Restore the deep link on load. #view=history switches straight to History (it
-// renders empty until the first graph, then focuses the filter); otherwise a
-// #session link is fulfilled once the first graph contains it.
-if (hashView() === 'history') setView('history');
+// Restore the deep link on load. #view=search (or a legacy #view=history
+// bookmark, resolved to Search) switches straight to the Search view; otherwise
+// a #session link is fulfilled once the first graph contains it.
+initSearchView();
+if (hashView()) setView(hashView());
 else pendingSelect = hashSessionId();
 populateModelSelect();
 connect();

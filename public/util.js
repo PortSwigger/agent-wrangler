@@ -51,6 +51,21 @@ export function throbDelayStyle(stateClass) {
 
 export function pad2(n) { return String(n).padStart(2, '0'); }
 
+// Compact, two-unit duration: "1h 47m", "3h", "3d 2h", "22m", "<1m". Anything
+// non-positive or missing (no createdAt) returns null so the caller omits it.
+export function fmtDuration(ms) {
+  if (!ms || ms <= 0) return null;
+  const DAY = 86400e3;
+  const HOUR = 3600e3;
+  const d = Math.floor(ms / DAY);
+  const h = Math.floor((ms % DAY) / HOUR);
+  const m = Math.floor((ms % HOUR) / 60e3);
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return `${m}m`;
+  return '<1m';
+}
+
 const WORKTREE_MARKER = '/.claude/worktrees/';
 // Collapse a worktree path (<repo>/.claude/worktrees/<branch> or a wrangler
 // `<repo>-worktree-<branch>` sibling) to its repo root; non-worktree paths pass

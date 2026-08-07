@@ -295,9 +295,9 @@ test('buildGraph carries the mapping links onto the board node', async () => {
   assert.deepEqual(bare.links, [], 'an entry with no links defaults to an empty array');
 });
 
-// History records mirror the board node's workflow subset + parentSession so the
-// History view can fold a run's worker cards under their orchestrator (worker's
-// parentSession → orchestrator sessionId), exactly like the board.
+// graph.history records mirror the board node's workflow subset + parentSession
+// so Search's archived rows can fold a run's worker cards under their orchestrator
+// (worker's parentSession → orchestrator sessionId), exactly like the board.
 function makeArchiveManager(entries) {
   return {
     activeEntries: () => [],

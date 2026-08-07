@@ -1,10 +1,9 @@
 import { send, selectedSessionId, deselectSession, latestTasks } from './app.js';
 import { toast } from './toast.js';
 import { customSnoozeValid, toDatetimeLocalValue, resolveUntil, parseDatetimeLocal, snoozeSetMessage } from './snooze.js';
-import { esc, truncate, timeAgo } from './util.js';
 import { createRenderer } from './markdown-preview.js';
 
-// Self-contained dialogs: fork, custom-snooze, find-&-attach, task-memory. Each
+// Self-contained dialogs: fork, custom-snooze, task-memory. Each
 // owns its own DOM wiring + transient state; the app calls the open*/on* entry
 // points and the modals reach back for send/selection/tasks. (The dispatch dialog
 // stays in app.js — its worktree state is entangled with the ws handlers.)
@@ -72,89 +71,6 @@ snoozeModal.addEventListener('mousedown', (e) => { if (e.target === snoozeModal)
 snoozeModal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitCustomSnooze(); }
   else if (e.key === 'Escape') { e.preventDefault(); closeCustomSnooze(); }
-});
-
-// --- find & attach a session ---
-const findModal = document.getElementById('find-modal');
-// Loaded candidate set for the open dialog; search filters this client-side and
-// `total` is the full count in the window so we can show an honest "N of M".
-let findState = { all: [], total: 0, windowDays: 7, query: '' };
-
-function requestResumable() {
-  document.getElementById('find-list').innerHTML = '<div class="find-empty">Loading…</div>';
-  send({ type: 'list-resumable', windowDays: findState.windowDays });
-}
-function openFindModal() {
-  findModal.classList.remove('hidden');
-  findState = { all: [], total: 0, windowDays: 7, query: '' };
-  const search = document.getElementById('find-search');
-  if (search) search.value = '';
-  updateWidenLabel();
-  requestResumable();
-}
-function updateWidenLabel() {
-  const b = document.getElementById('find-widen');
-  if (b) b.textContent = findState.windowDays === 30 ? 'Show last 7 days' : 'Show last 30 days';
-}
-export function onResumable(msg) {
-  findState.all = msg.candidates || [];
-  findState.total = msg.total ?? findState.all.length;
-  if (msg.windowDays) findState.windowDays = msg.windowDays;
-  updateWidenLabel();
-  renderResumable();
-}
-function renderResumable() {
-  const el = document.getElementById('find-list');
-  if (!el || findModal.classList.contains('hidden')) return;
-  const q = findState.query.trim().toLowerCase();
-  const rows = q
-    ? findState.all.filter((c) => `${c.summary || ''} ${c.cwd || ''}`.toLowerCase().includes(q))
-    : findState.all;
-  const countEl = document.getElementById('find-count');
-  if (countEl) {
-    countEl.textContent = !findState.total
-      ? ''
-      : q
-        ? `${rows.length} of ${findState.total} match`
-        : `${findState.total} in last ${findState.windowDays} days`;
-  }
-  if (!findState.all.length) {
-    el.innerHTML = `<div class="find-empty">No off-board sessions in the last ${findState.windowDays} days — everything on disk is already on the board or in History.</div>`;
-    return;
-  }
-  if (!rows.length) {
-    el.innerHTML = '<div class="find-empty">No sessions match your filter.</div>';
-    return;
-  }
-  el.innerHTML = rows
-    .map(
-      (c) => `<div class="find-row">
-        <div class="find-main">
-          <div class="find-desc">${esc(truncate(c.summary || c.sessionId, 80))}</div>
-          <div class="find-dir">📁 ${esc(c.cwd || '—')}</div>
-        </div>
-        <div class="find-when">${esc(c.lastActivity ? timeAgo(c.lastActivity) || '—' : '—')}</div>
-        <button class="find-resume" data-sid="${esc(c.sessionId)}">↪ Attach</button>
-      </div>`
-    )
-    .join('');
-  el.querySelectorAll('.find-resume').forEach((b) =>
-    b.addEventListener('click', () => {
-      send({ type: 'resume', sessionId: b.dataset.sid });
-      findModal.classList.add('hidden');
-      toast('Attaching a forked copy…');
-    }));
-}
-document.getElementById('find-sessions').addEventListener('click', openFindModal);
-document.getElementById('find-cancel').addEventListener('click', () => findModal.classList.add('hidden'));
-document.getElementById('find-widen').addEventListener('click', () => {
-  findState.windowDays = findState.windowDays === 30 ? 7 : 30;
-  updateWidenLabel();
-  requestResumable();
-});
-document.getElementById('find-search').addEventListener('input', (e) => {
-  findState.query = e.target.value;
-  renderResumable();
 });
 
 // --- task memory modal: one freeform markdown file per task, shared with the

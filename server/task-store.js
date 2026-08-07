@@ -151,9 +151,9 @@ export class TaskStore {
   }
 
   // The task a session is currently assigned to, as {id, name}, or null. Used at
-  // archive time to snapshot the task name onto the session entry, so History's
-  // search can still match it by the name the task had back then, even after a
-  // later rename.
+  // archive time to snapshot the task name onto the session entry, so Search can
+  // still match the archived session by the name the task had back then, even
+  // after a later rename.
   taskFor(sessionId) {
     const id = this.assignments[sessionId];
     const task = id && this.tasks.find((t) => t.id === id);

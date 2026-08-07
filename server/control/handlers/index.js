@@ -37,13 +37,14 @@ import {
   scheduleToggleHandler,
   scheduleRunNowHandler,
 } from './schedules.js';
-import { listResumableHandler } from './list-resumable.js';
 import { refreshHandler } from './refresh.js';
 import { openTerminalForSessionHandler } from './open-terminal-for-session.js';
 import { viewDiffHandler } from './view-diff.js';
 import { diffCommentsHandler } from './diff-comments.js';
 import { subagentDetailHandler } from './subagent-detail.js';
 import { usageHandler } from './usage.js';
+import { searchHandler, searchStatusHandler, searchReindexHandler } from './search.js';
+import { adoptConversationHandler } from './adopt.js';
 
 // The control-WS handler registry, mirroring server/mcp/tools. Adding a message
 // type = adding a module here. Each handler: { type, handler(msg, ctx) }, where
@@ -88,13 +89,16 @@ export const CONTROL_HANDLERS = [
   scheduleDeleteHandler,
   scheduleToggleHandler,
   scheduleRunNowHandler,
-  listResumableHandler,
   refreshHandler,
   openTerminalForSessionHandler,
   viewDiffHandler,
   diffCommentsHandler,
   subagentDetailHandler,
   usageHandler,
+  searchHandler,
+  searchStatusHandler,
+  searchReindexHandler,
+  adoptConversationHandler,
 ];
 
 export const HANDLER_BY_TYPE = Object.fromEntries(CONTROL_HANDLERS.map((h) => [h.type, h]));
