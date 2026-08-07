@@ -5,8 +5,8 @@ import {
 } from './snooze.js';
 import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX } from './todo.js';
 import {
-  MAX_ONSCREEN_ROWS,
-  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  MAX_ONSCREEN_ROWS, MAX_FIT_ROWS,
+  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption } from './workflow.js';
@@ -647,7 +647,7 @@ function sortBucketSessions(sessions, bucketId) {
     : orderSessions(sessions, (latestTasks.sessionOrder || {})[bucketId]);
 }
 
-// Feeds tileSpan (layout.js) the two child-row counts it needs, both derived from
+// Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
 // exactly what renderTileCards (cards.js) draws: computeAbsorption decides which
 // sessions fold into a parent's spine (an orphan, or a chained grandchild whose
 // parent is itself absorbed, renders as its own top-level card instead and must
@@ -685,7 +685,19 @@ function childRowCounts(activeSessions) {
     if (!absorbed.has(s.sessionId)) visible += (s.teammates?.length || 0);
   }
   const workflowBoxCount = activeSessions.filter((s) => !absorbed.has(s.sessionId) && isWorkflowRun(s)).length;
-  return { visible, absorbed: absorbed.size, workflowBoxCount };
+  // Sub-agent zones (cards.js subagentZoneHtml) only ever render on a plain
+  // top-level card — an absorbed child draws as a workerRowHtml, which has no
+  // zone of its own — so this mirrors the exact render-time check: shown pill,
+  // has sub-agents, and at least one currently-recent row (an empty zone
+  // renders nothing, per subagentZoneHtml).
+  const now = Date.now();
+  let subagentRowCount = 0, subagentZoneCount = 0;
+  for (const s of activeSessions) {
+    if (absorbed.has(s.sessionId) || !isSubagentShown(s.sessionId)) continue;
+    const rows = visibleSubAgents(s.subAgents || [], { showFinished: false, now }).length;
+    if (rows > 0) { subagentRowCount += rows; subagentZoneCount += 1; }
+  }
+  return { visible, absorbed: absorbed.size, workflowBoxCount, subagentRowCount, subagentZoneCount };
 }
 
 // Per-card sub-agent zone visibility: which card ids currently show their zone at
@@ -813,7 +825,6 @@ function renderGrid() {
   // than one → the normal packed grid. The tray is appended by both paths.
   if (visible.length === 1) { renderFocusedTile(el, visible[0]); return; }
   el.classList.remove('focus-mode');
-  const perRow = sessionsPerRow(el);
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
   for (const s of latestSessions) {
@@ -821,24 +832,54 @@ function renderGrid() {
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
   }
-  // One tile per id in the stored display order; the Ad-hoc tile is an ordinary,
-  // movable member of that order (no longer pinned).
-  const tileById = new Map(
-    latestTasks.tasks.map((task) => {
-      const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
-      const sessions = sortAsleepLast(ordered, phaseOf);
-      const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
-      const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-      return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount) }];
-    })
-  );
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
   const adhocTodoCount = ((latestTasks.todos || {})[ADHOC_ID] || []).length;
-  const { visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-  tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount) });
-  const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
-  const canonical = computeLayout(tiles, columnsForWidth(el));
+  // One tile per id in the stored display order; the Ad-hoc tile is an ordinary,
+  // movable member of that order (no longer pinned). Pulled into a closure of
+  // `perRow` so the self-consistency refinement below can repack against a
+  // corrected perRow without duplicating tile construction.
+  function buildTiles(perRow) {
+    const tileById = new Map(
+      latestTasks.tasks.map((task) => {
+        const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
+        const sessions = sortAsleepLast(ordered, phaseOf);
+        const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
+        const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount) }];
+      })
+    );
+    const {
+      visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
+      subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount,
+    } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount) });
+    const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
+    return computeLayout(tiles, columnsForWidth(el));
+  }
+
+  let perRow = sessionsPerRow(el);
+  let canonical = buildTiles(perRow);
+  // Self-consistency refinement: sessionsPerRow budgets cards-per-row against
+  // the NOMINAL row height (available height / MAX_ONSCREEN_ROWS). Once the
+  // packer genuinely needs more rows than that, `1fr` divides the same
+  // available height across those extra rows too, so the REAL row height is
+  // shorter than every tile's span was budgeted against — undersizing a tile
+  // and clipping a full active card into `.task-body`'s scroll (never
+  // allowed — see layout.js tileSpan's "never clipped" invariant; confirmed
+  // against a live board). Re-derive perRow from the row count the packer
+  // actually chose and repack. Bounded and convergent: perRowForRows only
+  // ever lowers perRow here (never below MIN_SESSIONS_PER_ROW, layout.js's
+  // floor), so this tightens at most a few times before perRow stops
+  // changing — deliberately a dynamic correction, not a static lower
+  // MAX_ONSCREEN_ROWS (which would shrink every tile's budget even on a small
+  // board that never left 3 rows in the first place).
+  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
+    const refined = perRowForRows(el.clientHeight, canonical.rows);
+    if (refined >= perRow) break;
+    perRow = refined;
+    canonical = buildTiles(perRow);
+  }
   let { placed, cols, rows, scroll } = canonical;
   // Mid-drag preview: swap the dragged tile and the hovered target WITHOUT
   // re-running computeLayout on the whole board — see localSwapPlacement for

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
   MIN_COL_PX, GRID_CHROME_X_PX,
-  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { tileWeight } from './snooze.js';
@@ -46,6 +46,39 @@ test('sessionsPerRow: never overestimates capacity relative to the grid\'s real 
   for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
     assert.ok(sessionsPerRow({ clientHeight }) <= rawFormula(clientHeight));
   }
+});
+
+test('perRowForRows: at MAX_ONSCREEN_ROWS it agrees exactly with sessionsPerRow', () => {
+  for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
+    assert.equal(perRowForRows(clientHeight, MAX_ONSCREEN_ROWS), sessionsPerRow({ clientHeight }));
+  }
+});
+
+// The bug this exists to let a caller correct for: sessionsPerRow budgets
+// every tile's card capacity against the NOMINAL row height (available height
+// / MAX_ONSCREEN_ROWS). Once the packer genuinely needs more rows than that,
+// `1fr` divides the same available height across those extra rows too, so the
+// REAL row is shorter than the nominal one every tile's span was computed
+// against — confirmed against a live board (a 3-card tile sized for 1 row
+// under a 3-row nominal budget did not fit once the board packed into 4 real
+// rows). perRowForRows lets a caller re-derive perRow from the row count the
+// packer actually chose, so tile spans can be recomputed against reality.
+test('perRowForRows: more rows than MAX_ONSCREEN_ROWS yields a smaller perRow than the nominal', () => {
+  const clientHeight = 1107; // a real measured live-board grid height
+  const nominal = sessionsPerRow({ clientHeight });
+  const refined = perRowForRows(clientHeight, 4);
+  assert.ok(refined <= nominal);
+});
+
+test('perRowForRows: fewer rows than MAX_ONSCREEN_ROWS yields a LARGER perRow (more room per row)', () => {
+  const clientHeight = 1107;
+  const nominal = sessionsPerRow({ clientHeight });
+  const refined = perRowForRows(clientHeight, 1);
+  assert.ok(refined >= nominal);
+});
+
+test('perRowForRows: never below MIN_SESSIONS_PER_ROW, even for a pathologically dense pack', () => {
+  assert.equal(perRowForRows(1107, MAX_FIT_ROWS * 10), MIN_SESSIONS_PER_ROW);
 });
 
 test('columnsForWidth: floors to the readable-width columns that fit, never below one', () => {
@@ -479,6 +512,33 @@ test('tileSpan: collapsing a workflow keeps paying for its box chrome, unlike it
   const collapsed = tileSpan(workflowTile, perRow, 0, phaseOf, 0, 4, 1); // childRowCount 0, workflowBoxCount unchanged
   const collapsedNoBox = tileSpan(workflowTile, perRow, 0, phaseOf, 0, 4, 0); // what it'd be if the box chrome wrongly dropped too
   assert.ok(collapsed >= collapsedNoBox);
+});
+
+// A card's own expanded sub-agent zone (cards.js subagentZoneHtml) grows THAT
+// card past CARD_STRIDE_PX with no change to the tile's session count at all —
+// unlike childRowCount/workflowBoxCount, which only ever apply to sessions
+// folded into a spine or wrapped in workflow chrome. Verified against a live
+// board: a plain card with one shown sub-agent row measured 113.4px against a
+// sibling's 77.4px baseline.
+test('tileSpan: a card with a shown sub-agent zone weighs more than a bare card', () => {
+  const perRow = 2;
+  const plain = [sess('a')];
+  const bare = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 0, 0);
+  const withZone = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 1, 1);
+  assert.ok(withZone >= bare);
+});
+
+// Two cards each showing one sub-agent row must weigh more than one card
+// showing both rows — the zone's own margin chrome (SUBAGENT_ZONE_BASE_PX) is
+// a per-card cost, not a per-row one, so subagentZoneCount has to be tracked
+// separately from subagentRowCount rather than folded into a single count.
+test('tileSpan: sub-agent zone chrome is charged per card, not just per row', () => {
+  const perRow = 4; // wide enough that neither case's secondary weight hits the perRow cap
+  const oneCard = [sess('a')];
+  const twoCards = [sess('a'), sess('b')];
+  const oneZoneTwoRows = tileSpan(oneCard, perRow, 0, phaseOf, 0, 0, 0, 2, 1);
+  const twoZonesTwoRows = tileSpan(twoCards, perRow, 0, phaseOf, 0, 0, 0, 2, 2);
+  assert.ok(twoZonesTwoRows >= oneZoneTwoRows);
 });
 
 // A live-board regression, updated for the GRID_CHROME_PX fix: at a real
