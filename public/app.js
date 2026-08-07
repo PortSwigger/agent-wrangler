@@ -25,7 +25,7 @@ import {
 } from './term-font.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
-  repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure,
+  repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
 import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml } from './cards.js';
@@ -282,7 +282,7 @@ function barWord(s) {
   if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
-  return STATUS_WORDS[s.status] || '?';
+  return STATUS_WORDS[displayStatus(s)] || '?';
 }
 
 
@@ -578,7 +578,7 @@ function isAsleep(s) { return phaseOf(s) === 'asleep'; }
 function cardState(s) {
   let base = justFinished.has(s.sessionId)
     ? 'just-finished'
-    : (s.status === 'needs-you' && isAcknowledged(s) ? 'needs-you focused' : s.status);
+    : (s.status === 'needs-you' && isAcknowledged(s) ? 'needs-you focused' : displayStatus(s));
   // A manual unread bookmark reuses the cyan just-finished alarm (no new CSS) and
   // persists until the card is opened — but a live needs-you (red) outranks it.
   if (unread.has(s.sessionId) && base !== 'needs-you' && base !== 'needs-you focused') base = 'just-finished';
@@ -928,7 +928,7 @@ function sessionDotStatus(s) {
   if (!s.managed) return 'idle';
   if (s.status === 'needs-you') return 'needs-you';
   if (justFinished.has(s.sessionId)) return 'just-finished';
-  return s.status || 'idle';
+  return displayStatus(s) || 'idle';
 }
 
 // The bottom tray: the tiles NOT in `visible` (so grid and tray can never show the
@@ -3012,7 +3012,7 @@ function renderPanel(sessionId) {
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
   // Mirror the card's transient cyan "just-finished" edge in the header.
-  const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : s.status;
+  const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];

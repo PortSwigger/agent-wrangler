@@ -12,12 +12,12 @@ import {
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
-  esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl,
+  esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl, displayStatus,
 } from './util.js';
 import { wakeLabel } from './snooze.js';
 import { isWorkflowRun, computeAbsorption } from './workflow.js';
 
-export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle' };
+export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
 
 // Sub-agents finished within this window still show under the default "Recent" filter
 // (a starting point — not tuned against real usage yet).
@@ -256,7 +256,7 @@ export function workerStatusWord(s, ctx) {
   if (!s.managed && !s.restarting) return 'resume';
   if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
   if (ctx.justFinished.has(s.sessionId)) return 'done';
-  return STATUS_WORDS[s.status] || s.status || '';
+  return STATUS_WORDS[displayStatus(s)] || s.status || '';
 }
 
 // One worker on its run's spine: a status dot (coloured by state, same vocabulary

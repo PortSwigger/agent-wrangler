@@ -437,6 +437,41 @@ test('buildGraph: a discovered devcontainer session with a normal working pane h
   assert.equal(node.waitingFor, null);
 });
 
+// Claude's 'shell' status means "a Bash tool is tracked as live" — it can't
+// distinguish a still-blocking foreground command from a detached
+// run_in_background job the turn has already ended on. A still-blocking
+// command keeps "esc to interrupt" in the pane, so 'shell' + that pane text
+// must stay 'working' (the mid-command guard the raw status exists to serve).
+test('buildGraph: raw shell status + a pane still showing "esc to interrupt" stays working', async () => {
+  const entry = { sessionId: 'sh1', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_sh1');
+  const discover = async () => [{ tmuxName: 'cc_sh1', socket: '', claudePid: 6161, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --resume L1', paneTitle: '' }];
+  const capture = async () => 'Running a long build...\nesc to interrupt';
+  const runtimeResolver = () => ({ readLive: async () => ({ liveSid: 'L1', status: 'working', rawStatus: 'shell', name: null, waitingFor: null }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'sh1');
+  assert.ok(node, 'synthesized node present');
+  assert.equal(node.status, 'working');
+});
+
+// The other half of the same guard: once the pane's own idle prompt shows (the
+// turn has genuinely ended) with the background-shell footer still present, the
+// stale 'shell' status must not pin the card at "busy" forever — it should read
+// idle, with hasBackgroundShell true so displayStatus() (public/util.js) folds
+// it into the 'job' state.
+test('buildGraph: raw shell status + an idle pane with the shell footer reads idle, with hasBackgroundShell true', async () => {
+  const entry = { sessionId: 'sh2', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L2' };
+  const mgr = makeDiscoveredManager(entry, 'cc_sh2');
+  const discover = async () => [{ tmuxName: 'cc_sh2', socket: '', claudePid: 6262, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --resume L2', paneTitle: '' }];
+  const capture = async () => 'Started — sleep 1800 is running in the background.\n❯ \n⏵⏵ auto mode on · 1 shell · ← 2 agents';
+  const runtimeResolver = () => ({ readLive: async () => ({ liveSid: 'L2', status: 'working', rawStatus: 'shell', name: null, waitingFor: null }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'sh2');
+  assert.ok(node, 'synthesized node present');
+  assert.equal(node.status, 'idle');
+  assert.equal(node.hasBackgroundShell, true);
+});
+
 // C3: a COLD devcontainer dispatch spends 1-2min in `devcontainer up` +
 // postCreateCommand before `claude` starts. During that window the pane has no
 // `claude` token for discoverClaudeSessions to match, so `discover` legitimately

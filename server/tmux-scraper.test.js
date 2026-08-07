@@ -214,6 +214,11 @@ test('hasBackgroundShell returns false for an unrecognized agent rather than mat
   assert.equal(hasBackgroundShell(pane, 'some-future-agent'), false);
 });
 
+test('hasBackgroundShell detects Claude\'s footer even when the pane is too narrow for the trailing middot to render (verified against a real truncated capture)', () => {
+  const pane = '  ⏵⏵ auto mode on · 1 shell';
+  assert.equal(hasBackgroundShell(pane, 'claude'), true);
+});
+
 test('prefillPane delivers multi-line text as one paste-buffer block and sends NO Enter (review-first)', async () => {
   const cmds = [];
   let pastedContent = null;
