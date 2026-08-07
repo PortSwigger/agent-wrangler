@@ -373,12 +373,14 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
 }
 
 // The archived children (one level deep — see foldSameBucketChildren) nested
-// under a parent row: an indented, left-ruled stack of full rows immediately
-// following the parent's own, each independently resumable/forkable/deletable
-// like any other row.
-function childrenNode(children, opts) {
+// under a parent row: History's own elbow-connector stack (ported verbatim in
+// styles.css), each child independently resumable/forkable/deletable like any
+// other row. `variant` tints the connector — 'task' (purple, cascade-archived
+// under a task marker) or 'wf' (the parent was itself an autopilot
+// orchestrator) — falling through to a neutral border for a plain parent/child.
+function childrenNode(children, variant, opts) {
   const wrap = document.createElement('div');
-  wrap.className = 'search-children';
+  wrap.className = variant ? `search-children search-children--${variant}` : 'search-children';
   for (const c of children) wrap.appendChild(browseRowNode(c, opts));
   return wrap;
 }
@@ -440,7 +442,7 @@ function taskGroupHeadingNode(name, count) {
 function sessionEntryNode(entry, opts) {
   const frag = document.createDocumentFragment();
   frag.appendChild(browseRowNode(entry.group, { parentTitle: entry.parentTitle, ...opts }));
-  if (entry.children?.length) frag.appendChild(childrenNode(entry.children));
+  if (entry.children?.length) frag.appendChild(childrenNode(entry.children, entry.group.isWorkflow ? 'wf' : null));
   return frag;
 }
 
@@ -451,7 +453,7 @@ function browseRowUnitNode(r) {
   if (r.kind === 'task') {
     const frag = document.createDocumentFragment();
     frag.appendChild(taskRowNode(r.task));
-    if (r.nested.length) frag.appendChild(childrenNode(r.nested));
+    if (r.nested.length) frag.appendChild(childrenNode(r.nested, 'task'));
     return frag;
   }
   if (r.kind === 'task-group') {

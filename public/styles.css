@@ -2108,9 +2108,44 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-task-heading .n { font-weight: 500; color: var(--fg-subtle); }
 
 /* Nested rows (a task-archive marker's cascade-archived sessions, or a parent's
-   same-bucket archived children): an indented, left-ruled stack right under the
-   row it belongs to — a plain rule reads as "part of the row above" without the
-   weight of a bordered box. */
-.search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 14px; padding-left: 12px; border-left: 2px solid var(--border-muted); }
+   same-bucket archived children) — History's own elbow-connector stack, ported
+   verbatim (see the retired .hist-children/.hc-task-nested): each row gets an
+   L-shaped bracket off a shared vertical spine, rather than a flat left rule,
+   so a multi-child stack reads as one tree instead of independent indents.
+   Colour cues the relationship: neutral for a plain parent/child, purple to
+   match a task-archive marker's own accent, workflow-tinted under an
+   orchestrator (no violet box, just the connector — the box was tile-grid
+   furniture the accent alone doesn't need). */
+.search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 13px; padding-left: 14px; --line-color: var(--border); }
+.search-children--task { --line-color: var(--purple); }
+.search-children--wf { --line-color: var(--wf); }
+.search-children > .search-group {
+  /* .search-group's own `overflow: hidden` (clipping its border-radius) would
+     also clip these connector pseudo-elements — they sit at left:-14px,
+     entirely outside its border box, in the gap to its left. */
+  position: relative;
+  overflow: visible;
+}
+.search-children > .search-group::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+}
+.search-children > .search-group:first-child::before { top: -8px; height: calc(50% + 8px); }
+.search-children > .search-group:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
 
 .search-wf { color: var(--wf); border-color: color-mix(in srgb, var(--wf) 35%, transparent); background: color-mix(in srgb, var(--wf) 14%, transparent); }
