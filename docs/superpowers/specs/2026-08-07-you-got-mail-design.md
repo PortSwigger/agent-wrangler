@@ -1,9 +1,34 @@
 # "You've got mail" — inter-session comms redesign
 
-**Status:** design, awaiting review
+**Status:** design, revised after independent review (Codex `gpt-5.5`, session 79ea514b)
 **Date:** 2026-08-07
 **Scope:** peer-to-peer (`send_message` MCP) delivery only. Human→agent messaging,
 PR nudges, snooze notes and diff-comment delivery are explicitly out of scope.
+
+## Phasing — what ships first
+
+The review's central verdict, accepted: the mailbox core is worth building; the
+reliability subsystem layered on top of it is not, yet. Shipping both at once turns a
+delivery fix into a second system with several new race surfaces, and the nudge machinery
+is justified by a failure mode that has not been observed — only feared.
+
+**Phase 1 (build now).** Durable mailbox, fixed settle window, terse notification,
+`read_mail` + `list_mail`, unread pill, restart-safe settle runner, retention caps. This
+alone fixes both measured failures: derailment by peer payload, and silent loss.
+
+**Phase 2 (build only on evidence).** Re-nudge state machine, server-side working→idle
+transition tracking, amber escalation, `deliveryFailed` card state. Phase 1 makes unread
+*age and count* observable, so the decision to build this becomes a telemetry question
+rather than a guess. Deferring it also removes Phase 1's dependency on status semantics
+that do not currently exist server-side and are unverified for Codex.
+
+Phase 2 sections below are kept, marked **[Phase 2]**, so the reasoning survives.
+
+**Consequence to accept honestly:** without nudges, a recipient that ignores its
+notification leaves mail unread indefinitely, visible only as a pill. That is still
+strictly better than today, where the message is lost with `delivered: true` returned to
+the sender — but it is not a delivery guarantee, and Phase 1 should not be described as
+one.
 
 ## Terminology
 
@@ -13,7 +38,7 @@ These are distinct and the design turns on the difference. Used precisely throug
 |---|---|---|
 | **working** | live tmux, agent mid-turn | notify anyway — a terse notice does not derail (exp7) |
 | **idle** | live tmux, agent not currently doing anything. **Not "asleep" in any sense** — it is sitting at its prompt, ready | notify immediately; this is also the only state a *re-nudge* fires in |
-| **dormant** | tmux torn down, mapping entry retained. Reached via auto-suspend after `suspendIdleHours` of idle, or any other teardown | **woken by mail**, exactly as today — resume, then deliver |
+| **dormant** | tmux torn down, mapping entry retained. Reached via auto-suspend after `suspendIdleHours` of idle, or any other teardown | **woken by mail** — but at settle-close, not at send. See below |
 | **archived** | left the board on purpose | hard refusal at send, unchanged |
 
 Two consequences worth stating plainly, because getting them backwards inverts the design:
@@ -104,10 +129,24 @@ recipient pulls bodies with `read_mail`.
 4. **Read.** The recipient calls `read_mail()`, which drains and marks read.
 5. **Nudge.** If mail stays unread, re-notify on a backoff, then escalate to the human.
 
-Waking a **dormant** recipient on send is **retained deliberately and unchanged**. A session
-becomes dormant after `suspendIdleHours` of idleness (or any other tmux teardown), and being
-unable to wake a dormant session with a message was actively harmful to inter-agent
-interoperability — hence the capability. Mail is never held back waiting for a natural wake.
+Waking a **dormant** recipient is **retained deliberately** — but the *timing and error
+reporting change*, and that is a semantic change the spec must not paper over.
+
+The capability is load-bearing: a session becomes dormant after `suspendIdleHours` of
+idleness (or any other tmux teardown), and being unable to wake a dormant session with a
+message was actively harmful to inter-agent interoperability. Mail is never held back
+waiting for a natural wake.
+
+What changes:
+
+| | today | under the mailbox |
+|---|---|---|
+| when the wake happens | synchronously, inside the `send_message` call (`message-delivery.js:23-78`) | ~10s later, at settle close |
+| what the sender learns | `{mode:'dormant'}`, or a real error if resume failed | `queued: true`; resume outcome unknown |
+| resume failure | returned to the sender as a tool error | invisible to the sender — see *What `send_message` can and cannot report* |
+
+The capability is preserved; the synchronous contract around it is not. Trading immediate
+resume-failure feedback for batching is deliberate, but it is a trade, not a no-op.
 
 An **idle** recipient is not woken, because there is nothing to wake: it is live, at its
 prompt, and the notification simply arrives.
@@ -143,16 +182,26 @@ working agent, so delaying it would buy latency and machinery for nothing.
 
 ### The notification
 
-Server-authored. **Contains no sender-controlled text whatsoever** — sender ids and board
-labels are server-derived, and counts and sizes are server-computed.
+Server-authored, and **carries session ids only — no labels, no subject, no body**.
 
 ```
-📬 You've got mail — 3 new messages (from sess_abc "worker-1", sess_def "worker-2").
+📬 You've got mail — 3 new messages (from sess_abc, sess_def).
 Call read_mail() when you reach a good stopping point.
 ```
 
-A subject line is **rejected by design**: it would place attacker-controlled text at
-exactly the trust boundary this redesign hardens.
+**Board labels must NOT appear here**, and an earlier draft of this spec was wrong to claim
+the notification contains no sender-controlled text. `sessionLabel`
+(`state-reader.js:212`) derives a label from `liveTitle` — *the summary Claude writes to its
+own terminal title* — falling back to `aiTitle`/`intent`/`summary`. All are agent-generated.
+A hostile or merely confused peer can therefore shape its own label, and the notification is
+pasted into a **raw prompt stream**, where the `textContent` protection that guards the board
+UI does not apply. Session ids are server-assigned and are the only safe identifier at this
+boundary.
+
+Labels remain fine everywhere they are not a prompt: the board UI (via `textContent`) and
+`read_mail`/`list_mail` results (a JSON string field, structurally separated).
+
+A subject line is rejected for the same reason, more obviously.
 
 ### What `send_message` can and cannot report
 
@@ -198,20 +247,33 @@ fraction of the cost. No search tool: the box is small by construction.
 > allow-listed in `server/mcp/client-config.js` `ALLOWED_TOOLS`.** Registering without
 > allow-listing ships a tool that passes tests and dies silently in a real launch.
 
+### Rollout: already-running sessions cannot call `read_mail`
+
+`ALLOWED_TOOLS` is baked into launch argv (`allowedToolsArg()` → `--allowedTools`,
+`agents/claude.js:109`). **A session launched before this change does not have `read_mail`
+and will not get it until it is resumed or relaunched.** Routing mail to such a session
+notifies it to call a tool it cannot call — precisely what exp7 observed, where the agent
+flagged `read_mail()` as nonexistent and treated the notice as suspicious.
+
+Mitigation: stamp `entry.mailCapable = true` at launch/resume once the new argv is in use,
+and have `send_message` **fall back to today's direct push** for any recipient without the
+stamp. The fallback is small, self-clearing as sessions cycle, and prevents a broken
+window on the day of deployment. Remove it once no unstamped sessions remain.
+
 ### The no-reply footer — retained, unchanged
 
 The no-reply-by-default prose in `send-message.js` is a **behavioural control validated
 against a real failure**: before it existed, sessions conversed in long acknowledge-loops.
 Its wording is carried over verbatim.
 
-It moves from once-per-message to **once per `read_mail` batch**, appended at the end of
-the result. Its effectiveness comes from sitting adjacent to the payload, which a batch
-footer preserves and a tool-description-only version would not. It correctly scopes to
-everything just read. Per-message, the structured `from` id remains so a warranted reply
-has its target.
+**It stays per-message for v1** — a reversal of this spec's earlier recommendation, on the
+review's argument, which is the stronger one: this footer guards a *validated* failure, its
+effectiveness comes from salience adjacent to each body, and moving it to once-per-batch
+changes both placement and salience while everything around it is also changing. The
+design's own traffic data says batches are small, so ~40 tokens × batch size is affordable.
 
-*Flagged for review: if per-batch feels like too much of a change to a control that
-works, per-message costs ~40 tokens × batch size and is a safe fallback.*
+Per-batch remains available as a later optimisation if token cost ever proves painful. Do
+not take it as part of this change.
 
 ### Untrusted-input framing
 
@@ -241,7 +303,13 @@ filesystem, and this is the preferred pattern for a large artifact — state it 
 a follow-up `read_mail({id})` costs an inference round-trip to recover ~500 tokens — a bad
 trade for addressed mail the recipient almost always needs.*
 
-### Nudging unread mail
+### Nudging unread mail **[Phase 2 — not built now]**
+
+*Deferred per the review. Phase 1 ships without any of this; the unread pill makes misses
+visible, and unread age/count give the telemetry to decide whether it is needed at all.
+Retained here because the reasoning is worth keeping. Note that deferring it also removes
+Phase 1's dependency on server-side status-transition tracking, which does not exist and is
+unverified for Codex.*
 
 Only ever fires on an **idle** session — live tmux, nothing in flight. Never while working.
 Never on a **dormant** one.
@@ -286,7 +354,8 @@ deadline is already past on boot. The runner's first sweep must fire expired win
 otherwise mail sits with no notification ever sent, and the nudge cycle cannot rescue it,
 because nudge 1 is gated on a turn boundary *since a notification* that never happened.
 
-**Server-side working→idle transition tracking is new state.** The turn-boundary gate
+**Server-side working→idle transition tracking is new state. [Phase 2 only — Phase 1 needs
+none of it.]** The turn-boundary gate
 needs to know a session finished a turn after being notified. Today the only such
 tracking is `prevStatusById` / `settledStatus` / `trackJustFinished` in `public/app.js` —
 **browser-side, and only while a board client is connected**. The server keeps no prior
@@ -315,6 +384,14 @@ wake, a read, thinking and a tool call — 10–30s minimum — so the cooldown 
 What it does catch is a single sender emitting several messages quickly, which is precisely
 what batching now handles *better* than a refusal (nothing is lost).
 
+*Review dissent, recorded rather than resolved:* the reviewer argues the 10–30s reply-loop
+figure is reasoned from observed inference latency rather than measured, may not hold for
+terse auto-acks or faster future models, and that removing an existing guard on unmeasured
+grounds is the riskier direction. Counter-argument, which this spec keeps: with per-recipient
+batching the cooldown has no remaining job — its only effect is refusing the 2nd and 3rd
+message of a legitimate burst that would otherwise batch harmlessly. Low stakes and trivially
+reversible either way; **James's call**, and worth a measurement if it matters.
+
 **Keep the pair rate limit** (6 per unordered `{from,to}` pair per 60s) as the loop backstop.
 Fold the cooldown's pedagogical line — *"If you were only acknowledging, do not reply at all"* —
 into the rate-limit error, which is what genuinely fires on a loop.
@@ -341,16 +418,45 @@ currently protects its *box* when many senders target one recipient.
   `pr-nudge-runner.js`, `snooze-wake-runner.js`, `session-action-runner.js`,
   `control/handlers/diff-comments.js`, `control/handlers/archive.js`, and the PR pane lines in
   `index.js`. All are server-generated or human-configured, not peer mail.
-- **The dormant-resume machinery is unchanged.** `resolveResumeDir` (resolve by *live* id),
-  the fail-open `--resume` guard, the memory bind, and the synchronous archive-race commit
-  block all stay exactly as they are. The **only** difference is that the intent threaded
-  through `--resume -- <intent>` where `resumeCarriesIntent` is now the *notification* rather
-  than the message body. Codex still ignores the intent and falls back to a post-resume paste.
+- **The dormant-resume machinery keeps the same semantics — but the mail runner must
+  REIMPLEMENT it, not inherit it.** Saying it is "unchanged" was misleading: peer mail no
+  longer flows through `deliverMessage`, so nothing carries these guarantees over for free.
+  The runner must reproduce, exactly:
+  - `resolveResumeDir(entry.liveSessionId || cardId)` — resolve by the **live** id, or a
+    resume silently starts a fresh empty session (CLAUDE.md's fail-open `--resume` guard);
+  - the memory bind before relaunch, keyed on card id;
+  - **the synchronous commit block**: re-read `entryFor`, check `archivedAt`, and then
+    **no `await` before `resume()` registers its `_resuming` slot**
+    (`message-delivery.js:40-68`). No store write, no `rebuild()`, no label lookup, no
+    mailbox mutation and no async notification formatting may occur inside that window. All
+    of that must be done *before* the re-check or *after* `resume()` is initiated.
+
+  The only intentional difference is that the intent threaded through `--resume -- <intent>`
+  where `resumeCarriesIntent` is now the *notification* rather than the message body. Codex
+  still ignores the intent and falls back to a post-resume paste.
 - **Archived targets** keep today's hard refusal — refused at send, never boxed (see
   *Archived recipients*). The one addition is the settle-close re-check, which the wider
   race now demands.
 
 ## Data model
+
+### The store is an object with synchronous mutators, not load-mutate-save
+
+`atomic-json.js` gives **crash-safe writes, not transactional read-modify-write**, and the
+`DATA_DIR` lock prevents a second *process*, not interleaving *within* this one. Four
+writers touch a mailbox — `send_message` appends, `read_mail` drains and marks read, the
+settle runner marks notified/undeliverable, archive handling stops nudges — and every
+`await` between a read and its write is a place for them to clobber each other.
+
+So the mailbox is a **store object in the `schedule-store.js` / `task-store.js` mould**:
+state held in memory, **synchronous** mutation methods, persistence as a side effect of
+mutation. No tool or runner may load-mutate-save the JSON itself.
+
+Races this specifically prevents, all of which the naive form allows:
+- the runner selects an unread batch, the recipient reads it, and the runner then notifies
+  about a batch that is already read;
+- two senders both pass the box cap check and both append, crossing it;
+- a drain and an append interleave and the append is lost.
 
 `$DATA_DIR/mailbox.json`, written through `atomic-json.js`, covered by the existing
 per-`DATA_DIR` instance lock.
@@ -371,7 +477,33 @@ per-`DATA_DIR` instance lock.
   reachable from the archived card's detail view. Mail is deleted only when the card itself is
   purged from `mappings.json` — never on archive.
 - Read mail is retained rather than deleted on read, so `list_mail` and `read_mail({id})` stay
-  useful after a compaction.
+  useful after a compaction — **bounded by the retention caps below**.
+
+**Three distinct unread states**, which an earlier draft blurred:
+
+| state | meaning | counts against box cap | drained by `read_mail()` |
+|---|---|---|---|
+| `unread` | delivered or awaiting settle; the normal case | yes | yes |
+| `undeliverable` | recipient was archived during the settle window | no | **no** |
+| `read` | fetched at least once; retained for `list_mail`/`read_mail({id})` | no | no |
+
+`undeliverable` mail is **never drained as if it just arrived**. A card that is archived and
+later resumed (which drops `archivedAt`) must not have weeks-old orphaned mail delivered into
+it as fresh. It stays visible via `list_mail`, marked, and is retrievable by id only.
+
+### Retention caps
+
+Read mail retained until card-purge is unbounded growth: a long-lived orchestrator reads
+thousands of messages over weeks, and nothing above prunes them. Explicit caps:
+
+| cap | value | on breach |
+|---|---|---|
+| unread per recipient | 20 messages / 256KB | refuse at send (sender told the recipient is backed up) |
+| retained read per recipient | 100 messages / 1MB | evict oldest read first; never evict unread |
+| total store | 32MB | evict oldest read across all boxes, log it |
+
+Eviction touches **read and `undeliverable` mail only** — unread mail is never silently
+dropped, because a sender was told it was queued.
 
 ## Testing
 
@@ -426,6 +558,26 @@ per-`DATA_DIR` instance lock.
 5. **Delivery-failed handling** — retry-then-escalate (recommended) vs. surfacing the failure
    back to the sender some other way.
 
+## Review record
+
+Independently reviewed by a Codex `gpt-5.5` session (79ea514b) with no prior context beyond
+the spec, `CLAUDE.md` and the touched code. Verdict: *"build a smaller version first"* —
+adopted as the Phase 1/2 split above. Changes made in response:
+
+| finding | disposition |
+|---|---|
+| Phase the nudge/escalation/status subsystem out of v1 | **accepted** — Phase 1/2 split |
+| "Dormant wake unchanged" is internally inconsistent — timing and error reporting do change | **accepted** — stated as an explicit semantic change |
+| The runner must reimplement the archive-race guard, not inherit it | **accepted** — no-await window spelled out |
+| Store needs synchronous mutators, not load-mutate-save | **accepted** — `schedule-store` pattern mandated |
+| Notification's "no sender-controlled text" claim is false — labels are agent-derived | **accepted, verified** (`state-reader.js:212`) — labels removed from the notification |
+| Footer should stay per-message for v1 | **accepted** — earlier per-batch recommendation reversed |
+| "no wait-for-idle" overstates the evidence | **accepted** — reworded from *disproved* to *not justified* |
+| Retention/pruning caps missing | **accepted** — caps table added |
+| Fork/archive needs unread-pending vs undeliverable | **accepted** — three-state table added |
+| `ALLOWED_TOOLS` is baked in at launch; live sessions lack `read_mail` | **accepted, verified** (`agents/claude.js:109`) — `mailCapable` stamp + push fallback |
+| Keep the 5s cooldown | **not adopted** — dissent recorded inline; James's call |
+
 ## Known new work this depends on
 
 Two things the design assumes that the codebase does **not** currently provide, both sized
@@ -440,8 +592,12 @@ into the plan rather than discovered during it:
 
 - **Deferred wake** (holding mail until a dormant session happens to wake on its own). Waking a
   **dormant** session with a message is intended behaviour and load-bearing for interoperability.
-- **Wait-for-not-busy before notifying.** Disproved by exp7 — a terse notification does not
-  derail a working agent.
+- **Wait-for-not-busy before notifying.** Not disproved — *not justified*. exp7 shows a terse
+  notification did not derail one Claude Code task; it does not show that no notification ever
+  derails, nor that the agent will actually call `read_mail` (the tool did not exist during the
+  test). The notification is still an imperative interjection, just a small and neutral one.
+  This is a latency-and-complexity tradeoff decided against the gate, not a proof the gate is
+  unnecessary. Revisit if Phase 1 telemetry shows notifications landing badly.
 - **A session-level "disable mail notifications" toggle.** It would guard against something
   already bounded (the nudge cycle fires only on an idle session, backed off, and capped) while introducing the
   exact failure mode this design targets — and an agent that disables notifications then
