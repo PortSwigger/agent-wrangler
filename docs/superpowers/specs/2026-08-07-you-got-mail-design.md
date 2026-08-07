@@ -25,10 +25,16 @@ that do not currently exist server-side and are unverified for Codex.
 Phase 2 sections below are kept, marked **[Phase 2]**, so the reasoning survives.
 
 **Consequence to accept honestly:** without nudges, a recipient that ignores its
-notification leaves mail unread indefinitely, visible only as a pill. That is still
-strictly better than today, where the message is lost with `delivered: true` returned to
-the sender — but it is not a delivery guarantee, and Phase 1 should not be described as
-one.
+notification leaves mail unread indefinitely. That is still strictly better than today,
+where the message is lost with `delivered: true` returned to the sender — but it is not a
+delivery guarantee, and Phase 1 should not be described as one.
+
+**What covers it in Phase 1 is the unread pill plus the human.** The pill goes amber at the
+same 30-minute point the Phase 2 nudge cycle would have escalated, and a human can push a
+message directly into the pane from the card — a path that bypasses the mailbox and
+therefore works even when the agent is ignoring its mail. Phase 1 does not remove the
+escalation; it replaces an automatic actor with a human one, and makes the signal visible
+either way. See *Board UI — the unread pill*.
 
 ## Terminology
 
@@ -367,15 +373,40 @@ status across rebuilds. So:
   gate spuriously and nudge a working agent.
 - This is board-client-independent — the nudge cycle must work with no browser open.
 
-### Board UI
+### Board UI — the unread pill **[Phase 1]**
 
-An unread-mail pill on the card, in two states:
-- **normal** — unread mail, nudges still pending.
-- **amber** — the nudge cap was reached and the server gave up. This is the one that wants
-  human attention. Expected to be rare.
+**The pill ships in Phase 1.** With nudging deferred, it is the *only* mechanism telling
+anyone that mail is going unread, so it carries more weight here than it did in the original
+design and must not be phased out with the nudge cycle.
+
+It is keyed on **unread age**, not on nudge state (which does not exist in Phase 1). Age is
+derivable with no new machinery — each message carries `at`, and the store records
+`lastNotifiedAt` when the settle window closes.
+
+| state | condition | meaning |
+|---|---|---|
+| **normal** | unread mail, notified < 30 min ago | working as intended — the recipient simply hasn't got to it |
+| **amber** | unread mail, notified ≥ 30 min ago | the recipient is not reading its mail; wants a human |
+| — | no unread mail | no pill |
+
+The 30-minute threshold matches where the Phase 2 nudge cycle would have given up
+(1 + 5 + 20 min), so the human sees the signal at the same point the server would have
+escalated — the difference is only who acts on it.
+
+The pill shows the unread **count**, with age and senders in the tooltip.
+
+**In Phase 1 the human is the nudge.** A stale pill is actionable: message the session
+directly from the card. That path (`control/handlers/message.js`) bypasses the mailbox
+entirely and pushes straight into the pane, so it works regardless of whether the agent is
+ignoring its mail — which makes it a genuine escape hatch, not a workaround.
+
+**This is also the Phase 2 trigger.** Unread age and count are exactly the telemetry needed
+to decide whether automatic nudging is worth building. If amber pills are rare, Phase 2 is
+never needed; if they are routine, that's the evidence.
 
 Untrusted content rules apply: sender labels and excerpts go in via `textContent`/`dataset`,
-**never `innerHTML`**.
+**never `innerHTML`**. (Labels are safe in the DOM; they are only unsafe in the pasted
+notification — see *The notification*.)
 
 ### Throttle changes
 
@@ -518,6 +549,8 @@ dropped, because a sender was told it was queued.
   the server was down fires on the first sweep after boot.**
 - **Transition tracking** — the server-side working→idle gate fires with no board client
   connected, and a status flap does not satisfy it.
+- **Unread pill** — appears on first unread; flips amber at the 30-minute threshold; clears on
+  `read_mail`; `undeliverable` mail does not count toward it.
 - **Archive race** — sending to an already-archived session is refused and writes nothing;
   a session archived *during* its settle window is never resumed, its mail is marked
   `undeliverable`, and `archivedAt` is not dropped.
