@@ -224,6 +224,22 @@ test('buildGraph carries the mapping snooze onto the board node', async () => {
   assert.deepEqual(node.snooze, { until: 9999, createdAt: 1 });
 });
 
+test('buildGraph: with no mailStore injected, `mail` is omitted (not a fabricated empty object)', async () => {
+  const mgr = makeDormantManager([{ sessionId: 'no-mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const node = graph.sessions.find((s) => s.sessionId === 'no-mail-sid');
+  assert.equal('mail' in node, true); // the key exists (object literal), but its value is undefined
+  assert.equal(node.mail, undefined);
+});
+
+test('buildGraph: carries unreadInfo from an injected mailStore onto the dormant board node, keyed on card id', async () => {
+  const mgr = makeDormantManager([{ sessionId: 'mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
+  const mailStore = { unreadInfo: (id) => (id === 'mail-sid' ? { unread: 3, notifiedAt: 100, amber: true } : { unread: 0, notifiedAt: null, amber: false }) };
+  const graph = await buildGraph(mgr, async () => ({}), { mailStore });
+  const node = graph.sessions.find((s) => s.sessionId === 'mail-sid');
+  assert.deepEqual(node.mail, { unread: 3, notifiedAt: 100, amber: true });
+});
+
 test('buildGraph carries the mapping workflow marker onto the board node', async () => {
   const workflow = { issue: 'ENT-1', phase: { label: 'implementing', kind: 'active', at: 1 }, startedAt: 1 };
   const mgr = makeDormantManager([

@@ -63,16 +63,17 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
   assert.match(SKILLS_ROOT, /agent-skills\/skills$/);
 });
 
-test('the real agent-skills dir ships task-memory, links, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
+test('the real agent-skills dir ships task-memory, links, mail, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'links', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
-test('task-memory is mandatory (carries a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
+test('task-memory is mandatory (carries a nudge); links, mail, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
   const byName = Object.fromEntries(skillEntries().map((e) => [e.name, e]));
   assert.ok(byName['task-memory'].nudge.length > 0);
   assert.equal(byName.links.nudge, '');
+  assert.equal(byName.mail.nudge, '');
   assert.equal(byName['spawn-session'].nudge, '');
   assert.equal(byName['session-activity'].nudge, '');
   assert.equal(byName['session-hierarchy'].nudge, '');

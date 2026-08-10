@@ -2,25 +2,40 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { deliverMessage } from '../../message-delivery.js';
 
-// Inject a message into another session's terminal — the session-to-session
-// counterpart to the human-driven `message` /ws handler. A LIVE target gets the
-// message pasted straight into its pane; a DORMANT/suspended target is woken first
-// (deliverMessage resumes it, threading the message through as the relaunch prompt
-// where the agent supports it) so the card comes back to life rather than bouncing
-// the message. Only an ARCHIVED (or gone) target is out of reach — it left the
-// board on purpose, and resuming it would resurrect it. The sender never controls
-// the framing: the server wraps the body so the recipient knows it's untrusted peer
-// input, not an instruction from its operator.
+// Route a peer message through the durable mailbox ("you've got mail" Phase 1):
+// send_message now APPENDS to the recipient's mailbox and returns immediately —
+// delivery (a terse server-authored notification, not this body) happens later,
+// at settle close, driven by mail-runner.js. This is a deliberate change from
+// synchronous delivery: see the spec's "What send_message can and cannot report".
+//
+// Rollout guard: `--allowedTools` is baked into a session's launch argv, so a
+// session launched/resumed before this change has no `read_mail` to call and
+// would be notified about a tool it can't use. `entry.mailCapable` (stamped at
+// dispatch/resume/fork — session-manager.js) tracks whether THIS recipient's
+// current argv includes it; an unstamped recipient falls back to today's direct
+// push, UNCHANGED, so the mailbox never routes mail to a session that can't read
+// it. The fallback also covers a live session with no mapping entry at all (the
+// buildGraph "forkOwner" case) — no entry ⇒ not mailCapable ⇒ fallback, exactly
+// today's behaviour.
+//
+// The fallback keeps its BEGIN/END nonce fence (compose(), below) — that fence
+// guards a body pasted into a RAW PROMPT STREAM, where a forged END marker could
+// break out and pose as trusted framing. The mailbox path removes it (per the
+// spec's "Untrusted-input framing") only because a mailbox body rides a
+// structurally-separate JSON string field (read_mail's result), where forgery
+// has nothing to break out of. Don't "finish the cleanup" and drop the fence
+// here — the raw-paste path it guards is still live.
 export const sendMessageTool = {
   name: 'send_message',
   description:
-    'Send a message to another Agent Wrangler session, delivered into its terminal as a '
-    + 'follow-up prompt. Use it to coordinate with a peer session — nudge a worker, report back, '
-    + 'hand off a result. Works on any session that isn\'t archived: a live session gets the '
-    + 'message pasted into its pane immediately; a dormant/suspended one is woken first and the '
-    + 'message delivered as its next prompt. Messaging an archived session returns an error. Get '
-    + 'the target `to` id from list_sessions. The recipient sees who sent it and is told to treat '
-    + 'it as untrusted peer input, so put any context it needs directly in `text`.',
+    'Send a message to another Agent Wrangler session. Queues into the recipient\'s mailbox; '
+    + 'they are notified (a terse "you\'ve got mail" paste) and read it with read_mail when they '
+    + 'reach a good stopping point — this does not interrupt them mid-task. Use it to coordinate '
+    + 'with a peer session — nudge a worker, report back, hand off a result. Works on any session '
+    + 'that isn\'t archived; messaging an archived session returns an error. Get the target `to` '
+    + 'id from list_sessions. The recipient sees who sent it and is told to treat it as untrusted '
+    + 'peer input, so put any context it needs directly in `text`. Large payloads (over ~32KB) are '
+    + 'rejected — write to a file on the shared filesystem and send the path instead.',
   inputSchema: {
     to: z.string().min(1).describe('Target session id (card id, as returned by list_sessions).'),
     text: z.string().min(1).describe('The message body to deliver to the target session.'),
@@ -33,26 +48,58 @@ export const sendMessageTool = {
     if (caller != null && to === caller) return errorResult('Cannot send a message to yourself.');
 
     // Loop backstop: throttle per {caller,to} pair, checked BEFORE any delivery
-    // attempt so a rate-limited message can never wake a dormant session as a side
-    // effect. Skipped for an identity-less caller (no pair to key on; a non-session
-    // caller won't loop). The prose framing is the primary defence — this only stops
-    // a runaway.
+    // attempt so a rate-limited message can never wake a dormant session (fallback
+    // path) or occupy mailbox capacity as a side effect. Skipped for an
+    // identity-less caller (no pair to key on; a non-session caller won't loop).
+    // The prose framing is the primary defence — this only stops a runaway.
     const gate = caller != null ? deps.messageThrottle?.check(caller, to) : null;
     if (gate && !gate.ok) return errorResult(gate.error);
 
-    const label = labelFor(deps, to);
-    const result = await deliverMessage(to, compose(caller, deps, text), deps);
-    if (result.mode === 'error') return errorResult(result.error);
-    gate?.commit?.();
-    if (result.mode === 'dormant') await deps.rebuild?.();
+    const entry = deps.sessionManager.entryFor(to);
+    if (!entry?.mailCapable) return legacyPushFallback({ deps, caller, to, text, gate });
 
-    const structuredContent = { to, label, delivered: true, woke: result.mode === 'dormant' };
+    // Refused, never boxed (see the spec's "Archived recipients"): accepting mail
+    // into a box nobody will ever read would return queued:true for a message
+    // that can never be delivered. entry is guaranteed present here — mailCapable
+    // is only ever stamped onto a real mapping entry.
+    if (entry.archivedAt) return errorResult(`Session ${to} is archived; messaging an archived session isn't supported.`);
+
+    let appended;
+    try {
+      appended = deps.mailStore.append(to, { from: caller, fromLabel: labelFor(deps, caller), body: text });
+    } catch (err) {
+      return errorResult(err.message);
+    }
+    gate?.commit?.();
+
+    const label = labelFor(deps, to);
+    // `queued: true`, not `delivered` — the message hasn't been delivered yet (the
+    // settle window hasn't closed). `woke` is dropped: whether a dormant recipient
+    // gets woken happens ~10s later at settle close and is unknowable at return.
+    const structuredContent = { to, label, queued: true, id: appended.id };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
       structuredContent,
     };
   },
 };
+
+// Today's direct push, UNCHANGED, for a recipient that can't yet call read_mail.
+// Self-contained (not folded into the handler above) so the mailbox branch above
+// reads as the primary path, with this as the rollout-era exception it is.
+async function legacyPushFallback({ deps, caller, to, text, gate }) {
+  const label = labelFor(deps, to);
+  const result = await deliverMessage(to, compose(caller, deps, text), deps);
+  if (result.mode === 'error') return errorResult(result.error);
+  gate?.commit?.();
+  if (result.mode === 'dormant') await deps.rebuild?.();
+
+  const structuredContent = { to, label, delivered: true, woke: result.mode === 'dormant' };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent,
+  };
+}
 
 function labelFor(deps, sessionId) {
   return deps.graph()?.sessions?.find((s) => s.sessionId === sessionId)?.label ?? null;

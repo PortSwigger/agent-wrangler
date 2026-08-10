@@ -148,3 +148,90 @@ test('send_message validates required args', async () => {
   assert.equal(blankText.isError, true);
   assert.equal(sent.length, 0);
 });
+
+// --- mailbox path (recipient stamped mailCapable) ---
+
+function mailDeps(sent, { archivedAt, appendError } = {}) {
+  const d = deps(sent);
+  const appended = [];
+  d.sessionManager = {
+    entryFor: (id) => (id === 'MAILBOX1' ? { mailCapable: true, archivedAt } : null),
+    isResuming: () => false,
+    resume: async () => ({}),
+  };
+  d.mailStore = {
+    append: (to, msg) => {
+      if (appendError) throw new Error(appendError);
+      appended.push({ to, msg });
+      return { id: 'mail_1' };
+    },
+  };
+  d.appended = appended;
+  return d;
+}
+
+test('send_message: a mailCapable recipient gets queued into the mailbox, not paste-pushed', async () => {
+  const sent = [];
+  const d = mailDeps(sent);
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.equal(sent.length, 0); // no pane paste at send time
+  assert.deepEqual(out.structuredContent, { to: 'MAILBOX1', label: null, queued: true, id: 'mail_1' });
+  assert.equal(d.appended.length, 1);
+  assert.equal(d.appended[0].to, 'MAILBOX1');
+  assert.equal(d.appended[0].msg.from, 'CARD1');
+  assert.equal(d.appended[0].msg.body, 'hi');
+});
+
+test('send_message: `queued`, not `delivered`, and no `woke` field, for a mailCapable recipient', async () => {
+  const sent = [];
+  const d = mailDeps(sent);
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.equal('delivered' in out.structuredContent, false);
+  assert.equal('woke' in out.structuredContent, false);
+  assert.equal(out.structuredContent.queued, true);
+});
+
+test('send_message: a mailCapable but ARCHIVED recipient is refused, never boxed', async () => {
+  const sent = [];
+  const d = mailDeps(sent, { archivedAt: Date.now() });
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /archived/);
+  assert.equal(d.appended.length, 0); // never written to the mailbox
+});
+
+test('send_message: a box-cap breach on append surfaces the store\'s error to the sender', async () => {
+  const sent = [];
+  const d = mailDeps(sent, { appendError: 'Recipient MAILBOX1 has too much unread mail' });
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /too much unread mail/);
+});
+
+test('send_message: mailbox path still honours the rate-limit gate before appending', async () => {
+  const sent = [];
+  const d = mailDeps(sent);
+  d.messageThrottle = { check: () => ({ ok: false, error: 'Rate limited: slow down.' }) };
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Rate limited/);
+  assert.equal(d.appended.length, 0);
+});
+
+test('send_message: mailbox path commits the throttle only after a successful append', async () => {
+  const sent = [];
+  const d = mailDeps(sent);
+  const calls = [];
+  d.messageThrottle = { check: (from, to) => { calls.push([from, to]); return { ok: true, commit: () => calls.push('commit') }; } };
+  await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'hi' });
+  assert.deepEqual(calls, [['CARD1', 'MAILBOX1'], 'commit']);
+});
+
+test('send_message: a recipient with no mapping entry at all falls back to the legacy push (not an "unknown recipient" refusal)', async () => {
+  // Mirrors buildGraph's "forkOwner" case: a live tmux with no mapping entry.
+  // entryFor(to) === null ⇒ not mailCapable ⇒ today's push, unchanged.
+  const sent = [];
+  const out = await sendMessageTool.handler({ deps: deps(sent), caller: 'CARD1' }, { to: 'CARD2', text: 'ping' });
+  assert.equal(out.structuredContent.delivered, true);
+  assert.equal(sent.length, 1);
+});

@@ -74,6 +74,12 @@ export const CLOCK_ICON =
 // Bell (Lucide) — the manual "mark unread" bookmark toggle in the card menu.
 export const BELL_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.41 5.956-2.738 7.326"/></svg>';
+// Envelope (Lucide "mail") — the mail-badge pill on a card's name row (unread
+// mail waiting in the recipient's mailbox). Distinct from BELL_ICON (the
+// unrelated per-browser "mark unread" bookmark — see CLAUDE.md on the naming
+// collision to avoid).
+export const MAIL_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
 export const DOLLAR_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>';
 // Sun — "wake now" affordance on a snoozed row. (Distinct from SUN_ICON in theme.js,

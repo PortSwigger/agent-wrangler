@@ -135,6 +135,12 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     forkedFrom: parentId,
     liveSessionId: undefined,
     runtime: parentEntry?.runtime,
+    // Same argv-is-current-code reasoning as resumeEntry — a fork's launch also
+    // runs buildInnerCommand/allowedToolsArg fresh, so it always carries
+    // read_mail/list_mail. NOT inherited from parentEntry: a fork gets a fresh
+    // card id and its own empty mailbox (unread mail is dropped on fork), so its
+    // capability is its own, not the parent's history.
+    mailCapable: true,
   };
   // A name inherited from the parent is marked so the board shows "[FORK] <name>"
   // until the user renames it; an explicit title (or a later rename) is user-chosen
@@ -224,6 +230,13 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     links: prev?.links,
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
+    // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
+    // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
+    // regardless of what it was launched with originally — stamp it true
+    // unconditionally (never carried over from `prev`; this is deliberately about
+    // the argv this resume just built, not the entry's history). send_message reads
+    // this to decide mailbox vs. direct-push fallback for the recipient.
+    mailCapable: true,
   };
 }
 
@@ -1198,7 +1211,7 @@ export class SessionManager {
     // workflowOpt is authoritative for the initial marker; fall back to the adopted
     // one so a pre-launch phase report isn't clobbered for a non-workflow dispatch.
     const existing = this.map.get(sessionId);
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: parentSession || existing?.parentSession };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: parentSession || existing?.parentSession, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();

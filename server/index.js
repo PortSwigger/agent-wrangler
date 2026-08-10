@@ -11,6 +11,8 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
+import { MailboxStore } from './mailbox-store.js';
+import { createMailSettleSweeper } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
@@ -56,6 +58,7 @@ const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
 const memoryStore = new MemoryStore();
 const scheduleStore = new ScheduleStore();
+const mailStore = new MailboxStore();
 const terminalRegistry = new TerminalRegistry();
 
 // A one-off missed during downtime fires once when overdue, UNLESS it's older than
@@ -289,6 +292,16 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
   onWakeError: onSnoozeWakeError,
 }, { onWoken: () => rebuild() });
 
+// Mail settle sweeper: closes due settle windows (mailbox-store.js) and delivers
+// the terse notification (mail-runner.js). A delivery failure has no sender to
+// report to (the send already returned queued:true) and Phase 1 tracks no
+// deliveryFailed state — the mail pill's unreadInfo age fallback is what still
+// surfaces it to a human, so this just logs rather than broadcasting a toast.
+const fireMailSettlesTick = createMailSettleSweeper({
+  mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore,
+  onError: (to, err) => console.error(`[mail] delivery failed for ${to}:`, err?.message || err),
+}, { onWoken: () => rebuild() });
+
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
 // runs INSIDE the one session whose Bash tool ran `gh pr create` and posts the
 // new PR url with that session's card id in X-AW-Session, so the PR attaches to
@@ -374,6 +387,8 @@ const mcpRequestHandler = createMcpRequestHandler({
   sessionFromGraph,
   // Shared in-memory loop backstop for send_message; one instance for the process.
   messageThrottle: createMessageThrottle(),
+  // The durable mailbox send_message/read_mail/list_mail all share.
+  mailStore,
   config: { jiraBaseUrl },
   onPrLinksChanged: (scope, ownerId) => { pollPrStatuses({ scope, ownerId }).catch(() => {}); },
   // create_terminal deps
@@ -435,7 +450,7 @@ async function rebuild() {
     task: taskStore.taskFor(sid),
     label: lastGraph?.sessions?.find((s) => s.sessionId === sid)?.label,
   }));
-  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts));
+  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   // Annotate each task with whether it has memory so tiles can render the dot
@@ -480,6 +495,7 @@ controlWss.on('connection', (ws) => {
     taskStore,
     memoryStore,
     scheduleStore,
+    mailStore,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
@@ -588,6 +604,18 @@ async function main() {
     fireDueSnoozeWakesTick().catch(() => {});
   }, 30000);
   schedulePoll.unref();
+
+  // Mail settle sweep: a fixed 10s window needs a finer cadence than the 30s
+  // schedule poll above to close near its deadline (spec: "~2s"). Fire one sweep
+  // immediately at boot, before the interval starts, so a settle deadline that
+  // passed while the server was down fires on this first sweep rather than
+  // waiting up to 2s more — and, more importantly, so it's not lost entirely if
+  // the process is killed again before the interval's first tick.
+  fireMailSettlesTick().catch(() => {});
+  const mailPoll = setInterval(() => {
+    fireMailSettlesTick().catch(() => {});
+  }, 2000);
+  mailPoll.unref();
 
   // Keep the Usage dashboard's per-file scan cache populated even if nobody ever opens
   // the panel: Claude Code deletes its transcripts past ~30 days and a costed day only

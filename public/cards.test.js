@@ -4,7 +4,7 @@ import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
-  tileHtml, ghostHtml,
+  tileHtml, ghostHtml, mailBadgeHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml,
 } from './cards.js';
@@ -137,6 +137,52 @@ test('sessionCardHtml: the sub-agent zone nests INSIDE the card, not after it �
   const cardClose = html.lastIndexOf('</div>');
   const rowIdx = html.indexOf('data-subagent-id="r"');
   assert.ok(rowIdx > cardOpen && rowIdx < cardClose, 'the row must sit between the card\'s own open and close tags');
+});
+
+test('mailBadgeHtml: no unread mail → empty string (no pill at all)', () => {
+  assert.equal(mailBadgeHtml(sess({ mail: null })), '');
+  assert.equal(mailBadgeHtml(sess({ mail: { unread: 0, notifiedAt: null, amber: false } })), '');
+  assert.equal(mailBadgeHtml(sess()), ''); // no `mail` field at all
+});
+
+test('mailBadgeHtml: normal unread mail renders the count, no "stale" class', () => {
+  const html = mailBadgeHtml(sess({ mail: { unread: 3, notifiedAt: Date.now(), amber: false } }));
+  assert.match(html, /class="mail-badge"/);
+  assert.doesNotMatch(html, /stale/);
+  assert.match(html, />3<\/span>$/);
+});
+
+test('mailBadgeHtml: stale (amber) unread mail adds the stale class', () => {
+  const html = mailBadgeHtml(sess({ mail: { unread: 1, notifiedAt: Date.now(), amber: true } }));
+  assert.match(html, /class="mail-badge stale"/);
+});
+
+test('mailBadgeHtml: senders ride the tooltip, not the visible count', () => {
+  const html = mailBadgeHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false, senders: ['sess_abc', 'sess_def'] } }));
+  assert.match(html, /title="[^"]*from sess_abc, sess_def[^"]*"/);
+  assert.match(html, />2<\/span>$/); // visible text is just the count, session ids never shown as the pill's label
+});
+
+test('sessionCardHtml: the mail badge sits on the name row, before the agent icon', () => {
+  const html = sessionCardHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx());
+  assert.match(html, /<div class="card-name-row">[\s\S]*mail-badge[\s\S]*agent-ico[\s\S]*<\/div>/);
+});
+
+test('sessionCardHtml: no mail badge when there is no unread mail', () => {
+  const html = sessionCardHtml(sess({ mail: { unread: 0, notifiedAt: null, amber: false } }), ctx());
+  assert.doesNotMatch(html, /mail-badge/);
+});
+
+test('workerRowHtml: a bare amber worker-mail-dot renders only when mail is stale — never for normal unread, never for none', () => {
+  assert.doesNotMatch(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx()), /worker-mail-dot/);
+  assert.doesNotMatch(workerRowHtml(sess({ mail: null }), ctx()), /worker-mail-dot/);
+  assert.match(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: true } }), ctx()), /worker-mail-dot/);
+});
+
+test('snoozedRowHtml: never renders mail, even when the session has stale unread mail (an asleep session not reading mail is not news)', () => {
+  const html = snoozedRowHtml({ sessionId: 's1', label: 'z', snooze: { until: Date.now() + 1000 }, mail: { unread: 5, notifiedAt: 1, amber: true } });
+  assert.doesNotMatch(html, /mail-badge/);
+  assert.doesNotMatch(html, /worker-mail-dot/);
 });
 
 test('workerStatusWord: dormant → resume; just-finished → done; else the status word', () => {

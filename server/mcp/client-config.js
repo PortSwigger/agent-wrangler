@@ -50,7 +50,7 @@ export function allowedToolName(tool) {
 // prompt. Lives here (the leaf the agents import) rather than in the tools
 // registry, since that registry pulls in session-manager and would cycle back
 // through the agents layer. Keep in sync when a new always-on tool is added.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session'];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'read_mail', 'list_mail'];
 
 export function allowedToolsArg() {
   return ALLOWED_TOOLS.map(allowedToolName).join(',');

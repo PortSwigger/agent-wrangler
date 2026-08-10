@@ -8,7 +8,7 @@
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
-  PLUS_ICON, MINUS_ICON,
+  PLUS_ICON, MINUS_ICON, MAIL_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
@@ -180,6 +180,30 @@ export function devcontainerChip(s) {
   return '<span class="card-tag runtime-dc" title="Running inside the repo devcontainer">⬢ dc</span>';
 }
 
+// The mail-badge pill: `.card-name-row`, immediately left of the agent icon —
+// metadata about the card's identity ("this session has mail"), not what it's
+// doing (that's `.card-meta`). Call it `mail`/`mail-badge`, NEVER `unread` —
+// `public/app.js` already owns an unrelated per-browser `unread` bookmark
+// feature that hijacks `barWord()`/`cardState()`; mail must never touch either
+// (see CLAUDE.md). Rendered only when there is unread mail (undeliverable/read
+// mail never shows a pill — s.mail.unread counts unread only, see
+// mailbox-store.js unreadInfo). Stale (>=30min unnotified) gets a tinted chip
+// background rather than a hue change alone — plain coloured text was flagged
+// as too weak in light theme (`--snooze-fg` is a dark brown at 10px) — with
+// identical padding in both states so `.card-name`'s ellipsis doesn't reflow
+// the moment mail goes stale.
+export function mailBadgeHtml(s) {
+  const mail = s.mail;
+  if (!mail || !mail.unread) return '';
+  const stale = mail.amber;
+  const age = mail.notifiedAt ? timeAgo(mail.notifiedAt) : null;
+  const senders = mail.senders?.length ? ` from ${mail.senders.join(', ')}` : '';
+  const title = `${mail.unread} unread message${mail.unread > 1 ? 's' : ''}${senders}`
+    + (age ? ` — notified ${age}` : '')
+    + (stale ? ' — unread a while, may need a nudge' : '');
+  return `<span class="mail-badge${stale ? ' stale' : ''}" title="${esc(title)}">${MAIL_ICON}${mail.unread}</span>`;
+}
+
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   const estimated = s.agent === 'codex';
@@ -248,6 +272,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
     <span class="card-bar"${bwTitle}><span>${esc(bwShown)}</span></span>
     <div class="card-name-row">
       <span class="card-name">${esc(s.label)}</span>
+      ${mailBadgeHtml(s)}
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
@@ -286,9 +311,15 @@ export function workerRowHtml(s, ctx) {
   const costTitle = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
     ? ` title="$${s.advisorUsd.toFixed(2)} on advisor consults"`
     : '';
+  // A worker/child row has no name row or meta row to hold the full mail-badge
+  // pill, so it gets a bare dot instead — amber (stale) only, no count. Normal
+  // (fresh) unread mail is not worth a row-level signal here; only the case that
+  // wants a human's attention is.
+  const mailDot = s.mail?.amber ? '<span class="worker-mail-dot" title="unread mail — a while since notifying"></span>' : '';
   return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
+    ${mailDot}
     <span class="worker-cost"${costTitle}>${esc(cost)}</span>
     <span class="worker-ring" aria-hidden="true"></span>
   </div>`;

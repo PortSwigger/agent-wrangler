@@ -77,6 +77,7 @@ test('forkEntry: inherits parent intent/model, records provenance, no custom nam
     agent: 'claude',
     intent: 'fix the bug', name: undefined, model: 'sonnet',
     createdAt: 123, forkedFrom: 'parent-O', liveSessionId: undefined, runtime: undefined,
+    mailCapable: true,
   });
 });
 

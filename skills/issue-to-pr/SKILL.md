@@ -127,8 +127,11 @@ Your tools (all granted, no prompt):
   you brief it (what to do, what you've done, key files/paths). Pass **`nest:
   true`** so the board groups the worker under your run instead of showing it as
   an unrelated top-level session (nesting is opt-in, off by default).
-- `send_message` — deliver one line into another **live** session's terminal (it
-  arrives as a follow-up prompt). Workers report back with it; you nudge with it.
+- `send_message` — queue a message into another session's mailbox; it gets a
+  terse "you've got mail" notification, then calls `read_mail()` to see what you
+  actually sent. Workers report back with it; you nudge with it. You'll see the
+  same terse notification for a worker's report, not its one-liner directly —
+  call `read_mail()` yourself to read it.
 - `list_sessions` — every session with its `status` and `managed` (true = live
   terminal, reachable by `send_message`); your own row is flagged `isCaller`.
 - `archive_session` — stop & archive a worker once its work is merged (kept in
@@ -161,10 +164,12 @@ Spell out, every time:
 
 ### Waiting, integrating, closing
 
-After spawning, **end your turn** — you go idle. Each worker's `send_message`
-wakes you (it pastes + Enter into your terminal); track who's still outstanding in
-your own reasoning (your context persists across the wakeups). When the last one
-reports:
+After spawning, **end your turn**. Your session stays live at its prompt the
+whole time ("idle" is not "asleep" — nothing needs waking); a worker's
+`send_message` arrives as a terse notification a few seconds later, and you
+call `read_mail()` to see its actual report. Track who's still outstanding in
+your own reasoning (your context persists across the notifications). When the
+last one reports:
 
 1. integrate — merge the worker branches (parallel mode); same-worktree offload is
    already in place;

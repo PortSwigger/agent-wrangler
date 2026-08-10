@@ -43,6 +43,11 @@
   /* Snooze alarm hue — amber, its own role in the alarm hierarchy alongside
      --red (needs-you) and --just-finished (cyan). */
   --snooze:#d29922; --snooze-fg:#e3b341;
+  /* Mail-badge stale hue — its own role (same amber values as --snooze today)
+     so the mail pill can move independently of the snooze alarm later, same
+     pattern as --just-finished/--wf/--rt each getting their own name even
+     where they currently share a value with something else. */
+  --mail:#d29922; --mail-fg:#e3b341;
   /* Container-runtime chip hue — teal/cyan, its own role distinct from
      --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
   --rt:#39c5cf; --rt-fg:#56d4dd;
@@ -88,6 +93,7 @@ body.light {
   --danger-bg:#fff0ee; --danger-border:#ffc9c2; --danger-strong:#cf222e;
   --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
   --snooze:#9a6700; --snooze-fg:#7d4e00;
+  --mail:#9a6700; --mail-fg:#7d4e00;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
   --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
@@ -1346,6 +1352,12 @@ body.system-banner-open { padding-top: 30px; }
 .worker-row.job .worker-dot { background: var(--green); }
 .worker-row.needs-you .worker-dot { background: var(--red); }
 .worker-row.just-finished .worker-dot { background: var(--just-finished); }
+/* Spine-row mail signal: a worker/child row has no name row or meta row for
+   the full mail-badge pill, so stale unread mail (>=30min unnotified) gets a
+   bare dot instead — sized against .worker-dot's 8px so it reads as secondary
+   to status, not a second status dot. Amber-only (fresh unread mail is not
+   worth a row-level signal); a snoozed row gets nothing (see snoozedRowHtml). */
+.worker-mail-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mail); flex: none; }
 .worker-row.dormant .worker-dot { background: transparent; border: 1px solid var(--border); }
 .worker-name {
   flex: 1 1 auto; min-width: 0;
@@ -1658,6 +1670,19 @@ body.system-banner-open { padding-top: 30px; }
 .agent-ico svg { width: 14px; height: 14px; }
 /* Selected card lifts the agent glyph out of the subtle grey to full strength. */
 .session-card.selected .agent-ico { color: var(--fg); }
+/* Mail-badge pill: `.card-name-row`, paired with the agent icon (both answer
+   "what is this session", not "what is it doing" — see mailBadgeHtml in
+   cards.js for the full placement rationale). Normal state is plain text, no
+   chip background — metadata on the name line, not a distinct chip. Stale
+   (unread >=30min) gets a tinted fill, same convention as .snooze-chip,
+   because plain colour alone was flagged as too weak in light theme
+   (--mail-fg is a dark brown at this size). Padding stays identical between
+   states so `.card-name`'s ellipsis doesn't reflow the moment mail goes stale. */
+.mail-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 10px; color: var(--fg-subtle); padding: 1px 4px; border-radius: 999px; }
+.mail-badge svg { width: 12px; height: 12px; }
+.mail-badge.stale { color: var(--mail-fg); background: color-mix(in srgb, var(--mail) 16%, transparent); }
+.session-card.selected .mail-badge { color: var(--fg); }
+.session-card.selected .mail-badge.stale { color: var(--mail-fg); }
 .card-loc { font-size: 11px; color: var(--fg-muted); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
 .card-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Folder + branch share one line, each truncating its own text. When the card
