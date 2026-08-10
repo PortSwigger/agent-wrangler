@@ -393,32 +393,50 @@ status across rebuilds. So:
 anyone that mail is going unread, so it carries more weight here than it did in the original
 design and must not be phased out with the nudge cycle.
 
-#### Chosen design: `mail-mark`, two-tier
+#### Chosen design: `mail-badge`, on the name row
 
-![The mail pill in its stale state on a workflow card, with a stale worker dot on a spine row](2026-08-07-you-got-mail-pill.png)
-
-Of three candidates (`mail-chip`, a plain meta chip; `mail-mark`, two-tier; `mail-badge`, on
-the name row), **`mail-mark` is the decision**. It is the only one that answers both
-requirements structurally rather than by restraint:
+**The envelope sits on `.card-name-row`, immediately left of the agent (Claude/Codex) icon.**
+Of three candidates — `mail-chip` (a plain meta chip), `mail-mark` (two-tier, promoted on
+stale), and `mail-badge` (name row) — `mail-badge` is the decision.
 
 | state | treatment |
 |---|---|
-| **normal** | **not a chip at all** — bare envelope glyph + count, no background, `--fg-subtle`, matching `.subagent-updated`'s ambient-metadata register. `order: 1`, so it sits after the age and cost chips where routine information belongs. |
-| **stale** | **promoted** to a real `.card-tag` chip with the amber wash (`color-mix(in srgb, var(--mail) 18%, var(--surface-2))`, `--mail-fg` text) **and** `order: -1`, pinning it to the front of the meta row. |
+| **normal** | envelope glyph + count, `--fg-subtle`, no chip background — metadata on the name line, not part of the name |
+| **stale** | same slot, `--mail-fg` coloured text |
 
-Why the promotion matters: `.card-meta` is `flex-wrap`, and a busy card — devcontainer,
-worktree, workflow, sub-agents, PR link — wraps it. A plain chip would leave the amber state's
-discoverability to source-order luck on exactly the cards most likely to be ignoring their
-mail. `order: -1` is free (the row is already flex) and makes it structural.
+`.card-name-row` is already `display: flex; gap: 8px` with `.card-name` at `flex: 1 1 auto`
+and ellipsis, so a `flex: 0 0 auto` sibling simply shortens the name. Pair it with the agent
+icon: `.session-card.selected` must lift it out of `--fg-subtle` the same way it lifts
+`.agent-ico`.
 
-The screenshot above shows the stale state on a workflow card (`✉6` first in the meta row,
-ahead of the age, cost, worktree and PR chips) and the spine-row treatment — the bare amber
-dot on *implement mailbox store*, sized 6px against `.worker-dot`'s 8px so it reads as
-secondary to status rather than as a second status dot.
+**Why this over `mail-mark`:** a fixed slot on the name row is **immune to meta-row
+crowding**, which is the problem `mail-mark` solved with `order: -1`. The eye lands on the
+name row first, so the stale state is found fastest here. And pairing mail with the agent
+icon reads correctly — both answer "what is this session", not "what is it doing".
 
-Costs accepted: visual order no longer matches DOM order in the meta row, one concept has two
-visual forms, and the normal state is quiet enough to miss at a glance. The last is intended —
-routine mail is not meant to compete with `working`/`needs-you`.
+**Costs accepted, and one needs a mitigation:**
+- It breaks a convention: `.agent-ico` is *identity*, and every count on a card currently
+  lives in `.card-meta`.
+- It permanently shortens the session name on any card with mail.
+- **There is no chip precedent on that row, so stale is coloured *text* rather than a tinted
+  fill — the weakest of the three amber treatments.** This matters because stale is the state
+  that must be noticed. It is worst in light theme, where `--snooze-fg` is `#7d4e00`, a dark
+  brown that at 10px reads close to plain muted text. **Mitigation to decide at build time:**
+  either allow a chip background in the stale state only, or switch the glyph to a filled
+  envelope when stale so the shape changes, not just the hue. Verify against
+  `wrangler-verify-ui` in both themes before accepting.
+
+##### Superseded: the `mail-mark` mockup
+
+![Rejected `mail-mark` option: the pill in the meta row, promoted to first position when stale](2026-08-07-you-got-mail-pill.png)
+
+Kept as a record of the alternative. **This screenshot shows `mail-mark`, not the chosen
+design** — the envelope is in the meta row (`✉6`, promoted ahead of age, cost, worktree and PR
+chips), where `mail-badge` puts it on the name row instead.
+
+One element of it *is* still adopted: the **spine-row treatment**, visible as the bare amber
+dot on *implement mailbox store*. Worker rows have no name row *or* meta row, so they keep the
+6px dot, sized against `.worker-dot`'s 8px so it reads as secondary to status.
 
 **Do not make it a button in Phase 1.** The obvious next step is "click the pill to nudge",
 and `.subagent-pill` is the precedent for a `<button class="card-tag">` on a card. But there
@@ -653,9 +671,84 @@ dropped, because a sender was told it was queued.
    threshold is a judgement call.
 3. **Nudge intervals 1 / 5 / 20 min** — the turn-boundary gate matters more than the numbers.
 4. **Archive retention** — retain the whole box until the card is purged, vs. drop on archive.
-   *(Pill design is no longer open — `mail-mark` is chosen, see Board UI.)*
+5. **Stale-state legibility for `mail-badge`** — coloured text alone may be too weak on the
+   name row, especially in light theme. Chip background on stale only, or a filled glyph?
+   *(Pill placement itself is settled: `mail-badge`, next to the agent icon.)*
+6. **Transport swap timing** — after Phase 1, and after the `channels` investigation.
 5. **Delivery-failed handling** — retry-then-escalate (recommended) vs. surfacing the failure
    back to the sender some other way.
+
+## Claude Code cross-session messaging (v2.1.224) — impact on this design
+
+Shipped 2026-08-07 in Claude Code v2.1.224, i.e. **after this spec was drafted and on the
+version we already run**. Two tools, `ListAgents` and `SendMessage`. Verified directly:
+calling `ListAgents` from a wrangler-launched session lists our own `cc_*` sessions with
+their tmux panes and live status. Docs: <https://code.claude.com/docs/en/cross-session-messaging>
+
+**Verdict: the mailbox concept survives intact; only the delivery leg is affected, and only
+for one of three cases.** Do not adopt it as a replacement for `send_message`.
+
+### What it gives us
+
+- **A real transport for live Claude sessions.** Per-session Unix domain socket, never
+  through Anthropic servers for same-machine delivery. This **eliminates the swallowed-paste
+  loss mode** — the picker-ate-the-message failure that motivated Problem 2.
+- **Sender-side status**, asynchronously: held / denied / expired / delivered. Better than
+  today's fire-and-forget `delivered: true`.
+- **Independent confirmation of exp6/exp7.** The docs state the receiving Claude reads a
+  message *"between tool calls during an active turn, so a running tool is never
+  interrupted"*, and starts a new turn when idle. That is exactly what we measured. Our
+  empirical finding is now vendor-documented behaviour.
+
+### Why it cannot replace `send_message`
+
+| gap | consequence |
+|---|---|
+| **Claude-only** | Codex sessions can neither send nor receive. The wrangler supports both, so a fallback path is mandatory, not optional. |
+| **Cannot reach a dormant session** | A session appears "only when it binds an inbox socket", and the socket is bound at process start. A dormant session has no process. **Wake-on-send — which is load-bearing and deliberate — is not provided.** Our resume path stays. |
+| **Plain text only** | No structured payload, so mailbox metadata (id, size, read state) cannot ride the channel. Fine for a notification, useless for the mailbox itself. |
+| **Queue capped at 50, loop-throttled** | Its own semantics, overlapping ours; not a durable store. |
+| **Addressed by name, not card id** | The wrangler keys everything on card id. Needs `--name` at launch or a mapping. |
+| **Platform/provider gated** | macOS + Linux only; unavailable on Bedrock/Vertex/Foundry; disabled outright if any of `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` / `DISABLE_TELEMETRY` / `DO_NOT_TRACK` / `DISABLE_GROWTHBOOK` turns off flag evaluation. |
+
+### The inbound-approval trap — and its fix
+
+Wrangler sessions launch with **bypassed permissions**. The documented default for a
+receiving session that bypasses permission prompts is to **hold every message for the user's
+approval**, delivering only when the *sender* also identifies as bypassing. An external
+process (our Node server) asserts no permission class at all, so its messages would be held —
+with a dialog that expires after `dialogExpiry` (default 5 min) and is then **dropped**.
+
+Adopting the socket therefore requires setting **`crossSessionInbound: "accept"` in the
+launched session's own `--settings`** — the same remedy the docs prescribe for unattended
+`claude -p` workers. Not a blocker, but it is a mandatory launch-config change, and it must
+be per-session (a user-settings `accept` would apply to every session on the machine).
+
+### What this actually changes in the plan
+
+**Nothing in Phase 1.** Keep the tmux paste. It works, it is agent-agnostic, and it has no
+platform gates.
+
+**One architectural requirement, adopted now:** make the mailbox's **delivery leg a seam**.
+Notification delivery is selected per recipient and swappable without touching the mailbox:
+
+| recipient | transport |
+|---|---|
+| live Claude | tmux paste today → `SendMessage` socket later |
+| live Codex | tmux paste (no alternative exists) |
+| dormant, either agent | resume, then deliver |
+
+Note this makes delivery *three*-way where today it is two-way (paste or resume). That extra
+branch is a real cost, and is the reason the swap is deferred rather than taken now: it should
+be paid once, with the loss-mode fix as the justification, not bundled into Phase 1.
+
+### Follow-up worth its own investigation
+
+The docs point to a separate feature, **[channels](https://code.claude.com/docs/en/channels)**,
+described as the way *"to push external events, such as CI results or chat messages, into a
+session"*. That is a closer description of the wrangler's actual role than session-to-session
+messaging is. It was not investigated here and may be a better fit than `SendMessage` for
+server→agent delivery. **Investigate before implementing the transport swap.**
 
 ## Review record
 
