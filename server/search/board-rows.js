@@ -36,11 +36,23 @@ function labelOf(e) {
 // The board-join fields, split out so the handler can Object.assign them onto a
 // scan group without clobbering the group's own doc-derived title/cwd/branch.
 // `live` maps card id -> lastActivity for sessions currently in the graph.
-function boardFieldsOf(cardId, e, live, docLastMs) {
+// `taskFor(cardId)` resolves a session's CURRENT task assignment ({id, name} or
+// null) — needed because session-manager only stamps `entry.task` at archive
+// time (a frozen snapshot); an on-board session has no snapshot yet, so
+// without this every live session would be task-less and never group.
+function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
+  // Archived: trust the frozen snapshot (the name as it was AT archive time,
+  // per its own comment below) over the live assignment, which may have since
+  // been reassigned or cleared. Anything else (on-board, or a mapping with no
+  // snapshot): fall back to whatever it's assigned to right now.
+  const task = e.task || taskFor(cardId);
   return {
     cardId,
     boardLabel: labelOf(e),
-    task: (e.task && e.task.name) || '',
+    task: (task && task.name) || '',
+    // The task's id, not just its name — lets the client group same-task rows
+    // even if two tasks happen to share a display name.
+    taskId: (task && task.id) || null,
     onBoard: live.has(cardId),
     archived: Boolean(e.archivedAt),
     model: e.model || null,
@@ -49,6 +61,20 @@ function boardFieldsOf(cardId, e, live, docLastMs) {
     worktreeBranch: e.worktree?.branch || '',
     worktreePath: e.worktree?.path || '',
     workflowIssue: e.workflow?.issue || '',
+    // Generic parent-session link (see CLAUDE.md's session-hierarchy note) — lets
+    // the client fold an archived child under its archived parent, mirroring the
+    // board's own nesting. Just the id: which card it points at is all the client
+    // folding logic needs.
+    parentSession: e.parentSession || null,
+    // Whether THIS session was itself an autopilot orchestrator — a boolean, not
+    // the `workflow` object (whose `phase.label` is agent-written text that would
+    // need the same untrusted-text handling as everything else search.js renders,
+    // for no rendering benefit over a boolean).
+    isWorkflow: Boolean(e.workflow),
+    // Set only when this session was swept up by a task-archive cascade (see
+    // session-manager's archive()) — the link the client uses to nest it under
+    // its task's archive marker rather than showing it as a loose row.
+    viaTaskArchive: e.viaTaskArchive || null,
     // Best recency signal available: the transcript's own tail, the entry's
     // lifecycle stamps, and the graph's live activity — whichever is newest.
     lastActivity: Math.max(docLastMs || 0, e.archivedAt || 0, e.createdAt || 0, live.get(cardId) || 0),
@@ -60,7 +86,7 @@ function boardFieldsOf(cardId, e, live, docLastMs) {
 // the current graph. Dead (tombstoned) docs are skipped exactly as the scan's
 // docMask skips them — their bytes describe a rewritten file — which also routes
 // their board entry through the mappings-only union below.
-export function buildCandidates({ docs = [], entries = new Map(), live = new Map() } = {}) {
+export function buildCandidates({ docs = [], entries = new Map(), live = new Map(), taskFor = () => null } = {}) {
   const byConversation = new Map();
   for (const [cardId, e] of entries) byConversation.set(e.liveSessionId || cardId, [cardId, e]);
 
@@ -82,7 +108,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
     const hit = byConversation.get(d.id);
     if (hit) {
       joined.add(d.id);
-      Object.assign(row, boardFieldsOf(hit[0], hit[1], live, lastMs));
+      Object.assign(row, boardFieldsOf(hit[0], hit[1], live, lastMs, taskFor));
     }
     rows.push(row);
   });
@@ -101,7 +127,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
       branch: '',
       lastTs: 0,
       noTranscript: true,
-      ...boardFieldsOf(cardId, e, live, 0),
+      ...boardFieldsOf(cardId, e, live, 0, taskFor),
     });
   }
   return rows;
@@ -110,8 +136,9 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
 // The join subset a scan group gains from its candidate row — everything that
 // isn't already the group's own doc-derived shape (docIdx/title/cwd/branch/hits
 // stay the scan's). A doc-only candidate contributes just lastActivity.
-const BOARD_KEYS = ['cardId', 'boardLabel', 'task', 'onBoard', 'archived', 'model', 'createdAt',
-  'archivedAt', 'worktreeBranch', 'worktreePath', 'workflowIssue', 'lastActivity'];
+const BOARD_KEYS = ['cardId', 'boardLabel', 'task', 'taskId', 'onBoard', 'archived', 'model', 'createdAt',
+  'archivedAt', 'worktreeBranch', 'worktreePath', 'workflowIssue', 'parentSession', 'isWorkflow',
+  'viaTaskArchive', 'lastActivity'];
 export function boardFields(row) {
   const out = {};
   for (const k of BOARD_KEYS) if (row[k] !== undefined) out[k] = row[k];

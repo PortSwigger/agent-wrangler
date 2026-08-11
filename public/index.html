@@ -24,11 +24,8 @@
         <button data-view="grid" class="active" title="Tasks" aria-label="Tasks">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
         </button>
-        <!-- Search: a magnifier INSIDE a speech bubble, so it reads as "search
-             what was said" — the single find-anything surface (browse, full-text
-             search, archived sessions). -->
         <button data-view="search" title="Search conversations" aria-label="Search conversations">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><circle cx="11" cy="10" r="3"/><path d="m14.5 13.5 2 2"/></svg>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         </button>
       </div>
       <div class="rail-mid">
@@ -102,15 +99,16 @@
             <button type="button" data-role="assistant">Agent</button>
           </div>
           <div class="search-seg" role="group" aria-label="Agent">
-            <button type="button" class="on" data-agent="all">All agents</button>
+            <button type="button" class="on" data-agent="all">All</button>
             <button type="button" data-agent="claude">Claude</button>
             <button type="button" data-agent="codex">Codex</button>
+            <button type="button" data-agent="task">Task</button>
           </div>
           <div class="search-seg" role="group" aria-label="Where the session is">
             <button type="button" class="on" data-status="all">All</button>
-            <button type="button" data-status="board">On board</button>
+            <button type="button" data-status="board">Board</button>
             <button type="button" data-status="archived">Archived</button>
-            <button type="button" data-status="offboard">Off board</button>
+            <button type="button" data-status="offboard">External</button>
           </div>
           <div class="search-seg" role="group" aria-label="How recent">
             <button type="button" class="on" data-time="any">Any time</button>

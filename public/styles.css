@@ -2025,7 +2025,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-opt-sep { width: 1px; height: 16px; background: var(--border-muted); }
 .search-seg { display: inline-flex; border: 1px solid var(--border-muted); border-radius: 6px; overflow: hidden; }
 .search-seg button {
-  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted);
+  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted); border-radius: 0;
   color: var(--fg-muted); font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
 }
 .search-seg button:last-child { border-right: 0; }
@@ -2100,3 +2100,41 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Divider between real hits and the metadata-only matches appended after them. */
 .search-divider { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 11px; color: var(--fg-subtle); }
 .search-divider .rule { flex: 1; height: 1px; background: var(--border-muted); }
+
+/* Lightweight task grouping (History's tile heading, without the bordered tile):
+   a label line above the ≥2 rows it clusters within one time bucket. */
+.search-task-cluster { display: flex; flex-direction: column; gap: 6px; }
+/* Sticky within its own cluster only: `position: sticky` detaches once the
+   cluster's own bottom scrolls past, and the next cluster's heading — later in
+   DOM order, so painted on top at the same sticky offset — visually replaces
+   it. #search is the scrolling ancestor (`overflow-y: auto`); an opaque
+   background is required since content keeps scrolling underneath while
+   stuck, over the page's own wallpaper. */
+.search-task-heading {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 2px; margin: 0 -2px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg);
+}
+/* The pill itself: tinted like the app's other chips (search-agent--claude,
+   search-task-flag, …) rather than a flat/arbitrary colour, so it reads as
+   part of the same badge language instead of a one-off. */
+.search-task-pill {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent);
+}
+.search-task-heading .n { font-weight: 500; color: var(--fg-subtle); font-size: 11px; }
+
+/* Nested rows (a task-archive marker's cascade-archived sessions, or a parent's
+   same-bucket archived children). Three rounds of connector-line styling (a
+   History-verbatim port, a fixed-offset retune, a single-spine rebuild) each
+   fixed one rendering issue and surfaced another, so the line is gone —
+   indentation alone signals nesting now, same as most flat file-tree UIs. */
+.search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 13px; padding-left: 14px; }
+
+.search-wf { color: var(--wf); border-color: color-mix(in srgb, var(--wf) 35%, transparent); background: color-mix(in srgb, var(--wf) 14%, transparent); }

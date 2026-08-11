@@ -76,7 +76,11 @@ function fire() {
     caseSensitive: state.caseSensitive,
     wholeWord: state.wholeWord,
     roles: state.role === 'all' ? null : [state.role],
-    agents: state.agent === 'all' ? null : [state.agent],
+    // 'task' isn't a transcript agent the server knows — it's a client-side view
+    // that hides conversation rows entirely (see renderBrowse/renderResults), so
+    // the server-side agent filter stays unset (same as 'all') to keep the index
+    // stats/timing line accurate.
+    agents: state.agent === 'all' || state.agent === 'task' ? null : [state.agent],
     status: state.status,
     since: sinceMs(),
     until: null,
@@ -327,7 +331,12 @@ function groupNode(g) {
 // A hitless conversation row: browse mode's unit, and text mode's metadata-only
 // matches. Same .search-group frame as a hit group, but denser (.search-row) —
 // no snippet body, one meta line, and the actions inline on the head.
-function browseRowNode(g) {
+// `parentTitle` (browse only) is a breadcrumb for a session whose archived
+// parent exists but landed in a different time bucket — see search-browse.js —
+// so the relationship isn't silently lost just because it couldn't be nested.
+// `hideTaskChip` drops the redundant task chip for a row already rendered under
+// a task-group heading of the same name (see taskGroupHeadingNode).
+function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
   const card = document.createElement('div');
   card.className = 'search-group search-row';
 
@@ -340,8 +349,9 @@ function browseRowNode(g) {
   head.appendChild(title);
 
   head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
-  if (g.task) head.appendChild(chip(g.task, 'chip search-task'));
+  if (g.task && !hideTaskChip) head.appendChild(chip(g.task, 'chip search-task'));
   if (g.model) head.appendChild(chip(g.model, 'chip search-model'));
+  if (g.isWorkflow) head.appendChild(chip('⚙ workflow', 'chip search-wf'));
   if (g.archived) {
     const dur = fmtDuration(g.archivedAt && g.createdAt ? g.archivedAt - g.createdAt : 0);
     if (dur) head.appendChild(chip(`ran ${dur}`, 'chip search-dur'));
@@ -357,9 +367,20 @@ function browseRowNode(g) {
 
   const sub = document.createElement('div');
   sub.className = 'search-group-sub';
-  sub.textContent = `📁 ${g.cwd || '—'}${g.branch ? ` · ${g.branch}` : ''}`;
+  sub.textContent = `📁 ${g.cwd || '—'}${g.branch ? ` · ${g.branch}` : ''}${parentTitle ? ` · ↳ ${parentTitle}` : ''}`;
   card.appendChild(sub);
   return card;
+}
+
+// The archived children (one level deep — see foldSameBucketChildren) nested
+// under a parent row: an indented stack, each child independently
+// resumable/forkable/deletable like any other row. Nesting reads from the
+// indent alone (see styles.css) — no connector line.
+function childrenNode(children, opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'search-children';
+  for (const c of children) wrap.appendChild(browseRowNode(c, opts));
+  return wrap;
 }
 
 // An archived-task row (the whole task was set aside — taskStore.archiveTask).
@@ -396,13 +417,71 @@ function taskRowNode(t) {
   return card;
 }
 
+// The heading over a task's rows within one time bucket — either a cluster of
+// ≥2 same-task rows (see foldTaskGroups; a singleton stays headingless, its
+// own inline task chip already says which task it's in) or a task-archive
+// marker + its nested cascade-archived sessions, which always gets one since
+// the marker IS the task. Sticky (see styles.css) so it stays visible while
+// its own rows scroll past.
+function taskGroupHeadingNode(name, count) {
+  const div = document.createElement('div');
+  div.className = 'search-task-heading';
+  // The pill carries the tint/shape; the outer div stays a plain full-width
+  // bar with a solid backdrop, since IT'S what needs to stay opaque while
+  // stuck — a translucent pill wouldn't cover the rows scrolling underneath.
+  const pill = document.createElement('span');
+  pill.className = 'search-task-pill';
+  pill.textContent = `▦ ${name}`;
+  div.appendChild(pill);
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = String(count);
+  div.appendChild(n);
+  return div;
+}
+
+// One row (browseRowNode) plus, if it has same-bucket archived children or a
+// cross-bucket parent breadcrumb, whatever search-browse.js attached to it.
+function sessionEntryNode(entry, opts) {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(browseRowNode(entry.group, { parentTitle: entry.parentTitle, ...opts }));
+  if (entry.children?.length) frag.appendChild(childrenNode(entry.children));
+  return frag;
+}
+
+// Render one buildBrowseBuckets row: a task-archive marker (+ its nested
+// cascade-archived sessions), a task-group cluster (heading + rows), or a lone
+// session (+ its own nested children / parent breadcrumb).
+function browseRowUnitNode(r) {
+  if (r.kind === 'task') {
+    const wrap = document.createElement('div');
+    wrap.className = 'search-task-cluster';
+    wrap.appendChild(taskGroupHeadingNode(r.task.name || r.task.id, 1 + r.nested.length));
+    wrap.appendChild(taskRowNode(r.task));
+    if (r.nested.length) wrap.appendChild(childrenNode(r.nested));
+    return wrap;
+  }
+  if (r.kind === 'task-group') {
+    const wrap = document.createElement('div');
+    wrap.className = 'search-task-cluster';
+    wrap.appendChild(taskGroupHeadingNode(r.taskName, r.entries.length));
+    for (const e of r.entries) wrap.appendChild(sessionEntryNode(e, { hideTaskChip: true }));
+    return wrap;
+  }
+  return sessionEntryNode(r);
+}
+
 // Archived tasks that belong in the current result set: only under the All /
 // Archived status facets (a task is by definition not "on board" or a bare
-// transcript), inside the time facet's window, and — when there's a query —
-// only when every whitespace token matches the task name (same AND semantics
-// History's filter used). The empty browse query passes everything through.
+// transcript), only under the All / Task agent facets (a task isn't tied to one
+// agent — it can hold both Claude and Codex sessions — so a Claude/Codex filter
+// must not pull in unrelated task rows), inside the time facet's window, and —
+// when there's a query — only when every whitespace token matches the task name
+// (same AND semantics History's filter used). The empty browse query passes
+// everything through.
 function matchingArchivedTasks() {
   if (state.status !== 'all' && state.status !== 'archived') return [];
+  if (state.agent !== 'all' && state.agent !== 'task') return [];
   let tasks = (latestTasks.tasks || []).filter((t) => t.archivedAt);
   const since = sinceMs();
   if (since) tasks = tasks.filter((t) => (t.archivedAt || 0) >= since);
@@ -429,17 +508,23 @@ function renderBrowse(msg) {
   const host = el('search-results');
   if (!host) return;
   host.textContent = '';
-  const buckets = buildBrowseBuckets(msg.groups, matchingArchivedTasks(), Date.now());
+  // The Task facet is a client-side view over archived tasks only — conversation
+  // rows (and their truncation note, which describes the conversation total) are
+  // suppressed entirely rather than filtered, since the server has no notion of
+  // a "task" row to filter by.
+  const taskOnly = state.agent === 'task';
+  const groups = taskOnly ? [] : msg.groups;
+  const buckets = buildBrowseBuckets(groups, matchingArchivedTasks(), Date.now());
   if (!buckets.length) {
-    renderIdle('No conversations match these filters.');
+    renderIdle(taskOnly ? 'No archived tasks match these filters.' : 'No conversations match these filters.');
     return;
   }
   const frag = document.createDocumentFragment();
   for (const b of buckets) {
     frag.appendChild(bucketHeadNode(b));
-    for (const r of b.rows) frag.appendChild(r.kind === 'task' ? taskRowNode(r.task) : browseRowNode(r.group));
+    for (const r of b.rows) frag.appendChild(browseRowUnitNode(r));
   }
-  if (msg.truncated) {
+  if (msg.truncated && !taskOnly) {
     const more = document.createElement('div');
     more.className = 'search-truncated';
     more.textContent = `Showing the ${fmtNum((msg.groups || []).length)} most recently active of ${fmtNum(msg.total)} — narrow with a filter or query.`;
@@ -464,25 +549,28 @@ function renderResults(msg) {
   const host = el('search-results');
   if (!host) return;
   host.textContent = '';
+  // The Task facet hides every conversation match (text-hit and metadata-only
+  // alike) and shows only archived tasks whose name matches the query.
+  const taskOnly = state.agent === 'task';
   // Scan groups come first (server order), then the appended metadata-only
   // groups (metaMatch, hits:[]) — rendered browse-style under a slim divider.
-  const metaGroups = msg.groups.filter((g) => g.metaMatch && !(g.hits && g.hits.length));
-  const hitGroups = msg.groups.filter((g) => !metaGroups.includes(g));
+  const metaGroups = taskOnly ? [] : msg.groups.filter((g) => g.metaMatch && !(g.hits && g.hits.length));
+  const hitGroups = taskOnly ? [] : msg.groups.filter((g) => !metaGroups.includes(g));
   const tasks = matchingArchivedTasks();
   if (!hitGroups.length && !metaGroups.length && !tasks.length) {
-    renderIdle(`No conversation contains "${msg.query}".`);
+    renderIdle(taskOnly ? `No archived task matches "${msg.query}".` : `No conversation contains "${msg.query}".`);
     return;
   }
   const frag = document.createDocumentFragment();
   for (const g of hitGroups) frag.appendChild(groupNode(g));
-  if (msg.truncated) {
+  if (msg.truncated && !taskOnly) {
     const more = document.createElement('div');
     more.className = 'search-truncated';
     more.textContent = `Showing the ${fmtNum(msg.shownHits)} most recent of ${fmtNum(msg.matches)} matches — narrow the query to see the rest.`;
     frag.appendChild(more);
   }
   if (metaGroups.length || tasks.length) {
-    frag.appendChild(dividerNode('Matched by title, path, or label'));
+    if (!taskOnly) frag.appendChild(dividerNode('Matched by title, path, or label'));
     for (const g of metaGroups) frag.appendChild(browseRowNode(g));
     for (const t of tasks) frag.appendChild(taskRowNode(t));
   }
