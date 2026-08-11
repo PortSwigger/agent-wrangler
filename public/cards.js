@@ -8,7 +8,7 @@
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
-  PLUS_ICON, MINUS_ICON, MAIL_ICON,
+  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
@@ -187,11 +187,10 @@ export function devcontainerChip(s) {
 // feature that hijacks `barWord()`/`cardState()`; mail must never touch either
 // (see CLAUDE.md). Rendered only when there is unread mail (undeliverable/read
 // mail never shows a pill — s.mail.unread counts unread only, see
-// mailbox-store.js unreadInfo). Stale (>=30min unnotified) gets a tinted chip
-// background rather than a hue change alone — plain coloured text was flagged
-// as too weak in light theme (`--snooze-fg` is a dark brown at 10px) — with
-// identical padding in both states so `.card-name`'s ellipsis doesn't reflow
-// the moment mail goes stale.
+// mailbox-store.js unreadInfo). Stale (>=30min unnotified) switches to the
+// FILLED envelope glyph rather than a chip background in either theme — no
+// background was the explicit call (a tinted chip read as visual noise); the
+// shape change alone carries the signal instead.
 export function mailBadgeHtml(s) {
   const mail = s.mail;
   if (!mail || !mail.unread) return '';
@@ -201,7 +200,8 @@ export function mailBadgeHtml(s) {
   const title = `${mail.unread} unread message${mail.unread > 1 ? 's' : ''}${senders}`
     + (age ? ` — notified ${age}` : '')
     + (stale ? ' — unread a while, may need a nudge' : '');
-  return `<span class="mail-badge${stale ? ' stale' : ''}" title="${esc(title)}">${MAIL_ICON}${mail.unread}</span>`;
+  const icon = stale ? MAIL_FILLED_ICON : MAIL_ICON;
+  return `<span class="mail-badge${stale ? ' stale' : ''}" title="${esc(title)}">${icon}${mail.unread}</span>`;
 }
 
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {

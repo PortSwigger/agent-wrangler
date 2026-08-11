@@ -1672,15 +1672,16 @@ body.system-banner-open { padding-top: 30px; }
 .session-card.selected .agent-ico { color: var(--fg); }
 /* Mail-badge pill: `.card-name-row`, paired with the agent icon (both answer
    "what is this session", not "what is it doing" — see mailBadgeHtml in
-   cards.js for the full placement rationale). Normal state is plain text, no
-   chip background — metadata on the name line, not a distinct chip. Stale
-   (unread >=30min) gets a tinted fill, same convention as .snooze-chip,
-   because plain colour alone was flagged as too weak in light theme
-   (--mail-fg is a dark brown at this size). Padding stays identical between
-   states so `.card-name`'s ellipsis doesn't reflow the moment mail goes stale. */
-.mail-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 10px; color: var(--fg-subtle); padding: 1px 4px; border-radius: 999px; }
+   cards.js for the full placement rationale). No chip background in EITHER
+   state, in either theme — metadata on the name line, not a distinct chip.
+   Stale (unread >=30min) is carried by the FILLED envelope glyph
+   (MAIL_FILLED_ICON) plus the --mail-fg colour, not a background — a tinted
+   fill was tried and dropped as visual noise; the shape change alone reads
+   clearly in both themes. Padding stays identical between states so
+   `.card-name`'s ellipsis doesn't reflow the moment mail goes stale. */
+.mail-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 10px; color: var(--fg-subtle); padding: 1px 4px; }
 .mail-badge svg { width: 12px; height: 12px; }
-.mail-badge.stale { color: var(--mail-fg); background: color-mix(in srgb, var(--mail) 16%, transparent); }
+.mail-badge.stale { color: var(--mail-fg); }
 .session-card.selected .mail-badge { color: var(--fg); }
 .session-card.selected .mail-badge.stale { color: var(--mail-fg); }
 .card-loc { font-size: 11px; color: var(--fg-muted); margin-top: 5px; display: flex; align-items: center; gap: 5px; }

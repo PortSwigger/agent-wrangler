@@ -80,6 +80,14 @@ export const BELL_ICON =
 // collision to avoid).
 export const MAIL_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
+// Filled variant — the stale mail-badge's legibility mitigation (see
+// cards.js mailBadgeHtml): no chip background in either theme, so stale
+// distinguishes itself by SHAPE (solid) rather than a fill colour, which
+// alone wasn't reliably visible. The flap line is drawn in --card-bg (not
+// currentColor) so it reads as a cutout on the solid body, in whichever
+// theme is active.
+export const MAIL_FILLED_ICON =
+  '<svg class="icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2" fill="currentColor"/><path d="m3 6.5 9 6 9-6" fill="none" stroke="var(--card-bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 export const DOLLAR_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>';
 // Sun — "wake now" affordance on a snoozed row. (Distinct from SUN_ICON in theme.js,

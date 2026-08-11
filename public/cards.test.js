@@ -152,9 +152,12 @@ test('mailBadgeHtml: normal unread mail renders the count, no "stale" class', ()
   assert.match(html, />3<\/span>$/);
 });
 
-test('mailBadgeHtml: stale (amber) unread mail adds the stale class', () => {
-  const html = mailBadgeHtml(sess({ mail: { unread: 1, notifiedAt: Date.now(), amber: true } }));
-  assert.match(html, /class="mail-badge stale"/);
+test('mailBadgeHtml: stale (amber) unread mail adds the stale class and swaps to the filled envelope glyph — no background either way', () => {
+  const normal = mailBadgeHtml(sess({ mail: { unread: 1, notifiedAt: Date.now(), amber: false } }));
+  const stale = mailBadgeHtml(sess({ mail: { unread: 1, notifiedAt: Date.now(), amber: true } }));
+  assert.match(stale, /class="mail-badge stale"/);
+  assert.doesNotMatch(normal, /fill="currentColor"/); // outline glyph
+  assert.match(stale, /fill="currentColor"/); // filled glyph — the shape carries the stale signal, not a background
 });
 
 test('mailBadgeHtml: senders ride the tooltip, not the visible count', () => {
