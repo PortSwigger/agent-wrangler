@@ -70,8 +70,13 @@ function styleIconSvg(s) {
 // data:image/ upload preview. Allowlist those; reject anything else.
 export function safeIconUrl(url) {
   if (typeof url !== 'string' || url === '') return null;
-  if ((url[0] === '/' && url[1] !== '/') || /^data:image\//i.test(url)) return url;
-  return null;
+  if (/^data:image\//i.test(url)) return url;
+  if (url[0] !== '/') return null;
+  try {
+    return new URL(url, location.origin).origin === location.origin ? url : null;
+  } catch {
+    return null;
+  }
 }
 // Effective row glyph: an uploaded image (as-is) wins over the svg path.
 function styleIconMarkup(s) {
