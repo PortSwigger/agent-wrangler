@@ -5,7 +5,16 @@ import { composeMailNotification } from './mail-notification.js';
 test('singular message, one sender', () => {
   const text = composeMailNotification([{ from: 'sess_abc', at: 1 }]);
   assert.match(text, /1 new message \(from sess_abc\)/);
-  assert.match(text, /read_mail\(\)/);
+});
+
+test('carries the [Agent Wrangler] prefix, like every other server-originated pane paste', () => {
+  const text = composeMailNotification([{ from: 'sess_abc', at: 1 }]);
+  assert.match(text, /^\[Agent Wrangler\] /);
+});
+
+test('does not instruct read_mail() itself — the mail skill carries that, not a duplicated line here', () => {
+  const text = composeMailNotification([{ from: 'sess_abc', at: 1 }]);
+  assert.doesNotMatch(text, /read_mail/);
 });
 
 test('plural messages, multiple distinct senders, deduped', () => {

@@ -9,8 +9,7 @@ description: Use when you get a "you've got mail" notification pasted into your 
 queues into your mailbox, and you get a short notification instead:
 
 ```
-📬 You've got mail — 3 new messages (from sess_abc, sess_def).
-Call read_mail() when you reach a good stopping point.
+[Agent Wrangler] 📬 You've got mail — 3 new messages (from sess_abc, sess_def).
 ```
 
 That's it — no body, no sender name, just session ids. It's server-authored,
