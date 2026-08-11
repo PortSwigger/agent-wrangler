@@ -73,7 +73,12 @@ export function safeIconUrl(url) {
   if (/^data:image\//i.test(url)) return url;
   if (url[0] !== '/') return null;
   try {
-    return new URL(url, location.origin).origin === location.origin ? url : null;
+    const parsed = new URL(url, location.origin);
+    if (parsed.origin !== location.origin) return null;
+    // Return the re-parsed path, not the raw input: origin-only bypasses
+    // (protocol-relative //, backslash variants, ...) never survive into
+    // pathname/search/hash, so this can't carry a foreign host to the sink.
+    return parsed.pathname + parsed.search + parsed.hash;
   } catch {
     return null;
   }
