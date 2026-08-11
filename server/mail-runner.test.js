@@ -39,19 +39,19 @@ test('sweepDueSettles: notifies a live recipient and marks the window notified',
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /1 new message \(from sess_a\)/);
+  assert.match(d.sent[0].text, /1 message, read when convenient\./);
   assert.equal(d.sent[0].name, 'cc_one');
   assert.ok(store.boxes.get('CARD1').lastNotifiedAt != null);
 });
 
-test('sweepDueSettles: fan-in batch — one notification lists every distinct sender, not one per message', async () => {
+test('sweepDueSettles: fan-in batch — one notification for the whole batch, not one per message', async () => {
   const store = new MailboxStore(tmpFile());
   store.append('CARD1', { from: 'sess_a', body: 'one' }, 0);
   store.append('CARD1', { from: 'sess_b', body: 'two' }, 100);
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /2 new messages \(from sess_a, sess_b\)/);
+  assert.match(d.sent[0].text, /2 messages, read when convenient\./);
 });
 
 test('sweepDueSettles: not-yet-due recipient is left alone', async () => {
@@ -98,8 +98,37 @@ test('sweepDueSettles: a delivery failure is isolated (surfaced via onError) and
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.errors.length, 1);
   assert.equal(d.errors[0].to, 'CARD1');
+  assert.match(d.errors[0].err.message, /no live pane/); // the real failure reason, not undefined
   assert.equal(d.sent.length, 1); // CARD2 still got notified
   assert.equal(d.sent[0].name, 'cc_two');
+});
+
+test('sweepDueSettles: a failed delivery re-arms the settle window — the batch is retried, not stranded unread forever', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'hi' }, 0);
+  const dir = realDir();
+  const d = deps({ mailStore: store, entries: { CARD1: { cwd: dir, agent: 'codex' } } });
+  d.sessionManager.resume = async () => ({}); // 'error' mode
+  await sweepDueSettles(d, SETTLE_MS);
+  assert.equal(store.list('CARD1')[0].state, 'unread'); // never dropped, never marked undeliverable
+  assert.equal(d.errors.length, 1);
+
+  // A fresh window is open — the next sweep at its new deadline retries.
+  const box = store.boxes.get('CARD1');
+  assert.equal(box.settleDeadline, SETTLE_MS + SETTLE_MS);
+  d.sessionManager.resume = async () => ({ tmux: 'cc_recovered' }); // now it succeeds
+  await sweepDueSettles(d, SETTLE_MS + SETTLE_MS);
+  assert.equal(store.boxes.get('CARD1').lastNotifiedAt, SETTLE_MS + SETTLE_MS);
+});
+
+test('sweepDueSettles: an unexpected throw also re-arms the settle window (not just an explicit error mode)', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'hi' }, 0);
+  const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
+  d.sendText = async () => { throw new Error('tmux gone'); };
+  await sweepDueSettles(d, SETTLE_MS);
+  assert.equal(store.boxes.get('CARD1').settleDeadline, SETTLE_MS + SETTLE_MS);
+  assert.equal(store.list('CARD1')[0].state, 'unread');
 });
 
 test('createMailSettleSweeper: an overlapping tick is a no-op (in-flight guard)', async () => {

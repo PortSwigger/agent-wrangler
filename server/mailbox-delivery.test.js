@@ -40,6 +40,20 @@ test('live recipient: pastes the notification into the pane, no resume', async (
   assert.equal(d.resumed.length, 0);
 });
 
+test('live recipient archived during its settle window: skip, never paste — lastGraph can still resolve a tmux for an already-killed card', async () => {
+  // Models the race: tmuxFor still resolves a target (lastGraph rebuilds
+  // every ~4s, slower than the 2s mail sweep), but the mapping entry already
+  // has archivedAt set. The spec requires the re-check "immediately before
+  // waking OR notifying" — this is the notifying half.
+  const d = deps({
+    live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } },
+    entries: { CARD1: { archivedAt: Date.now() } },
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'skip' });
+  assert.equal(d.sent.length, 0);
+});
+
 test('dormant Claude recipient (we OWN the resume): resume carries the notification as the intent, memory bound, no fallback paste', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'claude' };
@@ -96,18 +110,20 @@ test('coalescing JOIN: a resume already in flight ⇒ notification delivered via
   assert.deepEqual(d.sent, [{ name: 'cc_joined', text: 'you have mail', socket: '/s/z' }]);
 });
 
-test('coalescing JOIN with no resulting pane: reported as error, not silently dropped', async () => {
+test('coalescing JOIN with no resulting pane: reported as error, not silently dropped, and carries the real reason', async () => {
   const dir = realDir();
   const entry = { cwd: dir };
   const d = deps({ entries: { CARD1: entry }, resuming: true, resumeReturnsPane: false });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
-  assert.deepEqual(mode, { mode: 'error' });
+  assert.equal(mode.mode, 'error');
+  assert.match(mode.error, /no live pane/);
 });
 
-test('resume failure: returns error, never throws', async () => {
+test('resume failure: returns error (with the real failure message, never undefined), never throws', async () => {
   const dir = realDir();
   const entry = { cwd: dir };
   const d = deps({ entries: { CARD1: entry }, resumeThrows: true });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
-  assert.deepEqual(mode, { mode: 'error' });
+  assert.equal(mode.mode, 'error');
+  assert.match(mode.error, /transcript gone/);
 });

@@ -28,12 +28,20 @@ export async function sweepDueSettles(deps, now = Date.now()) {
       if (mode.mode === 'skip') {
         mailStore.markUndeliverable(to);
       } else if (mode.mode === 'error') {
-        onError?.(to);
+        // takeDueSettles already cleared the deadline SYNCHRONOUSLY at
+        // selection, and append() only opens a fresh window on a NEW message
+        // (`if settleDeadline == null`) — without re-arming here, a failed
+        // delivery strands this batch 'unread' forever with the sender
+        // already told queued:true, and no Phase-1 mechanism ever retries it.
+        // Not Phase 2 retry/backoff machinery: just don't drop the ball.
+        mailStore.reopenSettle(to, now);
+        onError?.(to, new Error(mode.error || 'mail delivery failed'));
       } else {
         mailStore.markNotified(to, now);
         if (mode.mode === 'dormant') notified += 1;
       }
     } catch (err) {
+      mailStore.reopenSettle(to, now);
       try { onError?.(to, err); } catch { /* surfacing must never crash the sweep */ }
     }
   }

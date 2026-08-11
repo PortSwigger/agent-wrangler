@@ -24,17 +24,27 @@ import { adapterFor } from './agents/index.js';
 // tmux paste -> the SendMessage socket) touches only that one branch — today
 // both live Claude and live Codex use the same tmux paste, so the branch is a
 // no-op until that swap lands.
-// Returns { mode: 'live' | 'dormant' | 'skip' | 'error' }. 'skip' = archived or
-// gone (never resume it — resurrection-by-mail is the one outcome this must not
-// produce). Only 'dormant' warrants the caller's rebuild(); 'error' means the
-// resume failed and no notification could be delivered (Phase 1 has no
-// deliveryFailed tracking — see mailbox-store's unreadInfo fallback).
+// Returns { mode: 'live' | 'dormant' | 'skip' } or { mode: 'error', error }.
+// 'skip' = archived or gone (never resume it — resurrection-by-mail is the one
+// outcome this must not produce). Only 'dormant' warrants the caller's
+// rebuild(); 'error' means delivery failed and carries the failure message —
+// Phase 1 has no deliveryFailed state to store it in (see mailbox-store's
+// unreadInfo fallback + reopenSettle), but the caller (mail-runner.js) still
+// needs the real message to log, not just "undefined".
 export async function deliverMailNotification(to, text, deps) {
   const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
   const sendText = deps.sendText ?? defaultSendText;
 
   const target = tmuxFor(to);
   if (target) {
+    // The spec requires the archivedAt re-check "immediately before waking OR
+    // NOTIFYING" — this is the notifying half. `lastGraph` (tmuxFor's source)
+    // rebuilds only every ~4s, slower than the mail sweep's 2s cadence, so a
+    // card archived (and killed) inside that window can still resolve a tmux
+    // target here without this check, pasting into a dead pane instead of
+    // marking the mail undeliverable.
+    const entry = sessionManager.entryFor(to);
+    if (entry?.archivedAt) return { mode: 'skip' };
     await liveTransport(target, text, socketFor(to), sendText);
     return { mode: 'live' };
   }
@@ -60,10 +70,10 @@ export async function deliverMailNotification(to, text, deps) {
       const tmux = res?.tmux ?? tmuxFor(to);
       const socket = sessionManager.entryFor(to)?.socket ?? '';
       if (tmux) await liveTransport(tmux, text, socket, sendText);
-      else return { mode: 'error' };
+      else return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };
     }
-  } catch {
-    return { mode: 'error' };
+  } catch (err) {
+    return { mode: 'error', error: err?.message || String(err) };
   }
   return { mode: 'dormant' };
 }

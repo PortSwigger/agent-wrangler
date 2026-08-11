@@ -17,6 +17,11 @@ export const UNREAD_CAP_BYTES = 256 * 1024;
 export const READ_RETENTION_MESSAGES = 100;
 export const READ_RETENTION_BYTES = 1024 * 1024;
 export const TOTAL_STORE_CAP_BYTES = 32 * 1024 * 1024;
+// Send-time hard reject — 4.4x the largest message ever observed (see the
+// spec's size-threshold table). Lives here alongside the other caps even
+// though send-message.js is the only caller: it's the same size-policy
+// surface, and the tool's own description promises this exact number.
+export const SEND_MAX_BYTES = 32 * 1024;
 
 const byteSize = (s) => Buffer.byteLength(s, 'utf8');
 
@@ -76,23 +81,29 @@ export class MailboxStore {
     return total;
   }
 
-  // Evict the oldest READ message in `box` (never unread/undeliverable — a
-  // sender was told its message was queued, so it must never be silently
-  // dropped). Returns true if something was evicted.
-  _evictOldestRead(box) {
-    const i = box.messages.findIndex((m) => m.state === 'read');
+  // Eviction candidates: read AND undeliverable — never unread (a sender was
+  // told its message was queued, so it must never be silently dropped).
+  // Undeliverable mail is retained forever otherwise (a card archived mid-
+  // window that never gets purged accumulates it without bound), so it must
+  // count toward the SAME caps as read mail, not sit outside every cap.
+  _isEvictable(m) { return m.state === 'read' || m.state === 'undeliverable'; }
+
+  // Evict the oldest evictable message in `box`. Returns true if something
+  // was evicted.
+  _evictOldestEvictable(box) {
+    const i = box.messages.findIndex((m) => this._isEvictable(m));
     if (i < 0) return false;
     box.messages.splice(i, 1);
     return true;
   }
 
-  // Evict the oldest read message across ALL boxes (the whole-store cap has no
-  // single owning box). Returns true if something was evicted.
-  _evictOldestReadAnywhere() {
+  // Evict the oldest evictable message across ALL boxes (the whole-store cap
+  // has no single owning box). Returns true if something was evicted.
+  _evictOldestEvictableAnywhere() {
     let oldest = null;
     for (const box of this.boxes.values()) {
       for (const m of box.messages) {
-        if (m.state === 'read' && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
+        if (this._isEvictable(m) && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
       }
     }
     if (!oldest) return false;
@@ -129,22 +140,23 @@ export class MailboxStore {
     return { id: message.id };
   }
 
-  // Retention caps — read mail only, oldest first. Per-box cap, then the
-  // whole-store cap; both operate strictly on 'read' messages so this can never
-  // evict unread/undeliverable mail. Called after ANY mutation that can grow the
-  // read set (append, drain, getOne) — the breach happens the moment a message
-  // is marked read, not only on append.
+  // Retention caps — read/undeliverable mail only, oldest first. Per-box cap,
+  // then the whole-store cap; both operate strictly on evictable messages so
+  // this can never evict unread mail. Called after ANY mutation that can grow
+  // the evictable set (append — a fresh undeliverable mark, drain, getOne) —
+  // the breach happens the moment a message stops being 'unread', not only on
+  // append.
   _enforceRetentionCaps(box) {
-    while (this._readCount(box) > READ_RETENTION_MESSAGES || this._readBytes(box) > READ_RETENTION_BYTES) {
-      if (!this._evictOldestRead(box)) break;
+    while (this._evictableCount(box) > READ_RETENTION_MESSAGES || this._evictableBytes(box) > READ_RETENTION_BYTES) {
+      if (!this._evictOldestEvictable(box)) break;
     }
     while (this._totalBytes() > TOTAL_STORE_CAP_BYTES) {
-      if (!this._evictOldestReadAnywhere()) break;
+      if (!this._evictOldestEvictableAnywhere()) break;
     }
   }
 
-  _readCount(box) { return box.messages.filter((m) => m.state === 'read').length; }
-  _readBytes(box) { return box.messages.filter((m) => m.state === 'read').reduce((n, m) => n + m.size, 0); }
+  _evictableCount(box) { return box.messages.filter((m) => this._isEvictable(m)).length; }
+  _evictableBytes(box) { return box.messages.filter((m) => this._isEvictable(m)).reduce((n, m) => n + m.size, 0); }
 
   // Recipients whose settle window is due (<= now). Clears the deadline
   // SYNCHRONOUSLY at selection (not left for the caller to clear later) — so
@@ -179,7 +191,23 @@ export class MailboxStore {
     for (const m of box.messages) {
       if (m.state === 'unread') { m.state = 'undeliverable'; changed = true; }
     }
-    if (changed) this._save();
+    if (changed) {
+      this._enforceRetentionCaps(box);
+      this._save();
+    }
+  }
+
+  // Re-open a fresh settle window for a recipient whose settle-close delivery
+  // just failed (mode:'error' — see mail-runner.js). takeDueSettles already
+  // cleared the deadline synchronously at selection, and nothing else re-arms
+  // it, so without this a failed delivery strands the batch 'unread' forever
+  // with the sender already told queued:true. No-op if the box is now empty
+  // (e.g. every pending message was concurrently marked undeliverable).
+  reopenSettle(to, now = Date.now()) {
+    const box = this.boxes.get(to);
+    if (!box || !box.messages.some((m) => m.state === 'unread')) return;
+    box.settleDeadline = now + SETTLE_MS;
+    this._save();
   }
 
   // Read-only peek at the currently unread messages, oldest-first, WITHOUT
@@ -234,23 +262,32 @@ export class MailboxStore {
 
   // { unread, notifiedAt, amber, senders } for the board's mail pill: the count
   // and amber boolean drive the pill itself, `senders` (deduped, in message
-  // order) rides along for the tooltip. Age is measured from lastNotifiedAt
-  // when we have it; if a dormant wake's resume failed (no Phase-1
-  // deliveryFailed tracking — see the spec), no notification was ever sent, so
-  // fall back to the oldest unread message's own timestamp — otherwise that
-  // mail would sit unread forever with no amber signal at all.
+  // order, identity-less senders dropped — see composeMailNotification for why)
+  // rides along for the tooltip.
+  //
+  // `lastNotifiedAt` is a SINGLE scalar per box, not per-message — it means
+  // "when we last pasted a notification covering the box's unread set", which
+  // is only trustworthy while no settle window is currently pending. A pending
+  // window (`box.settleDeadline != null`) means fresh mail has arrived (or a
+  // prior delivery failed and reopenSettle re-armed it) that this box's
+  // lastNotifiedAt predates — using it here would report brand-new mail as
+  // stale for however old the PREVIOUS notification happens to be, permanently
+  // so if delivery keeps failing. So: ignore lastNotifiedAt while a window is
+  // pending and fall back to the oldest unread message's own timestamp — the
+  // same fallback already used for "never notified at all" (a dormant wake
+  // whose resume failed — no Phase-1 deliveryFailed tracking, see the spec).
   unreadInfo(to, now = Date.now()) {
     const box = this.boxes.get(to);
     const unread = box ? box.messages.filter((m) => m.state === 'unread') : [];
     if (!unread.length) return { unread: 0, notifiedAt: null, amber: false, senders: [] };
-    const notifiedAt = box.lastNotifiedAt ?? null;
+    const notifiedAt = box.settleDeadline == null ? (box.lastNotifiedAt ?? null) : null;
     const oldestAt = Math.min(...unread.map((m) => m.at));
     const age = now - (notifiedAt ?? oldestAt);
     return {
       unread: unread.length,
       notifiedAt,
       amber: age >= AMBER_MS,
-      senders: [...new Set(unread.map((m) => m.from))],
+      senders: [...new Set(unread.map((m) => m.from).filter(Boolean))],
     };
   }
 

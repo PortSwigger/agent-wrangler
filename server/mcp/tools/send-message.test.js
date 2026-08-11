@@ -140,6 +140,23 @@ test('send_message commits to the throttle only after a successful delivery', as
   assert.deepEqual(calls, [['CARD1', 'CARD2'], 'commit']);
 });
 
+test('send_message: rejects an oversized body at send time, blaming the payload not the recipient — checked before mailCapable/mailbox-append even runs', async () => {
+  const sent = [];
+  const d = mailDeps(sent); // mailCapable recipient — would otherwise hit mailStore.append
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'x'.repeat(33 * 1024) });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /33KB.*over the 32KB limit/);
+  assert.doesNotMatch(out.content[0].text, /backed up/); // never the box-cap wording
+  assert.equal(d.appended.length, 0); // never reached the mailbox
+});
+
+test('send_message: a body right at the 32KB boundary is accepted', async () => {
+  const sent = [];
+  const d = mailDeps(sent);
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'MAILBOX1', text: 'x'.repeat(32 * 1024) });
+  assert.equal(out.isError, undefined);
+});
+
 test('send_message validates required args', async () => {
   const sent = [];
   const blankTo = await sendMessageTool.handler({ deps: deps(sent), caller: 'CARD1' }, { to: '  ', text: 'hi' });

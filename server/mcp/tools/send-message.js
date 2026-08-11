@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { deliverMessage } from '../../message-delivery.js';
+import { SEND_MAX_BYTES } from '../../mailbox-store.js';
 
 // Route a peer message through the durable mailbox ("you've got mail" Phase 1):
 // send_message now APPENDS to the recipient's mailbox and returns immediately —
@@ -45,6 +46,18 @@ export const sendMessageTool = {
     const text = (args.text ?? '').trim();
     if (!to) return errorResult('to is required.');
     if (!text) return errorResult('text is required.');
+    // Send-time hard reject, checked before anything recipient-specific — an
+    // oversized payload is the SENDER's problem, not a sign the recipient is
+    // "backed up" (mailbox-store's box-cap error, which names the recipient,
+    // is about a different failure and must never be what an oversized send
+    // sees instead of this).
+    const textBytes = Buffer.byteLength(text, 'utf8');
+    if (textBytes > SEND_MAX_BYTES) {
+      return errorResult(
+        `Message body is ${Math.round(textBytes / 1024)}KB, over the ${Math.round(SEND_MAX_BYTES / 1024)}KB limit `
+        + '— write it to a file on the shared filesystem and send the path instead.',
+      );
+    }
     if (caller != null && to === caller) return errorResult('Cannot send a message to yourself.');
 
     // Loop backstop: throttle per {caller,to} pair, checked BEFORE any delivery

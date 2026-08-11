@@ -1,6 +1,6 @@
 ---
 name: mail
-description: Use when you get a "you've got mail" notification pasted into your terminal, or when deciding whether to check your mailbox, read a message, or reply to a peer session. Covers read_mail vs list_mail and the no-reply-by-default norm.
+description: Use when you get a "📬 New mail" notification pasted into your terminal, or when deciding whether to check your mailbox, read a message, or reply to a peer session. Covers read_mail vs list_mail and the no-reply-by-default norm.
 ---
 
 # Mail
@@ -9,13 +9,18 @@ description: Use when you get a "you've got mail" notification pasted into your 
 queues into your mailbox, and you get a short notification instead:
 
 ```
-[Agent Wrangler] 📬 You've got mail — 3 new messages (from sess_abc, sess_def).
+[Agent Wrangler] 📬 New mail — 2 messages, read when convenient.
 ```
 
-That's it — no body, no sender name, just session ids. It's server-authored,
-not something a peer wrote, so it's safe to trust as a signal, but the ids are
-the only safe identifier at that boundary: a peer's own display label is
-agent-generated text and never appears here.
+That's it — no body, no sender name, not even which peer sent it. It's
+server-authored, not something a peer wrote, so it's safe to trust as a
+signal; you'll learn who actually sent each message from `read_mail`'s `from`
+field once you read it.
+
+(This nudge duplicates a standing instruction that's ALSO in your system
+prompt, injected once per session rather than repeated in every notification —
+you don't need to have read this file for the instruction to apply, but the
+sections below cover more than the nudge does.)
 
 ## Reading it
 

@@ -144,6 +144,36 @@ test('retention: read mail evicted oldest-first past the per-box cap; unread is 
   assert.ok(!list.some((m) => m.body === 'msg0')); // the oldest read message was evicted first
 });
 
+test('retention: undeliverable mail is evictable too — it must count toward the same caps as read mail, not sit outside every cap forever', () => {
+  const store = new MailboxStore(tmpFile());
+  // Append + immediately mark undeliverable, one at a time, so the 20-message
+  // UNREAD cap (a separate, narrower cap) is never in play — this test is
+  // about the READ_RETENTION cap on evictable (read + undeliverable) mail.
+  for (let i = 0; i < READ_RETENTION_MESSAGES; i++) {
+    store.append('rcpt', { from: 'a', body: `msg${i}` }, i);
+    store.markUndeliverable('rcpt');
+  }
+  // One more pushes the box over the retention cap.
+  store.append('rcpt', { from: 'a', body: 'extra' }, 10000);
+  store.markUndeliverable('rcpt');
+  const list = store.list('rcpt');
+  assert.ok(list.length <= READ_RETENTION_MESSAGES);
+  assert.ok(!list.some((m) => m.body === 'msg0')); // the oldest evictable message was evicted first
+});
+
+test('whole-store eviction can reclaim undeliverable mail across boxes when no read mail exists anywhere — this is exactly what was unreclaimable before the fix (the eviction loop broke on the first iteration and the 32MB cap was unenforceable)', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt1', { from: 'a', body: 'older' }, 1);
+  store.markUndeliverable('rcpt1');
+  store.append('rcpt2', { from: 'a', body: 'newer' }, 2);
+  store.markUndeliverable('rcpt2');
+  assert.equal(store._evictOldestEvictableAnywhere(), true);
+  assert.equal(store.list('rcpt1').length, 0); // the OLDER (at:1) undeliverable message was evicted first
+  assert.equal(store.list('rcpt2').length, 1);
+  assert.equal(store._evictOldestEvictableAnywhere(), true); // rcpt2's is now the oldest remaining
+  assert.equal(store._evictOldestEvictableAnywhere(), false); // nothing evictable left
+});
+
 test('unreadInfo: no unread mail → no pill', () => {
   const store = new MailboxStore(tmpFile());
   assert.deepEqual(store.unreadInfo('rcpt', 1000), { unread: 0, notifiedAt: null, amber: false, senders: [] });
@@ -163,6 +193,55 @@ test('unreadInfo: never-notified mail (resume failed) still ages off the oldest 
   const info = store.unreadInfo('rcpt', AMBER_MS);
   assert.equal(info.notifiedAt, null);
   assert.equal(info.amber, true); // ages off the message's own `at`, not stuck forever
+});
+
+test('unreadInfo: brand-new mail is NOT reported stale off a stale lastNotifiedAt from an earlier, already-drained batch', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'first batch' }, 0);
+  store.takeDueSettles(SETTLE_MS); // closes the window, as mail-runner.js does before notifying
+  store.markNotified('rcpt', SETTLE_MS);
+  store.drain('rcpt'); // box now empty; lastNotifiedAt=SETTLE_MS lingers on the box
+  // A new message arrives 8 hours later — a FRESH pending settle window opens
+  // (settleDeadline was cleared above, so append() opens a new one).
+  const EIGHT_HOURS = 8 * 60 * 60 * 1000;
+  store.append('rcpt', { from: 'b', body: 'second batch' }, EIGHT_HOURS);
+  // Checked moments later, while the settle window is still pending: must NOT
+  // report amber off the ~8-hour-old lastNotifiedAt for mail that just arrived.
+  const info = store.unreadInfo('rcpt', EIGHT_HOURS + 3000);
+  assert.equal(info.amber, false);
+});
+
+test('unreadInfo: a re-armed settle window (failed delivery) uses the NEW message\'s own age, not a stale lastNotifiedAt left over from an earlier, already-drained batch', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'old batch' }, 0);
+  store.takeDueSettles(SETTLE_MS);
+  store.markNotified('rcpt', SETTLE_MS);
+  store.drain('rcpt'); // box now empty; lastNotifiedAt = SETTLE_MS lingers on the box
+  const EIGHT_HOURS = 8 * 60 * 60 * 1000;
+  store.append('rcpt', { from: 'b', body: 'new message' }, EIGHT_HOURS); // opens a fresh window
+  store.takeDueSettles(EIGHT_HOURS + SETTLE_MS); // sweep attempts delivery...
+  store.reopenSettle('rcpt', EIGHT_HOURS + SETTLE_MS); // ...and it fails, so mail-runner.js re-arms
+  // Checked shortly after the failed attempt: the new message is only ~10s old — not stale,
+  // even though lastNotifiedAt (SETTLE_MS) is ~8 hours in the past.
+  assert.equal(store.unreadInfo('rcpt', EIGHT_HOURS + SETTLE_MS + 3000).amber, false);
+});
+
+test('unreadInfo: once the settle window closes (takeDueSettles + markNotified, the real flow) the notifiedAt is trusted again', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'x' }, 0);
+  store.takeDueSettles(SETTLE_MS); // closes the window, as mail-runner.js does before notifying
+  store.markNotified('rcpt', SETTLE_MS);
+  assert.equal(store.unreadInfo('rcpt', SETTLE_MS + AMBER_MS - 1).amber, false);
+  assert.equal(store.unreadInfo('rcpt', SETTLE_MS + AMBER_MS).amber, true); // genuinely stale — no pending window masking it
+});
+
+test('reopenSettle: no-op when the box has no unread mail left (e.g. concurrently marked undeliverable) — does not touch whatever deadline is already there', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'x' }, 0); // opens a deadline at SETTLE_MS
+  store.markUndeliverable('rcpt'); // no unread left; does not itself touch settleDeadline
+  const before = store.boxes.get('rcpt').settleDeadline;
+  store.reopenSettle('rcpt', 5000);
+  assert.equal(store.boxes.get('rcpt').settleDeadline, before); // unchanged, not re-armed to 5000+SETTLE_MS
 });
 
 test('unreadInfo: senders are deduped, in message order, unread only', () => {
