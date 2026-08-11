@@ -68,9 +68,9 @@ function styleIconSvg(s) {
 
 // An icon image URL is only ever a same-origin asset path (/styles/...) or a
 // data:image/ upload preview. Allowlist those; reject anything else.
-function safeIconUrl(url) {
+export function safeIconUrl(url) {
   if (typeof url !== 'string' || url === '') return null;
-  if (url[0] === '/' || /^data:image\//i.test(url)) return url;
+  if ((url[0] === '/' && url[1] !== '/') || /^data:image\//i.test(url)) return url;
   return null;
 }
 // Effective row glyph: an uploaded image (as-is) wins over the svg path.
