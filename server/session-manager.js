@@ -13,6 +13,7 @@ import { addDirFor, linkPathFor } from './memory-store.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
+import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket } from './config-store.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
@@ -963,8 +964,12 @@ export class SessionManager {
   // and a genuinely missing dir then fails loudly in the pane rather than silently
   // launching the agent somewhere else. Every `inner` we build is an `&&`-chain or a
   // single command, so prefixing with `&&` can't change its precedence.
+  // paneCommand is what keeps a long first prompt launchable: the intent rides inline
+  // in `inner`, and tmux rejects any single command over ~16 KB, so an oversized one is
+  // moved into a file the pane sources instead (see launch-script.js).
   async _newSession(tmux, dir, inner, socket) {
-    await this._tmux(socket, ['new-session', '-d', '-s', tmux, '-c', dir, `cd ${shellQuote(dir)} && ${inner}`]);
+    const cmd = paneCommand(tmux, `cd ${shellQuote(dir)} && ${inner}`);
+    await this._tmux(socket, ['new-session', '-d', '-s', tmux, '-c', dir, cmd]);
     await this._tmux(socket, ['set-option', '-t', tmux, 'remain-on-exit', 'on']).catch(() => {});
     // Hide tmux's status bar: it's purely cosmetic here (nothing reads it) and
     // its row is better spent on Claude's TUI. Scoped per-session so it can't
