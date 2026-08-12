@@ -88,28 +88,38 @@ function foldSameBucketChildren(sessions, now) {
   return top;
 }
 
-// Cluster same-task top-level rows into a heading group. A singleton (only one
-// row for that task in this bucket) stays a plain row — its own inline task
-// chip already says which task it's in, so a heading would be pure noise; a
-// heading only earns its keep once there are ≥2 rows to cluster.
+// A stand-in key for "no task" — grouped separately from real task ids below,
+// never equal to any real taskId (a string), so it can't collide.
+const UNASSIGNED = Symbol('unassigned');
+
+// Cluster same-task top-level rows into a heading group, one cluster per
+// distinct task PLUS one for everything with no task at all (mirrors History,
+// which always had its own "Unassigned" tile). A singleton for a REAL task
+// stays a plain row — its own inline task chip already says which task it's
+// in, so a heading would be pure noise — but Unassigned always gets its
+// heading, even for one row, since a task-less row carries no chip of its own
+// to say so otherwise.
 function foldTaskGroups(topLevel) {
-  const byTask = new Map();
+  const byKey = new Map();
   const order = [];
   for (const entry of topLevel) {
-    const taskId = entry.group.taskId;
-    if (!taskId) { order.push(entry); continue; }
-    let g = byTask.get(taskId);
-    if (!g) { g = { taskId, entries: [] }; byTask.set(taskId, g); order.push(g); }
+    const key = entry.group.taskId || UNASSIGNED;
+    let g = byKey.get(key);
+    if (!g) { g = { key, entries: [] }; byKey.set(key, g); order.push(g); }
     g.entries.push(entry);
   }
   return order.map((o) => {
-    if (o.taskId === undefined) return { kind: 'session', ts: o.group.lastActivity || 0, ...o };
-    if (o.entries.length < 2) return { kind: 'session', ts: o.entries[0].group.lastActivity || 0, ...o.entries[0] };
+    // Sorted newest-first WITHIN the group too — grouping must not undo the
+    // view's overall recency ordering (the bucket-level sort below only
+    // orders groups against each other, not each group's own members).
+    const entries = [...o.entries].sort((a, b) => (b.group.lastActivity || 0) - (a.group.lastActivity || 0));
+    const ts = entries[0].group.lastActivity || 0;
+    if (o.key === UNASSIGNED) return { kind: 'task-group', ts, taskId: null, taskName: 'Unassigned', unassigned: true, entries };
+    if (entries.length < 2) return { kind: 'session', ts, ...entries[0] };
     // Newest snapshot's name wins — a task rename between two archives shouldn't
     // show two different headings for the same id.
-    const taskName = o.entries[0].group.task || '';
-    const ts = Math.max(...o.entries.map((e) => e.group.lastActivity || 0));
-    return { kind: 'task-group', ts, taskId: o.taskId, taskName, entries: o.entries };
+    const taskName = entries[0].group.task || '';
+    return { kind: 'task-group', ts, taskId: o.key, taskName, entries };
   });
 }
 
