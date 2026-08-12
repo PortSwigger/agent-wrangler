@@ -53,6 +53,9 @@ export function visibleSubAgents(subAgents, { showFinished, now }) {
 // own running/completed tooltip since there's no verbal "run"/"done" word.
 export function subagentRowHtml(sa, sid) {
   const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `$${sa.usd.toFixed(2)}` : '';
+  const costTitle = typeof sa.advisorUsd === 'number' && sa.advisorUsd > 0
+    ? ` title="$${sa.advisorUsd.toFixed(2)} on advisor consults"`
+    : '';
   // endedAt is bumped on every transcript line while running (see
   // transcript-reader.js scanSubLine), not just at completion, so it already IS
   // "last updated" for both states — startedAt is only a fallback for a legacy
@@ -63,7 +66,7 @@ export function subagentRowHtml(sa, sid) {
     <span class="subagent-dot" title="${sa.status === 'running' ? 'running' : 'completed'}"></span>
     <span class="subagent-name">${esc(sa.label)}</span>
     ${updated ? `<span class="subagent-updated" title="last updated">${CLOCK_ICON}${esc(updated)}</span>` : ''}
-    <span class="subagent-cost">${esc(cost)}</span>
+    <span class="subagent-cost"${costTitle}>${esc(cost)}</span>
   </div>`;
 }
 
@@ -204,8 +207,14 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const age = s.lastActivity
     ? `<span class="card-tag">${CLOCK_ICON}${esc(timeAgo(s.lastActivity))}</span>`
     : '';
+  // Advisor consults are folded into `cost` already (they're real spend) — the
+  // title just breaks out how much of it was the native advisor tool, not a
+  // second number to add up.
+  const advisorNote = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
+    ? ` ($${s.advisorUsd.toFixed(2)} on advisor consults)`
+    : '';
   const costEl = cost
-    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}">${DOLLAR_ICON}${esc(cost)}</span>`
+    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}${advisorNote}">${DOLLAR_ICON}${esc(cost)}</span>`
     : '';
   // Card ring yields to the "new session" slot's ring while the keyboard selection
   // sits on a slot — the terminal stays open underneath, but only one thing is lit.
@@ -274,10 +283,13 @@ export function workerRowHtml(s, ctx) {
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
   const estimated = s.agent === 'codex';
   const cost = typeof s.usd === 'number' && s.usd > 0 ? `${estimated ? '~' : ''}$${s.usd.toFixed(2)}` : '';
+  const costTitle = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
+    ? ` title="$${s.advisorUsd.toFixed(2)} on advisor consults"`
+    : '';
   return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
-    <span class="worker-cost">${esc(cost)}</span>
+    <span class="worker-cost"${costTitle}>${esc(cost)}</span>
     <span class="worker-ring" aria-hidden="true"></span>
   </div>`;
 }

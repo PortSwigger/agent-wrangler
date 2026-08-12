@@ -106,6 +106,34 @@ function mergeInto(dest, src) {
   }
 }
 
+// Mirrors transcript-reader.js addUsageSplit / usage-report.js's copy: a turn's real
+// API calls live in usage.iterations[], each classified "message" or
+// "advisor_message" (the native advisor tool, its own `model`, never cached).
+// Top-level usage fields do NOT reliably equal the sum of the "message" iterations
+// once `iterations` exists — real turns have been found where the top level
+// under-reports ordinary "message" tokens too (not just the advisor's), whenever an
+// "advisor_message" iteration is bundled into the same turn. Advisor tokens land in
+// `totals` too, bucketed under `${model} (advisor)` rather than the bare model id — even when
+// the advisor happens to be the same model the parent turn used, its spend stays a
+// visibly separate row in the By-model table, not merged into ordinary usage of that
+// model. pricing.js's substring match still resolves the suffixed key to the right
+// rate. advisorTotals is an "of which" breakout for the report's separate line, not
+// an addition on top.
+function addUsageSplit(totals, advisorTotals, model, usage) {
+  if (!usage) return;
+  const iterations = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : null;
+  if (!iterations) {
+    addUsage(totals, model, usage);
+    return;
+  }
+  for (const iter of iterations) {
+    const isAdvisor = iter?.type === 'advisor_message';
+    const key = isAdvisor ? `${iter.model || 'unknown'} (advisor)` : model;
+    addUsage(totals, key, iter);
+    if (isAdvisor) addUsage(advisorTotals, key, iter);
+  }
+}
+
 // Sum per-turn usage from every agent-*.jsonl under a session's subagents/ dir
 // (modern async sub-agents get their own transcript), month-gated per line with
 // per-file message.id dedup — mirrors transcript-reader.js scanSubLine. `any` marks
@@ -113,10 +141,11 @@ function mergeInto(dest, src) {
 // inline aggregate, are the cost source — the same precedence analyze() uses).
 async function backgroundSubTotals(subDir) {
   let files;
-  try { files = await fsp.readdir(subDir); } catch { return { any: false, totals: {} }; }
+  try { files = await fsp.readdir(subDir); } catch { return { any: false, totals: {}, advisorTotals: {} }; }
   const agentFiles = files.filter((f) => /^agent-.+\.jsonl$/.test(f));
-  if (!agentFiles.length) return { any: false, totals: {} };
+  if (!agentFiles.length) return { any: false, totals: {}, advisorTotals: {} };
   const totals = {};
+  const advisorTotals = {};
   for (const f of agentFiles) {
     const seen = new Set();
     let content;
@@ -130,11 +159,11 @@ async function backgroundSubTotals(subDir) {
       const msg = e.message;
       if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
         if (msg.id) seen.add(msg.id);
-        addUsage(totals, msg.model, msg.usage);
+        addUsageSplit(totals, advisorTotals, msg.model, msg.usage);
       }
     }
   }
-  return { any: true, totals };
+  return { any: true, totals, advisorTotals };
 }
 
 // The usage bound for a mapping entry — DUPLICATED from transcript-reader.js
@@ -159,10 +188,11 @@ function usageSince(entry) {
 // reflects true spend, and subAgentUsd — the sub-agent portion — for the breakdown.
 async function monthTotalsFor(file, since = 0) {
   const totals = {};
+  const advisorTotals = {}; // "of which" — already inside totals via addUsageSplit
   const seenUsageIds = new Set();
   const inlineSubs = []; // legacy fallback: { model, usage } for in-range tool_results
   let lines;
-  try { lines = (await fsp.readFile(file, 'utf8')).split('\n'); } catch { return { totals, subAgentUsd: 0 }; }
+  try { lines = (await fsp.readFile(file, 'utf8')).split('\n'); } catch { return { totals, subAgentUsd: 0, advisorUsd: 0 }; }
   for (const line of lines) {
     if (!line.trim()) continue;
     let e;
@@ -173,7 +203,7 @@ async function monthTotalsFor(file, since = 0) {
     const msg = e.message;
     if (msg && msg.usage && !(msg.id && seenUsageIds.has(msg.id))) {
       if (msg.id) seenUsageIds.add(msg.id);
-      addUsage(totals, msg.model, msg.usage);
+      addUsageSplit(totals, advisorTotals, msg.model, msg.usage);
     }
     // A legacy (synchronous) sub-agent leaves only this aggregate on the parent's
     // tool_result — its own turns aren't on disk. A lower bound, used only when the
@@ -186,10 +216,14 @@ async function monthTotalsFor(file, since = 0) {
   const sessionId = path.basename(file, '.jsonl');
   const bg = await backgroundSubTotals(path.join(path.dirname(file), sessionId, 'subagents'));
   const subTotals = {};
-  if (bg.any) mergeInto(subTotals, bg.totals);
-  else for (const s of inlineSubs) addUsage(subTotals, s.model, s.usage);
+  if (bg.any) {
+    mergeInto(subTotals, bg.totals);
+    mergeInto(advisorTotals, bg.advisorTotals); // bg.totals already includes it — breakout only
+  } else {
+    for (const s of inlineSubs) addUsageSplit(subTotals, advisorTotals, s.model, s.usage);
+  }
   mergeInto(totals, subTotals);
-  return { totals, subAgentUsd: costUsd(subTotals) };
+  return { totals, subAgentUsd: costUsd(subTotals), advisorUsd: costUsd(advisorTotals) };
 }
 
 function tokensOf(totals) {
@@ -215,13 +249,13 @@ for (const [cardId, entry] of Object.entries(entries)) {
   if (agent === 'claude') {
     const file = resolveClaudeTranscript(cardId, entry);
     if (!file) { unresolved++; continue; }
-    const { totals, subAgentUsd } = await monthTotalsFor(file, usageSince(entry));
+    const { totals, subAgentUsd, advisorUsd } = await monthTotalsFor(file, usageSince(entry));
     const usd = costUsd(totals);
     const tokens = tokensOf(totals);
     if (tokens.total === 0) continue; // no activity this month (parent or sub-agents)
     const uuid = path.basename(file, '.jsonl');
     const owner = entry.liveSessionId === uuid || cardId === uuid; // true conversation owner vs a re-pointed resume
-    sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, tokens, estimated: false, file, owner });
+    sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, advisorUsd, tokens, estimated: false, file, owner });
   } else if (agent === 'codex' && analyzeCodex) {
     // Codex rollouts aren't line-stamped the same way; attribute the whole
     // session to its createdAt month (estimated ChatGPT-plan pricing).
@@ -272,11 +306,13 @@ const grand = blankAgg();
 const byType = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }; // Claude only — Codex cost is estimated and not split by type
 let estimatedCost = 0;
 let subAgentCost = 0; // portion of the (Claude) total spent by dispatched sub-agents
+let advisorCost = 0; // portion of the (Claude) total spent on native advisor-tool consults
 for (const s of sessions) {
   if (!byTask.has(s.task)) byTask.set(s.task, blankAgg());
   addAgg(byTask.get(s.task), s);
   addAgg(grand, s);
   subAgentCost += s.subAgentUsd || 0;
+  advisorCost += s.advisorUsd || 0;
   if (s.estimated) estimatedCost += s.usd;
   else {
     const bt = costUsdByType(s.totals);
@@ -306,11 +342,11 @@ const topSessions = [...sessions].sort((a, b) => b.usd - a.usd).slice(0, TOP);
 // ---- output -------------------------------------------------------------
 const report = {
   month, generatedAt: new Date().toISOString(),
-  totals: { ...grand, estimatedCostIncluded: estimatedCost, subAgentCostIncluded: subAgentCost, sessionsConsidered: Object.keys(entries).length, unresolved },
+  totals: { ...grand, estimatedCostIncluded: estimatedCost, subAgentCostIncluded: subAgentCost, advisorCostIncluded: advisorCost, sessionsConsidered: Object.keys(entries).length, unresolved },
   byTask: [...byTask.entries()].map(([name, a]) => ({ name, ...a })).sort((x, y) => y.cost - x.cost),
   byModel: [...byModel.entries()].map(([name, a]) => ({ name, ...a })).filter((m) => m.cost > 0 || m.tokens.total > 0).sort((x, y) => y.cost - x.cost),
   byType,
-  topSessions: topSessions.map((s) => ({ cardId: s.cardId, label: s.label, task: s.task, agent: s.agent, usd: s.usd, subAgentUsd: s.subAgentUsd || 0, tokens: s.tokens, estimated: s.estimated })),
+  topSessions: topSessions.map((s) => ({ cardId: s.cardId, label: s.label, task: s.task, agent: s.agent, usd: s.usd, subAgentUsd: s.subAgentUsd || 0, advisorUsd: s.advisorUsd || 0, tokens: s.tokens, estimated: s.estimated })),
 };
 
 if (JSON_OUT) { console.log(JSON.stringify(report, null, 2)); process.exit(0); }
@@ -325,6 +361,11 @@ console.log(`  Total: ${usd(grand.cost)}  across ${grand.sessions} active sessio
 console.log(`  Avg/session: ${usd(grand.cost / (grand.sessions || 1))}  ·  ${k(Math.round(grand.tokens.total / (grand.sessions || 1)))} tokens`);
 if (estimatedCost > 0) console.log(`  (includes ${usd(estimatedCost)} estimated Codex/ChatGPT-plan spend)`);
 if (subAgentCost > 0) console.log(`  (includes ${usd(subAgentCost)} spent by dispatched sub-agents, folded into the totals above)`);
+// Deliberately NOT disjoint from the sub-agent figure above — a sub-agent's own
+// advisor consult counts in both (each is an independent "of which" slice of the
+// same total, not a partition), so don't let the two lines read as separately
+// addable.
+if (advisorCost > 0) console.log(`  (includes ${usd(advisorCost)} spent on advisor consultations, folded into the totals above — may overlap the sub-agent figure)`);
 if (unresolved > 0) console.log(`  (${unresolved} sessions had no recoverable transcript — not counted)`);
 if (duplicatesDropped > 0) console.log(`  (${duplicatesDropped} resumed card(s) merged into their shared transcript)`);
 

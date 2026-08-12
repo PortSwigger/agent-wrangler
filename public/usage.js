@@ -35,7 +35,7 @@ const SLICES = [
   { v: 'type', label: 'Token type', dim: 'type' },
 ];
 
-const state = { granularity: 'month', metric: 'usd', sliceBy: 'task', filter: null, data: null };
+const state = { granularity: 'day', metric: 'usd', sliceBy: 'task', filter: null, data: null };
 let built = false;
 
 const el = (id) => document.getElementById(id);
@@ -130,6 +130,21 @@ function renderSummary() {
       ? `includes ~${fmtUsd(d.totals.estimatedUsd)} estimated Codex spend`
       : 'includes estimated Codex usage';
     box.appendChild(est);
+  }
+  // Advisor consults are already inside the total above (real spend, never
+  // dropped) — this just breaks out how much of it was the native advisor tool,
+  // the same "of which" framing as the sub-agent/estimated notes.
+  if (d.totals.advisorUsd > 0 && !state.filter) {
+    const adv = document.createElement('div');
+    adv.className = 'usage-est';
+    adv.textContent = state.metric === 'usd'
+      ? `includes ${fmtUsd(d.totals.advisorUsd)} spent on advisor consultations`
+      : 'includes advisor consultation usage';
+    // Deliberately not disjoint from a sub-agent's own cost (a sub-agent that
+    // itself consulted the advisor counts in both figures) — say so on hover
+    // rather than lengthening the visible line.
+    adv.title = 'May overlap sub-agent spend — a sub-agent that itself consulted the advisor counts in both.';
+    box.appendChild(adv);
   }
   // A transcript that failed to read/parse contributes nothing, so the total is a
   // lower bound — say so rather than presenting an understated figure as complete.
