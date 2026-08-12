@@ -2120,13 +2120,21 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    search-task-flag, …) rather than a flat/arbitrary colour, so it reads as
    part of the same badge language instead of a one-off. */
 .search-task-pill {
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 10px;
   border-radius: 999px;
   font-size: 11px; font-weight: 600;
   color: var(--purple);
   background: color-mix(in srgb, var(--purple) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent);
+}
+/* Unassigned isn't "about a task" the way a real one is — neutral, like
+   History's own .badge.unassigned, so it doesn't compete visually with real
+   task pills. */
+.search-task-pill--unassigned {
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border-color: var(--border-muted);
 }
 .search-task-heading .n { font-weight: 500; color: var(--fg-subtle); font-size: 11px; }
 

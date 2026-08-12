@@ -417,26 +417,32 @@ function taskRowNode(t) {
   return card;
 }
 
-// The heading over a task's rows within one time bucket — either a cluster of
-// ≥2 same-task rows (see foldTaskGroups; a singleton stays headingless, its
-// own inline task chip already says which task it's in) or a task-archive
-// marker + its nested cascade-archived sessions, which always gets one since
-// the marker IS the task. Sticky (see styles.css) so it stays visible while
-// its own rows scroll past.
-function taskGroupHeadingNode(name, count) {
+// The heading over a task's rows within one time bucket — a cluster of same-
+// task rows (see foldTaskGroups; a singleton REAL task stays headingless, its
+// own inline task chip already says which task it's in — but Unassigned
+// always gets one, since a task-less row has no chip of its own), or a
+// task-archive marker + its nested cascade-archived sessions, which always
+// gets one since the marker IS the task. Sticky (see styles.css) so it stays
+// visible while its own rows scroll past. Unassigned drops the ▦ icon and
+// uses a neutral tint (search-task-pill--unassigned) rather than the purple
+// every real task gets, matching History's own distinction.
+function taskGroupHeadingNode(name, count, { unassigned = false } = {}) {
   const div = document.createElement('div');
   div.className = 'search-task-heading';
-  // The pill carries the tint/shape; the outer div stays a plain full-width
-  // bar with a solid backdrop, since IT'S what needs to stay opaque while
-  // stuck — a translucent pill wouldn't cover the rows scrolling underneath.
+  // The pill wraps the WHOLE heading (name + count together) — the outer div
+  // is just a plain full-width bar with a solid backdrop underneath it, since
+  // IT'S what needs to stay opaque while stuck (a translucent pill wouldn't
+  // cover the rows scrolling underneath); it carries no shape of its own.
   const pill = document.createElement('span');
-  pill.className = 'search-task-pill';
-  pill.textContent = `▦ ${name}`;
-  div.appendChild(pill);
+  pill.className = unassigned ? 'search-task-pill search-task-pill--unassigned' : 'search-task-pill';
+  const label = document.createElement('span');
+  label.textContent = unassigned ? name : `▦ ${name}`;
+  pill.appendChild(label);
   const n = document.createElement('span');
   n.className = 'n';
   n.textContent = String(count);
-  div.appendChild(n);
+  pill.appendChild(n);
+  div.appendChild(pill);
   return div;
 }
 
@@ -464,7 +470,7 @@ function browseRowUnitNode(r) {
   if (r.kind === 'task-group') {
     const wrap = document.createElement('div');
     wrap.className = 'search-task-cluster';
-    wrap.appendChild(taskGroupHeadingNode(r.taskName, r.entries.length));
+    wrap.appendChild(taskGroupHeadingNode(r.taskName, r.entries.length, { unassigned: r.unassigned }));
     for (const e of r.entries) wrap.appendChild(sessionEntryNode(e, { hideTaskChip: true }));
     return wrap;
   }

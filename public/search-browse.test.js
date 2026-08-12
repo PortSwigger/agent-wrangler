@@ -53,9 +53,11 @@ test('buildBrowseBuckets orders buckets newest-first and omits empties', () => {
   assert.deepEqual(buckets.map((b) => b.rows.length), [1, 1, 1, 1]);
 });
 
-test('buildBrowseBuckets sorts rows within a bucket newest-first', () => {
+test('buildBrowseBuckets sorts rows within a bucket newest-first (within the Unassigned cluster they fall into)', () => {
   const [b] = buildBrowseBuckets([group('older', 3 * HOUR), group('newer', 1 * HOUR)], [], NOW);
-  assert.deepEqual(b.rows.map((r) => r.group.sessionId), ['newer', 'older']);
+  assert.equal(b.rows.length, 1);
+  assert.equal(b.rows[0].unassigned, true);
+  assert.deepEqual(b.rows[0].entries.map((e) => e.group.sessionId), ['newer', 'older']);
 });
 
 test('archived tasks merge into buckets by their own archivedAt, interleaved by time', () => {
@@ -65,10 +67,14 @@ test('archived tasks merge into buckets by their own archivedAt, interleaved by 
     NOW
   );
   assert.deepEqual(buckets.map((b) => b.label), ['Last 4 hours', '4–5 weeks ago']);
-  assert.deepEqual(
-    buckets[0].rows.map((r) => (r.kind === 'task' ? r.task.id : r.group.sessionId)),
-    ['s1', 't1', 's2']
-  );
+  // s1/s2 (no task) fold into one Unassigned cluster (ts = s1's, the newer of
+  // the two); the task-archive marker t1 stays its own row — newer than the
+  // cluster? no: t1 is 2h ago vs the cluster's 1h, so the cluster sorts first.
+  assert.equal(buckets[0].rows.length, 2);
+  assert.equal(buckets[0].rows[0].unassigned, true);
+  assert.deepEqual(buckets[0].rows[0].entries.map((e) => e.group.sessionId), ['s1', 's2']);
+  assert.equal(buckets[0].rows[1].kind, 'task');
+  assert.equal(buckets[0].rows[1].task.id, 't1');
   assert.deepEqual(buckets[1].rows.map((r) => r.kind), ['task']);
 });
 
@@ -76,7 +82,8 @@ test('a row with no timestamp sinks to an oldest weekly bucket instead of vanish
   const buckets = buildBrowseBuckets([{ sessionId: 'bare', cwd: '/x' }], [], NOW);
   assert.equal(buckets.length, 1);
   assert.match(buckets[0].label, /weeks ago$/);
-  assert.equal(buckets[0].rows[0].group.sessionId, 'bare');
+  assert.equal(buckets[0].rows[0].kind, 'task-group'); // Unassigned, even alone
+  assert.equal(buckets[0].rows[0].entries[0].group.sessionId, 'bare');
 });
 
 test('buildBrowseBuckets tolerates null inputs', () => {
@@ -142,49 +149,66 @@ test('same-task rows split across buckets do not cluster — grouping is per-buc
 
 // ── parent/child hierarchy ───────────────────────────────────────────────────
 
+// Each top-level identity below carries its own distinct taskId — a plain,
+// unrelated way to keep it OUT of the (always-on, unthrottled) Unassigned
+// cluster, so these assertions can inspect a folded row directly instead of
+// reaching into an Unassigned entries array for a concern these tests aren't
+// about. A singleton real task stays a plain 'session' row (see foldTaskGroups),
+// same shape these tests already expect.
+
 test('a child in the same bucket as its parent nests under it, not as its own row', () => {
   const [b] = buildBrowseBuckets(
-    [group('p', 2 * HOUR, { cardId: 'card-p' }), group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p' })],
+    [
+      group('p', 2 * HOUR, { cardId: 'card-p', taskId: 't-p', task: 'P task' }),
+      group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
+    ],
     [], NOW
   );
-  assert.equal(b.rows.length, 1);
-  assert.equal(b.rows[0].kind, 'session');
-  assert.equal(b.rows[0].group.sessionId, 'p');
-  assert.deepEqual(b.rows[0].children.map((c) => c.sessionId), ['c']);
+  const p = b.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'p');
+  assert.equal(p.group.sessionId, 'p');
+  assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
 });
 
 test('a grandchild promotes to top-level instead of nesting two deep', () => {
   const [b] = buildBrowseBuckets(
     [
-      group('p', 3 * HOUR, { cardId: 'card-p' }),
+      group('p', 3 * HOUR, { cardId: 'card-p', taskId: 't-p', task: 'P task' }),
       group('c', 2 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
-      group('gc', 1 * HOUR, { cardId: 'card-gc', parentSession: 'card-c' }),
+      group('gc', 1 * HOUR, { cardId: 'card-gc', parentSession: 'card-c', taskId: 't-gc', task: 'GC task' }),
     ],
     [], NOW
   );
   // p absorbs c; c is itself absorbed, so gc (parented on c) promotes to top-level.
-  assert.equal(b.rows.length, 2);
-  const p = b.rows.find((r) => r.group.sessionId === 'p');
-  const gc = b.rows.find((r) => r.group.sessionId === 'gc');
+  const sessions = b.rows.filter((r) => r.kind === 'session');
+  assert.equal(sessions.length, 2);
+  const p = sessions.find((r) => r.group.sessionId === 'p');
+  const gc = sessions.find((r) => r.group.sessionId === 'gc');
   assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
   assert.equal(gc.children, undefined);
 });
 
 test('a parent in a different bucket does not nest across the boundary — the child gets a breadcrumb instead', () => {
   const buckets = buildBrowseBuckets(
-    [group('p', 2 * DAY, { cardId: 'card-p', boardLabel: 'Parent run' }), group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p' })],
+    [
+      group('p', 2 * DAY, { cardId: 'card-p', boardLabel: 'Parent run', taskId: 't-p', task: 'P task' }),
+      group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-p', taskId: 't-c', task: 'C task' }),
+    ],
     [], NOW
   );
-  const childBucket = buckets.find((bk) => bk.rows.some((r) => r.group?.sessionId === 'c'));
-  const row = childBucket.rows.find((r) => r.group.sessionId === 'c');
+  const childBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'session' && r.group.sessionId === 'c'));
+  const row = childBucket.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'c');
   assert.equal(row.children, undefined);
   assert.equal(row.parentTitle, 'Parent run');
-  const parentBucket = buckets.find((bk) => bk.rows.some((r) => r.group?.sessionId === 'p'));
-  assert.equal(parentBucket.rows[0].children, undefined); // the child isn't hoisted up to it either
+  const parentBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'session' && r.group.sessionId === 'p'));
+  const parentRow = parentBucket.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'p');
+  assert.equal(parentRow.children, undefined); // the child isn't hoisted up to it either
 });
 
 test('an orphan child (parent not present at all) stays a loose row with no breadcrumb', () => {
-  const [b] = buildBrowseBuckets([group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-ghost' })], [], NOW);
+  const [b] = buildBrowseBuckets(
+    [group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-ghost', taskId: 't-c', task: 'C task' })],
+    [], NOW
+  );
   assert.equal(b.rows[0].kind, 'session');
   assert.equal(b.rows[0].parentTitle, undefined);
 });
@@ -203,7 +227,36 @@ test('sessions cascade-archived alongside an archived task nest under its marker
 });
 
 test('a viaTaskArchive session whose task is not in the archived-tasks list falls through as a loose row', () => {
-  const [b] = buildBrowseBuckets([group('s1', 1 * HOUR, { viaTaskArchive: 't1' })], [], NOW);
+  const [b] = buildBrowseBuckets(
+    [group('s1', 1 * HOUR, { viaTaskArchive: 't1', taskId: 't1', task: 'Some task' })],
+    [], NOW
+  );
   assert.equal(b.rows.length, 1);
   assert.equal(b.rows[0].kind, 'session');
+});
+
+// ── Unassigned grouping ──────────────────────────────────────────────────────
+
+test('sessions with no task fold into one Unassigned cluster, even a single one', () => {
+  const [b] = buildBrowseBuckets([group('s1', 1 * HOUR)], [], NOW);
+  assert.equal(b.rows.length, 1);
+  assert.equal(b.rows[0].kind, 'task-group');
+  assert.equal(b.rows[0].unassigned, true);
+  assert.equal(b.rows[0].taskName, 'Unassigned');
+  assert.equal(b.rows[0].taskId, null);
+  assert.deepEqual(b.rows[0].entries.map((e) => e.group.sessionId), ['s1']);
+});
+
+test('Unassigned and a real task-group coexist as separate clusters in one bucket', () => {
+  const [b] = buildBrowseBuckets(
+    [
+      group('s1', 1 * HOUR),
+      group('s2', 2 * HOUR, { taskId: 't1', task: 'Auth work' }),
+      group('s3', 3 * HOUR, { taskId: 't1', task: 'Auth work' }),
+    ],
+    [], NOW
+  );
+  assert.equal(b.rows.length, 2);
+  assert.deepEqual(b.rows.map((r) => r.unassigned || false), [true, false]);
+  assert.deepEqual(b.rows[1].entries.map((e) => e.group.sessionId), ['s2', 's3']);
 });
