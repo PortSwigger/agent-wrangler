@@ -118,6 +118,35 @@ function mergeInto(dest, src) {
     d.cacheWrite5m += t.cacheWrite5m; d.cacheWrite1h += t.cacheWrite1h; d.cacheRead += t.cacheRead;
   }
 }
+
+// Mirrors transcript-reader.js addUsageSplit: a turn's real API calls live in
+// usage.iterations[], each classified "message" or "advisor_message" (the native
+// advisor tool, its own `model`, never cached). Top-level usage fields do NOT
+// reliably equal the sum of the "message" iterations once `iterations` exists — real
+// turns have been found where the top level under-reports ordinary "message" tokens
+// too (not just the advisor's), whenever an "advisor_message" iteration is bundled
+// into the same turn — so iterations[] must be walked for correctness generally, not
+// only to recover advisor spend. Advisor tokens land in `totals` too, bucketed under
+// `${model} (advisor)` rather than the bare model id — even when the advisor happens
+// to be the same model the parent turn used, its spend must stay a visibly separate
+// row in the Model dimension (byModelOf), not silently merged into ordinary usage.
+// pricing.js's substring match still resolves the suffixed key to the right rate.
+// advisorTotals is an "of which" breakout for the separate cost line, not an
+// addition on top of `totals`.
+function addUsageSplit(totals, advisorTotals, model, usage) {
+  if (!usage) return;
+  const iterations = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : null;
+  if (!iterations) {
+    addUsage(totals, model, usage);
+    return;
+  }
+  for (const iter of iterations) {
+    const isAdvisor = iter?.type === 'advisor_message';
+    const key = isAdvisor ? `${iter.model || 'unknown'} (advisor)` : model;
+    addUsage(totals, key, iter);
+    if (isAdvisor) addUsage(advisorTotals, key, iter);
+  }
+}
 function tokensOf(totals) {
   let input = 0, output = 0, cacheWrite = 0, cacheRead = 0;
   for (const t of Object.values(totals)) {
@@ -213,10 +242,11 @@ async function forEachJsonLine(file, onEntry) {
 // aggregate, are the cost source — analyze()'s precedence).
 async function backgroundSubDaily(subDir) {
   let files;
-  try { files = await fsp.readdir(subDir); } catch { return { any: false, daily: {}, failed: false }; }
+  try { files = await fsp.readdir(subDir); } catch { return { any: false, daily: {}, advisorDaily: {}, failed: false }; }
   const agentFiles = files.filter((f) => /^agent-.+\.jsonl$/.test(f));
-  if (!agentFiles.length) return { any: false, daily: {}, failed: false };
+  if (!agentFiles.length) return { any: false, daily: {}, advisorDaily: {}, failed: false };
   const daily = {};
+  const advisorDaily = {};
   let failed = false;
   for (const f of agentFiles) {
     const seen = new Set();
@@ -227,12 +257,13 @@ async function backgroundSubDaily(subDir) {
         const msg = e.message;
         if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
           if (msg.id) seen.add(msg.id);
-          addUsage((daily[hourKeyOf(ts)] ||= {}), msg.model, msg.usage);
+          const hour = hourKeyOf(ts);
+          addUsageSplit((daily[hour] ||= {}), (advisorDaily[hour] ||= {}), msg.model, msg.usage);
         }
       });
     } catch { failed = true; } // a broken sub-agent file surfaces as a partial marker, not a silent drop
   }
-  return { any: true, daily, failed };
+  return { any: true, daily, advisorDaily, failed };
 }
 
 // Parse one Claude transcript into per-hour per-model totals (parent turns) and the
@@ -244,6 +275,7 @@ async function backgroundSubDaily(subDir) {
 // discard every already-cached entry — the one thing this cache must never do.
 async function claudeDaily(file, since = 0) {
   const parent = {}; // hourKey -> totalsByModel
+  const parentAdvisor = {}; // hourKey -> totalsByModel ("of which" advisor, own turns)
   const seen = new Set();
   const inlineSubs = []; // legacy fallback: { hourKey, model, usage } on tool_result lines
   let failed = false;
@@ -259,7 +291,7 @@ async function claudeDaily(file, since = 0) {
       const msg = e.message;
       if (msg && msg.usage && !(msg.id && seen.has(msg.id))) {
         if (msg.id) seen.add(msg.id);
-        addUsage((parent[hour] ||= {}), msg.model, msg.usage);
+        addUsageSplit((parent[hour] ||= {}), (parentAdvisor[hour] ||= {}), msg.model, msg.usage);
       }
       const tur = e.toolUseResult;
       if (tur && typeof tur === 'object' && tur.usage && tur.agentType) {
@@ -270,10 +302,19 @@ async function claudeDaily(file, since = 0) {
   const sessionId = path.basename(file, '.jsonl');
   const bg = await backgroundSubDaily(path.join(path.dirname(file), sessionId, 'subagents'));
   const sub = {}; // hourKey -> totalsByModel (sub-agents only)
-  if (bg.any) for (const [hour, t] of Object.entries(bg.daily)) mergeInto((sub[hour] ||= {}), t);
-  else for (const s of inlineSubs) addUsage((sub[s.hour] ||= {}), s.model, s.usage);
+  const advisor = {}; // hourKey -> totalsByModel ("of which" advisor, parent + sub-agents)
+  if (bg.any) {
+    for (const [hour, t] of Object.entries(bg.daily)) mergeInto((sub[hour] ||= {}), t);
+    for (const [hour, t] of Object.entries(bg.advisorDaily)) mergeInto((advisor[hour] ||= {}), t);
+  } else {
+    for (const s of inlineSubs) addUsageSplit((sub[s.hour] ||= {}), (advisor[s.hour] ||= {}), s.model, s.usage);
+  }
+  for (const [hour, t] of Object.entries(parentAdvisor)) mergeInto((advisor[hour] ||= {}), t);
+  // sub's tokens (including its own "of which" advisor share, already inside it via
+  // addUsageSplit) fold into parent for the headline; advisor itself is a pure
+  // breakout and must NOT be folded in again — parent already has those tokens.
   for (const [hour, t] of Object.entries(sub)) mergeInto((parent[hour] ||= {}), t);
-  return { daily: parent, sub, failed: failed || bg.failed };
+  return { daily: parent, sub, advisor, failed: failed || bg.failed };
 }
 
 // Collapse a session's per-hour per-model totals into normalized per-day bags the
@@ -285,14 +326,21 @@ async function claudeDaily(file, since = 0) {
 function normalizeClaudeDays(scan) {
   const byDay = {};
   const subByDay = {};
+  const advisorByDay = {};
   for (const [key, totals] of Object.entries(scan.daily)) mergeInto((byDay[dayOfKey(key)] ||= {}), totals);
   for (const [key, totals] of Object.entries(scan.sub)) mergeInto((subByDay[dayOfKey(key)] ||= {}), totals);
+  // scan.advisor is absent on a raw result cached before this field existed (an
+  // unchanged file served straight from claudeFileCache/deletedClaudeTranscript) —
+  // default to {} rather than throwing on Object.entries(undefined); that history's
+  // advisor share is simply not recoverable until the file changes and gets rescanned.
+  for (const [key, totals] of Object.entries(scan.advisor || {})) mergeInto((advisorByDay[dayOfKey(key)] ||= {}), totals);
   const out = {};
   for (const [day, totals] of Object.entries(byDay)) {
     out[day] = {
       usd: costUsd(totals),
       estimatedUsd: 0,
       subAgentUsd: costUsd(subByDay[day] || {}),
+      advisorUsd: costUsd(advisorByDay[day] || {}),
       tokens: tokensOf(totals),
       byModel: byModelOf(totals),
       costByType: costUsdByType(totals), // $ split by token type; sums to usd (Claude pricing)
@@ -492,7 +540,13 @@ async function claudeDailyCached(file, since = 0) {
   const cached = claudeFileCache.get(file);
   // `since` joins the key: the same file costed under a different bound is a
   // different result, and two card ids can resolve to one file (see the dedup below).
-  if (cached && cached.size === st.size && cached.subSig === subSig && (cached.since || 0) === since) {
+  // `cached.result.advisor` gates the hit too — a live, unchanged file whose cached
+  // result predates the advisor-breakout field would otherwise serve a `daily` total
+  // computed under the old top-level-only read (silently missing advisor spend)
+  // forever, since nothing else about the file would ever invalidate it. Missing the
+  // field forces one rescan to pick up the new shape; the `gone` branch above is
+  // deliberately NOT gated this way (that history is unrecoverable either way).
+  if (cached && cached.size === st.size && cached.subSig === subSig && (cached.since || 0) === since && cached.result.advisor) {
     usageFileCacheStats.hits += 1;
     return cached.result;
   }
@@ -601,7 +655,7 @@ export async function scanAllDaily({
       raw.push({
         file: null, owner: true, task,
         days: { [dayKeyOf(created)]: {
-          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: 0,
+          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: 0, advisorUsd: 0,
           tokens: codexTokens,
           // Codex $ is estimated, so its per-model and per-type breakdowns are too.
           byModel: { [model]: { usd: a.usd, estimatedUsd: a.usd, tokens: codexTokens } },
@@ -660,7 +714,7 @@ export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
   const taskSpend = new Map();
   const modelNames = new Map();
   const modelSpend = new Map();
-  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, tokens: blankTokens() };
+  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, tokens: blankTokens() };
   let estimatedIncluded = false;
 
   for (const s of scan.sessions) {
@@ -690,7 +744,12 @@ export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
 
       bkt.total.usd += bag.usd; bkt.total.estimatedUsd += bag.estimatedUsd; addTokens(bkt.total.tokens, bag.tokens);
       totals.usd += bag.usd; totals.estimatedUsd += bag.estimatedUsd;
-      totals.subAgentUsd += bag.subAgentUsd; addTokens(totals.tokens, bag.tokens);
+      totals.subAgentUsd += bag.subAgentUsd;
+      // `|| 0`: a bag built before advisorUsd existed (an unmigrated fixture/cache
+      // entry) has no such field — treat it as no advisor spend rather than NaN-ing
+      // the running total.
+      totals.advisorUsd += bag.advisorUsd || 0;
+      addTokens(totals.tokens, bag.tokens);
       if (bag.estimatedUsd > 0) estimatedIncluded = true;
     }
   }

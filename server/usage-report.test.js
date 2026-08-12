@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { scanAllDaily, rollup, buildUsage, _resetUsageFileCache, _usageFileCacheStats } from './usage-report.js';
 import { costUsd, costUsdByType } from './pricing.js';
+import { analyze } from './transcript-reader.js';
 
 const NOW = Date.parse('2026-07-16T00:00:00.000Z');
 
@@ -157,6 +158,139 @@ test('counts sub-agent spend from background transcripts, not the inline lower b
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
   assert.equal(r.totals.tokens.input, 5100, 'parent + sub-agent input tokens combined');
   assert.ok(r.totals.subAgentUsd > 0);
+});
+
+// --- advisor consultations: usage.iterations[] classification -----------------
+// Mirrors transcript-reader.test.js's coverage at this scanner's level (CLAUDE.md:
+// "Three scanners must agree"). The native advisor tool nests an extra
+// "advisor_message" iteration inside usage.iterations[], its own `model`, never
+// cached — top-level usage fields only sum the "message" iterations.
+test('advisor consultations are folded into usd and broken out as advisorUsd, priced at their own model', async () => {
+  const d = makeDirs();
+  const sid = '44444444-4444-4444-4444-444444444444';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-sonnet', {
+      iterations: [
+        { type: 'message', input_tokens: 1000, output_tokens: 200 },
+        { type: 'advisor_message', model: 'claude-opus', input_tokens: 3000, output_tokens: 100 },
+      ],
+    }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const expectedParent = costUsd({ 'claude-sonnet': { input: 1000, output: 200, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  const expectedAdvisor = costUsd({ 'claude-opus': { input: 3000, output: 100, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  assert.ok(Math.abs(r.totals.usd - (expectedParent + expectedAdvisor)) < 1e-9);
+  assert.ok(Math.abs(r.totals.advisorUsd - expectedAdvisor) < 1e-9);
+  const advisorModel = r.dimensions.model.find((m) => m.key === 'claude-opus (advisor)');
+  assert.ok(advisorModel, "the advisor iteration shows up under its OWN model, not the parent turn's");
+  assert.ok(Math.abs(advisorModel.usd - expectedAdvisor) < 1e-9);
+});
+
+// The Model slice must never fold a consult into ordinary usage just because the
+// advisor happened to be the same model as the parent turn — that would make the
+// Model view understate the advisor's real cost and overstate normal usage of it.
+test('an advisor consult on the SAME model the parent turn used is a separate row in the Model slice', async () => {
+  const d = makeDirs();
+  const sid = '77777777-7777-7777-7777-777777777777';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus-4-8', {
+      iterations: [
+        { type: 'message', input_tokens: 1000, output_tokens: 200 },
+        { type: 'advisor_message', model: 'claude-opus-4-8', input_tokens: 3000, output_tokens: 100 },
+      ],
+    }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const ownUsage = r.dimensions.model.find((m) => m.key === 'claude-opus-4-8');
+  const advisorUsage = r.dimensions.model.find((m) => m.key === 'claude-opus-4-8 (advisor)');
+  assert.ok(ownUsage, 'normal usage of the model keeps its own row');
+  assert.ok(advisorUsage, 'the consult on the same model gets its own row, not folded into the one above');
+  assert.equal(r.dimensions.model.length, 2, 'exactly two rows, never merged into one');
+  const expectedOwn = costUsd({ 'claude-opus-4-8': { input: 1000, output: 200, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  const expectedAdvisor = costUsd({ 'claude-opus-4-8': { input: 3000, output: 100, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  assert.ok(Math.abs(ownUsage.usd - expectedOwn) < 1e-9);
+  assert.ok(Math.abs(advisorUsage.usd - expectedAdvisor) < 1e-9);
+});
+
+test('multiple message iterations with an advisor_message interspersed: nothing dropped or double-counted', async () => {
+  const d = makeDirs();
+  const sid = '55555555-5555-5555-5555-555555555555';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-sonnet-5', {
+      iterations: [
+        { type: 'message', input_tokens: 2, output_tokens: 1799 },
+        { type: 'advisor_message', model: 'claude-opus-4-8', input_tokens: 104858, output_tokens: 14169 },
+        { type: 'message', input_tokens: 2, output_tokens: 225 },
+      ],
+    }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const expectedParent = costUsd({ 'claude-sonnet-5': { input: 4, output: 2024, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  const expectedAdvisor = costUsd({ 'claude-opus-4-8': { input: 104858, output: 14169, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  assert.ok(Math.abs(r.totals.usd - (expectedParent + expectedAdvisor)) < 1e-9);
+  assert.ok(Math.abs(r.totals.advisorUsd - expectedAdvisor) < 1e-9);
+});
+
+test('transcript-reader and usage-report agree on usd/advisorUsd for the same multi-iteration turn', async () => {
+  const d = makeDirs();
+  const sid = '66666666-6666-6666-6666-666666666666';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-sonnet-5', {
+      iterations: [
+        { type: 'message', input_tokens: 2, output_tokens: 1799 },
+        { type: 'advisor_message', model: 'claude-opus-4-8', input_tokens: 104858, output_tokens: 14169 },
+        { type: 'message', input_tokens: 2, output_tokens: 225 },
+      ],
+    }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const fromTranscriptReader = await analyze(sid, d.projectsDir);
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+
+  assert.ok(Math.abs(fromTranscriptReader.usd - r.totals.usd) < 1e-9, 'both scanners agree on the headline total');
+  assert.ok(Math.abs(fromTranscriptReader.advisorUsd - r.totals.advisorUsd) < 1e-9, 'both scanners agree on the advisor breakout');
+});
+
+// A live, unchanged file whose cached result predates the advisor-breakout field
+// would otherwise serve a `daily` total computed under the old top-level-only
+// read — silently missing the consult forever, since nothing else about the file
+// ever invalidates the entry. Pins the `cached.result.advisor` gate.
+test('a live file cached before advisorUsd existed is rescanned, not served stale', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2';
+  const file = claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-sonnet', {
+      iterations: [
+        { type: 'message', input_tokens: 1000, output_tokens: 200 },
+        { type: 'advisor_message', model: 'claude-opus', input_tokens: 3000, output_tokens: 100 },
+      ],
+    }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+
+  const size = fs.statSync(file).size;
+  const staleParentOnlyUsd = costUsd({ 'claude-sonnet': { input: 1000, output: 200, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 3,
+    claude: { [file]: { size, subSig: '', since: 0, result: {
+      daily: { '2026-07-14T12': { 'claude-sonnet': { input: 1000, output: 200, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } } },
+      sub: {}, failed: false,
+    } } },
+    codex: {},
+  }));
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(_usageFileCacheStats().misses, 1, 'the pre-advisor-shaped cache entry forced a rescan, not a stale hit');
+  assert.ok(r.totals.advisorUsd > 0, 'the consult is no longer silently missing');
+  assert.ok(r.totals.usd > staleParentOnlyUsd, 'the total grew once the consult was picked up');
 });
 
 test('dedups a resumed conversation shared by two card ids', async () => {

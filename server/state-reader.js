@@ -476,6 +476,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       socket: tmux ? (sessionManager?.socketOf?.(tmux) ?? '') : null,
       exitOutput,
       usd: enrichment?.usd ?? null,
+      advisorUsd: enrichment?.advisorUsd ?? null,
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],
       teammates,
@@ -624,6 +625,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       tmux: d.tmuxName,
       socket: d.socket || '',
       usd: enr?.usd ?? null,
+      advisorUsd: enr?.advisorUsd ?? null,
       tokens: enr?.tokens ?? null,
       subAgents: enr?.subAgents ?? [],
       teammates,
@@ -714,6 +716,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       exitOutput,
       dormant: true,
       usd: enrichment?.usd ?? null,
+      advisorUsd: enrichment?.advisorUsd ?? null,
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],
       teammates: [], // dormant — no live panes to host a team

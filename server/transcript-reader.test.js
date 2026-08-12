@@ -611,6 +611,138 @@ test('analyze leaves a legacy sub-agent uncounted when its tool_result carries n
   assert.equal(r.subAgentUsd, 0);
 });
 
+// --- advisor consultations: usage.iterations[] classification -----------------
+// Claude Code's native advisor tool nests an extra "advisor_message" iteration
+// inside a turn's usage.iterations[], carrying its OWN model (independent of the
+// parent turn's) and never using prompt caching. The top-level usage fields only
+// sum the "message" iterations — verified against real transcripts — so a consult
+// is invisible to any reader that stops at top-level usage. Advisor tokens still
+// land in `totals` (an "of which" breakout, not an addition), so the drill-down
+// invariant (per-agent usd, session total) is unaffected by whether some of the
+// spend happened to be a consult.
+const ADVISOR = 'claude-opus-4-8';
+// The bucket key an advisor iteration lands under — distinct from the bare model id
+// even when the advisor is the SAME model the parent turn used, so a per-model view
+// never silently merges a consult into ordinary usage of that model.
+const ADVISOR_KEY = `${ADVISOR} (advisor)`;
+const advisorLine = (id, model, usage) => JSON.stringify({
+  type: 'assistant',
+  message: { id, role: 'assistant', model, usage, content: [{ type: 'text', text: 'x' }] },
+});
+
+test('a turn with no iterations array falls back to the top-level usage fields unchanged', () => {
+  const state = { totals: {}, advisorTotals: {}, subAgents: [], lastActivity: 0, summary: null, seenUsageIds: new Set() };
+  scanLine(advisorLine('m1', 'claude-sonnet-4', { input_tokens: 100, output_tokens: 50 }), state);
+  assert.deepEqual(state.totals['claude-sonnet-4'], { input: 100, output: 50, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.advisorTotals, {});
+});
+
+test('a turn with only a "message" iteration costs the same as the fallback path', () => {
+  const state = { totals: {}, advisorTotals: {}, subAgents: [], lastActivity: 0, summary: null, seenUsageIds: new Set() };
+  const usage = { input_tokens: 100, output_tokens: 50, iterations: [{ type: 'message', input_tokens: 100, output_tokens: 50 }] };
+  scanLine(advisorLine('m1', 'claude-sonnet-4', usage), state);
+  assert.deepEqual(state.totals['claude-sonnet-4'], { input: 100, output: 50, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.advisorTotals, {});
+});
+
+test('a bundled message + advisor_message pair: total includes both, advisorUsd is the consult alone', () => {
+  const state = { totals: {}, advisorTotals: {}, subAgents: [], lastActivity: 0, summary: null, seenUsageIds: new Set() };
+  const usage = {
+    iterations: [
+      { type: 'message', input_tokens: 2, output_tokens: 1799, cache_read_input_tokens: 95799, cache_creation_input_tokens: 5954 },
+      { type: 'advisor_message', model: ADVISOR, input_tokens: 104858, output_tokens: 14169 },
+    ],
+  };
+  scanLine(advisorLine('m1', 'claude-sonnet-5', usage), state);
+
+  assert.deepEqual(state.totals['claude-sonnet-5'], { input: 2, output: 1799, cacheWrite5m: 5954, cacheWrite1h: 0, cacheRead: 95799 });
+  assert.deepEqual(state.totals[ADVISOR_KEY], { input: 104858, output: 14169, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.advisorTotals, { [ADVISOR_KEY]: { input: 104858, output: 14169, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+
+  const expectedTotalUsd = flat('claude-sonnet-5', { input: 2, output: 1799, cacheWrite5m: 5954, cacheRead: 95799 })
+    + flat(ADVISOR_KEY, { input: 104858, output: 14169 });
+  const expectedAdvisorUsd = flat(ADVISOR_KEY, { input: 104858, output: 14169 });
+  assert.ok(Math.abs(costUsd(state.totals) - expectedTotalUsd) < 1e-6);
+  assert.ok(Math.abs(costUsd(state.advisorTotals) - expectedAdvisorUsd) < 1e-6);
+});
+
+test('multiple message iterations with an advisor_message interspersed: nothing dropped or double-counted', () => {
+  const state = { totals: {}, advisorTotals: {}, subAgents: [], lastActivity: 0, summary: null, seenUsageIds: new Set() };
+  const usage = {
+    iterations: [
+      { type: 'message', input_tokens: 2, output_tokens: 1799 },
+      { type: 'advisor_message', model: ADVISOR, input_tokens: 104858, output_tokens: 14169 },
+      { type: 'message', input_tokens: 2, output_tokens: 225 },
+    ],
+  };
+  scanLine(advisorLine('m1', 'claude-sonnet-5', usage), state);
+
+  assert.deepEqual(state.totals['claude-sonnet-5'], { input: 4, output: 2024, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.totals[ADVISOR_KEY], { input: 104858, output: 14169, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.advisorTotals, { [ADVISOR_KEY]: { input: 104858, output: 14169, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
+});
+
+test('an advisor consult on the SAME model the parent turn used stays a distinct bucket, never merged', () => {
+  const state = { totals: {}, advisorTotals: {}, subAgents: [], lastActivity: 0, summary: null, seenUsageIds: new Set() };
+  const usage = {
+    iterations: [
+      { type: 'message', input_tokens: 1000, output_tokens: 200 },
+      { type: 'advisor_message', model: ADVISOR, input_tokens: 3000, output_tokens: 100 }, // same model as the parent turn
+    ],
+  };
+  scanLine(advisorLine('m1', ADVISOR, usage), state);
+
+  // Two distinct keys for the one model, not one merged bucket — else a per-model
+  // view (the Model slice) would silently fold a consult into ordinary usage.
+  assert.deepEqual(state.totals[ADVISOR], { input: 1000, output: 200, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.deepEqual(state.totals[ADVISOR_KEY], { input: 3000, output: 100, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 });
+  assert.equal(Object.keys(state.totals).length, 2);
+});
+
+test('analyze surfaces advisorUsd for a parent-turn consult, already included in the session usd', async () => {
+  const projects = tmpProject('cost-advisor', jsonl({
+    type: 'assistant', timestamp: '2026-07-09T09:00:00.000Z',
+    message: {
+      role: 'assistant', id: 'p1', model: OPUS,
+      usage: { iterations: [
+        { type: 'message', input_tokens: 1000, output_tokens: 200 },
+        { type: 'advisor_message', model: HAIKU, input_tokens: 3000, output_tokens: 100 },
+      ] },
+      content: [{ type: 'text', text: 'consulted' }],
+    },
+  }));
+  const parentUsd = flat(OPUS, { input: 1000, output: 200 });
+  const advisorUsd = flat(HAIKU, { input: 3000, output: 100 });
+  const r = await analyze('cost-advisor', projects);
+  assert.ok(Math.abs(r.usd - (parentUsd + advisorUsd)) < 1e-9, `usd ${r.usd} should equal parent+advisor ${parentUsd + advisorUsd}`);
+  assert.ok(Math.abs(r.advisorUsd - advisorUsd) < 1e-9, `advisorUsd ${r.advisorUsd} should equal ${advisorUsd}`);
+});
+
+test("analyze folds a background sub-agent's own advisor consult into both its usd and the session advisorUsd", async () => {
+  const projects = tmpProject('cost-sub-advisor', parentTurn, {
+    'agent-sa1.jsonl': jsonl({
+      type: 'assistant', timestamp: '2026-07-09T09:00:05.000Z',
+      message: {
+        role: 'assistant', id: 's1', model: HAIKU,
+        usage: { iterations: [
+          { type: 'message', input_tokens: 5000, output_tokens: 400 },
+          { type: 'advisor_message', model: OPUS, input_tokens: 2000, output_tokens: 50 },
+        ] },
+        content: [{ type: 'text', text: 'done' }],
+      },
+    }),
+  });
+  const parentUsd = flat(OPUS, { input: 1000, output: 200 });
+  const subOwnUsd = flat(HAIKU, { input: 5000, output: 400 });
+  const subAdvisorUsd = flat(OPUS, { input: 2000, output: 50 });
+  const r = await analyze('cost-sub-advisor', projects);
+  assert.ok(Math.abs(r.usd - (parentUsd + subOwnUsd + subAdvisorUsd)) < 1e-9, 'session usd includes the sub-agent\'s consult');
+  assert.ok(Math.abs(r.subAgentUsd - (subOwnUsd + subAdvisorUsd)) < 1e-9, 'per-agent usd already includes its own consult (drill-down invariant)');
+  assert.ok(Math.abs(r.advisorUsd - subAdvisorUsd) < 1e-9, 'session advisorUsd breaks out the sub-agent\'s consult too');
+  assert.ok(Math.abs(r.subAgents[0].usd - (subOwnUsd + subAdvisorUsd)) < 1e-9, 'the drill-down usd matches the headline sum');
+  assert.ok(Math.abs(r.subAgents[0].advisorUsd - subAdvisorUsd) < 1e-9, 'the sub-agent card can show its own consult spend');
+});
+
 test('analyze reports apiError when a transcript ends on a dropped API connection', async () => {
   const projects = tmpProject('ends-in-api-error', jsonl(
     { type: 'user', timestamp: '2026-07-09T09:00:00.000Z', message: { role: 'user', content: 'do the thing' } },

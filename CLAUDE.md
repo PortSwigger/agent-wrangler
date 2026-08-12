@@ -46,6 +46,40 @@ don't re-derive it.
   the background transcript per-turn (`transcript-reader.js`); the inline usage is a
   last-resort lower bound only. `scripts/cost-report.mjs` deliberately duplicates this
   so the report and live board agree.
+- **A turn's real API calls live in `message.usage.iterations[]`, not the top-level
+  `usage` fields — the native advisor tool (`advisorModel` in `~/.claude/settings.json`)
+  is invisible if you stop at top-level.** A turn that calls the advisor tool bundles
+  an extra `"advisor_message"` iteration alongside its `"message"` one(s), sharing the
+  parent's `session_id`/timestamp but carrying its **own `model`** and never using
+  prompt caching (full price, every call — a disproportionate, easy-to-miss cost
+  driver, ~19% of spend in one measured sample). **Top-level `input_tokens`/
+  `output_tokens`/`cache_*` are NOT reliably the sum of the `"message"`-type
+  iterations** — that held in the transcript that first motivated this fix, but a
+  frozen-snapshot audit found 121 real turns (68 sessions, one month) where the
+  top-level fields under-reported the ordinary `"message"` iterations too — in the
+  worst case by 636k `cache_read` tokens on one turn alone — whenever an
+  `"advisor_message"` iteration happened to be bundled into the same turn. So
+  iterations[] must be walked for correctness even ignoring the advisor tool entirely;
+  don't reason about this from the top-level fields at all once `iterations` exists.
+  All three scanners walk `iterations[]` and price an advisor iteration at its own
+  model, folding its tokens into the normal totals ("of which", not additive) while
+  also breaking them out as `advisorUsd` — a session's `usd` already includes it,
+  `advisorUsd` is the slice. **Not disjoint from `subAgentUsd`** — a sub-agent that
+  itself consults the advisor counts in both; the CLI/dashboard say so, don't silently
+  add the two together. **Bucketed under `` `${model} (advisor)` ``, never the bare
+  model id** — even when the advisor happens to be the same model the parent turn
+  used, its spend must stay a visibly separate row in the Model dimension
+  (`usage-report.js` `byModelOf`, `cost-report.mjs` `byModel`), never silently merged
+  into ordinary usage of that model. `pricing.js`'s substring match still resolves the
+  suffixed key to the right rate, so this costs nothing extra. `usage-report.js`'s
+  per-file cache additionally gates its live-file cache hit on
+  `cached.result.advisor` existing, so a file cached before this field existed forces
+  one rescan instead of serving a total that silently excludes advisor spend forever
+  — but that check is presence-only, not shape-aware: it cannot detect a LATER change
+  to how `.daily`'s keys are formed (like the model-key split above). Any future
+  reshape of what lives under `.daily`/`.advisor` needs its own gate, or an
+  already-migrated cache entry will pass this check and serve stale-shaped data until
+  its file next changes.
 - **A fork's transcript REPLAYS the parent's whole history — bound every cost scan by
   `usageSince(entry)`.** `--fork-session` copies every parent line into the fork's own
   jsonl (same uuids, `message.id`s and timestamps; only the per-line `sessionId` is

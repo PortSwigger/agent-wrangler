@@ -282,7 +282,7 @@ export async function activityInRange(sessionId, startMs, endMs, projectsDir = P
 }
 
 function emptyState(transcript, since = 0) {
-  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, seenUsageIds: new Set(), apiError: false };
+  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, advisorTotals: {}, subAdvisorTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, seenUsageIds: new Set(), apiError: false };
 }
 
 // Add one per-model totals bag into another (the shape addUsage builds), so the
@@ -314,6 +314,43 @@ function addUsage(totals, model, usage) {
     t.cacheWrite5m += usage.cache_creation_input_tokens || 0;
   }
   t.cacheRead += usage.cache_read_input_tokens || 0;
+}
+
+// A turn's real API calls live in usage.iterations[] — normally one "message" entry,
+// but a turn that calls the native advisor tool bundles an extra "advisor_message"
+// iteration alongside it, carrying its OWN `model` (independent of the parent turn's)
+// and never using prompt caching. The TOP-LEVEL usage fields (input_tokens etc.) do
+// NOT reliably equal the sum of the "message" iterations once `iterations` exists —
+// a frozen-snapshot audit found real turns where the top level under-reports the
+// ordinary "message" portion too (worst case: 636k cache_read tokens missing on one
+// turn), always co-occurring with a bundled "advisor_message" iteration. So this
+// isn't just "the consult is invisible at top level" — iterations[] must be walked
+// for correctness on ANY turn that has it, not only to recover advisor spend.
+//
+// Advisor tokens are bucketed under `${model} (advisor)`, NOT the bare model id —
+// even when the advisor happens to be the same model the parent turn used, its spend
+// must stay visibly separate in any per-model view (the Usage dashboard's Model slice
+// would otherwise silently merge a consult into ordinary "opus" usage). The suffixed
+// key still prices correctly: pricing.js matches by substring, so "claude-opus-4-8
+// (advisor)" still resolves to the Opus rate. Advisor tokens ARE counted in `totals`
+// ("of which" is a breakout, not an addition) — a sub-agent's per-agent usd and any
+// session's combined total is unaffected by whether some of its spend happened to be
+// a consult; `advisorTotals` mirrors the same (suffixed-key) tokens for the separate
+// "advisor consultations" cost line. A turn with no iterations (older transcripts)
+// falls back to addUsage exactly as before.
+function addUsageSplit(totals, advisorTotals, model, usage) {
+  if (!usage) return;
+  const iterations = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : null;
+  if (!iterations) {
+    addUsage(totals, model, usage);
+    return;
+  }
+  for (const iter of iterations) {
+    const isAdvisor = iter?.type === 'advisor_message';
+    const key = isAdvisor ? `${iter.model || 'unknown'} (advisor)` : model;
+    addUsage(totals, key, iter);
+    if (isAdvisor) addUsage(advisorTotals, key, iter);
+  }
 }
 
 export function scanLine(line, state) {
@@ -359,7 +396,7 @@ export function scanLine(line, state) {
   // line (older/synthetic) is always counted since it can't be matched to others.
   if (msg.usage && !inherited && !(msg.id && state.seenUsageIds.has(msg.id))) {
     if (msg.id) state.seenUsageIds.add(msg.id);
-    addUsage(state.totals, msg.model, msg.usage);
+    addUsageSplit(state.totals, state.advisorTotals, msg.model, msg.usage);
   }
 
   // First real user message → a human-readable summary for unnamed sessions.
@@ -453,6 +490,7 @@ function tailSubAgentFile(file, fc) {
     fc.offset = 0;
     fc.leftover = '';
     fc.totals = {};
+    fc.advisorTotals = {};
     fc.seenUsageIds = new Set();
     fc.startedAt = null;
     fc.endedAt = null;
@@ -500,7 +538,7 @@ function scanSubLine(line, fc) {
   // same usage 2-3x, exactly as the main transcript does (see scanLine).
   if (msg.usage && !(msg.id && fc.seenUsageIds.has(msg.id))) {
     if (msg.id) fc.seenUsageIds.add(msg.id);
-    addUsage(fc.totals, msg.model, msg.usage);
+    addUsageSplit(fc.totals, fc.advisorTotals, msg.model, msg.usage);
   }
   if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
@@ -530,7 +568,7 @@ export async function subAgentsFrom(subagentsDir, state) {
     if (!m) continue;
     const id = m[1];
     const fc = state.subFiles.get(id) || {
-      offset: 0, leftover: '', totals: {}, seenUsageIds: new Set(),
+      offset: 0, leftover: '', totals: {}, advisorTotals: {}, seenUsageIds: new Set(),
       startedAt: null, endedAt: null, dangling: false, size: null, meta: null, quietPolls: 0,
     };
     tailSubAgentFile(path.join(subagentsDir, f), fc);
@@ -553,6 +591,7 @@ export async function subAgentsFrom(subagentsDir, state) {
       startedAt: fc.startedAt,
       endedAt: fc.endedAt,
       usd: costUsd(fc.totals),
+      advisorUsd: costUsd(fc.advisorTotals || {}),
     });
   }
   return list;
@@ -667,7 +706,7 @@ export function usageSince(entry) {
 // history replayed into its transcript isn't billed twice (see scanLine).
 export async function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0 } = {}) {
   const transcript = await findTranscript(sessionId, projectsDir);
-  if (!transcript) return { usd: null, subAgentUsd: 0, tokens: null, subAgents: [] };
+  if (!transcript) return { usd: null, subAgentUsd: 0, advisorUsd: 0, tokens: null, subAgents: [] };
 
   let state = cache.get(sessionId);
   // A changed bound invalidates the accumulated totals as surely as a changed file
@@ -717,6 +756,10 @@ export async function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0
   const subagentsDir = path.join(path.dirname(transcript), sessionId, 'subagents');
   const background = await subAgentsFrom(subagentsDir, state);
   state.subAgentTotals = {};
+  // The "of which" advisor breakout across sub-agents, recomputed fresh each poll
+  // exactly like subAgentTotals — the sub-agent's own advisor tokens are already
+  // inside fc.totals/t (addUsageSplit), this is purely the drill-down slice.
+  state.subAdvisorTotals = {};
   if (background.length) {
     state.subAgents = background;
     // Cost each from its own transcript's per-turn totals — the same figures behind
@@ -724,12 +767,15 @@ export async function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0
     for (const b of background) {
       const fc = state.subFiles.get(b.id);
       if (fc?.totals) mergeTotals(state.subAgentTotals, fc.totals);
+      if (fc?.advisorTotals) mergeTotals(state.subAdvisorTotals, fc.advisorTotals);
     }
   } else {
     state.subAgents = [...state.legacyAgents.values()].map((a) => {
       const t = {};
-      if (a.usage) addUsage(t, a.model, a.usage);
+      const ta = {};
+      if (a.usage) addUsageSplit(t, ta, a.model, a.usage);
       mergeTotals(state.subAgentTotals, t);
+      mergeTotals(state.subAdvisorTotals, ta);
       return {
         id: a.id,
         agentType: a.agentType,
@@ -739,6 +785,7 @@ export async function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0
         startedAt: a.startedAt,
         endedAt: a.endedAt,
         usd: a.usage ? costUsd(t) : null,
+        advisorUsd: a.usage ? costUsd(ta) : null,
       };
     });
   }
@@ -753,6 +800,13 @@ function summarise(state) {
   const combined = {};
   mergeTotals(combined, state.totals);
   mergeTotals(combined, sub);
+  // advisorTotals/subAdvisorTotals are an "of which" breakout — their tokens are
+  // already inside state.totals/sub above (addUsageSplit), so this is NOT merged
+  // into `combined` a second time; it exists purely to cost the separate
+  // advisor-consultations line.
+  const advisor = {};
+  mergeTotals(advisor, state.advisorTotals || {});
+  mergeTotals(advisor, state.subAdvisorTotals || {});
   let input = 0;
   let output = 0;
   let cacheWrite = 0;
@@ -766,6 +820,7 @@ function summarise(state) {
   return {
     usd: costUsd(combined),
     subAgentUsd: costUsd(sub),
+    advisorUsd: costUsd(advisor),
     tokens: { input, output, cacheWrite, cacheRead },
     subAgents: state.subAgents,
     lastActivity: state.lastActivity || null,
