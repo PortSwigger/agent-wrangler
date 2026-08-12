@@ -144,6 +144,15 @@ don't re-derive it.
   live bug (a parent-with-children could never be dragged, and any drag in its
   task permanently dropped it from `sessionOrder`), not a "sessions with children
   sink last" feature.
+- **Never put agent-sized text on a tmux COMMAND LINE — the protocol caps one command
+  at 16 KB** (`MAX_IMSGSIZE`) and rejects the rest with a bare "command too long". The
+  first prompt rides inline (`claude … -- <intent>`), so a long brief killed the dispatch
+  before any tmux/entry existed while the same text pasted into a live pane was fine.
+  Both fixes are file-based and both must stay: `paneCommand` (`launch-script.js`, at the
+  one `_newSession` choke point, so launch/resume/fork and every agent are covered) spills
+  an oversized command to a sourced script; delivery into a *running* pane goes via a
+  paste buffer (`pasteBlock`), never `send-keys -l`. Beyond tmux the ceiling is ARG_MAX
+  (1 MB), so sourcing lifts the practical limit ~60×.
 - **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
   launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
   `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).
