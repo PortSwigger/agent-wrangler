@@ -137,9 +137,12 @@ function renderSummary() {
   if (d.totals.advisorUsd > 0 && !state.filter) {
     const adv = document.createElement('div');
     adv.className = 'usage-est';
+    // Real token counts either way — advisorTokens isn't an estimate the way Codex's
+    // estimatedUsd note above is, so the Tokens branch gets an actual number too,
+    // not the placeholder text the Codex note falls back to.
     adv.textContent = state.metric === 'usd'
       ? `includes ${fmtUsd(d.totals.advisorUsd)} spent on advisor consultations`
-      : 'includes advisor consultation usage';
+      : `includes ${fmtTokens(cellValueOf({ tokens: d.totals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;
     // Deliberately not disjoint from a sub-agent's own cost (a sub-agent that
     // itself consulted the advisor counts in both figures) — say so on hover
     // rather than lengthening the visible line.

@@ -341,6 +341,7 @@ function normalizeClaudeDays(scan) {
       estimatedUsd: 0,
       subAgentUsd: costUsd(subByDay[day] || {}),
       advisorUsd: costUsd(advisorByDay[day] || {}),
+      advisorTokens: tokensOf(advisorByDay[day] || {}),
       tokens: tokensOf(totals),
       byModel: byModelOf(totals),
       costByType: costUsdByType(totals), // $ split by token type; sums to usd (Claude pricing)
@@ -655,7 +656,7 @@ export async function scanAllDaily({
       raw.push({
         file: null, owner: true, task,
         days: { [dayKeyOf(created)]: {
-          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: 0, advisorUsd: 0,
+          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(),
           tokens: codexTokens,
           // Codex $ is estimated, so its per-model and per-type breakdowns are too.
           byModel: { [model]: { usd: a.usd, estimatedUsd: a.usd, tokens: codexTokens } },
@@ -714,7 +715,7 @@ export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
   const taskSpend = new Map();
   const modelNames = new Map();
   const modelSpend = new Map();
-  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, tokens: blankTokens() };
+  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() };
   let estimatedIncluded = false;
 
   for (const s of scan.sessions) {
@@ -747,8 +748,9 @@ export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
       totals.subAgentUsd += bag.subAgentUsd;
       // `|| 0`: a bag built before advisorUsd existed (an unmigrated fixture/cache
       // entry) has no such field — treat it as no advisor spend rather than NaN-ing
-      // the running total.
+      // the running total. Same reasoning for advisorTokens, guarded with `|| blankTokens()`.
       totals.advisorUsd += bag.advisorUsd || 0;
+      addTokens(totals.advisorTokens, bag.advisorTokens || blankTokens());
       addTokens(totals.tokens, bag.tokens);
       if (bag.estimatedUsd > 0) estimatedIncluded = true;
     }

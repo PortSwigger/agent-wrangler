@@ -186,6 +186,10 @@ test('advisor consultations are folded into usd and broken out as advisorUsd, pr
   const advisorModel = r.dimensions.model.find((m) => m.key === 'claude-opus (advisor)');
   assert.ok(advisorModel, "the advisor iteration shows up under its OWN model, not the parent turn's");
   assert.ok(Math.abs(advisorModel.usd - expectedAdvisor) < 1e-9);
+  // The Tokens-metric view of the dashboard's summary note needs a real number too,
+  // not just the $ figure — advisorTokens is exact (unlike Codex's estimatedUsd),
+  // so it should carry the consult's actual token counts.
+  assert.deepEqual(r.totals.advisorTokens, { input: 3000, output: 100, cacheWrite: 0, cacheRead: 0 });
 });
 
 // The Model slice must never fold a consult into ordinary usage just because the
