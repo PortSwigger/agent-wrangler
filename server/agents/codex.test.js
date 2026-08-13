@@ -22,7 +22,7 @@ test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   assert.match(cmd, /'--sandbox' 'workspace-write'/);
   assert.match(cmd, /'--ask-for-approval' 'never'/);
   assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
-  assert.match(cmd, /developer_instructions="Before your first action this session, read the file at AW_TASK_MEMORY/);
+  assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
   assert.match(cmd, /You have wrangler-meta skills available/);
   assert.match(cmd, /- task-memory — /);
   assert.match(cmd, /- links — /);
@@ -68,7 +68,7 @@ test('worktree guardrail is folded into developer_instructions only when launche
 
 test('developer_instructions carries the mandatory-skill nudge and the skills catalog as a TOML string', () => {
   const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: [], taskMemory: true });
-  assert.match(cmd, /developer_instructions="Before your first action this session, read the file at AW_TASK_MEMORY/);
+  assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
   assert.match(cmd, /You have wrangler-meta skills available/);
 });
 
@@ -76,7 +76,7 @@ test('codex resume and fork also carry the nudge + skills catalog in developer_i
   const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', taskMemory: true });
   const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', model: 'gpt-5.5', taskMemory: true });
   for (const cmd of [resume, fork]) {
-    assert.match(cmd, /developer_instructions="Before your first action this session, read the file at AW_TASK_MEMORY/);
+    assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
     assert.match(cmd, /You have wrangler-meta skills available/);
   }
 });

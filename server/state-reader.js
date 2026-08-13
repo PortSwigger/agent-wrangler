@@ -246,7 +246,13 @@ function withForkMark(label, entry) {
 // session-manager (tmux ownership) and an optional cost/sub-agent provider.
 // `discover` is a test seam (defaults to the real tmux scan) so the pane→node
 // logic — team-member routing and the dedup — is testable without a live tmux.
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = runtimeFor, discover = discoverClaudeSessions, capture = capturePane } = {}) {
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = runtimeFor, discover = discoverClaudeSessions, capture = capturePane, mailStore } = {}) {
+  const now = Date.now();
+  // The mail pill's data, keyed on card id like every other per-session field —
+  // omitted entirely (undefined) when no mailStore is injected, so a caller that
+  // doesn't pass one (most tests) sees no `mail` field rather than a fabricated
+  // empty one.
+  const mailInfo = (sid) => (mailStore ? mailStore.unreadInfo(sid, now) : undefined);
   const sessions = readSessions();
   const roster = readRosterBySession();
 
@@ -480,6 +486,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],
       teammates,
+      mail: mailInfo(s.sessionId),
     };
     sessionList.push(session);
     nodes.push(session);
@@ -629,6 +636,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       tokens: enr?.tokens ?? null,
       subAgents: enr?.subAgents ?? [],
       teammates,
+      mail: mailInfo(sid),
     };
     sessionList.push(session);
     nodes.push(session);
@@ -720,6 +728,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],
       teammates: [], // dormant — no live panes to host a team
+      mail: mailInfo(sid),
     };
     sessionList.push(session);
     nodes.push(session);

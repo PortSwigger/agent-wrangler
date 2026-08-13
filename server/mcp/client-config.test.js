@@ -62,3 +62,18 @@ test('allowedToolsArg grants the assign_session tool (no per-call prompt)', () =
 test('allowedToolsArg grants the get_session_info self-lookup tool (no per-call prompt)', () => {
   assert.ok(allowedToolsArg().split(',').includes(allowedToolName('get_session_info')));
 });
+
+// The two-place registration is the silent-failure mode CLAUDE.md warns about:
+// registering a tool in tools/index.js's TOOLS without also allow-listing it
+// here ships something that passes every unit test and dies silently in a real
+// launch (the agent never even gets a permission prompt to answer). Assert the
+// pair explicitly for read_mail/list_mail rather than relying on someone
+// remembering both files.
+test('allowedToolsArg grants read_mail and list_mail (the mailbox tools) — the two-place registration pair', async () => {
+  const { TOOLS } = await import('./tools/index.js');
+  const names = allowedToolsArg().split(',');
+  for (const toolName of ['read_mail', 'list_mail']) {
+    assert.ok(TOOLS.some((t) => t.name === toolName), `${toolName} must be registered in tools/index.js TOOLS`);
+    assert.ok(names.includes(allowedToolName(toolName)), `${toolName} must be allow-listed in client-config.js ALLOWED_TOOLS`);
+  }
+});

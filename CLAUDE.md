@@ -150,7 +150,40 @@ don't re-derive it.
   `--allowedTools` grants without a per-call permission prompt (a non-interactive
   agent that never gets a prompt answered effectively can't use a tool missing from
   it). Registering without allow-listing ships a tool that works in tests and dies
-  silently in a real launch.
+  silently in a real launch. `read_mail`/`list_mail` are the current example
+  (`client-config.test.js` asserts the pair) — and because `--allowedTools` is
+  baked into a session's launch argv, a session already running when this
+  shipped has neither until it's resumed/relaunched: `entry.mailCapable`
+  (stamped at dispatch/resume/fork, `session-manager.js`) tracks which
+  recipients can be routed through the mailbox at all; an unstamped one falls
+  back to `send_message`'s old direct-push behavior.
+- **The mailbox ("you've got mail", Phase 1) is a peer-only channel with its own
+  two independently-keyed guards — do not unify them.** The settle window
+  (`mailbox-store.js`) keys on the **recipient alone**, which is what makes
+  fan-in from several senders batch into one notification; the loop-backstop
+  rate limit (`mcp/message-throttle.js`) keys on the **unordered `{from,to}`
+  pair**, which is what catches a reply loop. Collapsing them to one key breaks
+  fan-in batching, the design's main win. **`server/control/handlers/message.js`
+  (a human typing into a card) still pushes directly and is deliberately
+  unchanged** — only the MCP `send_message` path (peer-to-peer) routes through
+  the mailbox; the two paths are meant to diverge now, not stay unified.
+  **`mailbox-delivery.js` reimplements, not imports, `message-delivery.js`'s
+  dormant-resume guard** (`resolveResumeDir` by the live id, memory bind, then a
+  synchronous commit block with no `await` between the fresh `archivedAt`
+  re-check and `resume()`) — peer mail no longer flows through `deliverMessage`,
+  so nothing carries that guarantee over for free. The store itself
+  (`mailbox-store.js`) is a `schedule-store.js`-style object with **synchronous**
+  mutators, not load-mutate-save via `atomic-json` — four independent writers
+  touch one box (send, drain, the settle sweeper, eviction) and an `await`
+  between a read and its write is where two of them would clobber each other.
+- **Call it `mail`, never `unread` — the name is already taken.** `public/app.js`
+  has an unrelated per-browser `unread` bookmark feature (`wrangler.unread`,
+  "Mark unread") that owns `barWord()` and rewrites `cardState()` to the cyan
+  `just-finished` alarm. The mailbox's `s.mail = {unread, notifiedAt, amber,
+  senders}` (carried on `buildGraph`, keyed on card id) must never touch either
+  — a card can legitimately be human-bookmarked *and* hold unread mail at once,
+  and mixing the two concepts into one signal was the exact bug this naming
+  rule prevents.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage

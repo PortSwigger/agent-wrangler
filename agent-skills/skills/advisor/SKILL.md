@@ -55,10 +55,14 @@ see any of your prior work and does not watch your files change, so state what's
 relevant now — the task, what you've tried or decided, and the specific
 question. Keep it tight; a wall of transcript defeats the point.
 
-After sending, your turn ends and you go idle until the advisor's reply wakes you
-back up (same as waiting on a worker — see the `spawn-session` skill). Reuse the
-same advisor session for later questions on this task instead of spawning a new
-one each time; it holds the thread of earlier advice.
+After sending, your turn ends. `send_message` now queues into the advisor's
+mailbox rather than pasting the body directly — you'll get back a short "you've
+got mail" notification once it replies, not the advice itself; call `read_mail()`
+to fetch what it actually said. ("Idle" here doesn't mean asleep — your session
+stays live at its prompt the whole time; the notification just arrives once the
+advisor has answered, same as waiting on a worker — see the `spawn-session`
+skill.) Reuse the same advisor session for later questions on this task instead
+of spawning a new one each time; it holds the thread of earlier advice.
 
 ## Weighing the advice
 
