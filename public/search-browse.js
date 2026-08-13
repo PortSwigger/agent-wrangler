@@ -94,11 +94,10 @@ const UNASSIGNED = Symbol('unassigned');
 
 // Cluster same-task top-level rows into a heading group, one cluster per
 // distinct task PLUS one for everything with no task at all (mirrors History,
-// which always had its own "Unassigned" tile). A singleton for a REAL task
-// stays a plain row — its own inline task chip already says which task it's
-// in, so a heading would be pure noise — but Unassigned always gets its
-// heading, even for one row, since a task-less row carries no chip of its own
-// to say so otherwise.
+// which always had its own "Unassigned" tile). Every task gets the same
+// treatment — its own row + indented sessions below — even a lone session, so
+// a live task reads identically to an archived one (see taskSummaryRowNode/
+// search.js); there is no "too small to bother" cutoff.
 function foldTaskGroups(topLevel) {
   const byKey = new Map();
   const order = [];
@@ -115,7 +114,6 @@ function foldTaskGroups(topLevel) {
     const entries = [...o.entries].sort((a, b) => (b.group.lastActivity || 0) - (a.group.lastActivity || 0));
     const ts = entries[0].group.lastActivity || 0;
     if (o.key === UNASSIGNED) return { kind: 'task-group', ts, taskId: null, taskName: 'Unassigned', unassigned: true, entries };
-    if (entries.length < 2) return { kind: 'session', ts, ...entries[0] };
     // Newest snapshot's name wins — a task rename between two archives shouldn't
     // show two different headings for the same id.
     const taskName = entries[0].group.task || '';
@@ -127,11 +125,13 @@ function foldTaskGroups(topLevel) {
 // archived tasks into ordered time buckets:
 //   [{ key, label, rows: [...] }]
 // Each row is one of:
-//   { kind:'session', ts, group, children?, parentTitle? }  — a lone/top-level
-//     session, optionally with its same-bucket archived children nested under
-//     it (children: raw group objects) and/or a cross-bucket parent breadcrumb.
-//   { kind:'task-group', ts, taskId, taskName, entries: [{group, children?, parentTitle?}] }
-//     — ≥2 same-task top-level rows in this bucket, clustered under one heading.
+//   { kind:'task-group', ts, taskId, taskName, unassigned?, entries: [{group, children?, parentTitle?}] }
+//     — every top-level row in this bucket, clustered under one heading: one
+//     cluster per distinct task, plus the always-present Unassigned cluster for
+//     task-less rows. A lone session still gets a cluster of one — every task
+//     reads the same regardless of session count. `children` (raw group
+//     objects) is a same-bucket archived child nested under its entry, and
+//     `parentTitle` is a cross-bucket parent breadcrumb.
 //   { kind:'task', ts, task, nested }  — a whole task was archived; `nested` is
 //     the sessions cascade-archived alongside it (flat, no further nesting —
 //     mirrors History, which never chained past this point either).
