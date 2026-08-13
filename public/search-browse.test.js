@@ -124,9 +124,11 @@ test('two same-task rows in one bucket cluster under a task-group heading', () =
   assert.deepEqual(b.rows[0].entries.map((e) => e.group.sessionId), ['s1', 's2']); // newest first
 });
 
-test('a lone session for a task stays a plain row — no heading for a singleton', () => {
+test('a lone session for a task still gets a task-group heading — every task looks the same', () => {
   const [b] = buildBrowseBuckets([group('s1', 1 * HOUR, { taskId: 't1', task: 'Auth work' })], [], NOW);
-  assert.deepEqual(b.rows.map((r) => r.kind), ['session']);
+  assert.deepEqual(b.rows.map((r) => r.kind), ['task-group']);
+  assert.equal(b.rows[0].taskId, 't1');
+  assert.deepEqual(b.rows[0].entries.map((e) => e.group.sessionId), ['s1']);
 });
 
 test('a task-group heading uses the newest snapshot name, even if an older one drifted', () => {
@@ -143,18 +145,20 @@ test('same-task rows split across buckets do not cluster — grouping is per-buc
     [], NOW
   );
   assert.equal(buckets.length, 2);
-  assert.equal(buckets[0].rows[0].kind, 'session');
-  assert.equal(buckets[1].rows[0].kind, 'session');
+  assert.equal(buckets[0].rows[0].kind, 'task-group');
+  assert.equal(buckets[0].rows[0].entries.length, 1);
+  assert.equal(buckets[1].rows[0].kind, 'task-group');
+  assert.equal(buckets[1].rows[0].entries.length, 1);
 });
 
 // ── parent/child hierarchy ───────────────────────────────────────────────────
 
 // Each top-level identity below carries its own distinct taskId — a plain,
 // unrelated way to keep it OUT of the (always-on, unthrottled) Unassigned
-// cluster, so these assertions can inspect a folded row directly instead of
-// reaching into an Unassigned entries array for a concern these tests aren't
-// about. A singleton real task stays a plain 'session' row (see foldTaskGroups),
-// same shape these tests already expect.
+// cluster, so these assertions can inspect a folded cluster directly instead
+// of reaching into an Unassigned entries array for a concern these tests
+// aren't about. Every real task, even a singleton, folds into its own
+// task-group cluster now (see foldTaskGroups) — reach entries[0] for the row.
 
 test('a child in the same bucket as its parent nests under it, not as its own row', () => {
   const [b] = buildBrowseBuckets(
@@ -164,7 +168,7 @@ test('a child in the same bucket as its parent nests under it, not as its own ro
     ],
     [], NOW
   );
-  const p = b.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'p');
+  const p = b.rows.find((r) => r.kind === 'task-group' && r.taskId === 't-p').entries[0];
   assert.equal(p.group.sessionId, 'p');
   assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
 });
@@ -179,10 +183,10 @@ test('a grandchild promotes to top-level instead of nesting two deep', () => {
     [], NOW
   );
   // p absorbs c; c is itself absorbed, so gc (parented on c) promotes to top-level.
-  const sessions = b.rows.filter((r) => r.kind === 'session');
-  assert.equal(sessions.length, 2);
-  const p = sessions.find((r) => r.group.sessionId === 'p');
-  const gc = sessions.find((r) => r.group.sessionId === 'gc');
+  const clusters = b.rows.filter((r) => r.kind === 'task-group' && !r.unassigned);
+  assert.equal(clusters.length, 2);
+  const p = clusters.find((r) => r.taskId === 't-p').entries[0];
+  const gc = clusters.find((r) => r.taskId === 't-gc').entries[0];
   assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
   assert.equal(gc.children, undefined);
 });
@@ -195,12 +199,12 @@ test('a parent in a different bucket does not nest across the boundary — the c
     ],
     [], NOW
   );
-  const childBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'session' && r.group.sessionId === 'c'));
-  const row = childBucket.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'c');
+  const childBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'task-group' && r.taskId === 't-c'));
+  const row = childBucket.rows.find((r) => r.taskId === 't-c').entries[0];
   assert.equal(row.children, undefined);
   assert.equal(row.parentTitle, 'Parent run');
-  const parentBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'session' && r.group.sessionId === 'p'));
-  const parentRow = parentBucket.rows.find((r) => r.kind === 'session' && r.group.sessionId === 'p');
+  const parentBucket = buckets.find((bk) => bk.rows.some((r) => r.kind === 'task-group' && r.taskId === 't-p'));
+  const parentRow = parentBucket.rows.find((r) => r.taskId === 't-p').entries[0];
   assert.equal(parentRow.children, undefined); // the child isn't hoisted up to it either
 });
 
@@ -209,8 +213,8 @@ test('an orphan child (parent not present at all) stays a loose row with no brea
     [group('c', 1 * HOUR, { cardId: 'card-c', parentSession: 'card-ghost', taskId: 't-c', task: 'C task' })],
     [], NOW
   );
-  assert.equal(b.rows[0].kind, 'session');
-  assert.equal(b.rows[0].parentTitle, undefined);
+  const row = b.rows.find((r) => r.kind === 'task-group' && r.taskId === 't-c').entries[0];
+  assert.equal(row.parentTitle, undefined);
 });
 
 // ── task-archive nesting ─────────────────────────────────────────────────────
@@ -232,7 +236,8 @@ test('a viaTaskArchive session whose task is not in the archived-tasks list fall
     [], NOW
   );
   assert.equal(b.rows.length, 1);
-  assert.equal(b.rows[0].kind, 'session');
+  assert.equal(b.rows[0].kind, 'task-group');
+  assert.equal(b.rows[0].taskId, 't1');
 });
 
 // ── Unassigned grouping ──────────────────────────────────────────────────────

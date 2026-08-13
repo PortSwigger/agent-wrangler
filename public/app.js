@@ -1553,21 +1553,25 @@ async function archiveTask(taskId, name) {
 
 // Restore an archived task, from Search's archived rows (a later, deliberate
 // action — unlike the toast's immediate force-restore right after archiving).
-// Counts sessions still
-// cascade-archived with this task (viaTaskArchive) fresh at click time, so a
-// session already resumed individually since the archive isn't double-counted
-// or double-resumed. Zero cascaded sessions skips the dialog entirely — there's
-// nothing to choose between.
+// Looks up sessions still cascade-archived with this task (viaTaskArchive)
+// fresh at click time, so a session already resumed individually since the
+// archive isn't double-counted or double-resumed. Zero cascaded sessions skips
+// the dialog entirely — there's nothing to choose between. Search's browse
+// list no longer visually singles out which rows would come back with the
+// task (every task cluster looks the same now — see search.js), so this
+// dialog is the one place left that names them.
 export async function restoreTaskWithPrompt(taskId, name) {
-  const cascadeCount = latestHistory.filter((h) => h.viaTaskArchive === taskId).length;
-  if (!cascadeCount) {
+  const cascaded = latestHistory.filter((h) => h.viaTaskArchive === taskId);
+  if (!cascaded.length) {
     send({ type: 'task-unarchive', taskId, restoreSessions: false });
     toast('Task restored');
     return;
   }
+  const names = cascaded.map((h) => h.label || h.sessionId.slice(0, 8));
+  const body = `This task has ${cascaded.length} session${cascaded.length > 1 ? 's' : ''} that ${cascaded.length > 1 ? 'were' : 'was'} archived along with it. Restore ${cascaded.length > 1 ? 'them' : 'it'} too?\n\n${names.map((n) => `• ${n}`).join('\n')}`;
   const result = await confirmDialog({
     title: `Restore "${name}"?`,
-    body: `This task has ${cascadeCount} session${cascadeCount > 1 ? 's' : ''} that ${cascadeCount > 1 ? 'were' : 'was'} archived along with it. Restore ${cascadeCount > 1 ? 'them' : 'it'} too?`,
+    body,
     okLabel: 'Restore task + sessions',
     extraLabel: 'Task only',
   });

@@ -3,12 +3,14 @@ import { toast } from './toast.js';
 import { openFork } from './modals.js';
 import { timeAgo, truncate, fmtDuration } from './util.js';
 import { buildBrowseBuckets, filterTasksByName, rowTitle } from './search-browse.js';
+import { FORK_ICON, TRASH_ICON } from './icons.js';
 
 // The Search view: substring search across every conversation on disk, and — for
 // an empty (or sub-2-char) query — a browse mode listing recent conversations in
 // History-style time buckets. This view supersedes both the find-&-attach modal
-// and the History view: every row carries the actions History had (Resume / Fork /
-// Delete, task Restore), keyed on the CARD id, never the conversation id.
+// and the History view: every row carries the actions History had (Restore / Fork /
+// Delete, task Restore too — same word, one user-facing meaning: archived → back
+// on the board), keyed on the CARD id, never the conversation id.
 //
 // Everything here is DOM-built, never innerHTML — the titles/paths/snippets are
 // agent- and human-written text pulled straight off disk and are as untrusted as
@@ -115,18 +117,18 @@ export function onSearchStatus(msg) {
 
 // An adopt that refused (unknown conversation, no codex on PATH, a resume the
 // server wouldn't do) — hand the button back rather than leave it saying
-// "Starting…" forever. Keyed on the conversation id, so a reply that arrives after
+// "Adopting…" forever. Keyed on the conversation id, so a reply that arrives after
 // a re-render still finds the right row, and one for a row that's gone is a no-op.
 export function onAdoptFailed(msg) {
   const b = document.querySelector(`#search-results [data-adopt="${CSS.escape(String(msg.sessionId || ''))}"]`);
   if (!b) return;
   b.disabled = false;
-  b.textContent = '↪ Start session';
+  b.textContent = 'Adopt';
 }
 
 // An adopt that landed. The view is on its way to the board, but re-run the
 // request (browse or text) so coming back to Search shows the row as "Open on
-// board" rather than a spent "Starting…" button — the server replies only after
+// board" rather than a spent "Adopting…" button — the server replies only after
 // its rebuild, so the card is already in the graph enrich() reads.
 export function onAdopted() {
   fire();
@@ -222,24 +224,29 @@ function appendActions(head, g) {
   if (g.cardId && g.onBoard) {
     const b = document.createElement('button');
     b.className = 'search-act';
-    b.textContent = 'Open on board';
+    b.textContent = 'Open';
     b.addEventListener('click', () => { setPendingSelect(g.cardId); location.hash = `#session=${encodeURIComponent(g.cardId)}`; });
     head.appendChild(b);
   } else if (g.cardId) {
+    // "Restore", not "Resume" — from the archived/board toggle a user sees, this
+    // is the same action as a task's Restore button (archived → back on the
+    // board), even though under the hood it's a --resume of the live process,
+    // not a flag flip. Same word for both, see the task's Restore button.
     const resume = document.createElement('button');
     resume.className = 'search-act';
-    resume.textContent = 'Resume';
-    resume.addEventListener('click', () => { setPendingSelect(g.cardId); send({ type: 'resume', sessionId: g.cardId }); toast('Resuming…'); });
+    resume.textContent = 'Restore';
+    resume.title = 'Restore this session to the board';
+    resume.addEventListener('click', () => { setPendingSelect(g.cardId); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…'); });
     head.appendChild(resume);
     const fork = document.createElement('button');
     fork.className = 'search-act search-act--icon';
-    fork.textContent = '⑂';
+    fork.innerHTML = FORK_ICON;
     fork.title = 'Fork into a new session';
     fork.addEventListener('click', () => openFork(g.cardId));
     head.appendChild(fork);
     const remove = document.createElement('button');
     remove.className = 'search-act search-act--icon';
-    remove.textContent = '🗑';
+    remove.innerHTML = TRASH_ICON;
     remove.title = 'Delete permanently';
     remove.addEventListener('click', () => {
       if (confirm(`Permanently remove "${truncate(rowTitle(g), 60)}"?\n\nThis deletes its record for good — it can no longer be resumed.`)) {
@@ -251,17 +258,17 @@ function appendActions(head, g) {
   } else {
     const b = document.createElement('button');
     b.className = 'search-act search-act--adopt';
-    b.textContent = '↪ Start session';
-    b.title = 'Put this conversation on the board and resume it in a new terminal';
+    b.textContent = 'Adopt';
+    b.title = 'Adopt this conversation onto the board and resume it in a new terminal';
     b.dataset.adopt = g.sessionId;
     b.addEventListener('click', () => {
       // Disabled on click: adopt is a launch, and a second one racing the first
       // would be answered from the same (now stale) result list. Re-enabled by
       // onAdoptFailed; a success navigates away from the view entirely.
       b.disabled = true;
-      b.textContent = 'Starting…';
+      b.textContent = 'Adopting…';
       send({ type: 'adopt-conversation', sessionId: g.sessionId });
-      toast('Starting a session from this conversation…');
+      toast('Adopting this conversation…');
     });
     head.appendChild(b);
   }
@@ -286,6 +293,24 @@ function snippetNode(hit) {
   return box;
 }
 
+// Shown as the first chip after the title, on archived rows only (tasks and
+// sessions alike) — a live row carries no chip at all, so presence is the
+// live/archived signal, not a competing "Live" label. Amber like the app's
+// other "set aside" cue (snooze), not alarm-red: archived is a normal, common
+// state, not a warning.
+function archivedChip() {
+  return chip('Archived', 'chip search-status search-status--archived');
+}
+
+// Same first-chip-after-title placement, for a session with no board card at
+// all (see appendActions' Adopt branch) — mutually exclusive with Archived,
+// since only a mapped row ever carries archivedAt. Blue like the Adopt
+// button itself (search-act--adopt), so the tag and the action it explains
+// read as the same idea.
+function externalChip() {
+  return chip('External', 'chip search-status search-status--external');
+}
+
 function groupNode(g) {
   const card = document.createElement('div');
   card.className = 'search-group';
@@ -298,6 +323,8 @@ function groupNode(g) {
   title.textContent = rowTitle(g);
   head.appendChild(title);
 
+  if (g.archived) head.appendChild(archivedChip());
+  else if (!g.cardId) head.appendChild(externalChip());
   head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
   if (g.task) head.appendChild(chip(g.task, 'chip search-task'));
   head.appendChild(chip(`${fmtNum(g.matches)} match${g.matches === 1 ? '' : 'es'}`, 'chip search-count'));
@@ -335,7 +362,7 @@ function groupNode(g) {
 // parent exists but landed in a different time bucket — see search-browse.js —
 // so the relationship isn't silently lost just because it couldn't be nested.
 // `hideTaskChip` drops the redundant task chip for a row already rendered under
-// a task-group heading of the same name (see taskGroupHeadingNode).
+// a task-group's own summary row of the same name (see taskSummaryRowNode).
 function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
   const card = document.createElement('div');
   card.className = 'search-group search-row';
@@ -348,6 +375,8 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
   title.textContent = rowTitle(g);
   head.appendChild(title);
 
+  if (g.archived) head.appendChild(archivedChip());
+  else if (!g.cardId) head.appendChild(externalChip());
   head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
   if (g.task && !hideTaskChip) head.appendChild(chip(g.task, 'chip search-task'));
   if (g.model) head.appendChild(chip(g.model, 'chip search-model'));
@@ -383,9 +412,12 @@ function childrenNode(children, opts) {
   return wrap;
 }
 
-// An archived-task row (the whole task was set aside — taskStore.archiveTask).
-// Client-side merge: the server's index knows nothing about tasks, so these come
-// straight off latestTasks and are bucketed by their own archivedAt.
+// A standalone archived-task row: text search's "matched by title" tail, where
+// a task appears alone with no session list under it (renderResults), so it
+// carries no count. Every row here is archived by construction (matchingArchivedTasks
+// only returns archived tasks), so the Archived chip is unconditional. Client-
+// side merge: the server's index knows nothing about tasks, so these come
+// straight off latestTasks.
 function taskRowNode(t) {
   const card = document.createElement('div');
   card.className = 'search-group search-row search-row--task';
@@ -393,12 +425,12 @@ function taskRowNode(t) {
   const head = document.createElement('div');
   head.className = 'search-group-head';
 
-  head.appendChild(chip('Task', 'chip search-task-flag'));
-
   const title = document.createElement('div');
   title.className = 'search-group-title';
   title.textContent = t.name || t.id;
   head.appendChild(title);
+
+  head.appendChild(archivedChip());
 
   const spacer = document.createElement('span');
   spacer.className = 'search-spacer';
@@ -417,33 +449,47 @@ function taskRowNode(t) {
   return card;
 }
 
-// The heading over a task's rows within one time bucket — a cluster of same-
-// task rows (see foldTaskGroups; a singleton REAL task stays headingless, its
-// own inline task chip already says which task it's in — but Unassigned
-// always gets one, since a task-less row has no chip of its own), or a
-// task-archive marker + its nested cascade-archived sessions, which always
-// gets one since the marker IS the task. Sticky (see styles.css) so it stays
-// visible while its own rows scroll past. Unassigned drops the ▦ icon and
-// uses a neutral tint (search-task-pill--unassigned) rather than the purple
-// every real task gets, matching History's own distinction.
-function taskGroupHeadingNode(name, count, { unassigned = false } = {}) {
-  const div = document.createElement('div');
-  div.className = 'search-task-heading';
-  // The pill wraps the WHOLE heading (name + count together) — the outer div
-  // is just a plain full-width bar with a solid backdrop underneath it, since
-  // IT'S what needs to stay opaque while stuck (a translucent pill wouldn't
-  // cover the rows scrolling underneath); it carries no shape of its own.
-  const pill = document.createElement('span');
-  pill.className = unassigned ? 'search-task-pill search-task-pill--unassigned' : 'search-task-pill';
-  const label = document.createElement('span');
-  label.textContent = unassigned ? name : `▦ ${name}`;
-  pill.appendChild(label);
-  const n = document.createElement('span');
-  n.className = 'n';
-  n.textContent = String(count);
-  pill.appendChild(n);
-  div.appendChild(pill);
-  return div;
+// The row representing a task cluster in browse mode — IS the heading now,
+// for every cluster alike (a real task, live or archived, and Unassigned):
+// no separate pill bar above it, and no "Task" chip either — the indent of
+// the sessions below already says this row is a task, so the chip was pure
+// redundancy. Restore + the Archived chip are what tell an archived task
+// apart from a live one now; everything else about the row looks the same.
+// Sticky (see styles.css) so it stays visible while its own sessions scroll
+// past. Unassigned uses a neutral title tint rather than the purple every
+// real task gets, matching History's own distinction.
+function taskSummaryRowNode({ name, count, unassigned = false, archivedAt = null, onRestore = null }) {
+  const card = document.createElement('div');
+  card.className = `search-group search-row search-row--task${unassigned ? ' search-row--task-unassigned' : ''}`;
+
+  const head = document.createElement('div');
+  head.className = 'search-group-head';
+
+  const title = document.createElement('div');
+  title.className = 'search-group-title';
+  title.textContent = name;
+  head.appendChild(title);
+
+  if (archivedAt) head.appendChild(archivedChip());
+  head.appendChild(chip(String(count), 'chip search-count'));
+
+  const spacer = document.createElement('span');
+  spacer.className = 'search-spacer';
+  head.appendChild(spacer);
+
+  if (archivedAt) head.appendChild(whenNode(archivedAt));
+
+  if (onRestore) {
+    const restore = document.createElement('button');
+    restore.className = 'search-act';
+    restore.textContent = 'Restore';
+    restore.title = 'Restore task to the board';
+    restore.addEventListener('click', onRestore);
+    head.appendChild(restore);
+  }
+
+  card.appendChild(head);
+  return card;
 }
 
 // One row (browseRowNode) plus, if it has same-bucket archived children or a
@@ -455,26 +501,31 @@ function sessionEntryNode(entry, opts) {
   return frag;
 }
 
-// Render one buildBrowseBuckets row: a task-archive marker (+ its nested
-// cascade-archived sessions), a task-group cluster (heading + rows), or a lone
-// session (+ its own nested children / parent breadcrumb).
+// Render one buildBrowseBuckets row: a task-archive marker (summary row,
+// carrying the only "unarchive" action, with its nested cascade-archived
+// sessions indented below) or a task-group cluster (summary row, no action,
+// with its sessions indented below) — both the same shape now.
 function browseRowUnitNode(r) {
   if (r.kind === 'task') {
     const wrap = document.createElement('div');
     wrap.className = 'search-task-cluster';
-    wrap.appendChild(taskGroupHeadingNode(r.task.name || r.task.id, 1 + r.nested.length));
-    wrap.appendChild(taskRowNode(r.task));
+    wrap.appendChild(taskSummaryRowNode({
+      name: r.task.name || r.task.id,
+      count: r.nested.length,
+      archivedAt: r.task.archivedAt,
+      onRestore: () => restoreTaskWithPrompt(r.task.id, r.task.name),
+    }));
     if (r.nested.length) wrap.appendChild(childrenNode(r.nested));
     return wrap;
   }
-  if (r.kind === 'task-group') {
-    const wrap = document.createElement('div');
-    wrap.className = 'search-task-cluster';
-    wrap.appendChild(taskGroupHeadingNode(r.taskName, r.entries.length, { unassigned: r.unassigned }));
-    for (const e of r.entries) wrap.appendChild(sessionEntryNode(e, { hideTaskChip: true }));
-    return wrap;
-  }
-  return sessionEntryNode(r);
+  const wrap = document.createElement('div');
+  wrap.className = 'search-task-cluster';
+  wrap.appendChild(taskSummaryRowNode({ name: r.taskName, count: r.entries.length, unassigned: r.unassigned }));
+  const list = document.createElement('div');
+  list.className = 'search-children';
+  for (const e of r.entries) list.appendChild(sessionEntryNode(e, { hideTaskChip: true }));
+  wrap.appendChild(list);
+  return wrap;
 }
 
 // Archived tasks that belong in the current result set: only under the All /
