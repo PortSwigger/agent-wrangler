@@ -29,6 +29,14 @@ function deps({ mailStore, live = {}, entries = {} } = {}) {
     memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+    // Models a TUI that's already ready (real classify()'s "esc to interrupt"
+    // working marker shows up as soon as anything is pasted), so the
+    // dormant-Codex post-resume paste lands on the first attempt
+    // (mailbox-delivery.js's pasteAndVerify) rather than falling back to a real
+    // (and here nonexistent) tmux pane and burning the real retry delay.
+    capturePane: async (name) => (sent.some((s) => s.name === name) ? 'esc to interrupt' : ''),
+    pasteVerifyDelayMs: 0,
+    pasteVerifyPollMs: 0,
     onError: (to, err) => { errors.push({ to, err }); },
   };
 }

@@ -23,6 +23,15 @@ function rolloutCwd(file) {
   }
 }
 
+// Codex resolves its own cwd (e.g. macOS /tmp -> /private/tmp) before recording
+// it in SessionMeta, but the wrangler's stored entry.cwd is whatever raw path it
+// was launched with — an exact string compare between the two silently fails to
+// discover a live-but-symlinked session (falls back to `p` when it doesn't exist
+// on disk, e.g. a fixture path in tests or a since-removed worktree).
+function realpathOrSelf(p) {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
 // Every rollout under the sessions tree, newest mtime first.
 async function allRollouts(sessionsDir) {
   const out = [];
@@ -47,9 +56,11 @@ async function allRollouts(sessionsDir) {
 // negative slop on launchedAt absorbs clock/rounding skew vs the file mtime.
 export async function discoverCodexLiveId({ cwd, launchedAt = 0, sessionsDir = CODEX_SESSIONS } = {}) {
   const floor = launchedAt - 2000;
+  const target = realpathOrSelf(cwd);
   for (const r of await allRollouts(sessionsDir)) {
     if (r.mtimeMs < floor) break; // sorted newest-first; nothing older can match
-    if (rolloutCwd(r.full) === cwd) return uuidFromName(r.name);
+    const rc = rolloutCwd(r.full);
+    if (rc != null && realpathOrSelf(rc) === target) return uuidFromName(r.name);
   }
   return null;
 }

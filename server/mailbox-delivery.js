@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
-import { sendText as defaultSendText } from './tmux-scraper.js';
+import { sendText as defaultSendText, capturePane as defaultCapturePane, classify as defaultClassify } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
 
 // Settle-close delivery leg for the mailbox — paste a server-authored
@@ -34,6 +34,10 @@ import { adapterFor } from './agents/index.js';
 export async function deliverMailNotification(to, text, deps) {
   const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
   const sendText = deps.sendText ?? defaultSendText;
+  const capturePane = deps.capturePane ?? defaultCapturePane;
+  const classify = deps.classify ?? defaultClassify;
+  const verifyDelayMs = deps.pasteVerifyDelayMs ?? PASTE_VERIFY_DELAY_MS;
+  const verifyPollMs = deps.pasteVerifyPollMs ?? PASTE_VERIFY_POLL_MS;
 
   const target = tmuxFor(to);
   if (target) {
@@ -69,8 +73,15 @@ export async function deliverMailNotification(to, text, deps) {
     if (!intentCarriesNotification) {
       const tmux = res?.tmux ?? tmuxFor(to);
       const socket = sessionManager.entryFor(to)?.socket ?? '';
-      if (tmux) await liveTransport(tmux, text, socket, sendText);
-      else return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };
+      if (!tmux) return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };
+      // A freshly-resumed pane's TUI can take several seconds to actually become
+      // interactive (loading MCP servers/skills/memory) — resume() only guarantees
+      // the pty was spawned, not that its input loop is reading yet. Confirmed live
+      // against Codex: a paste sent right after resume() is silently discarded (the
+      // TUI flushes buffered stdin on its own raw-mode init), not merely delayed, so
+      // waiting longer before ONE paste doesn't help — repaste-and-verify does.
+      const landed = await pasteAndVerify(tmux, text, socket, sendText, capturePane, classify, verifyDelayMs, verifyPollMs);
+      if (!landed) return { mode: 'error', error: 'notification paste did not land in the freshly-resumed pane (agent may still be starting up)' };
     }
   } catch (err) {
     return { mode: 'error', error: err?.message || String(err) };
@@ -83,4 +94,41 @@ export async function deliverMailNotification(to, text, deps) {
 // Phase 1 — see the spec's "Claude Code cross-session messaging" section).
 function liveTransport(tmux, text, socket, sendText) {
   return sendText(tmux, text, socket);
+}
+
+const PASTE_VERIFY_ATTEMPTS = 5;
+const PASTE_VERIFY_DELAY_MS = 1500;
+const PASTE_VERIFY_POLL_MS = 300;
+
+// Paste, then confirm the agent actually READ it before trusting it — re-pasting
+// (not just re-checking) on each attempt, since a not-yet-ready TUI DISCARDS the
+// bytes rather than queuing them; a later attempt only succeeds because IT lands
+// after the TUI is ready, not because an earlier one was replayed.
+//
+// The signal is `classify()`'s "esc to interrupt" working marker (the same one
+// the board's own status polling uses), NOT a plain substring check on the pane —
+// confirmed live against Codex that a substring check false-positives: a
+// freshly-resumed pane is briefly in the terminal's default cooked/echo mode
+// before the TUI grabs raw mode, so the pasted bytes appear on screen (as a plain
+// terminal echo) well before anything has actually read them, then vanish
+// un-actioned under the TUI's own redraw once it does boot. A transition into
+// "working" can only happen if the TUI genuinely picked the input up as a turn.
+// `delayMs`/`pollMs` are test seams (real callers get the module constants) — a
+// "never lands" case would otherwise cost the real multi-second delay per attempt.
+async function pasteAndVerify(tmux, text, socket, sendText, capturePane, classify, delayMs, pollMs) {
+  for (let attempt = 0; attempt < PASTE_VERIFY_ATTEMPTS; attempt += 1) {
+    await sendText(tmux, text, socket);
+    if (await sawWorkingWithin(tmux, socket, capturePane, classify, delayMs, pollMs)) return true;
+  }
+  return false;
+}
+
+async function sawWorkingWithin(tmux, socket, capturePane, classify, delayMs, pollMs) {
+  const deadline = Date.now() + delayMs;
+  do {
+    const pane = await capturePane(tmux, 60, socket);
+    if (classify(pane).status === 'working') return true;
+    await new Promise((r) => setTimeout(r, pollMs));
+  } while (Date.now() < deadline);
+  return false;
 }

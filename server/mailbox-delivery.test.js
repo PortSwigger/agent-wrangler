@@ -9,12 +9,16 @@ function realDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aw-maild-'));
 }
 
-function deps({ live = {}, entries = {}, resumeThrows = false, resuming = false, resumeTmux = 'cc_joined', resumeReturnsPane = true } = {}) {
+function deps({
+  live = {}, entries = {}, resumeThrows = false, resuming = false, resumeTmux = 'cc_joined',
+  resumeReturnsPane = true, pasteLandsOnAttempt = 1,
+} = {}) {
   const sent = [];
   const resumed = [];
   const bound = [];
+  const captures = [];
   return {
-    sent, resumed, bound,
+    sent, resumed, bound, captures,
     sessionManager: {
       entryFor: (id) => entries[id] || null,
       isResuming: () => resuming,
@@ -29,6 +33,20 @@ function deps({ live = {}, entries = {}, resumeThrows = false, resuming = false,
     memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+    // Models a freshly-resumed pane whose TUI discards pastes until it's ready:
+    // before `pasteLandsOnAttempt` pastes have been sent, the pane shows only the
+    // paste's own raw terminal echo (real classify() reads that as 'idle', same
+    // as the live cooked-mode-echo false positive this test guards against); once
+    // landed, the pane shows the "esc to interrupt" working marker classify()
+    // actually looks for. pasteLandsOnAttempt: Infinity never lands.
+    capturePane: async (name) => {
+      captures.push(name);
+      const attempts = sent.filter((s) => s.name === name).length;
+      if (attempts >= pasteLandsOnAttempt) return 'esc to interrupt';
+      return sent.filter((s) => s.name === name).at(-1)?.text ?? '';
+    },
+    pasteVerifyDelayMs: 0, // real callers wait ~1.5s between attempts; tests don't need to.
+    pasteVerifyPollMs: 0,
   };
 }
 
@@ -73,6 +91,44 @@ test('dormant Codex recipient: resume ignores the intent, so the notification is
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.deepEqual(mode, { mode: 'dormant' });
   assert.deepEqual(d.sent, [{ name: 'cx_woken', text: 'you have mail', socket: '/s/cx' }]);
+});
+
+test('dormant Codex recipient: TUI not ready on the first paste — retries until it actually lands, still reports dormant success', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken', pasteLandsOnAttempt: 3 });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'dormant' });
+  // Re-pasted (not just re-checked) on every attempt — a not-yet-ready TUI
+  // discards the bytes rather than queuing them, so only re-sending works.
+  assert.equal(d.sent.length, 3);
+  assert.ok(d.sent.every((s) => s.name === 'cx_woken' && s.text === 'you have mail'));
+});
+
+test('dormant Codex recipient: a pane merely ECHOING the pasted text (cooked-mode terminal echo, before the TUI has grabbed raw mode) is NOT mistaken for real delivery', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken' });
+  // Override the fixture's landing signal: the pane always shows the paste's own
+  // raw echo (a substring match on the notification text), but NEVER the "esc to
+  // interrupt" working marker — i.e. the TUI never actually reads it as a turn.
+  // Confirmed live (against a real Codex resume): a plain substring check on the
+  // pane false-positives on exactly this, reporting delivery success for a
+  // message that in fact sat unread.
+  d.capturePane = async () => 'you have mail';
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(mode.mode, 'error');
+  assert.match(mode.error, /may still be starting up/);
+});
+
+test('dormant Codex recipient: TUI never becomes ready — reported as error (never silently marked delivered), never throws', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken', pasteLandsOnAttempt: Infinity });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(mode.mode, 'error');
+  assert.match(mode.error, /may still be starting up/);
+  assert.equal(d.sent.length, 5); // PASTE_VERIFY_ATTEMPTS — bounded, not an infinite loop
 });
 
 test('archived recipient: never woken — no resume, no paste (resurrection-by-mail must not happen)', async () => {

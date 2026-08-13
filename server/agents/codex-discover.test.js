@@ -41,3 +41,16 @@ test('ignores rollouts older than launch time (minus slop)', async () => {
   const id = await discoverCodexLiveId({ cwd: '/work/proj', launchedAt: 60000, sessionsDir: root });
   assert.equal(id, null);
 });
+
+test('matches a symlinked cwd against the rollout\'s already-resolved cwd (macOS /tmp -> /private/tmp)', async () => {
+  const { root, day } = tmpSessions();
+  const realTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'cxs-real-'));
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cxs-link-'));
+  const link = path.join(linkDir, 'proj');
+  fs.symlinkSync(realTarget, link);
+  // Codex resolves the cwd it actually launched in before recording it — the
+  // wrangler's stored entry.cwd (what's queried here) is the raw, unresolved path.
+  writeRollout(day, '66666666-6666-6666-6666-666666666666', fs.realpathSync(realTarget), 5000);
+  const id = await discoverCodexLiveId({ cwd: link, launchedAt: 900, sessionsDir: root });
+  assert.equal(id, '66666666-6666-6666-6666-666666666666');
+});
