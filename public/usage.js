@@ -141,8 +141,8 @@ function renderSummary() {
     // estimatedUsd note above is, so the Tokens branch gets an actual number too,
     // not the placeholder text the Codex note falls back to.
     adv.textContent = state.metric === 'usd'
-      ? `includes ${fmtUsd(d.totals.advisorUsd)} spent on advisor consultations`
-      : `includes ${fmtTokens(cellValueOf({ tokens: d.totals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;
+      ? `Includes ${fmtUsd(d.totals.advisorUsd)} spent on advisor consultations`
+      : `Includes ${fmtTokens(cellValueOf({ tokens: d.totals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;
     // Deliberately not disjoint from a sub-agent's own cost (a sub-agent that
     // itself consulted the advisor counts in both figures) — say so on hover
     // rather than lengthening the visible line.
