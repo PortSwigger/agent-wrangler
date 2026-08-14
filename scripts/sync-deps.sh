@@ -7,7 +7,13 @@
 # deps; the stamp is written only on success so a failure retries next start.
 cd "$(dirname "$0")/.." || exit 1
 
-LOCK_HASH="$(shasum package-lock.json | cut -d' ' -f1)"
+# shasum ships with macOS/Perl but is absent from slim Linux images; sha1sum
+# (coreutils) is the equivalent there.
+if command -v shasum >/dev/null 2>&1; then
+  LOCK_HASH="$(shasum package-lock.json | cut -d' ' -f1)"
+else
+  LOCK_HASH="$(sha1sum package-lock.json | cut -d' ' -f1)"
+fi
 STAMP="node_modules/.lockhash"
 if [ "$(cat "$STAMP" 2>/dev/null)" != "$LOCK_HASH" ]; then
   npm ci || exit 1

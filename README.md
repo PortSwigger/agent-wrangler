@@ -32,10 +32,17 @@ otherwise it behaves exactly as a Claude-only board.
 
 ## Requirements
 
-- macOS, Node.js >= 20
+- macOS or Linux, Node.js >= 20
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
+  on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
   `gh auth login` once so it's authenticated)
+
+**Windows** isn't supported natively, but works via WSL2 — WSL2 runs a real Linux kernel, so the
+Linux path above applies unmodified once you're inside it. Keep your checkout on the WSL2 side of
+the filesystem (e.g. `~/...` under Linux), **not** under `/mnt/c/...`: the 9p filesystem bridge to
+the Windows side is slow, and inotify doesn't fire for file writes made from the Windows side —
+which silently breaks the wrangler's live-status and memory file watchers.
 
 ## Run
 
@@ -55,16 +62,21 @@ Environment variables:
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
 - `AW_JIRA_BASE_URL` — Jira browse URL prefix a bare issue key is appended to (e.g. `https://yourcompany.atlassian.net/browse/`); unset by default, so a bare key renders as plain text until this or the per-install `jiraBaseUrl` config value is set
+- `AW_DEVCONTAINER_HOST_ADDR` — host address a devcontainer session uses to reach the wrangler's
+  own server; defaults to `host.docker.internal`, which Docker Desktop (macOS/Windows) resolves
+  automatically but native Docker Engine on Linux does not. On Linux, either run the Docker daemon
+  with `--add-host=host.docker.internal:host-gateway` so the default still resolves, or set this
+  to a host address the container can reach (e.g. the `docker0` bridge IP)
 
 ### Run as a background service
 
-To keep it always-on, run it under launchd.
+To keep it always-on, run it under launchd (macOS) or a systemd user unit (Linux).
 
 **Recommended:** in Claude Code, just ask for the `setup-wrangler-service` skill (e.g. "set up the
-wrangler as a service"). It fills in the plist template, loads the launchd agent, and verifies the
-server is actually serving before reporting success — no manual steps.
+wrangler as a service"). It fills in the plist/unit template, loads it via launchctl/systemctl, and
+verifies the server is actually serving before reporting success — no manual steps, on either platform.
 
-To do it by hand instead, copy
+To do it by hand instead on macOS, copy
 `scripts/net.portswigger.agent-wrangler.plist.example` to
 `~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist`, fill in the path and username
 placeholders, then load it:
@@ -73,18 +85,28 @@ placeholders, then load it:
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
 ```
 
-The agent invokes `scripts/wrangler-start.sh`, which resolves Node via nvm, pins a UTF-8 locale so
-tmux renders Unicode correctly, and auto-installs after a dependency change. Restart it after changes
-with:
+Restart it after changes with:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ```
 
+On Linux, copy `scripts/agent-wrangler.service.example` to
+`~/.config/systemd/user/agent-wrangler.service`, fill in the path placeholder, then load it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now agent-wrangler.service
+```
+
+Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm, pins a UTF-8 locale so
+tmux renders Unicode correctly, and auto-installs after a dependency change.
+
 ## Snags
 
-**Sessions can't `ls`/`cp` files in Downloads, Documents, Desktop, etc.** This is macOS's file-access
-sandboxing (TCC), and it targets the `tmux` binary, not your terminal app — because the wrangler's tmux
+**Sessions can't `ls`/`cp` files in Downloads, Documents, Desktop, etc. (macOS only).** This is
+macOS's file-access sandboxing (TCC) — it doesn't apply on Linux. It targets the `tmux` binary, not
+your terminal app — because the wrangler's tmux
 server daemonizes and reparents under `launchd`, so there's no Terminal.app/iTerm2 in its process
 ancestry to grant instead. **Full Disk Access is the only fix that actually works here** — the narrower
 "Files and Folders" permission can't be manually populated; it only lists apps macOS has already shown

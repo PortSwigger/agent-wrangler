@@ -83,8 +83,10 @@ export const codex = {
   ],
 
   async isAvailable() {
+    // `command -v` (POSIX sh builtin) over `which` — the latter is a separate,
+    // sometimes-absent package on slim Linux.
     try {
-      const { stdout } = await exec('which', ['codex']);
+      const { stdout } = await exec('sh', ['-c', 'command -v codex']);
       return Boolean(stdout.trim());
     } catch {
       return false;
