@@ -50,6 +50,14 @@ export const SETTINGS = [
     help: 'Whether a session\'s sub-agents zone (board card + panel) starts expanded or collapsed. A card or panel you have toggled by hand keeps its own choice regardless of this setting.',
     default: false,
   },
+  {
+    id: 'trustCodexLaunchCwd',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Skip Codex\'s trust-folder prompt',
+    help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this marks the session\'s folder trusted for that invocation so Codex\'s own trust prompt never appears. Off restores Codex\'s normal prompt.',
+    default: true,
+  },
 ];
 
 let serverBridge = { get: () => undefined, set: () => {} };

@@ -14,6 +14,7 @@ import { autoFixPrChecksHandler } from './auto-fix-pr-checks.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { taskMemoryEnabledHandler } from './task-memory-enabled.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
+import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import {
   taskCreateHandler,
   taskRenameHandler,
@@ -71,6 +72,7 @@ export const CONTROL_HANDLERS = [
   autoMergeOnPassHandler,
   taskMemoryEnabledHandler,
   subagentsExpandedByDefaultHandler,
+  trustCodexLaunchCwdHandler,
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,

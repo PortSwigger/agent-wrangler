@@ -22,7 +22,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -460,6 +460,7 @@ async function rebuild() {
   // re-renders every open board via the ordinary rebuild broadcast.
   graph.taskMemoryEnabled = taskMemoryEnabled();
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
+  graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   lastGraph = graph;
 
   for (const sid of autoArchived) {

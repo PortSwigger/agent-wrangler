@@ -392,6 +392,22 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
   assert.match(captured, /'--effort' 'low'/);
 });
 
+test('fork() threads trustCodexLaunchCwd into buildFork for a codex parent', async () => {
+  const sm = new SessionManager();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', cwd: os.tmpdir() },
+    cwd: os.tmpdir(),
+  });
+  // Default config.json has no trustCodexLaunchCwd override — reads the on
+  // default, so the fork's cwd is threaded through as trusted.
+  assert.match(captured, /trust_level="trusted"/);
+});
+
 test('resume() refuses (does not launch) when a Claude transcript is nowhere on disk', async () => {
   const sm = new SessionManager();
   sm.map.clear();
@@ -537,6 +553,17 @@ test('resume() re-threads the persisted entry.effort into buildResume (effort is
   sm._newSession = async (_t, _d, inner) => { captured = inner; };
   await sm.resume('card-effort', os.tmpdir());
   assert.match(captured, /'model_reasoning_effort=medium'/);
+});
+
+test('resume() threads trustCodexLaunchCwd into buildResume', async () => {
+  const sm = resumableCodex('card-trust');
+  sm.killForSession = async () => [];
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-trust', os.tmpdir());
+  // Default config.json has no trustCodexLaunchCwd override — reads the on
+  // default, so the resume dir is threaded through as trusted.
+  assert.match(captured, /trust_level="trusted"/);
 });
 
 test('resolveWorktree creates a worktree and returns its path + branch', async () => {
@@ -814,6 +841,16 @@ test('dispatch persists entry.effort and passes it to buildLaunch', async () => 
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', effort: 'high' });
   assert.equal(sm.map.get(sessionId).effort, 'high');
   assert.match(captured, /--effort' 'high'/);
+});
+
+test('dispatch threads trustCodexLaunchCwd into buildLaunch for a codex session', async () => {
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  // Default config.json has no trustCodexLaunchCwd override — reads the on
+  // default, so the launch cwd is threaded through as trusted.
+  assert.match(captured, /trust_level="trusted"/);
 });
 
 test('dispatch stores effort:null when none is given', async () => {

@@ -115,6 +115,7 @@ export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
 let taskMemoryEnabled = true; // server config flag, carried on every graph push
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
+let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -293,6 +294,7 @@ function applyGraph(graph) {
   latestSchedules = graph.schedules || { schedules: [] };
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
+  trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -4092,6 +4094,7 @@ initSettings({
     get: (id) => {
       if (id === 'taskMemoryEnabled') return taskMemoryEnabled;
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
+      if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       return undefined;
     },
     set: (id, value) => {
@@ -4101,6 +4104,9 @@ initSettings({
       } else if (id === 'subagentsExpandedByDefault') {
         subagentsExpandedByDefault = Boolean(value);
         send({ type: 'set-subagents-expanded-by-default', enabled: subagentsExpandedByDefault });
+      } else if (id === 'trustCodexLaunchCwd') {
+        trustCodexLaunchCwd = Boolean(value);
+        send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
       }
     },
   },
