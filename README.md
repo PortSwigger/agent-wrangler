@@ -66,7 +66,14 @@ Environment variables:
   own server; defaults to `host.docker.internal`, which Docker Desktop (macOS/Windows) resolves
   automatically but native Docker Engine on Linux does not. On Linux, either run the Docker daemon
   with `--add-host=host.docker.internal:host-gateway` so the default still resolves, or set this
-  to a host address the container can reach (e.g. the `docker0` bridge IP)
+  to a host address the container can reach (e.g. the `docker0` bridge IP). Either way, this alone
+  isn't enough on Linux: the server also binds loopback-only by default, so pair it with
+  `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach `/mcp` even once it's dialing
+  the right address
+- `AW_BIND_HOST` — interface the server listens on (default `127.0.0.1`, loopback-only); set to
+  `0.0.0.0` when a devcontainer session needs to reach this server's `/mcp` from inside its
+  container. Widens exposure on a shared machine (the control/MCP posture is localhost-advisory),
+  so treat it as a deliberate opt-in, not a default
 
 ### Run as a background service
 

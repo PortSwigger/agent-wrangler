@@ -115,6 +115,14 @@ edit:
 - **`~/.local/bin` on `PATH`** — load-bearing: without it `dispatch`/`resume`
   exit 127 because `claude` isn't found. The template's `%h/.local/bin` covers
   this already; don't drop it when substituting.
+- **`AW_BIND_HOST=0.0.0.0` (only if you use devcontainer sessions)** — required so
+  an in-container agent can reach the wrangler's own `/mcp`. The server binds
+  loopback-only by default (`bindHost()`), so a container dialing out to
+  `AW_DEVCONTAINER_HOST_ADDR` (the host-gateway address on native Docker Engine)
+  can't reach it otherwise — uncomment the `Environment=AW_BIND_HOST=0.0.0.0` line
+  the template already has, commented out, for exactly this. Note the
+  shared-machine exposure trade-off (the control/MCP posture is
+  localhost-advisory) — same as the macOS flow.
 
 ```
 REPO=$(git rev-parse --show-toplevel)
@@ -168,8 +176,13 @@ unit is active but curl fails, the server crashed on boot — read the journal:
 - **Unit won't load / fails to start** — validate the unit file first:
   `systemd-analyze verify "$UNIT"` catches a malformed unit the same way
   `plutil -lint` does for the plist.
-- **Devcontainer sessions can't reach the host** — native Docker Engine (unlike
-  Docker Desktop) doesn't resolve `host.docker.internal` on its own. Either run
-  the Docker daemon with `--add-host=host.docker.internal:host-gateway`
-  available to containers, or set `AW_DEVCONTAINER_HOST_ADDR` (an
-  `Environment=` line in the unit) to a host address the container can reach.
+- **Devcontainer sessions can't reach the host** — two independent things must
+  both be true, not just one: (1) native Docker Engine (unlike Docker Desktop)
+  doesn't resolve `host.docker.internal` on its own — either run the Docker
+  daemon with `--add-host=host.docker.internal:host-gateway` available to
+  containers, or set `AW_DEVCONTAINER_HOST_ADDR` (an `Environment=` line in the
+  unit) to a host address the container can reach; **and** (2) the wrangler
+  server itself must be listening on that address, not just loopback — it binds
+  `127.0.0.1` by default, so uncomment `Environment=AW_BIND_HOST=0.0.0.0` in the
+  unit (see Step 1). Fixing only the address the container dials without also
+  widening the server's bind leaves `/mcp` unreachable either way.
