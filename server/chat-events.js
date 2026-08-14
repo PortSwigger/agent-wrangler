@@ -18,6 +18,30 @@ function isSynthetic(text) {
   return SYNTHETIC_PREFIXES.some((p) => head.startsWith(p));
 }
 
+// Same key list transcript-reader.js uses for a tool's one-line target, so the
+// chat view and the sub-agent modal name a call the same way.
+const TARGET_KEYS = ['file_path', 'path', 'notebook_path', 'pattern', 'command', 'url', 'query', 'prompt', 'description'];
+
+function oneLine(s) {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function toolTarget(input) {
+  if (!input || typeof input !== 'object') return '';
+  for (const k of TARGET_KEYS) {
+    const v = input[k];
+    if (typeof v === 'string' && v.trim()) return oneLine(v);
+  }
+  const first = Object.values(input).find((v) => typeof v === 'string' && v.trim());
+  return first ? oneLine(first) : '';
+}
+
+function cap(text) {
+  const s = typeof text === 'string' ? text : textOf(text);
+  if (s.length <= MAX_TOOL_TEXT) return { text: s, truncated: false };
+  return { text: s.slice(0, MAX_TOOL_TEXT), truncated: true };
+}
+
 function tsOf(iso) {
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : 0;
@@ -46,6 +70,19 @@ function pushClaude(entry, state) {
   if (!msg || typeof msg !== 'object' || entry.isMeta) return out;
   const ts = tsOf(entry.timestamp);
   if (msg.role === 'user') {
+    if (Array.isArray(msg.content)) {
+      for (const b of msg.content) {
+        if (b?.type !== 'tool_result') continue;
+        const open = state.pending.get(b.tool_use_id);
+        if (!open) continue;
+        state.pending.delete(b.tool_use_id);
+        const { text: output, truncated } = cap(b.content);
+        out.push({
+          kind: 'tool', id: open.id, name: open.name, target: open.target,
+          input: open.input, output, ok: b.is_error !== true, ts, truncated,
+        });
+      }
+    }
     const text = textOf(msg.content);
     if (text && !isSynthetic(text)) out.push({ kind: 'user', text, ts });
     return out;
@@ -57,6 +94,9 @@ function pushClaude(entry, state) {
       if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
         out.push({ kind: 'thinking', ts, text: b.thinking.trim() });
       }
+      if (b?.type === 'tool_use' && b.id) {
+        state.pending.set(b.id, { id: b.id, name: b.name || 'tool', target: toolTarget(b.input), input: b.input ?? null });
+      }
     }
   }
   const text = textOf(msg.content);
@@ -65,7 +105,7 @@ function pushClaude(entry, state) {
 }
 
 export function createChatScanner(agent = 'claude') {
-  const state = { agent, model: null };
+  const state = { agent, model: null, pending: new Map() };
   return {
     push(line) {
       if (!line || !line.trim()) return [];
@@ -78,7 +118,10 @@ export function createChatScanner(agent = 'claude') {
       }
       return pushClaude(entry, state);
     },
-    pending: () => null,
+    pending() {
+      const last = [...state.pending.values()].pop();
+      return last ? { name: last.name, target: last.target } : null;
+    },
   };
 }
 
