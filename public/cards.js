@@ -15,7 +15,7 @@ import {
   esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl, displayStatus,
 } from './util.js';
 import { wakeLabel } from './snooze.js';
-import { isWorkflowRun, computeAbsorption } from './workflow.js';
+import { isWorkflowRun, sessionGroups } from './workflow.js';
 
 export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
 
@@ -451,13 +451,12 @@ function childGroupHtml(card, s, children, ctx) {
 // top-level. A grandchild whose immediate parent is itself absorbed elsewhere is
 // promoted to its own top-level card (with its own spine, if it has children)
 // instead of being silently dropped — every session in `active` renders exactly
-// once. The same helper feeds layout.js's tile-height weighting, so the rendered
-// spine and the height reserved for it can never drift apart.
+// once. The same helper feeds layout.js's tile-height weighting (and, via
+// sessionGroups, app.js's keyboard-nav order), so the rendered spine and the
+// height reserved for it — and where the keyboard thinks a row is — can never
+// drift apart.
 export function renderTileCards(active, ctx, opts = {}) {
-  const { absorbed, childrenByParent } = computeAbsorption(active);
-  return active.map((s) => {
-    if (absorbed.has(s.sessionId)) return ''; // drawn on its parent's spine
-    const children = childrenByParent.get(s.sessionId) || [];
+  return sessionGroups(active).map(({ session: s, children }) => {
     // A live agent team hangs off the lead as its own spine, independent of the
     // parentSession child spine (a lead can have both). The workflow box already
     // wraps its own child spine, so a team is appended alongside it in one group.
