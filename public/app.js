@@ -9,7 +9,7 @@ import {
   sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
-import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption } from './workflow.js';
+import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups } from './workflow.js';
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
@@ -2588,12 +2588,19 @@ function focusModeActive() {
 }
 
 // The flat keyboard-nav order: tiles in display order, each contributing its
-// session cards (stored order, asleep excluded — they render as non-clickable
-// greyed rows a click can't reach either) followed by a single virtual "new
-// session" slot (`sid: null`). So an empty tile still offers one target (its
-// slot), and arrowing past a tile's last card lands on its slot before crossing
-// into the next tile. The Ad-hoc tile is included normally, in and out of focus
-// mode alike — it's a focusable tile like any other.
+// session cards (asleep excluded — they render as non-clickable greyed rows a
+// click can't reach either) followed by a single virtual "new session" slot
+// (`sid: null`). So an empty tile still offers one target (its slot), and
+// arrowing past a tile's last card lands on its slot before crossing into the
+// next tile. The Ad-hoc tile is included normally, in and out of focus mode
+// alike — it's a focusable tile like any other.
+//
+// Cards are taken in DRAWN order (sessionGroups), never the flat stored order:
+// an absorbed child renders on its parent's spine, i.e. at the parent's slot, so
+// walking the stored order made Shift+Cmd+↓ jump to a spine row sitting somewhere
+// else entirely on screen. A collapsed workflow box draws no spine at all, so its
+// workers are dropped here rather than reordered — same rule as asleep, don't
+// offer the keyboard a target the board isn't drawing.
 function navTargets() {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
@@ -2605,8 +2612,12 @@ function navTargets() {
   const targets = [];
   for (const id of currentOrder()) {
     const arr = id === ADHOC_ID ? noTask : (byTask.get(id) || []);
-    const sids = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id).map((s) => s.sessionId);
-    for (const sid of sids) targets.push({ tileId: id, sid });
+    const active = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id);
+    for (const { session, children } of sessionGroups(active)) {
+      targets.push({ tileId: id, sid: session.sessionId });
+      if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
+      for (const c of children) targets.push({ tileId: id, sid: c.sessionId });
+    }
     targets.push({ tileId: id, sid: null }); // the tile's "new session" slot
   }
   return targets;
@@ -2628,6 +2639,20 @@ function navTileGroups() {
 // `new:<tileId>` for a slot. navTargetKey produces the same key for a target.
 function navKey() { return selectedNewSlot != null ? `new:${selectedNewSlot}` : selectedSessionId; }
 function navTargetKey(t) { return t.sid == null ? `new:${t.tileId}` : t.sid; }
+// The selection can sit on a session that is NOT a nav target: collapse a workflow
+// box (or snooze) while one of its workers is open and the row stops being drawn,
+// while the panel stays on it. Anchor on its nearest drawn ancestor so the next
+// arrow steps from where the eye is, instead of resetting to the top of the board.
+function navAnchorKey(targets) {
+  const key = navKey();
+  if (selectedNewSlot != null) return key;
+  const has = (k) => targets.some((t) => navTargetKey(t) === k);
+  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const seen = new Set(); // parentSession shouldn't cycle; never hang if it does
+  let id = selectedSessionId;
+  while (id && !has(id) && !seen.has(id)) { seen.add(id); id = byId.get(id)?.parentSession; }
+  return id && has(id) ? id : key;
+}
 // Move the selection onto a nav target: a session card opens (terminal/panel), a
 // slot just highlights (Enter then dispatches into its tile).
 function applyNavTarget(t) { if (t.sid == null) selectNewSlot(t.tileId); else selectSession(t.sid); }
@@ -2640,7 +2665,7 @@ function applyNavTarget(t) { if (t.sid == null) selectNewSlot(t.tileId); else se
 function moveTaskFocus(dir) {
   const groups = navTileGroups();
   if (!groups.length) return;
-  const key = navKey();
+  const key = navAnchorKey(groups.flatMap((g) => g.targets));
   const ti = groups.findIndex((g) => g.targets.some((t) => navTargetKey(t) === key));
   const next = ti < 0 ? (dir > 0 ? 0 : groups.length - 1)
     : (ti + dir + groups.length) % groups.length;
@@ -2656,7 +2681,7 @@ function moveTaskFocus(dir) {
 function moveSessionFocus(dir) {
   const flat = navTargets();
   if (!flat.length) return;
-  const key = navKey();
+  const key = navAnchorKey(flat);
   const i = flat.findIndex((t) => navTargetKey(t) === key);
   const target = i < 0 ? flat[0] : flat[(i + dir + flat.length) % flat.length];
   if (focusModeActive() && (i < 0 || flat[i].tileId !== target.tileId)) focusOnly(target.tileId);

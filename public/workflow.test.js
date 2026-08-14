@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption } from './workflow.js';
+import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups } from './workflow.js';
 
 test('workflowPhaseLabel: absent / phase-less workflow → null', () => {
   assert.equal(workflowPhaseLabel(null), null);
@@ -71,4 +71,36 @@ test('computeAbsorption: a cycle never hangs — the guard breaks it determinist
   // in-progress node to "not absorbed", which the other node then reads as its
   // parent being top-level) — never both, never neither, and it terminates.
   assert.equal(absorbed.size, 1);
+});
+
+const groupIds = (sessions) =>
+  sessionGroups(sessions).map(({ session, children }) => [session.sessionId, children.map((c) => c.sessionId)]);
+
+test('sessionGroups: a child is grouped at its PARENT\'s slot, not its own place in the flat order', () => {
+  // Flat order puts the child last, but it draws on the parent's spine, so the
+  // drawn (and keyboard-nav) order is parent → child → the unrelated session.
+  const parent = { sessionId: 'p' };
+  const other = { sessionId: 'o' };
+  const child = { sessionId: 'c', parentSession: 'p' };
+  assert.deepEqual(groupIds([parent, other, child]), [['p', ['c']], ['o', []]]);
+});
+
+test('sessionGroups: children keep their relative order within the spine', () => {
+  const parent = { sessionId: 'p' };
+  const c1 = { sessionId: 'c1', parentSession: 'p' };
+  const c2 = { sessionId: 'c2', parentSession: 'p' };
+  assert.deepEqual(groupIds([c2, parent, c1]), [['p', ['c2', 'c1']]]);
+});
+
+test('sessionGroups: a promoted grandchild keeps its own flat slot, with its own children', () => {
+  const orch = { sessionId: 'orch' };
+  const worker = { sessionId: 'worker', parentSession: 'orch' };
+  const grand = { sessionId: 'grand', parentSession: 'worker' };
+  const great = { sessionId: 'great', parentSession: 'grand' };
+  assert.deepEqual(groupIds([orch, worker, grand, great]), [['orch', ['worker']], ['grand', ['great']]]);
+});
+
+test('sessionGroups: an orphan child stays top-level in its own slot', () => {
+  const orphan = { sessionId: 'c', parentSession: 'elsewhere' };
+  assert.deepEqual(groupIds([{ sessionId: 'a' }, orphan]), [['a', []], ['c', []]]);
 });

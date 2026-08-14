@@ -58,3 +58,16 @@ export function computeAbsorption(sessions) {
   }
   return { absorbed, childrenByParent };
 }
+
+// A tile's sessions as the DRAWN groups, in drawn order: each top-level session
+// followed by the children folded onto its spine. The flat stored order is NOT
+// the visual one — a child renders at its PARENT's slot, however far apart the
+// two sit in the flat list — so anything walking the board positionally (cards.js
+// renders from this; app.js's keyboard nav flattens it) must go through here or
+// it silently disagrees with what's on screen.
+export function sessionGroups(sessions) {
+  const { absorbed, childrenByParent } = computeAbsorption(sessions);
+  return sessions
+    .filter((s) => !absorbed.has(s.sessionId))
+    .map((s) => ({ session: s, children: childrenByParent.get(s.sessionId) || [] }));
+}
