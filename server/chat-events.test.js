@@ -105,3 +105,20 @@ test('oversized tool output is truncated and flagged', () => {
   assert.equal(ev.output.length, MAX_TOOL_TEXT);
   assert.equal(ev.truncated, true);
 });
+
+test('oversized tool input (e.g. a Write body) is truncated and flagged, target stays uncapped', () => {
+  const bigContent = 'y'.repeat(MAX_TOOL_TEXT + 500);
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_4', name: 'Write', input: { file_path: '/big.js', content: bigContent, overwrite: true } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_4', content: 'ok' },
+    ] } },
+  );
+  const ev = scanChatText(text, 'claude').events[0];
+  assert.equal(ev.input.content.length, MAX_TOOL_TEXT);
+  assert.equal(ev.truncated, true);
+  assert.equal(ev.target, '/big.js');
+  assert.equal(ev.input.overwrite, true);
+});

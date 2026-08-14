@@ -42,6 +42,25 @@ function cap(text) {
   return { text: s.slice(0, MAX_TOOL_TEXT), truncated: true };
 }
 
+// Write's `content` and Edit's `old_string`/`new_string` can each carry a whole
+// file, so input needs the same bound as output. Copies rather than mutates —
+// the pending entry stays uncapped because a later task derives adds/dels from
+// the real (uncapped) input.
+function capInput(input) {
+  if (!input || typeof input !== 'object') return { input, truncated: false };
+  let truncated = false;
+  const capped = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (typeof v === 'string' && v.length > MAX_TOOL_TEXT) {
+      capped[k] = v.slice(0, MAX_TOOL_TEXT);
+      truncated = true;
+    } else {
+      capped[k] = v;
+    }
+  }
+  return { input: capped, truncated };
+}
+
 function tsOf(iso) {
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : 0;
@@ -76,10 +95,11 @@ function pushClaude(entry, state) {
         const open = state.pending.get(b.tool_use_id);
         if (!open) continue;
         state.pending.delete(b.tool_use_id);
-        const { text: output, truncated } = cap(b.content);
+        const { text: output, truncated: outputTruncated } = cap(b.content);
+        const { input, truncated: inputTruncated } = capInput(open.input);
         out.push({
           kind: 'tool', id: open.id, name: open.name, target: open.target,
-          input: open.input, output, ok: b.is_error !== true, ts, truncated,
+          input, output, ok: b.is_error !== true, ts, truncated: outputTruncated || inputTruncated,
         });
       }
     }
