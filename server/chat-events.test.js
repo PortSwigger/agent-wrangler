@@ -39,6 +39,15 @@ test('claude: isMeta and synthetic user turns are dropped', () => {
 });
 
 test('a half-written trailing line is ignored, not thrown on', () => {
-  const text = '{"type":"user","timestamp":"2026-08-14T10:00:00.000Z","message":{"role":"user","content":"hi"}}\n{"type":"assis';
+  const text = '{"type":"user","timestamp":"2026-08-14T10:00:00.000Z","message":{"role":"user","content":"hi"}}\n{"type":"user","message":{"role":"user","content":"hi';
   assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.kind), ['user']);
+});
+
+test('claude: model is carried forward to later assistant messages that omit it', () => {
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:04.000Z', message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'First.' }] } },
+    { type: 'assistant', timestamp: '2026-08-14T10:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Second.' }] } },
+  );
+  const { events } = scanChatText(text, 'claude');
+  assert.deepEqual(events.map((e) => e.model), ['claude-opus-5', 'claude-opus-5']);
 });

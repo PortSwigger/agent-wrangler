@@ -51,6 +51,7 @@ function pushClaude(entry, state) {
     return out;
   }
   if (msg.role !== 'assistant') return out;
+  if (msg.model) state.model = msg.model;
   if (Array.isArray(msg.content)) {
     for (const b of msg.content) {
       if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
