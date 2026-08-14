@@ -195,8 +195,15 @@ function pushCodex(entry, state) {
     const open = state.pending.get(p.call_id);
     if (!open) return out;
     state.pending.delete(p.call_id);
-    const { text: output, truncated } = cap(typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? ''));
-    out.push({ kind: 'tool', id: open.id, name: open.name, target: open.target, input: open.input, output, ok: true, ts, truncated });
+    const { text: output, truncated: outputTruncated } = cap(typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? ''));
+    // Cap a COPY at emission — apply_patch embeds a full diff body, so this
+    // needs the same bound as Claude's Write/Edit input. The uncapped original
+    // stays in `open.input`/`state.pending` because a later task derives
+    // apply_patch +/- line counts from the real (uncapped) patch text.
+    const { input, truncated: inputTruncated } = capInput(open.input);
+    // function_call_output carries no structured error flag, only free text
+    // ("Process exited with code N") — `ok` can't be derived, so it's always true.
+    out.push({ kind: 'tool', id: open.id, name: open.name, target: open.target, input, output, ok: true, ts, truncated: outputTruncated || inputTruncated });
     return out;
   }
   return out;

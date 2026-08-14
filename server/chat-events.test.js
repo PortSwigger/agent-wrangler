@@ -180,3 +180,19 @@ test('codex: an assistant message takes its model from the preceding turn_contex
   assert.deepEqual(events.map((e) => e.kind), ['assistant'], 'turn_context itself emits no event');
   assert.equal(events[0].model, 'gpt-5.5');
 });
+
+test('codex: oversized function_call arguments (e.g. an apply_patch body) are truncated and flagged', () => {
+  const bigPatch = 'z'.repeat(MAX_TOOL_TEXT + 500);
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: {
+      type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'apply_patch',
+      arguments: JSON.stringify({ cmd: 'apply_patch', patch: bigPatch }),
+    } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: {
+      type: 'function_call_output', call_id: 'call_1', output: 'Process exited with code 0',
+    } },
+  );
+  const ev = scanChatText(text, 'codex').events[0];
+  assert.equal(ev.input.patch.length, MAX_TOOL_TEXT);
+  assert.equal(ev.truncated, true);
+});
