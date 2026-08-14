@@ -79,7 +79,11 @@ function textOf(content) {
 // The cheap gate: one indexOf over the raw line is ~100x cheaper than parsing it
 // to discover the line can't contribute.
 export function mightCarryChat(line, agent) {
-  if (agent === 'codex') return line.includes('"type":"message"') || line.includes('"function_call') || line.includes('"reasoning"');
+  if (agent === 'codex') {
+    return line.includes('"type":"message"') || line.includes('"function_call')
+      || line.includes('"reasoning"') || line.includes('"tool_search')
+      || line.includes('"turn_context"');
+  }
   return line.includes('"role":"user"') || line.includes('"role":"assistant"');
 }
 
@@ -124,6 +128,80 @@ function pushClaude(entry, state) {
   return out;
 }
 
+function codexText(content) {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b) => b && ['input_text', 'output_text', 'text'].includes(b.type) && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
+// Codex tool arguments arrive as a JSON *string*, unlike Claude's object.
+function codexArgs(raw) {
+  if (typeof raw !== 'string') return raw && typeof raw === 'object' ? raw : null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { command: oneLine(raw) };
+  }
+}
+
+function pushCodex(entry, state) {
+  const out = [];
+  const p = entry.payload && typeof entry.payload === 'object' ? entry.payload : entry;
+  // Codex names its model once per turn on its own line, not on the message lines —
+  // so an assistant event's model comes from carried state, never from the message.
+  if (entry.type === 'turn_context') {
+    if (typeof p.model === 'string' && p.model) state.model = p.model;
+    return out;
+  }
+  // event_msg/agent_message and user_message repeat response_item/message
+  // verbatim; indexing only response_item keeps every message exactly once.
+  if (entry.type !== 'response_item') return out;
+  const ts = tsOf(entry.timestamp);
+
+  if (p.type === 'message') {
+    // `developer` carries injected permissions/instructions text, not conversation.
+    const role = p.role === 'user' ? 'user' : p.role === 'assistant' ? 'assistant' : null;
+    if (!role) return out;
+    const text = codexText(p.content);
+    if (!text) return out;
+    if (role === 'user' && isSynthetic(text)) return out;
+    if (role === 'user') out.push({ kind: 'user', text, ts });
+    else out.push({ kind: 'assistant', text, ts, model: state.model || null });
+    return out;
+  }
+
+  // summary is always [] and the content is encrypted — presence only, never text.
+  if (p.type === 'reasoning') {
+    out.push({ kind: 'thinking', ts });
+    return out;
+  }
+
+  if (p.type === 'function_call' || p.type === 'tool_search_call') {
+    // BOTH ids exist: `id` is fc_…/tsc_…, `call_id` is call_…. The output only
+    // ever carries call_id, so keying on `id` silently orphans every result.
+    if (!p.call_id) return out;
+    const input = codexArgs(p.arguments);
+    state.pending.set(p.call_id, {
+      id: p.call_id, name: p.name || p.type, target: toolTarget(input), input,
+    });
+    return out;
+  }
+
+  if (p.type === 'function_call_output' || p.type === 'tool_search_output') {
+    const open = state.pending.get(p.call_id);
+    if (!open) return out;
+    state.pending.delete(p.call_id);
+    const { text: output, truncated } = cap(typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? ''));
+    out.push({ kind: 'tool', id: open.id, name: open.name, target: open.target, input: open.input, output, ok: true, ts, truncated });
+    return out;
+  }
+  return out;
+}
+
 export function createChatScanner(agent = 'claude') {
   const state = { agent, model: null, pending: new Map() };
   return {
@@ -136,7 +214,7 @@ export function createChatScanner(agent = 'claude') {
       } catch {
         return []; // a half-written trailing line is normal for a live session
       }
-      return pushClaude(entry, state);
+      return agent === 'codex' ? pushCodex(entry, state) : pushClaude(entry, state);
     },
     pending() {
       const last = [...state.pending.values()].pop();

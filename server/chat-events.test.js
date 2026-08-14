@@ -122,3 +122,61 @@ test('oversized tool input (e.g. a Write body) is truncated and flagged, target 
   assert.equal(ev.target, '/big.js');
   assert.equal(ev.input.overwrite, true);
 });
+
+const codexLines = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n');
+
+test('codex: user and assistant messages map, developer role is dropped', () => {
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:00.000Z', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<permissions instructions>' }] } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'review the PR' }] } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } },
+  );
+  const { events } = scanChatText(text, 'codex');
+  assert.deepEqual(events.map((e) => [e.kind, e.text]), [['user', 'review the PR'], ['assistant', 'On it.']]);
+});
+
+test('codex: function_call pairs on call_id even though id differs', () => {
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: {
+      type: 'function_call', id: 'fc_abc', call_id: 'call_xyz', name: 'exec_command',
+      arguments: '{"cmd":"cat AGENTS.md"}',
+    } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: {
+      type: 'function_call_output', call_id: 'call_xyz', output: 'Process exited with code 0',
+    } },
+  );
+  const { events } = scanChatText(text, 'codex');
+  assert.equal(events.length, 1, 'pairing on `id` instead of `call_id` orphans the output');
+  assert.equal(events[0].kind, 'tool');
+  assert.equal(events[0].name, 'exec_command');
+  assert.equal(events[0].target, 'cat AGENTS.md');
+  assert.equal(events[0].output, 'Process exited with code 0');
+});
+
+test('codex: reasoning emits a thinking event with no text', () => {
+  const text = codexLines({ type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: {
+    type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'gAAAAAB…',
+  } });
+  const { events } = scanChatText(text, 'codex');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'thinking');
+  assert.ok(!('text' in events[0]), 'codex reasoning is encrypted — never invent text for it');
+});
+
+test('codex: event_msg/agent_message is skipped as a duplicate of response_item/message', () => {
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } },
+    { type: 'event_msg', timestamp: '2026-08-14T10:00:02.000Z', payload: { type: 'agent_message', message: 'On it.' } },
+  );
+  assert.equal(scanChatText(text, 'codex').events.length, 1);
+});
+
+test('codex: an assistant message takes its model from the preceding turn_context', () => {
+  const text = codexLines(
+    { type: 'turn_context', timestamp: '2026-08-14T10:00:00.000Z', payload: { turn_id: 't1', model: 'gpt-5.5', cwd: '/repo' } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } },
+  );
+  const { events } = scanChatText(text, 'codex');
+  assert.deepEqual(events.map((e) => e.kind), ['assistant'], 'turn_context itself emits no event');
+  assert.equal(events[0].model, 'gpt-5.5');
+});
