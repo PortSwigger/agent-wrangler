@@ -921,8 +921,10 @@ export class SessionManager {
   // sidebar and an iTerm2 window can attach at once without clamping.
   async init() {
     // Resolve an absolute tmux path so node-pty's posix_spawnp can't miss it.
+    // `command -v` (POSIX sh builtin) over `which` — the latter is a separate,
+    // sometimes-absent package on slim Linux.
     try {
-      const { stdout } = await exec('which', ['tmux']);
+      const { stdout } = await exec('sh', ['-c', 'command -v tmux']);
       if (stdout.trim()) this.tmuxBin = stdout.trim();
     } catch {
       /* fall back to bare "tmux" */

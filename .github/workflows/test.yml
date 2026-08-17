@@ -20,6 +20,13 @@ jobs:
           node-version: 20
           cache: npm
 
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+
       - run: npm ci
 
       - run: npm test
+
+      - name: Verify systemd unit
+        run: |
+          sed "s#/ABSOLUTE/PATH/TO/agent-wrangler#$PWD#g" scripts/agent-wrangler.service.example > /tmp/agent-wrangler.service
+          systemd-analyze verify --user /tmp/agent-wrangler.service

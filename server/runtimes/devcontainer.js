@@ -8,7 +8,11 @@ import { addDirFor } from '../memory-store.js';
 import { analyzeLines, usageSince } from '../transcript-reader.js';
 import { statusOf } from '../claude-paths.js';
 
-const DEFAULT_HOST_ADDR = 'host.docker.internal';
+// Docker Desktop (macOS/Windows) resolves this name to the host automatically.
+// Native Docker Engine on Linux doesn't — either run the daemon with
+// `--add-host=host.docker.internal:host-gateway` or set AW_DEVCONTAINER_HOST_ADDR
+// (e.g. to the host's docker0/bridge IP) to override.
+const DEFAULT_HOST_ADDR = process.env.AW_DEVCONTAINER_HOST_ADDR || 'host.docker.internal';
 
 // Raised maxBuffer so a large transcript piped through `docker exec ... cat`
 // isn't truncated (execFile's default is 1MB).

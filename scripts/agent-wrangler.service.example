@@ -1,0 +1,49 @@
+# Example systemd user unit for agent-wrangler. Copy to
+# ~/.config/systemd/user/agent-wrangler.service, replace the
+# /ABSOLUTE/PATH/TO placeholder, then load it with:
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agent-wrangler.service
+#
+# Restart after changes with:
+#
+#   systemctl --user restart agent-wrangler.service
+#
+# Logs go to the user journal:
+#
+#   journalctl --user -u agent-wrangler -f
+
+[Unit]
+Description=Agent Wrangler
+After=network.target
+
+[Service]
+WorkingDirectory=/ABSOLUTE/PATH/TO/agent-wrangler
+ExecStart=/bin/bash /ABSOLUTE/PATH/TO/agent-wrangler/scripts/wrangler-start.sh
+Restart=always
+RestartSec=5
+
+Environment=PORT=7777
+# ~/.local/bin must be on PATH or dispatch/resume exit 127. %h expands to this
+# user's home directory (systemd specifier), so no per-machine username edit
+# is needed here the way the launchd plist needs YOUR_USERNAME substituted.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Uncomment ONLY if you use devcontainer sessions: the server binds loopback-only
+# by default (server/runtime.js bindHost()), so a container dialing out to
+# AW_DEVCONTAINER_HOST_ADDR (e.g. the host-gateway address on native Docker
+# Engine) can't reach /mcp unless the server also listens beyond loopback. This
+# widens exposure on a shared machine — the control/MCP posture is
+# localhost-advisory — so it's opt-in, not a default, same as on macOS.
+#Environment=AW_BIND_HOST=0.0.0.0
+
+# fd-limit hardening: the systemd-native equivalent of the `ulimit -n`
+# wrangler-start.sh sets for the launchd/shell path — LimitNOFILE is enforced
+# by systemd itself before the process starts, rather than by a shell builtin
+# inside it. Generous ceiling, not a leak canary (see server/fd-watchdog.js):
+# a one-shot MCP child like chrome-devtools-mcp needs a burst of ~270 fds at
+# startup, so a tight limit here would kill innocent children, not just catch
+# a runaway leak. Override by editing this value if you need something different.
+LimitNOFILE=16384
+
+[Install]
+WantedBy=default.target
