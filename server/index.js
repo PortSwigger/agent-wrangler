@@ -672,6 +672,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  // TmuxNotFoundError can also surface here: session-manager.init()'s own
+  // resolveTmuxBin() call (after the lock is held) throws it too, on the slim
+  // chance tmux vanishes between main()'s upfront check and init() running.
+  if (err instanceof TmuxNotFoundError) {
+    console.error(`[agent-wrangler] ${err.message}`);
+  } else {
+    console.error(err);
+  }
   process.exit(1);
 });
