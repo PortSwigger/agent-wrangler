@@ -32,6 +32,33 @@ test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   assert.match(cmd, /'fix the bug'$/);
 });
 
+test('codex buildLaunch: marks launch cwd trusted for this invocation when trustCwd is on', () => {
+  const cmd = codex.buildLaunch({ ...base, cwd: '/repo/with "quotes"', trustCwd: true, intent: '' });
+  assert.match(cmd, /'projects\."\/repo\/with \\"quotes\\""\.trust_level=\"trusted\"'/);
+});
+
+test('codex resume and fork also mark launch cwd trusted when trustCwd is on', () => {
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', cwd: '/repo', trustCwd: true });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', cwd: '/repo', trustCwd: true });
+  for (const cmd of [resume, fork]) {
+    assert.match(cmd, /'projects\."\/repo"\.trust_level=\"trusted\"'/);
+  }
+});
+
+test('codex omits the trust override when trustCwd is off, even with a cwd', () => {
+  const launch = codex.buildLaunch({ ...base, cwd: '/repo', trustCwd: false, intent: '' });
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', cwd: '/repo', trustCwd: false });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', cwd: '/repo', trustCwd: false });
+  for (const cmd of [launch, resume, fork]) {
+    assert.doesNotMatch(cmd, /trust_level/);
+  }
+});
+
+test('codex omits the trust override when no cwd is given, even with trustCwd on', () => {
+  const cmd = codex.buildLaunch({ ...base, trustCwd: true, intent: '' });
+  assert.doesNotMatch(cmd, /trust_level/);
+});
+
 test('codex buildLaunch: no env-strip wrapper, no empty trailing prompt', () => {
   const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: [] });
   assert.doesNotMatch(cmd, /env -u CLAUDECODE/);

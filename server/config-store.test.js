@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -118,4 +118,11 @@ test('subagentsExpandedByDefault defaults to off (collapsed); only an explicit t
   assert.equal(subagentsExpandedByDefault({}), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: false }), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: true }), true);
+});
+
+// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+test('trustCodexLaunchCwd defaults to on; only an explicit false disables', () => {
+  assert.equal(trustCodexLaunchCwd({}), true);
+  assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: true }), true);
+  assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: false }), false);
 });
