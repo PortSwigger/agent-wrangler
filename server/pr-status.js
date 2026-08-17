@@ -113,6 +113,42 @@ function defaultMerge(url) {
   });
 }
 
+// `gh pr view --json` has no `reviewThreads` field — only GraphQL's `resource(url:)`
+// exposes inline review-thread `isResolved` state, so this is a SEPARATE `gh api
+// graphql` call, keyed directly off the PR url (no owner/repo/number parsing
+// needed). `first: 100` caps the thread list; a PR with more silently undercounts
+// (not worth paginating for v1). The jq filter runs inside gh, so stdout is just
+// the unresolved count as a bare integer.
+const UNRESOLVED_QUERY = 'query($url:URI!){resource(url:$url){...on PullRequest{reviewThreads(first:100){nodes{isResolved}}}}}';
+const UNRESOLVED_JQ = '.data.resource.reviewThreads.nodes | map(select(.isResolved==false)) | length';
+
+function defaultUnresolvedRun(url) {
+  return new Promise((resolve) => {
+    execFile('gh', ['api', 'graphql', '-f', `query=${UNRESOLVED_QUERY}`, '-f', `url=${url}`,
+      '-q', UNRESOLVED_JQ], { timeout: 15000 },
+      (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
+  });
+}
+
+// Resolve a PR's unresolved review-THREAD count, or null on any failure (a
+// missing/inaccessible PR makes `resource` null, which the jq filter's `map`
+// over null fails on — same never-throws, null-on-failure contract as
+// fetchPrStatus, so the caller keeps its prior value rather than clobbering it).
+export async function fetchUnresolvedThreadCount(url, run = defaultUnresolvedRun) {
+  try {
+    const { code, stdout } = await run(url);
+    if (code !== 0) return null;
+    const trimmed = String(stdout).trim();
+    // Number('') is 0, not NaN — an explicit non-empty check is needed so blank
+    // output isn't misread as a genuine zero count.
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 // Merge a PR via gh, returning { ok, error }. Never throws — a failed merge
 // (branch protection, conflicts, method not allowed) is surfaced to the user as
 // a toast/pane nudge so they can merge manually, never a crash. The error text

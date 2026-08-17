@@ -155,3 +155,65 @@ export function planDirtyTransition(ev, entry) {
 export function prDirtyPaneNudge(ev) {
   return prPaneLine(ev.number, ev.url, 'merge conflicts with the base branch — needs a rebase');
 }
+
+// Transition-detection for unresolved review-THREAD counts — its own prev Map,
+// but DELIBERATELY no `seeded` flag (unlike diffCheckStatus/diffDirty). Those
+// two track small enum/bool state spaces where firing on first sight is exactly
+// the wanted behaviour for an already-terminal/dirty PR. Unresolved-comment
+// count is an unbounded counter that's already non-zero on almost every
+// established PR, so firing on first attach would spam "N unresolved comments"
+// on every newly-linked PR. Instead, a key not yet in `prevUnresolved` is
+// ALWAYS silently baselined (regardless of any global seeded state) — the
+// per-key baseline alone gives restart-safety, no separate flag needed.
+// Forward-only, mirroring diffDirty's precedent: only a previously-known key's
+// count INCREASING emits (carrying the delta); a decrease (including all the
+// way to zero) never emits — see the approved design for why "cleared" is
+// deliberately not a notification (it would double-fire alongside the existing
+// checkStatus pending→passing transition on repos where conversation
+// resolution is the only blocker, and is noise everywhere else).
+let prevUnresolved = new Map();
+
+// links: [{ scope, ownerId, url, number, unresolvedCount }]. Emits
+// { ...l, delta } for a link whose count rose since it was last seen. A link
+// whose count is not yet a real number (undefined — never successfully fetched,
+// e.g. every attempt so far hit a transient gh failure) is skipped entirely:
+// neither baselined nor emitted, carrying its PREVIOUS baseline (if any)
+// forward unchanged. Baselining it at 0 here would be wrong — the very next
+// successful fetch could return the PR's real, already-nonzero count and read
+// as a spurious increase, exactly the first-attach notification storm this
+// diff exists to prevent.
+export function diffUnresolvedComments(links) {
+  const events = [];
+  // Fresh each call (not seeded from prevUnresolved) so a link no longer in
+  // `links` — merged/closed and removed upstream — drops out of tracking
+  // rather than leaking forever, exactly like diffCheckStatus/diffDirty.
+  const next = new Map();
+  for (const l of links) {
+    if (typeof l.unresolvedCount !== 'number' || Number.isNaN(l.unresolvedCount)) continue;
+    const key = `${l.scope}:${l.ownerId}:${l.url}`;
+    const count = l.unresolvedCount;
+    const prevCount = prevUnresolved.get(key);
+    if (prevCount !== undefined && count > prevCount) events.push({ ...l, delta: count - prevCount });
+    next.set(key, count);
+  }
+  prevUnresolved = next;
+  return events;
+}
+
+// Decide whether an unresolved-comment increase should nudge the owning
+// session's pane. Session-scope only (a task link has no single pane to
+// nudge); reuses the same `autoFixPrChecks` opt-in the check/dirty nudges use
+// (defaults ON when unset) — this is just another PR notification, not a new
+// toggle surface. There is no merge branch — an unresolved comment never makes
+// a PR mergeable.
+export function planUnresolvedTransition(ev, entry) {
+  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? true);
+}
+
+// The one-line pane nudge for an unresolved-comment increase, pluralized and
+// sharing prPaneLine's exact shape so a dormant session's resume intent reads
+// consistently regardless of which PR event woke it.
+export function prUnresolvedPaneNudge(ev) {
+  const phrase = `${ev.delta} new unresolved review comment${ev.delta === 1 ? '' : 's'}`;
+  return prPaneLine(ev.number, ev.url, phrase);
+}

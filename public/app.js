@@ -4294,6 +4294,7 @@ function connect() {
     else if (msg.type === 'pr-checks') onPrChecks(msg);
     else if (msg.type === 'pr-merge') onPrMerge(msg);
     else if (msg.type === 'pr-dirty') onPrDirty(msg);
+    else if (msg.type === 'pr-unresolved') onPrComments(msg);
     else if (msg.type === 'schedule-fired') toast(`Scheduled "${msg.name}" started`);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
@@ -4496,6 +4497,25 @@ function onPrDirty(msg) {
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
+  toast(text, true);
+  if (window.Notification && Notification.permission === 'granted') {
+    const n = new Notification(text);
+    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
+  }
+  flashPr(msg.url);
+}
+
+// A linked PR's unresolved review-thread count just increased (forward-only —
+// see notifier.js for why "cleared" is deliberately not a notification).
+// Always an alert, like onPrDirty; mirrors its exact shape (focus-suppressed
+// toast + browser Notification + dot flash). Notification-only — no new
+// persistent PR-dot/card UI beyond the existing transient flash.
+function onPrComments(msg) {
+  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  const repo = prRepoName(msg.url);
+  const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
+  const phrase = `${msg.delta} new unresolved review comment${msg.delta === 1 ? '' : 's'}`;
+  const text = `[Agent Wrangler] ${label}: ${phrase}`;
   toast(text, true);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);

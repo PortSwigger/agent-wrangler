@@ -297,7 +297,7 @@ test('prLinks lists pr links with their task id', () => {
     { type: 'jira', key: 'ENT-1' },
     { type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 },
   ]);
-  assert.deepEqual(store.prLinks(), [{ ownerId: t.id, url: 'https://github.com/a/b/pull/1', number: 1, checkStatus: undefined, dirty: undefined }]);
+  assert.deepEqual(store.prLinks(), [{ ownerId: t.id, url: 'https://github.com/a/b/pull/1', number: 1, checkStatus: undefined, dirty: undefined, unresolvedCount: undefined }]);
 });
 
 test('updateLinkStatus writes checkStatus/dirty onto the matching pr link only', () => {
@@ -339,6 +339,18 @@ test('updateLinkStatus returns true when only dirty changes (checkStatus stable)
   store.setLinks(t.id, [{ type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 }]);
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'x'), true);
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', true, 'y'), true);
+});
+
+test('updateLinkStatus writes unresolvedCount as the last param and reports it in the changed check', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Login' });
+  store.setLinks(t.id, [{ type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 }]);
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'x', 2), true);
+  assert.equal(store.getLinks(t.id).find((l) => l.type === 'pr').unresolvedCount, 2);
+  // same checkStatus/dirty, unresolvedCount alone changes -> still reported changed
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'y', 5), true);
+  // everything stable -> no change
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'z', 5), false);
 });
 
 // ── TODOs ──────────────────────────────────────────────────────────────────────

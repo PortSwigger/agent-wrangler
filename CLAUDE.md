@@ -255,6 +255,21 @@ don't re-derive it.
   be unmergeable, so never report "passing" off the rollup alone. `autoFixPrChecks`
   (default on) gates the pane nudge; `autoMergeOnPass` (default **off**) squash-merges
   on a passing transition. All `gh` invocation stays in the `pr-status.js` leaf.
+  **`diffUnresolvedComments` (notifier.js) deliberately has NO `seeded` flag,
+  unlike `diffCheckStatus`/`diffDirty` — do not "fix" this for consistency.**
+  Unresolved review-thread count is an unbounded counter that's already nonzero
+  on almost every established PR, so firing on first sight (like the other two
+  diffs do for their small enum/bool state spaces) would spam every newly-linked
+  PR. Instead a key is baselined silently the first time its count is a REAL
+  number; a link whose count is still `undefined` (never yet fetched
+  successfully) is skipped entirely rather than baselined at 0 — baselining at 0
+  would misread the PR's first successful fetch (which may return an
+  already-nonzero count) as a spurious increase. Forward-only like `diffDirty`:
+  only an increase emits, never a decrease (including down to zero) — a
+  "cleared" direction was deliberately rejected, since resolving the last thread
+  on a repo enforcing conversation-resolution flips `mergeStateStatus`
+  BLOCKED→CLEAN in the same poll tick that already fires the checkStatus
+  pending→passing nudge, so it would double-notify the same real-world moment.
 - **Autopilot workflows = a skill + a thin tracking layer.** The whole issue→PR arc
   lives in the in-repo `issue-to-pr` skill (loaded via `--plugin-dir` only when the
   `workflow` flag is set — through `buildLaunch`/`buildResume`, **not** `buildFork`).

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine } from './notifier.js';
+import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus }.
 const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1 } = {}) =>
@@ -247,5 +247,89 @@ test('prPaneLine omits the (<repo>) segment entirely for an enterprise/malformed
   const url = 'https://github.example.com/o/internal/pull/7';
   const line = prPaneLine(7, url, 'closed — link removed');
   assert.equal(line, '[Agent Wrangler] PR #7: closed — link removed: ' + url);
+  assert.doesNotMatch(line, /\(\)/);
+});
+
+// diffUnresolvedComments: own transition-detection baseline, own key space —
+// DELIBERATELY no seeded flag (see notifier.js). link factory:
+// { scope, ownerId, url, number, unresolvedCount }.
+const U = (unresolvedCount, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1 } = {}) =>
+  ({ scope, ownerId, url, number, unresolvedCount });
+
+test('diffUnresolvedComments: a brand-new key is ALWAYS silently baselined, even already non-zero (no first-sight emit)', () => {
+  assert.deepEqual(diffUnresolvedComments([U(5), U(2, { ownerId: 's2' })]), []);
+});
+
+test('diffUnresolvedComments: a known key increasing emits with the delta; staying flat does not', () => {
+  diffUnresolvedComments([U(2, { ownerId: 'a' })]); // baseline 2
+  const events = diffUnresolvedComments([U(5, { ownerId: 'a' })]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].delta, 3);
+  assert.deepEqual(diffUnresolvedComments([U(5, { ownerId: 'a' })]), []); // flat: no re-emit
+});
+
+test('diffUnresolvedComments: a decrease (including down to zero) never emits — forward-only', () => {
+  diffUnresolvedComments([U(4, { ownerId: 'b' })]); // baseline
+  assert.deepEqual(diffUnresolvedComments([U(1, { ownerId: 'b' })]), []);
+  assert.deepEqual(diffUnresolvedComments([U(0, { ownerId: 'b' })]), []);
+});
+
+test('diffUnresolvedComments: a brand-new key appearing later (after other keys are known) is still baselined, not emitted', () => {
+  diffUnresolvedComments([U(1, { ownerId: 'c' })]); // establishes some baseline state
+  const events = diffUnresolvedComments([U(1, { ownerId: 'c' }), U(9, { ownerId: 'fresh', url: 'https://github.com/o/r/pull/42' })]);
+  assert.deepEqual(events, []);
+  // now that 'fresh' is known, a further increase emits
+  const next = diffUnresolvedComments([U(1, { ownerId: 'c' }), U(12, { ownerId: 'fresh', url: 'https://github.com/o/r/pull/42' })]);
+  assert.equal(next.length, 1);
+  assert.equal(next[0].delta, 3);
+});
+
+test('diffUnresolvedComments: task and session links to the same url do not collide (scope in key)', () => {
+  const same = (n, scope) => U(n, { scope, ownerId: scope === 'task' ? 't1' : 's1', url: 'https://github.com/o/r/pull/9' });
+  diffUnresolvedComments([same(1, 'task'), same(1, 'session')]); // baseline
+  const events = diffUnresolvedComments([same(3, 'task'), same(2, 'session')]);
+  assert.equal(events.length, 2);
+});
+
+test('diffUnresolvedComments: a missing/non-numeric count is skipped entirely — not baselined at 0', () => {
+  // Baselining an unknown count at 0 would misread the PR's first SUCCESSFUL
+  // fetch (which may return an already-nonzero real count) as a spurious
+  // increase — exactly the first-attach notification storm this diff exists
+  // to prevent.
+  assert.deepEqual(diffUnresolvedComments([U(undefined, { ownerId: 'd' })]), []);
+  assert.deepEqual(diffUnresolvedComments([U(undefined, { ownerId: 'd' })]), []);
+  // once a real number finally arrives, it's baselined silently (not emitted)
+  assert.deepEqual(diffUnresolvedComments([U(4, { ownerId: 'd' })]), []);
+  // and NOW increases emit normally
+  const events = diffUnresolvedComments([U(6, { ownerId: 'd' })]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].delta, 2);
+});
+
+test('planUnresolvedTransition: session scope with autoFixPrChecks ON (default) nudges', () => {
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, {}), true);
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, undefined), true);
+});
+
+test('planUnresolvedTransition: autoFixPrChecks OFF suppresses the nudge', () => {
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, { autoFixPrChecks: false }), false);
+});
+
+test('planUnresolvedTransition: a task-scope link never nudges (no single session pane to target)', () => {
+  assert.equal(planUnresolvedTransition({ scope: 'task' }, {}), false);
+});
+
+test('prUnresolvedPaneNudge pluralizes correctly and composes the shared pane-line shape', () => {
+  const url = 'https://github.com/o/agent-wrangler/pull/42';
+  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 1 }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): 1 new unresolved review comment: ' + url);
+  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 3 }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): 3 new unresolved review comments: ' + url);
+});
+
+test('prUnresolvedPaneNudge omits the (<repo>) segment entirely for an enterprise/malformed url', () => {
+  const url = 'https://github.example.com/o/internal/pull/7';
+  const line = prUnresolvedPaneNudge({ number: 7, url, delta: 2 });
+  assert.equal(line, '[Agent Wrangler] PR #7: 2 new unresolved review comments: ' + url);
   assert.doesNotMatch(line, /\(\)/);
 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPrStatus, mergePr } from './pr-status.js';
+import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 
 // run(url) resolves { code, stdout } mimicking the gh invocation; stdout is the
 // `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>` the in-gh jq
@@ -144,4 +144,28 @@ test('mergePr: a runner that throws is caught, never propagates', async () => {
   const res = await mergePr('u', async () => { throw new Error('spawn ENOENT'); });
   assert.equal(res.ok, false);
   assert.equal(res.error, 'spawn ENOENT');
+});
+
+// unresolvedRun(stdout, code) mimics the `gh api graphql -q` invocation: stdout
+// is just the bare unresolved count jq already extracted.
+const unresolvedRun = (stdout, code = 0) => async () => ({ code, stdout });
+
+test('fetchUnresolvedThreadCount returns the count on success', async () => {
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('3\n')), 3);
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('0\n')), 0);
+});
+
+test('fetchUnresolvedThreadCount returns null on a non-zero exit (missing/inaccessible PR)', async () => {
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('', 1)), null);
+});
+
+test('fetchUnresolvedThreadCount returns null on unparseable output', async () => {
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('weird\n')), null);
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('-1\n')), null);
+  assert.equal(await fetchUnresolvedThreadCount('u', unresolvedRun('\n')), null);
+});
+
+test('fetchUnresolvedThreadCount: a runner that throws yields null, never propagates', async () => {
+  const throwing = async () => { throw new Error('spawn ENOENT'); };
+  assert.equal(await fetchUnresolvedThreadCount('u', throwing), null);
 });
