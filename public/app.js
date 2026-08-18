@@ -1410,8 +1410,19 @@ function peerReviewSession(sessionId) {
 // "Full view" toggle row for a CHILD session's card/Actions menu (a session with
 // parentSession set — a workflow worker, or any other nested child; a merely
 // `spawnedBy` top-level session already renders full and never offers this).
-// Same keepOpen/optimistic-tick shape as autoFixMenuItem: on flips locally, the
-// server round-trip + next graph poll reconcile the persisted state.
+// Same keepOpen/optimistic-tick shape as autoFixMenuItem, PLUS an immediate
+// renderGrid() — unlike autoFix/autoMerge (whose persisted state only changes
+// a small chip, invisible until the menu next re-renders anyway), this toggle
+// reshapes the whole row (compact `.worker-row` ↔ full `.session-card`), so
+// waiting for the poll-driven rebuild on menu close reads as broken rather
+// than just stale. Safe to call synchronously here even though a card menu is
+// open: mountMenu appends the menu to <body>, not inside #grid, so re-rendering
+// the grid can't yank it out from under the click that's still running — unlike
+// the poll-driven renderGridIfVisible() (gated on !cardMenuEl for exactly that
+// reason against OTHER in-flight interactions, e.g. Rename's captured input).
+// `s` is the live latestSessions entry (not a copy — see openCardMenu/
+// openActionsMenu), so mutating it directly is what renderGrid's next pass
+// reads; the server round-trip + next graph poll still reconcile afterwards.
 function childFullViewMenuItem(s) {
   let on = isChildFullView(s);
   return {
@@ -1421,9 +1432,11 @@ function childFullViewMenuItem(s) {
     keepOpen: true,
     run: (e) => {
       on = !on;
+      s.childFullView = on;
       toggleChildFullView(s.sessionId, on);
       const t = e.currentTarget.querySelector('.context-menu-trailing');
       if (t) t.innerHTML = on ? CHECK_ICON : '';
+      if (currentView === 'grid') renderGrid();
     },
   };
 }

@@ -569,3 +569,27 @@ test('tileSpan: a full-view absorbed child weighs at least as much as an equal-c
   assert.ok(fullView >= compact);
 });
 
+// Regression: full-view children were originally folded into the SAME capped
+// secondary bucket as light rows/todos/chrome (Math.min(..., perRow)) — enough
+// of them alone could saturate that cap and clip a fully-drawn `.session-card`
+// into `.task-body` scroll, exactly the failure this function's own opening
+// invariant says never happens to a session rendered as its own card. A
+// live board with 5 full-view children under a parent (6 real cards at
+// perRow=2, i.e. 3 rows' worth) demonstrated it: before the fix this returned
+// 2 (capped); it must now reach the tile's own MAX_SPAN ceiling instead.
+test('tileSpan: full-view children are NOT subject to the secondary-weight cap — enough of them grows the tile past what a capped bucket would allow', () => {
+  const perRow = 2;
+  const sessions = [sess('parent'), sess('c1'), sess('c2'), sess('c3'), sess('c4'), sess('c5')];
+  const span = tileSpan(sessions, perRow, 0, phaseOf, 0, 5, 0, 0, 0, 5);
+  assert.equal(span, MAX_SPAN);
+});
+
+// The fix must not also exempt genuinely light secondary content (todos, plain
+// compact child rows, sub-agent zones) from the cap — only childFullViewCount
+// moves to the uncapped bucket.
+test('tileSpan: ordinary secondary content (todos) is still capped, unaffected by the full-view fix', () => {
+  const perRow = 4;
+  const span = tileSpan([sess('parent')], perRow, 50, phaseOf, 0, 0, 0, 0, 0, 0);
+  assert.ok(span <= MAX_SPAN);
+});
+
