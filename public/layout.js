@@ -340,12 +340,22 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 // margins are a per-card one-time cost, not a per-row one — see todo.js's
 // SUBAGENT_ZONE_BASE_PX/SUBAGENT_ROW_STRIDE_PX.
 //
-// `childFullViewCount` is a FIFTH secondary term: an absorbed child rendered
-// full (see cards.js childRowHtml / app.js isChildFullView) draws as a real
-// `.session-card`, not a compact `.worker-row` — it weighs a full CARD_STRIDE_PX,
-// not `childRowCount`'s light CHILD_STRIDE_PX. It's still excluded from
-// `topLevelActiveCount` (it never becomes its own top-level card — see
-// absorbedChildCount above) and still subject to the same secondary-weight cap.
+// `childFullViewCount` is a FIFTH term, but — unlike the other four — it does
+// NOT go in the capped secondary bucket. An absorbed child rendered full (see
+// cards.js childRowHtml / app.js isChildFullView) draws a real `.session-card`,
+// not a compact `.worker-row`: it's still excluded from `topLevelActiveCount`
+// (it never becomes its own top-level card — see absorbedChildCount above),
+// but this function's own opening invariant is "a session rendered as its own
+// card must stay fully visible, never clipped" — true of a full-view child
+// exactly as much as a real top-level one. Folding it into the capped
+// secondary bucket alongside light rows/chrome meant enough full-view
+// children alone (their weight is a whole CARD_STRIDE_PX each, not
+// CHILD_STRIDE_PX) could saturate the `perRow`-wide cap and clip a fully-drawn
+// card into `.task-body` scroll — the exact failure mode the cap exists to
+// prevent, just triggered by content the cap was never meant to bound. So it's
+// added to the UNCAPPED primary count instead, alongside `topLevelActiveCount`;
+// `totalWeight` already charges it at a full `cardStride` (see todo.js), so
+// this only moves it from capped to uncapped — never a double count.
 export function tileSpan(
   sessions, perRow, todoCount = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
   subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
@@ -356,6 +366,7 @@ export function tileSpan(
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, todoCount, childRowCount, workflowBoxCount,
     subagentRowCount, subagentZoneCount, childFullViewCount,
   });
-  const secondaryWeight = Math.min(totalWeight - topLevelActiveCount, perRow);
-  return rowSpan(topLevelActiveCount + secondaryWeight, perRow);
+  const uncappedCount = topLevelActiveCount + childFullViewCount;
+  const secondaryWeight = Math.min(totalWeight - uncappedCount, perRow);
+  return rowSpan(uncappedCount + secondaryWeight, perRow);
 }

@@ -207,19 +207,28 @@ don't re-derive it.
 - **`tileSpan` (`public/layout.js`) takes THREE child counts and they must stay
   distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
   subtracted to get the top-level active count; `childRowCount` (only rows currently
-  *drawn*, as a compact `.worker-row`) feeds the lighter secondary weight;
+  *drawn*, as a compact `.worker-row`) feeds the lighter, CAPPED secondary weight;
   `childFullViewCount` (a child currently toggled "Full view" — per-session
-  `entry.childFullView`, or the `childFullViewByDefault` config fallback) feeds a
-  FULL `CARD_STRIDE_PX` secondary weight instead, because that child renders a real
-  `.session-card` (`cards.js` childRowHtml), not a `.worker-row` — while still not
-  counting toward `absorbedChildCount`/top-level (it never becomes its own top-level
-  card). A full-view child can also show its OWN sub-agent zone (it renders via
-  `sessionCardHtml` same as a top-level card) — `app.js childRowCounts`'
-  `subagentRowCount`/`subagentZoneCount` loop must charge it too, not just
-  non-absorbed sessions, or the tile comes out short and silently scrolls. Defaulting
-  `absorbedChildCount` to `childRowCount` previously made collapsing a workflow box
-  grow the tile instead of shrinking it. **TODO data is the one exception to "carried
-  via `buildGraph`"** — it's task-scoped, not session-scoped, so it rides
+  `entry.childFullView`, a creation-time stamp, never a live read of
+  `childFullViewByDefault`, see the mailbox/child-full-view bullet elsewhere) is
+  charged a FULL `CARD_STRIDE_PX` at `totalWeight` time (it renders a real
+  `.session-card` via `cards.js` childRowHtml, not a `.worker-row`) but then moved
+  to the UNCAPPED bucket alongside `topLevelActiveCount` — unlike every other
+  secondary term, `Math.min(totalWeight - uncappedCount, perRow)` never clips it,
+  because this function's own invariant ("a session rendered as its own card must
+  stay fully visible") applies to it exactly as much as a real top-level card.
+  Enough full-view children alone used to saturate the `perRow`-wide cap and clip
+  a fully-drawn card into `.task-body` scroll before this was split out — verified
+  against the live board (a task with 5 full-view children scrolled). Still
+  excluded from `absorbedChildCount`/top-level itself (it never becomes its own
+  top-level card). A full-view child can also show its OWN sub-agent zone (it
+  renders via `sessionCardHtml` same as a top-level card) — `app.js
+  childRowCounts`' `subagentRowCount`/`subagentZoneCount` loop must charge it too,
+  not just non-absorbed sessions, or the tile comes out short and silently
+  scrolls. Defaulting `absorbedChildCount` to `childRowCount` previously made
+  collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
+  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
+  session-scoped, so it rides
   `taskStore.snapshot()` directly; don't go looking for it in `buildGraph`.
 - **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
   be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
