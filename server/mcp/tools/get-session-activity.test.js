@@ -72,6 +72,27 @@ test('finds a session active on the requested day via its transcript', async () 
   assert.equal(s.archived, false);
 });
 
+// A `/clear` splits one card's day across two transcripts (the abandoned conversation
+// keeps its own file), so the day's real span is the union — reading only the live id
+// would report a standup that starts after lunch.
+test('merges activity across a conversation the session cleared away mid-day', async () => {
+  const dir = makeProjects();
+  writeTranscript(dir, 'pre-clear', '/work/a', ['2026-07-01T09:00:00.000Z', '2026-07-01T09:30:00.000Z']);
+  writeTranscript(dir, 'post-clear', '/work/a', ['2026-07-01T14:00:00.000Z']);
+  const entries = [{
+    sessionId: 'CARD1', liveSessionId: 'post-clear', priorLiveSessionIds: ['pre-clear'],
+    cwd: '/work/a', createdAt: Date.parse('2026-07-01T00:00:00.000Z'),
+  }];
+
+  const out = await getSessionActivityTool.handler({ deps: deps(dir, { entries }) }, { date: '2026-07-01' });
+
+  assert.equal(out.structuredContent.sessions.length, 1, 'still one card, not one row per conversation');
+  const s = out.structuredContent.sessions[0];
+  assert.equal(s.messageCount, 3);
+  assert.equal(s.firstActivity, '2026-07-01T09:00:00.000Z');
+  assert.equal(s.lastActivity, '2026-07-01T14:00:00.000Z');
+});
+
 test('includes archived sessions that list_sessions would drop', async () => {
   const dir = makeProjects();
   writeTranscript(dir, 'live2', '/work/b', ['2026-07-01T12:00:00.000Z']);

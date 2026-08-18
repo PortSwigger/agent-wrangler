@@ -548,6 +548,12 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       || (adapter.presetsSessionId
         ? null
         : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0 }), status: 'unknown', name: null, waitingFor: null });
+    // The running conversation is the truth, and it can be one the entry has never
+    // heard of: `/clear` swaps the live id under us. Persist it — this read is the
+    // only place that sees the swap, and left unrecorded the entry keeps pointing at
+    // the abandoned conversation (stale label once dormant, and Resume brings the
+    // abandoned one back). No-ops when unchanged; see noteLiveSessionId.
+    if (live?.liveSid) await sessionManager?.noteLiveSessionId?.(realSid, live.liveSid);
     const enr = (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: live?.liveSid || appEntry?.liveSessionId }) : null)
       || await adapter.analyze(live?.liveSid || appEntry?.liveSessionId || realSid, { since: usageSince(appEntry) });
     // A recognized live status wins (Claude's mapped status, or Codex's). Else

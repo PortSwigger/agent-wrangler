@@ -119,6 +119,66 @@ test('rename() makes the name user-chosen, clearing the inherited-fork marker', 
   assert.ok(!sm.map.get('f').nameInherited);
 });
 
+// `/clear` swaps the agent's live conversation id under us. Without the write-back
+// the entry keeps pointing at the abandoned conversation, so the card reverts to its
+// pre-clear label once dormant and Resume relaunches the abandoned conversation.
+function swapManager(entry = {}) {
+  const sm = new SessionManager();
+  let saves = 0;
+  sm._save = () => { saves += 1; };
+  sm.map.clear();
+  sm.map.set('card', { agent: 'claude', cwd: '/repo', liveSessionId: 'L1', ...entry });
+  return { sm, saves: () => saves };
+}
+const foundTranscript = { transcriptFor: async () => '/projects/-repo/L2.jsonl' };
+
+test('noteLiveSessionId repoints the entry at the running conversation, keeping the abandoned one', async () => {
+  const { sm, saves } = swapManager();
+  assert.equal(await sm.noteLiveSessionId('card', 'L2', foundTranscript), true);
+  assert.equal(sm.map.get('card').liveSessionId, 'L2');
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L1']);
+  assert.equal(saves(), 1);
+});
+
+test('noteLiveSessionId no-ops on the unchanged id every rebuild reports (no save churn)', async () => {
+  const { sm, saves } = swapManager();
+  assert.equal(await sm.noteLiveSessionId('card', 'L1', foundTranscript), false);
+  assert.equal(await sm.noteLiveSessionId('card', '', foundTranscript), false);
+  assert.equal(await sm.noteLiveSessionId('missing', 'L2', foundTranscript), false);
+  assert.equal(saves(), 0);
+});
+
+// Repointing at a conversation whose transcript isn't written yet trades a
+// stale-but-resumable card for one _doResume refuses outright; the next rebuild retries.
+test('noteLiveSessionId waits for the new transcript to exist, but skips that check for codex', async () => {
+  const missing = { transcriptFor: async () => null };
+  const { sm } = swapManager();
+  assert.equal(await sm.noteLiveSessionId('card', 'L2', missing), false);
+  assert.equal(sm.map.get('card').liveSessionId, 'L1');
+  const codex = swapManager({ agent: 'codex' }).sm;
+  assert.equal(await codex.noteLiveSessionId('card', 'L2', missing), true);
+  assert.equal(codex.map.get('card').liveSessionId, 'L2');
+});
+
+test('noteLiveSessionId refuses a conversation another card already owns', async () => {
+  const { sm } = swapManager();
+  sm.map.set('other', { agent: 'claude', liveSessionId: 'L2' });
+  assert.equal(await sm.noteLiveSessionId('card', 'L2', foundTranscript), false);
+  assert.equal(sm.map.get('card').liveSessionId, 'L1');
+  // A legacy entry keyed on the conversation id itself counts as its owner too.
+  sm.map.set('L3', { agent: 'claude' });
+  assert.equal(await sm.noteLiveSessionId('card', 'L3', foundTranscript), false);
+});
+
+test('noteLiveSessionId keeps prior ids deduped and never lists the current one', async () => {
+  const { sm } = swapManager({ priorLiveSessionIds: ['L0'] });
+  await sm.noteLiveSessionId('card', 'L2', foundTranscript);
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L0', 'L1']);
+  await sm.noteLiveSessionId('card', 'L0', foundTranscript); // swapped back onto an earlier one
+  assert.equal(sm.map.get('card').liveSessionId, 'L0');
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L1', 'L2']);
+});
+
 test('forkEntry: falls back to (forked) intent and null model when parent lacks them', () => {
   const entry = forkEntry({
     short: 's', tmux: 'cc_s', cwd: '/repo', parentEntry: undefined,
@@ -188,8 +248,12 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     autoFixPrChecks: false,
     autoMergeOnPass: true,
     nameInherited: true,
+    priorLiveSessionIds: ['CLEARED1'],
   };
   const e = resumeEntry(prev, { short: 's', tmux: 'cc_s', cwd: '/w', agent: 'claude', resumeId: 'L', socket: 'sock', now: 999 });
+  // A conversation the agent cleared away still holds spend the card is billed for —
+  // and once its transcript is deleted, the usage cache keyed on it IS the record.
+  assert.deepEqual(e.priorLiveSessionIds, ['CLEARED1']);
   assert.deepEqual(e.workflow, prev.workflow); // the autopilot chip survives resume (8h-suspend recovery)
   assert.deepEqual(e.worktree, prev.worktree);
   assert.equal(e.forkedFrom, 'P');
