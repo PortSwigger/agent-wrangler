@@ -38,45 +38,62 @@ export const chatHandler = {
 
     const since = Number.isFinite(msg.sinceOffset) ? Math.max(0, Math.min(msg.sinceOffset, size)) : null;
     let start = since ?? Math.max(0, size - WINDOW_BYTES);
-    const windowed = since == null && start > 0;
+    let windowed = since == null && start > 0;
 
-    const handle = await fsp.open(file, 'r');
+    let handle;
     try {
-      const len = size - start;
-      const buf = Buffer.alloc(len);
-      await handle.read(buf, 0, len, start);
-      // Byte arithmetic, NOT string slicing. A windowed read can begin mid
-      // multi-byte character; decoding first would turn those bytes into U+FFFD,
-      // whose re-encoded byteLength no longer matches what was consumed —
-      // misaligning `offset`, which lands the NEXT poll mid-line (that poll trusts
-      // its start to be a line boundary and does not re-skip) and silently drops
-      // an event. 0x0A is '\n', and it cannot occur inside a multi-byte sequence.
-      let from = 0;
-      if (windowed) {
-        const nl = buf.indexOf(0x0a);
-        if (nl === -1) {
-          // A window with no newline at all: nothing parseable, but the caller
-          // still needs a resumable offset.
-          ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: size, more: true, pending: null });
+      handle = await fsp.open(file, 'r');
+    } catch {
+      // Deleted/unreadable between the stat above and this open — degrade the
+      // same way a missing file or a failed stat does, never throw.
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: 0, more: false, pending: null });
+      return;
+    }
+    try {
+      // At most two passes: the widen below flips `windowed` to false, and the
+      // widen condition requires `windowed` to be true, so it cannot re-fire.
+      for (;;) {
+        const len = size - start;
+        const buf = Buffer.alloc(len);
+        await handle.read(buf, 0, len, start);
+        // Byte arithmetic, NOT string slicing. A windowed read can begin mid
+        // multi-byte character; decoding first would turn those bytes into U+FFFD,
+        // whose re-encoded byteLength no longer matches what was consumed —
+        // misaligning `offset`, which lands the NEXT poll mid-line (that poll trusts
+        // its start to be a line boundary and does not re-skip) and silently drops
+        // an event. 0x0A is '\n', and it cannot occur inside a multi-byte sequence.
+        let from = 0;
+        if (windowed) {
+          const nl = buf.indexOf(0x0a);
+          if (nl === -1) {
+            // The window holds not even one newline: a single jsonl line (e.g. a
+            // huge tool Read result) can exceed WINDOW_BYTES on its own. Replying
+            // with offset: size here would permanently discard those bytes — the
+            // next poll starts past them and never looks again, even once the line
+            // is terminated. Widen to the whole file instead of narrowing further.
+            start = 0;
+            windowed = false;
+            continue;
+          }
+          from = nl + 1;
+        }
+        // A trailing partial line is normal for a live session — stop at the last
+        // complete newline and leave the remainder for the next poll.
+        const lastNl = buf.lastIndexOf(0x0a);
+        if (lastNl < from) {
+          // No complete line in range. Resume from the line boundary we found, so
+          // the next poll does not re-read the partial head.
+          ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: start + from, more: windowed, pending: null });
           return;
         }
-        from = nl + 1;
-      }
-      // A trailing partial line is normal for a live session — stop at the last
-      // complete newline and leave the remainder for the next poll.
-      const lastNl = buf.lastIndexOf(0x0a);
-      if (lastNl < from) {
-        // No complete line in range. Resume from the line boundary we found, so
-        // the next poll does not re-read the partial head.
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: start + from, more: windowed, pending: null });
+        const complete = buf.subarray(from, lastNl + 1).toString('utf8');
+        const scanner = createChatScanner(agent);
+        const events = [];
+        for (const line of complete.split('\n')) events.push(...scanner.push(line));
+        const offset = start + lastNl + 1;
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, events, offset, more: windowed, pending: scanner.pending() });
         return;
       }
-      const complete = buf.subarray(from, lastNl + 1).toString('utf8');
-      const scanner = createChatScanner(agent);
-      const events = [];
-      for (const line of complete.split('\n')) events.push(...scanner.push(line));
-      const offset = start + lastNl + 1;
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, events, offset, more: windowed, pending: scanner.pending() });
     } finally {
       await handle.close();
     }
