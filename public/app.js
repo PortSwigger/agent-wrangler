@@ -5,9 +5,9 @@ import {
 } from './snooze.js';
 import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX } from './todo.js';
 import {
-  MAX_ONSCREEN_ROWS, MAX_FIT_ROWS,
-  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
-  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
+  MAX_ONSCREEN_ROWS,
+  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
 } from './layout.js';
 import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups } from './workflow.js';
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
@@ -907,28 +907,17 @@ function renderGrid() {
     return computeLayout(tiles, columnsForWidth(el));
   }
 
-  let perRow = sessionsPerRow(el);
-  let canonical = buildTiles(perRow);
-  // Self-consistency refinement: sessionsPerRow budgets cards-per-row against
-  // the NOMINAL row height (available height / MAX_ONSCREEN_ROWS). Once the
-  // packer genuinely needs more rows than that, `1fr` divides the same
-  // available height across those extra rows too, so the REAL row height is
-  // shorter than every tile's span was budgeted against — undersizing a tile
-  // and clipping a full active card into `.task-body`'s scroll (never
-  // allowed — see layout.js tileSpan's "never clipped" invariant; confirmed
-  // against a live board). Re-derive perRow from the row count the packer
-  // actually chose and repack. Bounded and convergent: perRowForRows only
-  // ever lowers perRow here (never below MIN_SESSIONS_PER_ROW, layout.js's
-  // floor), so this tightens at most a few times before perRow stops
-  // changing — deliberately a dynamic correction, not a static lower
-  // MAX_ONSCREEN_ROWS (which would shrink every tile's budget even on a small
-  // board that never left 3 rows in the first place).
-  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
-    const refined = perRowForRows(el.clientHeight, canonical.rows);
-    if (refined >= perRow) break;
-    perRow = refined;
-    canonical = buildTiles(perRow);
-  }
+  // Self-consistency refinement (layout.js refinePerRow): sessionsPerRow
+  // budgets cards-per-row against the NOMINAL row height (available height /
+  // MAX_ONSCREEN_ROWS). Once the packer genuinely needs more rows than that,
+  // `1fr` divides the same available height across those extra rows too, so
+  // the REAL row height is shorter than every tile's span was budgeted
+  // against — undersizing a tile and clipping a full active card into
+  // `.task-body`'s scroll (never allowed — see layout.js tileSpan's "never
+  // clipped" invariant; confirmed against a live board), UNLESS the repack
+  // itself needs to scroll, in which case row height locks back to the same
+  // nominal size and the correction must not be adopted (see refinePerRow).
+  const { perRow, canonical } = refinePerRow(sessionsPerRow(el), buildTiles, el.clientHeight);
   let { placed, cols, rows, scroll } = canonical;
   // Mid-drag preview: swap the dragged tile and the hovered target WITHOUT
   // re-running computeLayout on the whole board — see localSwapPlacement for

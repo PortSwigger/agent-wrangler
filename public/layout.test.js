@@ -4,7 +4,7 @@ import {
   MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
   MIN_COL_PX, GRID_CHROME_X_PX,
   sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
-  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
+  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
 } from './layout.js';
 import { tileWeight } from './snooze.js';
 
@@ -79,6 +79,55 @@ test('perRowForRows: fewer rows than MAX_ONSCREEN_ROWS yields a LARGER perRow (m
 
 test('perRowForRows: never below MIN_SESSIONS_PER_ROW, even for a pathologically dense pack', () => {
   assert.equal(perRowForRows(1107, MAX_FIT_ROWS * 10), MIN_SESSIONS_PER_ROW);
+});
+
+// refinePerRow's guard, in isolation: the refinement's premise (real rows are
+// shorter than nominal) only holds while the repack stays non-scrolling — once
+// a repack needs to scroll, row height is locked back to the nominal 3-row
+// size (app.js's fixed-cellH branch), which is exactly what perRow was
+// already computed against. Adopting a refinement that flips scroll on when
+// the un-refined pack didn't need it shrinks perRow to compensate for shorter
+// rows that never materialize. `clientHeight` below (880) is chosen so
+// perRowForRows(880, 4) === 2 and perRowForRows(880, 6) === 2, reproducing a
+// real board's numbers: packFor(3) needs 4 rows (no scroll), packFor(2) would
+// need 6 (scroll).
+test('refinePerRow: an unguarded loop would adopt a repack that turns scrolling on', () => {
+  const clientHeight = 880;
+  const packFor = (perRow) => (perRow === 3 ? { rows: 4, scroll: false } : { rows: 6, scroll: true });
+
+  // The old, unguarded loop (what renderGrid did before this fix): no check
+  // on whether the repack itself needs to scroll.
+  let perRow = 3;
+  let canonical = packFor(perRow);
+  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
+    const refined = perRowForRows(clientHeight, canonical.rows);
+    if (refined >= perRow) break;
+    perRow = refined;
+    canonical = packFor(perRow);
+  }
+  assert.equal(perRow, 2);
+  assert.equal(canonical.scroll, true);
+});
+
+test('refinePerRow: guards against adopting a repack that turns scrolling on when the original pack did not need it', () => {
+  const clientHeight = 880;
+  const packFor = (perRow) => (perRow === 3 ? { rows: 4, scroll: false } : { rows: 6, scroll: true });
+
+  const { perRow, canonical } = refinePerRow(3, packFor, clientHeight);
+  assert.equal(perRow, 3);
+  assert.equal(canonical.rows, 4);
+  assert.equal(canonical.scroll, false);
+});
+
+test('refinePerRow: still refines when the repack stays non-scrolling', () => {
+  // packFor(3) needs 4 rows but stays non-scrolling; a shorter, still
+  // non-scrolling repack at a smaller perRow should be adopted.
+  const clientHeight = 1500;
+  const packFor = (perRow) => (perRow >= 4 ? { rows: 4, scroll: false } : { rows: 3, scroll: false });
+
+  const { perRow, canonical } = refinePerRow(sessionsPerRow({ clientHeight }), packFor, clientHeight);
+  assert.ok(perRow <= sessionsPerRow({ clientHeight }));
+  assert.equal(canonical.scroll, false);
 });
 
 test('columnsForWidth: floors to the readable-width columns that fit, never below one', () => {

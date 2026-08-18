@@ -88,6 +88,30 @@ export function perRowForRows(clientHeight, rows) {
   return perRowForRowHeight(((clientHeight || 0) - GRID_CHROME_PX) / Math.max(1, rows));
 }
 
+// Repacks perRow down while the pack needs more than MAX_ONSCREEN_ROWS, per
+// perRowForRows above — but ONLY while the repack itself stays non-scrolling.
+// Past MAX_FIT_ROWS the board switches to the fixed-cellH scrolling layout
+// (app.js), which locks row height back to the SAME nominal 3-row size
+// sessionsPerRow already budgeted `perRow` against — so a repack that flips
+// scrolling on invalidates the very premise (shorter real rows) that
+// justified shrinking perRow in the first place. Adopting it anyway shrinks
+// perRow to compensate for shorter rows that then never materialize,
+// inflating every tile's span for no reason (confirmed against a live
+// board). `packFor` is injected (the caller's tile-building closure) so this
+// stays DOM-free and testable with canned {rows, scroll} results.
+export function refinePerRow(perRow, packFor, clientHeight) {
+  let canonical = packFor(perRow);
+  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
+    const refined = perRowForRows(clientHeight, canonical.rows);
+    if (refined >= perRow) break;
+    const repacked = packFor(refined);
+    if (repacked.scroll && !canonical.scroll) break;
+    perRow = refined;
+    canonical = repacked;
+  }
+  return { perRow, canonical };
+}
+
 // How many readable-width columns fit the grid's CURRENT width — the horizontal
 // twin of sessionsPerRow, and for the same reason: the packer is otherwise blind to
 // the viewport, so 2 columns at 1600px and 2 at 400px look identical to it. Widening
