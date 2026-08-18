@@ -15,7 +15,7 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -204,9 +204,10 @@ export function shouldReloadWorkflowSkill(workflow) {
 // fork), the worktree it lives in, the autopilot `workflow` marker (a multi-hour run
 // that hits the idle-suspend would otherwise lose its phase chip on resume), any
 // attached links (a PR/Jira link attached before an idle-suspend must survive the
-// resume that follows it), and the per-session PR-automation toggles (autoFixPrChecks,
+// resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
 // autoMergeOnPass — an explicit true/false on either must not silently revert to its
-// default across the very idle-suspend cycle a long workflow run is most likely to hit;
+// default across the very idle-suspend cycle a long workflow run is most likely to hit),
+// and the per-child full/compact display override (childFullView — same reasoning);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
 // function's own field list, not because callers reliably clearSnooze() before resume
 // — some resume() call sites don't) all survive.
@@ -236,6 +237,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     links: prev?.links,
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
+    childFullView: prev?.childFullView,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
     // regardless of what it was launched with originally — stamp it true
@@ -475,6 +477,14 @@ export class SessionManager {
     const entry = this.map.get(sessionId);
     if (!entry || !this.map.has(parentSessionId)) return false;
     entry.parentSession = parentSessionId;
+    // "New child sessions show full view by default" (the settings copy) means
+    // NEW — a creation-time snapshot, not a live rule every untouched child
+    // keeps following forever. Stamp it in now, once, so a later flip of the
+    // global default never retroactively changes an already-nested child.
+    // Only when unset: a session re-attached after being detached (or moved to
+    // a different parent) already carries a stamp from its earlier nesting
+    // (explicit or default-derived) and keeps it unchanged.
+    if (entry.childFullView === undefined) entry.childFullView = childFullViewByDefault();
     this._save();
     return true;
   }
@@ -520,6 +530,32 @@ export class SessionManager {
       this.map.set(sessionId, entry);
     }
     entry.autoMergeOnPass = Boolean(enabled);
+    this._save();
+    return true;
+  }
+
+  // Per-CHILD (parentSession set) override for whether it renders as a full card
+  // instead of the default compact `.worker-row` — the card menu's "Full view"
+  // toggle. Unset (never nested through attachSession/dispatch, which stamp a
+  // boolean at creation time — see there) reads as compact on the client (NOT
+  // a live read of config.json childFullViewByDefault; that setting only ever
+  // seeds the creation-time stamp, never overrides an already-stamped or
+  // never-stamped child later). Adopts an externally-discovered session first
+  // (like setAutoFixPrChecks) so the override persists. Keyed on the card id.
+  setChildFullView(sessionId, enabled, snapshot = {}) {
+    let entry = this.map.get(sessionId);
+    if (!entry) {
+      entry = {
+        short: crypto.randomBytes(4).toString('hex'),
+        tmux: null,
+        cwd: snapshot.cwd || null,
+        intent: snapshot.intent || '',
+        model: null,
+        createdAt: Date.now(),
+      };
+      this.map.set(sessionId, entry);
+    }
+    entry.childFullView = Boolean(enabled);
     this._save();
     return true;
   }
@@ -1267,7 +1303,15 @@ export class SessionManager {
     // workflowOpt is authoritative for the initial marker; fall back to the adopted
     // one so a pre-launch phase report isn't clobbered for a non-workflow dispatch.
     const existing = this.map.get(sessionId);
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: parentSession || existing?.parentSession, mailCapable: true };
+    const nestedParent = parentSession || existing?.parentSession;
+    // A `nest:true` spawn (spawn_session) sets `parentSession` here directly —
+    // the session is a CHILD from the moment it's created, so this is the
+    // creation-time "new child" snapshot the settings copy promises (see
+    // attachSession's matching comment). Only when unset: a pre-adopted entry
+    // (an early setWorkflowPhase report landing before this map.set) may
+    // already carry one.
+    const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();

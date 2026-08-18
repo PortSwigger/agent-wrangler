@@ -88,11 +88,14 @@ export function tooltipPosition(anchor, tip, viewport) {
 // back to px, add todo/child px, divide back to units).
 export function tileWeightWithTodos({
   activeCount, snoozedCount, cardStride, todoCount = 0, childRowCount = 0, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
 }) {
   const px = tileWeight({ activeCount, snoozedCount, cardStride }) * cardStride
     + (todoCount > 0 ? TODO_DIVIDER_PX + todoCount * TODO_STRIDE_PX : 0)
     + childRowCount * CHILD_STRIDE_PX
+    // A full-view child draws as a real card, so it costs a whole cardStride,
+    // not CHILD_STRIDE_PX — see cards.js childRowHtml / layout.js tileSpan.
+    + childFullViewCount * cardStride
     + workflowBoxCount * WORKFLOW_BOX_CHROME_PX
     + subagentRowCount * SUBAGENT_ROW_STRIDE_PX + subagentZoneCount * SUBAGENT_ZONE_BASE_PX;
   return px / cardStride;

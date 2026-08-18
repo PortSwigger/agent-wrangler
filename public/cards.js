@@ -334,6 +334,19 @@ export function workerRowHtml(s, ctx) {
 // UNLESS `nested` (the run also has a live team, so renderTileCards wraps this
 // box in its own `.child-group`; that outer wrapper becomes the drag unit instead,
 // same as a plain parent's card yielding to childGroupHtml — see `nested` there).
+// A child (any session absorbed into a parent's spine — a workflow worker or a
+// plain nested child) draws as a compact `.worker-row` by default; "Full view"
+// (ctx.isChildFullView — a per-child override, or the server-wide new-child
+// default) instead draws it as an ordinary top-level card, wrapped in a bare
+// `.spine-full-row` div purely so it can carry the same elbow connector a
+// `.worker-row` draws (see styles.css) without borrowing that class's own
+// background/border/padding. Still non-draggable (`nested: true`) — the
+// enclosing `.child-group`/`.workflow-box` wrapper is the actual drag unit.
+function childRowHtml(c, ctx, { focusMode } = {}) {
+  if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx);
+  return `<div class="spine-full-row">${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
+}
+
 export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) {
   const n = workers.length;
   const collapsed = n > 0 && ctx.collapsedWorkflows.has(orch.sessionId);
@@ -347,7 +360,7 @@ export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) 
       ${chevron}
     </div>`;
   const spine = n > 0 && !collapsed
-    ? `<div class="workflow-spine">${workers.map((w) => workerRowHtml(w, ctx)).join('')}</div>`
+    ? `<div class="workflow-spine">${workers.map((w) => childRowHtml(w, ctx, { focusMode })).join('')}</div>`
     : '';
   return `<div class="workflow-box${collapsed ? ' collapsed' : ''}" data-sid="${esc(orch.sessionId)}" draggable="${nested ? 'false' : 'true'}">
     ${head}
@@ -359,12 +372,12 @@ export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) 
 // A plain (non-workflow) nested child spine: the parent renders as an ordinary
 // full card, immediately followed by this always-visible spine of compact rows —
 // no wrapping box, no "Workflow" header, no count, no collapse toggle. Reuses
-// workerRowHtml verbatim (same row markup as a workflow worker) — nesting reads
-// from position + the connector line's --line-color alone (see styles.css
-// .child-spine), not a distinct accent or class.
-function childSpineHtml(children, ctx) {
+// childRowHtml verbatim (same row markup as a workflow worker's spine, full-view
+// override included) — nesting reads from position + the connector line's
+// --line-color alone (see styles.css .child-spine), not a distinct accent or class.
+function childSpineHtml(children, ctx, { focusMode } = {}) {
   if (!children.length) return '';
-  return `<div class="child-spine">${children.map((c) => workerRowHtml(c, ctx)).join('')}</div>`;
+  return `<div class="child-spine">${children.map((c) => childRowHtml(c, ctx, { focusMode })).join('')}</div>`;
 }
 
 // Claude Code assigns each "agent team" member a colour name (--agent-color).
@@ -429,8 +442,8 @@ export function teamSpineHtml(lead, ctx) {
 // (dropped from the reordered array entirely) and dragging the inner card alone
 // inserts the placeholder into the wrong parent — the two bugs behind a
 // parent-with-children silently sinking to the bottom of its task on any drag.
-function childGroupHtml(card, s, children, ctx) {
-  const spine = childSpineHtml(children, ctx);
+function childGroupHtml(card, s, children, ctx, opts = {}) {
+  const spine = childSpineHtml(children, ctx, opts);
   const team = teamSpineHtml(s, ctx);
   return (spine || team) ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${card}${spine}${team}</div>` : card;
 }
@@ -467,7 +480,7 @@ export function renderTileCards(active, ctx, opts = {}) {
       return team ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${box}${team}</div>` : box;
     }
     const nested = children.length > 0 || hasTeam;
-    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode, nested }), s, children, ctx);
+    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode, nested }), s, children, ctx, opts);
   }).join('');
 }
 

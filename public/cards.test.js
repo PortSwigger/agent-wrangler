@@ -25,6 +25,7 @@ function ctx(over = {}) {
     phaseOf: (s) => (s.snooze && s.snooze.until ? 'asleep' : 'awake-none'),
     todosFor: () => [],
     ADHOC_ID: 'adhoc',
+    isChildFullView: (s) => Boolean(s.childFullView),
     ...over,
   };
 }
@@ -327,6 +328,42 @@ test('renderTileCards: a 3-level chain nests the great-grandchild under the (pro
   }
   assert.equal(html.match(/data-sid="gc1"/g)?.length, 2, 'gc1 renders on both its .child-group wrapper and its nested card');
   assert.match(html, /child-spine/); // ggc1 nests under gc1's own plain spine
+});
+
+test('renderTileCards: a "full view" child (ctx.isChildFullView) draws a real .session-card in the spine, not a .worker-row', () => {
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const child = sess({ sessionId: 'c1', label: 'full child', parentSession: 'p1', childFullView: true });
+  const html = renderTileCards([parent, child], ctx());
+  assert.equal(html.match(/data-sid="c1"/g).length, 1); // once, on the spine's own card
+  assert.match(html, /spine-full-row/);
+  assert.match(html, /child-spine/);
+  const c1Row = html.split('\n').find((line) => line.includes('data-sid="c1"'));
+  assert.match(c1Row, /session-card/);
+  assert.doesNotMatch(c1Row, /worker-row/);
+  // Non-draggable — the enclosing .child-group is the actual drag unit.
+  assert.match(c1Row, /session-card [^"]*" data-sid="c1" draggable="false"/);
+});
+
+test('renderTileCards: a full-view child falls back to a compact row via the server-wide default when no per-session override is set', () => {
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const child = sess({ sessionId: 'c1', label: 'child', parentSession: 'p1' }); // no childFullView field
+  const byDefault = renderTileCards([parent, child], ctx({ isChildFullView: () => true }));
+  assert.match(byDefault, /spine-full-row/);
+  const byDefaultOff = renderTileCards([parent, child], ctx({ isChildFullView: () => false }));
+  assert.doesNotMatch(byDefaultOff, /spine-full-row/);
+  assert.match(byDefaultOff, /worker-row/);
+});
+
+test('workflowBoxHtml: a full-view worker draws in the workflow spine too, wrapped the same way', () => {
+  const orch = sess({ sessionId: 'orch' });
+  const workers = [sess({ sessionId: 'w1', label: 'w1', childFullView: true }), sess({ sessionId: 'w2', label: 'w2' })];
+  const html = workflowBoxHtml(orch, workers, ctx());
+  assert.match(html, /workflow-spine/);
+  assert.match(html, /spine-full-row/);
+  const w1Row = html.split('\n').find((line) => line.includes('data-sid="w1"'));
+  assert.match(w1Row, /session-card/);
+  const w2Row = html.split('\n').find((line) => line.includes('data-sid="w2"'));
+  assert.match(w2Row, /worker-row/);
 });
 
 test('snoozedRowHtml: greyed name-only row with a wake button and data-sid', () => {

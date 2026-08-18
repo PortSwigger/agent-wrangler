@@ -58,6 +58,14 @@ export const SETTINGS = [
     help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this marks the session\'s folder trusted for that invocation so Codex\'s own trust prompt never appears. Off restores Codex\'s normal prompt.',
     default: true,
   },
+  {
+    id: 'childFullViewByDefault',
+    type: 'toggle',
+    scope: 'server',
+    label: 'New child sessions show full view by default',
+    help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for newly-nested children; a child you have toggled by hand (its card menu\'s "Full view") keeps its own choice regardless.',
+    default: false,
+  },
 ];
 
 let serverBridge = { get: () => undefined, set: () => {} };

@@ -339,15 +339,22 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 // rows across all of them) are summed separately because the zone's own
 // margins are a per-card one-time cost, not a per-row one — see todo.js's
 // SUBAGENT_ZONE_BASE_PX/SUBAGENT_ROW_STRIDE_PX.
+//
+// `childFullViewCount` is a FIFTH secondary term: an absorbed child rendered
+// full (see cards.js childRowHtml / app.js isChildFullView) draws as a real
+// `.session-card`, not a compact `.worker-row` — it weighs a full CARD_STRIDE_PX,
+// not `childRowCount`'s light CHILD_STRIDE_PX. It's still excluded from
+// `topLevelActiveCount` (it never becomes its own top-level card — see
+// absorbedChildCount above) and still subject to the same secondary-weight cap.
 export function tileSpan(
   sessions, perRow, todoCount = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
 ) {
   const snoozedCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
   const topLevelActiveCount = sessions.length - snoozedCount - absorbedChildCount;
   const totalWeight = tileWeightWithTodos({
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, todoCount, childRowCount, workflowBoxCount,
-    subagentRowCount, subagentZoneCount,
+    subagentRowCount, subagentZoneCount, childFullViewCount,
   });
   const secondaryWeight = Math.min(totalWeight - topLevelActiveCount, perRow);
   return rowSpan(topLevelActiveCount + secondaryWeight, perRow);

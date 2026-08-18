@@ -1171,6 +1171,40 @@ body.system-banner-open { padding-top: 30px; }
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
 }
+/* A "Full view" child (cards.js childRowHtml) draws a real .session-card in the
+   spine instead of a compact .worker-row — this bare wrapper carries the exact
+   same elbow connector (geometry copied from .worker-row::before/::after below)
+   without borrowing that class's own background/border/padding, which would
+   double up on the session-card's own. Percentage top/height resolve against
+   THIS element's own height (position: relative, like .worker-row), so the
+   connector scales correctly against a session-card's taller, variable height —
+   no per-row measurement needed. */
+.spine-full-row { position: relative; }
+.spine-full-row::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+  pointer-events: none;
+}
+.spine-full-row:first-child::before {
+  top: -9px;
+  height: calc(50% + 9px);
+}
+.spine-full-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
 /* Wraps a plain parent card + its .child-spine into one .task-body child (see
    cards.js childGroupHtml) — keeps them a single grid item under
    #grid.focus-mode's multi-column .task-body grid, where two independent

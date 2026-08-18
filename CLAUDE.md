@@ -157,6 +157,22 @@ don't re-derive it.
   (stamped at dispatch/resume/fork, `session-manager.js`) tracks which
   recipients can be routed through the mailbox at all; an unstamped one falls
   back to `send_message`'s old direct-push behavior.
+- **A child's "Full view" setting (`entry.childFullView`) is a CREATION-time
+  stamp, not a live read of `childFullViewByDefault` — and it must be stamped
+  at every site that sets `parentSession` on a session for the first time.**
+  Today that's `attachSession` and `dispatch`'s entry construction
+  (`session-manager.js`) — both read `childFullViewByDefault()` once and write
+  the boolean onto `entry.childFullView`, but ONLY when it's still `undefined`
+  (a session re-attached after detach, or moved to a different parent, already
+  carries a stamp and keeps it). A third path that starts setting
+  `parentSession` without adding the same stamp would silently produce a
+  permanently-compact child no later default flip can reach — the client's
+  `isChildFullView` (`public/app.js`) deliberately does NOT fall back to
+  `childFullViewByDefault` per-render (an earlier draft did; a reviewing peer
+  caught that it inverted the setting's own "new child sessions" label —
+  flipping the setting would have changed every already-nested, untouched
+  child instead of only future ones) — so an unstamped child reads as compact,
+  full stop, not "whatever the setting is now."
 - **The mailbox ("you've got mail", Phase 1) is a peer-only channel with its own
   two independently-keyed guards — do not unify them.** The settle window
   (`mailbox-store.js`) keys on the **recipient alone**, which is what makes
@@ -188,14 +204,23 @@ don't re-derive it.
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
   keyed on the card id.
-- **`tileSpan` (`public/layout.js`) takes TWO child counts and they must stay
+- **`tileSpan` (`public/layout.js`) takes THREE child counts and they must stay
   distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
   subtracted to get the top-level active count; `childRowCount` (only rows currently
-  *drawn*) feeds the lighter secondary weight. Defaulting one to the other previously
-  made collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
-  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
-  session-scoped, so it rides `taskStore.snapshot()` directly; don't go looking for it
-  in `buildGraph`.
+  *drawn*, as a compact `.worker-row`) feeds the lighter secondary weight;
+  `childFullViewCount` (a child currently toggled "Full view" — per-session
+  `entry.childFullView`, or the `childFullViewByDefault` config fallback) feeds a
+  FULL `CARD_STRIDE_PX` secondary weight instead, because that child renders a real
+  `.session-card` (`cards.js` childRowHtml), not a `.worker-row` — while still not
+  counting toward `absorbedChildCount`/top-level (it never becomes its own top-level
+  card). A full-view child can also show its OWN sub-agent zone (it renders via
+  `sessionCardHtml` same as a top-level card) — `app.js childRowCounts`'
+  `subagentRowCount`/`subagentZoneCount` loop must charge it too, not just
+  non-absorbed sessions, or the tile comes out short and silently scrolls. Defaulting
+  `absorbedChildCount` to `childRowCount` previously made collapsing a workflow box
+  grow the tile instead of shrinking it. **TODO data is the one exception to "carried
+  via `buildGraph`"** — it's task-scoped, not session-scoped, so it rides
+  `taskStore.snapshot()` directly; don't go looking for it in `buildGraph`.
 - **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
   be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
   (`public/cards.js`) carry `data-sid` + `draggable="true"` and stand in for
