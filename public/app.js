@@ -116,6 +116,7 @@ export let latestTasks = { tasks: [], assignments: {} };
 let taskMemoryEnabled = true; // server config flag, carried on every graph push
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
+let childFullViewByDefault = false; // server config flag, carried on every graph push
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -295,6 +296,7 @@ function applyGraph(graph) {
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
+  childFullViewByDefault = graph.childFullViewByDefault === true;
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -671,13 +673,28 @@ function sortBucketSessions(sessions, bucketId) {
 // — every one of them renders wrapped in its own `.workflow-box` (cards.js),
 // solo or with workers, collapsed or not, so this is independent of collapse
 // state (unlike `visible`).
+// `fullView` counts absorbed children currently drawn as a full card (see
+// isChildFullView/cards.js childRowHtml) — these weigh like a top-level active
+// card (CARD_STRIDE_PX), not the light CHILD_STRIDE_PX `visible` rows below, so
+// they're split out rather than folded into `visible`. Same collapse exemption:
+// a collapsed workflow box's workers draw nothing, full-view or not.
 function childRowCounts(activeSessions) {
   const { absorbed, childrenByParent } = computeAbsorption(activeSessions);
   let visible = 0;
+  let fullView = 0;
+  // Full-view children that are actually drawn (so, same collapse exemption as
+  // `visible`) — a full-view child renders via sessionCardHtml same as a
+  // top-level card, so it can ALSO show its own sub-agent zone (see below);
+  // this set is what tells that loop such a child isn't zone-less like a plain
+  // compact `.worker-row`.
+  const drawnFullView = new Set();
   for (const [parentId, children] of childrenByParent) {
     const parent = activeSessions.find((s) => s.sessionId === parentId);
     if (isWorkflowRun(parent) && collapsedWorkflows.has(parentId)) continue;
-    visible += children.length;
+    for (const c of children) {
+      if (isChildFullView(c)) { fullView += 1; drawnFullView.add(c.sessionId); }
+      else visible += 1;
+    }
   }
   // Live team-member rows are always-drawn secondary rows on a top-level lead's
   // spine (never collapsed). Count them for the tile weight, but only for a lead
@@ -687,19 +704,21 @@ function childRowCounts(activeSessions) {
     if (!absorbed.has(s.sessionId)) visible += (s.teammates?.length || 0);
   }
   const workflowBoxCount = activeSessions.filter((s) => !absorbed.has(s.sessionId) && isWorkflowRun(s)).length;
-  // Sub-agent zones (cards.js subagentZoneHtml) only ever render on a plain
-  // top-level card — an absorbed child draws as a workerRowHtml, which has no
-  // zone of its own — so this mirrors the exact render-time check: shown pill,
-  // has sub-agents, and at least one currently-recent row (an empty zone
+  // Sub-agent zones (cards.js subagentZoneHtml) render on any session drawn via
+  // sessionCardHtml — a plain top-level card, OR an absorbed child currently
+  // shown "Full view" (drawnFullView above); a compact `.worker-row` child has
+  // no zone of its own. Mirrors the exact render-time check otherwise: shown
+  // pill, has sub-agents, and at least one currently-recent row (an empty zone
   // renders nothing, per subagentZoneHtml).
   const now = Date.now();
   let subagentRowCount = 0, subagentZoneCount = 0;
   for (const s of activeSessions) {
-    if (absorbed.has(s.sessionId) || !isSubagentShown(s.sessionId)) continue;
+    const drawsCard = !absorbed.has(s.sessionId) || drawnFullView.has(s.sessionId);
+    if (!drawsCard || !isSubagentShown(s.sessionId)) continue;
     const rows = visibleSubAgents(s.subAgents || [], { showFinished: false, now }).length;
     if (rows > 0) { subagentRowCount += rows; subagentZoneCount += 1; }
   }
-  return { visible, absorbed: absorbed.size, workflowBoxCount, subagentRowCount, subagentZoneCount };
+  return { visible, absorbed: absorbed.size, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView };
 }
 
 // Per-card sub-agent zone visibility: which card ids currently show their zone at
@@ -732,6 +751,19 @@ function toggleSubagentShown(sessionId) {
   if (currentView === 'grid') renderGrid();
 }
 
+// Whether a CHILD session (parentSession set) renders as a full card instead of
+// the default compact `.worker-row`. Unlike isSubagentShown's client-local
+// override, `s.childFullView` is server-persisted (session-manager
+// setChildFullView, tri-state: true/false/null) so the choice follows the
+// session across browsers/reloads — absent (null) falls back to the server-wide
+// childFullViewByDefault setting.
+function isChildFullView(s) {
+  return typeof s.childFullView === 'boolean' ? s.childFullView : childFullViewByDefault;
+}
+function toggleChildFullView(sessionId, on) {
+  send({ type: 'set-child-full-view', sessionId, enabled: on });
+}
+
 function flashPr(url) {
   flashingPr.add(url);
   renderGrid(); // re-render so the alert class lands now
@@ -748,6 +780,7 @@ function cardCtx() {
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
+    isChildFullView,
   };
 }
 
@@ -847,15 +880,15 @@ function renderGrid() {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
         const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
-        const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount) }];
+        const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount) }];
       })
     );
     const {
       visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
-      subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount,
+      subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount) });
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
     return computeLayout(tiles, columnsForWidth(el));
   }
@@ -1369,6 +1402,27 @@ function peerReviewSession(sessionId) {
   openDispatch(assignedTaskId(sessionId), reviewDispatchOpts(sessionId, s));
 }
 
+// "Full view" toggle row for a CHILD session's card/Actions menu (a session with
+// parentSession set — a workflow worker, or any other nested child; a merely
+// `spawnedBy` top-level session already renders full and never offers this).
+// Same keepOpen/optimistic-tick shape as autoFixMenuItem: on flips locally, the
+// server round-trip + next graph poll reconcile the persisted state.
+function childFullViewMenuItem(s) {
+  let on = isChildFullView(s);
+  return {
+    label: 'Full view',
+    icon: MAXIMIZE_ICON,
+    trailing: on ? CHECK_ICON : '',
+    keepOpen: true,
+    run: (e) => {
+      on = !on;
+      toggleChildFullView(s.sessionId, on);
+      const t = e.currentTarget.querySelector('.context-menu-trailing');
+      if (t) t.innerHTML = on ? CHECK_ICON : '';
+    },
+  };
+}
+
 // Promote ("Detach"): clear parentSession, moving a nested child (and any of
 // its OWN children, untouched) to the top level. Quiet — no confirm dialog
 // (reversible: Attach undoes it) and no success toast; the board re-renders
@@ -1438,6 +1492,9 @@ function openCardMenu(sessionId, x, y) {
     // desync that). Attach is offered whenever there's at least one valid
     // same-task target to attach under.
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
+    // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
+    // top-level session already renders full, whether or not it's `spawnedBy`.
+    ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
     ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
@@ -1465,6 +1522,7 @@ function openActionsMenu(sessionId, x, y) {
     { sep: true },
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
+    ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
     ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
@@ -4120,6 +4178,7 @@ initSettings({
       if (id === 'taskMemoryEnabled') return taskMemoryEnabled;
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
+      if (id === 'childFullViewByDefault') return childFullViewByDefault;
       return undefined;
     },
     set: (id, value) => {
@@ -4132,6 +4191,9 @@ initSettings({
       } else if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
+      } else if (id === 'childFullViewByDefault') {
+        childFullViewByDefault = Boolean(value);
+        send({ type: 'set-child-full-view-default', enabled: childFullViewByDefault });
       }
     },
   },

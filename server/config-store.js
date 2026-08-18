@@ -102,3 +102,16 @@ export function subagentsExpandedByDefault(cfg = readConfig()) {
 export function trustCodexLaunchCwd(cfg = readConfig()) {
   return cfg.trustCodexLaunchCwd !== false;
 }
+
+// Whether a newly-nested CHILD session (parentSession set — a workflow worker or
+// any other nested child, never a merely-`spawnedBy` top-level session) starts
+// rendered as a full card (like a top-level session) instead of the default
+// compact `.worker-row`. Default off (compact), matching today's behaviour;
+// toggled from the board's settings modal (config.json
+// `childFullViewByDefault: true`). Per-child, this is only ever the fallback —
+// an explicit per-session override (session-manager `childFullView`) always
+// wins. Takes cfg (like subagentsExpandedByDefault) so tests never write the
+// shared config.json.
+export function childFullViewByDefault(cfg = readConfig()) {
+  return cfg.childFullViewByDefault === true;
+}

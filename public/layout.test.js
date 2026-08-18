@@ -557,3 +557,15 @@ test('tileSpan: perRow reflects the grid\'s real per-row budget, not an inflated
   assert.equal(tileSpan(sessions, perRow, 0, phaseOf, 3, 3), 3);
 });
 
+// A "full view" child (cards.js childRowHtml) draws a real .session-card in the
+// spine, not the light .worker-row — it must weigh like a top-level active card
+// (CARD_STRIDE_PX), not childRowCount's lighter CHILD_STRIDE_PX, or the tile
+// would come out shorter than what actually renders.
+test('tileSpan: a full-view absorbed child weighs at least as much as an equal-count compact spine', () => {
+  const perRow = 4; // wide enough that neither case's secondary weight hits the perRow cap
+  const withParent = [sess('parent'), sess('c1')];
+  const compact = tileSpan(withParent, perRow, 0, phaseOf, 1, 1, 0, 0, 0, 0);
+  const fullView = tileSpan(withParent, perRow, 0, phaseOf, 0, 1, 0, 0, 0, 1);
+  assert.ok(fullView >= compact);
+});
+

@@ -237,7 +237,7 @@ test('resumeLaunchPlan: transcript found but launch dir unknown falls back to th
   );
 });
 
-test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSession, links, PR-automation toggles, and nameInherited across the rebuild', () => {
+test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSession, links, PR-automation toggles, childFullView, and nameInherited across the rebuild', () => {
   const prev = {
     intent: 'fix', name: 'My run', model: 'sonnet', createdAt: 100,
     forkedFrom: 'P', spawnedBy: 'SPAWNER1',
@@ -247,6 +247,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1', number: 1 }],
     autoFixPrChecks: false,
     autoMergeOnPass: true,
+    childFullView: true,
     nameInherited: true,
     priorLiveSessionIds: ['CLEARED1'],
   };
@@ -262,6 +263,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.deepEqual(e.links, prev.links); // a PR/Jira link attached before an idle-suspend must survive resume
   assert.equal(e.autoFixPrChecks, false); // an explicit opt-out must not silently revert to the on-default
   assert.equal(e.autoMergeOnPass, true); // ditto for an explicit opt-in surviving a workflow run's idle-suspend
+  assert.equal(e.childFullView, true); // ditto for a child's full-view override
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
   assert.equal(e.liveSessionId, 'L');
   assert.equal(e.intent, 'fix');

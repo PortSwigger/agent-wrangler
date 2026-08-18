@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -125,4 +125,11 @@ test('trustCodexLaunchCwd defaults to on; only an explicit false disables', () =
   assert.equal(trustCodexLaunchCwd({}), true);
   assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: true }), true);
   assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: false }), false);
+});
+
+// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+test('childFullViewByDefault defaults to off (compact); only an explicit true enables', () => {
+  assert.equal(childFullViewByDefault({}), false);
+  assert.equal(childFullViewByDefault({ childFullViewByDefault: false }), false);
+  assert.equal(childFullViewByDefault({ childFullViewByDefault: true }), true);
 });

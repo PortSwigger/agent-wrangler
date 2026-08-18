@@ -188,14 +188,23 @@ don't re-derive it.
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
   keyed on the card id.
-- **`tileSpan` (`public/layout.js`) takes TWO child counts and they must stay
+- **`tileSpan` (`public/layout.js`) takes THREE child counts and they must stay
   distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
   subtracted to get the top-level active count; `childRowCount` (only rows currently
-  *drawn*) feeds the lighter secondary weight. Defaulting one to the other previously
-  made collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
-  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
-  session-scoped, so it rides `taskStore.snapshot()` directly; don't go looking for it
-  in `buildGraph`.
+  *drawn*, as a compact `.worker-row`) feeds the lighter secondary weight;
+  `childFullViewCount` (a child currently toggled "Full view" — per-session
+  `entry.childFullView`, or the `childFullViewByDefault` config fallback) feeds a
+  FULL `CARD_STRIDE_PX` secondary weight instead, because that child renders a real
+  `.session-card` (`cards.js` childRowHtml), not a `.worker-row` — while still not
+  counting toward `absorbedChildCount`/top-level (it never becomes its own top-level
+  card). A full-view child can also show its OWN sub-agent zone (it renders via
+  `sessionCardHtml` same as a top-level card) — `app.js childRowCounts`'
+  `subagentRowCount`/`subagentZoneCount` loop must charge it too, not just
+  non-absorbed sessions, or the tile comes out short and silently scrolls. Defaulting
+  `absorbedChildCount` to `childRowCount` previously made collapsing a workflow box
+  grow the tile instead of shrinking it. **TODO data is the one exception to "carried
+  via `buildGraph`"** — it's task-scoped, not session-scoped, so it rides
+  `taskStore.snapshot()` directly; don't go looking for it in `buildGraph`.
 - **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
   be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
   (`public/cards.js`) carry `data-sid` + `draggable="true"` and stand in for

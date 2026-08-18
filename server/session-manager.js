@@ -203,9 +203,10 @@ export function shouldReloadWorkflowSkill(workflow) {
 // fork), the worktree it lives in, the autopilot `workflow` marker (a multi-hour run
 // that hits the idle-suspend would otherwise lose its phase chip on resume), any
 // attached links (a PR/Jira link attached before an idle-suspend must survive the
-// resume that follows it), and the per-session PR-automation toggles (autoFixPrChecks,
+// resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
 // autoMergeOnPass — an explicit true/false on either must not silently revert to its
-// default across the very idle-suspend cycle a long workflow run is most likely to hit;
+// default across the very idle-suspend cycle a long workflow run is most likely to hit),
+// and the per-child full/compact display override (childFullView — same reasoning);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
 // function's own field list, not because callers reliably clearSnooze() before resume
 // — some resume() call sites don't) all survive.
@@ -235,6 +236,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     links: prev?.links,
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
+    childFullView: prev?.childFullView,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
     // regardless of what it was launched with originally — stamp it true
@@ -519,6 +521,29 @@ export class SessionManager {
       this.map.set(sessionId, entry);
     }
     entry.autoMergeOnPass = Boolean(enabled);
+    this._save();
+    return true;
+  }
+
+  // Per-CHILD (parentSession set) override for whether it renders as a full card
+  // instead of the default compact `.worker-row`. Tri-state: absent ⇒ inherit the
+  // server-wide default (config.json childFullViewByDefault); an explicit boolean
+  // wins. Adopts an externally-discovered session first (like setAutoFixPrChecks)
+  // so the override persists. Keyed on the card id.
+  setChildFullView(sessionId, enabled, snapshot = {}) {
+    let entry = this.map.get(sessionId);
+    if (!entry) {
+      entry = {
+        short: crypto.randomBytes(4).toString('hex'),
+        tmux: null,
+        cwd: snapshot.cwd || null,
+        intent: snapshot.intent || '',
+        model: null,
+        createdAt: Date.now(),
+      };
+      this.map.set(sessionId, entry);
+    }
+    entry.childFullView = Boolean(enabled);
     this._save();
     return true;
   }
