@@ -824,10 +824,19 @@ function scheduleSnoozeWake() {
   snoozeWakeTimer = setTimeout(() => { if (currentView === 'grid') renderGrid(); }, delay);
 }
 
+// Resolves a .task-body's owning bucket id: a real task's data-taskid, or
+// ADHOC_ID for the no-task cell (which carries data-entity="no-task" instead,
+// same convention used elsewhere in this file for the Unassigned bucket).
+function taskBodyBucketId(body) {
+  const cell = body.closest('[data-taskid], [data-entity="no-task"]');
+  if (!cell) return null;
+  return cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
+}
+
 function captureScrollState(el) {
   const bodies = new Map();
   for (const body of el.querySelectorAll('.task-body')) {
-    const taskId = body.closest('[data-taskid]')?.dataset.taskid;
+    const taskId = taskBodyBucketId(body);
     if (taskId) bodies.set(taskId, body.scrollTop);
   }
   const tray = el.querySelector('.tray-pills');
@@ -837,7 +846,7 @@ function captureScrollState(el) {
 function restoreScrollState(el, { grid, bodies, tray }) {
   el.scrollTop = grid;
   for (const body of el.querySelectorAll('.task-body')) {
-    const taskId = body.closest('[data-taskid]')?.dataset.taskid;
+    const taskId = taskBodyBucketId(body);
     if (taskId && bodies.has(taskId)) body.scrollTop = bodies.get(taskId);
   }
   const trayPills = el.querySelector('.tray-pills');
