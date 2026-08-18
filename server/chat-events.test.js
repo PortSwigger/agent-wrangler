@@ -292,3 +292,40 @@ test('apply_patch counts its real +/- lines and ignores file headers', () => {
   assert.equal(ev.adds, 2);
   assert.equal(ev.dels, 1);
 });
+
+test('a notice needs both is_error and the denial phrase — a successful result with the same text is not a denial', () => {
+  const denied = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_7', name: 'Bash', input: { command: 'git push' } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:30.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_7', is_error: true, content: 'user denied' },
+    ] } },
+  );
+  const deniedNotice = scanChatText(denied, 'claude').events.find((e) => e.kind === 'notice');
+  assert.equal(deniedNotice.noticeKind, 'denied');
+
+  const okWithSamePhrase = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_8', name: 'Bash', input: { command: 'grep user denied /var/log/auth.log' } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_8', content: 'auth.log:42: user denied access for uid 501' },
+    ] } },
+  );
+  const noNotice = scanChatText(okWithSamePhrase, 'claude').events.find((e) => e.kind === 'notice');
+  assert.equal(noNotice, undefined, 'a successful result must not be read as a denial just because the phrase appears in its output');
+});
+
+test('a blank Claude thinking block (content redacted into signature) still emits a presence-only thinking event', () => {
+  const text = claudeLines(
+    { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: 'go' } },
+    { type: 'assistant', timestamp: '2026-08-14T10:00:05.000Z', message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: '', signature: 'EqQBCgYIAxgCIAA...opaque...redacted' },
+    ] } },
+  );
+  const think = scanChatText(text, 'claude').events.find((e) => e.kind === 'thinking');
+  assert.ok(think, 'a blank thinking block must still produce an event, not be silently dropped');
+  assert.ok(!('text' in think), 'blank thinking has no recoverable text, so the field must be absent, not an empty string');
+  assert.equal(think.durationMs, 5000, 'a duration is still derivable even when the text is redacted');
+});

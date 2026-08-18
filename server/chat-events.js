@@ -156,7 +156,11 @@ function pushClaude(entry, state) {
           input, output, ok: b.is_error !== true, ts, truncated: outputTruncated || inputTruncated,
           ...(counts || {}),
         });
-        const notice = noticeFor(open, output);
+        // Gate on is_error first: two of the three markers ('user rejected',
+        // 'user denied') are generic enough to appear in ordinary successful
+        // output (e.g. an auth log line), so the phrase alone isn't enough —
+        // a spurious denial notice needs both an error result AND the phrase.
+        const notice = b.is_error === true ? noticeFor(open, output) : null;
         if (notice) out.push({ ...notice, ts });
       }
     }
@@ -172,6 +176,12 @@ function pushClaude(entry, state) {
       if (b?.type === 'thinking') {
         const think = { kind: 'thinking', ts };
         if (state.prevTs && ts > state.prevTs) think.durationMs = ts - state.prevTs;
+        // Blank `thinking` is the norm, not an anomaly: Claude redacts the real
+        // content into `b.signature` (an opaque blob), so an empty string here
+        // means "thinking happened, content unavailable" — the exact analogue
+        // of Codex's encrypted `reasoning` line. Do not gate emission on
+        // non-empty text, or most real Claude sessions show no thinking
+        // indicator at all while Codex ones still would.
         if (typeof b.thinking === 'string' && b.thinking.trim()) think.text = b.thinking.trim();
         out.push(think);
       }
