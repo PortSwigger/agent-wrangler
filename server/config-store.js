@@ -134,3 +134,12 @@ export function childFullViewByDefault(cfg = readConfig()) {
 export function autoFixPrChecksDefault(cfg = readConfig()) {
   return cfg.autoFixPrChecksDefault !== false;
 }
+
+// Which view a session's sidebar opens in for cards the user hasn't explicitly
+// toggled either way. Default off (terminal) to preserve today's behaviour;
+// toggled from the board's settings modal (config.json `chatViewDefault: true`).
+// Takes cfg (like subagentsExpandedByDefault) so tests never write the shared
+// config.json — `node --test` runs files in parallel against the same real file.
+export function chatViewDefault(cfg = readConfig()) {
+  return cfg.chatViewDefault === true;
+}

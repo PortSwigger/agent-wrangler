@@ -18,6 +18,7 @@ import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-defau
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
+import { chatViewDefaultHandler } from './chat-view-default.js';
 import {
   taskCreateHandler,
   taskRenameHandler,
@@ -80,6 +81,7 @@ export const CONTROL_HANDLERS = [
   trustCodexLaunchCwdHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
+  chatViewDefaultHandler,
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,

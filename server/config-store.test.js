@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, chatViewDefault, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -138,4 +138,10 @@ test('autoFixPrChecksDefault defaults to on; only an explicit false disables', (
   assert.equal(autoFixPrChecksDefault({}), true);
   assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: true }), true);
   assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: false }), false);
+});
+
+test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
+  assert.equal(chatViewDefault({}), false);
+  assert.equal(chatViewDefault({ chatViewDefault: true }), true);
+  assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
 });

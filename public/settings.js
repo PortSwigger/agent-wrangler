@@ -74,6 +74,14 @@ export const SETTINGS = [
     help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for newly-nested children; a child you have toggled by hand (its card menu\'s "Full view") keeps its own choice regardless.',
     default: false,
   },
+  {
+    id: 'chatViewDefault',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Open sessions in chat view',
+    help: 'Whether a session\'s sidebar opens in the rich chat view or the terminal. A session you have switched by hand keeps its own choice regardless of this setting.',
+    default: false,
+  },
 ];
 
 let serverBridge = { get: () => undefined, set: () => {} };
