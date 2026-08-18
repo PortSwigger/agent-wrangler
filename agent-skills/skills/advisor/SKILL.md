@@ -36,7 +36,7 @@ Call `spawn_session` once per task that needs one (not once per question):
 - `cwd` — your own working directory, not the default scratch dir, so the
   advisor can read the same files you're working from. Do not set `worktree`.
 - `model` — the strongest model available for the agent you launch (Claude:
-  `opus`; Codex: `gpt-5.5` — see the `spawn-session` skill for the full menu).
+  `opus`; Codex: `gpt-5.6-sol` — see the `spawn-session` skill for the full menu).
   If you're already running that model yourself, spawn one anyway: a fresh
   context with no accumulated assumptions can catch what you've anchored past.
 - `nest: true` — an advisor is a deliberate, designed child of the session that
