@@ -18,6 +18,7 @@ import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js'
 import { resolveInstanceSocket, trustCodexLaunchCwd } from './config-store.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
+import { resolveTmuxBin } from './tmux-resolve.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -978,15 +979,10 @@ export class SessionManager {
   // Size each tmux window to the most recently active client so the browser
   // sidebar and an iTerm2 window can attach at once without clamping.
   async init() {
-    // Resolve an absolute tmux path so node-pty's posix_spawnp can't miss it.
-    // `command -v` (POSIX sh builtin) over `which` — the latter is a separate,
-    // sometimes-absent package on slim Linux.
-    try {
-      const { stdout } = await exec('sh', ['-c', 'command -v tmux']);
-      if (stdout.trim()) this.tmuxBin = stdout.trim();
-    } catch {
-      /* fall back to bare "tmux" */
-    }
+    // main() already validated tmux is present (before acquireInstanceLock) —
+    // resolve again here rather than thread the value through, so this class
+    // has no dependency on being constructed after that check.
+    this.tmuxBin = await resolveTmuxBin();
     // This install's own tmux socket (generated + persisted on first run). New
     // sessions launch here; legacy default-socket sessions drain over time.
     this.socket = resolveInstanceSocket();

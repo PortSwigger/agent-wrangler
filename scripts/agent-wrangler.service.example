@@ -22,6 +22,9 @@ WorkingDirectory=/ABSOLUTE/PATH/TO/agent-wrangler
 ExecStart=/bin/bash /ABSOLUTE/PATH/TO/agent-wrangler/scripts/wrangler-start.sh
 Restart=always
 RestartSec=5
+# A missing tmux (server refuses to start, see server/tmux-resolve.js) becomes a
+# restart loop under this, rather than a one-shot boot failure — check the
+# journal if the service won't stay up.
 
 Environment=PORT=7777
 # ~/.local/bin must be on PATH or dispatch/resume exit 127. %h expands to this

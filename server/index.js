@@ -37,6 +37,7 @@ import { createShellSession } from './shell-session.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage } from './control/router.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
+import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
@@ -552,6 +553,18 @@ ptyWss.on('connection', (ws, req) => {
 });
 
 async function main() {
+  // Checked before anything else: a missing tmux is an environment fact, not an
+  // instance-ownership one, so failing here avoids lock acquire/release churn on
+  // the failure path and doesn't depend on the exit-handler release running.
+  try {
+    await resolveTmuxBin();
+  } catch (err) {
+    if (err instanceof TmuxNotFoundError) {
+      console.error(`[agent-wrangler] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
   // Refuse to start if another wrangler already owns this DATA_DIR — a second
   // instance would clobber tasks.json/mappings.json with its own stale snapshot
   // (the "sessions unassigned / deleted tasks reappear on restart" bug). Acquired
@@ -694,6 +707,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  // TmuxNotFoundError can also surface here: session-manager.init()'s own
+  // resolveTmuxBin() call (after the lock is held) throws it too, on the slim
+  // chance tmux vanishes between main()'s upfront check and init() running.
+  if (err instanceof TmuxNotFoundError) {
+    console.error(`[agent-wrangler] ${err.message}`);
+  } else {
+    console.error(err);
+  }
   process.exit(1);
 });

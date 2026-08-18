@@ -39,6 +39,10 @@
          count bounded; before it, the watch grew until node-pty spawns failed
          with "posix_spawnp failed" on every terminal attach until a restart. -->
 
+    <!-- KeepAlive means a missing tmux (server refuses to start, see
+         server/tmux-resolve.js) becomes a respawn loop rather than a one-shot
+         boot failure; launchd throttles respawns, so check the log path below
+         if the service won't stay up. -->
     <key>KeepAlive</key>
     <true/>
 
