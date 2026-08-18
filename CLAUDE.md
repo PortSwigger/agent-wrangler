@@ -157,6 +157,22 @@ don't re-derive it.
   (stamped at dispatch/resume/fork, `session-manager.js`) tracks which
   recipients can be routed through the mailbox at all; an unstamped one falls
   back to `send_message`'s old direct-push behavior.
+- **A child's "Full view" setting (`entry.childFullView`) is a CREATION-time
+  stamp, not a live read of `childFullViewByDefault` — and it must be stamped
+  at every site that sets `parentSession` on a session for the first time.**
+  Today that's `attachSession` and `dispatch`'s entry construction
+  (`session-manager.js`) — both read `childFullViewByDefault()` once and write
+  the boolean onto `entry.childFullView`, but ONLY when it's still `undefined`
+  (a session re-attached after detach, or moved to a different parent, already
+  carries a stamp and keeps it). A third path that starts setting
+  `parentSession` without adding the same stamp would silently produce a
+  permanently-compact child no later default flip can reach — the client's
+  `isChildFullView` (`public/app.js`) deliberately does NOT fall back to
+  `childFullViewByDefault` per-render (an earlier draft did; a reviewing peer
+  caught that it inverted the setting's own "new child sessions" label —
+  flipping the setting would have changed every already-nested, untouched
+  child instead of only future ones) — so an unstamped child reads as compact,
+  full stop, not "whatever the setting is now."
 - **The mailbox ("you've got mail", Phase 1) is a peer-only channel with its own
   two independently-keyed guards — do not unify them.** The settle window
   (`mailbox-store.js`) keys on the **recipient alone**, which is what makes

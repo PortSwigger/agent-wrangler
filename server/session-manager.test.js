@@ -810,6 +810,29 @@ test('attachSession is a no-op (false) when the target parent is unmapped', () =
   assert.equal(sm.map.get('child').parentSession, undefined);
 });
 
+// "New child sessions show full view by default" is a CREATION-time snapshot,
+// not a live rule (see config-store.js childFullViewByDefault) — attachSession
+// stamps it in once, the first time a session becomes a child.
+test('attachSession stamps entry.childFullView from the current default the first time a session becomes a child', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('child', { short: 's', tmux: 'cc_c' });
+  sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
+  sm.attachSession('child', 'newparent');
+  // Default config.json has no childFullViewByDefault override — reads the off
+  // (compact) default, so the stamp is `false`, not left undefined/null.
+  assert.equal(sm.map.get('child').childFullView, false);
+});
+
+test('attachSession does not overwrite an already-stamped childFullView on re-attach', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('child', { short: 's', tmux: 'cc_c', childFullView: true }); // explicit prior choice
+  sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
+  sm.attachSession('child', 'newparent');
+  assert.equal(sm.map.get('child').childFullView, true);
+});
+
 test('setWorkflowPhase adopts an unmapped session and stamps a timestamped phase', () => {
   const sm = freshManager();
   sm.setWorkflowPhase('wf-new', { label: 'planning', kind: 'active' }, { cwd: '/x' });
@@ -898,6 +921,23 @@ test('dispatch leaves parentSession undefined when not passed', async () => {
   const sm = smForDispatch();
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
   assert.equal(sm.map.get(sessionId).parentSession, undefined);
+});
+
+// A `nest:true` spawn sets parentSession directly in dispatch() — the session
+// IS a child from creation, so this is the same creation-time stamp as
+// attachSession (see the comment there).
+test('dispatch stamps entry.childFullView from the current default when parentSession is passed', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y', parentSession: 'ORCH1' });
+  // Default config.json has no childFullViewByDefault override — reads the off
+  // (compact) default.
+  assert.equal(sm.map.get(sessionId).childFullView, false);
+});
+
+test('dispatch leaves entry.childFullView undefined for a non-nested dispatch', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.equal(sm.map.get(sessionId).childFullView, undefined);
 });
 
 test('dispatch persists entry.effort and passes it to buildLaunch', async () => {

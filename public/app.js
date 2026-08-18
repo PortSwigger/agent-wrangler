@@ -754,11 +754,16 @@ function toggleSubagentShown(sessionId) {
 // Whether a CHILD session (parentSession set) renders as a full card instead of
 // the default compact `.worker-row`. Unlike isSubagentShown's client-local
 // override, `s.childFullView` is server-persisted (session-manager
-// setChildFullView, tri-state: true/false/null) so the choice follows the
-// session across browsers/reloads — absent (null) falls back to the server-wide
-// childFullViewByDefault setting.
+// setChildFullView, boolean once explicitly set by a card-menu toggle or by
+// the creation-time stamp — see attachSession/dispatch) so the choice follows
+// the session across browsers/reloads. Deliberately NOT a live fallback onto
+// childFullViewByDefault here: that setting is "new child sessions show full
+// view by DEFAULT" — a snapshot taken once when a session becomes a child,
+// not a rule every untouched child re-reads forever — so an unstamped child
+// (never explicitly nested through the stamping sites, e.g. a legacy one from
+// before this shipped) reads as compact, matching what it already rendered as.
 function isChildFullView(s) {
-  return typeof s.childFullView === 'boolean' ? s.childFullView : childFullViewByDefault;
+  return s.childFullView === true;
 }
 function toggleChildFullView(sessionId, on) {
   send({ type: 'set-child-full-view', sessionId, enabled: on });

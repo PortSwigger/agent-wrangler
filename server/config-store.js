@@ -108,10 +108,17 @@ export function trustCodexLaunchCwd(cfg = readConfig()) {
 // rendered as a full card (like a top-level session) instead of the default
 // compact `.worker-row`. Default off (compact), matching today's behaviour;
 // toggled from the board's settings modal (config.json
-// `childFullViewByDefault: true`). Per-child, this is only ever the fallback —
-// an explicit per-session override (session-manager `childFullView`) always
-// wins. Takes cfg (like subagentsExpandedByDefault) so tests never write the
-// shared config.json.
+// `childFullViewByDefault: true`). This is a CREATION-time default, not a live
+// rule: "new child sessions show full view by default" means new —
+// session-manager's attachSession/dispatch read this value ONCE and stamp it
+// onto `entry.childFullView` at the moment a session becomes a child, so
+// flipping the setting later never retroactively changes an already-nested
+// child (see the client's isChildFullView, which deliberately does NOT fall
+// back to this setting per-render — an unstamped child reads as compact,
+// matching what it already rendered as, not whatever this setting is now).
+// An explicit per-child override (the card menu's "Full view" toggle) is just
+// the same stamp applied again later by hand. Takes cfg (like
+// subagentsExpandedByDefault) so tests never write the shared config.json.
 export function childFullViewByDefault(cfg = readConfig()) {
   return cfg.childFullViewByDefault === true;
 }

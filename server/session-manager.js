@@ -15,7 +15,7 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 
@@ -476,6 +476,14 @@ export class SessionManager {
     const entry = this.map.get(sessionId);
     if (!entry || !this.map.has(parentSessionId)) return false;
     entry.parentSession = parentSessionId;
+    // "New child sessions show full view by default" (the settings copy) means
+    // NEW — a creation-time snapshot, not a live rule every untouched child
+    // keeps following forever. Stamp it in now, once, so a later flip of the
+    // global default never retroactively changes an already-nested child.
+    // Only when unset: a session re-attached after being detached (or moved to
+    // a different parent) already carries a stamp from its earlier nesting
+    // (explicit or default-derived) and keeps it unchanged.
+    if (entry.childFullView === undefined) entry.childFullView = childFullViewByDefault();
     this._save();
     return true;
   }
@@ -526,10 +534,13 @@ export class SessionManager {
   }
 
   // Per-CHILD (parentSession set) override for whether it renders as a full card
-  // instead of the default compact `.worker-row`. Tri-state: absent ⇒ inherit the
-  // server-wide default (config.json childFullViewByDefault); an explicit boolean
-  // wins. Adopts an externally-discovered session first (like setAutoFixPrChecks)
-  // so the override persists. Keyed on the card id.
+  // instead of the default compact `.worker-row` — the card menu's "Full view"
+  // toggle. Unset (never nested through attachSession/dispatch, which stamp a
+  // boolean at creation time — see there) reads as compact on the client (NOT
+  // a live read of config.json childFullViewByDefault; that setting only ever
+  // seeds the creation-time stamp, never overrides an already-stamped or
+  // never-stamped child later). Adopts an externally-discovered session first
+  // (like setAutoFixPrChecks) so the override persists. Keyed on the card id.
   setChildFullView(sessionId, enabled, snapshot = {}) {
     let entry = this.map.get(sessionId);
     if (!entry) {
@@ -1296,7 +1307,15 @@ export class SessionManager {
     // workflowOpt is authoritative for the initial marker; fall back to the adopted
     // one so a pre-launch phase report isn't clobbered for a non-workflow dispatch.
     const existing = this.map.get(sessionId);
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: parentSession || existing?.parentSession, mailCapable: true };
+    const nestedParent = parentSession || existing?.parentSession;
+    // A `nest:true` spawn (spawn_session) sets `parentSession` here directly —
+    // the session is a CHILD from the moment it's created, so this is the
+    // creation-time "new child" snapshot the settings copy promises (see
+    // attachSession's matching comment). Only when unset: a pre-adopted entry
+    // (an early setWorkflowPhase report landing before this map.set) may
+    // already carry one.
+    const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();
