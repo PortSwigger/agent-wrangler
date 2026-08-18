@@ -599,24 +599,32 @@ export class SessionManager {
   }
 
   // Every pr link across all mapped sessions, as
-  // { ownerId, url, number, checkStatus, dirty } — number/checkStatus/dirty
-  // drive the check-transition and dirty-transition notifiers; the poll loop's
-  // update path only reads url.
+  // { ownerId, url, number, checkStatus, dirty, unresolvedCount } —
+  // number/checkStatus/dirty/unresolvedCount drive the check/dirty/unresolved-
+  // comment transition notifiers; the poll loop's update path only reads url.
   prLinks() {
     const out = [];
     for (const [sessionId, entry] of this.map)
       for (const l of entry.links || [])
         if (l.type === 'pr' && l.url)
-          out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, dirty: l.dirty });
+          out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, dirty: l.dirty, unresolvedCount: l.unresolvedCount });
     return out;
   }
 
-  // Write checkStatus/dirty onto the pr link with this url on a session, in
-  // place. Always bumps the freshness timestamp on a match, but returns true
-  // only when checkStatus OR dirty actually changed (false if both unchanged or
-  // the session/link isn't found) — that return drives the poller's rebuild, so
-  // a stable PR mustn't trigger a graph broadcast.
-  updateLinkStatus(sessionId, url, checkStatus, dirty, fetchedAt) {
+  // Write checkStatus/dirty/unresolvedCount onto the pr link with this url on a
+  // session, in place. Always bumps the freshness timestamp on a match, but
+  // returns true only when checkStatus OR dirty actually changed (false if
+  // both unchanged or the session/link isn't found) — that return drives the
+  // poller's rebuild, so a stable PR mustn't trigger a graph broadcast.
+  // unresolvedCount is deliberately EXCLUDED from that comparison: it renders
+  // nowhere in public/ (notification-only, per the approved design), so a
+  // thread resolving/unresolving shouldn't force a graph rebuild — the
+  // unresolved-comment notifier reads the persisted value straight from the
+  // store on every sweep regardless of this return. unresolvedCount is
+  // appended LAST (after fetchedAt) rather than inserted mid-signature, so the
+  // existing positional-arg call sites/tests aren't silently broken by an
+  // argument shift.
+  updateLinkStatus(sessionId, url, checkStatus, dirty, fetchedAt, unresolvedCount) {
     const entry = this.map.get(sessionId);
     if (!entry) return false;
     const link = (entry.links || []).find((l) => l.type === 'pr' && l.url === url);
@@ -625,6 +633,7 @@ export class SessionManager {
     link.checkStatus = checkStatus;
     link.dirty = dirty;
     link.checkStatusFetchedAt = fetchedAt;
+    link.unresolvedCount = unresolvedCount;
     this._save();
     return changed;
   }

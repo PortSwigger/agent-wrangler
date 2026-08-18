@@ -18,9 +18,9 @@ import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
-import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine } from './notifier.js';
+import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge } from './notifier.js';
 import { setTmuxBin, sendText } from './tmux-scraper.js';
-import { fetchPrStatus, mergePr } from './pr-status.js';
+import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
@@ -98,7 +98,7 @@ async function runPrStatusSweep(only) {
     ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
   ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   let changed = false;
-  for (const { scope, ownerId, url, number } of links) {
+  for (const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } of links) {
     const res = await fetchPrStatus(url);
     if (res == null) continue;
     const store = scope === 'task' ? taskStore : sessionManager;
@@ -118,8 +118,13 @@ async function runPrStatusSweep(only) {
       }
       continue;
     }
+    // A second gh call, sequenced right after the first (still a handful of PRs
+    // per sweep). On failure fall back to the link's existing stored count
+    // rather than clobbering it with null — a transient gh hiccup must not look
+    // like every thread just got resolved.
+    const unresolvedCount = (await fetchUnresolvedThreadCount(url)) ?? prevUnresolvedCount;
     const at = new Date().toISOString();
-    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at)) changed = true;
+    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount)) changed = true;
   }
   // Detect check-status transitions only on the full sweep (the on-attach fast
   // path skips other links, so its baseline would be incomplete and re-fire).
@@ -128,7 +133,15 @@ async function runPrStatusSweep(only) {
       ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
       ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
     ];
+    // Collected so the unresolved-comment loop below can skip its OWN pane
+    // nudge for any link that just got a checkStatus nudge this same tick (see
+    // that loop for why: a "Request changes" review with inline comments fires
+    // both diffs in the same sweep, and two unawaited deliverPrNudge calls to
+    // one pane would interleave — the same hazard planCheckTransition's merge
+    // branch already guards against for merge-vs-nudge).
+    const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
+      checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
                   url: ev.url, number: ev.number, status: ev.checkStatus });
       const entry = sessionManager.entryFor(ev.ownerId);
@@ -179,6 +192,28 @@ async function runPrStatusSweep(only) {
       if (planDirtyTransition(ev, entry)) {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, sendText,
+          sessionManager, memoryStore, taskStore, onError: onPrWakeError,
+        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+      }
+    }
+    // Detect unresolved review-thread-count increases — own diff/baseline,
+    // independent of checkStatus/dirty (an unbounded counter, not an enum/bool).
+    // Same board-toast-always / pane-nudge-gated shape as the dirty transition
+    // above; there is no auto-merge branch (an unresolved comment never makes a
+    // PR mergeable) and no "cleared" direction (see notifier.js). The board
+    // toast always fires, but the PANE NUDGE is skipped when checkStatus already
+    // nudged this same link this tick (checkStatusKeys, above) — a "Request
+    // changes" review commonly trips BOTH diffs in one sweep (new inline
+    // comments AND a fresh changes-requested transition), and two unawaited
+    // deliverPrNudge calls to the same pane would interleave their pastes.
+    for (const ev of diffUnresolvedComments(current)) {
+      broadcast({ type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
+                  url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta });
+      const entry = sessionManager.entryFor(ev.ownerId);
+      const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
+      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry)) {
+        deliverPrNudge(ev, entry, {
+          message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, sendText,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }

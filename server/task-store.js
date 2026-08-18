@@ -187,25 +187,34 @@ export class TaskStore {
   }
 
   // Every pr link across all tasks, as
-  // { ownerId, url, number, checkStatus, dirty } — the poll loop's input.
-  // number/checkStatus/dirty drive the check-transition and dirty-transition
-  // notifiers; the update path only reads url, so the wider payload is backward-safe.
+  // { ownerId, url, number, checkStatus, dirty, unresolvedCount } — the poll
+  // loop's input. number/checkStatus/dirty/unresolvedCount drive the
+  // check/dirty/unresolved-comment transition notifiers; the update path only
+  // reads url, so the wider payload is backward-safe.
   prLinks() {
     const out = [];
     for (const t of this.tasks)
       for (const l of t.links || [])
         if (l.type === 'pr' && l.url)
-          out.push({ ownerId: t.id, url: l.url, number: l.number, checkStatus: l.checkStatus, dirty: l.dirty });
+          out.push({ ownerId: t.id, url: l.url, number: l.number, checkStatus: l.checkStatus, dirty: l.dirty, unresolvedCount: l.unresolvedCount });
     return out;
   }
 
-  // Write checkStatus/dirty/checkStatusFetchedAt onto the pr link with this url,
-  // in place (so a concurrent setLinks replacing the list is last-writer-wins but
-  // the poller never resurrects a removed link). Always bumps the freshness
-  // timestamp on a match, but returns true only when checkStatus OR dirty actually
-  // changed (false if both unchanged or not found) — that return drives the
-  // poller's rebuild, so a stable PR mustn't trigger a graph broadcast.
-  updateLinkStatus(taskId, url, checkStatus, dirty, fetchedAt) {
+  // Write checkStatus/dirty/checkStatusFetchedAt/unresolvedCount onto the pr
+  // link with this url, in place (so a concurrent setLinks replacing the list
+  // is last-writer-wins but the poller never resurrects a removed link).
+  // Always bumps the freshness timestamp on a match, but returns true only
+  // when checkStatus OR dirty actually changed (false if both unchanged or not
+  // found) — that return drives the poller's rebuild, so a stable PR mustn't
+  // trigger a graph broadcast. unresolvedCount is deliberately EXCLUDED from
+  // that comparison: it renders nowhere in public/ (notification-only, per the
+  // approved design), so a thread resolving/unresolving shouldn't force a
+  // graph rebuild — the unresolved-comment notifier reads the persisted value
+  // straight from the store on every sweep regardless of this return.
+  // unresolvedCount is appended LAST (after fetchedAt) rather than inserted
+  // mid-signature, so the existing positional-arg call sites/tests aren't
+  // silently broken by an argument shift.
+  updateLinkStatus(taskId, url, checkStatus, dirty, fetchedAt, unresolvedCount) {
     const task = this.tasks.find((t) => t.id === taskId);
     if (!task) return false;
     const link = (task.links || []).find((l) => l.type === 'pr' && l.url === url);
@@ -214,6 +223,7 @@ export class TaskStore {
     link.checkStatus = checkStatus;
     link.dirty = dirty;
     link.checkStatusFetchedAt = fetchedAt;
+    link.unresolvedCount = unresolvedCount;
     this._save();
     return changed;
   }
