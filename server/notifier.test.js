@@ -306,6 +306,17 @@ test('diffUnresolvedComments: a missing/non-numeric count is skipped entirely â€
   assert.equal(events[0].delta, 2);
 });
 
+test('diffUnresolvedComments: a fetch gap after a real baseline carries the baseline forward, so the increase across the gap still emits', () => {
+  // Regression: the skip branch must not just drop the key â€” dropping it makes
+  // the count's next real value look brand-new and silently re-baseline,
+  // swallowing a genuine increase that spans the gap.
+  diffUnresolvedComments([U(1, { ownerId: 'e' })]);           // baseline 1
+  assert.deepEqual(diffUnresolvedComments([U(undefined, { ownerId: 'e' })]), []); // gap: skipped, but 1 carries forward
+  const events = diffUnresolvedComments([U(9, { ownerId: 'e' })]); // real value returns
+  assert.equal(events.length, 1);
+  assert.equal(events[0].delta, 8); // 1 -> 9, not re-baselined at 9
+});
+
 test('planUnresolvedTransition: session scope with autoFixPrChecks ON (default) nudges', () => {
   assert.equal(planUnresolvedTransition({ scope: 'session' }, {}), true);
   assert.equal(planUnresolvedTransition({ scope: 'session' }, undefined), true);
@@ -319,17 +330,17 @@ test('planUnresolvedTransition: a task-scope link never nudges (no single sessio
   assert.equal(planUnresolvedTransition({ scope: 'task' }, {}), false);
 });
 
-test('prUnresolvedPaneNudge pluralizes correctly and composes the shared pane-line shape', () => {
+test('prUnresolvedPaneNudge says "thread(s)" (not "comment(s)"), pluralizes correctly, and carries the running total', () => {
   const url = 'https://github.com/o/agent-wrangler/pull/42';
-  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 1 }),
-    '[Agent Wrangler] PR #42 (agent-wrangler): 1 new unresolved review comment: ' + url);
-  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 3 }),
-    '[Agent Wrangler] PR #42 (agent-wrangler): 3 new unresolved review comments: ' + url);
+  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 1, unresolvedCount: 1 }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): 1 new unresolved review thread (1 unresolved total): ' + url);
+  assert.equal(prUnresolvedPaneNudge({ number: 42, url, delta: 3, unresolvedCount: 7 }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): 3 new unresolved review threads (7 unresolved total): ' + url);
 });
 
 test('prUnresolvedPaneNudge omits the (<repo>) segment entirely for an enterprise/malformed url', () => {
   const url = 'https://github.example.com/o/internal/pull/7';
-  const line = prUnresolvedPaneNudge({ number: 7, url, delta: 2 });
-  assert.equal(line, '[Agent Wrangler] PR #7: 2 new unresolved review comments: ' + url);
+  const line = prUnresolvedPaneNudge({ number: 7, url, delta: 2, unresolvedCount: 5 });
+  assert.equal(line, '[Agent Wrangler] PR #7: 2 new unresolved review threads (5 unresolved total): ' + url);
   assert.doesNotMatch(line, /\(\)/);
 });

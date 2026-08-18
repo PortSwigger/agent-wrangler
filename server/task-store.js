@@ -204,18 +204,22 @@ export class TaskStore {
   // link with this url, in place (so a concurrent setLinks replacing the list
   // is last-writer-wins but the poller never resurrects a removed link).
   // Always bumps the freshness timestamp on a match, but returns true only
-  // when checkStatus, dirty, OR unresolvedCount actually changed (false if all
-  // unchanged or not found) — that return drives the poller's rebuild, so a
-  // stable PR mustn't trigger a graph broadcast. unresolvedCount is appended
-  // LAST (after fetchedAt) rather than inserted mid-signature, so the existing
-  // positional-arg call sites/tests aren't silently broken by an argument shift.
+  // when checkStatus OR dirty actually changed (false if both unchanged or not
+  // found) — that return drives the poller's rebuild, so a stable PR mustn't
+  // trigger a graph broadcast. unresolvedCount is deliberately EXCLUDED from
+  // that comparison: it renders nowhere in public/ (notification-only, per the
+  // approved design), so a thread resolving/unresolving shouldn't force a
+  // graph rebuild — the unresolved-comment notifier reads the persisted value
+  // straight from the store on every sweep regardless of this return.
+  // unresolvedCount is appended LAST (after fetchedAt) rather than inserted
+  // mid-signature, so the existing positional-arg call sites/tests aren't
+  // silently broken by an argument shift.
   updateLinkStatus(taskId, url, checkStatus, dirty, fetchedAt, unresolvedCount) {
     const task = this.tasks.find((t) => t.id === taskId);
     if (!task) return false;
     const link = (task.links || []).find((l) => l.type === 'pr' && l.url === url);
     if (!link) return false;
-    const changed = link.checkStatus !== checkStatus || Boolean(link.dirty) !== Boolean(dirty)
-      || link.unresolvedCount !== unresolvedCount;
+    const changed = link.checkStatus !== checkStatus || Boolean(link.dirty) !== Boolean(dirty);
     link.checkStatus = checkStatus;
     link.dirty = dirty;
     link.checkStatusFetchedAt = fetchedAt;

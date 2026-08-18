@@ -189,8 +189,15 @@ export function diffUnresolvedComments(links) {
   // rather than leaking forever, exactly like diffCheckStatus/diffDirty.
   const next = new Map();
   for (const l of links) {
-    if (typeof l.unresolvedCount !== 'number' || Number.isNaN(l.unresolvedCount)) continue;
     const key = `${l.scope}:${l.ownerId}:${l.url}`;
+    if (typeof l.unresolvedCount !== 'number' || Number.isNaN(l.unresolvedCount)) {
+      // Carry the prior baseline forward unchanged rather than dropping the key —
+      // dropping it would make the count's NEXT real value look brand-new and
+      // silently re-baseline, swallowing a genuine increase that spans the gap.
+      const prevCount = prevUnresolved.get(key);
+      if (prevCount !== undefined) next.set(key, prevCount);
+      continue;
+    }
     const count = l.unresolvedCount;
     const prevCount = prevUnresolved.get(key);
     if (prevCount !== undefined && count > prevCount) events.push({ ...l, delta: count - prevCount });
@@ -212,8 +219,13 @@ export function planUnresolvedTransition(ev, entry) {
 
 // The one-line pane nudge for an unresolved-comment increase, pluralized and
 // sharing prPaneLine's exact shape so a dormant session's resume intent reads
-// consistently regardless of which PR event woke it.
+// consistently regardless of which PR event woke it. "thread(s)", not
+// "comment(s)" — a thread with several replies still counts as one, so
+// "comment" would overstate it (matches reviewThreads/unresolvedCount/
+// fetchUnresolvedThreadCount's vocabulary elsewhere). Carries the running
+// total alongside the delta since it's already on the event and materially
+// more actionable than the delta alone.
 export function prUnresolvedPaneNudge(ev) {
-  const phrase = `${ev.delta} new unresolved review comment${ev.delta === 1 ? '' : 's'}`;
+  const phrase = `${ev.delta} new unresolved review thread${ev.delta === 1 ? '' : 's'} (${ev.unresolvedCount} unresolved total)`;
   return prPaneLine(ev.number, ev.url, phrase);
 }

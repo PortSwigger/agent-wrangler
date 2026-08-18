@@ -341,16 +341,17 @@ test('updateLinkStatus returns true when only dirty changes (checkStatus stable)
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', true, 'y'), true);
 });
 
-test('updateLinkStatus writes unresolvedCount as the last param and reports it in the changed check', () => {
+test('updateLinkStatus writes unresolvedCount as the last param, but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Login' });
   store.setLinks(t.id, [{ type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 }]);
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'x', 2), true);
   assert.equal(store.getLinks(t.id).find((l) => l.type === 'pr').unresolvedCount, 2);
-  // same checkStatus/dirty, unresolvedCount alone changes -> still reported changed
-  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'y', 5), true);
-  // everything stable -> no change
-  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'z', 5), false);
+  // same checkStatus/dirty, unresolvedCount alone changes -> still written, but NOT reported changed
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', false, 'y', 5), false);
+  assert.equal(store.getLinks(t.id).find((l) => l.type === 'pr').unresolvedCount, 5);
+  // a genuine checkStatus change alongside a stable unresolvedCount still reports changed
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'failing', false, 'z', 5), true);
 });
 
 // ── TODOs ──────────────────────────────────────────────────────────────────────

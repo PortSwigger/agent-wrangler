@@ -973,16 +973,16 @@ test('updateLinkStatus returns true when only dirty changes (checkStatus stable)
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', true, 'y'), true);
 });
 
-test('updateLinkStatus writes unresolvedCount as the last param and reports it in the changed check', () => {
+test('updateLinkStatus writes unresolvedCount as the last param, but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
   const mgr = freshManager();
   mgr.setLinks('CARD1', [{ type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 }]);
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', false, 'x', 2), true);
   assert.equal(mgr.getLinks('CARD1')[0].unresolvedCount, 2);
-  // same checkStatus/dirty, unresolvedCount alone changes -> still reported changed
-  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', false, 'y', 5), true);
+  // same checkStatus/dirty, unresolvedCount alone changes -> still written, but NOT reported changed
+  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', false, 'y', 5), false);
   assert.equal(mgr.getLinks('CARD1')[0].unresolvedCount, 5);
-  // everything stable -> no change
-  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', false, 'z', 5), false);
+  // a genuine checkStatus change alongside a stable unresolvedCount still reports changed
+  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', false, 'z', 5), true);
 });
 
 

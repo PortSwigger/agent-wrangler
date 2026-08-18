@@ -133,7 +133,15 @@ async function runPrStatusSweep(only) {
       ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
       ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
     ];
+    // Collected so the unresolved-comment loop below can skip its OWN pane
+    // nudge for any link that just got a checkStatus nudge this same tick (see
+    // that loop for why: a "Request changes" review with inline comments fires
+    // both diffs in the same sweep, and two unawaited deliverPrNudge calls to
+    // one pane would interleave — the same hazard planCheckTransition's merge
+    // branch already guards against for merge-vs-nudge).
+    const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
+      checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
                   url: ev.url, number: ev.number, status: ev.checkStatus });
       const entry = sessionManager.entryFor(ev.ownerId);
@@ -192,12 +200,18 @@ async function runPrStatusSweep(only) {
     // independent of checkStatus/dirty (an unbounded counter, not an enum/bool).
     // Same board-toast-always / pane-nudge-gated shape as the dirty transition
     // above; there is no auto-merge branch (an unresolved comment never makes a
-    // PR mergeable) and no "cleared" direction (see notifier.js).
+    // PR mergeable) and no "cleared" direction (see notifier.js). The board
+    // toast always fires, but the PANE NUDGE is skipped when checkStatus already
+    // nudged this same link this tick (checkStatusKeys, above) — a "Request
+    // changes" review commonly trips BOTH diffs in one sweep (new inline
+    // comments AND a fresh changes-requested transition), and two unawaited
+    // deliverPrNudge calls to the same pane would interleave their pastes.
     for (const ev of diffUnresolvedComments(current)) {
       broadcast({ type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
                   url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta });
       const entry = sessionManager.entryFor(ev.ownerId);
-      if (planUnresolvedTransition(ev, entry)) {
+      const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
+      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry)) {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, sendText,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,

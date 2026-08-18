@@ -4514,7 +4514,7 @@ function onPrComments(msg) {
   if (focusSuppresses(msg.scope, msg.sessionId)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
-  const phrase = `${msg.delta} new unresolved review comment${msg.delta === 1 ? '' : 's'}`;
+  const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
   toast(text, true);
   if (window.Notification && Notification.permission === 'granted') {

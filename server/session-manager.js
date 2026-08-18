@@ -608,19 +608,23 @@ export class SessionManager {
 
   // Write checkStatus/dirty/unresolvedCount onto the pr link with this url on a
   // session, in place. Always bumps the freshness timestamp on a match, but
-  // returns true only when checkStatus, dirty, OR unresolvedCount actually
-  // changed (false if all unchanged or the session/link isn't found) — that
-  // return drives the poller's rebuild, so a stable PR mustn't trigger a graph
-  // broadcast. unresolvedCount is appended LAST (after fetchedAt) rather than
-  // inserted mid-signature, so the existing positional-arg call sites/tests
-  // aren't silently broken by an argument shift.
+  // returns true only when checkStatus OR dirty actually changed (false if
+  // both unchanged or the session/link isn't found) — that return drives the
+  // poller's rebuild, so a stable PR mustn't trigger a graph broadcast.
+  // unresolvedCount is deliberately EXCLUDED from that comparison: it renders
+  // nowhere in public/ (notification-only, per the approved design), so a
+  // thread resolving/unresolving shouldn't force a graph rebuild — the
+  // unresolved-comment notifier reads the persisted value straight from the
+  // store on every sweep regardless of this return. unresolvedCount is
+  // appended LAST (after fetchedAt) rather than inserted mid-signature, so the
+  // existing positional-arg call sites/tests aren't silently broken by an
+  // argument shift.
   updateLinkStatus(sessionId, url, checkStatus, dirty, fetchedAt, unresolvedCount) {
     const entry = this.map.get(sessionId);
     if (!entry) return false;
     const link = (entry.links || []).find((l) => l.type === 'pr' && l.url === url);
     if (!link) return false;
-    const changed = link.checkStatus !== checkStatus || Boolean(link.dirty) !== Boolean(dirty)
-      || link.unresolvedCount !== unresolvedCount;
+    const changed = link.checkStatus !== checkStatus || Boolean(link.dirty) !== Boolean(dirty);
     link.checkStatus = checkStatus;
     link.dirty = dirty;
     link.checkStatusFetchedAt = fetchedAt;
