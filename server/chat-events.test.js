@@ -196,3 +196,99 @@ test('codex: oversized function_call arguments (e.g. an apply_patch body) are tr
   assert.equal(ev.input.patch.length, MAX_TOOL_TEXT);
   assert.equal(ev.truncated, true);
 });
+
+test('thinking carries a duration derived from the previous line, omitted when unknown', () => {
+  const first = claudeLines({ type: 'assistant', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm' }] } });
+  assert.ok(!('durationMs' in scanChatText(first, 'claude').events[0]));
+
+  const pair = claudeLines(
+    { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: 'go' } },
+    { type: 'assistant', timestamp: '2026-08-14T10:00:06.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm' }] } },
+  );
+  const think = scanChatText(pair, 'claude').events.find((e) => e.kind === 'thinking');
+  assert.equal(think.durationMs, 6000);
+});
+
+test('a denied tool call emits a notice alongside the tool event', () => {
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_5', name: 'Bash', input: { command: 'git push' } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:30.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_5', is_error: true, content: "The user doesn't want to proceed with this tool use." },
+    ] } },
+  );
+  const { events } = scanChatText(text, 'claude');
+  const notice = events.find((e) => e.kind === 'notice');
+  assert.equal(notice.noticeKind, 'denied');
+  assert.equal(notice.text, 'git push');
+});
+
+test('a Task tool_use emits a subagent spawn point', () => {
+  const text = claudeLines({ type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+    { type: 'tool_use', id: 'tu_6', name: 'Task', input: { description: 'Explore mailbox guards', subagent_type: 'Explore' } },
+  ] } });
+  const { events } = scanChatText(text, 'claude');
+  assert.deepEqual(events, [{ kind: 'subagent', id: 'tu_6', name: 'Explore mailbox guards', ts: Date.parse('2026-08-14T10:00:01.000Z') }]);
+});
+
+test('an Edit tool event carries derived line counts', () => {
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_e1', name: 'Edit', input: { file_path: '/a.js', old_string: 'one\ntwo', new_string: 'one\ntwo\nthree\nfour' } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_e1', content: 'ok' },
+    ] } },
+  );
+  const ev = scanChatText(text, 'claude').events.find((e) => e.kind === 'tool');
+  assert.equal(ev.adds, 4);
+  assert.equal(ev.dels, 2);
+});
+
+test('a non-edit tool event carries no counts at all', () => {
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_r1', name: 'Read', input: { file_path: '/a.js' } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_r1', content: 'body' },
+    ] } },
+  );
+  const ev = scanChatText(text, 'claude').events.find((e) => e.kind === 'tool');
+  assert.ok(!('adds' in ev), 'a read must not carry a misleading zero count');
+  assert.ok(!('dels' in ev), 'a read must not carry a misleading zero count');
+});
+
+test('counts are derived from the UNCAPPED input, not the truncated copy', () => {
+  // 3000 lines is well past MAX_TOOL_TEXT in characters, so a count taken from the
+  // capped string would come out far too low.
+  const content = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join('\n');
+  const text = claudeLines(
+    { type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_w1', name: 'Write', input: { file_path: '/big.js', content } },
+    ] } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu_w1', content: 'written' },
+    ] } },
+  );
+  const ev = scanChatText(text, 'claude').events.find((e) => e.kind === 'tool');
+  assert.equal(ev.adds, 3000);
+  assert.equal(ev.truncated, true, 'the shipped input is still capped');
+});
+
+test('apply_patch counts its real +/- lines and ignores file headers', () => {
+  const patch = ['--- a/x.js', '+++ b/x.js', '@@ -1,2 +1,3 @@', ' keep', '-gone', '+new one', '+new two'].join('\n');
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: {
+      type: 'function_call', id: 'fc_p', call_id: 'call_p', name: 'apply_patch',
+      arguments: JSON.stringify({ patch }),
+    } },
+    { type: 'response_item', timestamp: '2026-08-14T10:00:02.000Z', payload: {
+      type: 'function_call_output', call_id: 'call_p', output: 'applied',
+    } },
+  );
+  const ev = scanChatText(text, 'codex').events.find((e) => e.kind === 'tool');
+  assert.equal(ev.adds, 2);
+  assert.equal(ev.dels, 1);
+});

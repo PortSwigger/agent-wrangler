@@ -66,6 +66,53 @@ function tsOf(iso) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+// Task/Agent tool_use blocks mark a sub-agent's spawn point only — the client
+// reads status/cost off the graph's existing s.subAgents, so this must not
+// re-derive the subagents/-dir-vs-inline discriminator that transcript-reader.js
+// owns (duplicating it is what makes sub-agents double-count).
+const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
+
+// Phrasing each agent's tool_result uses when a permission prompt is denied —
+// this is the only place a resolved denial is visible after the fact.
+const DENIED_MARKERS = ["user doesn't want to proceed", 'user rejected', 'user denied'];
+
+function noticeFor(open, resultText) {
+  const low = resultText.toLowerCase();
+  if (DENIED_MARKERS.some((m) => low.includes(m))) {
+    return { kind: 'notice', noticeKind: 'denied', text: open.target || open.name };
+  }
+  return null;
+}
+
+// Line counts for the `+N −M` on an edit activity chip. Deliberately approximate for
+// Edit/Write — the tool input is all we have, so a replacement whose old_string spans
+// unchanged context over-counts. The diff panel stays the authority; this is a hint.
+// apply_patch is the exception: its input IS a patch, so its +/- lines are exact.
+const EDIT_COUNT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'apply_patch']);
+
+function lineCount(s) {
+  return typeof s === 'string' && s ? s.split('\n').length : 0;
+}
+
+function editCounts(name, input) {
+  if (!input || typeof input !== 'object') return null;
+  if (name === 'apply_patch') {
+    const body = typeof input.patch === 'string' ? input.patch : typeof input.input === 'string' ? input.input : '';
+    let adds = 0;
+    let dels = 0;
+    for (const line of body.split('\n')) {
+      // Skip the +++/--- file headers; only the hunk body's own markers count.
+      if (line.startsWith('+++') || line.startsWith('---')) continue;
+      if (line.startsWith('+')) adds += 1;
+      else if (line.startsWith('-')) dels += 1;
+    }
+    return { adds, dels };
+  }
+  const added = input.new_string ?? input.content ?? input.new_source;
+  const removed = input.old_string;
+  return { adds: lineCount(added), dels: lineCount(removed) };
+}
+
 function textOf(content) {
   if (typeof content === 'string') return content.trim();
   if (!Array.isArray(content)) return '';
@@ -101,22 +148,37 @@ function pushClaude(entry, state) {
         state.pending.delete(b.tool_use_id);
         const { text: output, truncated: outputTruncated } = cap(b.content);
         const { input, truncated: inputTruncated } = capInput(open.input);
+        // Derived from open.input (uncapped, still in `pending` at this point) —
+        // never from the just-capped copy above, or a large Write undercounts.
+        const counts = EDIT_COUNT_TOOLS.has(open.name) ? editCounts(open.name, open.input) : null;
         out.push({
           kind: 'tool', id: open.id, name: open.name, target: open.target,
           input, output, ok: b.is_error !== true, ts, truncated: outputTruncated || inputTruncated,
+          ...(counts || {}),
         });
+        const notice = noticeFor(open, output);
+        if (notice) out.push({ ...notice, ts });
       }
     }
     const text = textOf(msg.content);
     if (text && !isSynthetic(text)) out.push({ kind: 'user', text, ts });
+    state.prevTs = ts;
     return out;
   }
   if (msg.role !== 'assistant') return out;
   if (msg.model) state.model = msg.model;
   if (Array.isArray(msg.content)) {
     for (const b of msg.content) {
-      if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
-        out.push({ kind: 'thinking', ts, text: b.thinking.trim() });
+      if (b?.type === 'thinking') {
+        const think = { kind: 'thinking', ts };
+        if (state.prevTs && ts > state.prevTs) think.durationMs = ts - state.prevTs;
+        if (typeof b.thinking === 'string' && b.thinking.trim()) think.text = b.thinking.trim();
+        out.push(think);
+      }
+      if (b?.type === 'tool_use' && b.id && SUBAGENT_TOOLS.has(b.name)) {
+        const name = b.input?.description || b.input?.subagent_type || b.name;
+        out.push({ kind: 'subagent', id: b.id, name: oneLine(String(name)), ts });
+        continue;
       }
       if (b?.type === 'tool_use' && b.id) {
         state.pending.set(b.id, { id: b.id, name: b.name || 'tool', target: toolTarget(b.input), input: b.input ?? null });
@@ -125,6 +187,7 @@ function pushClaude(entry, state) {
   }
   const text = textOf(msg.content);
   if (text) out.push({ kind: 'assistant', text, ts, model: msg.model || state.model || null });
+  state.prevTs = ts;
   return out;
 }
 
@@ -171,12 +234,16 @@ function pushCodex(entry, state) {
     if (role === 'user' && isSynthetic(text)) return out;
     if (role === 'user') out.push({ kind: 'user', text, ts });
     else out.push({ kind: 'assistant', text, ts, model: state.model || null });
+    state.prevTs = ts;
     return out;
   }
 
   // summary is always [] and the content is encrypted — presence only, never text.
   if (p.type === 'reasoning') {
-    out.push({ kind: 'thinking', ts });
+    const think = { kind: 'thinking', ts };
+    if (state.prevTs && ts > state.prevTs) think.durationMs = ts - state.prevTs;
+    out.push(think);
+    state.prevTs = ts;
     return out;
   }
 
@@ -188,6 +255,7 @@ function pushCodex(entry, state) {
     state.pending.set(p.call_id, {
       id: p.call_id, name: p.name || p.type, target: toolTarget(input), input,
     });
+    state.prevTs = ts;
     return out;
   }
 
@@ -201,11 +269,19 @@ function pushCodex(entry, state) {
     // stays in `open.input`/`state.pending` because a later task derives
     // apply_patch +/- line counts from the real (uncapped) patch text.
     const { input, truncated: inputTruncated } = capInput(open.input);
+    // Derived from open.input (uncapped) for the same reason as the Claude side —
+    // apply_patch's patch body would otherwise be cut to MAX_TOOL_TEXT first.
+    const counts = EDIT_COUNT_TOOLS.has(open.name) ? editCounts(open.name, open.input) : null;
     // function_call_output carries no structured error flag, only free text
     // ("Process exited with code N") — `ok` can't be derived, so it's always true.
-    out.push({ kind: 'tool', id: open.id, name: open.name, target: open.target, input, output, ok: true, ts, truncated: outputTruncated || inputTruncated });
+    out.push({
+      kind: 'tool', id: open.id, name: open.name, target: open.target, input, output, ok: true, ts, truncated: outputTruncated || inputTruncated,
+      ...(counts || {}),
+    });
+    state.prevTs = ts;
     return out;
   }
+  state.prevTs = ts;
   return out;
 }
 
