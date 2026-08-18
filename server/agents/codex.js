@@ -9,10 +9,12 @@ import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 
 const exec = promisify(execFile);
-// gpt-5.5 is the model valid for ChatGPT-account logins; gpt-5.5-codex is
-// rejected there ("not supported when using Codex with a ChatGPT account") and
-// only works with API-key auth. Default to the broadly-valid one.
-const DEFAULT_MODEL = 'gpt-5.5';
+// `*-codex`-suffixed models (e.g. gpt-5.5-codex) are rejected on ChatGPT-account
+// logins ("not supported when using Codex with a ChatGPT account") and only work
+// with API-key auth; plain model ids are broadly valid. gpt-5.6-sol (frontier,
+// no -codex suffix) is confirmed to work on a ChatGPT-account login — default
+// to it as the strongest broadly-valid model.
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 
 // A TOML double-quoted string for a `-c key=value` override. Escapes backslash
 // and double-quote per TOML basic-string rules; the memory prompt has neither
@@ -71,10 +73,10 @@ export const codex = {
   // pasted into the now-live pane after resume() resolves (see pr-nudge-runner).
   resumeCarriesIntent: false,
   models: [
-    { value: 'gpt-5.5', label: 'GPT-5.5 · frontier', default: true },
+    { value: 'gpt-5.5', label: 'GPT-5.5 · frontier' },
     { value: 'gpt-5.4', label: 'GPT-5.4 · everyday coding' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap' },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier' },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', default: true },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap' },
   ],

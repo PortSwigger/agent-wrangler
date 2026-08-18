@@ -30,12 +30,12 @@ the model to fit the work:
 - `haiku` — Haiku 4.5, 200K context. Fast and cheap for simple, mechanical work.
 
 **Codex** (`agent: "codex"`):
-- `gpt-5.5` — frontier; the default.
-- `gpt-5.4` — everyday coding.
-- `gpt-5.4-mini` — fast and cheap.
-- `gpt-5.6-sol` — frontier.
+- `gpt-5.6-sol` — frontier; the default.
 - `gpt-5.6-terra` — everyday coding.
 - `gpt-5.6-luna` — fast and cheap.
+- `gpt-5.5` — frontier.
+- `gpt-5.4` — everyday coding.
+- `gpt-5.4-mini` — fast and cheap.
 
 ## Placement
 
