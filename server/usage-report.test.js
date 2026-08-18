@@ -616,6 +616,41 @@ test('keeps a deleted transcript\'s cached history across rescans and a restart'
   assert.deepEqual(r.tasks.map((t) => t.name), ['Alpha'], 'still attributed to its task');
 });
 
+// A `/clear` abandons the running conversation for a fresh id in the same pane, so one
+// card owns several transcripts (the outgoing id lands in priorLiveSessionIds). The
+// abandoned one still holds real spend, and costing only the current one would both
+// under-report the card AND — because the file never reaches seenClaudeFiles — evict
+// the cache entry that becomes the sole record once Claude Code deletes the transcript.
+test('costs every conversation a card has owned, and keeps a cleared-away one cached after deletion', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const cleared = 'c1c1c1c1-c1c1-c1c1-c1c1-c1c1c1c1c1c1';
+  const current = 'c2c2c2c2-c2c2-c2c2-c2c2-c2c2c2c2c2c2';
+  const clearedFile = claudeTranscript(d.projectsDir, { sessionId: cleared, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1000, output_tokens: 10 }, '2026-07-10T12:00:00.000Z'),
+  ] });
+  claudeTranscript(d.projectsDir, { sessionId: current, lines: [
+    turn('m2', 'claude-opus', { input_tokens: 500, output_tokens: 10 }, '2026-07-12T09:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, {
+    entries: { card1: { agent: 'claude', liveSessionId: current, priorLiveSessionIds: [cleared], cwd: '/work/proj' } },
+    tasks: [{ id: 't1', name: 'Alpha' }], assignments: { card1: 't1' },
+  });
+
+  const scanned = async (label) => {
+    const r = rollup(await scanAllDaily(d), { granularity: 'day', now: NOW });
+    assert.equal(r.failedFiles, 0, `${label}: no failed reads`);
+    assert.deepEqual(r.tasks.map((t) => t.name), ['Alpha'], `${label}: both conversations attributed to the card's task`);
+    return Object.fromEntries(activeBuckets(r).map((b) => [b.key, b.total.tokens.input]));
+  };
+  const expected = { '2026-07-10': 1000, '2026-07-12': 500 };
+  assert.deepEqual(await scanned('both transcripts present'), expected);
+
+  fs.rmSync(clearedFile); // the retention sweep reaches the abandoned conversation first
+  assert.deepEqual(await scanned('the scan that notices it is gone'), expected);
+  assert.deepEqual(await scanned('a later scan, after the eviction loop has run once'), expected);
+});
+
 // The other half: a transcript deleted before anything ever costed it is genuinely
 // unrecoverable, and must degrade exactly as it did before the deterministic-path
 // fallback existed — no spend, no crash, and NOT a phantom read that inflates the

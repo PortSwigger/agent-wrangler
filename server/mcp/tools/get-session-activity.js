@@ -49,10 +49,24 @@ export const getSessionActivityTool = {
       const lifetimeEnd = entry.archivedAt ?? entry.suspendedAt;
       if (typeof lifetimeEnd === 'number' && lifetimeEnd < startMs) continue;
 
-      const liveId = entry.liveSessionId || entry.sessionId;
+      // Every conversation the card has owned, not just the current one: `/clear`
+      // starts a fresh conversation in the same pane, so a single day's work under one
+      // card routinely straddles two transcripts (the abandoned ids are recorded on
+      // the entry). Reading only the live id would drop whichever half of the day fell
+      // on the other side of the clear.
       const dir = entry.agent === 'codex' ? deps.codexSessionsDir : deps.projectsDir;
-      const activity = await adapterFor(entry.agent).activityInRange(liveId, startMs, endMs, dir);
-      if (!activity || activity.messageCount === 0) continue;
+      const ids = [entry.liveSessionId || entry.sessionId, ...(entry.priorLiveSessionIds || [])];
+      const parts = [];
+      for (const id of ids) {
+        const a = await adapterFor(entry.agent).activityInRange(id, startMs, endMs, dir);
+        if (a && a.messageCount > 0) parts.push(a);
+      }
+      if (!parts.length) continue;
+      const activity = {
+        messageCount: parts.reduce((n, a) => n + a.messageCount, 0),
+        firstActivity: Math.min(...parts.map((a) => a.firstActivity)),
+        lastActivity: Math.max(...parts.map((a) => a.lastActivity)),
+      };
 
       results.push({
         sessionId: entry.sessionId,

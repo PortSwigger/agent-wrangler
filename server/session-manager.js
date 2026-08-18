@@ -220,6 +220,11 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     effort: prev?.effort ?? null,
     createdAt: prev?.createdAt ?? now,
     liveSessionId: resumeId,
+    // Conversations this card owned before the agent abandoned them with `/clear`
+    // (see noteLiveSessionId). Durable: their transcripts still hold real spend, and
+    // dropping them here would take that spend off the card's cost AND out of the
+    // usage scan cache that outlives the transcript itself.
+    priorLiveSessionIds: prev?.priorLiveSessionIds,
     socket,
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
@@ -860,6 +865,50 @@ export class SessionManager {
       if (e.liveSessionId === liveSessionId) return cardId;
     }
     return null;
+  }
+
+  // Record that the agent swapped conversations on us. Claude's live id can change
+  // with nothing on our side doing it: `/clear` abandons the running conversation
+  // and starts a fresh one — new id, new transcript — in the same process and pane.
+  // Only launch/fork/resume ever wrote `liveSessionId`, so the entry went on
+  // pointing at the abandoned conversation: the card reverted to its pre-clear label
+  // the moment the pane went away (while attached it looks fine — the live label
+  // tracks the pane title), and Resume then relaunched the ABANDONED conversation,
+  // orphaning everything done since the clear. buildGraph reads the true live id
+  // from the pane process's session file on every rebuild, so it's the only place
+  // that sees the swap — this is its write-back.
+  //
+  // The outgoing id is kept in `priorLiveSessionIds` because it still holds real
+  // spend: usage-report.js costs every transcript a card has owned, and a file left
+  // out doesn't just under-report — it misses `seenClaudeFiles` and gets its scan-
+  // cache entry evicted, which for a transcript Claude Code has since deleted is the
+  // permanent record. Deliberately NOT folded into `cardForLive`: an abandoned
+  // conversation stays unowned so Search can Adopt it onto its own card, which is
+  // the only way back to pre-clear work.
+  async noteLiveSessionId(sessionId, liveSessionId, { transcriptFor = findTranscript } = {}) {
+    const entry = this.map.get(sessionId);
+    if (!entry || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
+    // Never take over a conversation another card already owns (or that IS another
+    // card id): two entries on one transcript double-count its cost and fight over
+    // whose resume wins.
+    const owner = this.cardForLive(liveSessionId);
+    if (owner && owner !== sessionId) return false;
+    // Wait for the new conversation's transcript to exist. _doResume refuses outright
+    // when it can't find one, so repointing early would trade a stale-but-resumable
+    // card for an unresumable one; the next rebuild retries, and findTranscript
+    // caches the hit, so this costs one directory scan per clear. Gated exactly like
+    // that resume guard — a discover-id agent (Codex) isn't bucketed this way, and a
+    // devcontainer session's transcript lives inside the container, not on the host.
+    const needsTranscript = adapterFor(entry.agent || 'claude').presetsSessionId
+      && !runtimeFor(entry.runtime).skipsHostResumeGuard;
+    if (needsTranscript && !(await transcriptFor(liveSessionId))) return false;
+    const prior = new Set(entry.priorLiveSessionIds || []);
+    if (entry.liveSessionId) prior.add(entry.liveSessionId);
+    prior.delete(liveSessionId); // re-swapping back to a conversation makes it current, not prior
+    entry.liveSessionId = liveSessionId;
+    if (prior.size) entry.priorLiveSessionIds = [...prior];
+    this._save();
+    return true;
   }
 
   // Register a conversation that exists on disk but was never launched by us as a

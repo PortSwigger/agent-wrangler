@@ -453,6 +453,22 @@ test('buildGraph: a discovered devcontainer session with a normal working pane h
   assert.equal(node.waitingFor, null);
 });
 
+// `/clear` starts a fresh conversation (new id, new transcript) inside the same pane,
+// so the pane's session file is the ONLY place that swap shows up. buildGraph already
+// enriches from the live id it finds there; it must also hand it to the session manager
+// or the entry keeps pointing at the abandoned conversation (stale label once dormant,
+// and Resume brings the abandoned one back).
+test('buildGraph writes back a live session id that changed under us (a /clear)', async () => {
+  const entry = { sessionId: 'clr1', agent: 'claude', cwd: '/nonexistent/repo', intent: 'the original ask', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_clr1');
+  const noted = [];
+  mgr.noteLiveSessionId = async (...args) => { noted.push(args); };
+  const discover = async () => [{ tmuxName: 'cc_clr1', socket: '', claudePid: 7171, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --session-id L1', paneTitle: '' }];
+  const runtimeResolver = () => ({ readLive: async () => ({ liveSid: 'L2', status: 'idle', rawStatus: 'idle', name: null, waitingFor: null }) });
+  await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture: async () => '' });
+  assert.deepEqual(noted, [['clr1', 'L2']], 'the card id and the conversation actually running');
+});
+
 // Claude's 'shell' status means "a Bash tool is tracked as live" — it can't
 // distinguish a still-blocking foreground command from a detached
 // run_in_background job the turn has already ended on. A still-blocking

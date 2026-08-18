@@ -80,6 +80,19 @@ function resolveClaudeTranscript(cardId, entry) {
   return null;
 }
 
+// Every transcript the card has owned, current first. `/clear` abandons the running
+// conversation for a fresh id in the same pane, and the board records the outgoing id
+// in `priorLiveSessionIds` — the pre-clear spend is real and belongs to this card, so
+// the report has to add it up the same way the board does. Prior ids resolve by exact
+// id only; the single-file-in-bucket guess is for the one live conversation.
+function resolveClaudeTranscripts(cardId, entry) {
+  const out = [];
+  const add = (file) => { if (file && !out.includes(file)) out.push(file); };
+  add(resolveClaudeTranscript(cardId, entry));
+  for (const id of entry.priorLiveSessionIds || []) add(byUuid.get(id));
+  return out;
+}
+
 // ---- usage accumulation (mirrors server/transcript-reader.js addUsage) ---
 function addUsage(totals, model, usage) {
   if (!usage) return;
@@ -247,15 +260,19 @@ for (const [cardId, entry] of Object.entries(entries)) {
   const label = (intent && intent !== '(resumed)' ? intent.slice(0, 50) : '')
     || entry.name || (entry.cwd ? path.basename(entry.cwd) : '') || cardId.slice(0, 8);
   if (agent === 'claude') {
-    const file = resolveClaudeTranscript(cardId, entry);
-    if (!file) { unresolved++; continue; }
-    const { totals, subAgentUsd, advisorUsd } = await monthTotalsFor(file, usageSince(entry));
-    const usd = costUsd(totals);
-    const tokens = tokensOf(totals);
-    if (tokens.total === 0) continue; // no activity this month (parent or sub-agents)
-    const uuid = path.basename(file, '.jsonl');
-    const owner = entry.liveSessionId === uuid || cardId === uuid; // true conversation owner vs a re-pointed resume
-    sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, advisorUsd, tokens, estimated: false, file, owner });
+    const files = resolveClaudeTranscripts(cardId, entry);
+    if (!files.length) { unresolved++; continue; }
+    // One row per conversation the card has owned, so a cleared-away conversation's
+    // spend still lands under the same card and task.
+    for (const file of files) {
+      const { totals, subAgentUsd, advisorUsd } = await monthTotalsFor(file, usageSince(entry));
+      const usd = costUsd(totals);
+      const tokens = tokensOf(totals);
+      if (tokens.total === 0) continue; // no activity this month (parent or sub-agents)
+      const uuid = path.basename(file, '.jsonl');
+      const owner = entry.liveSessionId === uuid || cardId === uuid; // true conversation owner vs a re-pointed resume
+      sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, advisorUsd, tokens, estimated: false, file, owner });
+    }
   } else if (agent === 'codex' && analyzeCodex) {
     // Codex rollouts aren't line-stamped the same way; attribute the whole
     // session to its createdAt month (estimated ChatGPT-plan pricing).

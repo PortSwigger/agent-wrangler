@@ -373,14 +373,30 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
   return deletedClaudeTranscript(cardId, entry, projectsDir);
 }
 
-// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and that used
-// to take the dashboard's history with it: the vanished file drops out of the listing
-// above, so it never reaches seenClaudeFiles and scanAllDaily's eviction loop then
-// deletes the very cache entry already holding its costed days. A transcript's path is
-// COMPUTABLE without a listing, so resolve to that same key and the cached result
-// survives as the permanent record (claudeDailyCached hands it back once the file is
-// unreadable). Reads claudeFileCache, which scanAllDaily loads before it resolves
-// anything.
+// Every transcript this card has owned, current conversation first. A card owns more
+// than one as soon as its agent runs `/clear`: that abandons the running conversation
+// and starts a fresh id in the same pane, and the wrangler records the outgoing id in
+// `priorLiveSessionIds` (session-manager `noteLiveSessionId`). An abandoned transcript
+// still holds every dollar spent before the clear, so cost them all — omitting one
+// doesn't merely under-report the dashboard, it keeps the file out of seenClaudeFiles
+// and so EVICTS its scan-cache entry, which for an already-deleted transcript is the
+// only surviving record of that spend.
+function resolveClaudeTranscripts(cardId, entry, index, projectsDir) {
+  const out = [];
+  const add = (file) => { if (file && !out.includes(file)) out.push(file); };
+  add(resolveClaudeTranscript(cardId, entry, index, projectsDir));
+  // Prior ids resolve by exact id only (plus the deleted-transcript path): the
+  // single-file-in-bucket heuristic guesses at an unknown id, which is right for the
+  // one conversation a card is currently running and wrong for a list of past ones.
+  for (const id of entry.priorLiveSessionIds || []) {
+    add(index.byUuid.get(id) || cachedComputedPath(id, entry, projectsDir));
+  }
+  return out;
+}
+
+// Where a session id's transcript WOULD live, but only if the scan cache already holds
+// a result for that path — which is what makes it safe to hand back a path that may no
+// longer exist on disk (see deletedClaudeTranscript below for why that matters).
 //
 // Gated on actually holding a cache entry claudeDailyCached will SERVE — same file, same
 // fork bound — because resolving unconditionally would point every never-scanned entry at
@@ -390,6 +406,21 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
 // threaded through: `since` is stored on the entry but is NOT part of the cache key (the
 // key is the file, and two card ids can share one), so presence alone wouldn't tell us
 // the hit will land.
+function cachedComputedPath(id, entry, projectsDir) {
+  const file = path.join(projectsDir, bucketName(entry.cwd), `${id}.jsonl`);
+  const since = usageSince(entry); // exactly what scanAllDaily will pass to claudeDailyCached
+  const cached = claudeFileCache && claudeFileCache.get(file);
+  return cached && (cached.since || 0) === since ? file : null;
+}
+
+// Claude Code deletes its own transcripts past cleanupPeriodDays (~30) and that used
+// to take the dashboard's history with it: the vanished file drops out of the listing
+// above, so it never reaches seenClaudeFiles and scanAllDaily's eviction loop then
+// deletes the very cache entry already holding its costed days. A transcript's path is
+// COMPUTABLE without a listing, so resolve to that same key and the cached result
+// survives as the permanent record (claudeDailyCached hands it back once the file is
+// unreadable). Reads claudeFileCache, which scanAllDaily loads before it resolves
+// anything.
 //
 // LAST, after both live-listing resolutions — never ahead of the single-file-in-bucket
 // heuristic, tempting as an exact id match looks. An entry whose liveSessionId names a
@@ -397,12 +428,9 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
 // jumping the queue would displace it, drop it from seenClaudeFiles and evict its own
 // still-recoverable cache entry.
 function deletedClaudeTranscript(cardId, entry, projectsDir) {
-  const bucket = bucketName(entry.cwd);
-  const since = usageSince(entry); // exactly what scanAllDaily will pass to claudeDailyCached
   for (const id of [entry.liveSessionId, cardId].filter(Boolean)) {
-    const file = path.join(projectsDir, bucket, `${id}.jsonl`);
-    const cached = claudeFileCache && claudeFileCache.get(file);
-    if (cached && (cached.since || 0) === since) return file;
+    const file = cachedComputedPath(id, entry, projectsDir);
+    if (file) return file;
   }
   return null;
 }
@@ -624,17 +652,20 @@ export async function scanAllDaily({
     const agent = entry.agent || 'claude';
     const task = taskInfoFor(cardId, entry, assignments, taskNameById);
     if (agent === 'claude') {
-      const file = resolveClaudeTranscript(cardId, entry, index, projectsDir);
-      if (!file) continue;
-      seenClaudeFiles.add(file);
-      const cd = await claudeDailyCached(file, usageSince(entry));
-      await maybeYield();
-      if (cd.failed) failedFiles += 1;
-      const days = normalizeClaudeDays(cd);
-      if (!Object.keys(days).length) continue;
-      const uuid = path.basename(file, '.jsonl');
-      const owner = entry.liveSessionId === uuid || cardId === uuid;
-      raw.push({ file, owner, task, days });
+      // One row per transcript the card has owned (a `/clear` leaves earlier ones
+      // behind), each attributed to the same task — rollup sums rows, so the card's
+      // spend stays whole across a swap and every file stays in seenClaudeFiles.
+      for (const file of resolveClaudeTranscripts(cardId, entry, index, projectsDir)) {
+        seenClaudeFiles.add(file);
+        const cd = await claudeDailyCached(file, usageSince(entry));
+        await maybeYield();
+        if (cd.failed) failedFiles += 1;
+        const days = normalizeClaudeDays(cd);
+        if (!Object.keys(days).length) continue;
+        const uuid = path.basename(file, '.jsonl');
+        const owner = entry.liveSessionId === uuid || cardId === uuid;
+        raw.push({ file, owner, task, days });
+      }
     } else if (agent === 'codex' && analyzeCodex) {
       // Codex rollouts aren't reliably line-stamped for cost, so attribute the whole
       // (estimated, ChatGPT-plan-equivalent) session to its createdAt day — sub-monthly
