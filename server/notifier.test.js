@@ -118,6 +118,18 @@ test('auto-fix OFF suppresses every pane nudge (board toast is unaffected — no
   }
 });
 
+// The install-wide default (config.json autoFixPrChecksDefault, passed in by the
+// poll loop) only applies to a session with NO explicit choice of its own.
+test('auto-fix default OFF suppresses the nudge for a session with no explicit choice', () => {
+  assert.equal(planCheckTransition(ev('failing'), {}, false).nudge, false);
+  assert.equal(planCheckTransition(ev('failing'), undefined, false).nudge, false);
+});
+
+test('an explicit per-session auto-fix choice outranks the install-wide default either way', () => {
+  assert.equal(planCheckTransition(ev('failing'), { autoFixPrChecks: true }, false).nudge, true);
+  assert.equal(planCheckTransition(ev('failing'), { autoFixPrChecks: false }, true).nudge, false);
+});
+
 test('auto-fix OFF + auto-merge ON still merges a passing PR (merge is its own gate)', () => {
   assert.deepEqual(planCheckTransition(ev('passing'), { autoFixPrChecks: false, autoMergeOnPass: true }),
     { merge: true, nudge: false });
@@ -209,6 +221,12 @@ test('planDirtyTransition: session scope with autoFixPrChecks ON (default) nudge
 
 test('planDirtyTransition: autoFixPrChecks OFF suppresses the nudge', () => {
   assert.equal(planDirtyTransition({ scope: 'session' }, { autoFixPrChecks: false }), false);
+});
+
+test('planDirtyTransition: honours the install-wide default, but an explicit choice wins', () => {
+  assert.equal(planDirtyTransition({ scope: 'session' }, {}, false), false);
+  assert.equal(planDirtyTransition({ scope: 'session' }, { autoFixPrChecks: true }, false), true);
+  assert.equal(planDirtyTransition({ scope: 'session' }, { autoFixPrChecks: false }, true), false);
 });
 
 test('planDirtyTransition: a task-scope link never nudges (no single session pane to target)', () => {
@@ -324,6 +342,12 @@ test('planUnresolvedTransition: session scope with autoFixPrChecks ON (default) 
 
 test('planUnresolvedTransition: autoFixPrChecks OFF suppresses the nudge', () => {
   assert.equal(planUnresolvedTransition({ scope: 'session' }, { autoFixPrChecks: false }), false);
+});
+
+test('planUnresolvedTransition: honours the install-wide default, but an explicit choice wins', () => {
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, {}, false), false);
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, { autoFixPrChecks: true }, false), true);
+  assert.equal(planUnresolvedTransition({ scope: 'session' }, { autoFixPrChecks: false }, true), false);
 });
 
 test('planUnresolvedTransition: a task-scope link never nudges (no single session pane to target)', () => {

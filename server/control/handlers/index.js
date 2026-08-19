@@ -11,6 +11,7 @@ import { detachHandler } from './detach.js';
 import { attachHandler } from './attach.js';
 import { snoozeSetHandler, snoozeClearHandler } from './snooze.js';
 import { autoFixPrChecksHandler } from './auto-fix-pr-checks.js';
+import { autoFixPrChecksDefaultHandler } from './auto-fix-pr-checks-default.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { taskMemoryEnabledHandler } from './task-memory-enabled.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
@@ -71,6 +72,7 @@ export const CONTROL_HANDLERS = [
   snoozeSetHandler,
   snoozeClearHandler,
   autoFixPrChecksHandler,
+  autoFixPrChecksDefaultHandler,
   autoMergeOnPassHandler,
   taskMemoryEnabledHandler,
   subagentsExpandedByDefaultHandler,

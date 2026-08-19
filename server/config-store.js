@@ -122,3 +122,15 @@ export function trustCodexLaunchCwd(cfg = readConfig()) {
 export function childFullViewByDefault(cfg = readConfig()) {
   return cfg.childFullViewByDefault === true;
 }
+
+// The fallback for a session's `autoFixPrChecks` (the PR check-failure and
+// merge-conflict pane nudge) when that session has no explicit choice of its
+// own — the per-card toggle always wins over this, so flipping the default
+// never overrides a card someone has already set by hand. Default on, which is
+// exactly the behaviour before the setting existed; toggled from the board's
+// settings modal (config.json `autoFixPrChecksDefault: false` leaves
+// new/untouched sessions unnudged). Takes cfg (like taskMemoryEnabled) so tests
+// never write the shared config.json.
+export function autoFixPrChecksDefault(cfg = readConfig()) {
+  return cfg.autoFixPrChecksDefault !== false;
+}
