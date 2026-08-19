@@ -3001,6 +3001,12 @@ function hideSidebar() {
   // panel (close / deselect / Search switch) closes the diff too — it must never
   // outlive the session it belongs to. No-op when the diff is already closed.
   closeDiffPanel();
+  // Same reasoning for the chat view: its 2s poll must not keep running for a
+  // session nobody is looking at once the panel closes. renderSidebar mounts it
+  // per-session but only unmounts on a SWITCH to the terminal view, so closing/
+  // deselecting while chat is showing needs its own unmount here. No-op when
+  // nothing is mounted.
+  chatView.unmount();
 }
 
 // Drag-to-resize the sidebar (stretch the terminal wider than the grid).
@@ -3149,8 +3155,16 @@ function beginRename(sessionId) {
 // id) like every other per-session field, and persisted so a reload keeps your
 // choice. A session toggled by hand keeps it no matter how chatViewDefault moves.
 const CHAT_VIEW_KEY = 'cm-session-view';
+// Type-checked like panelSubagentShownOverrides below: a corrupted/tampered
+// value that still parses as valid JSON (a bare string, number, etc.) is not an
+// object, so setSessionView's `all[sessionId] = view` — outside any try/catch —
+// would throw a strict-mode TypeError assigning a property to a primitive.
+// Falling back to {} here keeps that assignment always safe.
 function readSessionViews() {
-  try { return JSON.parse(localStorage.getItem(CHAT_VIEW_KEY)) || {}; } catch { return {}; }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_VIEW_KEY));
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
 }
 function viewForSession(sessionId) {
   const stored = readSessionViews()[sessionId];

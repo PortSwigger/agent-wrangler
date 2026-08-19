@@ -2235,7 +2235,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-tool-output { white-space: pre-wrap; max-height: 220px; overflow: auto; }
 .chat-tool-output[data-truncated="1"]::after { content: ' …truncated'; color: var(--fg-muted); }
 .chat-tool-row[data-failed="1"] .chat-tool-name { color: var(--red-fg); }
-.chat-subagent { border: 1px solid var(--wf); background: color-mix(in srgb, var(--wf) 14%, transparent);
+/* Neutral, not violet — violet (--wf) is this codebase's workflow-nested-child
+   colour (see .workflow-box), a deliberately distinct concept from a sub-agent.
+   Matches .subagent-row's own resting style so a sub-agent reads the same way
+   here as it does on the board card. */
+.chat-subagent { border: 1px solid var(--border-muted); background: var(--surface);
   border-radius: 8px; padding: 6px 9px; font-size: 11.5px; cursor: pointer; }
 .chat-notice { border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 11.5px; }
 .chat-notice-bar { display: flex; align-items: center; gap: 9px; font-size: 11.5px;
