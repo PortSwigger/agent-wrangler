@@ -57,15 +57,17 @@ export function diffCheckStatus(links) {
 //   merge — run `gh pr merge` ONLY on a session-scope `passing` (== CLEAN ==
 //     mergeable) transition when `autoMergeOnPass` is set. Defaults OFF (merging
 //     is consequential); task links have no single entry so never merge.
-//   nudge — sendText a pane line to the live session. Gated by `autoFixPrChecks`
-//     (defaults ON when unset); suppressed for a task link (no single pane) and
-//     when we're about to merge (the merge sends its own line, and two unawaited
-//     sendTexts to one pane interleave).
+//   nudge — sendText a pane line to the live session. Gated by `autoFixPrChecks`,
+//     which falls back to the install-wide default (`fixDefault`, from
+//     config-store's autoFixPrChecksDefault) when the session has no explicit
+//     choice — hence ON when the caller passes nothing; suppressed for a task
+//     link (no single pane) and when we're about to merge (the merge sends its
+//     own line, and two unawaited sendTexts to one pane interleave).
 // The board toast is deliberately NOT gated here — it always fires in the poll
 // loop, independent of either flag.
-export function planCheckTransition(ev, entry) {
+export function planCheckTransition(ev, entry, fixDefault = true) {
   const merge = ev.scope === 'session' && ev.checkStatus === 'passing' && Boolean(entry?.autoMergeOnPass);
-  const fixEnabled = entry?.autoFixPrChecks ?? true;
+  const fixEnabled = entry?.autoFixPrChecks ?? fixDefault;
   const nudge = ev.scope === 'session' && fixEnabled && !merge;
   return { merge, nudge };
 }
@@ -142,11 +144,12 @@ export function diffDirty(links) {
 
 // Decide whether a dirty transition should nudge the owning session's pane.
 // Session-scope only (a task link has no single pane to nudge); reuses the same
-// `autoFixPrChecks` opt-in the check-status nudge uses (defaults ON when unset) —
+// `autoFixPrChecks` opt-in the check-status nudge uses, with the same
+// install-wide `fixDefault` fallback when the session has no explicit choice —
 // dirty is just another PR notification, not a new toggle surface. There is no
 // auto-merge equivalent: a DIRTY PR is by definition not mergeable.
-export function planDirtyTransition(ev, entry) {
-  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? true);
+export function planDirtyTransition(ev, entry, fixDefault = true) {
+  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? fixDefault);
 }
 
 // The one-line pane nudge for a dirty transition, sharing prPaneLine's exact
@@ -209,12 +212,13 @@ export function diffUnresolvedComments(links) {
 
 // Decide whether an unresolved-comment increase should nudge the owning
 // session's pane. Session-scope only (a task link has no single pane to
-// nudge); reuses the same `autoFixPrChecks` opt-in the check/dirty nudges use
-// (defaults ON when unset) — this is just another PR notification, not a new
-// toggle surface. There is no merge branch — an unresolved comment never makes
-// a PR mergeable.
-export function planUnresolvedTransition(ev, entry) {
-  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? true);
+// nudge); reuses the same `autoFixPrChecks` opt-in the check/dirty nudges use,
+// with the same install-wide `fixDefault` fallback when the session has no
+// explicit choice — this is just another PR notification, not a new toggle
+// surface. There is no merge branch — an unresolved comment never makes a PR
+// mergeable.
+export function planUnresolvedTransition(ev, entry, fixDefault = true) {
+  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? fixDefault);
 }
 
 // The one-line pane nudge for an unresolved-comment increase, pluralized and

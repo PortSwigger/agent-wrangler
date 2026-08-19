@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -132,4 +132,10 @@ test('childFullViewByDefault defaults to off (compact); only an explicit true en
   assert.equal(childFullViewByDefault({}), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: false }), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: true }), true);
+});
+
+test('autoFixPrChecksDefault defaults to on; only an explicit false disables', () => {
+  assert.equal(autoFixPrChecksDefault({}), true);
+  assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: true }), true);
+  assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: false }), false);
 });

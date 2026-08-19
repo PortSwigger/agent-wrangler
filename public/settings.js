@@ -51,6 +51,14 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'autoFixPrChecksDefault',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Auto-fix PR checks by default',
+    help: 'Whether a new session nudges its agent when a linked PR needs attention — failing required checks, a merge conflict, or new unresolved review threads. A session you have toggled by hand from its card menu keeps its own choice regardless of this setting.',
+    default: true,
+  },
+  {
     id: 'trustCodexLaunchCwd',
     type: 'toggle',
     scope: 'server',

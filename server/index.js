@@ -22,7 +22,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -141,6 +141,11 @@ async function runPrStatusSweep(only) {
     // one pane would interleave — the same hazard planCheckTransition's merge
     // branch already guards against for merge-vs-nudge).
     const checkStatusKeys = new Set();
+    // The install-wide fallback for a session with no explicit autoFixPrChecks —
+    // read once per sweep and shared by all three transition loops below, so one
+    // tick can't gate a checks nudge and a dirty/unresolved one on different
+    // defaults.
+    const fixPrDefault = autoFixPrChecksDefault();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
@@ -151,7 +156,7 @@ async function runPrStatusSweep(only) {
       // here. The nudge now WAKES a dormant/suspended session (deliverPrNudge) so it
       // behaves like an idle-but-live one; the auto-merge confirmation line below
       // stays board-only when dormant (terminal/informational — not expanded here).
-      const { merge: willMerge, nudge } = planCheckTransition(ev, entry);
+      const { merge: willMerge, nudge } = planCheckTransition(ev, entry, fixPrDefault);
       if (nudge) {
         // A live session gets the nudge in its pane; a DORMANT one (entry, no tmux)
         // is woken and handed the SAME nudge as its resume intent — dormancy is only
@@ -190,7 +195,7 @@ async function runPrStatusSweep(only) {
     for (const ev of diffDirty(current)) {
       broadcast({ type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number });
       const entry = sessionManager.entryFor(ev.ownerId);
-      if (planDirtyTransition(ev, entry)) {
+      if (planDirtyTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, sendText,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
@@ -212,7 +217,7 @@ async function runPrStatusSweep(only) {
                   url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta });
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
-      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry)) {
+      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, sendText,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
@@ -498,6 +503,7 @@ async function rebuild() {
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.childFullViewByDefault = childFullViewByDefault();
+  graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   lastGraph = graph;
 
   for (const sid of autoArchived) {

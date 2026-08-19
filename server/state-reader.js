@@ -13,6 +13,7 @@ import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { usageSince } from './transcript-reader.js';
+import { autoFixPrChecksDefault } from './config-store.js';
 
 const execp = promisify(execFile);
 
@@ -253,6 +254,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
   // doesn't pass one (most tests) sees no `mail` field rather than a fabricated
   // empty one.
   const mailInfo = (sid) => (mailStore ? mailStore.unreadInfo(sid, now) : undefined);
+  // The install-wide fallback every card's autoFixPrChecks resolves against when it
+  // has no explicit per-session choice. Read ONCE per build (readConfig is a sync
+  // file read and this is per-session, three times over), so a mid-build settings
+  // flip can't hand two cards in one graph different defaults.
+  const fixPrDefault = autoFixPrChecksDefault();
   const sessions = readSessions();
   const roster = readRosterBySession();
 
@@ -462,7 +468,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
-      autoFixPrChecks: mapEntry?.autoFixPrChecks ?? true,
+      autoFixPrChecks: mapEntry?.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: mapEntry?.autoMergeOnPass ?? false,
       childFullView: mapEntry?.childFullView ?? null,
       links: mapEntry?.links || [],
@@ -620,7 +626,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
-      autoFixPrChecks: appEntry?.autoFixPrChecks ?? true,
+      autoFixPrChecks: appEntry?.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: appEntry?.autoMergeOnPass ?? false,
       childFullView: appEntry?.childFullView ?? null,
       links: appEntry?.links || [],
@@ -711,7 +717,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
-      autoFixPrChecks: entry.autoFixPrChecks ?? true,
+      autoFixPrChecks: entry.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: entry.autoMergeOnPass ?? false,
       childFullView: entry.childFullView ?? null,
       links: entry.links || [],
