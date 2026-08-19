@@ -40,6 +40,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
+import { initChatView } from './chat-view.js';
 
 let currentView = 'grid';
 
@@ -3035,6 +3036,21 @@ function hideSidebar() {
 // Managed sessions get a live terminal; others get an explanation + Resume.
 function renderSidebar(s) {
   showSidebar();
+  // The view branch goes here, not in selectSession: this function owns the whole
+  // terminal lifecycle (openTerminal / closeTerminal / the dormant + exited notes
+  // it writes into #term), so branching anywhere else would let a terminal attach
+  // land on top of the chat view.
+  if (viewForSession(s.sessionId) === 'chat') {
+    // Chat renders from the transcript on disk, so it works for dormant, exited and
+    // archived sessions alike — none of the managed/unmanaged handling below applies,
+    // and that is the point: this view shows sessions the terminal cannot.
+    document.getElementById('term-wrap').hidden = true;
+    closeTerminal(); // no-op when nothing is attached
+    chatView.mount(s.sessionId);
+    return;
+  }
+  chatView.unmount();
+  document.getElementById('term-wrap').hidden = false;
   if (s.managed) {
     if (holdForRestart(s)) return; // restart in flight — hold the spinner, not the dead pane
     resuming.delete(s.sessionId); // resumed — drop the in-flight placeholder
@@ -3067,6 +3083,14 @@ function renderSidebar(s) {
     send({ type: 'resume', sessionId: s.sessionId });
     toast('Resuming…');
   });
+}
+
+// Re-apply the current view choice for a session already selected — what the
+// Chat/Terminal toggle calls. Routes through renderSidebar so there is exactly ONE
+// place that decides which view is showing.
+function applySessionView(sessionId) {
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s) renderSidebar(s);
 }
 
 // Swap the panel title for an input to rename the session. Enter/blur commits,
@@ -3121,6 +3145,24 @@ function beginRename(sessionId) {
 // on every fresh page load — there's no session-switch reset to write here at
 // all (contrast the old code, which had to remember to reset a transient flag);
 // each session's own state is just looked up fresh from its Map/Set.
+// Which view each session's sidebar shows. Keyed on the CARD id (never the live
+// id) like every other per-session field, and persisted so a reload keeps your
+// choice. A session toggled by hand keeps it no matter how chatViewDefault moves.
+const CHAT_VIEW_KEY = 'cm-session-view';
+function readSessionViews() {
+  try { return JSON.parse(localStorage.getItem(CHAT_VIEW_KEY)) || {}; } catch { return {}; }
+}
+function viewForSession(sessionId) {
+  const stored = readSessionViews()[sessionId];
+  if (stored === 'chat' || stored === 'terminal') return stored;
+  return chatViewDefault ? 'chat' : 'terminal';
+}
+function setSessionView(sessionId, view) {
+  const all = readSessionViews();
+  all[sessionId] = view;
+  try { localStorage.setItem(CHAT_VIEW_KEY, JSON.stringify(all)); } catch {}
+}
+
 const PANEL_SA_SHOWN_KEY = 'wrangler.panelSubagentShown';
 const panelSubagentShownOverrides = (() => {
   try {
@@ -3161,8 +3203,10 @@ function renderPanel(sessionId) {
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
+  const view = viewForSession(sessionId);
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
+  if (view === 'chat') chatView.setStatus(displayStatus(s));
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];
@@ -3195,6 +3239,10 @@ function renderPanel(sessionId) {
         <div class="sess-row1">
           <span class="sess-name" id="session-name" title="Double-click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
+            <span class="chat-seg" role="group" aria-label="Session view">
+              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
+              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+            </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
             <span class="sess-acts-divider"></span>
             <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
@@ -3251,6 +3299,15 @@ function renderPanel(sessionId) {
     e.stopPropagation();
     const r = actionsBtn.getBoundingClientRect();
     openActionsMenu(sessionId, r.left, r.bottom + 4);
+  });
+  panel.querySelectorAll('.chat-seg-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.view;
+      if (next === viewForSession(sessionId)) return;
+      setSessionView(sessionId, next);
+      applySessionView(sessionId);
+      renderPanel(sessionId);
+    });
   });
 }
 
@@ -4471,6 +4528,7 @@ function connect() {
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
     else if (msg.type === 'styles') setCustomStyles(msg.styles);
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
+    else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
@@ -4618,6 +4676,14 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
 initStyles();
+
+// Constructed once: renderSidebar/applySessionView mount/unmount it per session,
+// and the WS dispatch below feeds it every 'chat' poll reply.
+const chatView = initChatView({
+  send,
+  onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
+  onOpenDiff: (sid) => openDiffPanel(sid),
+});
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
 // Restore the deep link on load. #view=search (or a legacy #view=history
