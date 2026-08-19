@@ -4697,6 +4697,7 @@ const chatView = initChatView({
   send,
   onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
   onOpenDiff: (sid) => openDiffPanel(sid),
+  onGoTerminal: (sid) => { setSessionView(sid, 'terminal'); applySessionView(sid); renderPanel(sid); },
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();

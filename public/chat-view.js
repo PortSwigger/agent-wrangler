@@ -13,7 +13,7 @@ import { createRenderer } from './markdown-preview.js';
 const POLL_MS = 2000;
 const BOTTOM_SLACK_PX = 40;
 
-export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
+export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   const dom = createChatDom({ renderMarkdown: createRenderer(window.markdownit) });
@@ -53,7 +53,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
   sendBtn.addEventListener('click', submit);
   stopBtn.addEventListener('click', () => sessionId && send({ type: 'interrupt', sessionId }));
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    // isComposing: an IME user (Japanese/Chinese/Korean) presses Enter to confirm
+    // a composition, not to submit — without this guard that Enter fires submit()
+    // before the composed text even lands in the field.
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -151,15 +154,29 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
     },
     setStatus(status) {
       const bar = document.getElementById('chat-notice-bar');
-      const stop = document.getElementById('chat-stop');
-      bar.hidden = status !== 'needs-you';
-      if (status === 'needs-you') {
-        bar.textContent = '';
+      const box = document.querySelector('.chat-box');
+      const blocked = status === 'needs-you';
+      bar.hidden = !blocked;
+      bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
+      if (blocked) {
         const msg = document.createElement('span');
-        msg.textContent = 'Waiting on you — answer in the terminal';
+        msg.textContent = 'Waiting on you — this prompt only exists in the terminal.';
         bar.appendChild(msg);
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'chat-notice-go';
+        go.textContent = 'Terminal →';
+        go.addEventListener('click', () => onGoTerminal?.(sessionId));
+        bar.appendChild(go);
       }
-      stop.hidden = status !== 'working';
+      // Dim rather than disable-and-hide: a prompt typed while blocked would land in
+      // the permission dialog, not the conversation, so the composer must visibly
+      // stop inviting input until the dialog is answered — and revert cleanly once
+      // it isn't, since this runs on every render in both directions.
+      box?.setAttribute('data-blocked', blocked ? '1' : '0');
+      input.placeholder = blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…';
+      input.disabled = blocked;
+      stopBtn.hidden = status !== 'working';
     },
   };
 }

@@ -2250,3 +2250,10 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-box textarea { flex: 1; resize: none; border: 0; background: transparent;
   color: var(--fg); font: inherit; max-height: 140px; }
 .chat-hint, .chat-working { font-size: 10.5px; color: var(--fg-muted); margin-top: 5px; }
+.chat-box[data-blocked="1"] { opacity: .55; }
+/* --warn/--text (brief names, aspirational) map to the real vars this file uses
+   for the same status elsewhere: --snooze is what .chat-notice-bar itself is
+   already tinted with above, and --fg is the general text colour. */
+.chat-notice-go { margin-left: auto; font: inherit; font-size: 11.5px; font-weight: 600;
+  border: 1px solid var(--snooze); border-radius: 6px; padding: 3px 9px;
+  background: transparent; color: var(--fg); cursor: pointer; white-space: nowrap; }
