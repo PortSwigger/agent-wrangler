@@ -3062,6 +3062,12 @@ function renderSidebar(s) {
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
     chatView.mount(s.sessionId);
+    // AFTER mount, which resets the view's cached status to null: selectSession calls
+    // renderPanel (the only other setStatus caller) BEFORE this function, so without
+    // re-seeding here an already-working session shows no "Working — running X" line
+    // until the next ~4s graph rebuild, while Stop — driven off the same status — is
+    // already visible. The two must never disagree.
+    chatView.setStatus(displayStatus(s));
     return;
   }
   chatView.unmount();
