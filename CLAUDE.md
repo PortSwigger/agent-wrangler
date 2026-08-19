@@ -285,7 +285,8 @@ don't re-derive it.
 - **The chat view's read path must not apply the fork bound and must not price anything.**
   A fork replaying parent history is correct for *reading*; `usageSince` bounds spend only.
   Three cost scanners already have to agree on `iterations[]`/advisor/fork rules — the chat
-  path deliberately shows model and tokens only so it never becomes a fourth. `subagent.usd`
+  path deliberately shows model only so it never becomes a fourth (no tokens are produced or
+  rendered anywhere on this path). `subagent.usd`
   is forwarded from `transcript-reader.js`, not recomputed (`server/chat-events.js`).
 - **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
   `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
