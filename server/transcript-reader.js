@@ -282,7 +282,7 @@ export async function activityInRange(sessionId, startMs, endMs, projectsDir = P
 }
 
 function emptyState(transcript, since = 0) {
-  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, advisorTotals: {}, subAdvisorTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, seenUsageIds: new Set(), apiError: false };
+  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, advisorTotals: {}, subAdvisorTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, currentModel: null, seenUsageIds: new Set(), apiError: false };
 }
 
 // Add one per-model totals bag into another (the shape addUsage builds), so the
@@ -382,6 +382,9 @@ export function scanLine(line, state) {
   const inherited = state.since > 0 && entry.timestamp && Date.parse(entry.timestamp) < state.since;
   const msg = entry.message;
   if (!msg) return;
+  if (!inherited && !entry.isSidechain && !entry.isApiErrorMessage && msg.role === 'assistant' && typeof msg.model === 'string' && msg.model && !msg.model.startsWith('<')) {
+    state.currentModel = msg.model;
+  }
   // A dropped API connection ends the turn on a synthetic assistant message
   // flagged isApiErrorMessage, with no permission request following — so the
   // status file just reports idle, indistinguishable from a normal finish.
@@ -826,6 +829,7 @@ function summarise(state) {
     lastActivity: state.lastActivity || null,
     summary: state.summary || null,
     aiTitle: state.aiTitle || null,
+    currentModel: state.currentModel || null,
     apiError: Boolean(state.apiError),
   };
 }

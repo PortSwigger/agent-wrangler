@@ -59,7 +59,13 @@ function scanLine(line, state) {
   try { entry = JSON.parse(line); } catch { return; }
   const p = entry.payload || entry;
   const kind = p.type || entry.type;
-  if (kind === 'turn_context' && typeof p.model === 'string') state.model = p.model;
+  if (kind === 'turn_context' && typeof p.model === 'string') {
+    state.model = p.model;
+    state.pendingModel = p.model;
+  }
+  if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
+    state.currentModel = state.pendingModel;
+  }
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
   if (!state.summary && kind === 'user_message') {
@@ -71,7 +77,7 @@ function scanLine(line, state) {
 export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
   const file = index ? index.get(sessionId) || null : await findRollout(sessionId, sessionsDir);
   if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
-  const state = { usage: null, model: null, summary: null };
+  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -91,6 +97,7 @@ export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, in
     usd: codexCostUsd(totals),
     costByType: codexCostUsdByType(totals), // $ split across input/output/cache for the usage dashboard's Token-type slice
     model, // surfaced so the dashboard can attribute Codex spend to its model bucket
+    currentModel: state.currentModel || null,
     tokens: { input, output, cacheWrite: 0, cacheRead },
     subAgents: [],
     summary: state.summary,

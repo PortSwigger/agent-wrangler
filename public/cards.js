@@ -206,7 +206,7 @@ export function mailBadgeHtml(s) {
 
 export function modelPillHtml(model) {
   if (!model) return '';
-  return `<span class="card-tag model-pill" title="model">${esc(model)}</span>`;
+  return `<span class="card-tag model-pill" title="${esc(model)}">${esc(model)}</span>`;
 }
 
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
@@ -254,7 +254,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const tokenChip = expanded && s.tokens
     ? `<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`
     : '';
-  const modelPill = modelPillHtml(s.model);
+  const modelPill = modelPillHtml(s.currentModel);
   // The show/hide pill; the zone itself renders INSIDE the card (below), not as
   // a sibling after it — otherwise it's unclear which card a zone belongs to
   // once a tile holds more than one. Shown whenever the session has any

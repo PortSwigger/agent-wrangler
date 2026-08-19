@@ -224,6 +224,15 @@ test('buildGraph carries the mapping snooze onto the board node', async () => {
   assert.deepEqual(node.snooze, { until: 9999, createdAt: 1 });
 });
 
+test('buildGraph carries the transcript-derived current model onto a dormant board node', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'model-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'opusplan' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({ currentModel: 'claude-sonnet-4' }));
+  const node = graph.sessions.find((s) => s.sessionId === 'model-sid');
+  assert.equal(node.currentModel, 'claude-sonnet-4');
+});
+
 test('buildGraph: with no mailStore injected, `mail` is omitted (not a fabricated empty object)', async () => {
   const mgr = makeDormantManager([{ sessionId: 'no-mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
   const graph = await buildGraph(mgr, async () => ({}));
