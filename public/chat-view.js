@@ -38,6 +38,34 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   const sendBtn = document.getElementById('chat-send');
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
+  const working = document.getElementById('chat-working');
+
+  // The working line's two inputs — the last reply's pending tool call and the
+  // last known session status — arrive on separate, asynchronous paths
+  // (onChatReply and setStatus), so both are held here and consulted together
+  // by workingLine() rather than either call site deciding on its own view.
+  let lastStatus = null;
+  let lastPending = null;
+
+  // A pending entry alone is not enough to claim a tool is running: the
+  // scanner's pending map is deliberately persistent across polls (so a
+  // tool_use pairs with a tool_result arriving in a later window), which means
+  // an ORPHANED entry — result never arriving because the pane was killed or
+  // suspended mid-tool, or the call was interrupted by this view's own Stop
+  // button — survives and would otherwise be reported forever. Gating on the
+  // session's real status (the same signal that drives stopBtn.hidden below)
+  // keeps the working line consistent with the Stop button instead of
+  // contradicting it.
+  function workingLine(status, pending) {
+    if (status !== 'working' || !pending) return null;
+    return `Working — running ${pending.name}${pending.target ? `: ${pending.target}` : ''}`;
+  }
+
+  function renderWorking() {
+    const line = workingLine(lastStatus, lastPending);
+    working.hidden = !line;
+    if (line) working.textContent = line;
+  }
 
   function submit() {
     const text = input.value.trim();
@@ -102,6 +130,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       offset = null;
       generation += 1;
       stream.textContent = '';
+      // A new era starts with no known pending call or status — otherwise the
+      // previous session's working line would flash on screen until this
+      // session's own setStatus/onChatReply arrives.
+      lastPending = null;
+      lastStatus = null;
+      renderWorking();
       wrap.hidden = false;
       poll();
       clearInterval(timer);
@@ -114,6 +148,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       generation += 1;
       wrap.hidden = true;
       stream.textContent = '';
+      lastPending = null;
+      lastStatus = null;
+      renderWorking();
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -129,13 +166,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // still refresh it — skipping this would freeze the indicator whenever two
       // same-window polls overlap. A stale-era reply's pending is already excluded
       // by the token check, so it never reaches this line.
-      const working = document.getElementById('chat-working');
-      if (msg.pending) {
-        working.textContent = `Working — running ${msg.pending.name}${msg.pending.target ? `: ${msg.pending.target}` : ''}`;
-        working.hidden = false;
-      } else {
-        working.hidden = true;
-      }
+      lastPending = msg.pending || null;
+      renderWorking();
       // Apply only forward progress. Two overlapping polls sent before either had
       // replied carry the SAME offset back (neither saw the other's result), so
       // the second is dropped here instead of re-appending the same window; null
@@ -153,6 +185,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       appendItems(groupChatEvents(msg.events));
     },
     setStatus(status) {
+      // A transition AWAY from 'working' must hide the line even with no new
+      // reply in flight (e.g. suspend, or the pane dying mid-tool) — otherwise
+      // the last reply's pending entry stays displayed after the Stop button
+      // (driven by this same status) has already disappeared.
+      lastStatus = status;
+      renderWorking();
       const bar = document.getElementById('chat-notice-bar');
       const box = document.querySelector('.chat-box');
       const blocked = status === 'needs-you';

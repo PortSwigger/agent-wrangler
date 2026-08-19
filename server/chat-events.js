@@ -61,6 +61,25 @@ function capInput(input) {
   return { input: capped, truncated };
 }
 
+// The pending map is deliberately persistent across polls (see createChatScanner)
+// so a tool_use in one window pairs with a tool_result arriving in a later one —
+// but a call whose result never arrives (pane killed or suspended mid-tool, or
+// interrupted by the chat view's own Stop button) is orphaned forever, and
+// without a cap it sits in the map for the scanner's whole cached lifetime.
+// Worse, an orphaned Write/apply_patch entry pins its UNCAPPED input (capInput
+// only copies a bounded slice at emission time) — that's the one genuinely
+// unbounded dimension of this otherwise-bounded cache. A real in-flight set is
+// one or two calls; 32 is generous headroom above that while still bounding the
+// worst case an orphan can pin.
+const MAX_PENDING = 32;
+
+function setPending(pending, id, entry) {
+  pending.set(id, entry);
+  if (pending.size > MAX_PENDING) {
+    pending.delete(pending.keys().next().value); // oldest-out, same idiom as the scanner LRU cache
+  }
+}
+
 function tsOf(iso) {
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : 0;
@@ -191,7 +210,7 @@ function pushClaude(entry, state) {
         continue;
       }
       if (b?.type === 'tool_use' && b.id) {
-        state.pending.set(b.id, { id: b.id, name: b.name || 'tool', target: toolTarget(b.input), input: b.input ?? null });
+        setPending(state.pending, b.id, { id: b.id, name: b.name || 'tool', target: toolTarget(b.input), input: b.input ?? null });
       }
     }
   }
@@ -262,7 +281,7 @@ function pushCodex(entry, state) {
     // ever carries call_id, so keying on `id` silently orphans every result.
     if (!p.call_id) return out;
     const input = codexArgs(p.arguments);
-    state.pending.set(p.call_id, {
+    setPending(state.pending, p.call_id, {
       id: p.call_id, name: p.name || p.type, target: toolTarget(input), input,
     });
     state.prevTs = ts;

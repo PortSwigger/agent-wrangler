@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanChatText, MAX_TOOL_TEXT } from './chat-events.js';
+import { scanChatText, createChatScanner, MAX_TOOL_TEXT } from './chat-events.js';
 
 const claudeLines = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n');
 
@@ -315,6 +315,38 @@ test('a notice needs both is_error and the denial phrase — a successful result
   );
   const noNotice = scanChatText(okWithSamePhrase, 'claude').events.find((e) => e.kind === 'notice');
   assert.equal(noNotice, undefined, 'a successful result must not be read as a denial just because the phrase appears in its output');
+});
+
+test('the pending map is bounded: an old orphan is evicted once the cap is exceeded', () => {
+  const scanner = createChatScanner('claude');
+  // One tool_use per line, none ever paired with a tool_result — each stays
+  // "pending" (orphaned) forever, the exact shape a killed/suspended pane
+  // leaves behind. Feed comfortably more than the cap (32) so eviction must
+  // have happened for the assertions below to hold.
+  const toolUseLine = (id) => JSON.stringify({
+    type: 'assistant', timestamp: '2026-08-14T10:00:01.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `cmd-${id}` } }] },
+  });
+  const toolResultLine = (id) => JSON.stringify({
+    type: 'user', timestamp: '2026-08-14T10:00:02.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+  });
+
+  for (let i = 0; i < 40; i += 1) scanner.push(toolUseLine(`tu_${i}`));
+
+  // The oldest orphan (tu_0) must have been evicted — pending() no longer
+  // reports it as the (only) survivor, and a tool_result arriving for it now
+  // finds nothing to pair with and emits no event.
+  const events = scanner.push(toolResultLine('tu_0'));
+  assert.deepEqual(events, [], 'a result for a long-evicted call must pair with nothing');
+
+  // A recent call (well within the cap of the most recent 32) must still be
+  // tracked and pair normally — the cap must not have wiped everything.
+  const recentEvents = scanner.push(toolResultLine('tu_39'));
+  assert.equal(recentEvents.length, 1, 'a recent call must still pair correctly');
+  assert.equal(recentEvents[0].id, 'tu_39');
+
+  assert.notEqual(scanner.pending()?.target, 'cmd-tu_0', 'the oldest orphan must no longer be what pending() reports');
 });
 
 test('a blank Claude thinking block (content redacted into signature) still emits a presence-only thinking event', () => {
