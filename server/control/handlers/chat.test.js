@@ -64,6 +64,27 @@ test('chat: a missing transcript replies with an empty stream, not an error', as
   assert.equal(c.sent[0].offset, 0);
 });
 
+test('chat: echoes the client token verbatim on a normal reply', async () => {
+  // The client (chat-view.js) compares this against its own current generation
+  // to tell a reply from an earlier mount era apart from the current one, since
+  // concurrent chat requests are not serialized and can complete out of order —
+  // sessionId alone can't distinguish two eras of the same session id.
+  const file = await tmpTranscript([userLine('one', '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 7 }, c);
+  assert.equal(c.sent[0].token, 7);
+});
+
+test('chat: echoes the client token on the missing-transcript early return too', async () => {
+  // Every reply path must carry it — a path that silently drops the token would
+  // make the client permanently ignore replies for that session, since a token
+  // of `undefined` never matches a real generation.
+  const c = ctx(null);
+  c.findTranscript = async () => null;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 3 }, c);
+  assert.equal(c.sent[0].token, 3);
+});
+
 test('chat: a windowed read whose boundary falls mid-multi-byte-char still returns aligned offsets', async () => {
   // Every line carries multi-byte characters, so the WINDOW_BYTES cut almost
   // certainly lands inside one. The invariant under test: whatever the window

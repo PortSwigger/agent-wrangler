@@ -11,6 +11,16 @@ export const WINDOW_BYTES = 256 * 1024;
 // to the requesting client only (like subagent-detail / get-memory), never
 // broadcast — only the reader of this session needs it. findTranscript is a ctx
 // seam for test isolation.
+//
+// `token`, like `sessionId`, is echoed back verbatim and unvalidated on EVERY
+// reply path below — the server never interprets it. The client (chat-view.js)
+// uses it to tell a reply sent under an earlier "mount era" apart from one sent
+// under the current era, which the sessionId alone can't do (reopening the same
+// session keeps the id but not the era) and which arrival order can't do either,
+// since concurrent `chat` requests are not awaited in series (server/index.js's
+// ws 'message' handler) and can complete out of order. Every early return here
+// must carry it too, or a reply missing it looks to the client like the session
+// silently stopped updating.
 export const chatHandler = {
   type: 'chat',
   async handler(msg, ctx) {
@@ -24,7 +34,7 @@ export const chatHandler = {
 
     const file = await findTranscript(convId);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
       return;
     }
 
@@ -32,7 +42,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
       return;
     }
 
@@ -46,7 +56,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
       return;
     }
     try {
@@ -83,7 +93,7 @@ export const chatHandler = {
         if (lastNl < from) {
           // No complete line in range. Resume from the line boundary we found, so
           // the next poll does not re-read the partial head.
-          ctx.reply({ type: 'chat', sessionId: msg.sessionId, events: [], offset: start + from, more: windowed, pending: null });
+          ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: start + from, more: windowed, pending: null });
           return;
         }
         const complete = buf.subarray(from, lastNl + 1).toString('utf8');
@@ -91,7 +101,7 @@ export const chatHandler = {
         const events = [];
         for (const line of complete.split('\n')) events.push(...scanner.push(line));
         const offset = start + lastNl + 1;
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, events, offset, more: windowed, pending: scanner.pending() });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner.pending() });
         return;
       }
     } finally {

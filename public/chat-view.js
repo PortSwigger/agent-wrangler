@@ -24,13 +24,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
   // Bumped on every mount/unmount so an in-flight reply from a closed-then-reopened
   // session (same session id, different era) can be told apart from one belonging
   // to what's on screen now — the session-id check alone can't see this, since
-  // reopening the same session leaves the id unchanged.
+  // reopening the same session leaves the id unchanged. Sent as `token` on every
+  // request and echoed back verbatim by chat.js, so onChatReply can compare it
+  // against the CURRENT generation directly — no arrival-order assumption needed
+  // (concurrent `chat` requests aren't serialized server-side and can complete
+  // out of order; an earlier design queued generations by send order and got
+  // this exact case backwards under reordering).
   let generation = 0;
-  // FIFO: one entry pushed per poll() send, shifted off per onChatReply. A single
-  // WS connection preserves send order, so the oldest queued entry always belongs
-  // to whichever reply arrives next — this is what lets a stale entry be told
-  // apart from a current one without the server echoing anything back for it.
-  const pollGenerations = [];
 
   const atBottom = () => stream.scrollHeight - stream.scrollTop - stream.clientHeight < BOTTOM_SLACK_PX;
 
@@ -60,8 +60,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
 
   function poll() {
     if (!sessionId) return;
-    pollGenerations.push(generation);
-    send({ type: 'chat', sessionId, ...(offset == null ? {} : { sinceOffset: offset }) });
+    send({ type: 'chat', sessionId, token: generation, ...(offset == null ? {} : { sinceOffset: offset }) });
   }
 
   return {
@@ -85,20 +84,19 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
       stream.textContent = '';
     },
     onChatReply(msg) {
-      // Shift unconditionally, before any early return: every reply that reaches
-      // here corresponds to exactly one poll() push, whether or not it's about to
-      // be dropped below. Returning early without shifting would leave that entry
-      // stranded in the queue, permanently offsetting every later shift by one.
-      const era = pollGenerations.shift();
       if (!sessionId || msg.sessionId !== sessionId) return;
       // Drop the whole reply if it was sent under an earlier era than the one
       // showing now — a remount already reset offset and the stream locally, so
       // nothing in a stale-era reply (events, offset, or pending) can be trusted.
-      if (era !== generation) return;
-      // Update the working line before the offset gate below: pending describes
-      // this reply's OWN moment regardless of whether it carried new events, so a
-      // same-offset "nothing new" reply must still refresh it — skipping this
-      // would freeze the indicator whenever two same-window polls overlap.
+      // Comparing the echoed token directly against the current generation needs
+      // no ordering assumption, unlike a send-order queue would.
+      if (msg.token !== generation) return;
+      // Update the working line after the token check above but before the offset
+      // gate below: pending describes this reply's OWN moment regardless of
+      // whether it carried new events, so a same-offset "nothing new" reply must
+      // still refresh it — skipping this would freeze the indicator whenever two
+      // same-window polls overlap. A stale-era reply's pending is already excluded
+      // by the token check, so it never reaches this line.
       const working = document.getElementById('chat-working');
       if (msg.pending) {
         working.textContent = `Working — running ${msg.pending.name}${msg.pending.target ? `: ${msg.pending.target}` : ''}`;
