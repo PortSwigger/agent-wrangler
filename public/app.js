@@ -328,7 +328,14 @@ function applyGraph(graph) {
     const sel = latestSessions.find((x) => x.sessionId === selectedSessionId);
     if (sel && holdForRestart(sel)) {
       // spinner held — don't attach the dying pane
-    } else if (sel && sel.managed && (!current || current.sessionId !== selectedSessionId)) {
+    } else if (sel && sel.managed && viewForSession(sel.sessionId) !== 'chat' && (!current || current.sessionId !== selectedSessionId)) {
+      // viewForSession guard: renderSidebar's chat branch calls closeTerminal(), which
+      // nulls `current` — without this check, the very next ~4s graph tick re-attaches
+      // a terminal into the hidden #term-wrap. FitAddon can't measure a display:none
+      // element, so xterm stays at its 80x24 default and /pty opens tmux attach at
+      // cols=80&rows=24, squeezing the agent's REAL pane (and any co-attached terminal)
+      // to 80 columns for as long as the chat view stays open — plus a stolen focus()
+      // that silently clears the needs-you flash, and a leaked pty/socket per session.
       openTerminal(sel);
     }
   }
@@ -3047,9 +3054,11 @@ function renderSidebar(s) {
   // it writes into #term), so branching anywhere else would let a terminal attach
   // land on top of the chat view.
   if (viewForSession(s.sessionId) === 'chat') {
-    // Chat renders from the transcript on disk, so it works for dormant, exited and
-    // archived sessions alike — none of the managed/unmanaged handling below applies,
-    // and that is the point: this view shows sessions the terminal cannot.
+    // Chat renders from the transcript on disk, so it works for dormant and exited
+    // sessions alike — none of the managed/unmanaged handling below applies, and
+    // that is the point: this view shows sessions the terminal cannot. NOT archived:
+    // renderSidebar is only reached via selectSession/applySessionView, both of which
+    // look the session up in latestSessions, which excludes archived sessions.
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
     chatView.mount(s.sessionId);
