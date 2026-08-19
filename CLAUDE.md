@@ -282,6 +282,32 @@ don't re-derive it.
   A skill that MUST run at session start (task-memory) opts into a sidecar `WRANGLER.md`
   whose text is force-injected (`--append-system-prompt` / Codex `developer_instructions`);
   a plain discoverable skill does not reliably self-invoke. Most skills should have none.
+- **The chat view's read path must not apply the fork bound and must not price anything.**
+  A fork replaying parent history is correct for *reading*; `usageSince` bounds spend only.
+  Three cost scanners already have to agree on `iterations[]`/advisor/fork rules — the chat
+  path deliberately shows model and tokens only so it never becomes a fourth. `subagent.usd`
+  is forwarded from `transcript-reader.js`, not recomputed (`server/chat-events.js`).
+- **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
+  `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
+  it silently renders a timeline with no tool outputs. Codex `reasoning` is `encrypted_content`
+  with `summary: []`, so Codex thinking is a presence marker and can never have text.
+- **`server/chat-events.js` is a leaf and must stay one.** It deliberately duplicates
+  `search/extract.js`'s *shape* while keeping the tool calls that module drops — opposite
+  goals, do not merge them.
+- **Every `ctx.reply` in `server/control/handlers/chat.js` MUST echo `token`.** The chat view
+  correlates each poll reply to the mount that requested it by an opaque token it sends and
+  the handler echoes back (`token: msg.token ?? null`); the client drops any reply whose
+  token does not match its current generation. There are five reply paths (missing transcript,
+  failed stat, failed open, no-complete-line, success) and **a new reply path that omits the
+  token makes the chat view silently stop updating for that session, forever** — the client
+  cannot distinguish "token absent" from "stale era", and there is no retry. Nothing catches
+  this automatically: no lint rule, and the replies are separate object literals rather than
+  going through a shared builder. `chat.test.js` pins two of the five paths; a new path needs
+  its own assertion. The token exists because `server/index.js`'s control-socket handler invokes
+  `routeControlMessage` **without awaiting**, so concurrent requests interleave and the
+  handler's async reads can complete out of order. An earlier attempt correlated replies with
+  a FIFO queue and was provably inverted by that (it dropped the valid reply and applied the
+  stale one) — so do not "simplify" the token back to positional correlation.
 
 ## How subsystems hang together (pointers, not mechanics)
 

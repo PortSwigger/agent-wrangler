@@ -26,6 +26,8 @@ otherwise it behaves exactly as a Claude-only board.
   wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
+- **Chat and Terminal views** — chat reads dormant and archived sessions via transcript, while
+  terminal attaches only to live panes.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
