@@ -2243,7 +2243,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   border-radius: 8px; padding: 6px 9px; font-size: 11.5px; cursor: pointer; }
 .chat-notice { border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 11.5px; }
 .chat-notice-bar { display: flex; align-items: center; gap: 9px; font-size: 11.5px;
-  background: color-mix(in srgb, var(--snooze) 14%, transparent); border-top: 1px solid var(--snooze); padding: 8px 11px; }
+  background: color-mix(in srgb, var(--red) 14%, transparent); border-top: 1px solid var(--red); padding: 8px 11px; }
 .chat-composer { border-top: 1px solid var(--border); padding: 9px 11px; }
 .chat-box { display: flex; align-items: flex-end; gap: 8px;
   border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; }
@@ -2251,9 +2251,12 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   color: var(--fg); font: inherit; max-height: 140px; }
 .chat-hint, .chat-working { font-size: 10.5px; color: var(--fg-muted); margin-top: 5px; }
 .chat-box[data-blocked="1"] { opacity: .55; }
-/* --warn/--text (brief names, aspirational) map to the real vars this file uses
-   for the same status elsewhere: --snooze is what .chat-notice-bar itself is
-   already tinted with above, and --fg is the general text colour. */
+/* --warn/--text (brief names, aspirational) map to this file's real vars: --red is
+   the documented needs-you identity (see the --snooze comment above, which spells
+   out --red/--snooze/--just-finished as separate alarm roles) — --snooze reads as
+   "snoozed" everywhere else on the board, so using it here would send the wrong
+   signal, not just a less-precise one. --red-fg is its established foreground
+   partner (same pairing as .pill.needs-you), used for the button's text. */
 .chat-notice-go { margin-left: auto; font: inherit; font-size: 11.5px; font-weight: 600;
-  border: 1px solid var(--snooze); border-radius: 6px; padding: 3px 9px;
-  background: transparent; color: var(--fg); cursor: pointer; white-space: nowrap; }
+  border: 1px solid var(--red); border-radius: 6px; padding: 3px 9px;
+  background: transparent; color: var(--red-fg); cursor: pointer; white-space: nowrap; }

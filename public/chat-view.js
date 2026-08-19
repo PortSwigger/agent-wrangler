@@ -176,6 +176,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       box?.setAttribute('data-blocked', blocked ? '1' : '0');
       input.placeholder = blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…';
       input.disabled = blocked;
+      // A disabled input still retains its value, so without this a prompt typed
+      // before the block started stays sendable via a click — defeating the guard.
+      sendBtn.disabled = blocked;
       stopBtn.hidden = status !== 'working';
     },
   };
