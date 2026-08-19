@@ -63,3 +63,27 @@ test('a codex thinking item with no text renders without a duration or body', ()
   const node = dom.itemNode({ type: 'thinking', event: { kind: 'thinking', ts: 1 } });
   assert.ok(walk(node).some((n) => n._text === 'Thinking'));
 });
+
+test('subagent name never reaches innerHTML', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: (s) => `<p>${s}</p>` });
+  const node = dom.itemNode({
+    type: 'subagent',
+    event: { kind: 'subagent', id: 'sub-1', name: '<img src=x onerror=alert(1)>', ts: 1 },
+  });
+  const html = walk(node).map((n) => n._html).filter(Boolean).join('');
+  assert.equal(html, '', 'no innerHTML anywhere in a subagent subtree');
+  const texts = walk(node).map((n) => n._text).filter(Boolean);
+  assert.ok(texts.some((t) => t.includes('<img src=x')), 'the raw name is carried as text, not markup');
+});
+
+test('notice text never reaches innerHTML', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: (s) => `<p>${s}</p>` });
+  const node = dom.itemNode({
+    type: 'notice',
+    event: { kind: 'notice', noticeKind: 'denied', text: '<img src=x onerror=alert(1)>', ts: 1 },
+  });
+  const html = walk(node).map((n) => n._html).filter(Boolean).join('');
+  assert.equal(html, '', 'no innerHTML anywhere in a notice subtree');
+  const texts = walk(node).map((n) => n._text).filter(Boolean);
+  assert.ok(texts.some((t) => t.includes('<img src=x')), 'the raw text (built from a tool target/name) is carried as text, not markup');
+});
