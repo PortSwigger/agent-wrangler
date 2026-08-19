@@ -131,6 +131,19 @@
       <div id="term-wrap">
         <div id="term"></div>
       </div>
+      <div id="chat-wrap" hidden>
+        <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+        <div id="chat-notice-bar" class="chat-notice-bar" hidden></div>
+        <div id="chat-composer" class="chat-composer">
+          <div class="chat-working" id="chat-working" hidden></div>
+          <div class="chat-box">
+            <textarea id="chat-input" rows="1" placeholder="Send a prompt…"></textarea>
+            <button type="button" id="chat-stop" class="chat-stop" hidden>Stop</button>
+            <button type="button" id="chat-send" class="chat-send">Send</button>
+          </div>
+          <div class="chat-hint" id="chat-hint"></div>
+        </div>
+      </div>
     </aside>
   </main>
 

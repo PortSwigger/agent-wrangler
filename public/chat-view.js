@@ -1,0 +1,107 @@
+// The chat view controller: mounts into the #chat-wrap slot beside #term-wrap,
+// owns the poll loop, scroll anchoring and the composer.
+//
+// APPEND, NEVER RE-RENDER. renderPanel (app.js) already documents why
+// reassigning innerHTML is a trap — it restarts the CSS throb mid-cycle and
+// resets scroll. At a 2s cadence a full re-render would fight the reader
+// continuously, so each reply appends nodes for its new events only.
+
+import { groupChatEvents } from './chat-group.js';
+import { createChatDom } from './chat-dom.js';
+import { createRenderer } from './markdown-preview.js';
+
+const POLL_MS = 2000;
+const BOTTOM_SLACK_PX = 40;
+
+export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
+  const wrap = document.getElementById('chat-wrap');
+  const stream = document.getElementById('chat-stream');
+  const dom = createChatDom({ renderMarkdown: createRenderer(window.markdownit) });
+
+  let sessionId = null;
+  let offset = null;
+  let timer = null;
+
+  const atBottom = () => stream.scrollHeight - stream.scrollTop - stream.clientHeight < BOTTOM_SLACK_PX;
+
+  function appendItems(items) {
+    const stick = atBottom();
+    for (const item of items) {
+      const node = dom.itemNode(item);
+      if (item.type === 'subagent') {
+        node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
+      }
+      if (item.type === 'activity' && item.adds + item.dels > 0) {
+        node.querySelector('.chat-activity-chip')?.addEventListener('dblclick', () => onOpenDiff?.(sessionId));
+      }
+      if (item.type === 'activity') {
+        const chip = node.querySelector('.chat-activity-chip');
+        const body = node.querySelector('.chat-activity-body');
+        chip?.addEventListener('click', () => {
+          const open = body.dataset.collapsed === '1';
+          body.dataset.collapsed = open ? '0' : '1';
+          chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+      }
+      stream.appendChild(node);
+    }
+    if (stick) stream.scrollTop = stream.scrollHeight;
+  }
+
+  function poll() {
+    if (!sessionId) return;
+    send({ type: 'chat', sessionId, ...(offset == null ? {} : { sinceOffset: offset }) });
+  }
+
+  return {
+    mount(id) {
+      if (sessionId === id) return;
+      sessionId = id;
+      offset = null;
+      stream.textContent = '';
+      wrap.hidden = false;
+      poll();
+      clearInterval(timer);
+      timer = setInterval(poll, POLL_MS);
+    },
+    unmount() {
+      clearInterval(timer);
+      timer = null;
+      sessionId = null;
+      wrap.hidden = true;
+      stream.textContent = '';
+    },
+    onChatReply(msg) {
+      if (!sessionId || msg.sessionId !== sessionId) return;
+      offset = msg.offset;
+      // Group THIS reply's events only. An earlier design carried the previous
+      // reply's trailing tool run, re-grouped it with the new events and appended
+      // the difference — which silently dropped events: when a carried run was
+      // extended, the merged first item WAS the node already on screen, so slicing
+      // it off discarded its new tools too. Per-reply grouping cannot lose an event.
+      // The cost is cosmetic and accepted: a tool run straddling a poll boundary
+      // draws as two adjacent activity chips rather than one, and self-heals on
+      // remount.
+      appendItems(groupChatEvents(msg.events));
+      const working = document.getElementById('chat-working');
+      if (msg.pending) {
+        working.textContent = `Working — running ${msg.pending.name}${msg.pending.target ? `: ${msg.pending.target}` : ''}`;
+        working.hidden = false;
+      } else {
+        working.hidden = true;
+      }
+    },
+    setStatus(status) {
+      const bar = document.getElementById('chat-notice-bar');
+      const stop = document.getElementById('chat-stop');
+      bar.hidden = status !== 'needs-you';
+      if (status === 'needs-you') {
+        bar.textContent = '';
+        const msg = document.createElement('span');
+        msg.textContent = 'Waiting on you — answer in the terminal';
+        bar.appendChild(msg);
+      }
+      stop.hidden = status !== 'working';
+    },
+  };
+}
