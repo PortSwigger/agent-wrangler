@@ -50,6 +50,18 @@ export function diffCheckStatus(links) {
   return events;
 }
 
+// The effective PR pane-nudge gate for one session: its own explicit
+// `autoFixPrChecks` when it has one, else the install-wide default the caller
+// passes in (config-store's autoFixPrChecksDefault; ON when omitted). THE single
+// definition of that precedence — every site that types a PR line into a pane
+// routes through it (the checks/dirty/unresolved transitions below AND the
+// merged/closed link-removal line in index.js's sweep), so turning the toggle
+// off silences all of them rather than most of them. Board toasts are never
+// gated on it.
+export function prNudgeEnabled(entry, fixDefault = true) {
+  return entry?.autoFixPrChecks ?? fixDefault;
+}
+
 // Decide what a single check-status transition should trigger for the owning
 // session, given its mapping entry's two opt-in flags. Pure — all the I/O
 // (board broadcast, pane sendText, mergePr) stays in the poll loop; this just
@@ -67,7 +79,7 @@ export function diffCheckStatus(links) {
 // loop, independent of either flag.
 export function planCheckTransition(ev, entry, fixDefault = true) {
   const merge = ev.scope === 'session' && ev.checkStatus === 'passing' && Boolean(entry?.autoMergeOnPass);
-  const fixEnabled = entry?.autoFixPrChecks ?? fixDefault;
+  const fixEnabled = prNudgeEnabled(entry, fixDefault);
   const nudge = ev.scope === 'session' && fixEnabled && !merge;
   return { merge, nudge };
 }
@@ -149,7 +161,7 @@ export function diffDirty(links) {
 // dirty is just another PR notification, not a new toggle surface. There is no
 // auto-merge equivalent: a DIRTY PR is by definition not mergeable.
 export function planDirtyTransition(ev, entry, fixDefault = true) {
-  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? fixDefault);
+  return ev.scope === 'session' && prNudgeEnabled(entry, fixDefault);
 }
 
 // The one-line pane nudge for a dirty transition, sharing prPaneLine's exact
@@ -218,7 +230,7 @@ export function diffUnresolvedComments(links) {
 // surface. There is no merge branch — an unresolved comment never makes a PR
 // mergeable.
 export function planUnresolvedTransition(ev, entry, fixDefault = true) {
-  return ev.scope === 'session' && (entry?.autoFixPrChecks ?? fixDefault);
+  return ev.scope === 'session' && prNudgeEnabled(entry, fixDefault);
 }
 
 // The one-line pane nudge for an unresolved-comment increase, pluralized and

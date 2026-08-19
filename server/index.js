@@ -18,7 +18,7 @@ import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
-import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge } from './notifier.js';
+import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
@@ -99,17 +99,25 @@ async function runPrStatusSweep(only) {
     ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
   ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   let changed = false;
+  // The install-wide fallback for a session with no explicit autoFixPrChecks —
+  // read once per sweep and shared by every pane-nudge decision below (the
+  // merged/closed line here, plus all three transition loops), so one tick can't
+  // gate two of them on different defaults.
+  const fixPrDefault = autoFixPrChecksDefault();
   for (const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } of links) {
     const res = await fetchPrStatus(url);
     if (res == null) continue;
     const store = scope === 'task' ? taskStore : sessionManager;
     // A merged/closed PR is dead: drop its link automatically (any pr link,
     // however it was attached). Nudge a live owning session's pane, like the
-    // checks notifier; a dormant session or task-scope link is silent.
+    // checks notifier — and gated the same way (prNudgeEnabled): this is a PR pane
+    // line like any other, so the auto-fix toggle silences it too. A dormant
+    // session or task-scope link is silent regardless; the link is still removed
+    // either way (dropping a dead link is bookkeeping, not a notification).
     if (res.state === 'MERGED' || res.state === 'CLOSED') {
       if (removePrLink(store, ownerId, url)) {
         changed = true;
-        if (scope === 'session') {
+        if (scope === 'session' && prNudgeEnabled(sessionManager.entryFor(ownerId), fixPrDefault)) {
           const target = tmuxFor(ownerId);
           if (target) {
             const phrase = `${res.state === 'MERGED' ? 'merged' : 'closed'} — link removed`;
@@ -141,11 +149,6 @@ async function runPrStatusSweep(only) {
     // one pane would interleave — the same hazard planCheckTransition's merge
     // branch already guards against for merge-vs-nudge).
     const checkStatusKeys = new Set();
-    // The install-wide fallback for a session with no explicit autoFixPrChecks —
-    // read once per sweep and shared by all three transition loops below, so one
-    // tick can't gate a checks nudge and a dirty/unresolved one on different
-    // defaults.
-    const fixPrDefault = autoFixPrChecksDefault();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
