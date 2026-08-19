@@ -96,6 +96,13 @@ test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
   assert.match(sessionCardHtml(sess({ agent: 'claude', usd: 1.5 }), ctx()), /(?<!~)1\.50/);
 });
 
+test('sessionCardHtml: shows the launched model as a meta pill only when known', () => {
+  const known = sessionCardHtml(sess({ model: 'gpt-5.6-sol' }), ctx());
+  const unknown = sessionCardHtml(sess({ model: null }), ctx());
+  assert.match(known, /<span class="card-tag model-pill" title="model">gpt-5\.6-sol<\/span>/);
+  assert.doesNotMatch(unknown, /model-pill/);
+});
+
 test('sessionCardHtml: long bar word is clipped to 6 chars with a full-text title', () => {
   const html = sessionCardHtml(sess(), ctx({ barWord: () => 'implementing' }));
   assert.match(html, /title="implementing"/);

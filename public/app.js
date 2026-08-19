@@ -28,7 +28,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml } from './cards.js';
+import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
@@ -3167,6 +3167,7 @@ function renderPanel(sessionId) {
   const active = timeAgo(s.lastActivity);
   if (active) chips.push(`<span class="card-tag">${CLOCK_ICON}${esc(active)}</span>`);
   if (typeof s.usd === 'number') chips.push(`<span class="card-tag" title="cost so far">${DOLLAR_ICON}${s.usd.toFixed(2)}</span>`);
+  chips.push(modelPillHtml(s.model));
   if (s.tokens) chips.push(`<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`);
   if (s.tasks?.running) chips.push(`<span class="card-tag">${esc(s.tasks.running)} running${s.tasks.kinds?.length ? ` (${s.tasks.kinds.map(esc).join(', ')})` : ''}</span>`);
   if (s.tasks?.queued) chips.push(`<span class="card-tag">${esc(s.tasks.queued)} queued</span>`);
