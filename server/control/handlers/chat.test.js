@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { chatHandler, WINDOW_BYTES } from './chat.js';
+import { chatHandler, WINDOW_BYTES, TARGET_EVENTS, MAX_INITIAL_BYTES } from './chat.js';
 
 async function tmpTranscript(lines) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'aw-chat-'));
@@ -166,6 +166,13 @@ test('chat: a windowed read whose only in-window newline is the one being skippe
   const file = path.join(dir, 'conv.jsonl');
   await fsp.writeFile(file, header + partial); // deliberately no trailing newline on the tail line
   const c = ctx(file);
+  // Pin the initial read to a single WINDOW_BYTES attempt — the shape production
+  // hits when the event-count widen runs into MAX_INITIAL_BYTES. Without this the
+  // widen would reach byte 0 (this fixture is only ~WINDOW_BYTES long) and the
+  // final attempt would take the complete-line path instead, leaving this branch
+  // — a window that finds a boundary to skip but nothing complete after it —
+  // untested. The widen itself is covered by the event-count tests below.
+  c.maxInitialBytes = WINDOW_BYTES;
 
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   const first = c.sent[0];
@@ -219,3 +226,155 @@ test(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Event-count windowing. Each of these pins the OLD behaviour in the same test
+// by injecting maxInitialBytes: WINDOW_BYTES, which stops the widen after the
+// first 256 KB attempt — so the assertions state the before/after directly
+// rather than describing it in a comment.
+// ---------------------------------------------------------------------------
+
+const bigUserTurns = (n, padChars, tsBase = '2026-08-14T10:00:00.000Z') =>
+  Array.from({ length: n }, (_, i) => userLine(`msg ${i} ${'p'.repeat(padChars)}`, tsBase));
+
+test('chat: the initial window is sized by event count, not bytes', async () => {
+  // 300 modest turns, ~900 KB in total: a flat 256 KB window shows barely a
+  // quarter of them. The event target keeps doubling backwards until the whole
+  // conversation is in view.
+  const many = bigUserTurns(300, 3000);
+  const file = await tmpTranscript(many);
+  const size = fs.statSync(file).size;
+  assert.ok(size > 3 * WINDOW_BYTES, 'fixture must be several windows long');
+
+  const old = ctx(file);
+  old.maxInitialBytes = WINDOW_BYTES; // the pre-fix, byte-only behaviour
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, old);
+  const byteWindow = old.sent[0].events.length;
+  assert.ok(byteWindow < TARGET_EVENTS, `a 256 KB slice yields only ${byteWindow} events`);
+
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const reply = c.sent[0];
+  assert.equal(reply.events.length, many.length, 'every turn is visible — the file is smaller than the ceiling');
+  assert.ok(reply.events.length >= TARGET_EVENTS, 'at least the event target is in view');
+  assert.ok(reply.events.length > byteWindow * 3, 'materially more than the byte window gave');
+  assert.equal(reply.more, false, 'the widen reached byte 0, so nothing is older than this window');
+  assert.equal(reply.offset, size, 'a complete file ends on a line boundary at EOF');
+});
+
+test('chat: a tool-output-heavy tail shows far more user turns than a byte window would', async () => {
+  // The actual bug: transcript bytes are tool output, not conversation. Each turn
+  // here is one small user line plus a tool call whose result is ~40 KB, so a
+  // 256 KB window spans only a handful of turns however many the session has.
+  const lines = [];
+  for (let i = 0; i < 12; i += 1) {
+    const ts = `2026-08-14T10:${String(i).padStart(2, '0')}:00.000Z`;
+    lines.push(userLine(`question ${i}`, ts));
+    lines.push(toolUseLine(`call-${i}`, 'Read', { file_path: `/repo/file-${i}.js` }, ts));
+    lines.push(toolResultLine(`call-${i}`, ts, 'L'.repeat(40 * 1024)));
+  }
+  const file = await tmpTranscript(lines);
+  assert.ok(fs.statSync(file).size > WINDOW_BYTES * 1.5, 'fixture must exceed the old window several times over');
+  const users = (r) => r.events.filter((e) => e.kind === 'user').length;
+
+  const old = ctx(file);
+  old.maxInitialBytes = WINDOW_BYTES;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, old);
+  const before = users(old.sent[0]);
+
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const after = users(c.sent[0]);
+
+  assert.ok(before <= 7, `a 256 KB tail of tool output shows only ${before} of 12 turns`);
+  assert.equal(after, 12, 'the event target pulls the whole conversation into view');
+  assert.ok(after > before, 'the fix must strictly increase visible conversation');
+});
+
+test('chat: a single enormous turn far bigger than the byte window is not lost', async () => {
+  // The pathological case: one turn whose own line dwarfs WINDOW_BYTES. Its only
+  // in-window newline is the file's final byte, so the byte window skipped past
+  // the entire line and replied with nothing at all — 0 turns visible, forever.
+  const text = 'z'.repeat(400 * 1024);
+  const file = await tmpTranscript([userLine(text, '2026-08-14T10:00:00.000Z')]);
+  const size = fs.statSync(file).size;
+
+  const old = ctx(file);
+  old.maxInitialBytes = WINDOW_BYTES;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, old);
+  assert.deepEqual(old.sent[0].events, [], 'the byte window showed this session nothing');
+
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const reply = c.sent[0];
+  assert.equal(reply.events.length, 1, 'the widen reaches back far enough to see the one turn');
+  assert.equal(reply.events[0].text, text);
+  assert.equal(reply.offset, size);
+  assert.equal(reply.more, false);
+});
+
+test('chat: a transcript that fits entirely is fully visible with more:false', async () => {
+  const many = bigUserTurns(5, 10);
+  const file = await tmpTranscript(many);
+  assert.ok(fs.statSync(file).size < WINDOW_BYTES, 'fixture must fit inside the first attempt');
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const reply = c.sent[0];
+  assert.equal(reply.events.length, many.length);
+  assert.equal(reply.more, false, 'nothing above byte 0 to fetch');
+  assert.equal(reply.offset, fs.statSync(file).size);
+});
+
+test('chat: the byte ceiling stops the widen, returning promptly with more:true', async () => {
+  // Injects a small ceiling rather than writing an 8 MB fixture — the production
+  // constant is untouched (asserted below). 20 turns of ~60 KB each: the ceiling
+  // is hit long before TARGET_EVENTS, so the reply is a bounded tail, not the file.
+  assert.equal(MAX_INITIAL_BYTES, 8 * 1024 * 1024, 'production ceiling must not be weakened');
+  const many = bigUserTurns(20, 60 * 1024);
+  const file = await tmpTranscript(many);
+  const size = fs.statSync(file).size;
+  const ceiling = 512 * 1024;
+  assert.ok(size > ceiling * 2, 'fixture must be well past the injected ceiling');
+
+  const c = ctx(file);
+  c.maxInitialBytes = ceiling;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const reply = c.sent[0];
+  assert.ok(reply.events.length > 0, 'a capped read still ships what it found');
+  assert.ok(reply.events.length < TARGET_EVENTS, 'the ceiling, not the event target, is what stopped it');
+  assert.ok(reply.events.length < many.length, 'and it did NOT read the whole file');
+  assert.equal(reply.more, true, 'older events exist above this window');
+  const bytes = fs.readFileSync(file);
+  assert.ok(reply.offset === size || bytes[reply.offset - 1] === 0x0A, 'offset must be a real line boundary');
+  assert.equal(reply.events.at(-1).text, many.at(-1).message.content, 'the window keeps the NEWEST events');
+});
+
+test('chat: only the final attempt of a widened read is cached, so the next poll still pairs its tool call', async () => {
+  // Invariant: each attempt scans a larger range with a FRESH scanner, and exactly
+  // one scanner — the chosen attempt's, keyed on the offset actually returned — is
+  // cached. Get that wrong and a follow-up poll either reuses a scanner built from
+  // a range it isn't resuming, or gets none and drops the open tool call.
+  const lines = [];
+  for (let i = 0; i < 10; i += 1) {
+    const ts = `2026-08-14T10:${String(i).padStart(2, '0')}:00.000Z`;
+    lines.push(userLine(`question ${i}`, ts));
+    lines.push(toolUseLine(`call-${i}`, 'Read', { file_path: `/repo/file-${i}.js` }, ts));
+    lines.push(toolResultLine(`call-${i}`, ts, 'L'.repeat(40 * 1024)));
+  }
+  lines.push(toolUseLine('call-open', 'Bash', { command: 'npm test' }, '2026-08-14T10:30:00.000Z'));
+  const file = await tmpTranscript(lines);
+  assert.ok(fs.statSync(file).size > WINDOW_BYTES, 'the read must actually widen for this to mean anything');
+
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.equal(first.events.filter((e) => e.kind === 'user').length, 10, 'the widen ran');
+  assert.deepEqual(first.pending, { name: 'Bash', target: 'npm test' }, 'the trailing tool_use is open');
+  assert.equal(first.events.filter((e) => e.kind === 'tool').length, 10, 'each closed call paired exactly once, not twice');
+
+  await fsp.appendFile(file, JSON.stringify(toolResultLine('call-open', '2026-08-14T10:30:05.000Z')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  const paired = c.sent[1].events.find((e) => e.kind === 'tool');
+  assert.ok(paired, 'the cached scanner from the CHOSEN attempt must still hold the open call');
+  assert.equal(paired.target, 'npm test');
+});

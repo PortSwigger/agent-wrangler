@@ -4,8 +4,28 @@ import { createChatScanner } from '../../chat-events.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
 // bounds the TAIL; without this bound, opening a months-old session parses and
-// ships its whole history before the view can draw anything.
+// ships its whole history before the view can draw anything. This is the FIRST
+// attempt's size only — see TARGET_EVENTS.
 export const WINDOW_BYTES = 256 * 1024;
+
+// Bytes are the wrong unit for "how much conversation": transcript size is
+// dominated by tool OUTPUT, not by turns. Measured over 39 real transcripts, a
+// flat 256 KB window showed a median of 2 user turns out of a median 6 present —
+// 27 of 39 sessions lost history after two or three exchanges, and one 1.2 MB
+// session whose tail was a single huge turn showed nothing at all. So the initial
+// window is sized by EVENT COUNT: start at WINDOW_BYTES and keep doubling
+// backwards until roughly this many events are in view, the start of the file is
+// reached, or MAX_INITIAL_BYTES caps it. 200 events covers a typical session
+// whole.
+export const TARGET_EVENTS = 200;
+
+// Hard ceiling on the initial read so a pathological transcript can't be slurped
+// unboundedly — reached with fewer than TARGET_EVENTS, we ship what we have and
+// say more:true. Doubling costs ~2x the final read in total scan work; that's
+// paid once per open, not per poll, so it's cheap next to losing history.
+// Deliberately generous: 8 MB captures essentially any real single turn, which is
+// what turns the "one enormous turn" case from 0 visible turns into 1.
+export const MAX_INITIAL_BYTES = 8 * 1024 * 1024;
 
 // A scanner is stateful — pending (open tool calls), model and prevTs only make
 // sense for a byte range read CONTIGUOUSLY from a fixed start. Building one fresh
@@ -101,7 +121,17 @@ export const chatHandler = {
     }
 
     const since = Number.isFinite(msg.sinceOffset) ? Math.max(0, Math.min(msg.sinceOffset, size)) : null;
-    let start = since ?? Math.max(0, size - WINDOW_BYTES);
+    // A ctx seam for tests only (like findTranscript) — production always uses the
+    // constant. Nothing on the wire can reach it; the control handler is fed by
+    // server/index.js, which never sets it.
+    const ceiling = Number.isFinite(ctx.maxInitialBytes) ? ctx.maxInitialBytes : MAX_INITIAL_BYTES;
+    // How far back THIS attempt reaches. Only the initial open (since == null)
+    // ever grows it; a follow-up poll resumes exactly at its own offset.
+    let attempt = Math.min(WINDOW_BYTES, ceiling);
+    let start = since ?? Math.max(0, size - attempt);
+    // `more` means "older events exist above this window", i.e. the chosen start
+    // is above byte 0 — so it tracks `start`, and every path that moves `start`
+    // must move this with it.
     let windowed = since == null && start > 0;
 
     let handle;
@@ -114,8 +144,11 @@ export const chatHandler = {
       return;
     }
     try {
-      // At most two passes: the widen below flips `windowed` to false, and the
-      // widen condition requires `windowed` to be true, so it cannot re-fire.
+      // Bounded, so this cannot spin: the event-count widen strictly grows
+      // `attempt` until it hits `ceiling` (~6 passes at the production numbers) and
+      // needs start > 0, while the no-newline widen pins start to 0 and clears
+      // `windowed`, which is the only thing that can re-trigger it. A follow-up
+      // poll (since != null) never widens at all — its body runs exactly once.
       for (;;) {
         const len = size - start;
         const buf = Buffer.alloc(len);
@@ -131,10 +164,14 @@ export const chatHandler = {
           const nl = buf.indexOf(0x0a);
           if (nl === -1) {
             // The window holds not even one newline: a single jsonl line (e.g. a
-            // huge tool Read result) can exceed WINDOW_BYTES on its own. Replying
+            // huge tool Read result) can exceed the attempt on its own. Replying
             // with offset: size here would permanently discard those bytes — the
             // next poll starts past them and never looks again, even once the line
-            // is terminated. Widen to the whole file instead of narrowing further.
+            // is terminated. Widen to the whole file instead of narrowing further:
+            // this is a correctness widen, not the event-count one, so it ignores
+            // `ceiling` — a bounded read that discards content is not a trade
+            // worth making, and a file with no newline in its tail has no events
+            // to bound anyway.
             start = 0;
             windowed = false;
             continue;
@@ -144,22 +181,44 @@ export const chatHandler = {
         // A trailing partial line is normal for a live session — stop at the last
         // complete newline and leave the remainder for the next poll.
         const lastNl = buf.lastIndexOf(0x0a);
+        // Each attempt rescans a LARGER range from scratch, so each needs its own
+        // scanner: replaying earlier lines through the previous attempt's scanner
+        // would double-count them into its `pending` map. getOrCreateScanner only
+        // ever reuses a cached scanner when `since` is non-null, and a non-null
+        // `since` never widens, so an attempt after a widen is always fresh here.
+        let scanner = null;
+        const events = [];
+        let offset;
         if (lastNl < from) {
           // No complete line in range. Resume from the line boundary we found, so
-          // the next poll does not re-read the partial head.
-          ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: start + from, more: windowed, pending: null });
-          return;
+          // the next poll does not re-read the partial head. (`from` is either 0 or
+          // one past a newline, and equals `len` only when the window's sole
+          // newline is its final byte — EOF, also a legal boundary.)
+          offset = start + from;
+        } else {
+          scanner = getOrCreateScanner(convId, since, agent);
+          const complete = buf.subarray(from, lastNl + 1).toString('utf8');
+          for (const line of complete.split('\n')) events.push(...scanner.push(line));
+          offset = start + lastNl + 1;
         }
-        const complete = buf.subarray(from, lastNl + 1).toString('utf8');
-        const scanner = getOrCreateScanner(convId, since, agent);
-        const events = [];
-        for (const line of complete.split('\n')) events.push(...scanner.push(line));
-        const offset = start + lastNl + 1;
+        // Too little conversation in view and older bytes to reach for: double the
+        // window and rescan from the new, earlier start. Deliberately checked after
+        // the empty/incomplete branch too — the "one enormous turn" case lands
+        // there with zero events, and widening is exactly what rescues it.
+        if (since == null && start > 0 && attempt < ceiling && events.length < TARGET_EVENTS) {
+          attempt = Math.min(attempt * 2, ceiling);
+          start = Math.max(0, size - attempt);
+          windowed = start > 0;
+          continue;
+        }
         // Cache under the offset just produced (not `since`) — that is the value a
         // contiguous follow-up poll will send back as ITS sinceOffset, which is
         // exactly the match getOrCreateScanner needs to reuse this scanner next time.
-        touchCache(convId, { scanner, offset, agent });
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner.pending() });
+        // Only the FINAL attempt's scanner is ever cached; the discarded attempts'
+        // scanners are garbage, and caching one would hand a follow-up poll a
+        // pending map built from a range it isn't resuming.
+        if (scanner) touchCache(convId, { scanner, offset, agent });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null });
         return;
       }
     } finally {
