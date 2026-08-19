@@ -21,6 +21,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
   let sessionId = null;
   let offset = null;
   let timer = null;
+  // Bumped on every mount/unmount so an in-flight reply from a closed-then-reopened
+  // session (same session id, different era) can be told apart from one belonging
+  // to what's on screen now — the session-id check alone can't see this, since
+  // reopening the same session leaves the id unchanged.
+  let generation = 0;
+  // FIFO: one entry pushed per poll() send, shifted off per onChatReply. A single
+  // WS connection preserves send order, so the oldest queued entry always belongs
+  // to whichever reply arrives next — this is what lets a stale entry be told
+  // apart from a current one without the server echoing anything back for it.
+  const pollGenerations = [];
 
   const atBottom = () => stream.scrollHeight - stream.scrollTop - stream.clientHeight < BOTTOM_SLACK_PX;
 
@@ -50,6 +60,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
 
   function poll() {
     if (!sessionId) return;
+    pollGenerations.push(generation);
     send({ type: 'chat', sessionId, ...(offset == null ? {} : { sinceOffset: offset }) });
   }
 
@@ -58,6 +69,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
       if (sessionId === id) return;
       sessionId = id;
       offset = null;
+      generation += 1;
       stream.textContent = '';
       wrap.hidden = false;
       poll();
@@ -68,11 +80,37 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
       clearInterval(timer);
       timer = null;
       sessionId = null;
+      generation += 1;
       wrap.hidden = true;
       stream.textContent = '';
     },
     onChatReply(msg) {
+      // Shift unconditionally, before any early return: every reply that reaches
+      // here corresponds to exactly one poll() push, whether or not it's about to
+      // be dropped below. Returning early without shifting would leave that entry
+      // stranded in the queue, permanently offsetting every later shift by one.
+      const era = pollGenerations.shift();
       if (!sessionId || msg.sessionId !== sessionId) return;
+      // Drop the whole reply if it was sent under an earlier era than the one
+      // showing now — a remount already reset offset and the stream locally, so
+      // nothing in a stale-era reply (events, offset, or pending) can be trusted.
+      if (era !== generation) return;
+      // Update the working line before the offset gate below: pending describes
+      // this reply's OWN moment regardless of whether it carried new events, so a
+      // same-offset "nothing new" reply must still refresh it — skipping this
+      // would freeze the indicator whenever two same-window polls overlap.
+      const working = document.getElementById('chat-working');
+      if (msg.pending) {
+        working.textContent = `Working — running ${msg.pending.name}${msg.pending.target ? `: ${msg.pending.target}` : ''}`;
+        working.hidden = false;
+      } else {
+        working.hidden = true;
+      }
+      // Apply only forward progress. Two overlapping polls sent before either had
+      // replied carry the SAME offset back (neither saw the other's result), so
+      // the second is dropped here instead of re-appending the same window; null
+      // means this is the first reply since mount and always applies.
+      if (offset != null && !(msg.offset > offset)) return;
       offset = msg.offset;
       // Group THIS reply's events only. An earlier design carried the previous
       // reply's trailing tool run, re-grouped it with the new events and appended
@@ -83,13 +121,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
       // draws as two adjacent activity chips rather than one, and self-heals on
       // remount.
       appendItems(groupChatEvents(msg.events));
-      const working = document.getElementById('chat-working');
-      if (msg.pending) {
-        working.textContent = `Working — running ${msg.pending.name}${msg.pending.target ? `: ${msg.pending.target}` : ''}`;
-        working.hidden = false;
-      } else {
-        working.hidden = true;
-      }
     },
     setStatus(status) {
       const bar = document.getElementById('chat-notice-bar');
