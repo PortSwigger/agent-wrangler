@@ -7,6 +7,60 @@ import { createChatScanner } from '../../chat-events.js';
 // ships its whole history before the view can draw anything.
 export const WINDOW_BYTES = 256 * 1024;
 
+// A scanner is stateful — pending (open tool calls), model and prevTs only make
+// sense for a byte range read CONTIGUOUSLY from a fixed start. Building one fresh
+// per request (the pre-fix behaviour) throws that state away every poll, so an
+// assistant's tool_use and its tool_result — routinely split across the 2s poll
+// interval by however long the tool takes — land in different scanners and the
+// tool_result finds no open call to pair with: dropped permanently. Caching one
+// scanner per live conversation and reusing it across contiguous polls fixes
+// that; see getOrCreateScanner for the reuse condition, which is the one thing
+// that has to be exactly right here.
+//
+// Keyed on the CONVERSATION id (liveSessionId), matching convId below — never the
+// card id, so a resume/fork that repoints a card at a different transcript can't
+// hand this scanner's state to the wrong stream.
+//
+// Capped at a small size (oldest entry evicted first) because this is new
+// server-side state on a path that previously had none: a session viewed once
+// and never revisited must not occupy a slot forever. 50 is comfortably above
+// how many sessions are ever open in chat view on one board at once.
+const MAX_CACHED_SCANNERS = 50;
+const scannerCache = new Map(); // convId -> { scanner, offset, agent }
+
+function touchCache(convId, entry) {
+  // Map preserves insertion order; delete-then-set moves this key to the most-
+  // recently-used end, turning insertion order into a cheap LRU order.
+  scannerCache.delete(convId);
+  scannerCache.set(convId, entry);
+  if (scannerCache.size > MAX_CACHED_SCANNERS) {
+    scannerCache.delete(scannerCache.keys().next().value); // oldest-out
+  }
+}
+
+// Reuse the cached scanner ONLY when this request's sinceOffset is exactly the
+// offset the cache entry last returned. Every other case — no sinceOffset (a
+// fresh mount, which deliberately re-reads a window rather than resuming a
+// stream), an offset that doesn't match (a second browser polling the same
+// session from a different offset, or this one having skipped/rewound), or a
+// different agent — gets a brand-new scanner instead.
+//
+// This is the guard against the worse failure mode than the one being fixed: a
+// scanner's `pending` map reflects exactly the tool_use lines it has already
+// seen. Handing it to a request that starts from a different offset would
+// either re-emit events it already produced (offset behind the cache) or skip
+// straight past tool_use lines it never saw (offset ahead), corrupting
+// `pending` either way. Matching the offset exactly is what guarantees two
+// clients at different points in the stream never share one scanner.
+function getOrCreateScanner(convId, since, agent) {
+  const cached = scannerCache.get(convId);
+  if (cached && since != null && cached.offset === since && cached.agent === agent) {
+    touchCache(convId, cached); // mark recently used, keep it alive under LRU pressure
+    return cached.scanner;
+  }
+  return createChatScanner(agent);
+}
+
 // On-demand, uncached read of one session's conversation. A fresh, TARGETED reply
 // to the requesting client only (like subagent-detail / get-memory), never
 // broadcast — only the reader of this session needs it. findTranscript is a ctx
@@ -97,10 +151,14 @@ export const chatHandler = {
           return;
         }
         const complete = buf.subarray(from, lastNl + 1).toString('utf8');
-        const scanner = createChatScanner(agent);
+        const scanner = getOrCreateScanner(convId, since, agent);
         const events = [];
         for (const line of complete.split('\n')) events.push(...scanner.push(line));
         const offset = start + lastNl + 1;
+        // Cache under the offset just produced (not `since`) — that is the value a
+        // contiguous follow-up poll will send back as ITS sinceOffset, which is
+        // exactly the match getOrCreateScanner needs to reuse this scanner next time.
+        touchCache(convId, { scanner, offset, agent });
         ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner.pending() });
         return;
       }

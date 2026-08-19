@@ -20,6 +20,18 @@ function ctx(file, node = { liveSessionId: 'live-1', agent: 'claude' }) {
 
 const userLine = (t, ts) => ({ type: 'user', timestamp: ts, message: { role: 'user', content: t } });
 
+const toolUseLine = (id, name, input, ts) => ({
+  type: 'assistant',
+  timestamp: ts,
+  message: { role: 'assistant', model: 'claude-x', content: [{ type: 'tool_use', id, name, input }] },
+});
+
+const toolResultLine = (id, ts, output = 'ok') => ({
+  type: 'user',
+  timestamp: ts,
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] },
+});
+
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 test('chat: replies with events and a line-boundary offset', async () => {
@@ -168,6 +180,27 @@ test('chat: a windowed read whose only in-window newline is the one being skippe
   await fsp.appendFile(file, remainder + '\n');
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
   assert.deepEqual(c.sent[1].events.map((e) => e.text), [text]);
+});
+
+test('chat: a tool_use in one poll and its tool_result in the next still pairs into a tool event (regression)', async () => {
+  // Reproduces the real production shape: an assistant's tool_use line and its
+  // tool_result land in separate 2s poll windows because the tool takes time to
+  // run. A scanner built fresh per request (the pre-fix behaviour) has no memory
+  // of the open tool_use by the time the second poll arrives, so the tool_result
+  // finds nothing to pair with and the whole tool event is silently dropped.
+  const file = await tmpTranscript([toolUseLine('call-1', 'Bash', { command: 'npm test' }, '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.deepEqual(first.pending, { name: 'Bash', target: 'npm test' }, 'the tool_use is still open after poll 1');
+
+  await fsp.appendFile(file, JSON.stringify(toolResultLine('call-1', '2026-08-14T10:00:05.000Z')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  const second = c.sent[1];
+  const toolEvent = second.events.find((e) => e.kind === 'tool');
+  assert.ok(toolEvent, 'the tool_result must pair with the tool_use seen in the PREVIOUS poll, not be lost');
+  assert.equal(toolEvent.name, 'Bash');
+  assert.equal(toolEvent.target, 'npm test');
 });
 
 test(
