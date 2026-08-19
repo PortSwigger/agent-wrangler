@@ -32,6 +32,35 @@ export function initChatView({ send, onSubagentClick, onOpenDiff } = {}) {
   // this exact case backwards under reordering).
   let generation = 0;
 
+  // Declared here (factory scope), not inside submit() — setStatus and a later
+  // task both need to reach `input` to drive its placeholder/disabled state.
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('chat-send');
+  const stopBtn = document.getElementById('chat-stop');
+  const hint = document.getElementById('chat-hint');
+
+  function submit() {
+    const text = input.value.trim();
+    if (!text || !sessionId) return;
+    // The EXISTING human message path: live → paste into the pane, dormant →
+    // wake and deliver, archived → refuse. Deliberately not the mailbox, which
+    // is peer-only.
+    send({ type: 'message', sessionId, text });
+    input.value = '';
+    input.style.height = 'auto';
+  }
+
+  sendBtn.addEventListener('click', submit);
+  stopBtn.addEventListener('click', () => sessionId && send({ type: 'interrupt', sessionId }));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+  });
+  hint.textContent = 'Enter sends · Shift+Enter newline';
+
   const atBottom = () => stream.scrollHeight - stream.scrollTop - stream.clientHeight < BOTTOM_SLACK_PX;
 
   function appendItems(items) {
