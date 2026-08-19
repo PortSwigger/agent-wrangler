@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge } from './notifier.js';
+import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus }.
 const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1 } = {}) =>
@@ -80,6 +80,20 @@ test('awaiting-review→awaiting-review does not re-emit (no net transition)', (
   diffCheckStatus([L('pending', { ownerId: 'j' })]);             // baseline
   diffCheckStatus([L('awaiting-review', { ownerId: 'j' })]);     // pending→awaiting-review (emits, ignored)
   assert.deepEqual(diffCheckStatus([L('awaiting-review', { ownerId: 'j' })]), []); // stable
+});
+
+// prNudgeEnabled: the one definition of "should this session get a PR pane line",
+// shared by the three transition plans AND the merged/closed link-removal line.
+test('prNudgeEnabled: an explicit per-session choice wins over the install-wide default', () => {
+  assert.equal(prNudgeEnabled({ autoFixPrChecks: true }, false), true);
+  assert.equal(prNudgeEnabled({ autoFixPrChecks: false }, true), false);
+});
+
+test('prNudgeEnabled: a session with no choice follows the default (ON when omitted)', () => {
+  assert.equal(prNudgeEnabled({}), true);
+  assert.equal(prNudgeEnabled(undefined), true);
+  assert.equal(prNudgeEnabled({}, false), false);
+  assert.equal(prNudgeEnabled(undefined, false), false);
 });
 
 // planCheckTransition: pure gate deciding merge / pane-nudge for one transition.
