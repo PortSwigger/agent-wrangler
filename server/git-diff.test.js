@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { workingTreeDiff, branchDiff, parseDiff, EXEC_OPTS } from './git-diff.js';
+import { workingTreeDiff, branchDiff, pullRequestDiff, parseDiff, EXEC_OPTS } from './git-diff.js';
 
 // A temp git repo with one committed file. Returns the realpath'd repo dir plus a
 // bound `git` runner (isolated identity, quiet). Mirrors worktree.test.js.
@@ -357,6 +357,85 @@ test('branchDiff: a remote-only commit is NOT shown as reverted (merge-base, not
   const paths = res.files.map((f) => f.path);
   assert.ok(!paths.includes('remote-only.txt'), "origin's own later commit doesn't appear as a local change");
   assert.ok(paths.includes('tracked.txt'), 'this branch\'s own change does appear');
+});
+
+test('pullRequestDiff: parses aggregate gh pr diff output', async () => {
+  const calls = [];
+  const raw = [
+    'diff --git a/src/a.js b/src/a.js',
+    'index 1111111..2222222 100644',
+    '--- a/src/a.js',
+    '+++ b/src/a.js',
+    '@@ -1,2 +1,2 @@',
+    ' one',
+    '-two',
+    '+TWO',
+    '',
+  ].join('\n');
+  const run = async (url) => {
+    calls.push(url);
+    return { stdout: raw };
+  };
+
+  const res = await pullRequestDiff('https://github.com/acme/widgets/pull/42', { run });
+
+  assert.deepEqual(calls, ['https://github.com/acme/widgets/pull/42']);
+  assert.equal(res.state, 'ok');
+  assert.equal(res.truncated.droppedLines, 0);
+  const f = res.files[0];
+  assert.equal(f.path, 'src/a.js');
+  assert.equal(f.status, 'modified');
+  assert.deepEqual(f.hunks[0].lines.map((l) => [l.type, l.text]), [['context', 'one'], ['del', 'two'], ['add', 'TWO']]);
+});
+
+test('pullRequestDiff: applies the shared line cap to PR diffs', async () => {
+  const raw = [
+    'diff --git a/big.txt b/big.txt',
+    '--- a/big.txt',
+    '+++ b/big.txt',
+    '@@ -1,4 +1,4 @@',
+    '-a',
+    '-b',
+    '+A',
+    '+B',
+    '',
+  ].join('\n');
+  const res = await pullRequestDiff('https://github.com/acme/widgets/pull/42', {
+    lineCap: 2,
+    run: async () => ({ stdout: raw }),
+  });
+
+  assert.equal(res.state, 'ok');
+  assert.equal(res.files.flatMap((f) => f.hunks).flatMap((h) => h.lines).length, 2);
+  assert.equal(res.truncated.droppedLines, 2);
+});
+
+test('pullRequestDiff: empty gh diff output returns empty', async () => {
+  const res = await pullRequestDiff('https://github.com/acme/widgets/pull/42', {
+    run: async () => ({ stdout: '' }),
+  });
+
+  assert.deepEqual(res, { state: 'empty' });
+});
+
+test('pullRequestDiff: gh failure returns an error state', async () => {
+  const res = await pullRequestDiff('https://github.com/acme/widgets/pull/42', {
+    run: async () => { throw new Error('not found'); },
+  });
+
+  assert.equal(res.state, 'error');
+  assert.match(res.error, /not found/);
+});
+
+test('pullRequestDiff: gh failure prefers stderr when available', async () => {
+  const err = new Error('Command failed');
+  err.stderr = 'GraphQL: resource not found';
+  const res = await pullRequestDiff('https://github.com/acme/widgets/pull/42', {
+    run: async () => { throw err; },
+  });
+
+  assert.equal(res.state, 'error');
+  assert.match(res.error, /GraphQL: resource not found/);
 });
 
 test('parseDiff: captures a rename oldPath', () => {
