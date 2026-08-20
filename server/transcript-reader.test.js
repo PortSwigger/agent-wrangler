@@ -544,6 +544,17 @@ test('analyzeLines yields the same usd + tokens as analyze(path) for the same co
   assert.ok(fromFile.usd > 0);
 });
 
+test('analyzeLines reports the model from the latest assistant turn', () => {
+  const lines = [
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: 'claude-sonnet-4', content: [] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-4-8', content: [] } }),
+    JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', model: 'claude-haiku-4-5', content: [] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [] } }),
+  ];
+
+  assert.equal(analyzeLines(lines).currentModel, 'claude-opus-4-8');
+});
+
 // A sub-agent's own turns are billed too, so the session total must include them.
 // They're costed exactly like the parent (per-turn usage summed), from the SAME
 // source analyze already uses for each sub-agent's displayed usd — never the inline

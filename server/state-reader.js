@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
-import { adapterFor } from './agents/index.js';
+import { adapterFor, modelPillFor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
@@ -463,6 +463,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       intent,
       createdAt: mapEntry?.createdAt || null,
       model: mapEntry?.model || null,
+      currentModel: enrichment?.currentModel ?? null,
+      modelPill: modelPillFor(agentId, enrichment?.currentModel, mapEntry?.model),
       snooze: mapEntry?.snooze || null,
       runtime: mapEntry?.runtime || null,
       workflow: parentFields.workflow,
@@ -621,6 +623,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       intent: appEntry?.intent || '',
       createdAt: appEntry?.createdAt || null,
       model: appEntry?.model || null,
+      currentModel: enr?.currentModel ?? null,
+      modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
       snooze: appEntry?.snooze || null,
       runtime: appEntry?.runtime || null,
       workflow: parentFields.workflow,
@@ -712,6 +716,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       intent: entry.intent || '',
       createdAt: entry.createdAt || null,
       model: entry.model || null,
+      currentModel: enrichment?.currentModel ?? null,
+      modelPill: modelPillFor(agentId, enrichment?.currentModel, entry.model),
       snooze: entry.snooze || null,
       runtime: entry.runtime || null,
       workflow: parentFields.workflow,

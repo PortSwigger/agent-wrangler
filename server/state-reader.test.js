@@ -224,6 +224,26 @@ test('buildGraph carries the mapping snooze onto the board node', async () => {
   assert.deepEqual(node.snooze, { until: 9999, createdAt: 1 });
 });
 
+test('buildGraph derives a short model pill from the transcript model', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'model-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'opusplan' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({ currentModel: 'claude-sonnet-4' }));
+  const node = graph.sessions.find((s) => s.sessionId === 'model-sid');
+  assert.equal(node.currentModel, 'claude-sonnet-4');
+  assert.deepEqual(node.modelPill, { label: 'sonnet', title: 'claude-sonnet-4' });
+});
+
+test('buildGraph falls back to the launch model when no transcript model is available', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'launch-model-sid', agent: 'codex', cwd: '/nonexistent/c', intent: 'x', model: 'gpt-5.6-sol' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const node = graph.sessions.find((s) => s.sessionId === 'launch-model-sid');
+  assert.equal(node.currentModel, null);
+  assert.deepEqual(node.modelPill, { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' });
+});
+
 test('buildGraph: with no mailStore injected, `mail` is omitted (not a fabricated empty object)', async () => {
   const mgr = makeDormantManager([{ sessionId: 'no-mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
   const graph = await buildGraph(mgr, async () => ({}));

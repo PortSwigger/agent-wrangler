@@ -8,7 +8,7 @@
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
-  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON,
+  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
@@ -204,6 +204,11 @@ export function mailBadgeHtml(s) {
   return `<span class="mail-badge${stale ? ' stale' : ''}" title="${esc(title)}">${icon}${mail.unread}</span>`;
 }
 
+export function modelPillHtml(model) {
+  if (!model) return '';
+  return `<span class="card-tag model-pill" title="${esc(model.title)}">${CPU_ICON}<span class="model-pill-label">${esc(model.label)}</span></span>`;
+}
+
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   const estimated = s.agent === 'codex';
@@ -249,6 +254,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const tokenChip = expanded && s.tokens
     ? `<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`
     : '';
+  const modelPill = modelPillHtml(s.modelPill);
   // The show/hide pill; the zone itself renders INSIDE the card (below), not as
   // a sibling after it — otherwise it's unclear which card a zone belongs to
   // once a tile holds more than one. Shown whenever the session has any
@@ -276,7 +282,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${age}${costEl}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${metaLinks}</div>
+    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }
