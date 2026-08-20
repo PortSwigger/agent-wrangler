@@ -1399,7 +1399,12 @@ body.system-banner-open { padding-top: 30px; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .worker-row.dormant .worker-name { color: var(--fg-muted); }
-.worker-cost { font-size: 10px; color: var(--fg-subtle); min-width: 38px; text-align: right; flex: none; }
+/* Cost pill + link chips, right-aligned like the full card's own meta line
+   (.card-meta) — .worker-name's flex:1 above already pushes this group to the
+   row's right edge, so no margin-left:auto is needed here. */
+.worker-meta { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.worker-meta .link-chip { font-size: 10px; border: none; line-height: normal; }
+.worker-meta .link-chip .icon { width: 10px; height: 10px; }
 
 /* needs-you is two things: the STATE (red stripe above, persists until you
    reply) and the ALARM below (flash + ring + glow, an attention-grab). The

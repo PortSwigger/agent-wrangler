@@ -307,9 +307,22 @@ export function workerRowHtml(s, ctx) {
   const dormant = (s.managed || s.restarting) ? '' : ' dormant';
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
   const estimated = s.agent === 'codex';
-  const cost = typeof s.usd === 'number' && s.usd > 0 ? `${estimated ? '~' : ''}$${s.usd.toFixed(2)}` : '';
-  const costTitle = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
-    ? ` title="$${s.advisorUsd.toFixed(2)} on advisor consults"`
+  const cost = typeof s.usd === 'number' && s.usd > 0
+    ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
+    : '';
+  const advisorNote = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
+    ? ` ($${s.advisorUsd.toFixed(2)} on advisor consults)`
+    : '';
+  // Same card-tag pill as the full session card's cost chip (sessionCardHtml
+  // costEl) — composing on .card-tag, not a bespoke row-only style, so the two
+  // read as the same chip whether a session is collapsed into a spine or not.
+  const costEl = cost
+    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}${advisorNote}">${DOLLAR_ICON}${esc(cost)}</span>`
+    : '';
+  // Same link chips as the full card's metaLinks, alongside the cost pill —
+  // a collapsed child otherwise hides its Jira/PR links entirely.
+  const metaLinks = s.links?.length
+    ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
     : '';
   // A worker/child row has no name row or meta row to hold the full mail-badge
   // pill, so it gets a bare dot instead — amber (stale) only, no count. Normal
@@ -320,7 +333,7 @@ export function workerRowHtml(s, ctx) {
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailDot}
-    <span class="worker-cost"${costTitle}>${esc(cost)}</span>
+    <span class="worker-meta">${costEl}${metaLinks}</span>
     <span class="worker-ring" aria-hidden="true"></span>
   </div>`;
 }
