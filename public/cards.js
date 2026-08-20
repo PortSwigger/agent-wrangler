@@ -8,7 +8,7 @@
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
-  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON,
+  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
@@ -206,7 +206,8 @@ export function mailBadgeHtml(s) {
 
 export function modelPillHtml(model) {
   if (!model) return '';
-  return `<span class="card-tag model-pill" title="${esc(model)}">${esc(model)}</span>`;
+  const pill = typeof model === 'string' ? { label: model, title: model } : model;
+  return `<span class="card-tag model-pill" title="${esc(pill.title)}">${CPU_ICON}${esc(pill.label)}</span>`;
 }
 
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
@@ -254,7 +255,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const tokenChip = expanded && s.tokens
     ? `<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`
     : '';
-  const modelPill = modelPillHtml(s.currentModel);
+  const modelPill = modelPillHtml(s.modelPill);
   // The show/hide pill; the zone itself renders INSIDE the card (below), not as
   // a sibling after it — otherwise it's unclear which card a zone belongs to
   // once a tile holds more than one. Shown whenever the session has any

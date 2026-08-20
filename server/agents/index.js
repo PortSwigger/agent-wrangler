@@ -7,6 +7,19 @@ export function adapterFor(id) {
   return ALL.find((a) => a.id === id) || claude;
 }
 
+export function modelPillFor(agentId, currentModel, launchModel) {
+  const models = adapterFor(agentId).models;
+  const find = (model) => models.find((entry) => entry.value === model
+    || entry.transcriptPrefixes?.some((prefix) => model.startsWith(prefix)));
+  if (currentModel) {
+    const entry = find(currentModel);
+    return { label: entry?.pillLabel || currentModel, title: currentModel };
+  }
+  if (!launchModel) return null;
+  const entry = find(launchModel);
+  return entry ? { label: entry.pillLabel, title: launchModel } : { label: launchModel, title: launchModel };
+}
+
 export function adapterForProcess(command) {
   return ALL.find((a) => a.matchProcess(command)) || null;
 }

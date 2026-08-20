@@ -42,6 +42,16 @@ test('analyzeCodex returns nulls for an unknown id', async () => {
   assert.equal(r.tokens, null);
 });
 
+test('analyzeCodex keeps the latest completed turn model when a new turn is pending', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.5' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'done' } },
+    { type: 'turn_context', payload: { model: 'gpt-5.6-sol' } },
+  ]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.currentModel, 'gpt-5.5');
+});
+
 test('listResumableCodex surfaces sessions with cwd + summary, tagged codex', async () => {
   const { root, uuid } = fixtureSessions();
   const { candidates, total } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-06-10T10:00:00Z') });

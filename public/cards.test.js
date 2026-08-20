@@ -96,10 +96,10 @@ test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
   assert.match(sessionCardHtml(sess({ agent: 'claude', usd: 1.5 }), ctx()), /(?<!~)1\.50/);
 });
 
-test('sessionCardHtml: shows the current model as a meta pill only when known', () => {
-  const known = sessionCardHtml(sess({ currentModel: 'gpt-5.6-sol' }), ctx());
-  const unknown = sessionCardHtml(sess({ currentModel: null }), ctx());
-  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol">gpt-5\.6-sol<\/span>/);
+test('sessionCardHtml: shows the short model label with a CPU icon only when resolved', () => {
+  const known = sessionCardHtml(sess({ modelPill: { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' } }), ctx());
+  const unknown = sessionCardHtml(sess({ modelPill: null }), ctx());
+  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol"><svg class="icon"[^>]*>[^]*<\/svg>gpt-5\.6 sol<\/span>/);
   assert.doesNotMatch(unknown, /model-pill/);
 });
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { claude, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
-import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelsWithDefault } from './index.js';
+import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
   assert.equal(claude.id, 'claude');
@@ -184,6 +184,15 @@ test('claude offers fable', () => {
 
 test('claude offers opusplan as a selectable model', () => {
   assert.ok(claude.models.some((m) => m.value === 'opusplan'));
+});
+
+test('modelPillFor shortens a transcript model and falls back to the launch model', () => {
+  assert.deepEqual(modelPillFor('claude', 'claude-sonnet-4-5-20250929', 'opus'), {
+    label: 'sonnet', title: 'claude-sonnet-4-5-20250929',
+  });
+  assert.deepEqual(modelPillFor('codex', null, 'gpt-5.6-sol'), {
+    label: 'gpt-5.6 sol', title: 'gpt-5.6-sol',
+  });
 });
 
 test('modelsWithDefault leaves the built-in default when AW_DEFAULT_MODEL is unset or unknown', () => {
