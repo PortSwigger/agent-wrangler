@@ -216,6 +216,33 @@ test('workerRowHtml: marks selection like a top-level card, suppressed by a slot
   assert.doesNotMatch(slotted, /worker-row [^"]*\bselected\b/);
 });
 
+test('workerRowHtml: cost renders as a card-tag pill with the dollar icon, matching the full card, codex still gets the ~ prefix', () => {
+  const html = workerRowHtml(sess({ usd: 1.5 }), ctx());
+  assert.match(html, /<span class="card-tag" title="cost so far">.*1\.50<\/span>/);
+  assert.doesNotMatch(html, /worker-cost/);
+  const codex = workerRowHtml(sess({ agent: 'codex', usd: 1.5 }), ctx());
+  assert.match(codex, /~1\.50/);
+});
+
+test('workerRowHtml: no cost pill when usd is absent/zero', () => {
+  assert.doesNotMatch(workerRowHtml(sess({ usd: 0 }), ctx()), /card-tag/);
+  assert.doesNotMatch(workerRowHtml(sess(), ctx()), /card-tag/);
+});
+
+test('workerRowHtml: link chips render alongside the cost pill, inside worker-meta, before the trailing ring', () => {
+  const s = sess({ usd: 2, links: [{ type: 'jira', key: 'ENT-9', url: 'https://jira/ENT-9' }] });
+  const html = workerRowHtml(s, ctx());
+  assert.match(html, /<span class="worker-meta"><span class="card-tag"[^>]*>.*<\/span><span class="card-meta-links">.*ENT-9.*<\/span><\/span>/);
+  const metaIdx = html.indexOf('worker-meta');
+  const ringIdx = html.indexOf('worker-ring');
+  assert.ok(metaIdx > -1 && metaIdx < ringIdx, 'worker-meta must render before the trailing ring');
+});
+
+test('workerRowHtml: no links → no card-meta-links span', () => {
+  assert.doesNotMatch(workerRowHtml(sess({ links: [] }), ctx()), /card-meta-links/);
+  assert.doesNotMatch(workerRowHtml(sess(), ctx()), /card-meta-links/);
+});
+
 test('workflowBoxHtml: solo run shows no chevron and no spine', () => {
   const html = workflowBoxHtml(sess({ sessionId: 'orch' }), [], ctx());
   assert.match(html, /wf-count">solo/);
