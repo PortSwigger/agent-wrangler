@@ -10,7 +10,7 @@
   "scripts": {
     "prestart": "bash scripts/sync-deps.sh",
     "start": "node server/index.js",
-    "test": "node --test"
+    "test": "node --test --import ./server/test-setup.js"
   },
   "dependencies": {
     "@devcontainers/cli": "^0.87.0",

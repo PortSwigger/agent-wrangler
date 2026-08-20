@@ -483,20 +483,52 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
   assert.match(captured, /'--effort' 'low'/);
 });
 
-test('fork() threads trustCodexLaunchCwd into buildFork for a codex parent', async () => {
+// Trust is no longer part of the launch command (verified against the real
+// Codex binary that a `-c projects.<path>.trust_level` override is silently
+// ignored by its interactive trust dialog) — fork() instead calls
+// this._ensureCodexTrust (codex-trust.js) to persist it before launch. That
+// call is a seam precisely so a test never needs to touch the real
+// ~/.codex/config.toml to assert this wiring.
+test('fork() threads trustCodexLaunchCwd into ensureCodexTrust for a codex parent, keyed on the parent worktree repoRoot when present', async () => {
   const sm = new SessionManager();
-  let captured = '';
-  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  sm._newSession = async () => {};
   sm._save = () => {};
   sm.refreshAlive = async () => {};
+  let trusted = [];
+  sm._ensureCodexTrust = (p) => trusted.push(p);
   await sm.fork({
     sourceId: 'SRC', parentId: 'PARENT',
     parentEntry: { agent: 'codex', cwd: os.tmpdir() },
     cwd: os.tmpdir(),
   });
   // Default config.json has no trustCodexLaunchCwd override — reads the on
-  // default, so the fork's cwd is threaded through as trusted.
-  assert.match(captured, /trust_level="trusted"/);
+  // default, so the fork's cwd is trusted (no worktree on this parent).
+  assert.deepEqual(trusted, [os.tmpdir()]);
+
+  trusted = [];
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', cwd: '/wt', worktree: { path: '/wt', branch: 'b', repoRoot: '/repo' } },
+    cwd: '/wt',
+  });
+  // A worktree parent trusts the worktree's MAIN checkout, not the worktree
+  // path itself — Codex resolves a linked worktree's trust to that root.
+  assert.deepEqual(trusted, ['/repo']);
+});
+
+test('fork() never calls ensureCodexTrust for a claude parent', async () => {
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  let called = false;
+  sm._ensureCodexTrust = () => { called = true; };
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'claude', cwd: os.tmpdir() },
+    cwd: os.tmpdir(),
+  });
+  assert.equal(called, false);
 });
 
 test('resume() refuses (does not launch) when a Claude transcript is nowhere on disk', async () => {
@@ -646,15 +678,33 @@ test('resume() re-threads the persisted entry.effort into buildResume (effort is
   assert.match(captured, /'model_reasoning_effort=medium'/);
 });
 
-test('resume() threads trustCodexLaunchCwd into buildResume', async () => {
+// Trust is no longer part of the launch command (verified against the real
+// Codex binary that a `-c projects.<path>.trust_level` override is silently
+// ignored by its interactive trust dialog) — resume() instead calls
+// this._ensureCodexTrust (codex-trust.js) to persist it before relaunch.
+test('resume() threads trustCodexLaunchCwd into ensureCodexTrust, keyed on the entry worktree repoRoot when present', async () => {
   const sm = resumableCodex('card-trust');
   sm.killForSession = async () => [];
-  let captured = '';
-  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  sm._newSession = async () => {};
+  let trusted = [];
+  sm._ensureCodexTrust = (p) => trusted.push(p);
   await sm.resume('card-trust', os.tmpdir());
   // Default config.json has no trustCodexLaunchCwd override — reads the on
-  // default, so the resume dir is threaded through as trusted.
-  assert.match(captured, /trust_level="trusted"/);
+  // default, so the resume dir is trusted (no worktree on this entry).
+  assert.deepEqual(trusted, [os.tmpdir()]);
+
+  const sm2 = new SessionManager();
+  sm2.map.set('card-trust-wt', { agent: 'codex', cwd: '/wt', liveSessionId: 'live-wt', worktree: { path: '/wt', branch: 'b', repoRoot: '/repo' } });
+  sm2._save = () => {};
+  sm2.refreshAlive = async () => {};
+  sm2.killForSession = async () => [];
+  sm2._newSession = async () => {};
+  trusted = [];
+  sm2._ensureCodexTrust = (p) => trusted.push(p);
+  await sm2.resume('card-trust-wt', '/wt');
+  // A worktree entry trusts the worktree's MAIN checkout, not the worktree
+  // path itself — Codex resolves a linked worktree's trust to that root.
+  assert.deepEqual(trusted, ['/repo']);
 });
 
 test('resolveWorktree creates a worktree and returns its path + branch', async () => {
@@ -987,14 +1037,29 @@ test('dispatch persists entry.effort and passes it to buildLaunch', async () => 
   assert.match(captured, /--effort' 'high'/);
 });
 
-test('dispatch threads trustCodexLaunchCwd into buildLaunch for a codex session', async () => {
+// Trust is no longer part of the launch command (verified against the real
+// Codex binary that a `-c projects.<path>.trust_level` override is silently
+// ignored by its interactive trust dialog) — dispatch() instead calls
+// this._ensureCodexTrust (codex-trust.js) to persist it before launch. The
+// worktree-vs-plain-cwd key selection is identical to resume()/fork() (see
+// those tests for the worktree-repoRoot case); this covers dispatch's own
+// wiring plus the agent gate.
+test('dispatch threads trustCodexLaunchCwd into ensureCodexTrust for a codex session', async () => {
   const sm = smForDispatch();
-  let captured = '';
-  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  let trusted = [];
+  sm._ensureCodexTrust = (p) => trusted.push(p);
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
   // Default config.json has no trustCodexLaunchCwd override — reads the on
-  // default, so the launch cwd is threaded through as trusted.
-  assert.match(captured, /trust_level="trusted"/);
+  // default, so the launch cwd is trusted.
+  assert.deepEqual(trusted, [os.tmpdir()]);
+});
+
+test('dispatch never calls ensureCodexTrust for a claude session', async () => {
+  const sm = smForDispatch();
+  let called = false;
+  sm._ensureCodexTrust = () => { called = true; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' }); // default agent: claude
+  assert.equal(called, false);
 });
 
 test('dispatch stores effort:null when none is given', async () => {

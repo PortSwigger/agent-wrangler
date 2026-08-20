@@ -16,6 +16,7 @@ import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
+import { ensureCodexTrust } from './codex-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -282,6 +283,10 @@ export class SessionManager {
     this.legacySocket = process.env.AW_LEGACY_TMUX_SOCKET || '';
     this.socketByName = new Map(); // tmux name -> socket it was last discovered on
     this._resuming = new Map(); // card id -> in-flight resume promise (coalesces concurrent resumes)
+    // Seam (like _newSession/_save) so a test can observe/stub the one call in
+    // dispatch/resume/fork that touches a real machine-global dotfile
+    // (~/.codex/config.toml) instead of this class's own owned state.
+    this._ensureCodexTrust = ensureCodexTrust;
     this._load();
   }
 
@@ -832,8 +837,9 @@ export class SessionManager {
       if (lp.mode === 'refuse') throw new Error(lp.message);
       dir = lp.dir;
     }
+    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const inner = adapter.buildResume({
-      sessionId, resumeId: plan.resumeId, cwd: dir, trustCwd: trustCodexLaunchCwd(), model: prev?.model || undefined, effort: prev?.effort || undefined,
+      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
       memoryDir: addDirFor(sessionId), memoryPath: linkPathFor(sessionId),
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
       // issue-to-pr skill plugin so a suspended/rebooted autopilot run keeps it —
@@ -879,8 +885,9 @@ export class SessionManager {
     // under a known id (no phantom → the fork is resumable); a discover agent (Codex)
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
+    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, trustCwd: trustCodexLaunchCwd(), model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
       memoryDir: addDirFor(sessionId), memoryPath: linkPathFor(sessionId),
     });
     bindMemory?.(sessionId);
@@ -1284,7 +1291,8 @@ export class SessionManager {
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, trustCwd: trustCodexLaunchCwd(), intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy });
+    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy });
     // Bind the per-session memory link to its task (or scratch) BEFORE launch, so
     // AW_TASK_MEMORY and --add-dir resolve the moment the agent boots — and BEFORE
     // wrapLaunch, so the devcontainer runtime's `docker cp` of the memory dir sees

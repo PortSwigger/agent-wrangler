@@ -37,10 +37,13 @@ function envPrefix(sessionId, spawnedBy) {
 // --append-system-prompt; injected as a `developer`-role message). The memory dir
 // derives from the OWNER sessionId — the single source of truth — so callers
 // needn't pass it (matches the Claude adapter; guards against a caller dropping
-// it, which once produced `--add-dir undefined`). `trustCwd` is the resolved
-// trustCodexLaunchCwd setting — the caller's job, not this adapter's, to read
-// config; this file only honors whatever boolean it's handed.
-function commonFlags({ sessionId, cwd, trustCwd, addDirs = [], worktree = null, taskMemory }) {
+// it, which once produced `--add-dir undefined`). Directory trust is NOT handled
+// here: verified against the installed binary that Codex's interactive trust
+// dialog ignores a `-c projects.<path>.trust_level` CLI override entirely — only
+// an entry already persisted in `~/.codex/config.toml` at process start
+// suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
+// before this launch command is ever spawned.
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
@@ -55,7 +58,6 @@ function commonFlags({ sessionId, cwd, trustCwd, addDirs = [], worktree = null, 
     '--ask-for-approval', 'never',
     '-c', 'sandbox_workspace_write.network_access=true',
   ];
-  if (trustCwd && cwd) args.push('-c', `projects.${tomlString(cwd)}.trust_level="trusted"`);
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('--add-dir', addDirFor(sessionId));
   for (const d of addDirs) args.push('--add-dir', d);
@@ -109,28 +111,28 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, cwd, trustCwd, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory }) {
+  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory }) {
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, cwd, trustCwd, addDirs, worktree, taskMemory }));
+    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory }));
     let inner = `${envPrefix(sessionId, spawnedBy)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, cwd, trustCwd, effort, addDirs = [], spawnedBy, taskMemory }) {
+  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory }) {
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, cwd, trustCwd, addDirs, taskMemory }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory }));
     return `${envPrefix(sessionId, spawnedBy)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, cwd, trustCwd, model, effort, intent = '', addDirs = [], taskMemory }) {
+  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory }) {
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, cwd, trustCwd, addDirs, taskMemory }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory }));
     let inner = `${envPrefix(sessionId)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
