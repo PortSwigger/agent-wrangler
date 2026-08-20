@@ -9,6 +9,11 @@
 // HTML rather than passing it through, and validateLink drops javascript:/
 // vbscript:/data: — so its output needs no separate sanitiser pass. It is
 // injected rather than imported so this module tests with no window and no jsdom.
+//
+// Every affordance glyph (disclosure caret, sub-agent arrow, notice mark) is a
+// CSS ::before/::after, never a text node: they are decoration, so keeping them
+// out of the DOM keeps them out of the accessibility tree and out of a copied
+// selection — and means this module never grows a glyph table.
 
 export function activityTitle(item) {
   if (!item.adds && !item.dels) return item.label;
@@ -25,10 +30,34 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
     return node;
   };
 
+  // Shared by the activity and thinking chips: both are the same control (a
+  // disclosure button that reveals a sibling body), so they get the same
+  // markup contract — chat-view.js wires one click handler shape for both.
+  const chipButton = (className, labelClass, labelText, title) => {
+    const chip = el('button', className);
+    chip.setAttribute('type', 'button');
+    chip.setAttribute('aria-expanded', 'false');
+    if (title) chip.setAttribute('title', title);
+    chip.appendChild(el('span', labelClass, labelText));
+    return chip;
+  };
+
   function toolRow(t) {
     const row = el('div', 'chat-tool-row');
-    row.appendChild(el('span', 'chat-tool-name', t.name));
-    row.appendChild(el('span', 'chat-tool-target', t.target || ''));
+    // The name and target live on their own flex line rather than as bare
+    // adjacent spans: without a container they rendered as one run-together
+    // word ("Grepredirect"), since neither carries whitespace of its own.
+    const head = el('div', 'chat-tool-head');
+    head.appendChild(el('span', 'chat-tool-name', t.name));
+    if (t.target) {
+      const target = el('span', 'chat-tool-target', t.target);
+      // Truncated to one line in CSS, so the untruncated value has to stay
+      // reachable somewhere — a path or command is often only distinguishable
+      // by its tail.
+      target.setAttribute('title', t.target);
+      head.appendChild(target);
+    }
+    row.appendChild(head);
     if (t.output) {
       const pre = el('pre', 'chat-tool-output', t.output);
       if (t.truncated) pre.dataset.truncated = '1';
@@ -40,10 +69,16 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
 
   function activityNode(item) {
     const wrap = el('div', 'chat-activity');
-    const chip = el('button', 'chat-activity-chip');
-    chip.setAttribute('type', 'button');
-    chip.setAttribute('aria-expanded', 'false');
-    chip.appendChild(el('span', 'chat-activity-label', activityTitle(item)));
+    const chip = chipButton('chat-activity-chip', 'chat-activity-label', item.label, activityTitle(item));
+    // The counts are their own coloured spans rather than part of the label
+    // text so + and − can carry the green/red they mean everywhere else in the
+    // app; activityTitle keeps the flat form for the tooltip.
+    if (item.adds || item.dels) {
+      const stat = el('span', 'chat-diffstat');
+      stat.appendChild(el('span', 'chat-adds', `+${item.adds}`));
+      stat.appendChild(el('span', 'chat-dels', `−${item.dels}`));
+      chip.appendChild(stat);
+    }
     wrap.appendChild(chip);
     const body = el('div', 'chat-activity-body');
     body.dataset.collapsed = '1';
@@ -63,18 +98,29 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       const prose = el('div', 'chat-prose');
       prose.innerHTML = renderMarkdown(e.text); // the one sanctioned innerHTML
       wrap.appendChild(prose);
-      const foot = el('div', 'chat-turn-foot');
-      if (e.model) foot.appendChild(el('span', 'chat-model', e.model));
-      wrap.appendChild(foot);
+      // Only when there is something to put in it: an empty foot still drew its
+      // own gap under every prose block, which read as a stray blank line.
+      if (e.model) {
+        const foot = el('div', 'chat-turn-foot');
+        foot.appendChild(el('span', 'chat-model', e.model));
+        wrap.appendChild(foot);
+      }
       return wrap;
     }
     if (item.type === 'thinking') {
       const wrap = el('div', 'chat-thinking');
-      wrap.appendChild(el('span', 'chat-thinking-label', e.durationMs ? `Thought for ${AGO(e.durationMs)}` : 'Thinking'));
+      const label = e.durationMs ? `Thought for ${AGO(e.durationMs)}` : 'Thinking';
+      // A chip only when there is a body to reveal. Claude's thinking is usually
+      // blank and Codex's is presence-only (encrypted_content, summary: []), so
+      // the textless case is the common one and must not offer a control that
+      // opens nothing.
       if (e.text) {
+        wrap.appendChild(chipButton('chat-thinking-chip', 'chat-thinking-label', label));
         const body = el('div', 'chat-thinking-body', e.text);
         body.dataset.collapsed = '1';
         wrap.appendChild(body);
+      } else {
+        wrap.appendChild(el('span', 'chat-thinking-label', label));
       }
       return wrap;
     }

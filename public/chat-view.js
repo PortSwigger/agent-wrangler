@@ -92,6 +92,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   });
   hint.textContent = 'Enter sends · Shift+Enter newline';
 
+  function wireDisclosure(node, chipSel, bodySel) {
+    const chip = node.querySelector(chipSel);
+    const body = node.querySelector(bodySel);
+    if (!chip || !body) return;
+    chip.addEventListener('click', () => {
+      const open = body.dataset.collapsed === '1';
+      body.dataset.collapsed = open ? '0' : '1';
+      chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
+
   const atBottom = () => stream.scrollHeight - stream.scrollTop - stream.clientHeight < BOTTOM_SLACK_PX;
 
   function appendItems(items) {
@@ -104,15 +115,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       if (item.type === 'activity' && item.adds + item.dels > 0) {
         node.querySelector('.chat-activity-chip')?.addEventListener('dblclick', () => onOpenDiff?.(sessionId));
       }
-      if (item.type === 'activity') {
-        const chip = node.querySelector('.chat-activity-chip');
-        const body = node.querySelector('.chat-activity-body');
-        chip?.addEventListener('click', () => {
-          const open = body.dataset.collapsed === '1';
-          body.dataset.collapsed = open ? '0' : '1';
-          chip.setAttribute('aria-expanded', open ? 'true' : 'false');
-        });
-      }
+      // Activity and thinking are the same disclosure control, so they are wired
+      // by the same code — a thinking body with text was previously rendered
+      // collapsed with nothing anywhere able to open it, making Codex/Claude
+      // reasoning text permanently unreachable in this view.
+      wireDisclosure(node, '.chat-activity-chip', '.chat-activity-body');
+      wireDisclosure(node, '.chat-thinking-chip', '.chat-thinking-body');
       stream.appendChild(node);
     }
     if (stick) stream.scrollTop = stream.scrollHeight;
