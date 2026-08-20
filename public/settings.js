@@ -63,7 +63,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Skip Codex\'s trust-folder prompt',
-    help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this marks the session\'s folder trusted for that invocation so Codex\'s own trust prompt never appears. Off restores Codex\'s normal prompt.',
+    help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this persists the folder as trusted in Codex\'s own ~/.codex/config.toml before launch (a per-invocation flag doesn\'t work; Codex ignores it), so its trust prompt never appears. For a worktree session this trusts the repo\'s main checkout, not just that worktree, so every other worktree of the same repo — and any other Codex use of it, wrangler or not — is trusted from then on too. Off restores Codex\'s normal prompt.',
     default: true,
   },
   {

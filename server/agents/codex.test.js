@@ -32,31 +32,18 @@ test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   assert.match(cmd, /'fix the bug'$/);
 });
 
-test('codex buildLaunch: marks launch cwd trusted for this invocation when trustCwd is on', () => {
-  const cmd = codex.buildLaunch({ ...base, cwd: '/repo/with "quotes"', trustCwd: true, intent: '' });
-  assert.match(cmd, /'projects\."\/repo\/with \\"quotes\\""\.trust_level=\"trusted\"'/);
-});
-
-test('codex resume and fork also mark launch cwd trusted when trustCwd is on', () => {
-  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', cwd: '/repo', trustCwd: true });
-  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', cwd: '/repo', trustCwd: true });
-  for (const cmd of [resume, fork]) {
-    assert.match(cmd, /'projects\."\/repo"\.trust_level=\"trusted\"'/);
-  }
-});
-
-test('codex omits the trust override when trustCwd is off, even with a cwd', () => {
-  const launch = codex.buildLaunch({ ...base, cwd: '/repo', trustCwd: false, intent: '' });
-  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', cwd: '/repo', trustCwd: false });
-  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', cwd: '/repo', trustCwd: false });
+// Directory trust is no longer a `-c` override here: verified against the real
+// binary that Codex's interactive trust dialog ignores that override entirely,
+// whichever path it's keyed on. Trust is instead persisted to config.toml
+// before launch by ensureCodexTrust (codex-trust.js), called by the session
+// manager — this adapter must never re-introduce the dead `-c` flag.
+test('codex never emits a trust_level override (that mechanism does not work; see codex-trust.js)', () => {
+  const launch = codex.buildLaunch({ ...base, intent: '' });
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID' });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID' });
   for (const cmd of [launch, resume, fork]) {
     assert.doesNotMatch(cmd, /trust_level/);
   }
-});
-
-test('codex omits the trust override when no cwd is given, even with trustCwd on', () => {
-  const cmd = codex.buildLaunch({ ...base, trustCwd: true, intent: '' });
-  assert.doesNotMatch(cmd, /trust_level/);
 });
 
 test('codex buildLaunch: no env-strip wrapper, no empty trailing prompt', () => {

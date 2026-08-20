@@ -40,6 +40,35 @@ don't re-derive it.
 - **Codex specifics.** Pane-scraped status (working/idle only, no needs-you), `cx_`
   tmux prefix (Claude `cc_`), cost is an *estimate* shown with `~`, offered only when
   the `codex` binary is on PATH.
+- **Codex's "trust this directory" dialog cannot be silenced with a `-c` flag —
+  verified against the installed binary.** `-c projects."<path>".trust_level="trusted"`
+  is silently ignored by the interactive dialog, whichever path it's keyed on; only an
+  entry already *persisted* in `~/.codex/config.toml` at process start suppresses it.
+  For a linked git worktree, Codex resolves trust to the worktree's MAIN checkout (git
+  commondir), so `ensureCodexTrust` (`server/codex-trust.js`) — called from
+  `session-manager.js` dispatch/resume/fork via the `this._ensureCodexTrust` seam,
+  only when `agent === 'codex'` and `trustCodexLaunchCwd()` is on — persists trust for
+  `worktree.repoRoot` (not the worktree path) so one write covers every worktree of
+  that repo. **TOML forbids two `[table]` headers for the same key — a duplicate
+  `[projects."X"]` block makes Codex refuse to load config.toml AT ALL**, breaking
+  every Codex session on the machine (wrangler-launched or not) until a human edits the
+  file by hand — verified live. So the writer is idempotent (no-ops if already
+  trusted, checked synchronously with no `await` before the append, so two calls from
+  this process can't interleave — same technique as `mailbox-store.js`), append-only
+  (never rewrites existing bytes, so it can't clobber a concurrent external writer's
+  unrelated change), and re-scans the whole file after writing; if it finds a
+  duplicate (a lost race against some other process, e.g. a manual `codex` run
+  accepting its own prompt at the same path), it surgically removes exactly the bytes
+  it just appended, leaves a forensic `config.toml.wrangler-broken-<ts>` copy, and
+  throws so the launch fails loudly rather than leaving a broken config on disk.
+  **Never call `ensureCodexTrust` directly in a test** — `server/test-setup.js`
+  (loaded via `node --test --import`, see `package.json`'s `test` script) redirects
+  `CODEX_HOME` to a per-process temp dir for exactly this reason: a
+  `dispatch/resume/fork` test with `agent: 'codex'` and no `_ensureCodexTrust` stub
+  once genuinely wrote "trust `os.tmpdir()`" into this developer's real
+  `~/.codex/config.toml`. The `this._ensureCodexTrust` instance seam (parallel to
+  `_newSession`/`_save`) exists so a test can also assert the wiring without touching
+  any filesystem at all.
 - **A session's cost includes its dispatched sub-agents. Never trust the inline
   `toolUseResult.usage` when a `subagents/*.jsonl` transcript exists** — it reflects a
   single settle, not every turn, and undercounts a multi-turn sub-agent ~5–25×. Cost
