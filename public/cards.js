@@ -206,8 +206,7 @@ export function mailBadgeHtml(s) {
 
 export function modelPillHtml(model) {
   if (!model) return '';
-  const pill = typeof model === 'string' ? { label: model, title: model } : model;
-  return `<span class="card-tag model-pill" title="${esc(pill.title)}">${CPU_ICON}${esc(pill.label)}</span>`;
+  return `<span class="card-tag model-pill" title="${esc(model.title)}">${CPU_ICON}<span class="model-pill-label">${esc(model.label)}</span></span>`;
 }
 
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {

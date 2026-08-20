@@ -4,7 +4,7 @@ import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
-  tileHtml, ghostHtml, mailBadgeHtml,
+  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml,
 } from './cards.js';
@@ -99,8 +99,13 @@ test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
 test('sessionCardHtml: shows the short model label with a CPU icon only when resolved', () => {
   const known = sessionCardHtml(sess({ modelPill: { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' } }), ctx());
   const unknown = sessionCardHtml(sess({ modelPill: null }), ctx());
-  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol"><svg class="icon"[^>]*>[^]*<\/svg>gpt-5\.6 sol<\/span>/);
+  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol"><svg class="icon"[^>]*>[^]*<\/svg><span class="model-pill-label">gpt-5\.6 sol<\/span><\/span>/);
   assert.doesNotMatch(unknown, /model-pill/);
+});
+
+test('modelPillHtml: keeps the label in its own truncatable element', () => {
+  const html = modelPillHtml({ label: 'an-unrecognised-model-with-a-very-long-id', title: 'raw-model-id' });
+  assert.match(html, /<span class="model-pill-label">an-unrecognised-model-with-a-very-long-id<\/span>/);
 });
 
 test('sessionCardHtml: long bar word is clipped to 6 chars with a full-text title', () => {

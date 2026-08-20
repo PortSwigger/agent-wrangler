@@ -12,7 +12,10 @@ export function modelPillFor(agentId, currentModel, launchModel) {
   const find = (model) => models.find((entry) => entry.value === model
     || entry.transcriptPrefixes?.some((prefix) => model.startsWith(prefix)));
   if (currentModel) {
-    const entry = find(currentModel);
+    const launchEntry = models.find((entry) => entry.value === launchModel);
+    const entry = launchEntry?.transcriptPrefixes?.some((prefix) => currentModel.startsWith(prefix))
+      ? launchEntry
+      : find(currentModel);
     return { label: entry?.pillLabel || currentModel, title: currentModel };
   }
   if (!launchModel) return null;

@@ -142,7 +142,7 @@ export const claude = {
     { value: 'opus', label: 'Opus 5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true },
     { value: 'opusplan', label: 'Opus plan · Sonnet execution', pillLabel: 'opus plan' },
     { value: 'sonnet', label: 'Sonnet 5 · 200K context', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'] },
-    { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m' },
+    { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'] },
     { value: 'haiku', label: 'Haiku 4.5 · 200K context', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'] },
   ],
   efforts: [

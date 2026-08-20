@@ -1733,7 +1733,8 @@ body.system-banner-open { padding-top: 30px; }
 /* Right-aligned chip on the meta line (worktree marker). Purple ties it to the
    branch colour so a worktree session reads as a branch-side concept. */
 .card-tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: none; background: var(--surface-2); color: var(--fg-muted); line-height: normal; display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; white-space: nowrap; }
-.model-pill { max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
+.model-pill { max-width: 14em; }
+.model-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tag.wt { color: var(--purple-fg); background: var(--purple); }
 /* Green ties the pill to its meaning — this session merges its PR once checks go green.
    A solid --green fill reads too low-contrast against --green-fg text (they're close in

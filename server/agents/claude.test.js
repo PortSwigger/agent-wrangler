@@ -193,6 +193,9 @@ test('modelPillFor shortens a transcript model and falls back to the launch mode
   assert.deepEqual(modelPillFor('codex', null, 'gpt-5.6-sol'), {
     label: 'gpt-5.6 sol', title: 'gpt-5.6-sol',
   });
+  assert.deepEqual(modelPillFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet[1m]'), {
+    label: 'sonnet 1m', title: 'claude-sonnet-4-5-20250929',
+  });
 });
 
 test('modelsWithDefault leaves the built-in default when AW_DEFAULT_MODEL is unset or unknown', () => {
