@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fetchPrDiff } from './pr-status.js';
 
 const exec = promisify(execFile);
 
@@ -355,4 +356,18 @@ export async function branchDiff(cwd, { lineCap } = {}) {
 
   const result = await diffAgainstBase(cwd, base, cap);
   return { ...result, baseRef: remoteRef };
+}
+
+export async function pullRequestDiff(url, { lineCap, run = fetchPrDiff } = {}) {
+  const cap = Number.isFinite(lineCap) ? lineCap : envLineCap();
+  try {
+    const { stdout } = await run(url);
+    const budget = { cap, kept: 0, droppedLines: 0 };
+    const files = parseDiff(stdout || '', budget);
+    if (files.length === 0) return { state: 'empty' };
+    const { files: capped, droppedLines } = applyLineCap(files, cap);
+    return { state: 'ok', files: capped, truncated: { droppedLines: budget.droppedLines + droppedLines, droppedFiles: 0 } };
+  } catch (err) {
+    return { state: 'error', error: String(err.stderr || err.message || err) };
+  }
 }

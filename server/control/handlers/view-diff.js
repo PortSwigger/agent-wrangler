@@ -1,5 +1,6 @@
-import { workingTreeDiff, branchDiff } from '../../git-diff.js';
+import { workingTreeDiff, branchDiff, pullRequestDiff as defaultPullRequestDiff } from '../../git-diff.js';
 import { recentCwds } from '../../transcript-reader.js';
+import { linkedPrForUrl } from './pr-links.js';
 
 // Bound how many historical cwds a not-a-repo launch dir makes us shell out to git
 // for. Only reached once per request, and only when the primary dir failed the
@@ -24,8 +25,20 @@ export const viewDiffHandler = {
     // client can drop stale/out-of-order diffs and settle its in-flight guard.
     // Absent on legacy clients — echoing `undefined` is inert (drops from JSON).
     const reqId = msg.reqId;
-    const mode = msg.mode === 'branch' ? 'branch' : 'working-tree';
+    const mode = msg.mode === 'branch' ? 'branch' : msg.mode === 'pr' ? 'pr' : 'working-tree';
     try {
+      if (mode === 'pr') {
+        const pr = linkedPrForUrl(sessionId, msg.prUrl, ctx);
+        if (!pr) {
+          ctx.reply({ type: 'diff', sessionId, reqId, mode, prUrl: msg.prUrl, state: 'error', error: 'That PR is not linked to this session or its task.' });
+          return;
+        }
+        const fetchPrDiff = ctx.pullRequestDiff || defaultPullRequestDiff;
+        const result = await fetchPrDiff(pr.url);
+        ctx.reply({ type: 'diff', sessionId, reqId, mode, ...result, prUrl: pr.url, prRepo: pr.repo, prNumber: pr.number });
+        return;
+      }
+
       const entry = ctx.sessionManager.entryFor(sessionId);
       const cwd = entry?.worktree?.path || entry?.cwd || ctx.sessionFromGraph(sessionId)?.cwd;
       if (!cwd) {

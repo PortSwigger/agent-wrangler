@@ -42,19 +42,41 @@ test('formatDiffComments: a legacy plain-text snapshot (pre-context, no marker) 
   assert.match(msg, /f\.js:3 \(new\)\n {4}gone\(\)\n {4}why\?/);
 });
 
+test('formatDiffComments: PR source names the pull request and repo', () => {
+  const msg = formatDiffComments(COMMENTS, {
+    mode: 'pr',
+    prNumber: 42,
+    prRepo: 'acme/widgets',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  });
+  assert.match(msg, /^Review comments on PR #42 \(acme\/widgets\) https:\/\/github\.com\/acme\/widgets\/pull\/42 \(1\):/);
+  assert.match(msg, /Line numbers refer to the PR diff\./);
+});
+
+test('formatDiffComments: PR source without repo still names the pull request', () => {
+  const msg = formatDiffComments(COMMENTS, { mode: 'pr', prNumber: 42 });
+  assert.match(msg, /^Review comments on PR #42 \(1\):/);
+});
+
+test('formatDiffComments: branch source names the full branch diff', () => {
+  const msg = formatDiffComments(COMMENTS, { mode: 'branch' });
+  assert.match(msg, /^Review comments on the full branch diff \(1\):/);
+});
+
 // ctx double: tmuxFor reflects a `live` flag that resume() flips true; records
 // sendText calls, resume calls, and replies. sendText is injected via ctx (test
 // seam) so no real tmux is touched.
-function makeCtx({ live }) {
+function makeCtx({ live, sessionLinks = [], taskLinks = [] }) {
   const calls = { sends: [], sent: [], resumed: 0, settled: 0, order: [] };
   let isLive = live;
   const ctx = {
     sessionManager: {
       entryFor: () => ({ cwd: os.tmpdir(), liveSessionId: 'L1' }),
+      getLinks: () => sessionLinks,
       resume: async () => { calls.resumed += 1; calls.order.push('resume'); isLive = true; return { tmux: 'cc_1' }; },
     },
     memoryStore: { bindSession: () => {} },
-    taskStore: { taskFor: () => ({ id: 'T1' }) },
+    taskStore: { taskFor: () => ({ id: 'T1' }), getLinks: () => taskLinks },
     rebuild: async () => {},
     tmuxFor: () => (isLive ? 'cc_1' : null),
     socketFor: () => 'sockA',
@@ -79,6 +101,78 @@ test('diff-comments: a live session gets the formatted message via sendText, rep
   assert.equal(calls.sends[0].socket, 'sockA');
   assert.equal(calls.sends[0].text, formatDiffComments(COMMENTS));
   assert.deepEqual(calls.sent, [{ type: 'diff-comments-result', sessionId: 'S1', ok: true }]);
+});
+
+test('diff-comments: passes PR source metadata into the delivered message', async () => {
+  const { ctx, calls } = makeCtx({
+    live: true,
+    sessionLinks: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }],
+  });
+  await diffCommentsHandler.handler({
+    type: 'diff-comments',
+    sessionId: 'S1',
+    comments: COMMENTS,
+    mode: 'pr',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    prNumber: 99,
+    prRepo: 'forged/repo',
+  }, ctx);
+  assert.equal(calls.sends[0].text, formatDiffComments(COMMENTS, {
+    mode: 'pr',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    prNumber: 42,
+    prRepo: 'acme/widgets',
+  }));
+});
+
+test('diff-comments: accepts task-linked PR comments', async () => {
+  const { ctx, calls } = makeCtx({
+    live: true,
+    taskLinks: [{ type: 'pr', url: 'https://github.com/acme/api/pull/7', repo: 'acme/api', number: 7 }],
+  });
+  await diffCommentsHandler.handler({
+    type: 'diff-comments',
+    sessionId: 'S1',
+    comments: COMMENTS,
+    mode: 'pr',
+    prUrl: 'https://github.com/acme/api/pull/7',
+  }, ctx);
+  assert.equal(calls.sends.length, 1);
+  assert.match(calls.sends[0].text, /PR #7 \(acme\/api\) https:\/\/github\.com\/acme\/api\/pull\/7/);
+  assert.equal(calls.sent[0].ok, true);
+});
+
+test('diff-comments: rejects PR comments with no PR URL', async () => {
+  const { ctx, calls } = makeCtx({
+    live: true,
+    sessionLinks: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }],
+  });
+  await diffCommentsHandler.handler({
+    type: 'diff-comments',
+    sessionId: 'S1',
+    comments: COMMENTS,
+    mode: 'pr',
+  }, ctx);
+  assert.equal(calls.sends.length, 0);
+  assert.equal(calls.sent[0].ok, false);
+  assert.match(calls.sent[0].error, /not linked/i);
+});
+
+test('diff-comments: rejects PR comments for an unlinked PR URL', async () => {
+  const { ctx, calls } = makeCtx({
+    live: true,
+    sessionLinks: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }],
+  });
+  await diffCommentsHandler.handler({
+    type: 'diff-comments',
+    sessionId: 'S1',
+    comments: COMMENTS,
+    mode: 'pr',
+    prUrl: 'https://github.com/acme/widgets/pull/99',
+  }, ctx);
+  assert.equal(calls.sends.length, 0);
+  assert.equal(calls.sent[0].ok, false);
+  assert.match(calls.sent[0].error, /not linked/i);
 });
 
 test('diff-comments: a dormant session is resumed BEFORE sendText', async () => {

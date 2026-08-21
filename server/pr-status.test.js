@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
+import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff } from './pr-status.js';
 
 // run(url) resolves { code, stdout } mimicking the gh invocation; stdout is the
 // `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>` the in-gh jq
@@ -168,4 +168,14 @@ test('fetchUnresolvedThreadCount returns null on unparseable output', async () =
 test('fetchUnresolvedThreadCount: a runner that throws yields null, never propagates', async () => {
   const throwing = async () => { throw new Error('spawn ENOENT'); };
   assert.equal(await fetchUnresolvedThreadCount('u', throwing), null);
+});
+
+test('fetchPrDiff calls the supplied PR diff runner with the URL', async () => {
+  const calls = [];
+  const res = await fetchPrDiff('https://github.com/acme/widgets/pull/42', async (url) => {
+    calls.push(url);
+    return { stdout: 'diff --git a/a b/a\n' };
+  });
+  assert.deepEqual(calls, ['https://github.com/acme/widgets/pull/42']);
+  assert.equal(res.stdout, 'diff --git a/a b/a\n');
 });

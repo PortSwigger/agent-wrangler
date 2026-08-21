@@ -10,6 +10,37 @@ export function draftsStorageKey(sessionId) {
   return `aw:diff-drafts:${sessionId}`;
 }
 
+export function draftStorageKeysForSource(sessionId, mode = 'working-tree', prKey = null) {
+  const source = mode === 'pr' && prKey ? `pr:${prKey}` : mode;
+  return {
+    primary: draftsStorageKey(`${sessionId}:${source}`),
+    legacy: mode === 'working-tree' || mode === 'branch' ? draftsStorageKey(sessionId) : null,
+  };
+}
+
+export function clearSubmittedDraftSource({ currentKey, submittedKey }) {
+  const removeKey = submittedKey || currentKey;
+  return { removeKey, clearCurrent: removeKey === currentKey };
+}
+
+export function diffPrLinks(session, task) {
+  const out = [];
+  const seen = new Set();
+  for (const link of [...(session?.links || []), ...(task?.links || [])]) {
+    if (link?.type !== 'pr' || !link.url) continue;
+    const key = link.repo && link.number ? `${link.repo}#${link.number}` : link.url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      url: link.url,
+      repo: link.repo,
+      number: link.number,
+      label: link.number ? `PR #${link.number}` : 'PR',
+    });
+  }
+  return out;
+}
+
 // A diff line's review "side" follows the GitHub convention: a deletion is
 // addressed on the OLD file (its newLine is null), everything else (an addition
 // or an unchanged context line) on the NEW file. One place so the renderer's
