@@ -52,6 +52,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   // ghost-suggestion.js). Held like pending/lastTs because it too describes the
   // reply's own moment rather than any event.
   let lastSuggestion = null;
+  // The most recent thing the human sent, kept so Stop can put it back in the
+  // composer the way pressing Esc does in the pane. Read off the `user` events
+  // as they arrive rather than remembered at submit() time: submit() is not the
+  // only way a prompt reaches the session (the card's own message box and a
+  // peer's mail both land as user turns), and the transcript is what actually
+  // happened.
+  let lastUserText = null;
   // Created lazily and kept as the stream's last child while the session works.
   // It lives IN the stream, not above the composer where the old status line
   // sat: the complaint this answers is that the stream looks dead during a long
@@ -124,6 +131,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
     input.value = text;
     input.disabled = false;
     input.focus();
+    // Caret at the end, not a selection over the whole value: the point of
+    // restoring a prompt is to amend it, and a full selection means the next
+    // keystroke deletes it.
+    try { input.setSelectionRange(text.length, text.length); } catch { /* not all inputs support it */ }
     // The composer auto-grows on `input`, which a programmatic value set does not
     // fire, so a multi-line suggestion would land in a one-row box that hides
     // most of itself.
@@ -152,12 +163,33 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   }
 
   sendBtn.addEventListener('click', submit);
-  stopBtn.addEventListener('click', () => sessionId && send({ type: 'interrupt', sessionId }));
+  // Mimics pressing Esc in the pane: stop the turn, then hand the prompt back
+  // for editing. The interrupt goes first so the stop is never delayed by the
+  // restore, and it is sent even when there is nothing to restore.
+  function interruptAndRestore() {
+    if (!sessionId) return;
+    send({ type: 'interrupt', sessionId });
+    // Never over a draft: if something is already typed, that is newer than the
+    // prompt being cancelled and is what the human wants to keep. Stopping still
+    // happens — only the restore is skipped.
+    if (lastUserText && !input.value.trim()) loadComposer(lastUserText);
+    renderSuggestion();
+  }
+
+  stopBtn.addEventListener('click', interruptAndRestore);
   input.addEventListener('keydown', (e) => {
     // isComposing: an IME user (Japanese/Chinese/Korean) presses Enter to confirm
     // a composition, not to submit — without this guard that Enter fires submit()
     // before the composed text even lands in the field.
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+    // Escape only while the session is actually working, which is what the pane
+    // does — and what keeps this from swallowing the key the rest of the app
+    // uses to dismiss things. Scoped to the composer rather than the document
+    // for the same reason.
+    if (e.key === 'Escape' && !e.isComposing && lastStatus === 'working') {
+      e.preventDefault();
+      interruptAndRestore();
+    }
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -169,7 +201,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
     if (lastSuggestion) loadComposer(lastSuggestion);
     renderSuggestion();
   });
-  hint.textContent = 'Enter sends · Shift+Enter newline';
+  // Status-driven, because Esc only does anything while a turn is running —
+  // advertising it permanently would promise a key that mostly does nothing.
+  function renderHint() {
+    const base = 'Enter sends · Shift+Enter newline';
+    hint.textContent = lastStatus === 'working' ? `${base} · Esc stops` : base;
+  }
+  renderHint();
 
   function wireDisclosure(node, chipSel, bodySel) {
     const chip = node.querySelector(chipSel);
@@ -187,6 +225,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   function appendItems(items) {
     const stick = atBottom();
     for (const item of items) {
+      if (item.type === 'user' && item.event.text) lastUserText = item.event.text;
       const node = dom.itemNode(item);
       if (item.type === 'subagent') {
         node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
@@ -236,6 +275,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       lastStatus = null;
       lastTs = null;
       lastSuggestion = null;
+      lastUserText = null;
       // The row is a child of the stream that was just cleared, so the handle is
       // dangling — dropping it here (rather than only in renderLive's not-working
       // branch) stops the next render re-appending a detached node and, worse,
@@ -261,6 +301,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       lastStatus = null;
       lastTs = null;
       lastSuggestion = null;
+      lastUserText = null;
       live = null;
       renderLive();
       renderSuggestion();
@@ -311,6 +352,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       lastStatus = status;
       renderLive();
       renderSuggestion();
+      renderHint();
       const bar = document.getElementById('chat-notice-bar');
       const box = document.querySelector('.chat-box');
       const blocked = status === 'needs-you';
