@@ -1577,6 +1577,38 @@ function openActionsMenu(sessionId, x, y) {
   mountMenu(items, x, y);
 }
 
+// Mirrors set-session-model.js's own refusals, so the chat view only offers the
+// menu where the server would honour it. Kept as one named predicate rather than
+// inline conditions because the two sides have to agree: a mismatch here shows a
+// menu whose every choice fails.
+function canSwitchModel(s) {
+  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+}
+
+// Pick a model for a live session — the chat view's model chip. Sends the same
+// `/model <name>` the pane takes; the board confirms it on the next turn via
+// modelPill (read from the transcript), so nothing is assumed here.
+function openModelMenu(sessionId, x, y) {
+  const s = latestSessions.find((sess) => sess.sessionId === sessionId);
+  if (!canSwitchModel(s)) return;
+  const claude = availableAgents.find((a) => a.id === 'claude');
+  const models = claude?.models || [];
+  if (!models.length) return;
+  // The pill's label is the adapter's own short form, so matching on it is how
+  // the current model is identified without duplicating the transcript-prefix
+  // mapping that produced it server-side.
+  const current = s.modelPill?.label;
+  mountMenu(models.map((m) => ({
+    label: m.label,
+    // `trailing` rather than `icon`, and present on every row even when empty:
+    // that is what reserves the slot so the labels stay aligned instead of the
+    // checked row sitting indented from the rest (same idiom as the auto-fix and
+    // auto-merge menu items).
+    trailing: m.pillLabel === current || m.value === current ? CHECK_ICON : '',
+    run: () => send({ type: 'set-session-model', sessionId, model: m.value }),
+  })), x, y);
+}
+
 // The task tile's kebab menu — the header's action buttons collapsed into one menu,
 // reusing the same mountMenu primitive as the card/pane menus. `taskId` is the bucket
 // id (a real task id or ADHOC_ID). Distinct from openTaskMenu (the cell right-click
@@ -3095,6 +3127,10 @@ function renderSidebar(s) {
     // until the next ~4s graph rebuild, while Stop — driven off the same status — is
     // already visible. The two must never disagree.
     chatView.setStatus(displayStatus(s));
+    // Same reasoning for the model: mount clears it so a session switch cannot
+    // leave the previous session's model showing, which means it has to be
+    // re-seeded here or the chip stays blank until the next graph rebuild.
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     return;
   }
   chatView.unmount();
@@ -3273,7 +3309,10 @@ function renderPanel(sessionId) {
   const view = viewForSession(sessionId);
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
-  if (view === 'chat') chatView.setStatus(displayStatus(s));
+  if (view === 'chat') {
+    chatView.setStatus(displayStatus(s));
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+  }
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];
@@ -4544,6 +4583,10 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // Success is silent on purpose: the model chip changes on the next turn, off
+    // the transcript, which is real confirmation rather than this reply's
+    // optimism. Only a refusal needs saying, because nothing else would show it.
+    else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
@@ -4794,6 +4837,7 @@ const chatView = initChatView({
   onOpenDiff: (sid) => openDiffPanel(sid),
   // Arms the round trip before switching: applyGraph brings the view back once
   // the session leaves needs-you, i.e. once the prompt has been answered.
+  onPickModel: (sid, rect) => openModelMenu(sid, rect.left, rect.bottom + 6),
   onGoTerminal: (sid) => {
     chatHandoffFor = sid;
     setSessionView(sid, 'terminal');

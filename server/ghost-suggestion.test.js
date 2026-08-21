@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGhostSuggestion } from './ghost-suggestion.js';
+import { parseGhostSuggestion, paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const E = '\x1b';
 // Reproduced from a real `capture-pane -e` of a live Claude Code session that was
@@ -81,4 +81,29 @@ test('non-string input yields nothing', () => {
   assert.equal(parseGhostSuggestion(null), null);
   assert.equal(parseGhostSuggestion(undefined), null);
   assert.equal(parseGhostSuggestion(''), null);
+});
+
+// --- paneComposerIsEmpty: the guard before pasting a slash command ---
+
+test('an empty composer is confirmed empty', () => {
+  assert.equal(parseGhostSuggestion(composer('')), null);
+  assert.equal(paneComposerIsEmpty([FRAME, composer(''), FRAME].join('\n')), true);
+});
+
+test('a composer holding only ghost text is still empty', () => {
+  // Nothing was typed; a paste would replace the suggestion, not collide with it.
+  assert.equal(paneComposerIsEmpty(composer(`${E}[2mpoint 5${E}[0m`)), true);
+});
+
+test('typed text means not empty', () => {
+  assert.equal(paneComposerIsEmpty(composer('half a prompt')), false);
+  assert.equal(paneComposerIsEmpty(composer(`typed${E}[2mpoint 5${E}[0m`)), false);
+});
+
+// Fail-safe: anything unreadable must answer "not empty" so no paste happens.
+test('an unreadable capture is never reported as empty', () => {
+  assert.equal(paneComposerIsEmpty('❯ '), false, 'no escapes: cannot judge');
+  assert.equal(paneComposerIsEmpty(''), false);
+  assert.equal(paneComposerIsEmpty(null), false);
+  assert.equal(paneComposerIsEmpty(`${E}[39msome output with no composer`), false);
 });

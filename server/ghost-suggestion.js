@@ -42,6 +42,33 @@ const MAX_SUGGESTION = 300;
 
 const visible = (s) => s.replace(ANSI, '').trim();
 
+// Whether the pane's composer is CONFIRMED empty — nothing typed and no
+// suggestion accepted into it. Its own function rather than a negation of
+// parseGhostSuggestion, because the two ask different questions: that one wants
+// the faint text, this one wants to know whether anything at all is in the way.
+//
+// Fail-safe by construction: it answers false whenever emptiness cannot be
+// confirmed (no escapes, no composer line found, an unreadable capture). The
+// caller uses it to decide whether pasting a slash command is safe, and pasting
+// into a pane whose state we could not read is exactly what must not happen —
+// the paste lands at the cursor, so a draft already there would turn
+// "/model sonnet" into a mangled prompt the Enter then submits.
+export function paneComposerIsEmpty(paneText) {
+  if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
+  const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
+  if (!line) return false;
+  const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
+  // Drop faint runs before judging: ghost text occupies the composer visually
+  // but is not content — pressing Enter on it does submit it, but it is not
+  // something the human typed, and it is replaced wholesale by a paste.
+  const withoutGhost = after.split(DIM_OPEN).map((part, i) => {
+    if (i === 0) return part;
+    const close = part.search(DIM_CLOSE);
+    return close === -1 ? '' : part.slice(close);
+  }).join('');
+  return !visible(withoutGhost);
+}
+
 // `paneText` must come from `capture-pane -e` — WITHOUT the escape sequences
 // there is no way to tell ghost text from typed text, which is the whole basis
 // of this parser. Plain text in means null out, not a guess.

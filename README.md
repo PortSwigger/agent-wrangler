@@ -35,7 +35,9 @@ otherwise it behaves exactly as a Claude-only board.
   terminal to answer one and brings you back by itself once it is answered — switching view by
   hand while you are there cancels the return. Esc (or Stop) interrupts a running turn and hands
   the prompt back for editing, as it does in the pane; a draft you have already started is never
-  overwritten. Its font size is its own setting, separate from the terminal's.
+  overwritten. The session's current model shows beside the composer, and on an idle Claude
+  session you can click it to switch mid-conversation — the same session-scoped change `/model`
+  makes in the pane. Its font size is its own setting, separate from the terminal's.
   Claude Code's suggested next prompt is offered above the composer too — that one is read off
   the pane, since it exists nowhere else, so it shows only for live Claude sessions and stays
   hidden whenever it can't be told apart from something you were typing.

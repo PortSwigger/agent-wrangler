@@ -2501,7 +2501,33 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-stop { background: transparent; color: var(--red-fg); border-color: color-mix(in srgb, var(--red) 55%, transparent); }
 .chat-stop:hover { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: var(--red); }
 
-.chat-hint { font-size: 0.76em; color: var(--fg-subtle); margin-top: 7px; }
+/* Hint left, current model right — the model belongs by the editor (that is what
+   the request asked for) and this is the only row down here, so it costs no
+   vertical space to put it there. */
+.chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
+/* Which model the session is on RIGHT NOW, as opposed to .chat-model, which
+   records the model of one past turn. Deliberately a little stronger than that
+   one: it is live state, not provenance. */
+.chat-current-model {
+  margin-left: auto; flex: none; max-width: 45%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  color: var(--fg-muted); background: var(--surface-2);
+  border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Same [hidden] trap as the other attribute-toggled chat elements. */
+.chat-current-model[hidden] { display: none; }
+/* Pressable only where the switch would be honoured (see canSwitchModel): the
+   hover affordance has to appear exactly where the click does something. */
+.chat-current-model[data-switchable="1"] { cursor: pointer; }
+.chat-current-model[data-switchable="1"]:hover { color: var(--fg); border-color: var(--border); background: var(--surface); }
+/* The global `button:hover` rule would still light up a chip that cannot be
+   pressed, so the disabled state has to restate its resting colours. */
+.chat-current-model:disabled { cursor: default; }
+.chat-current-model:disabled:hover {
+  background: var(--surface-2); border-color: var(--border-muted); color: var(--fg-muted);
+}
 /* Buttons carry an absolute 12px from the global `button` rule, which would sit
    unchanged beside prose the size setting had scaled. */
 .chat-send, .chat-stop { font-size: 0.86em; }

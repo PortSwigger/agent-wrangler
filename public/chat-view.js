@@ -13,7 +13,7 @@ import { createRenderer } from './markdown-preview.js';
 const POLL_MS = 2000;
 const BOTTOM_SLACK_PX = 40;
 
-export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal } = {}) {
+export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   const dom = createChatDom({ renderMarkdown: createRenderer(window.markdownit) });
@@ -39,6 +39,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
   const suggestionBtn = document.getElementById('chat-suggestion');
+  const modelEl = document.getElementById('chat-current-model');
 
   // The live row's three inputs — the last reply's pending tool call, the
   // timestamp of the newest transcript line, and the last known session status
@@ -197,6 +198,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
     // Typing withdraws the suggestion, and clearing the box brings it back.
     renderSuggestion();
   });
+  modelEl.addEventListener('click', () => {
+    if (!sessionId || modelEl.disabled) return;
+    // The menu is app.js's business (it owns mountMenu and the agent registry);
+    // this module only says where to put it, the same way the sub-agent and diff
+    // hooks hand off rather than reach out.
+    onPickModel?.(sessionId, modelEl.getBoundingClientRect());
+  });
   suggestionBtn.addEventListener('click', () => {
     if (lastSuggestion) loadComposer(lastSuggestion);
     renderSuggestion();
@@ -285,6 +293,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       tick = null;
       renderLive();
       renderSuggestion();
+      // Cleared, not carried: the model belongs to the session being left. The
+      // caller re-seeds it straight after mount (see renderSidebar in app.js).
+      modelEl.hidden = true;
       wrap.hidden = false;
       poll();
       clearInterval(timer);
@@ -305,6 +316,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       live = null;
       renderLive();
       renderSuggestion();
+      modelEl.hidden = true;
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -343,6 +355,28 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // draws as two adjacent activity chips rather than one, and self-heals on
       // remount.
       appendItems(groupChatEvents(msg.events));
+    },
+    // The model the session is on now, as the graph reports it (`s.modelPill`,
+    // derived from the transcript's own `message.model`, so it follows a
+    // mid-conversation change on its own). Its own entry point rather than a
+    // second argument to setStatus: the two come from different parts of the
+    // node and change on different cadences.
+    setModel(pill, { switchable = false } = {}) {
+      const label = pill?.label;
+      modelEl.hidden = !label;
+      if (!label) return;
+      modelEl.textContent = label;
+      // Only pressable when the switch would actually work — the server refuses a
+      // non-idle, dormant or Codex session anyway, so offering the menu there
+      // would just produce an error the user could have been spared. The reason
+      // goes in the tooltip instead of leaving a dead-looking control.
+      modelEl.disabled = !switchable;
+      modelEl.dataset.switchable = switchable ? '1' : '0';
+      // The pill's label is shortened for width; the raw id is the tooltip, same
+      // pairing the board card uses.
+      modelEl.setAttribute('title', switchable
+        ? `${pill.title || label} — click to switch model`
+        : `${pill.title || label} — switching needs an idle Claude session with a live terminal`);
     },
     setStatus(status) {
       // A transition AWAY from 'working' must hide the line even with no new

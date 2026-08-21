@@ -19,6 +19,7 @@ import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
+import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
   taskRenameHandler,
@@ -83,6 +84,7 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
+  setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,

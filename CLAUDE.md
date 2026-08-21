@@ -389,6 +389,31 @@ don't re-derive it.
   only** — Codex's composer is a different TUI and guessing at it is exactly the
   failure this is built to avoid. Carried on every reply under the same all-paths
   rule as `token`/`lastTs`.
+- **`/model <name>` is the ONE slash command the chat view is allowed to send,
+  and `entry.model` must NOT be updated when it does.** The "slash commands stay
+  in the pane" rule exists because a slash command's output is a TUI dialog this
+  view cannot render (`/clear`, `/compact`, `/config`, …). `/model <name>` is the
+  exception that proves it: it takes its argument inline and applies silently,
+  with no dialog to miss. Verified against the installed binary — its help says
+  "`/model <name>` — session-scoped, **not persisted**" and its accepted alias
+  list is `["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]",
+  "fable[1m]","opusplan"]`, a superset of every value the Claude adapter offers,
+  so `set-session-model.js` validates against the adapter's own list and no
+  second model vocabulary exists. **`entry.model` stays the LAUNCH model** — it
+  is what a resume re-launches with, and since Claude Code does not persist a
+  `/model` change either, writing it would make the wrangler claim a durability
+  the agent does not have. Confirmation comes from `modelPill` on the next turn
+  (derived from the transcript's `message.model`), never from the handler's own
+  optimism. Three refusals are load-bearing and mirrored client-side by
+  `canSwitchModel` (`public/app.js`) so the menu is only offered where it would
+  be honoured: **Claude only** (Codex's model is a launch choice and its TUI is a
+  different program), **idle only** (composer input during a turn is queued as
+  the next PROMPT, so the session would answer "/model sonnet" as a question),
+  and **pane composer confirmed empty** via `paneComposerIsEmpty`
+  (`ghost-suggestion.js`) — the paste lands at the cursor, so a draft already
+  there fuses with the command into one mangled prompt that the Enter submits.
+  That guard is fail-safe: it returns false whenever emptiness cannot be
+  confirmed.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message
