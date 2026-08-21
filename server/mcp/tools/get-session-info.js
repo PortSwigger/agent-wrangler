@@ -50,7 +50,9 @@ export const getSessionInfoTool = {
     + 'UI. Either can be set with the other null — do not assume one implies the other. The same '
     + 'spawnedBy is also available at boot (and after a resume) as the AW_SPAWNER_SESSION_ID env '
     + 'var, but that var never reflects `parent`/nesting at all, and goes stale if you get '
-    + 're-nested after launch — this tool always reads live state. Read-only.',
+    + 're-nested after launch — this tool always reads live state. `parentLabel`/`spawnedByLabel` '
+    + 'name the id in the sibling field — use them, not the raw id, when telling the user about '
+    + 'your parent or spawner. Read-only.',
   inputSchema: {},
   async handler({ deps, caller }) {
     if (!caller) return errorResult('No caller identity on this request — this tool answers for the calling session only.');
@@ -68,14 +70,21 @@ export const getSessionInfoTool = {
       ? (graphRow.label ?? null)
       : sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: caller.slice(0, 8) }) || null;
 
+    const parentChain = walkChain(deps.sessionManager, deps.taskStore, parent, 'parentSession');
+    const spawnerChain = walkChain(deps.sessionManager, deps.taskStore, spawnedBy, 'spawnedBy');
     const structuredContent = {
       sessionId: caller,
       label,
       task: deps.taskStore.taskFor(caller) ?? null,
       parent,
-      parentChain: walkChain(deps.sessionManager, deps.taskStore, parent, 'parentSession'),
+      // Sits alongside the bare id — same reason spawn_session/spawn_workflow
+      // return a label, not just an id: naming the parent to the user
+      // shouldn't require digging into parentChain[0] for it.
+      parentLabel: parentChain[0]?.label ?? null,
+      parentChain,
       spawnedBy,
-      spawnerChain: walkChain(deps.sessionManager, deps.taskStore, spawnedBy, 'spawnedBy'),
+      spawnedByLabel: spawnerChain[0]?.label ?? null,
+      spawnerChain,
     };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

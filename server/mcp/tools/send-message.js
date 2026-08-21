@@ -153,9 +153,12 @@ function compose(caller, deps, text) {
   return lines.join('\n');
 }
 
+// Name-first: this lands verbatim in the recipient's pane, where a human
+// attached to it reads it too — the id means nothing to them, so it trails in
+// parens as a lookup aid rather than leading.
 function senderWho(caller, deps) {
   const label = labelFor(deps, caller);
-  return label ? `${caller} (${label})` : caller;
+  return label ? `${label} (${caller})` : caller;
 }
 
 function errorResult(message) {

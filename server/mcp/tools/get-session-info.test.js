@@ -27,7 +27,9 @@ test('get_session_info reports both relations null for a plain top-level session
     caller: 'S1',
   });
   assert.deepEqual(out.structuredContent, {
-    sessionId: 'S1', label: 'Solo', task: null, parent: null, parentChain: [], spawnedBy: null, spawnerChain: [],
+    sessionId: 'S1', label: 'Solo', task: null,
+    parent: null, parentLabel: null, parentChain: [],
+    spawnedBy: null, spawnedByLabel: null, spawnerChain: [],
   });
 });
 
@@ -43,10 +45,15 @@ test('get_session_info: nested-but-not-spawned session reports parent without sp
     caller: 'S1',
   });
   assert.equal(out.structuredContent.parent, 'ORCH');
+  // parentLabel sits alongside the bare id for the same reason spawn_session's
+  // result does — a caller reporting its parent to the user needs a name, not
+  // a raw id, without having to dig into parentChain[0] for it.
+  assert.equal(out.structuredContent.parentLabel, 'Orchestrator');
   assert.deepEqual(out.structuredContent.parentChain, [
     { sessionId: 'ORCH', label: 'Orchestrator', task: { id: 'T1', name: 'Benchmark' } },
   ]);
   assert.equal(out.structuredContent.spawnedBy, null);
+  assert.equal(out.structuredContent.spawnedByLabel, null);
   assert.deepEqual(out.structuredContent.spawnerChain, []);
 });
 
@@ -59,10 +66,12 @@ test('get_session_info: spawned-but-not-nested session reports spawnedBy without
     caller: 'S1',
   });
   assert.equal(out.structuredContent.spawnedBy, 'PREV');
+  assert.equal(out.structuredContent.spawnedByLabel, 'Previous');
   assert.deepEqual(out.structuredContent.spawnerChain, [
     { sessionId: 'PREV', label: 'Previous', task: null },
   ]);
   assert.equal(out.structuredContent.parent, null);
+  assert.equal(out.structuredContent.parentLabel, null);
   assert.deepEqual(out.structuredContent.parentChain, []);
 });
 

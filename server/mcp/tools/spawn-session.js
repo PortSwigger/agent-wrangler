@@ -18,7 +18,9 @@ export const spawnSessionTool = {
     + '`into` to put it on a different task. Put the full handoff (what you have done, what the '
     + 'new session should do next, key files/paths) in `intent` — that is its launch prompt. Do '
     + 'NOT write handoff context into task memory: memory is enduring information about the task '
-    + 'itself, not a channel for briefing another session. Returns the new session id.',
+    + 'itself, not a channel for briefing another session. Returns the new session id and its '
+    + 'label — when telling the user about it, use the label, not the id, which means nothing to '
+    + 'them.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '

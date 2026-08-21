@@ -54,6 +54,25 @@ test('spawn_session joins the caller’s current task by default', async () => {
   assert.equal(out.content[0].type, 'text');
 });
 
+// The caller has no way to refer to the new session by name (only spawn's own
+// return value ever names it) unless this comes back — without it, the only
+// identifier a caller can report to a human is the raw card id.
+test('spawn_session returns the new session’s label so the caller can refer to it by name', async () => {
+  const d = deps({
+    deps: { graph: () => ({ sessions: [{ sessionId: 'NEWCARD', label: 'Fresh Worker' }] }) },
+  });
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'do a thing' });
+
+  assert.equal(out.structuredContent.label, 'Fresh Worker');
+});
+
+test('spawn_session reports a null label when the graph has no row for the new session yet', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'do a thing' });
+
+  assert.equal(out.structuredContent.label, null);
+});
+
 test('spawn_session lets `into` override the caller’s task', async () => {
   const d = deps({ tasks: [{ id: 'T1', name: 'Login' }, { id: 'T2', name: 'Billing' }] });
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', into: 'T2' });
