@@ -33,14 +33,15 @@ export const sendMessageTool = {
     + 'they are notified (a terse "you\'ve got mail" paste) and read it with read_mail when they '
     + 'reach a good stopping point — this does not interrupt them mid-task. Use it to coordinate '
     + 'with a peer session — nudge a worker, report back, hand off a result. Works on any session '
-    + 'that isn\'t archived; messaging an archived session returns an error. `to` must be the '
-    + 'exact, full `sessionId` field from list_sessions — a short/truncated id, a display label, '
-    + 'or an id from another tool will be refused as unknown, not treated as archived. The '
-    + 'recipient sees who sent it and is told to treat it as untrusted peer input, so put any '
-    + 'context it needs directly in `text`. Large payloads (over ~32KB) are rejected — write to a '
-    + 'file on the shared filesystem and send the path instead.',
+    + 'that isn\'t archived; messaging an archived session returns an error. `to` must be a full '
+    + 'Agent Wrangler `sessionId` — from list_sessions, get_session_info, spawn_session, or '
+    + 'spawn_workflow, all of which return the same real id. A short/truncated id, a display '
+    + 'label, or a handle from a non-Wrangler tool will be refused as unknown, not treated as '
+    + 'archived. The recipient sees who sent it and is told to treat it as untrusted peer input, '
+    + 'so put any context it needs directly in `text`. Large payloads (over ~32KB) are rejected — '
+    + 'write to a file on the shared filesystem and send the path instead.',
   inputSchema: {
-    to: z.string().min(1).describe('Exact, full `sessionId` from list_sessions — not a truncated/short id or a label.'),
+    to: z.string().min(1).describe('Full Agent Wrangler sessionId (list_sessions, get_session_info, spawn_session, spawn_workflow, …) — not a truncated/short id or a label.'),
     text: z.string().min(1).describe('The message body to deliver to the target session.'),
   },
   async handler({ deps, caller }, args = {}) {
@@ -72,20 +73,25 @@ export const sendMessageTool = {
 
     const entry = deps.sessionManager.entryFor(to);
     // No mapping entry at all is usually a genuinely unknown id — a short/truncated
-    // ref, a display label, or an id lifted from an unrelated tool (e.g. ListAgents)
-    // rather than the exact `sessionId` from list_sessions — and deliverMessage's
-    // shared "not found (it may have been archived)" wording (message-delivery.js)
-    // reads as "this peer is dead" when the real problem is the id itself, pushing a
-    // caller to wrongly give up on a live peer. Distinguish that from the one case
-    // where entry-less is legitimate: a live tmux with no mapping entry at all (the
-    // buildGraph "forkOwner" case) still falls through to today's push, unchanged.
+    // ref, a display label, or a handle from a NON-Wrangler tool (e.g. Claude Code's
+    // own ListAgents) rather than a real Agent Wrangler sessionId — and
+    // deliverMessage's shared "not found (it may have been archived)" wording
+    // (message-delivery.js) reads as "this peer is dead" when the real problem is the
+    // id itself, pushing a caller to wrongly give up on a live peer. NOTE: a full
+    // sessionId from ANY Wrangler tool (get_session_info, spawn_session,
+    // spawn_workflow, list_sessions — spawn-common.js/get-session-info.js return the
+    // same real id) resolves here just fine; only a non-Wrangler/short/label form
+    // hits this branch. Distinguish that from the one case where entry-less is
+    // legitimate: a live tmux with no mapping entry at all (the buildGraph
+    // "forkOwner" case) still falls through to today's push, unchanged.
     if (!entry && !deps.tmuxFor?.(to)) {
       return errorResult(
-        `No session with id "${to}" is known to Agent Wrangler. This tool needs the exact `
-        + '`sessionId` from list_sessions (the full board card id) — a short/truncated id, a '
-        + 'display label, or an id surfaced by a different tool will not match, and that is not '
-        + 'evidence the session is archived or dead. Call list_sessions and pass its `sessionId` '
-        + 'field verbatim.',
+        `No session with id "${to}" is known to Agent Wrangler. This tool needs a full Agent `
+        + 'Wrangler `sessionId` (from list_sessions, get_session_info, spawn_session, or '
+        + 'spawn_workflow — they all return the same real id) — a short/truncated id, a display '
+        + 'label, or a handle from a non-Wrangler tool will not match, and that is not evidence '
+        + 'the session is archived or dead. Call list_sessions and pass its `sessionId` field '
+        + 'verbatim.',
       );
     }
     if (!entry?.mailCapable) return legacyPushFallback({ deps, caller, to, text, gate });
