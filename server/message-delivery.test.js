@@ -155,3 +155,92 @@ test('dormant target: recreates a missing launch dir rather than stranding the r
   assert.equal(d.resumed[0].dir, missing);
   fs.rmdirSync(missing);
 });
+
+// --- Cloud cards: steered through the CLI, never resumed. ---
+
+// The base double plus the cloud seams: an injected steer (so nothing shells
+// out), the graph the attach gate is read from, and markCloudArchived.
+function cloudDeps({ steer, attachSupported = false, entries = {}, live = {} } = {}) {
+  const d = deps({ live, entries });
+  d.steered = [];
+  d.markedArchived = [];
+  d.graph = () => ({ cloudAttachSupported: attachSupported });
+  d.sessionManager.markCloudArchived = (id) => d.markedArchived.push(id);
+  d.sendCloudMessage = async (args) => { d.steered.push(args); return steer(args); };
+  return d;
+}
+
+const cloudEntry = (over = {}) => ({
+  runtime: 'cloud',
+  cwd: '/tmp',
+  agent: 'claude',
+  ...over,
+  cloud: { sessionId: 'session_abc', ...(over.cloud || {}) },
+});
+
+test('cloud card: the message goes to the cloud session, never a resume', async () => {
+  const d = cloudDeps({ entries: { CARD1: cloudEntry() }, steer: () => ({ ok: true }) });
+  const result = await deliverMessage('CARD1', 'do the thing', d);
+  assert.deepEqual(result, { mode: 'live' });
+  assert.deepEqual(d.steered, [{ cloudSessionId: 'session_abc', text: 'do the thing' }]);
+  assert.equal(d.resumed.length, 0);
+  assert.equal(d.sent.length, 0);
+});
+
+test('cloud card with a LIVE create pane and attach off: still steered, not pasted into the dying pane', async () => {
+  const d = cloudDeps({
+    live: { CARD1: { tmux: 'cl_abc', socket: '/s/a' } },
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: true }),
+  });
+  const result = await deliverMessage('CARD1', 'hi', d);
+  assert.deepEqual(result, { mode: 'live' });
+  assert.equal(d.steered.length, 1);
+  assert.equal(d.sent.length, 0);
+});
+
+test('cloud card with a live pane once attach is supported: pasted like any live card', async () => {
+  const d = cloudDeps({
+    live: { CARD1: { tmux: 'cl_abc', socket: '/s/a' } },
+    entries: { CARD1: cloudEntry() },
+    attachSupported: true,
+    steer: () => { throw new Error('must not steer'); },
+  });
+  const result = await deliverMessage('CARD1', 'hi', d);
+  assert.deepEqual(result, { mode: 'live' });
+  assert.deepEqual(d.sent, [{ name: 'cl_abc', text: 'hi', socket: '/s/a' }]);
+  assert.equal(d.steered.length, 0);
+});
+
+test('cloud card: an archived-session steer marks the card, not just an error toast', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: false, archived: true, error: 'session is archived' }),
+  });
+  const result = await deliverMessage('CARD1', 'hi', d);
+  assert.equal(result.mode, 'error');
+  assert.match(result.error, /archived/);
+  assert.deepEqual(d.markedArchived, ['CARD1']);
+});
+
+test('cloud card: an ordinary steer failure surfaces the error and leaves the card unmarked', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: false, archived: false, error: 'network unreachable' }),
+  });
+  const result = await deliverMessage('CARD1', 'hi', d);
+  assert.equal(result.mode, 'error');
+  assert.match(result.error, /network unreachable/);
+  assert.deepEqual(d.markedArchived, []);
+});
+
+test('cloud card archived on the board: refused before any steer', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry({ archivedAt: Date.now() }) },
+    steer: () => { throw new Error('must not steer'); },
+  });
+  const result = await deliverMessage('CARD1', 'hi', d);
+  assert.equal(result.mode, 'error');
+  assert.match(result.error, /archived/);
+  assert.equal(d.steered.length, 0);
+});
