@@ -61,11 +61,23 @@ test('the fence nonce is random per message, not derived from sender input', asy
   assert.notEqual(nonceOf(sent[0].text), nonceOf(sent[1].text), 'a fresh nonce each call');
 });
 
-test('send_message errors when the target is gone (no live tmux, no mapping entry)', async () => {
+test('send_message errors when the id is unknown (no live tmux, no mapping entry) — and does NOT claim it may be archived', async () => {
   const sent = [];
   const out = await sendMessageTool.handler({ deps: deps(sent), caller: 'CARD1' }, { to: 'GHOST', text: 'hi' });
   assert.equal(out.isError, true);
-  assert.match(out.content[0].text, /not found/);
+  assert.match(out.content[0].text, /No session with id "GHOST" is known/);
+  assert.match(out.content[0].text, /list_sessions/);
+  assert.doesNotMatch(out.content[0].text, /may have been archived/); // wrong id ≠ evidence of archival
+  assert.equal(sent.length, 0);
+});
+
+test('send_message: the same unknown-id error fires for a short/truncated ref or a name from another tool, not just garbage', async () => {
+  const sent = [];
+  for (const badTo of ['f2064590', '2f48c8', 'some-agent-name']) {
+    const out = await sendMessageTool.handler({ deps: deps(sent), caller: 'CARD1' }, { to: badTo, text: 'hi' });
+    assert.equal(out.isError, true, `expected ${badTo} to be refused`);
+    assert.match(out.content[0].text, new RegExp(`No session with id "${badTo}" is known`));
+  }
   assert.equal(sent.length, 0);
 });
 
