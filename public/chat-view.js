@@ -38,6 +38,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   const sendBtn = document.getElementById('chat-send');
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
+  const suggestionBtn = document.getElementById('chat-suggestion');
 
   // The live row's three inputs — the last reply's pending tool call, the
   // timestamp of the newest transcript line, and the last known session status
@@ -47,6 +48,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   let lastStatus = null;
   let lastPending = null;
   let lastTs = null;
+  // Claude Code's suggested next prompt, scraped off the pane server-side (see
+  // ghost-suggestion.js). Held like pending/lastTs because it too describes the
+  // reply's own moment rather than any event.
+  let lastSuggestion = null;
   // Created lazily and kept as the stream's last child while the session works.
   // It lives IN the stream, not above the composer where the old status line
   // sat: the complaint this answers is that the stream looks dead during a long
@@ -112,6 +117,29 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
     live.querySelector('.chat-live-elapsed').textContent = lastTs ? elapsedText(Date.now() - lastTs) : '';
   }
 
+  // Shared by the recap's next step and the pane suggestion: both are proposals,
+  // so both LOAD the composer and neither sends. The human always gets the last
+  // word on a prompt they did not write.
+  function loadComposer(text) {
+    input.value = text;
+    input.disabled = false;
+    input.focus();
+    // The composer auto-grows on `input`, which a programmatic value set does not
+    // fire, so a multi-line suggestion would land in a one-row box that hides
+    // most of itself.
+    input.dispatchEvent(new Event('input'));
+  }
+
+  function renderSuggestion() {
+    // Withheld while the composer holds anything, so pressing it can never
+    // discard something the human was in the middle of writing — and while
+    // blocked, when the composer is disabled and the only useful action is
+    // answering the prompt in the pane.
+    const show = Boolean(lastSuggestion) && !input.value.trim() && lastStatus !== 'needs-you';
+    suggestionBtn.hidden = !show;
+    if (show) suggestionBtn.textContent = lastSuggestion;
+  }
+
   function submit() {
     const text = input.value.trim();
     if (!text || !sessionId) return;
@@ -134,6 +162,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+    // Typing withdraws the suggestion, and clearing the box brings it back.
+    renderSuggestion();
+  });
+  suggestionBtn.addEventListener('click', () => {
+    if (lastSuggestion) loadComposer(lastSuggestion);
+    renderSuggestion();
   });
   hint.textContent = 'Enter sends · Shift+Enter newline';
 
@@ -172,13 +206,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // into an instruction.
       if (item.type === 'recap' && item.event.next) {
         node.querySelector('.chat-recap-next')?.addEventListener('click', () => {
-          input.value = item.event.next;
-          input.disabled = false;
-          input.focus();
-          // The composer auto-grows on `input`, which a programmatic value set
-          // does not fire, so a multi-line suggestion would land in a one-row
-          // box that hides most of itself.
-          input.dispatchEvent(new Event('input'));
+          loadComposer(item.event.next);
+          renderSuggestion();
         });
       }
       stream.appendChild(node);
@@ -206,6 +235,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       lastPending = null;
       lastStatus = null;
       lastTs = null;
+      lastSuggestion = null;
       // The row is a child of the stream that was just cleared, so the handle is
       // dangling — dropping it here (rather than only in renderLive's not-working
       // branch) stops the next render re-appending a detached node and, worse,
@@ -214,6 +244,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       clearInterval(tick);
       tick = null;
       renderLive();
+      renderSuggestion();
       wrap.hidden = false;
       poll();
       clearInterval(timer);
@@ -229,8 +260,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       lastPending = null;
       lastStatus = null;
       lastTs = null;
+      lastSuggestion = null;
       live = null;
       renderLive();
+      renderSuggestion();
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -251,7 +284,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // same-offset "nothing new" reply must still refresh it or the elapsed
       // clock freezes whenever two same-window polls overlap.
       if (Number.isFinite(msg.lastTs)) lastTs = msg.lastTs;
+      lastSuggestion = typeof msg.suggestion === 'string' && msg.suggestion ? msg.suggestion : null;
       renderLive();
+      renderSuggestion();
       // Apply only forward progress. Two overlapping polls sent before either had
       // replied carry the SAME offset back (neither saw the other's result), so
       // the second is dropped here instead of re-appending the same window; null
@@ -275,6 +310,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // (driven by this same status) has already disappeared.
       lastStatus = status;
       renderLive();
+      renderSuggestion();
       const bar = document.getElementById('chat-notice-bar');
       const box = document.querySelector('.chat-box');
       const blocked = status === 'needs-you';

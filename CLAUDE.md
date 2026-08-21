@@ -365,6 +365,30 @@ don't re-derive it.
   armed id is **deliberately in-memory, never persisted** beside the view choice
   — it describes a trip in progress, so surviving a reload would drop someone
   into an automatic switch they cannot connect to anything they did.
+- **The suggested next prompt is the ONE deliberate exception to "the chat view
+  is transcript-sourced" — and it is scraped, because it exists nowhere else.**
+  Verified against a live session while the suggestion was on screen: absent from
+  the session jsonl (it lands only after acceptance, as an ordinary user message
+  indistinguishable from typing), `atis-latch`'s `atis` field empty in all 181
+  occurrences across 150 transcripts, no file written under `~/.claude` when it
+  appears, and `history.jsonl` holds only submitted prompts. The rendered pane is
+  its only external representation. So `parseGhostSuggestion`
+  (`server/ghost-suggestion.js`, a leaf) reads it off `capturePaneStyled` —
+  **`capture-pane -e`, which is why that is a SEPARATE helper from
+  `capturePane`**: every existing caller feeds plain text to `stripAnsi`/
+  `classify`, and the escapes are the entire basis of this parser, since the
+  faint attribute (SGR 2) is the only thing distinguishing ghost text from what
+  the human is typing. Governing rule is **hide on any doubt** — a missed
+  suggestion is just the old behaviour, a wrong one echoes someone's own
+  half-written draft back as the agent's idea — so it bails on typed text before
+  the run, an unterminated run (a wrapped suggestion, where reporting line one
+  would load a TRUNCATED prompt), trailing text, over-long text, and escape-
+  stripped input. Read in the chat handler rather than `buildGraph`: one tmux
+  exec for the one session being viewed instead of every card, at the 2s poll
+  rather than the ~4s graph, and a dormant card has no pane anyway. **Claude
+  only** — Codex's composer is a different TUI and guessing at it is exactly the
+  failure this is built to avoid. Carried on every reply under the same all-paths
+  rule as `token`/`lastTs`.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message

@@ -2455,6 +2455,30 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-notice-go:hover { background: color-mix(in srgb, var(--red) 18%, transparent); }
 
 .chat-composer { border-top: 1px solid var(--border); padding: 11px 14px 12px; }
+/* Claude Code's suggested next prompt, sitting where the terminal shows it —
+   directly above the input. Styled like the recap's next step (same accent, same
+   arrow) because it is the same kind of offer: press it and the composer fills.
+   Quieter than the recap card though: this one appears and disappears with the
+   pane's own state, so it must not draw the eye every time it arrives. */
+.chat-suggestion {
+  display: block; width: 100%; text-align: left; margin-bottom: 8px;
+  font: inherit; font-size: 0.8em; line-height: 1.45;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px; padding: 5px 10px;
+  background: transparent; color: var(--fg-muted); cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+/* Same [hidden] trap as #term-wrap / #chat-wrap / .chat-notice-bar / .chat-working:
+   the explicit display above out-specifies the UA's [hidden] { display: none },
+   and chat-view.js toggles this element by attribute. */
+.chat-suggestion[hidden] { display: none; }
+.chat-suggestion:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); color: var(--fg);
+}
+/* Dashed border and a leading arrow rather than a label: it reads as "not yours
+   yet", which is exactly what ghost text means in the pane it came from. */
+.chat-suggestion::before { content: '→ '; color: var(--fg-subtle); }
 .chat-box {
   display: flex; align-items: flex-end; gap: 8px;
   border: 1px solid var(--border); border-radius: 12px; padding: 8px 8px 8px 13px;
@@ -2533,6 +2557,6 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 @media (prefers-reduced-motion: reduce) {
   .chat-live::before { animation: none; }
   .chat-activity-chip::before, .chat-thinking-chip::before,
-  .chat-subagent::after, .chat-box, .chat-subagent, .chat-recap-next,
+  .chat-subagent::after, .chat-box, .chat-subagent, .chat-recap-next, .chat-suggestion,
   .chat-activity-chip, .chat-thinking-chip, .chat-turn-foot { transition: none; }
 }

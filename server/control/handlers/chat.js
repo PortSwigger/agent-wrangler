@@ -1,6 +1,8 @@
 import fsp from 'node:fs/promises';
 import { findTranscript as realFindTranscript } from '../../transcript-reader.js';
 import { createChatScanner } from '../../chat-events.js';
+import { capturePaneStyled } from '../../tmux-scraper.js';
+import { parseGhostSuggestion } from '../../ghost-suggestion.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
 // bounds the TAIL; without this bound, opening a months-old session parses and
@@ -106,9 +108,22 @@ export const chatHandler = {
     const convId = node?.liveSessionId || msg.sessionId;
     const agent = node?.agent === 'codex' ? 'codex' : 'claude';
 
+    // Claude Code's suggested next prompt — the one thing in this view that is
+    // not transcript-sourced, because it exists nowhere else (see
+    // ghost-suggestion.js). Read here rather than in buildGraph for three
+    // reasons: it costs one tmux exec for the ONE session being looked at
+    // instead of every session on the board, it refreshes at this poll's 2s
+    // cadence rather than the graph's ~4s, and a suggestion is inherently live
+    // so there is nothing to report for a dormant card anyway.
+    // Claude only: Codex's composer is a different TUI and guessing at it would
+    // be exactly the wrong-suggestion failure this is built to avoid.
+    const suggestion = (agent === 'claude' && node?.tmux)
+      ? parseGhostSuggestion(await (ctx.capturePaneStyled || capturePaneStyled)(node.tmux, 6, node.socket || ''))
+      : null;
+
     const file = await findTranscript(convId);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
       return;
     }
 
@@ -116,7 +131,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
       return;
     }
 
@@ -140,7 +155,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
       return;
     }
     try {
@@ -218,7 +233,7 @@ export const chatHandler = {
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
         if (scanner) touchCache(convId, { scanner, offset, agent });
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion });
         return;
       }
     } finally {

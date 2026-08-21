@@ -378,3 +378,49 @@ test('chat: only the final attempt of a widened read is cached, so the next poll
   assert.ok(paired, 'the cached scanner from the CHOSEN attempt must still hold the open call');
   assert.equal(paired.target, 'npm test');
 });
+
+// --- suggested next prompt (scraped off the pane, see ghost-suggestion.js) ---
+
+const E = '\x1b';
+const paneWithSuggestion = `${E}[39m❯ ${E}[2mpoint 5${E}[0m`;
+
+function ctxWithPane(file, node, pane) {
+  const c = ctx(file, node);
+  c.capturePaneStyled = async (...args) => { c.captured = args; return pane; };
+  return c;
+}
+
+test('chat: a live Claude session reports the pane suggestion', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'claude', tmux: 'cc_a', socket: 'sock' }, paneWithSuggestion);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].suggestion, 'point 5');
+  assert.deepEqual(c.captured, ['cc_a', 6, 'sock'], 'targets the session pane, few lines');
+});
+
+// A suggestion is live-only state; a dormant card has no pane to read.
+test('chat: a session with no tmux never captures a pane', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'claude', tmux: null }, paneWithSuggestion);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].suggestion, null);
+  assert.equal(c.captured, undefined);
+});
+
+// Codex's composer is a different TUI; guessing at it is the wrong-suggestion
+// failure the parser exists to avoid.
+test('chat: codex is excluded from the pane scrape entirely', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'codex', tmux: 'cx_a' }, paneWithSuggestion);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].suggestion, null);
+  assert.equal(c.captured, undefined);
+});
+
+// The all-paths rule that already covers token and lastTs covers this too: a
+// reply omitting it is indistinguishable from "no suggestion" to the client.
+test('chat: a missing transcript still carries the suggestion field', async () => {
+  const c = ctxWithPane(null, { liveSessionId: 'live-1', agent: 'claude', tmux: 'cc_a' }, paneWithSuggestion);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].suggestion, 'point 5', 'read before the transcript lookup, so it survives its failure');
+});

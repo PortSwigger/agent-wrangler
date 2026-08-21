@@ -170,6 +170,24 @@ export async function capturePane(name, lines = 60, socket = '') {
   }
 }
 
+// capture-pane WITH escape sequences, and only the last few lines. Separate from
+// capturePane above on purpose: every existing caller feeds plain text to
+// stripAnsi/classify, and switching the shared helper to -e would push escapes
+// into all of them. The escapes are the entire point here — parseGhostSuggestion
+// (ghost-suggestion.js) tells a suggestion from typed text by the faint
+// attribute, and cannot do its job without them. Defaults to 6 lines because the
+// only thing it reads is the composer.
+export async function capturePaneStyled(name, lines = 6, socket = '') {
+  try {
+    const { stdout } = await tmux(socket, ['capture-pane', '-t', name, '-p', '-e', '-S', `-${lines}`], {
+      maxBuffer: 256 * 1024,
+    });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
 // Derive live state from the pane: only the "esc to interrupt" working signal
 // vs idle. The "needs you" (waiting) state comes from Claude's own session
 // file (status: 'waiting'), not from scraping the pane — pane scraping produced

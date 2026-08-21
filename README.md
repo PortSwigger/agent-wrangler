@@ -34,6 +34,9 @@ otherwise it behaves exactly as a Claude-only board.
   you). Permission prompts only exist in the pane, so chat offers a one-click hop to the
   terminal to answer one and brings you back by itself once it is answered — switching view by
   hand while you are there cancels the return. Its font size is its own setting, separate from the terminal's.
+  Claude Code's suggested next prompt is offered above the composer too — that one is read off
+  the pane, since it exists nowhere else, so it shows only for live Claude sessions and stays
+  hidden whenever it can't be told apart from something you were typing.
   Because the transcript records whole messages rather than a token stream, chat cannot show a
   reply arriving word by word the way the terminal does; while a turn is running it shows a
   live row naming the tool in flight and how long the session has been busy.
