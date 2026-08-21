@@ -169,6 +169,45 @@ means *ready to review*; a genuine block flips the card to **needs-you** (red) w
 launch, resolving it from its own install — so it works from any worktree and against
 any target repo without a `~/.claude/skills` symlink.
 
+## Cloud sessions
+
+The dispatch dialog's **Destination** row picks where a session actually runs: **This Mac**,
+**Container** (the repo's devcontainer), or **☁ Cloud** — Claude Code's own hosted machine, either an
+Anthropic-hosted environment or your own self-hosted runner pool. A cloud session clones the repo from
+its pushed GitHub ref and works there; nothing runs on your machine but the `claude` client that
+created it, so you can fire off a batch without paying for them in local RAM.
+
+That buys parallelism at the cost of visibility. A cloud card shows its environment, a
+`claude.ai/code` link to open the session, and lets you **send it a message** — and that's the lot:
+
+- **No cost figure.** A cloud session writes no local transcript, so there's nothing to cost. The card
+  says `☁ cost untracked` rather than a misleading `$0.00`, and that spend is missing from **Usage &
+  spend** and `scripts/cost-report.mjs` too.
+- **No status beyond "running in cloud"** — no working/idle/needs-you, because nothing on this machine
+  can see what it's doing.
+- **No diff and no terminal.** There's no local checkout to diff, and attaching a local terminal to a
+  running cloud session isn't enabled for every account yet (both menu items say so on hover rather
+  than silently doing nothing).
+
+**Teleport** — from the card menu — is the way back to all of that. It creates a fresh detached git
+worktree, pulls the cloud conversation down into it, and converts the card in place. From then on it's
+an ordinary local session: transcript, cost, diff, terminal, messages and PR watching all work, with a
+`was ☁` chip recording where it started. It's one-way; there's no sending it back up.
+
+**Registering environments.** There's no API listing, so you register the environments you can use:
+**Settings → Cloud environments**, an editable list of name + id rows. An id starting `env_` is an
+Anthropic-hosted environment; `ccpool_` is a self-hosted runner pool (only that form honours the
+dialog's **Branch (ref)** field). Anything else is rejected, because the prefix is what picks the
+launch form. Leave the dropdown on **Account default** to use whatever your account defaults to.
+
+**What it checks before you go.** With Cloud selected the dialog runs a live preflight on the chosen
+folder and shows what it found. It **refuses** — and keeps Go disabled — when the agent is Codex (cloud
+is Claude-only), when Workflow mode is on (the autopilot skill is loaded from a local plugin dir a VM
+never sees), when the launch environment carries an API key or a Bedrock/Vertex credential (cloud
+sessions need subscription/OAuth auth), or when the folder isn't a git repo with a GitHub `origin` (the
+VM clones from the remote). It **warns**, but lets you proceed, about uncommitted changes and unpushed
+commits — the cloud session works from the pushed ref, so it won't see either.
+
 ## Scheduled sessions
 
 The **clock button** on the nav rail opens the **Schedules** panel, where you can have
@@ -234,13 +273,17 @@ ones you want with a single click.
 - red — needs you (e.g. a permission prompt)
 - green — working
 - grey — idle / unknown
+- teal, reading `cloud` — running in the cloud, where none of the above can be observed (see
+  [Cloud sessions](#cloud-sessions))
 
 ## Cost tracking
 
 Every card shows its running cost as a live dollar figure — including everything its sub-agents have
 spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
 computed from the actual transcript, not a rough estimate; the one exception is Codex, which only
-reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. Cost
+reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. A
+[cloud session](#cloud-sessions) is the one card with no figure at all — it writes no local transcript,
+so there's nothing to cost until you Teleport it. Cost
 history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
 cleanup.
 

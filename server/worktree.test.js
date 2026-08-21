@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, gitRepoRoot, worktreeDirName, branchExists, createWorktree, addDetachedWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -347,6 +347,56 @@ test('createWorktree: initializes submodules when checking out an existing branc
   makeBranch(repo, 'existing-with-subs');
   await withGitFileProtocol(async () => {
     const res = await createWorktree({ cwd: repo, branch: 'existing-with-subs', auto: false });
+    assert.ok(fs.existsSync(path.join(res.path, 'sub', 'README.md')));
+  });
+});
+
+test('addDetachedWorktree: creates a sibling worktree with a DETACHED HEAD (no branch)', async () => {
+  const { repo } = tempRepo();
+  const res = await addDetachedWorktree({ repoRoot: repo, folderName: 'myproj-teleport-ab12' });
+  assert.deepEqual(res, { path: path.join(path.dirname(repo), 'myproj-teleport-ab12'), repoRoot: repo });
+  assert.ok(fs.existsSync(path.join(res.path, 'README.md')));
+  // Detached is the whole point: `claude --teleport` checks out whatever the cloud
+  // session was on, so no branch may be pre-decided here.
+  const head = execFileSync('git', ['-C', res.path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+  assert.equal(head, 'HEAD');
+  const branches = execFileSync('git', ['-C', repo, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' }).trim();
+  assert.equal(branches, 'main');
+  // Registered against the repo as a detached worktree.
+  const list = execFileSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.match(list, /\ndetached\n/);
+});
+
+test('addDetachedWorktree: honors an absolute folderName', async () => {
+  const { repo } = tempRepo();
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-tele-')));
+  const dest = path.join(outside, 'teleported');
+  const res = await addDetachedWorktree({ repoRoot: repo, folderName: dest });
+  assert.equal(res.path, dest);
+  assert.ok(fs.existsSync(path.join(dest, 'README.md')));
+});
+
+test('addDetachedWorktree: git failure becomes a WorktreeError naming the git step', async () => {
+  const { repo } = tempRepo();
+  const folder = path.join(path.dirname(repo), 'myproj-teleport-occupied');
+  fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder, 'stuff.txt'), 'occupied\n');
+  await assert.rejects(
+    () => addDetachedWorktree({ repoRoot: repo, folderName: folder }),
+    (e) => e instanceof WorktreeError && /git worktree add failed/.test(e.message),
+  );
+});
+
+test('addDetachedWorktree: refuses a missing repoRoot or folderName', async () => {
+  const { repo } = tempRepo();
+  await assert.rejects(() => addDetachedWorktree({ repoRoot: '', folderName: 'x' }), WorktreeError);
+  await assert.rejects(() => addDetachedWorktree({ repoRoot: repo, folderName: '' }), WorktreeError);
+});
+
+test('addDetachedWorktree: initializes submodules in the detached worktree', async () => {
+  const { repo } = tempRepoWithSubmodule();
+  await withGitFileProtocol(async () => {
+    const res = await addDetachedWorktree({ repoRoot: repo, folderName: 'myproj-teleport-subs' });
     assert.ok(fs.existsSync(path.join(res.path, 'sub', 'README.md')));
   });
 });

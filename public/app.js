@@ -25,7 +25,7 @@ import {
 } from './term-font.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
-  repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
+  repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus, safeHttpUrl,
 
 } from './util.js';
 import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
@@ -40,6 +40,13 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
+// Every non-trivial cloud rule lives in cloud-ui.js so it can be unit-tested
+// without a DOM (this module has no test); here we only translate the answers
+// into DOM/WS calls.
+import {
+  destinationFieldVisibility, cloudPreflightPills, cloudPreflightBlocks, cloudEnvLabel,
+  cloudCardActions, cloudResumeBlocked, ATTACH_UNSUPPORTED_REASON,
+} from './cloud-ui.js';
 
 let currentView = 'grid';
 
@@ -118,6 +125,13 @@ let subagentsExpandedByDefault = false; // server config flag, carried on every 
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
+// The cloud attach gate (server/cloud-attach.js) — the ONE question "can we attach
+// to a cloud session?", answered server-side and carried on every graph push. The
+// client never re-derives it; it only greys/ungreys off this flag.
+let cloudAttachSupported = false;
+// The registered cloud environments ([{ label, id }]), server-scoped config carried
+// on the graph so the dispatch dropdown needs no extra round trip.
+let cloudEnvironments = [];
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -141,6 +155,18 @@ let wtValidation = null;   // last {ok, repoName, repoRoot, reason} for wtLastCw
 let wtLastCwd = null;      // cwd wtValidation belongs to (stale once cwd changes)
 let wtPending = false;     // a worktree dispatch is awaiting ack
 let pendingTodoConsume = null; // {taskId, todoId, key} — set by spawnTodo, consumed on 'dispatched'
+// The dispatch dialog's Destination selection. Held in JS (not read back off the
+// DOM the way the old #m-runtime <select>.value was) because the three cards are
+// <button>s with no value; still the SAME three strings the server has always
+// received, so readDispatchFields' `runtime` field is unchanged.
+let dispatchDest = 'local'; // 'local' | 'devcontainer' | 'cloud'
+// The last cloud-preflight reply and the request it answers, plus the debounce
+// timer — mirrors wtValidation/wtLastCwd/validateWorktree's shape exactly, so the
+// two live gates behave identically (stale reply discarded, Launch blocked while a
+// refusal stands).
+let cloudPreflight = null;     // { refusals, warnings } for cloudPreflightKey
+let cloudPreflightKey = null;  // the cwd|env|ref|agent|workflow the reply belongs to
+let cloudPreflightTimer = null;
 
 // Available agents + their models, replaced by the server's `agents` message.
 // Seeded with the Claude default so the dropdown is correct before that arrives.
@@ -272,6 +298,14 @@ function quickLaunch(value) {
 // The bar word for the left status bar, mirroring the displayed state. Dormant
 // (no live tmux) wins regardless of the frozen `idle` the server reports for it.
 function barWord(s) {
+  // A cloud card has NO status signal — there is no transcript and no pane to
+  // scrape, so 'busy'/'idle'/'reply' would each be an invention. This branch is
+  // first, ahead of even the dormant 'resume' affordance: a cloud card is not
+  // dormant, it is running somewhere we can't see, and offering Resume would run
+  // an attach the account may not even permit. Deliberately NOT wired into
+  // unread/justFinished — those are the human bookmark + finish alarm and must
+  // stay untouched (see CLAUDE.md's mail/unread naming rule).
+  if (s.runtime === 'cloud') return 'cloud';
   // Every dormant card — suspended, crashed, or rebooted — needs the same action:
   // click to resume. So the bar word is the affordance ('resume'), not the cause.
   // A restarting card is only momentarily unmanaged (tmux down between kill and
@@ -299,6 +333,8 @@ function applyGraph(graph) {
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
+  cloudAttachSupported = graph.cloudAttachSupported === true;
+  cloudEnvironments = Array.isArray(graph.cloudEnvironments) ? graph.cloudEnvironments : [];
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -582,6 +618,11 @@ function isAsleep(s) { return phaseOf(s) === 'asleep'; }
 // alarm (flash + ring) is suppressed while the red state stripe stays (see
 // acknowledgedAt).
 function cardState(s) {
+  // Same first-and-only rule as barWord: a cloud card gets its own state, ahead of
+  // every other branch (justFinished, needs-you, unread, the snooze alarm), because
+  // none of those signals exist for a session with no transcript and no pane. One
+  // dedicated class, no alarm — there is nothing here to be alarmed about yet.
+  if (s.runtime === 'cloud') return 'cloud';
   let base = justFinished.has(s.sessionId)
     ? 'just-finished'
     : (s.status === 'needs-you' && isAcknowledged(s) ? 'needs-you focused' : displayStatus(s));
@@ -793,6 +834,10 @@ function cardCtx() {
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
     isChildFullView,
+    // The environment registry, for cards.js cloudChips' `☁ <env label>` chip.
+    // Server-scoped config off the graph; cards.js defaults it to [] so an old
+    // server (or a graph push that predates the field) renders the raw id.
+    cloudEnvironments,
   };
 }
 
@@ -1233,7 +1278,10 @@ function onCardMenuDismiss(e) {
 function focusMenuItem(dir) {
   const menu = subMenuEl || cardMenuEl;
   if (!menu) return;
-  const items = Array.from(menu.querySelectorAll('.context-menu-item'));
+  // Disabled rows (shown-with-a-reason, e.g. a cloud card's View diff) are skipped:
+  // .focus() on a disabled button is a no-op, so including them would make an arrow
+  // press silently do nothing instead of moving on.
+  const items = Array.from(menu.querySelectorAll('.context-menu-item:not(:disabled)'));
   if (!items.length) return;
   const i = items.indexOf(document.activeElement);
   const next = i < 0 ? (dir > 0 ? 0 : items.length - 1) : (i + dir + items.length) % items.length;
@@ -1244,7 +1292,7 @@ function onCardMenuKey(e) {
   // (if open), then the root — never both in one press.
   if (e.key === 'Escape') {
     e.preventDefault();
-    if (subMenuEl) { closeSubMenu(); cardMenuEl?.querySelector('.context-menu-item')?.focus(); }
+    if (subMenuEl) { closeSubMenu(); cardMenuEl?.querySelector('.context-menu-item:not(:disabled)')?.focus(); }
     else closeCardMenu();
     return;
   }
@@ -1261,7 +1309,7 @@ function onCardMenuKey(e) {
   if (e.key === 'ArrowLeft' && subMenuEl) {
     e.preventDefault();
     closeSubMenu();
-    cardMenuEl?.querySelector('.context-menu-item')?.focus();
+    cardMenuEl?.querySelector('.context-menu-item:not(:disabled)')?.focus();
     return;
   }
   // Enter/Space activate the focused row via the browser's own native button
@@ -1300,6 +1348,14 @@ function buildMenuEl(items) {
       : ('trailing' in it ? `<span class="context-menu-trailing">${it.trailing || ''}</span>` : '');
     b.innerHTML = `${it.icon || ''}<span>${esc(it.label)}</span>${trailing}`;
     if (it.title) b.title = it.title;
+    // A disabled row is shown, not omitted, when its absence would read as a bug
+    // (cloud's View diff / Open terminal) — the reason lives in `title`, which is
+    // why `title` is set above this and why the click listener is skipped below.
+    if (it.disabled) {
+      b.disabled = true;
+      menu.appendChild(b);
+      continue;
+    }
     if (it.submenu) {
       b.dataset.hasSubmenu = '1';
       b.setAttribute('aria-haspopup', 'true');
@@ -1335,7 +1391,7 @@ function openSubMenu(items, anchorEl) {
   menu.style.top = `${Math.max(4, Math.min(anchor.top, window.innerHeight - height - 4))}px`;
   menu.style.visibility = '';
   subMenuEl = menu;
-  menu.querySelector('.context-menu-item')?.focus();
+  menu.querySelector('.context-menu-item:not(:disabled)')?.focus();
 }
 // Build + mount a context menu from an items array at (x,y), clamped into the
 // viewport — see buildMenuEl for the item shape. Returns nothing; sets
@@ -1359,7 +1415,7 @@ function mountMenu(items, x, y) {
   // Land focus on the first row immediately so a keyboard-opened menu (e.g.
   // Ctrl+Cmd+S) is navigable right away — arrow keys move focus (see
   // onCardMenuKey), Enter/Space activate the focused row natively.
-  menu.querySelector('.context-menu-item')?.focus();
+  menu.querySelector('.context-menu-item:not(:disabled)')?.focus();
 }
 
 // Shared "Auto-fix PR checks" toggle row for the card + Actions menus. keepOpen
@@ -1480,9 +1536,52 @@ function attachMenuItems(sessionId) {
   });
 }
 
+// Icons for the cloud action rows, mapped by the id cloudCardActions() returns so
+// the pure module stays free of markup. Teleport reuses the promote arrow (it is
+// literally "bring this session up to a full local one").
+const CLOUD_ACTION_ICONS = {
+  'send-message': ROBOT_ICON,
+  teleport: PROMOTE_ICON,
+  'view-diff': DIFF_ICON,
+  'open-terminal': TERMINAL_ICON,
+  archive: ARCHIVE_ICON,
+};
+// The whole menu for a cloud card, shared by the card right-click menu and the
+// panel's Actions menu so the two can't offer different things. Fork / Restart /
+// Peer review are absent by construction (cloudCardActions never emits them):
+// each is a host-transcript or host-pane operation with no cloud meaning. Rename
+// and Snooze are folded in here because they're pure board bookkeeping that works
+// on any card, cloud or not.
+function cloudMenuItems(sessionId, s, x, y) {
+  const runners = {
+    'send-message': () => openCloudMessage(sessionId),
+    teleport: () => teleportSession(sessionId),
+    archive: () => archiveSession(sessionId),
+  };
+  const actions = cloudCardActions({ s, attachSupported: cloudAttachSupported }).map((a) => ({
+    label: a.label,
+    icon: CLOUD_ACTION_ICONS[a.id] || '',
+    disabled: a.disabled,
+    title: a.title || undefined,
+    danger: a.danger,
+    run: runners[a.id] || (() => {}),
+  }));
+  return [
+    { label: 'Rename', icon: PENCIL_ICON, run: () => { selectSession(sessionId); beginRename(sessionId); } },
+    ...actions.slice(0, 4),
+    { sep: true },
+    isAsleep(s)
+      ? { label: 'Unsnooze', icon: CLOCK_ICON, run: () => wakeSession(sessionId) }
+      : { label: 'Snooze…', icon: CLOCK_ICON, run: () => openSnoozeMenu(sessionId, x, y) },
+    { sep: true },
+    ...actions.slice(4),
+  ];
+}
+
 function openCardMenu(sessionId, x, y) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return;
+  if (s.runtime === 'cloud') { mountMenu(cloudMenuItems(sessionId, s, x, y), x, y); return; }
   const snoozed = isAsleep(s);
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   // Rename edits the panel title, so select first to open the panel — exactly
@@ -1531,6 +1630,7 @@ function openCardMenu(sessionId, x, y) {
 function openActionsMenu(sessionId, x, y) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return;
+  if (s.runtime === 'cloud') { mountMenu(cloudMenuItems(sessionId, s, x, y), x, y); return; }
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
@@ -2396,6 +2496,54 @@ async function archiveSession(sessionId) {
   archivedToast(sessionId, 'Session archived', s?.worktree);
 }
 
+// Teleport a cloud session into a local detached git worktree — the one path back
+// to full local capability. Confirmed (not one-click) because it creates a real
+// worktree on disk and permanently converts the card: the server flips the entry to
+// a local Claude session, so a card can only be teleported once.
+async function teleportSession(sessionId) {
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  const result = await confirmDialog({
+    title: 'Teleport this cloud session?',
+    body: 'A fresh detached git worktree is created here and the cloud session is checked out into it.\n\n'
+      + 'The card then becomes an ordinary local session: cost, diff, the terminal, mail and PR watching all start working. '
+      + 'It stops being a cloud card — this is one-way.',
+    okLabel: 'Teleport',
+  });
+  if (result !== 'ok') return;
+  send({ type: 'teleport', sessionId });
+  toast('Teleporting…');
+  if (s) pendingSelect = sessionId; // jump to the local terminal once it appears
+}
+
+// --- steer a cloud session ---
+// A cloud card has no pane, so this dialog is its only input. Sends the same
+// `message` control type a human's pane paste uses; the cloud routing is
+// server-side (deliverMessage), so nothing here knows how the steer happens.
+const cloudMessageModal = document.getElementById('cloud-message-modal');
+let cloudMessageTargetId = null;
+function openCloudMessage(sessionId) {
+  cloudMessageTargetId = sessionId;
+  document.getElementById('cloud-message-text').value = '';
+  cloudMessageModal.classList.remove('hidden');
+  document.getElementById('cloud-message-text').focus();
+}
+function closeCloudMessage() { cloudMessageModal.classList.add('hidden'); cloudMessageTargetId = null; }
+function submitCloudMessage() {
+  if (!cloudMessageTargetId) return;
+  const text = document.getElementById('cloud-message-text').value.trim();
+  if (!text) return;
+  send({ type: 'message', sessionId: cloudMessageTargetId, text });
+  closeCloudMessage();
+  toast('Message sent');
+}
+document.getElementById('cloud-message-cancel').addEventListener('click', closeCloudMessage);
+document.getElementById('cloud-message-go').addEventListener('click', submitCloudMessage);
+cloudMessageModal.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitCloudMessage(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeCloudMessage(); }
+});
+cloudMessageModal.addEventListener('mousedown', (e) => { if (e.target === cloudMessageModal) closeCloudMessage(); });
+
 // Restart a live session: kill its tmux and relaunch with --resume, so the fresh
 // process re-reads current MCP/env config while the conversation continues. It's
 // the same server-side operation as the dormant-session Resume, so it rides the
@@ -2565,7 +2713,24 @@ function selectSession(sessionId) {
 // appearing in the next graph (the session is still managed:false meanwhile).
 const resuming = new Set();
 let resumeFailTimer = null;
+// One-shot per session so a click-loop on a gated cloud card doesn't stack toasts.
+const cloudAttachToasted = new Set();
+// True (and toasts once) when the click must NOT send `resume`. A cloud card is not
+// dormant — it is running on Claude's machine — so a resume would be an ATTACH, and
+// attaching may not be enabled for this account (server/cloud-attach.js is the one
+// authority; `cloudAttachSupported` is its answer, carried on the graph).
+function blockCloudResume(sessionId) {
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (!cloudResumeBlocked({ s, attachSupported: cloudAttachSupported })) return false;
+  if (!cloudAttachToasted.has(sessionId)) {
+    cloudAttachToasted.add(sessionId);
+    toast(`${ATTACH_UNSUPPORTED_REASON} Open it on claude.ai, or Teleport it to a local worktree.`, true);
+  }
+  selectSession(sessionId); // still open the card — the user asked to look at it
+  return true;
+}
 function resumeDormant(sessionId) {
+  if (blockCloudResume(sessionId)) return;
   resuming.add(sessionId);
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
@@ -3035,9 +3200,54 @@ function hideSidebar() {
   });
 })();
 
+// An https claude.ai URL, or null. `safeHttpUrl` alone only settles the protocol.
+function claudeAiHref(raw) {
+  const safe = raw ? safeHttpUrl(raw) : null;
+  if (!safe) return null;
+  try {
+    const u = new URL(safe);
+    return (u.protocol === 'https:' && /^(www\.)?claude\.ai$/.test(u.hostname)) ? safe : null;
+  } catch {
+    return null;
+  }
+}
+
+// A cloud card is not dormant, so the "Resume a copy" panel is wrong for it in both
+// directions: the copy names `claude --resume --fork-session` (a host-transcript
+// operation a cloud session has no transcript for), and clicking it would attempt an
+// attach the account may not permit. Offer the two things that DO work instead.
+function renderCloudPanel(s) {
+  closeTerminal();
+  const term = document.getElementById('term');
+  // Host-pinned as well as protocol-checked, matching cards.js's chip: the URL is
+  // scraped from CLI output, and `parseCloudLaunchLog` already pins it before
+  // storage — but this is the one place it becomes an href without re-pinning, and
+  // an href built from agent-provided text should never rely on a single upstream
+  // check.
+  const url = claudeAiHref(s.cloud?.url);
+  term.innerHTML = `<div class="term-note">
+    <p>This session is running on Claude's own machine, so there's no local terminal to attach.</p>
+    <p class="muted">${esc(ATTACH_UNSUPPORTED_REASON)}</p>
+    ${url ? `<p><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open it on claude.ai ↗</a></p>` : ''}
+    <button id="cloud-teleport-btn">Teleport to a local worktree…</button>
+    <p class="muted">Teleport checks the cloud session out into a fresh detached git worktree here and converts the card to a local session — after which cost, diff, mail and PR watching all start working.</p>
+  </div>`;
+  term.querySelector('#cloud-teleport-btn').addEventListener('click', () => teleportSession(s.sessionId));
+}
+
 // Managed sessions get a live terminal; others get an explanation + Resume.
 function renderSidebar(s) {
   showSidebar();
+  // Cloud is decided BEFORE `managed`. A freshly dispatched cloud card is managed
+  // for the few seconds its CREATE pane is alive, and attaching a live terminal to
+  // that pane is exactly what the rest of the cloud code exists to avoid: it is the
+  // local client finishing its handshake, not the agent, and the card menu already
+  // renders "Open terminal" disabled for the same reason. Once the attach gate
+  // flips, a cloud pane IS the session and the ordinary managed path is right.
+  if (s.runtime === 'cloud' && !cloudAttachSupported) {
+    renderCloudPanel(s);
+    return;
+  }
   if (s.managed) {
     if (holdForRestart(s)) return; // restart in flight — hold the spinner, not the dead pane
     resuming.delete(s.sessionId); // resumed — drop the in-flight placeholder
@@ -3164,8 +3374,12 @@ function renderPanel(sessionId) {
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
-  // Mirror the card's transient cyan "just-finished" edge in the header.
-  const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
+  // Mirror the card's transient cyan "just-finished" edge in the header. A cloud
+  // session gets the same dedicated class the card does — barWord already says
+  // CLOUD here, so a grey `idle` stripe underneath it would contradict the word.
+  const stateClass = s.runtime === 'cloud'
+    ? 'cloud'
+    : justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];
@@ -3698,6 +3912,11 @@ function worktreeStatusMsg(v) {
 //    stays enabled) to launch a normal session, or pick a repo.
 //  - real git repo: everything enabled.
 function renderWorktreeState() {
+  // Cloud has no local checkout at all, so the whole worktree gate is inapplicable
+  // — the box is hidden and its (possibly still-ticked) state is ignored by
+  // readDispatchFields. Launch is owned by the cloud preflight instead; letting
+  // both write go.disabled would have each mask the other's refusal.
+  if (dispatchDest === 'cloud') { syncCloudGo(); return; }
   const box = document.getElementById('m-worktree');
   const cwd = document.getElementById('m-cwd').value.trim();
   const scratch = !cwd || isScratchDir(cwd);
@@ -3759,6 +3978,9 @@ function syncWorktreeFields() {
   renderWorktreeState();
   refreshWorktreeDefaults();
   validateWorktree();
+  // The cloud preflight is cwd-dependent too (origin remote, dirty tree, unpushed
+  // commits), so it rides the same cwd-change path rather than its own listener.
+  if (dispatchDest === 'cloud') requestCloudPreflight();
 }
 
 // Branch default from intent; folder default from branch — unless user-edited.
@@ -3784,6 +4006,7 @@ function refreshWorktreeDefaults() {
 function validateWorktree() {
   const cwd = document.getElementById('m-cwd').value.trim();
   const box = document.getElementById('m-worktree');
+  if (dispatchDest === 'cloud') return; // no local checkout ⇒ nothing to classify
   if (!box.checked || !cwd || isScratchDir(cwd)) return; // only need git-ness when worktree is on for a real folder
   // Always classify the real target — refreshWorktreeDefaults() keeps the branch
   // field current with the auto-derived slug even when untouched, so this
@@ -3818,7 +4041,6 @@ function syncWorkflow() {
     ? 'ENT-1234, a GitHub issue URL or #number, or a free-text task'
     : 'What should the agent work on?';
   document.getElementById('m-mode-cards').classList.toggle('hidden', reviewMode);
-  document.querySelector('.worktree-box').classList.toggle('hidden', on || reviewMode);
   document.getElementById('m-wf-worktree-note').classList.toggle('hidden', !on);
   document.getElementById('m-wf-auto-merge-row').classList.toggle('hidden', !on);
   const go = document.getElementById('m-go');
@@ -3826,26 +4048,146 @@ function syncWorkflow() {
   // labels here. The violet wf tint applies in both (a scheduled workflow run).
   if (!scheduleMode()) go.textContent = on ? 'Start workflow' : 'Launch';
   go.classList.toggle('wf', on);
-  syncRuntimeToggle();
+  // The worktree box's visibility is NOT toggled here any more: workflow, review
+  // mode AND cloud all hide it, and three independent toggles is exactly how the
+  // four touch points drift apart. syncDestination derives it (and every other
+  // destination-dependent field) from destinationFieldVisibility, once.
+  syncDestination();
 }
 function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 
-// The runtime picker defaults to Local (host). Every non-local runtime is currently
-// Claude-only (devcontainer's status/cost hooks read Claude paths; codex-in-container
-// isn't wired), so for a non-Claude agent disable each non-local <option> and snap
-// the value back to local — a stale devcontainer selection must not survive an agent
-// swap. Workflow runs ARE supported (the issue-to-pr skill dir is copied into the
-// container). Extensible: a new runtime adds an <option> in index.html; the Claude-
-// only gate here covers it, and any extra per-runtime constraints slot in alongside.
-function syncRuntimeToggle() {
+// The agent behind the currently-selected model — the gate for every non-local
+// destination (both are Claude-only: devcontainer's status/cost hooks read Claude
+// paths, and a cloud VM runs Claude Code).
+function currentAgent() {
   const sel = document.getElementById('m-model');
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
-  const rt = document.getElementById('m-runtime');
-  for (const opt of rt.options) {
-    if (opt.value !== 'local') opt.disabled = agent !== 'claude';
+  return sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+}
+
+// The Destination row (replacing the old #m-runtime <select>) and every field whose
+// visibility depends on it. The DECISIONS all come from destinationFieldVisibility
+// (cloud-ui.js) so the dialog, its unit test and the "all four touch points agree"
+// rule share one source; this function is only DOM.
+//
+// A non-Claude agent disables Container and ☁ Cloud and snaps the selection back to
+// local — the old "a stale non-local selection must not survive an agent swap" rule,
+// widened from devcontainer to cover cloud. Workflow runs ARE supported in a
+// container (the issue-to-pr skill dir is copied in) but NOT in the cloud (the skill
+// rides --plugin-dir, which never reaches a VM), so cloud disables the Workflow card
+// and says why.
+function syncDestination() {
+  const v = destinationFieldVisibility({
+    dest: dispatchDest, agent: currentAgent(), mode: modalMode,
+    dispatchMode, reviewMode,
+  });
+  if (v.effectiveDest !== dispatchDest) dispatchDest = v.effectiveDest;
+  document.getElementById('m-dest-cards').classList.toggle('hidden', !v.destRowVisible);
+  document.getElementById('m-dest-label').classList.toggle('hidden', !v.destRowVisible);
+  document.getElementById('m-dest-devcontainer').disabled = !v.devcontainerCardEnabled;
+  document.getElementById('m-dest-cloud').disabled = !v.cloudCardEnabled;
+  for (const btn of document.querySelectorAll('#m-dest-cards .mode-card')) {
+    btn.classList.toggle('selected', btn.dataset.dest === dispatchDest);
+    // Two different reasons can disable a card; naming the wrong one is worse than
+    // naming none. Cloud in a schedule is the out-of-scope case, everything else is
+    // the Claude-only one.
+    btn.title = !btn.disabled ? ''
+      : (btn.dataset.dest === 'cloud' && currentAgent() === 'claude')
+        ? "Scheduling a cloud session isn't supported yet."
+        : 'Only available for Claude sessions.';
   }
-  const cur = rt.options[rt.selectedIndex];
-  if (cur && cur.disabled) rt.value = 'local';
+  document.querySelector('.worktree-box').classList.toggle('hidden', !v.worktreeBox);
+  document.getElementById('m-cloud-fields').classList.toggle('hidden', !v.cloudEnv);
+  // Workflow stays visible but dead for cloud, with the reason on the line below —
+  // silently dropping the card would leave "where did Workflow go?".
+  const wfCard = document.getElementById('m-mode-workflow');
+  wfCard.disabled = !v.workflowEnabled;
+  wfCard.title = v.workflowDisabledReason || '';
+  const wfReason = document.getElementById('m-mode-workflow-reason');
+  wfReason.textContent = v.workflowDisabledReason || '';
+  wfReason.classList.toggle('hidden', !v.workflowDisabledReason);
+  // Picking cloud while Workflow was selected must not launch a workflow run the
+  // VM can't honour — fall back to Standard and re-run the whole pass.
+  if (!v.workflowEnabled && dispatchMode === 'workflow') { setDispatchMode('standard'); return; }
+  if (v.cloudEnv) { populateCloudEnvSelect(); requestCloudPreflight(); }
+  renderCloudPreflight();
+}
+function setDispatchDest(dest) {
+  if (document.getElementById(`m-dest-${dest}`)?.disabled) return;
+  dispatchDest = dest;
+  // Switching destination invalidates the answer to a different question.
+  cloudPreflight = null; cloudPreflightKey = null;
+  syncDestination();
+  syncWorktreeFields();
+}
+
+// The Cloud environment dropdown: `Account default` plus one option per registered
+// environment (the registry is wrangler-side config — there is deliberately no API
+// listing, see §8). Preserves the current selection across a repopulate so a graph
+// push mid-edit doesn't reset it.
+function populateCloudEnvSelect() {
+  const sel = document.getElementById('m-cloud-env');
+  const want = sel.value;
+  sel.innerHTML = [`<option value="">${esc(cloudEnvLabel(null))}</option>`]
+    .concat(cloudEnvironments.map((e) => `<option value="${esc(e.id)}">${esc(cloudEnvLabel(e.id, cloudEnvironments))} · ${esc(e.id)}</option>`))
+    .join('');
+  if (want && [...sel.options].some((o) => o.value === want)) sel.value = want;
+}
+
+// Debounced live preflight, mirroring syncWorktreeFields → validateWorktree(): the
+// server owns every git/env probe (server/cloud-preflight.js), we only render the
+// answer and gate Launch on it. Keyed so a reply for a superseded cwd/env/ref is
+// discarded rather than shown against the current form.
+function cloudPreflightRequest() {
+  return {
+    cwd: document.getElementById('m-cwd').value.trim() || proposedCwd,
+    environmentId: document.getElementById('m-cloud-env').value,
+    ref: document.getElementById('m-cloud-ref').value.trim(),
+    agent: currentAgent(),
+    workflow: dispatchMode === 'workflow',
+  };
+}
+function requestCloudPreflight() {
+  const req = cloudPreflightRequest();
+  const key = `${req.cwd}|${req.environmentId}|${req.ref}|${req.agent}|${req.workflow}`;
+  if (key === cloudPreflightKey) return; // already answered (or in flight) for this exact form
+  cloudPreflightKey = key;
+  cloudPreflight = null;
+  clearTimeout(cloudPreflightTimer);
+  cloudPreflightTimer = setTimeout(() => send({ type: 'cloud-preflight', ...req }), 250);
+}
+function onCloudPreflightResult(msg) {
+  const key = `${msg.cwd || ''}|${msg.environmentId || ''}|${msg.ref || ''}|${msg.agent || 'claude'}|${Boolean(msg.workflow)}`;
+  // A reply the form has already moved past is dropped — never rendered against a
+  // cwd/env the user has since changed (same staleness rule as wtLastCwd).
+  if (cloudPreflightKey && key !== cloudPreflightKey) return;
+  cloudPreflight = { refusals: msg.refusals || [], warnings: msg.warnings || [] };
+  renderCloudPreflight();
+}
+// Refusals (red) then warnings (amber), reusing .worktree-msg's existing classes so
+// no new colour token is needed. A standing refusal disables Launch, exactly as the
+// worktree refusal gate does.
+function renderCloudPreflight() {
+  const el = document.getElementById('m-cloud-msg');
+  if (dispatchDest !== 'cloud') { el.className = 'worktree-msg hidden'; el.textContent = ''; return; }
+  const pills = cloudPreflightPills(cloudPreflight);
+  el.textContent = '';
+  el.className = pills.length ? 'worktree-msg' : 'worktree-msg hidden';
+  for (const p of pills) {
+    const line = document.createElement('div');
+    // Server-generated text (branch names, git errors) — textContent, never innerHTML.
+    line.className = `worktree-msg ${p.cls}`;
+    line.textContent = p.text;
+    el.appendChild(line);
+  }
+  syncCloudGo();
+}
+// Launch gating for cloud. Separate from renderWorktreeState's gate because the two
+// destinations block for entirely different reasons and must not mask each other.
+function syncCloudGo() {
+  if (scheduleMode()) { syncScheduleGo(); return; }
+  const go = document.getElementById('m-go');
+  go.disabled = wtPending || cloudPreflightBlocks(cloudPreflight);
+  go.textContent = wtPending ? 'Creating…' : 'Launch';
 }
 
 // #modal is reused for three jobs (modalMode): launching now, creating a schedule,
@@ -3975,11 +4317,19 @@ function readDispatchFields() {
   const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   // !reviewMode makes the "a review never creates a worktree" invariant explicit
   // (the box is also hidden+unchecked in review mode, but don't rely on that alone).
-  const wtOn = !wfOn && !reviewMode && document.getElementById('m-worktree').checked && !document.getElementById('m-worktree').disabled;
-  // Runtime picker; Local is the default and sent as undefined (the server stores
-  // only non-local). Non-Claude agents are local-only (see syncRuntimeToggle), so
-  // resolve to local for them regardless of a stale selection — a dispatch safety net.
-  const runtime = agent === 'claude' ? document.getElementById('m-runtime').value : 'local';
+  // Destination row; Local is the default and sent as undefined (the server stores
+  // only non-local). The one function that decides which destinations are legal
+  // here is the same one the dialog renders from, so a dispatch can't carry a
+  // destination the row wouldn't let you pick (non-Claude ⇒ local; a SCHEDULE ⇒
+  // never cloud, since schedules targeting cloud are out of scope for v1). This is
+  // a safety net, not the primary gate — syncDestination already snapped it.
+  const runtime = destinationFieldVisibility({
+    dest: dispatchDest, agent, mode: modalMode, dispatchMode, reviewMode,
+  }).effectiveDest;
+  const cloudOn = runtime === 'cloud';
+  // Cloud has no local checkout, so a still-ticked (but hidden) worktree box must
+  // never reach dispatch — the same belt-and-braces as the reviewMode term.
+  const wtOn = !wfOn && !reviewMode && !cloudOn && document.getElementById('m-worktree').checked && !document.getElementById('m-worktree').disabled;
   return {
     cwd: document.getElementById('m-cwd').value.trim() || proposedCwd,
     intent: document.getElementById('m-intent').value.trim(),
@@ -3999,6 +4349,11 @@ function readDispatchFields() {
     worktreeAuto: wfOn,
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
+    // Cloud-only, and only when non-empty: the environment id picks the launch FORM
+    // server-side (env_ ⇒ Anthropic-hosted, ccpool_ ⇒ self-hosted runner) and blank
+    // means the account default; `--ref` is honoured only by the self-hosted form.
+    cloudEnvironmentId: cloudOn ? (document.getElementById('m-cloud-env').value || undefined) : undefined,
+    cloudRef: cloudOn ? (document.getElementById('m-cloud-ref').value.trim() || undefined) : undefined,
   };
 }
 
@@ -4039,8 +4394,17 @@ function openModal({ mode, taskId = null, schedule = null }) {
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
-  // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
-  document.getElementById('m-runtime').value = d.runtime || 'local';
+  // Restore the saved destination (Local default); syncWorkflow→syncDestination
+  // re-gates it by agent/mode. A saved schedule can't carry 'cloud' (the row is
+  // hidden in schedule mode) but restore it faithfully anyway — snapping it to
+  // local here would silently rewrite a bag someone hand-edited in config.
+  dispatchDest = d.runtime || 'local';
+  cloudPreflight = null; cloudPreflightKey = null;
+  // Populate before assigning — a <select>.value assignment to an option that
+  // doesn't exist yet is silently dropped, which would lose a saved environment.
+  populateCloudEnvSelect();
+  document.getElementById('m-cloud-env').value = d.cloudEnvironmentId || '';
+  document.getElementById('m-cloud-ref').value = d.cloudRef || '';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   reviewMode = false;
@@ -4142,6 +4506,11 @@ function submitDispatch() {
   // A classified target the server says is impossible (branch busy / folder occupied)
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return;
+  // Same for a standing cloud refusal. Note the deliberate gap: a Launch fired
+  // BEFORE the (debounced) preflight reply lands isn't blocked here — cloud.preflight
+  // runs again server-side inside dispatch and throws to a toast, exactly as the
+  // worktree flow tolerates an in-flight validation.
+  if (fields.runtime === 'cloud' && cloudPreflightBlocks(cloudPreflight)) return;
   send({ type: 'dispatch', ...fields });
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
@@ -4204,6 +4573,7 @@ initSettings({
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
+      if (id === 'cloudEnvironments') return cloudEnvironments;
       return undefined;
     },
     set: (id, value) => {
@@ -4222,6 +4592,15 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'cloudEnvironments') {
+        // The only non-boolean server setting (a 'list' row). Already sanitized by
+        // settings.js before it gets here; the server re-validates on write, since a
+        // bad prefix must never reach a launch form.
+        cloudEnvironments = Array.isArray(value) ? value : [];
+        send({ type: 'cloud-environments', environments: cloudEnvironments });
+        // The dispatch dropdown reads the module flag, so keep it current while the
+        // dialog is open behind the settings modal.
+        populateCloudEnvSelect();
       }
     },
   },
@@ -4239,6 +4618,14 @@ document.getElementById('m-go').addEventListener('click', submitDispatch);
 document.getElementById('m-worktree').addEventListener('change', syncWorktreeFields);
 document.getElementById('m-mode-standard').addEventListener('click', () => setDispatchMode('standard'));
 document.getElementById('m-mode-workflow').addEventListener('click', () => setDispatchMode('workflow'));
+// Destination row: three .mode-card buttons carrying the same three values the old
+// #m-runtime <select> did, so nothing downstream of readDispatchFields changed.
+document.querySelectorAll('#m-dest-cards .mode-card').forEach((btn) =>
+  btn.addEventListener('click', () => setDispatchDest(btn.dataset.dest)));
+// Env/ref changes re-run the (debounced) preflight, mirroring the worktree branch
+// field's live re-classify.
+document.getElementById('m-cloud-env').addEventListener('change', requestCloudPreflight);
+document.getElementById('m-cloud-ref').addEventListener('input', requestCloudPreflight);
 // Schedule "When" picker: each change re-evaluates which rows show + Save validity.
 document.getElementById('m-sch-cadence').addEventListener('change', syncWhenRows);
 document.getElementById('m-sch-at').addEventListener('input', syncScheduleGo);
@@ -4263,7 +4650,7 @@ function wtSanitize(el, re) {
 }
 document.getElementById('m-wt-branch').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9-]/g); wtBranchEdited = true; refreshWorktreeDefaults(); validateWorktree(); });
 document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9/._~-]/g); wtFolderEdited = true; });
-document.getElementById('m-model').addEventListener('change', () => { modelEdited = true; populateEffortSelect(); syncRuntimeToggle(); });
+document.getElementById('m-model').addEventListener('change', () => { modelEdited = true; populateEffortSelect(); syncDestination(); });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
@@ -4476,6 +4863,7 @@ function connect() {
     else if (msg.type === 'memory') onMemory(msg);
     else if (msg.type === 'memory-changed') onMemoryChanged(msg);
     else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
+    else if (msg.type === 'cloud-preflight-result') onCloudPreflightResult(msg);
     else if (msg.type === 'dispatched') {
       if (wtPending) {
         wtPending = false; setDispatchPending(false);

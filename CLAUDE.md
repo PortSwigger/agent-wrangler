@@ -144,6 +144,69 @@ don't re-derive it.
   just mismatch-and-discard: for a deleted transcript, discarding the blob *is* deleting
   the spend record. v2's bare day keys survive precisely because `dayOfKey` treats them
   as their own day.
+- **Cloud sessions add a THIRD id namespace, and it must never meet `--resume`.**
+  `entry.cloud.sessionId` (`session_…`) sits alongside the card id and
+  `liveSessionId`; only `claude --cloud <id>` (attach) and `claude --teleport <id>`
+  take it. A cloud entry's `liveSessionId` stays **absent** — that's what keeps
+  every transcript/cost path off it, and exactly why `_doResume` branches on
+  `runtime === 'cloud'` **before** the resume-id resolution: fall through and
+  `resumeId` degrades to the card-id fallback, so `claude --resume` fails open
+  (the standing rule) into a blank local session while the real work keeps
+  running in the cloud, unreachable. `control/handlers/fork.js` refuses cloud
+  before any id resolution for the same reason. `cloud.analyze` returning an
+  explicit `null` is load-bearing, not decorative: a *missing* `analyze` makes
+  state-reader fall through to `enrich(entry.liveSessionId || sid)` — i.e. a
+  transcript scan under the **card id**.
+- **`claude --cloud "<desc>"` needs a TTY, and `-p` + a description silently runs
+  LOCALLY.** Hence a real tmux pane and never `-p` on the Anthropic-hosted create.
+  The silent local run is the dangerous outcome (work happening on this Mac behind
+  a card that claims to be cloud), so `assertNoPromptWithCloudDescription` is run
+  by `buildCloudCreateCommand` on its own output — a future edit to either branch
+  can't bypass it — and has its own test. `-p` is legitimate *only* alongside a
+  `session_…` id (steering, `cloud-steer.js`) or the self-hosted
+  `-p … --environment ccpool_…` create form.
+- **A cloud create pane exits 0 — which is precisely `archivableExits`' clean-exit
+  signature, so cloud entries must stay excluded** or every card self-archives
+  seconds after creation. The exclusion stays correct if attach ever ships: a
+  cloud pane exiting *then* means the local **attach** ended, still not the
+  session. Two adjacent shape rules: `CLOUD_TMUX_PREFIX = 'cl_'` is declared in
+  `server/agents/index.js` (the owned-prefix registry) though it's a *runtime*
+  constant, because `agents/*` must never import `runtimes/*`, and `_tmuxName`
+  takes the runtime so the prefix can't be spelled two ways; and a runtime that
+  defines **`buildLaunch` REPLACES** the agent adapter's `buildLaunch`/
+  `buildResume` (unlike `wrapLaunch`, which decorates), read at exactly two sites
+  — `dispatch` and `_doResume`.
+- **No wrangler surface exists inside the VM** — it can't reach
+  `127.0.0.1:<port>`: no MCP tools, no `AW_TASK_MEMORY`, no appended system
+  prompt, no PR-attach hook (so PR auto-attach never fires for cloud work), and
+  `mailCapable: false` (peer mail is one-way, pushed via `cloud-steer.js`; nothing
+  comes back). The deliberate-looking oddity: `bindMemory` **is** still called at
+  cloud dispatch — bound but not injected — so the human's notes UI works on a
+  cloud card like any other and a later Teleport finds memory already wired.
+- **The attach gate is one module and one flag — keep it that way.**
+  `server/cloud-attach.js` + `config.json cloudAttach` answer "can this account
+  attach a local pane to a running cloud session?" and nothing else forms an
+  opinion; the two delivery paths and the client read the answer off the
+  **graph field `cloudAttachSupported`** rather than importing the module, and
+  `cloud-attach.test.js` enforces the property with an import allowlist. That is
+  what makes "the day attach is enabled it's one flag" true.
+- **A cloud card's two gaps are permanent, and Teleport is the only exit.** No
+  local transcript ⇒ no cost in the usage cache, and (per the bullets above) the
+  cache *is* the long-term record, so cloud spend is invisible to the board,
+  `usage-report.js` and `scripts/cost-report.mjs` **forever** — it cannot be
+  back-filled. Never invent an estimate; a fabricated number poisons rollups that
+  are otherwise transcript-exact. Likewise no status signal beyond "running in
+  cloud" (no hook file, no pane once the create client exits) — hence a dedicated
+  `cloud` state, never a guessed working/idle/needs-you. `teleport()` is the
+  one-way conversion back to full local capability, and its worktree is
+  **`--detach`** on purpose: `claude --teleport` checks out whatever ref the cloud
+  session was on, so pre-deciding a branch would fight that checkout or record a
+  name the session never used (branch *and* `liveSessionId` are both discovered
+  post-launch — `agents/claude-discover.js`, the `codex-discover` shape). It
+  **refuses to convert** when the local conversation never appears — a local
+  runtime with no live id is unresumable, strictly worse than a cloud card that
+  failed to teleport — and removes the empty worktree it just made (`git worktree
+  remove` refusing a dirty one is the guard that spares anything with content).
 - **One instance per `DATA_DIR` — enforced.** Two servers sharing a `DATA_DIR`
   clobber each other's `mappings.json`/`tasks.json` (whole-snapshot writes). **A
   different `PORT` does NOT isolate — only `AW_DATA_DIR` does.** `main()` takes a
@@ -405,6 +468,12 @@ don't re-derive it.
   disabled** (`DISABLE_AUTOUPDATER=1`) or a mid-life self-update breaks its own
   `bin/claude` symlink (dead pane, exit 127). Per-repo template concern; the wrangler
   injects nothing.
+- **Cloud sessions (ops).** A card that never learns its `session_…` id is
+  debugged from `DATA_DIR/cloud-launch-logs/<card id>.log` — the pane's raw
+  `pipe-pane` bytes, pruned on write at 7 days — since the scrape is
+  fire-and-forget and only logs its failures. The environment registry is
+  human-maintained (`config.json cloudEnvironments`, or Settings → Cloud
+  environments); there is no API listing.
 - **Deps auto-reconcile on startup** (`scripts/sync-deps.sh` runs `npm ci` when
   `package-lock.json`'s hash changed). So a dep change needs a **restart** to take
   effect; `node server/index.js` directly skips this.

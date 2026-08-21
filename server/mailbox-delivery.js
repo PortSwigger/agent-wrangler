@@ -3,6 +3,7 @@ import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, capturePane as defaultCapturePane, classify as defaultClassify } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
+import { cloudSteerWins, sendCloudMessage as defaultSendCloudMessage } from './cloud-steer.js';
 
 // Settle-close delivery leg for the mailbox — paste a server-authored
 // notification into the recipient's pane, waking it first if dormant.
@@ -40,6 +41,33 @@ export async function deliverMailNotification(to, text, deps) {
   const verifyPollMs = deps.pasteVerifyPollMs ?? PASTE_VERIFY_POLL_MS;
 
   const target = tmuxFor(to);
+
+  // Cloud recipient: hand the notification to the cloud session via the CLI and
+  // NEVER resume — there is no host transcript to resume, and the pane a cloud
+  // card may still have is the exiting create pane (hence cloudSteerWins'
+  // ordering, checked before the live branch below). Cloud mail is ONE-WAY: the
+  // VM can't reach the wrangler's MCP endpoint, so a cloud session has no
+  // read_mail/send_message tool and nothing ever comes back — this leg is the
+  // whole conversation. A failure returns 'error', not 'skip', so
+  // sweepDueSettles re-arms the settle window (reopenSettle) and the mail stays
+  // queued instead of being silently dropped.
+  const cloudEntry = sessionManager.entryFor(to);
+  if (cloudSteerWins({ entry: cloudEntry, tmux: target, attachSupported: cloudAttachSupportedFor(deps) })) {
+    // 'skip' (= markUndeliverable), not 'error', for anything permanent: an
+    // archived board card, and an archived CLOUD session. Re-arming a settle for
+    // a recipient that can never receive again would retry the same doomed steer
+    // on every 2s sweep forever.
+    if (cloudEntry.archivedAt || cloudEntry.cloud?.archivedAt) return { mode: 'skip' };
+    const steer = deps.sendCloudMessage ?? defaultSendCloudMessage;
+    const res = await steer({ cloudSessionId: cloudEntry.cloud?.sessionId, text });
+    if (res.ok) return { mode: 'live' };
+    if (res.archived) {
+      sessionManager.markCloudArchived?.(to);
+      return { mode: 'skip' };
+    }
+    return { mode: 'error', error: res.error };
+  }
+
   if (target) {
     // The spec requires the archivedAt re-check "immediately before waking OR
     // NOTIFYING" — this is the notifying half. `lastGraph` (tmuxFor's source)
@@ -87,6 +115,17 @@ export async function deliverMailNotification(to, text, deps) {
     return { mode: 'error', error: err?.message || String(err) };
   }
   return { mode: 'dormant' };
+}
+
+// The attach gate's answer, read off the graph field the server publishes rather
+// than by importing cloud-attach.js — same reasoning as message-delivery.js's
+// copy of this (the gate stays one module's question; this consumes its published
+// answer). `server/index.js` gives the mail sweeper its own `graph: () => lastGraph`
+// precisely so this isn't answered off a missing dep; an absent graph still reads as
+// unsupported, which is the safe direction either way (an unsupported gate always
+// routes to the steer, never to a paste into a pane that may not exist).
+function cloudAttachSupportedFor(deps) {
+  return Boolean(deps.graph?.()?.cloudAttachSupported);
 }
 
 // Today's only live transport: paste into the pane. The swap point for a live

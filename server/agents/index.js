@@ -33,8 +33,16 @@ export function adapterForContainerProcess(command) {
   return ALL.find((a) => a.matchContainerized?.(command)) || null;
 }
 
+// Owned-tmux prefix for a CLOUD session's local pane. It lives here, not in
+// runtimes/cloud.js, because this module is the owned-prefix registry and
+// agents/* must never import runtimes/*.
+export const CLOUD_TMUX_PREFIX = 'cl_';
+
+// A cloud pane is not agent-prefixed (it runs a `claude --cloud` client, but the
+// name has to say "cloud", not "claude"), so its prefix is appended rather than
+// derived from an adapter.
 export function ownedPrefixes() {
-  return ALL.map((a) => a.tmuxPrefix);
+  return [...ALL.map((a) => a.tmuxPrefix), CLOUD_TMUX_PREFIX];
 }
 
 export function isOwnedTmux(name) {

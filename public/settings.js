@@ -9,6 +9,13 @@
 //
 // Each entry: { id, label, help, type, default }.
 //   type 'toggle' → boolean, rendered as a switch; getSetting returns a boolean.
+//   type 'list'   → an editable list of { label, id } pairs (add/remove), validated
+//                   by `sanitize` (a pure function from cloud-ui.js et al) before
+//                   every write; getSetting returns the array. server-scope only —
+//                   there is no localStorage encoding for it, deliberately: a list
+//                   like the cloud-environment registry has to be shared by every
+//                   browser AND readable by the launch path, so a per-browser copy
+//                   would be a second, silently-diverging source of truth.
 // New types extend renderRow()/readStored()/writeStored() + getSetting().
 //
 // scope: 'server' marks a setting persisted in the server's config.json (shared
@@ -23,6 +30,7 @@
 
 import { esc } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
+import { sanitizeCloudEnvironments } from './cloud-ui.js';
 
 const STORE_PREFIX = 'cm-setting-';
 
@@ -74,6 +82,21 @@ export const SETTINGS = [
     help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for newly-nested children; a child you have toggled by hand (its card menu\'s "Full view") keeps its own choice regardless.',
     default: false,
   },
+  {
+    id: 'cloudEnvironments',
+    type: 'list',
+    scope: 'server',
+    label: 'Cloud environments',
+    help: 'The cloud environments offered when Destination is ☁ Cloud. There is no API listing — you register them here. An id starting env_ is an Anthropic-hosted environment; ccpool_ is a self-hosted runner pool (only that form honours a branch ref). Anything else is rejected, since the prefix is what picks the launch form.',
+    default: [],
+    // Same rule the server's cloudEnvironments(cfg) accessor applies, run in front
+    // of the user so a typo is reported instead of silently vanishing on the next
+    // graph push.
+    sanitize: sanitizeCloudEnvironments,
+    itemLabelPlaceholder: 'Name (e.g. Anthropic prod)',
+    itemIdPlaceholder: 'env_… or ccpool_…',
+    addLabel: '+ Add environment',
+  },
 ];
 
 let serverBridge = { get: () => undefined, set: () => {} };
@@ -86,8 +109,14 @@ const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 function readStored(def) {
   if (def.scope === 'server') {
     const v = serverBridge.get(def.id);
+    if (def.type === 'list') return Array.isArray(v) ? v : def.default;
     return v == null ? def.default : v;
   }
+  // A 'list' has no localStorage encoding by design (see the header comment) — a
+  // per-browser copy of a registry the launch path reads would be a second source
+  // of truth. Fail loudly at definition time rather than silently storing "[object
+  // Object],…" via String().
+  if (def.type === 'list') throw new Error(`setting '${def.id}': type 'list' requires scope 'server'`);
   const raw = localStorage.getItem(STORE_PREFIX + def.id);
   if (raw == null) return def.default;
   if (def.type === 'toggle') return raw === '1';
@@ -96,6 +125,7 @@ function readStored(def) {
 
 function writeStored(def, value) {
   if (def.scope === 'server') { serverBridge.set(def.id, value); return; }
+  if (def.type === 'list') throw new Error(`setting '${def.id}': type 'list' requires scope 'server'`);
   const raw = def.type === 'toggle' ? (value ? '1' : '0') : String(value);
   localStorage.setItem(STORE_PREFIX + def.id, raw);
 }
@@ -112,10 +142,47 @@ export function setSetting(id, value) {
   if (def) writeStored(def, value);
 }
 
+// One editable { label, id } pair. `idx` is the row's position in the list — the
+// write path reads every pair back out of the DOM by index, so an id never has to
+// be a stable key (two half-typed rows may briefly share one).
+function listItemHtml(def, item, idx) {
+  const base = `setting-${esc(def.id)}-item-${idx}`;
+  return `<div class="setting-pair" id="${base}" data-idx="${idx}">
+      <input class="setting-pair-label" id="${base}-label" value="${esc(item.label || '')}"
+        placeholder="${esc(def.itemLabelPlaceholder || 'Label')}" aria-label="Label" autocomplete="off" />
+      <input class="setting-pair-id" id="${base}-id" value="${esc(item.id || '')}"
+        placeholder="${esc(def.itemIdPlaceholder || 'Id')}" aria-label="Id" autocomplete="off" />
+      <button type="button" class="setting-pair-remove" id="${base}-remove" title="Remove" aria-label="Remove">×</button>
+    </div>`;
+}
+
+// A 'list' row: label + help stacked above the editable pairs, an Add button, and a
+// feedback line. The list is re-rendered from the STORED value after every commit,
+// so a dropped row visibly disappears with its reason shown — the module's rule is
+// that nothing is lost silently.
+function listRowHtml(def) {
+  const items = readStored(def) || [];
+  const base = `setting-${esc(def.id)}`;
+  return `<div class="setting-row setting-row-stacked" data-id="${esc(def.id)}" id="${base}-row">
+      <div class="setting-copy" id="${base}-copy">
+        <div class="setting-label" id="${base}-label">${esc(def.label)}</div>
+        ${def.help ? `<div class="setting-help" id="${base}-help">${esc(def.help)}</div>` : ''}
+      </div>
+      <div class="setting-pairs" id="${base}-pairs">
+        ${items.map((it, i) => listItemHtml(def, it, i)).join('')}
+      </div>
+      <div class="setting-pairs-foot" id="${base}-foot">
+        <button type="button" class="ghost setting-pairs-add" id="${base}-add">${esc(def.addLabel || '+ Add')}</button>
+        <div class="setting-pairs-msg hidden" id="${base}-msg" aria-live="polite"></div>
+      </div>
+    </div>`;
+}
+
 function rowHtml(def) {
   const on = readStored(def);
   // type dispatch: only 'toggle' today, but the switch keeps the door open for
   // select/number rows without touching the open/close/escape wiring below.
+  if (def.type === 'list') return listRowHtml(def);
   if (def.type === 'toggle') {
     return `<div class="setting-row" data-id="${esc(def.id)}">
         <div class="setting-copy">
@@ -185,7 +252,52 @@ export function initSettings({ server, appearance } = {}) {
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
 
+  // --- 'list' rows ---
+  // Read every pair out of the DOM, sanitize, persist the survivors, then re-render
+  // the row from the stored value. Re-rendering (rather than leaving the typed DOM
+  // alone) is what makes a dropped row VISIBLE: the bad line disappears and the
+  // feedback slot says why, instead of the value quietly not taking.
+  const commitList = (def, rowEl, { rerender = true } = {}) => {
+    const rows = [...rowEl.querySelectorAll('.setting-pair')].map((el) => ({
+      label: el.querySelector('.setting-pair-label').value,
+      id: el.querySelector('.setting-pair-id').value,
+    }));
+    const sanitize = def.sanitize || ((r) => ({ environments: r, dropped: [] }));
+    const { environments, dropped } = sanitize(rows);
+    setSetting(def.id, environments);
+    if (rerender) {
+      rowEl.querySelector('.setting-pairs').innerHTML =
+        environments.map((it, i) => listItemHtml(def, it, i)).join('');
+    }
+    const msg = rowEl.querySelector('.setting-pairs-msg');
+    msg.textContent = dropped.length
+      ? dropped.map((d) => `Dropped "${d.label || d.id || '(blank)'}" — ${d.reason}.`).join(' ')
+      : '';
+    msg.classList.toggle('hidden', !dropped.length);
+  };
+
   body.addEventListener('click', (e) => {
+    const add = e.target.closest('.setting-pairs-add');
+    if (add) {
+      const rowEl = add.closest('.setting-row');
+      const def = byId.get(rowEl?.dataset.id);
+      if (!def) return;
+      const list = rowEl.querySelector('.setting-pairs');
+      // Appended as a blank pair, not persisted yet — sanitize treats a fully-blank
+      // row as the empty add-form rather than an error, so nothing is reported
+      // until the user actually types something.
+      list.insertAdjacentHTML('beforeend', listItemHtml(def, { label: '', id: '' }, list.children.length));
+      list.lastElementChild.querySelector('.setting-pair-label').focus();
+      return;
+    }
+    const remove = e.target.closest('.setting-pair-remove');
+    if (remove) {
+      const rowEl = remove.closest('.setting-row');
+      const def = byId.get(rowEl?.dataset.id);
+      remove.closest('.setting-pair').remove();
+      if (def) commitList(def, rowEl);
+      return;
+    }
     const themeRow = e.target.closest('.theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
@@ -207,5 +319,20 @@ export function initSettings({ server, appearance } = {}) {
     setSetting(def.id, next);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
+  });
+
+  // Commit a list on blur (focusout), not on every keystroke: a half-typed id
+  // ("env") would otherwise be reported as invalid on the way to a valid one, and
+  // a re-render mid-typing would steal focus. `rerender: false` on focusout for the
+  // same reason — the row the user just left must not be rebuilt under the cursor
+  // that has already moved into the next field; the next open renders from store.
+  body.addEventListener('focusout', (e) => {
+    const item = e.target.closest?.('.setting-pair');
+    if (!item) return;
+    const rowEl = item.closest('.setting-row');
+    const def = byId.get(rowEl?.dataset.id);
+    // Still inside the same list ⇒ tab between the two fields, not a commit-worthy
+    // exit… but commit anyway (cheap, idempotent) so a closed modal can't lose it.
+    if (def) commitList(def, rowEl, { rerender: false });
   });
 }

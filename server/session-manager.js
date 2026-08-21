@@ -6,11 +6,15 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, isOwnedTmux } from './agents/index.js';
+import { adapterFor, isOwnedTmux, CLOUD_TMUX_PREFIX } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
+import { classifyEnvironmentId, buildTeleportCommand } from './runtimes/cloud.js';
+import { cloudAttachSupported, CLOUD_ATTACH_UNSUPPORTED_MSG } from './cloud-attach.js';
+import { watchCloudLaunch, pruneCloudLaunchLogs } from './cloud-launch-watch.js';
+import { discoverClaudeLiveIdAfter } from './agents/claude-discover.js';
 import { addDirFor, linkPathFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
+import { createWorktree, addDetachedWorktree, gitRepoRoot, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -67,12 +71,30 @@ function isInsideSessions(dir) {
 // /exit or a self-stopped agent). A non-zero or unknown (null) status is left
 // for the existing dead-pane path so a crash/failed-resume keeps surfacing its
 // output with Resume. Foreign (non-`cc_`) tmuxes are never swept.
+//
+// CLOUD IS EXCLUDED, and this is not an optimisation. A cloud CREATE pane exits 0
+// the moment the CLI has printed the new session's id — which is exactly the
+// "clean agent exit" signature above, so without this filter every cloud card
+// self-archived seconds after it appeared. The exit means "the local client
+// finished", never "the cloud session finished": the agent is still running in a
+// VM we cannot see. The exclusion stays correct once interactive attach ships,
+// too — a cloud pane exiting then means the local ATTACH ended, still not the
+// session.
 export function archivableExits(deadEntries) {
   return deadEntries.filter(
     (d) => typeof d.tmux === 'string' && isOwnedTmux(d.tmux)
-      && d.sessionId && !d.archived && d.status === 0,
+      && d.sessionId && !d.archived && d.status === 0
+      && d.runtime !== 'cloud',
   );
 }
+
+// How long `teleport` waits for the pulled-down session to write its first
+// transcript line and for git to report the worktree's HEAD. ~60 s, far wider than
+// `_resolveLiveId`'s Codex-calibrated 3 s, because `claude --teleport` fetches the
+// remote session and checks out its ref before it writes anything at all — and
+// giving up early means telling the human it failed while it is succeeding.
+const TELEPORT_DISCOVERY_TRIES = 400;
+const TELEPORT_DISCOVERY_POLL_MS = 150;
 
 // A long snooze (>= 1h) also reclaims a session's RAM by suspending it. A shorter
 // snooze is a pure visibility hide (no resume cost on a quick re-open).
@@ -239,13 +261,22 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
     childFullView: prev?.childFullView,
+    // A cloud card's whole cloud identity (its `session_…` id, URL, environment)
+    // must survive the resume that re-attaches to it — that id is the only handle
+    // on the running session, and losing it would strand the work in the cloud
+    // with no way back. Also retained across a Teleport conversion so a local card
+    // can still render `was ☁`.
+    cloud: prev?.cloud,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
     // regardless of what it was launched with originally — stamp it true
     // unconditionally (never carried over from `prev`; this is deliberately about
     // the argv this resume just built, not the entry's history). send_message reads
     // this to decide mailbox vs. direct-push fallback for the recipient.
-    mailCapable: true,
+    // EXCEPT cloud: a cloud relaunch is `claude --cloud <session_…>`, which carries
+    // no --mcp-config and no --allowedTools at all (nothing in the VM can reach
+    // 127.0.0.1), so its recipient has no mailbox tool either way.
+    mailCapable: prev?.runtime !== 'cloud',
   };
 }
 
@@ -287,6 +318,14 @@ export class SessionManager {
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
     this._ensureCodexTrust = ensureCodexTrust;
+    // Same kind of seam, for the one call in dispatch that polls a real tmux pane's
+    // output after the launch has already returned. A test stubs this to assert the
+    // wiring (and to capture the log path) without a tmux server or a 120 s poll.
+    this._cloudLaunch = watchCloudLaunch;
+    // Third seam of the same kind. The attach gate answers off config.json, which
+    // `node --test` may not write (it's the developer's real data dir), so the one
+    // caller that acts on the answer reads it through here.
+    this._cloudAttachSupported = cloudAttachSupported;
     this._load();
   }
 
@@ -498,6 +537,52 @@ export class SessionManager {
   // poller sends into a live pane). Tri-state: absent ⇒ inherit the default
   // (on); an explicit boolean wins. Adopts an externally-discovered session
   // first (like setSnooze) so the override persists. Keyed on the card id.
+  // Record what the launch scrape learned about a cloud session: its `session_…`
+  // id and claude.ai URL (see cloud-launch-watch.js). Idempotent by design — it
+  // no-ops once an id is already stored, so a later stray `session_…` match in the
+  // pane's scrollback (a second create in the same pane, a pasted id) can never
+  // clobber a good one. Only ever writes to a `runtime: 'cloud'` entry.
+  noteCloudSession(sessionId, { cloudSessionId, url } = {}) {
+    const entry = this.map.get(sessionId);
+    if (!entry || entry.runtime !== 'cloud' || !cloudSessionId) return false;
+    if (entry.cloud?.sessionId) return false;
+    entry.cloud = { ...(entry.cloud || {}), sessionId: cloudSessionId, url: url || entry.cloud?.url || null };
+    this._save();
+    return true;
+  }
+
+  // The cloud session is gone (a steer came back saying it's archived). Stamped
+  // rather than only toasted so the card keeps showing it — there is no other
+  // signal a cloud session has ended, so a lost toast would leave a card that
+  // looks live forever.
+  markCloudArchived(sessionId, now = Date.now()) {
+    const entry = this.map.get(sessionId);
+    if (!entry?.cloud || entry.cloud.archivedAt) return false;
+    entry.cloud = { ...entry.cloud, archivedAt: now };
+    this._save();
+    return true;
+  }
+
+  // The Teleport conversion: this card stops being a cloud card and becomes an
+  // ordinary local one, in place. `runtime` goes back to ABSENT because that's how
+  // local is stored (see runtimeFor's contract comment) — flipping it to the string
+  // 'local' would work today but breaks the "absent ⇒ local" back-compat rule every
+  // pre-runtime entry relies on. From here the card gets transcript, cost, diff,
+  // resume, mail and PR watching with no cloud-specific code on any of those paths;
+  // `entry.cloud` is deliberately RETAINED so the card can render a `was ☁` chip
+  // (and so the cloud session's id survives for anyone auditing where the work
+  // started).
+  convertCloudToLocal(sessionId, { worktree, liveSessionId } = {}) {
+    const entry = this.map.get(sessionId);
+    if (!entry || entry.runtime !== 'cloud' || !liveSessionId) return false;
+    entry.runtime = undefined;
+    entry.worktree = worktree || entry.worktree;
+    entry.liveSessionId = liveSessionId;
+    entry.mailCapable = true;
+    this._save();
+    return true;
+  }
+
   setAutoFixPrChecks(sessionId, enabled, snapshot = {}) {
     let entry = this.map.get(sessionId);
     if (!entry) {
@@ -789,8 +874,36 @@ export class SessionManager {
     const runtime = runtimeFor(prev?.runtime);
     await this.killForSession(sessionId);
     const short = crypto.randomBytes(4).toString('hex');
-    const tmux = this._tmuxName(agent, short);
+    const tmux = this._tmuxName(agent, short, prev?.runtime);
     let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    // Cloud resume = re-ATTACH a local pane to a session still running in the
+    // cloud. It must branch BEFORE the resume-id resolution below, all of which is
+    // about host transcripts: for a cloud entry `liveSessionId` is absent, so
+    // `resumeId` would fall back to the CARD id and `claude --resume <card id>`
+    // would fail open into a fresh, empty LOCAL session (CLAUDE.md's fails-open
+    // rule) — silently replacing a running cloud session with a blank local one.
+    // `cloud.skipsHostResumeGuard` documents why none of that machinery applies.
+    if (prev?.runtime === 'cloud') {
+      if (!this._cloudAttachSupported()) throw new Error(CLOUD_ATTACH_UNSUPPORTED_MSG);
+      const launchCmd = runtime.buildLaunch({ mode: 'resume', cwd: dir, sessionId, entry: prev });
+      await this._newSession(tmux, dir, launchCmd, this.socket);
+      // Watch this pane too — an ATTACH is the only launch that can print the
+      // refusal line, so it's the only one that can move the gate's answer in either
+      // direction. Not awaited, same as dispatch's: a resume must return at once.
+      const logPath = await this._pipePaneToFile(tmux, this.socket, sessionId);
+      Promise.resolve(this._cloudLaunch({ sessionManager: this, sessionId, tmux, socket: this.socket, logPath, mode: 'attach' }))
+        .catch((e) => console.error(`[cloud] attach watch for ${sessionId} failed:`, e?.message || e));
+      // resumeEntry carries `cloud` forward and leaves mailCapable false for a cloud
+      // entry; `resumeId` is null because there is no host conversation to resume —
+      // storing the card id here is exactly the confusion the three-namespace rule
+      // forbids.
+      this.map.set(sessionId, resumeEntry(prev, {
+        short, tmux, cwd: dir, agent, resumeId: undefined, socket: this.socket, now: Date.now(),
+      }));
+      this._save();
+      await this.refreshAlive();
+      return { tmux };
+    }
     // Memory binds to the owner/mapped id (this `sessionId`, stable across the
     // fork), not the new id --fork-session gives the process — per the resume-fork
     // invariant, so the memory follows the durable identity.
@@ -941,6 +1054,13 @@ export class SessionManager {
   async noteLiveSessionId(sessionId, liveSessionId, { transcriptFor = findTranscript } = {}) {
     const entry = this.map.get(sessionId);
     if (!entry || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
+    // A cloud card's liveSessionId must stay ABSENT — that absence is what keeps
+    // `--resume`, transcript costing and the resume guards off it (see the
+    // three-namespaces rule). The local pane IS a `claude` process, so it may well
+    // write a `~/.claude/sessions/<pid>.json` of its own for the CLIENT; adopting
+    // that id would point the card at a conversation that holds none of the work,
+    // and would make Resume `--resume` it instead of attaching to the cloud session.
+    if (entry.runtime === 'cloud') return false;
     // Never take over a conversation another card already owns (or that IS another
     // card id): two entries on one transcript double-count its cost and fight over
     // whose resume wins.
@@ -1037,7 +1157,15 @@ export class SessionManager {
     await this.refreshAlive();
   }
 
-  _tmuxName(agentId, short) {
+  // The single place a tmux session name is composed. `runtime` is threaded in
+  // rather than composed at the call sites so the cloud prefix can't be spelled
+  // two ways: a cloud pane holds the local `claude` CLIENT, not the agent, so it
+  // is named by its RUNTIME (`cl_`) instead of the agent adapter's prefix — the
+  // pane's process is the same `claude` binary either way, and a `cc_` name would
+  // make a cloud pane indistinguishable from a real local Claude session to
+  // anything reading names (attach pickers, the owned-tmux sweep).
+  _tmuxName(agentId, short, runtime) {
+    if (runtime === 'cloud') return `${CLOUD_TMUX_PREFIX}${short}`;
     return `${adapterFor(agentId).tmuxPrefix}${short}`;
   }
 
@@ -1100,6 +1228,140 @@ export class SessionManager {
     // browser addon needs — the default is usually `external` (which also works),
     // but a user's global `set-clipboard off` would silently break browser copy.
     await this._tmux(socket, ['set-option', '-t', tmux, 'set-clipboard', 'on']).catch(() => {});
+  }
+
+  // Tee a pane's RAW output to a file so the cloud launch scrape reads unwrapped
+  // bytes (see cloud-launch-watch.js for why capture-pane alone isn't enough).
+  // Keyed on the card id, not the tmux name, so a resume/relaunch of the same card
+  // overwrites its own log rather than accumulating one per tmux. Returns the log
+  // path, or null when the pipe couldn't be set up — the watcher then relies on its
+  // capture-pane fallback, so a failure here degrades rather than breaks.
+  async _pipePaneToFile(tmux, socket, sessionId) {
+    const dir = path.join(DATA_DIR, 'cloud-launch-logs');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      pruneCloudLaunchLogs(dir);
+      const logPath = path.join(dir, `${sessionId}.log`);
+      fs.writeFileSync(logPath, '');
+      await this._tmux(socket, ['pipe-pane', '-t', tmux, '-o', `cat >> ${shellQuote(logPath)}`]);
+      return logPath;
+    } catch (e) {
+      console.error(`[cloud] could not pipe ${tmux} to a log file:`, e?.message || e);
+      return null;
+    }
+  }
+
+  // Teleport: pull a running cloud session down into a fresh local worktree and
+  // convert the card in place. This is the ONLY way back to full local capability
+  // — transcript, cost, diff, terminal, mail and PR watching all start working
+  // afterwards with no cloud-specific code on any of those paths.
+  //
+  // The worktree is DETACHED because `claude --teleport` checks out whatever ref the
+  // cloud session was on; pre-deciding a branch would either fight that checkout or
+  // record a name the session never used. The branch and the live conversation id
+  // are therefore both DISCOVERED after launch (the codex-discover shape), and if
+  // the conversation never appears we deliberately do NOT convert: a half-converted
+  // card (local runtime, no live id) would be unresumable, which is strictly worse
+  // than a cloud card that failed to teleport.
+  // `discoverLiveId`/`tries`/`pollMs` are injectable purely so a test can assert the
+  // conversion (and the failure cleanup) without a real `claude --teleport` or a
+  // 60-second wait.
+  async teleport(sessionId, { discoverLiveId = discoverClaudeLiveIdAfter, tries = TELEPORT_DISCOVERY_TRIES, pollMs = TELEPORT_DISCOVERY_POLL_MS } = {}) {
+    const prev = this.map.get(sessionId);
+    if (!prev) throw new Error('No such session.');
+    if (prev.runtime !== 'cloud') throw new Error('Only a cloud session can be teleported.');
+    const cloudSessionId = prev.cloud?.sessionId;
+    if (!cloudSessionId) {
+      throw new Error("This cloud session's id hasn't been read back from its launch yet — wait for the ☁ chip to show a session id, or open it on claude.ai.");
+    }
+    const repoRoot = prev.cwd ? await gitRepoRoot(prev.cwd) : null;
+    if (!repoRoot) throw new Error(`Can't teleport: ${prev.cwd || 'this session'} isn't inside a git repository any more.`);
+    // Reap the card's old `cl_` create pane BEFORE anything else. Once the entry's
+    // tmux is repointed at the new `cc_` name, `entryByTmux` no longer resolves the
+    // old one, so nothing would ever sweep it and remain-on-exit would keep it on
+    // the socket forever. Safe here: the teleport command below references the
+    // CLOUD session id, not the card id, so this can't reap the pane it's about to
+    // create.
+    await this.killForSession(sessionId);
+    const short = crypto.randomBytes(4).toString('hex');
+    const folderName = `${path.basename(repoRoot)}-teleport-${short}`;
+    const wt = await addDetachedWorktree({ repoRoot, folderName });
+    let converted = false;
+    let tmux = null;
+    try {
+      // A local Claude session from this moment on, so it takes the ordinary `cc_`
+      // prefix rather than `cl_` — the pane really is a local agent now.
+      tmux = this._tmuxName('claude', short);
+      const launchedAt = Date.now();
+      await this._newSession(tmux, wt.path, buildTeleportCommand({ cloudSessionId }), this.socket);
+      // Both discoveries race the launch: the checkout and the first transcript line
+      // both happen after the process starts. The window is deliberately much wider
+      // than `_resolveLiveId`'s (which is calibrated for a Codex rollout, written
+      // immediately): `claude --teleport` has to fetch the remote session and check
+      // out its ref before it writes a single transcript line, so a six-second bound
+      // reports "no conversation appeared" while the teleport is in fact working.
+      let liveSessionId = null;
+      let branch = null;
+      for (let i = 0; i < tries; i++) {
+        liveSessionId = liveSessionId || await discoverLiveId({ cwd: wt.path, launchedAt });
+        branch = branch || await this._readWorktreeBranch(wt.path);
+        if (liveSessionId && branch) break;
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+      if (!liveSessionId) {
+        throw new Error("Teleport launched but no local conversation appeared — leaving the card as a cloud session rather than converting it into one that can't be resumed. Check the pane for what `claude --teleport` said.");
+      }
+      // `HEAD` (still detached) is a legitimate answer, so store it as-is rather
+      // than inventing a branch name the session isn't on.
+      const worktree = { path: wt.path, branch: branch || 'HEAD', repoRoot };
+      const entry = this.map.get(sessionId);
+      entry.short = short;
+      entry.tmux = tmux;
+      entry.cwd = wt.path;
+      entry.socket = this.socket;
+      this.convertCloudToLocal(sessionId, { worktree, liveSessionId });
+      converted = true;
+      await this.refreshAlive();
+      return { sessionId, tmux, cwd: wt.path, branch: worktree.branch, liveSessionId };
+    } finally {
+      if (!converted) {
+        // Kill the pane FIRST. `claude --teleport` is still running in it, and no
+        // entry points at that tmux yet (the entry's tmux is only repointed on
+        // success), so leaving it would orphan a live agent nothing can reach —
+        // and pulling its worktree out from under it would be worse still.
+        if (tmux) await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
+        // Then clean up ONLY a worktree we just created that is still empty of real
+        // work: `git worktree remove` refuses a dirty one, which is exactly the
+        // guard we want (the repo's "cleanup is offered, never automatic" instinct
+        // for anything with content). Otherwise every retry stacks a stray
+        // detached worktree.
+        await this._removeEmptyWorktree(wt.path, repoRoot);
+      }
+    }
+  }
+
+  // The checked-out branch of a just-created worktree, or null while git hasn't
+  // finished (or when HEAD is detached and git prints the literal `HEAD`, which the
+  // caller treats as a real answer). File-free: one cheap git call, polled.
+  async _readWorktreeBranch(dir) {
+    try {
+      const { stdout } = await exec('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      return stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // `git worktree remove` refuses a dirty worktree, which is exactly the guard we
+  // want: it removes the empty one this teleport just made and leaves anything with
+  // real content alone. Best effort — a failure here must not mask the teleport
+  // error that brought us here.
+  async _removeEmptyWorktree(dir, repoRoot) {
+    try {
+      await exec('git', ['-C', repoRoot, 'worktree', 'remove', dir]);
+    } catch {
+      /* dirty, or already gone — leave it for the human */
+    }
   }
 
   // A tmux session is only attachable if it still has a live pane. `remain-on-exit`
@@ -1165,6 +1427,9 @@ export class SessionManager {
         sessionId,
         status: this.deadStatus.has(tmux) ? this.deadStatus.get(tmux) : null,
         archived: sessionId ? this.isArchived(sessionId) : false,
+        // Fed to archivableExits so it can skip cloud entries — see the
+        // exits-0-is-not-finished reasoning there.
+        runtime: sessionId ? this.map.get(sessionId)?.runtime : undefined,
       };
     });
     const toArchive = archivableExits(deadEntries);
@@ -1241,15 +1506,30 @@ export class SessionManager {
 
   async dispatch({ cwd, intent = '', model, effort, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession,
+                   cloudEnvironmentId = '', cloudRef = '' } = {}) {
     const trimmed = cwd && expandTilde(String(cwd).trim());
+    const isCloud = runtime === 'cloud';
+    // A cloud session has no local checkout at all — the VM clones from the pushed
+    // remote — so a worktree would be a directory nothing ever opens, plus a branch
+    // nobody is on. The dialog hides the toggle; refuse here for the paths that
+    // don't go through it (spawn_session, a schedule).
+    if (isCloud && worktree) {
+      throw new Error('Worktree mode and Cloud are mutually exclusive: a cloud session works from the pushed remote and has no local checkout to branch.');
+    }
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
     // scratch dir plus an opaque dead pane. e.g. the devcontainer runtime refuses a
     // repo with no .devcontainer config instead of letting `devcontainer up` try to
     // synthesize one and die in the pane.
     const rt = runtimeFor(runtime);
-    const preflightErr = rt.preflight ? await rt.preflight({ cwd: trimmed }) : null;
+    // The bag is widened, not replaced: devcontainer's `preflight({ cwd })`
+    // destructure ignores the extra keys. Cloud needs all four — it refuses codex,
+    // refuses workflow mode, and validates the environment id's prefix before that
+    // id can pick a launch form.
+    const preflightErr = rt.preflight
+      ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), cloud: { environmentId: cloudEnvironmentId, ref: cloudRef } })
+      : null;
     if (preflightErr) throw new Error(preflightErr);
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
     // is ensured-fresh and created here; a real user-typed path is created too
@@ -1265,7 +1545,7 @@ export class SessionManager {
     const short = crypto.randomBytes(4).toString('hex');
     const sessionId = crypto.randomUUID();
     const adapter = adapterFor(agent);
-    const tmux = this._tmuxName(agent, short);
+    const tmux = this._tmuxName(agent, short, runtime);
 
     // Worktree mode: create the worktree BEFORE launch and start the session in
     // it. Throws WorktreeError on refusal — abort the whole dispatch (no tmux, no
@@ -1286,25 +1566,52 @@ export class SessionManager {
     // The conversation runs under its own live id, distinct from the card id, so
     // the card id is never also a conversation id. Preset for Claude; Codex mints
     // and we discover it post-launch.
-    const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
+    // Cloud mints NO preset live id: no `--session-id` is passed (the create form
+    // takes none) and no host conversation exists, so there is nothing to preset
+    // and `_resolveLiveId` is never called either — a cloud entry's liveSessionId
+    // stays absent, which is what keeps every transcript/cost path off it.
+    const presetLiveId = (!isCloud && adapter.presetsSessionId) ? crypto.randomUUID() : undefined;
     // Only an ORCHESTRATOR run loads the issue-to-pr skill plugin; a worker (tagged
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy });
+    // A runtime that defines `buildLaunch` REPLACES the adapter's, rather than
+    // decorating it (this and _doResume are its only two read sites). Cloud needs
+    // that because a cloud launch is a different `claude` invocation entirely — no
+    // --session-id, no --mcp-config, no --add-dir, no appended prompt: none of it
+    // can reach the VM.
+    const rawInner = rt.buildLaunch
+      ? rt.buildLaunch({ mode: 'dispatch', cwd, sessionId, intent, cloud: { environmentId: cloudEnvironmentId, ref: cloudRef } })
+      : adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy });
     // Bind the per-session memory link to its task (or scratch) BEFORE launch, so
     // AW_TASK_MEMORY and --add-dir resolve the moment the agent boots — and BEFORE
     // wrapLaunch, so the devcontainer runtime's `docker cp` of the memory dir sees
     // a real symlink target rather than a not-yet-created one. dispatch mints the
     // sessionId, so the caller hands in a binder rather than doing it after the
     // launch returns.
+    //
+    // Still called for a cloud dispatch even though the launch injects NO
+    // AW_TASK_MEMORY (the VM can't see a host path) — "bound but not injected"
+    // looks like a bug otherwise. The bind creates the dir and the per-session
+    // symlink so the human's notes UI works on a cloud card exactly like any
+    // other, and so a later Teleport conversion finds the memory already wired.
     bindMemory?.(sessionId);
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
 
-    const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
+    // Cloud: start piping the pane's raw output to a file and scrape it for the new
+    // `session_…` id / claude.ai URL. Deliberately NOT awaited — a cloud dispatch
+    // must return as fast as any other, and the pills fill in on a later graph poll
+    // (buildGraph reads the entry, so there's no rebuild plumbing to thread).
+    if (isCloud) {
+      const logPath = await this._pipePaneToFile(tmux, this.socket, sessionId);
+      Promise.resolve(this._cloudLaunch({ sessionManager: this, sessionId, tmux, socket: this.socket, logPath }))
+        .catch((e) => console.error(`[cloud] launch scrape for ${sessionId} failed:`, e?.message || e));
+    }
+
+    const liveSessionId = isCloud ? undefined : (presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt }));
 
     // Merge onto any entry an early setWorkflowPhase already adopted (the process is
     // alive before this map.set, so the skill can report a phase first). The launch
@@ -1319,7 +1626,22 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !isCloud };
+    if (isCloud) {
+      // `sessionId` is the third id namespace's placeholder: `cloud.sessionId` is
+      // the CLOUD session's own `session_…` handle, filled in post-launch by the log
+      // scrape. It is NEVER the card id and never `liveSessionId` — and it must
+      // never be `--resume`d (it isn't a conversation id at all; `claude --cloud
+      // <session_…>` attaches to it and `claude --teleport <session_…>` pulls it
+      // local).
+      entry.cloud = {
+        sessionId: null,
+        url: null,
+        environmentId: cloudEnvironmentId || null, // null = the account default environment
+        kind: classifyEnvironmentId(cloudEnvironmentId) === 'self-hosted' ? 'self-hosted' : 'anthropic',
+        createdAt: launchedAt,
+      };
+    }
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();

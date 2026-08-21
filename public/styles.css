@@ -48,8 +48,8 @@
      pattern as --just-finished/--wf/--rt each getting their own name even
      where they currently share a value with something else. */
   --mail:#d29922; --mail-fg:#e3b341;
-  /* Container-runtime chip hue — teal/cyan, its own role distinct from
-     --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
+  /* Non-local-runtime chip hue (devcontainer AND cloud) — teal/cyan, its own role
+     distinct from --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
   --rt:#39c5cf; --rt-fg:#56d4dd;
   --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
   /* Ink for text sitting ON a filled status bar. Dark theme state colours are
@@ -94,7 +94,7 @@ body.light {
   --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
   --snooze:#9a6700; --snooze-fg:#7d4e00;
   --mail:#9a6700; --mail-fg:#7d4e00;
-  /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
+  /* Non-local-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
   --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
   --bar-on:#ffffff;
@@ -216,6 +216,11 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .context-menu-trailing { margin-left: auto; display: inline-flex; padding-left: 12px; }
 /* Ctrl+Cmd+<key> board-shortcut hint shown next to an Actions-menu row. */
 .kbd-hint { font-size: 11px; color: var(--fg-subtle); letter-spacing: .02em; white-space: nowrap; }
+/* Shown-but-dead row (e.g. a cloud card's View diff / Open terminal): the reason
+   is in the button's title, so it must stay hoverable-looking-dead — dimmed, no
+   hover highlight, and no focus ring since it can't be activated. */
+.context-menu-item:disabled { opacity: 0.42; cursor: not-allowed; }
+.context-menu-item:disabled:hover { background: transparent; }
 .context-menu-item.danger { color: var(--red-fg); }
 .context-menu-item.danger:hover, .context-menu-item.danger:focus-visible { background: var(--danger-bg); color: var(--danger-strong); outline: none; }
 .context-menu-sep { height: 1px; margin: 3px 2px; background: var(--border-muted); }
@@ -587,6 +592,35 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   border-color: var(--wf); background: color-mix(in srgb, var(--wf) 12%, transparent);
 }
 .mode-card[data-mode="workflow"].selected .mode-card-check { background: var(--wf); }
+/* Destination row (#m-dest-cards): the same three-card pattern, so it inherits
+   every .mode-card rule above and only needs its own selected fill + a disabled
+   look. Selection is accent for all three — the destination isn't a mode with its
+   own colour identity the way Standard/Workflow are, so tinting each one
+   differently would read as three unrelated states. */
+.dest-cards.hidden, #m-dest-label.hidden { display: none; }
+.mode-card[data-dest].selected,
+.mode-card[data-dest].selected:hover {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.mode-card[data-dest].selected .mode-card-check { background: var(--accent); }
+/* A destination the current agent can't reach (cloud/container are Claude-only).
+   Kept visible-but-dead rather than removed so the option's existence is still
+   discoverable; the title carries the reason. */
+.mode-card:disabled { opacity: 0.42; cursor: not-allowed; }
+.mode-card:disabled:hover { background: transparent; }
+/* One-liner under a card row explaining why something in it is disabled
+   (e.g. Workflow when the destination is cloud). */
+.dest-note { font-size: 12px; margin-top: 6px; color: var(--fg-subtle); }
+.dest-note.hidden { display: none; }
+/* Cloud-only fields, shown in place of the worktree box. Bordered like
+   .worktree-box so the dialog reads as "one group per destination". */
+.cloud-fields { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
+.cloud-fields.hidden { display: none; }
+.cloud-fields label:first-child { margin-top: 0; }
+/* The live-preflight pill stack. Each line inside is a .worktree-msg with the
+   existing hint/warn/error classes, so refusals and warnings reuse the colours the
+   worktree box already defines — no new tokens. */
+.cloud-msg.hidden { display: none; }
 /* Workflow mode: the manual worktree box is hidden and this confirms the auto one. */
 .wf-worktree-note { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); margin-top: 14px; }
 .wf-worktree-note.hidden { display: none; }
@@ -653,6 +687,13 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .fork-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 8px; }
 .fork-note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 11px; }
 
+/* Steer a cloud session (its only input — there is no pane to type into). */
+#cloud-message-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#cloud-message-modal.hidden { display: none; }
+
 /* Scheduled sessions panel */
 #schedules-modal {
   position: fixed; inset: 0; background: var(--overlay);
@@ -697,6 +738,25 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   background: var(--fg-muted); transition: transform 0.12s ease, background 0.12s ease;
 }
 .setting-toggle.on .setting-knob { transform: translateX(16px); background: var(--accent-fg); }
+/* A 'list' setting row (an editable registry of {label, id} pairs) stacks instead
+   of putting a control to the right of its copy — the pairs need the full width. */
+.setting-row-stacked { display: block; }
+.setting-pairs { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.setting-pair { display: flex; align-items: center; gap: 6px; }
+.setting-pair input { flex: 1 1 0; min-width: 0; margin: 0; }
+.setting-pair-remove {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; line-height: 1;
+  border: 1px solid var(--border); border-radius: 6px; background: transparent;
+  color: var(--fg-muted); cursor: pointer; font-size: 15px;
+}
+.setting-pair-remove:hover { border-color: var(--danger-border); color: var(--danger-strong); background: var(--danger-bg); }
+.setting-pairs-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.setting-pairs-add { font-size: 12px; padding: 4px 9px; }
+/* Rejected rows are reported, never dropped silently. Amber (the same role the
+   worktree box uses for "will work, but know this") — a typo isn't an error state,
+   it's a row that didn't take. */
+.setting-pairs-msg { font-size: 12px; color: var(--snooze-fg); }
+.setting-pairs-msg.hidden { display: none; }
 
 /* Appearance section: each item (Theme, Terminal font size) gets the same
    label/help styling as a Behavior row, then its own row of pills/segments. */
@@ -1110,6 +1170,15 @@ body.system-banner-open { padding-top: 30px; }
 .session-card.job .card-bar > span,
 .session-card.needs-you .card-bar > span,
 .session-card.just-finished .card-bar > span { color: var(--bar-on); }
+/* Cloud: a session running on Claude's own machine. It has NO status signal (no
+   transcript, no pane to scrape), so it gets one dedicated bar in the non-local
+   runtime hue rather than borrowing a live/dormant/alarm skin that would imply
+   knowledge we don't have. cardState() returns 'cloud' ahead of every other
+   branch, so this never combines with the alarm rules below. */
+.session-card.cloud .card-bar,
+.sess-hdr.cloud .sess-bar { background: var(--rt); }
+.session-card.cloud .card-bar > span,
+.sess-hdr.cloud .sess-bar > span { color: var(--bar-on); }
 /* Dormant: no live tmux. A hollow bar reads "nothing running here, click to
    resume"; the name dims to match. Wins over the frozen `idle` status class. */
 .session-card.dormant .card-bar { background: transparent; border: 1px solid var(--border); }
@@ -1753,6 +1822,13 @@ body.system-banner-open { padding-top: 30px; }
 .card-tag.runtime-dc--starting { animation: bar-throb 1.4s ease-in-out infinite; animation-delay: var(--throb-delay, 0s); }
 .card-tag.runtime-dc--failed { color: var(--red-fg); background: color-mix(in srgb, var(--red) 18%, var(--surface-2)); }
 @media (prefers-reduced-motion: reduce) { .card-tag.runtime-dc--starting { animation: none; } }
+/* Cloud runtime chips (cloudChips in cards.js) deliberately share the dc chip's
+   runtime hue rather than claiming a new colour token: --rt/--rt-fg already means
+   "this session runs somewhere other than this Mac", the two chips are mutually
+   exclusive on a card (sessionCardHtml picks one), and the ☁/⬢ glyphs are what
+   tell them apart. The plain `☁ cost untracked` / `archived` chips stay bare
+   .card-tag — they qualify the session, they don't identify where it runs. */
+.card-tag.runtime-cloud { color: var(--rt-fg); background: color-mix(in srgb, var(--rt) 18%, var(--surface-2)); }
 /* Blue reads as an in-progress/transient state — the session's tmux is being torn
    down and relaunched. Same tinted-wash convention as .card-tag.automerge. */
 .card-tag.restarting { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); }

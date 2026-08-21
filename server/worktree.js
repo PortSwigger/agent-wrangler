@@ -225,6 +225,37 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
   return { path: f, branch: b, repoRoot };
 }
 
+// Create a worktree with a DETACHED HEAD — the landing pad for a teleport. Unlike
+// createWorktree there is no branch to name here: `claude --teleport` checks out
+// whatever ref the cloud session was working on, so pre-deciding a branch would
+// either fight that checkout or record a name the session never used. We hand git
+// an empty, detached worktree and let the teleport decide; the caller reads the
+// resulting HEAD back afterwards (a still-detached `HEAD` is a legitimate answer).
+// `folderName` may be absolute (placed anywhere) or a bare name (sibling of the
+// repo), same convention as createWorktree. Returns { path, repoRoot }; every git
+// failure surfaces as the same WorktreeError shape createWorktree produces.
+export async function addDetachedWorktree({ repoRoot, folderName }) {
+  if (!repoRoot) throw new WorktreeError('No repository root');
+  if (!folderName) throw new WorktreeError('No worktree folder name');
+  const f = path.isAbsolute(folderName)
+    ? folderName
+    : path.join(path.dirname(repoRoot), folderName);
+  try {
+    await exec('git', ['-C', repoRoot, 'worktree', 'add', '--detach', f]);
+  } catch (e) {
+    throw new WorktreeError(`git worktree add failed: ${(e.stderr || e.message || '').toString().trim()}`);
+  }
+  // git worktree add does not initialize submodules; do it now so agents find the expected files.
+  if (fs.existsSync(path.join(repoRoot, '.gitmodules'))) {
+    try {
+      await exec('git', ['-C', f, 'submodule', 'update', '--init', '--recursive']);
+    } catch (e) {
+      throw new WorktreeError(`git submodule update failed: ${(e.stderr || e.message || '').toString().trim()}`);
+    }
+  }
+  return { path: f, repoRoot };
+}
+
 // Best-effort main-repo root for a (possibly already-removed) worktree entry.
 // Prefers the root stored at creation, then a live git query (works only while
 // the dir survives), then the `<repo>-worktree-<branch>` naming convention as a

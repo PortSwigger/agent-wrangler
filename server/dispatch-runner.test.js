@@ -115,3 +115,24 @@ test('a launch failure propagates (callers own the error envelope)', async () =>
   const d = deps({ sessionManager: { dispatch: async () => { throw new Error('Branch feat already exists'); } } });
   await assert.rejects(() => runDispatch({ intent: 'x', worktree: true }, d), /Branch feat already exists/);
 });
+
+// The cloud fields must ride the SHARED runner, not just the WS handler: the
+// scheduler and spawn_session reach sessionManager.dispatch through here too, and
+// a path that dropped them would silently create an account-default cloud session
+// when a specific environment was asked for.
+test('cloud dispatch threads the environment id and ref through to sessionManager.dispatch', async () => {
+  const d = deps();
+  await runDispatch({ cwd: '/repo', intent: 'x', runtime: 'cloud', cloudEnvironmentId: 'ccpool_9', cloudRef: 'release' }, d);
+  const opts = d.calls.dispatch[0];
+  assert.equal(opts.runtime, 'cloud');
+  assert.equal(opts.cloudEnvironmentId, 'ccpool_9');
+  assert.equal(opts.cloudRef, 'release');
+});
+
+test('a non-cloud dispatch still carries empty cloud fields (one shape for every caller)', async () => {
+  const d = deps();
+  await runDispatch({ cwd: '/repo', intent: 'x' }, d);
+  assert.equal(d.calls.dispatch[0].runtime, 'local');
+  assert.equal(d.calls.dispatch[0].cloudEnvironmentId, '');
+  assert.equal(d.calls.dispatch[0].cloudRef, '');
+});

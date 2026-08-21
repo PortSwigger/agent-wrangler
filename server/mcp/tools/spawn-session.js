@@ -21,7 +21,10 @@ export const spawnSessionTool = {
     + 'itself, not a channel for briefing another session. Returns the new session id and its '
     + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
     + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
-    + 'with a short id.',
+    + 'with a short id. `destination` picks where it runs: this Mac (default), a devcontainer, or '
+    + 'a Claude Code cloud VM. Cloud is Claude-only, cannot be combined with a workflow '
+    + 'orchestration run, and a cloud session has no local checkout and no cost tracking — say '
+    + 'these in advance rather than learning them from a refusal.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '
@@ -35,6 +38,18 @@ export const spawnSessionTool = {
       'Task id to put the new session on, sourced from list_tasks. An id not sourced from '
       + 'list_tasks silently lands the session in Unassigned instead of erroring. Defaults to '
       + 'your current task; omit to keep it there.',
+    ),
+    destination: z.enum(['local', 'devcontainer', 'cloud']).optional().describe(
+      'Where the session runs. `local` (default) is this Mac; `devcontainer` is the repo\'s '
+      + 'devcontainer; `cloud` is a Claude Code cloud VM — claude agent only, no workflow mode, '
+      + 'and it works from the pushed ref (uncommitted local edits are invisible to it).',
+    ),
+    cloud_environment_id: z.string().optional().describe(
+      'Cloud environment to run in (env_… Anthropic-hosted, or ccpool_… self-hosted runner). '
+      + 'Omit for the account default. Only meaningful with destination: cloud.',
+    ),
+    cloud_ref: z.string().optional().describe(
+      'Git ref/branch the cloud session starts from. Only meaningful with destination: cloud.',
     ),
     worktree: z.boolean().optional().describe('Launch in a fresh git worktree off cwd.'),
     worktree_branch: z.string().optional().describe('Branch for the worktree (default: derived from intent).'),
@@ -76,6 +91,14 @@ export const spawnSessionTool = {
         // nested child. This never sets `workflow` — that field is
         // orchestrator-only.
         intent,
+        // `undefined` (not 'local') so dispatch's own `runtime = 'local'` default
+        // stays the single place that decides it. The cloud knobs are passed
+        // unconditionally — dispatch ignores them off the cloud runtime, and the
+        // cloud refusals (claude-only, no workflow, auth/remote checks) come from
+        // the runtime's preflight, so this tool needs no validation of its own.
+        runtime: args.destination || undefined,
+        cloudEnvironmentId: args.cloud_environment_id || '',
+        cloudRef: args.cloud_ref || '',
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',
         worktreeFolderName: args.worktree_folder_name || '',

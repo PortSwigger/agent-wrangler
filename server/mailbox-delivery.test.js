@@ -183,3 +183,88 @@ test('resume failure: returns error (with the real failure message, never undefi
   assert.equal(mode.mode, 'error');
   assert.match(mode.error, /transcript gone/);
 });
+
+// --- Cloud recipients: one-way steer, NEVER a resume. ---
+
+function cloudDeps({ steer, attachSupported = false, entries = {}, live = {} } = {}) {
+  const d = deps({ live, entries });
+  d.steered = [];
+  d.markedArchived = [];
+  d.graph = () => ({ cloudAttachSupported: attachSupported });
+  d.sessionManager.markCloudArchived = (id) => d.markedArchived.push(id);
+  d.sendCloudMessage = async (args) => { d.steered.push(args); return steer(args); };
+  return d;
+}
+
+const cloudEntry = (over = {}) => ({
+  runtime: 'cloud',
+  agent: 'claude',
+  ...over,
+  cloud: { sessionId: 'session_abc', ...(over.cloud || {}) },
+});
+
+test('cloud recipient: notification is steered to the cloud session and NEVER resumed', async () => {
+  const d = cloudDeps({ entries: { CARD1: cloudEntry() }, steer: () => ({ ok: true }) });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.steered, [{ cloudSessionId: 'session_abc', text: 'you have mail' }]);
+  assert.equal(d.resumed.length, 0);
+  assert.equal(d.sent.length, 0);
+  assert.equal(d.bound.length, 0);
+});
+
+test('cloud recipient with a live create pane and attach off: steered, not pasted into the exiting pane', async () => {
+  const d = cloudDeps({
+    live: { CARD1: { tmux: 'cl_abc', socket: '/s/a' } },
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: true }),
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.equal(d.steered.length, 1);
+  assert.equal(d.sent.length, 0);
+});
+
+test('cloud recipient: a failed steer returns error so sweepDueSettles reopens the settle', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: false, archived: false, error: 'cloud steer failed' }),
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(mode.mode, 'error');
+  assert.match(mode.error, /cloud steer failed/);
+  assert.equal(d.resumed.length, 0);
+  assert.deepEqual(d.markedArchived, []);
+});
+
+test('cloud recipient whose cloud session is archived: marked and skipped, not requeued forever', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry() },
+    steer: () => ({ ok: false, archived: true, error: 'session is archived' }),
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  // 'skip' (markUndeliverable), not 'error': an archived cloud session can never
+  // receive, so re-arming the settle would retry the same doomed steer forever.
+  assert.deepEqual(mode, { mode: 'skip' });
+  assert.deepEqual(d.markedArchived, ['CARD1']);
+});
+
+test('cloud recipient already marked archived: skipped before any steer', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry({ cloud: { sessionId: 'session_abc', archivedAt: Date.now() } }) },
+    steer: () => { throw new Error('must not steer'); },
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'skip' });
+  assert.equal(d.steered.length, 0);
+});
+
+test('cloud recipient archived on the board: skipped before any steer', async () => {
+  const d = cloudDeps({
+    entries: { CARD1: cloudEntry({ archivedAt: Date.now() }) },
+    steer: () => { throw new Error('must not steer'); },
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'skip' });
+  assert.equal(d.steered.length, 0);
+});
