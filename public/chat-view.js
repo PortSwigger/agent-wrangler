@@ -38,33 +38,78 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
   const sendBtn = document.getElementById('chat-send');
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
-  const working = document.getElementById('chat-working');
 
-  // The working line's two inputs — the last reply's pending tool call and the
-  // last known session status — arrive on separate, asynchronous paths
-  // (onChatReply and setStatus), so both are held here and consulted together
-  // by workingLine() rather than either call site deciding on its own view.
+  // The live row's three inputs — the last reply's pending tool call, the
+  // timestamp of the newest transcript line, and the last known session status
+  // — arrive on separate asynchronous paths (onChatReply and setStatus), so all
+  // three are held here and consulted together by renderLive() rather than
+  // either call site deciding on its own partial view.
   let lastStatus = null;
   let lastPending = null;
+  let lastTs = null;
+  // Created lazily and kept as the stream's last child while the session works.
+  // It lives IN the stream, not above the composer where the old status line
+  // sat: the complaint this answers is that the stream looks dead during a long
+  // turn, and a line outside the stream does not fix a dead-looking stream. The
+  // transcript records whole messages only — there is no partial line to read —
+  // so this is the only liveness the view can honestly show between turns.
+  let live = null;
+  let tick = null;
+
+  const plural = (n, unit) => `${n}${unit}`;
+  // Mirrors the terminal's own elapsed format ("2s", "3m 23s") so the two
+  // surfaces agree about the same session.
+  function elapsedText(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    const total = Math.floor(ms / 1000);
+    if (total < 60) return plural(total, 's');
+    return `${plural(Math.floor(total / 60), 'm')} ${plural(total % 60, 's')}`;
+  }
 
   // A pending entry alone is not enough to claim a tool is running: the
   // scanner's pending map is deliberately persistent across polls (so a
   // tool_use pairs with a tool_result arriving in a later window), which means
   // an ORPHANED entry — result never arriving because the pane was killed or
   // suspended mid-tool, or the call was interrupted by this view's own Stop
-  // button — survives and would otherwise be reported forever. Gating on the
-  // session's real status (the same signal that drives stopBtn.hidden below)
-  // keeps the working line consistent with the Stop button instead of
-  // contradicting it.
-  function workingLine(status, pending) {
-    if (status !== 'working' || !pending) return null;
-    return `Working — running ${pending.name}${pending.target ? `: ${pending.target}` : ''}`;
+  // button — survives and would otherwise be reported forever. So the row's
+  // PRESENCE is gated on the session's real status (the same signal that drives
+  // stopBtn.hidden below), keeping it consistent with the Stop button instead of
+  // contradicting it; a pending entry only ever decorates a row that status has
+  // already justified.
+  function liveLabel(pending) {
+    if (!pending) return 'Working';
+    return `${pending.name}${pending.target ? `: ${pending.target}` : ''}`;
   }
 
-  function renderWorking() {
-    const line = workingLine(lastStatus, lastPending);
-    working.hidden = !line;
-    if (line) working.textContent = line;
+  function renderLive() {
+    if (lastStatus !== 'working') {
+      clearInterval(tick);
+      tick = null;
+      live?.remove();
+      live = null;
+      return;
+    }
+    const stick = atBottom();
+    if (!live) {
+      live = dom.liveRow();
+      // A 1s tick redraws the elapsed clock between the 2s polls. Started only
+      // alongside the row so an idle session holds no timer at all.
+      tick = setInterval(paintLive, 1000);
+    }
+    // Re-appended every render so it stays last even when this call follows an
+    // appendItems that added nodes after it.
+    stream.appendChild(live);
+    paintLive();
+    if (stick) stream.scrollTop = stream.scrollHeight;
+  }
+
+  function paintLive() {
+    if (!live) return;
+    live.querySelector('.chat-live-label').textContent = liveLabel(lastPending);
+    // Measured from the newest transcript line, not from when this view
+    // mounted — see the scanner's lastTs(). Blank rather than "0s" when the
+    // server had no timestamp to give (an empty or unreadable transcript).
+    live.querySelector('.chat-live-elapsed').textContent = lastTs ? elapsedText(Date.now() - lastTs) : '';
   }
 
   function submit() {
@@ -121,8 +166,25 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // reasoning text permanently unreachable in this view.
       wireDisclosure(node, '.chat-activity-chip', '.chat-activity-body');
       wireDisclosure(node, '.chat-thinking-chip', '.chat-thinking-body');
+      // A recap's next step LOADS the composer rather than sending it. The
+      // recap is Claude's guess at what comes next, so the human has to get the
+      // chance to edit or discard it — auto-sending would turn a suggestion
+      // into an instruction.
+      if (item.type === 'recap' && item.event.next) {
+        node.querySelector('.chat-recap-next')?.addEventListener('click', () => {
+          input.value = item.event.next;
+          input.disabled = false;
+          input.focus();
+          // The composer auto-grows on `input`, which a programmatic value set
+          // does not fire, so a multi-line suggestion would land in a one-row
+          // box that hides most of itself.
+          input.dispatchEvent(new Event('input'));
+        });
+      }
       stream.appendChild(node);
     }
+    // Keep the live row last: these nodes were just appended after it.
+    if (live) stream.appendChild(live);
     if (stick) stream.scrollTop = stream.scrollHeight;
   }
 
@@ -143,7 +205,15 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // session's own setStatus/onChatReply arrives.
       lastPending = null;
       lastStatus = null;
-      renderWorking();
+      lastTs = null;
+      // The row is a child of the stream that was just cleared, so the handle is
+      // dangling — dropping it here (rather than only in renderLive's not-working
+      // branch) stops the next render re-appending a detached node and, worse,
+      // leaving its 1s timer running against it.
+      live = null;
+      clearInterval(tick);
+      tick = null;
+      renderLive();
       wrap.hidden = false;
       poll();
       clearInterval(timer);
@@ -158,7 +228,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       stream.textContent = '';
       lastPending = null;
       lastStatus = null;
-      renderWorking();
+      lastTs = null;
+      live = null;
+      renderLive();
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -175,7 +247,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // same-window polls overlap. A stale-era reply's pending is already excluded
       // by the token check, so it never reaches this line.
       lastPending = msg.pending || null;
-      renderWorking();
+      // Same reasoning as pending: this describes the reply's OWN moment, so a
+      // same-offset "nothing new" reply must still refresh it or the elapsed
+      // clock freezes whenever two same-window polls overlap.
+      if (Number.isFinite(msg.lastTs)) lastTs = msg.lastTs;
+      renderLive();
       // Apply only forward progress. Two overlapping polls sent before either had
       // replied carry the SAME offset back (neither saw the other's result), so
       // the second is dropped here instead of re-appending the same window; null
@@ -198,7 +274,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal }
       // the last reply's pending entry stays displayed after the Stop button
       // (driven by this same status) has already disappeared.
       lastStatus = status;
-      renderWorking();
+      renderLive();
       const bar = document.getElementById('chat-notice-bar');
       const box = document.querySelector('.chat-box');
       const blocked = status === 'needs-you';

@@ -87,7 +87,10 @@ export const SETTINGS = [
 let serverBridge = { get: () => undefined, set: () => {} };
 // { themeRowsHtml(), fontSizeRowHtml(), onThemeSelect(id), onFontSize(n) } — supplied
 // by app.js, which owns both the live theme and the live terminal.
-let appearanceBridge = { themeRowsHtml: () => '', fontSizeRowHtml: () => '', onThemeSelect: () => {}, onFontSize: () => {} };
+let appearanceBridge = {
+  themeRowsHtml: () => '', fontSizeRowHtml: () => '', chatFontSizeRowHtml: () => '',
+  onThemeSelect: () => {}, onFontSize: () => {}, onChatFontSize: () => {},
+};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -163,6 +166,7 @@ function render(body) {
     sectionHtml('Appearance', [
       appearanceItemHtml('Theme', null, `<div class="theme-rows">${appearanceBridge.themeRowsHtml()}</div>`),
       appearanceItemHtml('Terminal font size', null, `<div class="fontsize-row">${appearanceBridge.fontSizeRowHtml()}</div>`),
+      appearanceItemHtml('Chat font size', 'Applies to the rich chat view only — the terminal keeps its own size above.', `<div class="fontsize-row" data-kind="chat">${appearanceBridge.chatFontSizeRowHtml()}</div>`),
     ].join('')),
     sectionHtml('Behavior', `<div class="settings-list">${behaviorRows}</div>`),
     sectionHtml('Shortcuts', `<div class="shortcuts-list">${shortcutsHtml()}</div>`),
@@ -202,8 +206,14 @@ export function initSettings({ server, appearance } = {}) {
     }
     const fontOpt = e.target.closest('.fontsize-opt');
     if (fontOpt) {
-      appearanceBridge.onFontSize(Number(fontOpt.dataset.size));
-      body.querySelectorAll('.fontsize-opt').forEach((r) => r.classList.toggle('active', r === fontOpt));
+      const row = fontOpt.closest('.fontsize-row');
+      const size = Number(fontOpt.dataset.size);
+      if (row?.dataset.kind === 'chat') appearanceBridge.onChatFontSize(size);
+      else appearanceBridge.onFontSize(size);
+      // Scoped to the clicked row, NOT the whole modal body: there are two
+      // .fontsize-row groups now, and a body-wide query would clear the other
+      // setting's highlight on every click, showing no selection at all for it.
+      row?.querySelectorAll('.fontsize-opt').forEach((r) => r.classList.toggle('active', r === fontOpt));
       return;
     }
     const toggle = e.target.closest('.setting-toggle');

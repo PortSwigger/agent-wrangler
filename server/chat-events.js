@@ -71,6 +71,40 @@ function capInput(input) {
 // unbounded dimension of this otherwise-bounded cache. A real in-flight set is
 // one or two calls; 32 is generous headroom above that while still bounding the
 // worst case an orphan can pin.
+// Claude Code's end-of-turn recap (`type:'system'`, `subtype:'away_summary'`) —
+// a summary of where the conversation is plus, usually, a proposed next step.
+// The terminal renders it as "※ recap: …"; the stored `content` has neither that
+// prefix nor any structure, so the split is textual.
+//
+// Two things are stripped or separated:
+//  - The trailing "(disable recaps in /config)" is TUI chrome. It instructs the
+//    reader to type a slash command, which the chat view has no way to accept
+//    (slash commands stay in the pane by design), so repeating it here would be
+//    an instruction the surface cannot honour.
+//  - The "Next:" / "Next action:" sentence is pulled out as `next` so the view
+//    can offer it as a prompt rather than as more prose. Split on the LAST such
+//    marker: the summary half is free text that may well contain the word
+//    itself ("...decided what to do next: ship it"), and the real marker is the
+//    one that starts the final sentence.
+const RECAP_CHROME = /\s*\(disable recaps in \/config\)\s*$/;
+const RECAP_NEXT = /\bNext(?: action)?:\s*/g;
+
+export function recapOf(content) {
+  if (typeof content !== 'string') return null;
+  const body = content.replace(RECAP_CHROME, '').trim();
+  if (!body) return null;
+  const marks = [...body.matchAll(RECAP_NEXT)];
+  const last = marks[marks.length - 1];
+  // Only treat it as a next-step when something actually follows the marker;
+  // a recap ending on a bare "Next:" would otherwise yield an empty prompt.
+  if (last) {
+    const summary = body.slice(0, last.index).trim();
+    const next = body.slice(last.index + last[0].length).trim();
+    if (next) return { kind: 'recap', text: summary, next };
+  }
+  return { kind: 'recap', text: body, next: null };
+}
+
 const MAX_PENDING = 32;
 
 function setPending(pending, id, entry) {
@@ -150,11 +184,22 @@ export function mightCarryChat(line, agent) {
       || line.includes('"reasoning"') || line.includes('"tool_search')
       || line.includes('"turn_context"');
   }
-  return line.includes('"role":"user"') || line.includes('"role":"assistant"');
+  // away_summary carries no `message` at all, so the role checks can't see it —
+  // its own marker has to be in the gate or the recap never reaches the parser.
+  return line.includes('"role":"user"') || line.includes('"role":"assistant"')
+    || line.includes('"away_summary"');
 }
 
 function pushClaude(entry, state) {
   const out = [];
+  // Checked BEFORE the `message` guard below: a recap is a `type:'system'` line
+  // with a bare `content` string and no `message` object, so the guard would
+  // drop it.
+  if (entry.type === 'system' && entry.subtype === 'away_summary') {
+    const recap = recapOf(entry.content);
+    if (recap) out.push({ ...recap, ts: tsOf(entry.timestamp) });
+    return out;
+  }
   const msg = entry.message;
   if (!msg || typeof msg !== 'object' || entry.isMeta) return out;
   const ts = tsOf(entry.timestamp);
@@ -331,6 +376,17 @@ export function createChatScanner(agent = 'claude') {
     pending() {
       const last = [...state.pending.values()].pop();
       return last ? { name: last.name, target: last.target } : null;
+    },
+    // The timestamp of the newest transcript line this scanner has consumed,
+    // which is how long ago the session last produced anything. The chat view
+    // uses it as the elapsed clock for its working indicator: measuring from
+    // when the VIEW mounted instead would report "3s" for a session that had
+    // already been grinding for five minutes. Tracked off `prevTs`, which
+    // pushClaude advances for every user and assistant entry — including an
+    // assistant message that is nothing but a tool_use and so emits no event
+    // at all, which is exactly the case the indicator has to cover.
+    lastTs() {
+      return state.prevTs ?? null;
     },
   };
 }

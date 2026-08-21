@@ -124,6 +124,23 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       }
       return wrap;
     }
+    if (item.type === 'recap') {
+      const wrap = el('div', 'chat-recap');
+      wrap.appendChild(el('div', 'chat-recap-label', 'Recap'));
+      if (e.text) wrap.appendChild(el('div', 'chat-recap-text', e.text));
+      // The next step is a BUTTON, not more prose: it is the one piece of a
+      // recap the reader might want to act on, and the chat view can act on it
+      // (chat-view.js loads it into the composer rather than sending it, so it
+      // stays a suggestion the human edits or discards).
+      if (e.next) {
+        const go = el('button', 'chat-recap-next');
+        go.setAttribute('type', 'button');
+        go.setAttribute('title', 'Put this in the composer');
+        go.appendChild(el('span', 'chat-recap-next-text', e.next));
+        wrap.appendChild(go);
+      }
+      return wrap;
+    }
     if (item.type === 'subagent') {
       const wrap = el('div', 'chat-subagent');
       wrap.dataset.subagentId = e.id;
@@ -136,5 +153,16 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
     return wrap;
   }
 
-  return { itemNode };
+  // The live "something is happening" row. Built here with the rest of the node
+  // construction, but owned by chat-view.js: it is the only node in the stream
+  // that is not an event, so it is created once per mount, kept as the last
+  // child, and removed when the session stops working.
+  function liveRow() {
+    const wrap = el('div', 'chat-live');
+    wrap.appendChild(el('span', 'chat-live-label', 'Working'));
+    wrap.appendChild(el('span', 'chat-live-elapsed', ''));
+    return wrap;
+  }
+
+  return { itemNode, liveRow };
 }

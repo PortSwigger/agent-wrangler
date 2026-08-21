@@ -87,3 +87,37 @@ test('notice text never reaches innerHTML', () => {
   const texts = walk(node).map((n) => n._text).filter(Boolean);
   assert.ok(texts.some((t) => t.includes('<img src=x')), 'the raw text (built from a tool target/name) is carried as text, not markup');
 });
+
+test('recap text and its next step never reach innerHTML', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: (s) => `<p>${s}</p>` });
+  const node = dom.itemNode({
+    type: 'recap',
+    event: { kind: 'recap', text: '<img src=x onerror=alert(1)>', next: '<script>bad()</script>', ts: 1 },
+  });
+  assert.equal(walk(node).map((n) => n._html).filter(Boolean).join(''), '', 'no innerHTML in a recap subtree');
+  const texts = walk(node).map((n) => n._text).filter(Boolean);
+  assert.ok(texts.some((t) => t.includes('<img src=x')), 'the raw summary is carried as text');
+  assert.ok(texts.some((t) => t.includes('<script>')), 'the raw next step is carried as text');
+});
+
+test('a recap with no next step renders no button to press', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({ type: 'recap', event: { kind: 'recap', text: 'All done.', next: null, ts: 1 } });
+  assert.equal(walk(node).filter((n) => n.tagName === 'BUTTON').length, 0);
+});
+
+test('a recap with a next step renders exactly one button carrying it', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({ type: 'recap', event: { kind: 'recap', text: 'Researched it.', next: 'plan phase 1', ts: 1 } });
+  const buttons = walk(node).filter((n) => n.tagName === 'BUTTON');
+  assert.equal(buttons.length, 1);
+  assert.ok(walk(buttons[0]).some((n) => n._text === 'plan phase 1'));
+});
+
+test('liveRow carries a label and an empty elapsed slot for chat-view to fill', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const row = dom.liveRow();
+  assert.equal(row.className, 'chat-live');
+  assert.ok(walk(row).some((n) => n.className === 'chat-live-label'));
+  assert.ok(walk(row).some((n) => n.className === 'chat-live-elapsed'));
+});

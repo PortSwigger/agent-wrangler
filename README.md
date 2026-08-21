@@ -29,7 +29,12 @@ otherwise it behaves exactly as a Claude-only board.
 - **Chat and Terminal views** — chat reads dormant and exited sessions via transcript, while
   terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
   events — enough that a typical session is visible whole — but history older than that window
-  is not reachable from the UI.
+  is not reachable from the UI. It surfaces Claude Code's end-of-turn recap, and offers the
+  recap's proposed next step as a one-click prompt (loaded into the composer, never sent for
+  you). Its font size is its own setting, separate from the terminal's.
+  Because the transcript records whole messages rather than a token stream, chat cannot show a
+  reply arriving word by word the way the terminal does; while a turn is running it shows a
+  live row naming the tool in flight and how long the session has been busy.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)

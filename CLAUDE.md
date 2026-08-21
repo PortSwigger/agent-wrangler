@@ -292,9 +292,38 @@ don't re-derive it.
   `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
   it silently renders a timeline with no tool outputs. Codex `reasoning` is `encrypted_content`
   with `summary: []`, so Codex thinking is a presence marker and can never have text.
+- **`mightCarryChat`'s Claude gate is role-based, so any non-`message` line needs
+  its own marker added or it is silently invisible.** The gate is a cheap substring
+  test run before `JSON.parse`, and for Claude it looks for `"role":"user"` /
+  `"role":"assistant"`. Claude Code's end-of-turn recap is a `type:'system'`,
+  `subtype:'away_summary'` line with a bare `content` string and **no `message`
+  object at all**, so it matches neither — `"away_summary"` had to go in the gate
+  *and* be handled before `pushClaude`'s `entry.message` guard, which would
+  otherwise drop it. Both halves are needed; adding either alone silently emits
+  nothing. Same shape applies to the other system subtypes on disk
+  (`turn_duration`, `stop_hook_summary`) if they are ever surfaced. The recap's
+  stored `content` has no `※ recap:` prefix (the TUI adds that) but does carry a
+  trailing `(disable recaps in /config)` — stripped by `recapOf`, because it tells
+  the reader to type a slash command and slash commands stay in the pane by design.
+  `recapOf` splits the "Next:" / "Next action:" sentence on the **last** marker:
+  the summary half is free prose that can contain the word itself.
 - **`server/chat-events.js` is a leaf and must stay one.** It deliberately duplicates
   `search/extract.js`'s *shape* while keeping the tool calls that module drops — opposite
   goals, do not merge them.
+- **The chat view's whole type scale is `em`-relative to `#chat-wrap`'s own
+  `font-size`, which is `var(--chat-font-size)`.** That one variable (set on
+  `<html>` by `applyChatFontSize`, `public/app.js`, from the `cm-chat-fontsize`
+  localStorage key via the `chat-font.js` leaf) is what the "Chat font size"
+  setting moves, and it only works because *every* size in the pane — prose,
+  chips, tool rows, the composer, the buttons — is a fraction of it. **A new
+  chat rule that sets `font-size` in px silently opts that element out of the
+  setting**, which is how the pane previously ended up with big prose beside
+  unchanged 11px machinery. Two deliberate exceptions: `.chat-seg-btn` (the
+  Chat/Terminal toggle lives in the panel header, outside the pane) and the
+  `14px` fallback on `#chat-wrap` itself (the variable is JS-set, so the pane
+  must still render if that never runs). Separate from the terminal's size on
+  purpose — `term-font.js` and `chat-font.js` are sibling leaves with different
+  presets and defaults, and `chat-font.test.js` asserts they have not converged.
 - **Every `ctx.reply` in `server/control/handlers/chat.js` MUST echo `token`.** The chat view
   correlates each poll reply to the mount that requested it by an opaque token it sends and
   the handler echoes back (`token: msg.token ?? null`); the client drops any reply whose
@@ -309,6 +338,23 @@ don't re-derive it.
   handler's async reads can complete out of order. An earlier attempt correlated replies with
   a FIFO queue and was provably inverted by that (it dropped the valid reply and applied the
   stale one) — so do not "simplify" the token back to positional correlation.
+  The same all-paths rule now applies to **`lastTs`** (the newest transcript
+  timestamp the scanner has consumed, `createChatScanner().lastTs()`): it is the
+  chat view's elapsed clock for its live "working" row, so a reply path that
+  omits it freezes that clock. It is deliberately server-sourced rather than
+  measured from when the view mounted — mount-relative timing reports "3s" for a
+  session that has already been grinding for five minutes. It reads `prevTs`,
+  which `pushClaude` advances for **every** user and assistant entry, including
+  an assistant message that is nothing but a `tool_use` and therefore emits no
+  event at all: exactly the case the indicator exists to cover.
+- **The chat view cannot stream a partial turn, and no indicator should imply it
+  does.** Claude Code writes whole messages to the transcript — there is no
+  partial or delta line to tail — so between the start of a turn and the message
+  landing there is genuinely nothing to render. The live row (`.chat-live`, last
+  child of the stream, `chat-view.js`) is the honest substitute: presence gated
+  on the session's real status, decorated with the pending tool name when there
+  is one, plus the elapsed clock above. Don't replace it with something that
+  looks like text arriving.
 
 ## How subsystems hang together (pointers, not mechanics)
 

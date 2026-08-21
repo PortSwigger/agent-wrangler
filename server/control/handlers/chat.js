@@ -108,7 +108,7 @@ export const chatHandler = {
 
     const file = await findTranscript(convId);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
       return;
     }
 
@@ -116,7 +116,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
       return;
     }
 
@@ -140,7 +140,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null });
       return;
     }
     try {
@@ -218,7 +218,7 @@ export const chatHandler = {
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
         if (scanner) touchCache(convId, { scanner, offset, agent });
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null });
         return;
       }
     } finally {

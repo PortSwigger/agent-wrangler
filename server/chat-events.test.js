@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanChatText, createChatScanner, MAX_TOOL_TEXT } from './chat-events.js';
+import { scanChatText, createChatScanner, mightCarryChat, recapOf, MAX_TOOL_TEXT } from './chat-events.js';
 
 const claudeLines = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n');
 
@@ -360,4 +360,56 @@ test('a blank Claude thinking block (content redacted into signature) still emit
   assert.ok(think, 'a blank thinking block must still produce an event, not be silently dropped');
   assert.ok(!('text' in think), 'blank thinking has no recoverable text, so the field must be absent, not an empty string');
   assert.equal(think.durationMs, 5000, 'a duration is still derivable even when the text is redacted');
+});
+
+// --- recap (Claude Code's end-of-turn "※ recap:" line) ---
+
+test('a recap line becomes a recap event, split into summary and next step', () => {
+  const line = JSON.stringify({
+    type: 'system', subtype: 'away_summary', timestamp: '2026-08-20T10:00:00.000Z',
+    content: "We're designing auth for the embed: a nonce exchanged for a cookie. Next: confirm the subdomain with security. (disable recaps in /config)",
+  });
+  const { events } = scanChatText(line, 'claude');
+  assert.deepEqual(events.map((e) => e.kind), ['recap']);
+  assert.equal(events[0].text, "We're designing auth for the embed: a nonce exchanged for a cookie.");
+  assert.equal(events[0].next, 'confirm the subdomain with security.');
+});
+
+test('recapOf strips the /config chrome, which the chat view cannot act on', () => {
+  const r = recapOf('Everything is fine. (disable recaps in /config)');
+  assert.equal(r.text, 'Everything is fine.');
+  assert.equal(r.next, null);
+});
+
+test('recapOf accepts "Next action:" as well as "Next:"', () => {
+  assert.equal(recapOf('Did the research. Next action: plan phase 1.').next, 'plan phase 1.');
+});
+
+test('recapOf splits on the LAST marker, so "next:" inside the summary is prose', () => {
+  const r = recapOf('We argued about what to do next: shipping. Next: ship it.');
+  assert.equal(r.text, 'We argued about what to do next: shipping.');
+  assert.equal(r.next, 'ship it.');
+});
+
+test('a recap with a marker but nothing after it keeps the whole body as summary', () => {
+  const r = recapOf('Work is done. Next:');
+  assert.equal(r.text, 'Work is done. Next:');
+  assert.equal(r.next, null, 'an empty next would offer an empty prompt');
+});
+
+test('a blank or non-string recap yields no event', () => {
+  assert.equal(recapOf('  (disable recaps in /config)'), null);
+  assert.equal(recapOf(null), null);
+  assert.equal(recapOf(undefined), null);
+});
+
+test('mightCarryChat lets an away_summary line through — it carries no role', () => {
+  const line = JSON.stringify({ type: 'system', subtype: 'away_summary', content: 'x. Next: y.' });
+  assert.ok(!line.includes('"role":'), 'precondition: the role checks cannot see this line');
+  assert.ok(mightCarryChat(line, 'claude'));
+});
+
+test('a recap line is inert for codex, which has no equivalent', () => {
+  const line = JSON.stringify({ type: 'system', subtype: 'away_summary', content: 'x. Next: y.' });
+  assert.deepEqual(scanChatText(line, 'codex').events, []);
 });

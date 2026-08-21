@@ -24,6 +24,9 @@ import {
   TERM_FONT_SIZES, DEFAULT_TERM_FONT_SIZE, normalizeFontSize,
 } from './term-font.js';
 import {
+  CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
+} from './chat-font.js';
+import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
@@ -3369,6 +3372,35 @@ function fontSizeRowHtml() {
   return TERM_FONT_SIZES.map((size) =>
     `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
 }
+
+// --- chat font size ---
+// A separate preference from the terminal's, with its own key, presets and
+// default (see chat-font.js): the two surfaces are read completely differently —
+// one is a fixed-width grid of program output, the other is prose — so one
+// number cannot serve both.
+//
+// Applied as a CSS custom property rather than by restyling elements, because
+// every size inside the chat view is an `em` fraction of #chat-wrap's own
+// font-size (see styles.css): setting the one variable scales the prose, the
+// chips, the tool rows and the composer together. Set on <html> so it survives
+// the chat pane being absent from the DOM tree's render path while hidden.
+const CHAT_FONT_KEY = 'cm-chat-fontsize';
+function chatFontSize() {
+  try { return normalizeChatFontSize(localStorage.getItem(CHAT_FONT_KEY)); } catch { return DEFAULT_CHAT_FONT_SIZE; }
+}
+function applyChatFontSize(n) {
+  document.documentElement.style.setProperty('--chat-font-size', `${n}px`);
+}
+function setChatFontSize(size) {
+  const n = normalizeChatFontSize(size);
+  try { localStorage.setItem(CHAT_FONT_KEY, String(n)); } catch {}
+  applyChatFontSize(n);
+}
+function chatFontSizeRowHtml() {
+  const cur = chatFontSize();
+  return CHAT_FONT_SIZES.map((size) =>
+    `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
+}
 function closeTerminal() {
   if (!current) return;
   try { current.ws.close(); } catch {}
@@ -4272,6 +4304,11 @@ function cancelModal() {
 }
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
+// Seed --chat-font-size from the stored preference at startup. The terminal's
+// size needs no equivalent: it is read per-terminal at construction, whereas
+// this one is a CSS variable that has to exist before the chat view first
+// renders (nothing else would ever set it on a page that never opens Settings).
+applyChatFontSize(chatFontSize());
 // Global settings live in their own module (registry + centered #settings-modal),
 // opened from the bottom-rail gear (#settings-btn). initSettings wires both.
 // The server bridge backs scope:'server' entries: reads come off the flag the
@@ -4315,8 +4352,10 @@ initSettings({
   appearance: {
     themeRowsHtml: renderThemeRows,
     fontSizeRowHtml,
+    chatFontSizeRowHtml,
     onThemeSelect: selectStyle,
     onFontSize: setTermFontSize,
+    onChatFontSize: setChatFontSize,
   },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);

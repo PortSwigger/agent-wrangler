@@ -2253,7 +2253,15 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    (#sidebar is deliberately transparent and each pane paints its own backdrop —
    #term does the same with --term-bg). One layer, on the wrapper: painting the
    stream and the composer separately would double it. */
-#chat-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--card-bg); }
+/* THE type scale for this whole pane. Every size below is an `em` fraction of
+   this one value, so the "Chat font size" setting (app.js applyChatFontSize sets
+   --chat-font-size on <html>) moves the prose, the chips, the tool rows and the
+   composer together. Sizing them in px independently is what made a 16px
+   setting produce big prose beside unchanged 11px machinery.
+   The px fallback matters: --chat-font-size is set by JS, and the pane must
+   still render correctly if that never runs. */
+#chat-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--card-bg);
+  font-size: var(--chat-font-size, 14px); }
 #chat-wrap[hidden] { display: none; }
 
 .chat-stream {
@@ -2274,13 +2282,18 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-user { margin-top: 26px; }
 .chat-assistant { margin-top: 16px; }
 
+/* 1em and the same leading as .chat-prose, deliberately: the user's words and
+   the agent's words are the same kind of content and were reading at different
+   sizes (the bubble inherited the app's 13px body type while the prose set its
+   own), which made every exchange look like two different documents. The agent's
+   measure won because it is the side you read most. */
 .chat-user {
   align-self: flex-end; width: fit-content; max-width: 84%;
   background: var(--surface-2); border: 1px solid var(--border-muted); color: var(--fg);
   /* One squared corner on the sender's side — the standard bubble tail, which
      is what makes an unlabelled right-aligned block read as "you said this". */
   border-radius: 14px 14px 5px 14px;
-  padding: 9px 14px; line-height: 1.55;
+  padding: 9px 14px; font-size: 1em; line-height: 1.62;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
@@ -2289,7 +2302,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    .memory-preview's, styles.css:~474 — same renderer, same markdown shape.
    The measure and leading are set here, not there: this is body copy in a
    reading column, where .memory-preview is a compact preview pane. */
-.chat-prose { font-size: 13.5px; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
+.chat-prose { font-size: 1em; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
 /* Held at half opacity at rest and lifted on hover. The model id repeats on
    every prose block in a turn and almost never changes, so at full strength it
    is three identical pills of noise per answer — but it is real provenance, so
@@ -2302,7 +2315,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    prose with nothing distinguishing it, so it read as a dangling fragment of
    the message rather than metadata about it. */
 .chat-model {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
   color: var(--fg-subtle); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
 }
@@ -2314,7 +2327,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    wires them identically and they must look identical too. */
 .chat-activity-chip, .chat-thinking-chip {
   display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
-  font: inherit; font-size: 11.5px; font-weight: 500;
+  font: inherit; font-size: 0.83em; font-weight: 500;
   border: 1px solid var(--border-muted); border-radius: 999px;
   padding: 3px 12px 3px 10px;
   background: var(--surface); color: var(--fg-muted);
@@ -2340,7 +2353,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    "something happened here and there is nothing to open". */
 .chat-thinking > .chat-thinking-label {
   display: inline-flex; align-items: center; gap: 7px;
-  font-size: 11.5px; font-style: italic; color: var(--fg-subtle); padding-left: 2px;
+  font-size: 0.83em; font-style: italic; color: var(--fg-subtle); padding-left: 2px;
 }
 .chat-thinking > .chat-thinking-label::before {
   content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--border);
@@ -2348,7 +2361,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* + and − carry the green/red they mean everywhere else in the app, which a
    flat "+14 −3" inside the label text could not. activityTitle keeps the flat
    form for the chip's tooltip. */
-.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; }
+.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em; }
 .chat-adds { color: var(--green-fg); }
 .chat-dels { color: var(--red-fg); }
 
@@ -2360,15 +2373,15 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   margin-left: 6px; padding-left: 13px; border-left: 2px solid var(--border-muted);
 }
 .chat-activity-body[data-collapsed="1"], .chat-thinking-body[data-collapsed="1"] { display: none; }
-.chat-thinking-body { font-size: 12px; line-height: 1.55; color: var(--fg-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-thinking-body { font-size: 0.87em; line-height: 1.55; color: var(--fg-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .chat-tool-row { border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface); overflow: hidden; min-width: 0; }
 .chat-tool-head { display: flex; align-items: baseline; gap: 9px; padding: 5px 10px; min-width: 0; }
 /* Uppercased and small so the tool name reads as a category label rather than
    competing with the target beside it, which is the part you actually scan. */
-.chat-tool-name { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+.chat-tool-name { flex: none; font-size: 0.72em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
 .chat-tool-target {
-  min-width: 0; font-size: 11.5px; color: var(--fg);
+  min-width: 0; font-size: 0.83em; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-tool-target, .chat-tool-output { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -2379,7 +2392,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
      dark but #ffffff in light, so it would have made the output block vanish
      into the row on the light theme. */
   background: var(--surface-2); color: var(--fg-muted);
-  font-size: 11px; line-height: 1.5;
+  font-size: 0.79em; line-height: 1.5;
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 200px; overflow: auto;
 }
@@ -2399,7 +2412,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-subagent {
   display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%;
   border: 1px solid var(--border-muted); background: var(--surface);
-  border-radius: 8px; padding: 5px 11px 5px 9px; font-size: 11.5px;
+  border-radius: 8px; padding: 5px 11px 5px 9px; font-size: 0.83em;
   color: var(--fg-muted); cursor: pointer;
   transition: background .12s, border-color .12s, color .12s;
 }
@@ -2414,7 +2427,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-notice {
   display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%;
   border: 1px solid var(--border); border-radius: 8px; padding: 4px 11px;
-  font-size: 11.5px; color: var(--fg-muted);
+  font-size: 0.83em; color: var(--fg-muted);
 }
 /* Filled dot against .chat-thinking-label's hollow one: the same 5px mark in
    the same lane, reading as "resolved" vs "nothing to see". */
@@ -2426,7 +2439,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   color: var(--red-fg);
 }
 
-.chat-notice-bar { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--fg);
+.chat-notice-bar { display: flex; align-items: center; gap: 10px; font-size: 0.83em; color: var(--fg);
   background: color-mix(in srgb, var(--red) 14%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--red) 55%, transparent); padding: 9px 14px; }
 .chat-notice-bar[hidden] { display: none; }
@@ -2436,7 +2449,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    "snoozed" everywhere else on the board, so using it here would send the wrong
    signal, not just a less-precise one. --red-fg is its established foreground
    partner (same pairing as .pill.needs-you), used for the button's text. */
-.chat-notice-go { margin-left: auto; font: inherit; font-size: 11.5px; font-weight: 600;
+.chat-notice-go { margin-left: auto; font: inherit; font-size: 0.83em; font-weight: 600;
   border: 1px solid var(--red); border-radius: 6px; padding: 3px 9px;
   background: transparent; color: var(--red-fg); cursor: pointer; white-space: nowrap; }
 .chat-notice-go:hover { background: color-mix(in srgb, var(--red) 18%, transparent); }
@@ -2451,7 +2464,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    without this the only focus signal was the caret. */
 .chat-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .chat-box textarea { flex: 1; resize: none; border: 0; background: transparent; outline: none;
-  color: var(--fg); font: inherit; font-size: 13px; line-height: 1.5; max-height: 140px; padding: 3px 0; }
+  color: var(--fg); font: inherit; font-size: 1em; line-height: 1.5; max-height: 140px; padding: 3px 0; }
 .chat-box textarea::placeholder { color: var(--fg-subtle); }
 .chat-box[data-blocked="1"] { opacity: .55; }
 /* Send is the primary action of the surface, so it takes the accent treatment
@@ -2464,24 +2477,62 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-stop { background: transparent; color: var(--red-fg); border-color: color-mix(in srgb, var(--red) 55%, transparent); }
 .chat-stop:hover { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: var(--red); }
 
-.chat-hint { font-size: 10.5px; color: var(--fg-subtle); margin-top: 7px; }
-.chat-working { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--fg-muted); margin-bottom: 8px; }
-/* Fourth instance of the #term-wrap/#chat-wrap/.chat-notice-bar trap: chat-view.js
-   toggles this element with the hidden ATTRIBUTE, and the explicit display above
-   out-specifies the UA's [hidden] { display: none } — without this the working
-   line would be permanently visible, showing a live pulse on an idle session. */
-.chat-working[hidden] { display: none; }
-/* Green pulsing dot rather than static text: this line is the one thing on the
-   surface that means "right now", and the board already reads a pulse as live
-   (see .card-bar's bar-throb). */
-.chat-working::before {
-  content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%;
+.chat-hint { font-size: 0.76em; color: var(--fg-subtle); margin-top: 7px; }
+/* Buttons carry an absolute 12px from the global `button` rule, which would sit
+   unchanged beside prose the size setting had scaled. */
+.chat-send, .chat-stop { font-size: 0.86em; }
+
+/* The live row. It sits IN the stream as its last child (chat-view.js keeps it
+   there) rather than above the composer, because what it answers is "the stream
+   looks dead mid-turn" — and it is styled as an event, not as a status bar, so
+   it reads as the next thing about to appear. */
+.chat-live {
+  display: flex; align-items: center; gap: 9px; margin-top: 12px;
+  align-self: flex-start; max-width: 100%;
+  font-size: 0.83em; color: var(--fg-muted);
+}
+/* Green pulsing dot: this row is the one thing on the surface that means "right
+   now", and the board already reads a pulse as live (see .card-bar's bar-throb). */
+.chat-live::before {
+  content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--green); animation: chat-live-pulse 1.4s ease-in-out infinite;
 }
+.chat-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Tabular figures so a 1s tick doesn't reflow the row as digits change width. */
+.chat-live-elapsed { flex: none; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 @keyframes chat-live-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+/* Recap — Claude Code's end-of-turn summary. Given a left accent rail and the
+   accent hue rather than a chip: it is the only thing in the stream that is
+   ABOUT the conversation rather than part of it, and its next step is an offer
+   to act, so it should invite a look instead of receding like machinery does. */
+.chat-recap {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+  margin-top: 16px; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px 9px 9px 4px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.chat-recap-label { font-size: 0.7em; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--blue-fg); }
+.chat-recap-text { font-size: 0.9em; line-height: 1.55; color: var(--fg); overflow-wrap: anywhere; }
+/* The proposed next step is a button because pressing it loads the composer.
+   Left-aligned text, not centred: it is a sentence, and it wraps. */
+.chat-recap-next {
+  font: inherit; font-size: 0.85em; text-align: left; max-width: 100%;
+  border: 1px solid var(--accent); border-radius: 7px; padding: 5px 11px;
+  background: transparent; color: var(--blue-fg); cursor: pointer;
+  transition: background .12s;
+}
+.chat-recap-next:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* An arrow leading the sentence, marking it as "do this next" rather than as a
+   quotation of the recap's last line. */
+.chat-recap-next::before { content: '→ '; color: var(--fg-subtle); }
+
 @media (prefers-reduced-motion: reduce) {
-  .chat-working::before { animation: none; }
+  .chat-live::before { animation: none; }
   .chat-activity-chip::before, .chat-thinking-chip::before,
-  .chat-subagent::after, .chat-box, .chat-subagent,
+  .chat-subagent::after, .chat-box, .chat-subagent, .chat-recap-next,
   .chat-activity-chip, .chat-thinking-chip, .chat-turn-foot { transition: none; }
 }
