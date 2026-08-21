@@ -60,6 +60,33 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // peer's mail both land as user turns), and the transcript is what actually
   // happened.
   let lastUserText = null;
+  // Two sources, deliberately kept apart. `graphModel` is the board's pill,
+  // derived from the transcript's last assistant message — correct for a dormant
+  // session but STALE right after a `/model` switch, which the transcript does
+  // not record. `liveModel` is the label the pane's own status bar shows, which
+  // is the only live source. The pane wins whenever it has an answer.
+  let graphModel = null;
+  let graphSwitchable = false;
+  let liveModel = null;
+
+  function renderModel() {
+    const label = liveModel || graphModel?.label;
+    modelEl.hidden = !label;
+    if (!label) return;
+    modelEl.textContent = label;
+    // Only pressable when the switch would actually work — the server refuses a
+    // non-idle, dormant or Codex session anyway, so offering the menu there
+    // would just produce an error the user could have been spared. The reason
+    // goes in the tooltip instead of leaving a dead-looking control.
+    modelEl.disabled = !graphSwitchable;
+    modelEl.dataset.switchable = graphSwitchable ? '1' : '0';
+    // The board pill's `title` is the raw model id; the live label has no id of
+    // its own, so it falls back to naming itself.
+    const full = graphModel?.title || label;
+    modelEl.setAttribute('title', graphSwitchable
+      ? `${full} — click to switch model`
+      : `${full} — switching needs an idle Claude session with a live terminal`);
+  }
   // Created lazily and kept as the stream's last child while the session works.
   // It lives IN the stream, not above the composer where the old status line
   // sat: the complaint this answers is that the stream looks dead during a long
@@ -284,6 +311,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastTs = null;
       lastSuggestion = null;
       lastUserText = null;
+      liveModel = null;
+      graphModel = null;
+      graphSwitchable = false;
       // The row is a child of the stream that was just cleared, so the handle is
       // dangling — dropping it here (rather than only in renderLive's not-working
       // branch) stops the next render re-appending a detached node and, worse,
@@ -295,7 +325,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderSuggestion();
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
-      modelEl.hidden = true;
+      renderModel();
       wrap.hidden = false;
       poll();
       clearInterval(timer);
@@ -313,10 +343,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastTs = null;
       lastSuggestion = null;
       lastUserText = null;
+      liveModel = null;
+      graphModel = null;
+      graphSwitchable = false;
       live = null;
       renderLive();
       renderSuggestion();
-      modelEl.hidden = true;
+      renderModel();
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -338,6 +371,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // clock freezes whenever two same-window polls overlap.
       if (Number.isFinite(msg.lastTs)) lastTs = msg.lastTs;
       lastSuggestion = typeof msg.suggestion === 'string' && msg.suggestion ? msg.suggestion : null;
+      liveModel = typeof msg.modelNow === 'string' && msg.modelNow ? msg.modelNow : null;
+      renderModel();
       renderLive();
       renderSuggestion();
       // Apply only forward progress. Two overlapping polls sent before either had
@@ -362,22 +397,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // second argument to setStatus: the two come from different parts of the
     // node and change on different cadences.
     setModel(pill, { switchable = false } = {}) {
-      const label = pill?.label;
-      modelEl.hidden = !label;
-      if (!label) return;
-      modelEl.textContent = label;
-      // Only pressable when the switch would actually work — the server refuses a
-      // non-idle, dormant or Codex session anyway, so offering the menu there
-      // would just produce an error the user could have been spared. The reason
-      // goes in the tooltip instead of leaving a dead-looking control.
-      modelEl.disabled = !switchable;
-      modelEl.dataset.switchable = switchable ? '1' : '0';
-      // The pill's label is shortened for width; the raw id is the tooltip, same
-      // pairing the board card uses.
-      modelEl.setAttribute('title', switchable
-        ? `${pill.title || label} — click to switch model`
-        : `${pill.title || label} — switching needs an idle Claude session with a live terminal`);
+      graphModel = pill || null;
+      graphSwitchable = switchable;
+      renderModel();
     },
+    // The live label as the pane reports it, for app.js's menu — so the tick
+    // matches what the chip says rather than the stale transcript-derived value.
+    currentModelLabel() {
+      return liveModel || graphModel?.label || null;
+    },
+
     setStatus(status) {
       // A transition AWAY from 'working' must hide the line even with no new
       // reply in flight (e.g. suspend, or the pane dying mid-tool) — otherwise

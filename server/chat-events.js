@@ -12,7 +12,20 @@
 // pushes a multi-megabyte frame over the control socket every poll.
 export const MAX_TOOL_TEXT = 2000;
 
-const SYNTHETIC_PREFIXES = ['<environment_context>', '<user_instructions>', '<environment_details>'];
+// Wrappers Claude Code writes as ordinary user messages that are not things a
+// human said. The command trio is the plumbing of a slash command: the
+// invocation (`<command-name>/model…`), whatever it printed
+// (`<local-command-stdout>`, `…-stderr`) and the caveat line. Slash commands
+// belong to the pane by design, so their internals have no business rendering
+// as chat — and they arrive as raw tag soup, which is what they looked like.
+// (`<local-command-caveat>` also carries isMeta, so it is already dropped a few
+// lines below; it is listed here so the set reads as one idea rather than
+// depending on a second mechanism to be complete.)
+const SYNTHETIC_PREFIXES = [
+  '<environment_context>', '<user_instructions>', '<environment_details>',
+  '<command-name>', '<command-message>', '<command-args>',
+  '<local-command-stdout>', '<local-command-stderr>', '<local-command-caveat>',
+];
 function isSynthetic(text) {
   const head = text.slice(0, 40).trimStart();
   return SYNTHETIC_PREFIXES.some((p) => head.startsWith(p));

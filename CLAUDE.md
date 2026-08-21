@@ -394,17 +394,36 @@ don't re-derive it.
   in the pane" rule exists because a slash command's output is a TUI dialog this
   view cannot render (`/clear`, `/compact`, `/config`, …). `/model <name>` is the
   exception that proves it: it takes its argument inline and applies silently,
-  with no dialog to miss. Verified against the installed binary — its help says
-  "`/model <name>` — session-scoped, **not persisted**" and its accepted alias
-  list is `["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]",
-  "fable[1m]","opusplan"]`, a superset of every value the Claude adapter offers,
-  so `set-session-model.js` validates against the adapter's own list and no
-  second model vocabulary exists. **`entry.model` stays the LAUNCH model** — it
-  is what a resume re-launches with, and since Claude Code does not persist a
-  `/model` change either, writing it would make the wrangler claim a durability
-  the agent does not have. Confirmation comes from `modelPill` on the next turn
-  (derived from the transcript's `message.model`), never from the handler's own
-  optimism. Three refusals are load-bearing and mirrored client-side by
+  with no dialog to miss. Its accepted alias list is
+  `["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]","fable[1m]",
+  "opusplan"]`, a superset of every value the Claude adapter offers, so
+  `set-session-model.js` validates against the adapter's own list and no second
+  model vocabulary exists. **`entry.model` stays the LAUNCH model** — it is what
+  a resume re-launches with, so writing it would change what a later resume does
+  on the strength of a runtime toggle.
+  **`/model` is NOT session-scoped, despite a string in the binary saying it is
+  — it writes `"model"` into `~/.claude/settings.json`.** Measured, not read:
+  the file gained `"model": "sonnet"` the moment the handler sent
+  `/model sonnet`. So a switch here changes the default for **every new Claude
+  session on the machine**, wrangler-launched or not. That is `/model`'s own
+  behaviour and matches what the feature was asked for, but it is surprising
+  enough that the menu says so in a header rather than leaving it to be
+  discovered. Don't restore the old value afterwards — that fights the tool and
+  races the user's own settings edits.
+  **A `/model` switch is invisible to the transcript**, so `modelPill` (built
+  from the last assistant `message.model`) keeps naming the OLD model until the
+  next turn runs — it is right for a dormant card and wrong for exactly the
+  moment after a switch. The live source is the pane's status bar via
+  `paneModelLabel` (`tmux-scraper.js`), carried on the chat reply as `modelNow`
+  and preferred over the pill by the chip. Its label is SHORT ("Sonnet 5") and
+  does not distinguish the 200K/1M variants, which is why `currentModelValue`
+  (`public/model-menu.js`) decides the menu's tick over the whole set and ticks
+  nothing when two rows are indistinguishable — a wrong tick is worse than none.
+  **Slash-command plumbing must stay out of the stream:** the invocation
+  (`<command-name>…`) and its output (`<local-command-stdout>`) arrive as
+  ordinary user messages with no `isMeta`, so they are filtered by name in
+  `chat-events.js`'s `SYNTHETIC_PREFIXES` — without that they render as raw tag
+  soup in a user bubble. Three refusals are load-bearing and mirrored client-side by
   `canSwitchModel` (`public/app.js`) so the menu is only offered where it would
   be honoured: **Claude only** (Codex's model is a launch choice and its TUI is a
   different program), **idle only** (composer input during a turn is queued as

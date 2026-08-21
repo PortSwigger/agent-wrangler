@@ -242,6 +242,30 @@ const BACKGROUND_SHELL_PATTERNS = {
   codex: /\d+\s+background terminals?\s+running/i,
 };
 
+// The model named in the TUI's own status bar — the ONLY live source for it.
+// A `/model` switch is not recorded in the transcript at all (verified: the line
+// types written are the command's own plumbing, none carrying a model), so the
+// board's `modelPill` — derived from the last assistant message's `message.model`
+// — keeps reporting the OLD model until the next turn actually runs. That made
+// the chat view's chip contradict the pane sitting next to it.
+//
+// The status bar looks like `◆ Sonnet 5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`.
+// Identified by the context meter's percentage next to a pipe rather than by
+// position, so it is not confused with conversation text, and the LAST match
+// wins because the bar is at the bottom. The leading glyph varies (✦, ◆) so it
+// is stripped as "everything before the first letter or digit" rather than
+// matched against a list that a new glyph would silently break.
+export function paneModelLabel(paneText) {
+  if (typeof paneText !== 'string') return null;
+  const line = stripAnsi(paneText).split('\n').filter((l) => /\|/.test(l) && /\d+%/.test(l)).pop();
+  if (!line) return null;
+  const first = line.slice(0, line.indexOf('|'));
+  const label = first.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+  // Bounded, and rejected outright if it is not the shape of a model name — a
+  // wrong label here would misreport live state, so no label beats a bad one.
+  return label && label.length <= 40 ? label : null;
+}
+
 export function hasBackgroundShell(paneText, agent = 'claude') {
   const pattern = BACKGROUND_SHELL_PATTERNS[agent];
   if (!pattern) return false;

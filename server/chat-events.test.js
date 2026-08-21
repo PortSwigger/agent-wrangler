@@ -413,3 +413,27 @@ test('a recap line is inert for codex, which has no equivalent', () => {
   const line = JSON.stringify({ type: 'system', subtype: 'away_summary', content: 'x. Next: y.' });
   assert.deepEqual(scanChatText(line, 'codex').events, []);
 });
+
+// --- slash-command plumbing is not conversation ---
+
+const metaUser = (text) => JSON.stringify({
+  type: 'user', timestamp: '2026-08-21T10:00:00.000Z', message: { role: 'user', content: text },
+});
+
+test('a slash-command invocation is not rendered as a user turn', () => {
+  const line = metaUser('<command-name>/model</command-name>\n  <command-message>model</command-message>\n  <command-args>sonnet</command-args>');
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+});
+
+test('a slash command\'s own output is not rendered as a user turn', () => {
+  const line = metaUser('<local-command-stdout>Set model to Sonnet 5</local-command-stdout>');
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+  const err = metaUser('<local-command-stderr>boom</local-command-stderr>');
+  assert.deepEqual(scanChatText(err, 'claude').events, []);
+});
+
+// The guard must not swallow a real prompt that merely mentions a command.
+test('a human prompt that talks about a slash command still renders', () => {
+  const line = metaUser('Please run /model sonnet for me');
+  assert.deepEqual(scanChatText(line, 'claude').events.map((e) => e.kind), ['user']);
+});

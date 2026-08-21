@@ -27,6 +27,7 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
+import { currentModelValue } from './model-menu.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
@@ -1585,6 +1586,13 @@ function canSwitchModel(s) {
   return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
 }
 
+// What this browser last asked for, per card id. Needed only to break one
+// ambiguity: the pane's status bar says "Sonnet 5" for both `sonnet` and
+// `sonnet[1m]`, so the label alone cannot say which row to tick. In-memory and
+// unpersisted — it is a tie-break, not a record, and it is only trusted when the
+// pane still agrees with it (see isCurrentModel).
+const lastModelSet = new Map();
+
 // Pick a model for a live session — the chat view's model chip. Sends the same
 // `/model <name>` the pane takes; the board confirms it on the next turn via
 // modelPill (read from the transcript), so nothing is assumed here.
@@ -1594,19 +1602,31 @@ function openModelMenu(sessionId, x, y) {
   const claude = availableAgents.find((a) => a.id === 'claude');
   const models = claude?.models || [];
   if (!models.length) return;
-  // The pill's label is the adapter's own short form, so matching on it is how
-  // the current model is identified without duplicating the transcript-prefix
-  // mapping that produced it server-side.
-  const current = s.modelPill?.label;
-  mountMenu(models.map((m) => ({
-    label: m.label,
-    // `trailing` rather than `icon`, and present on every row even when empty:
-    // that is what reserves the slot so the labels stay aligned instead of the
-    // checked row sitting indented from the rest (same idiom as the auto-fix and
-    // auto-merge menu items).
-    trailing: m.pillLabel === current || m.value === current ? CHECK_ICON : '',
-    run: () => send({ type: 'set-session-model', sessionId, model: m.value }),
-  })), x, y);
+  // Ticked against what the CHIP shows, which is the pane's own live label —
+  // not s.modelPill, which is derived from the last assistant message and so
+  // still names the old model right after a switch. That mismatch was the bug:
+  // the menu claimed Opus was selected while the pane said Sonnet.
+  const current = chatView.currentModelLabel();
+  const ticked = currentModelValue(models, current, lastModelSet.get(sessionId));
+  mountMenu([
+    // Said once, up front, because it is genuinely surprising: /model is not
+    // scoped to this session. Verified — it writes "model" into
+    // ~/.claude/settings.json, so it becomes the default for every new Claude
+    // session, wrangler-launched or not.
+    { header: 'Also becomes your default for new sessions' },
+    ...models.map((m) => ({
+      label: m.label,
+      // `trailing` rather than `icon`, and present on every row even when empty:
+      // that is what reserves the slot so the labels stay aligned instead of the
+      // checked row sitting indented from the rest (same idiom as the auto-fix and
+      // auto-merge menu items).
+      trailing: m.value === ticked ? CHECK_ICON : '',
+      run: () => {
+        lastModelSet.set(sessionId, m.value);
+        send({ type: 'set-session-model', sessionId, model: m.value });
+      },
+    })),
+  ], x, y);
 }
 
 // The task tile's kebab menu — the header's action buttons collapsed into one menu,

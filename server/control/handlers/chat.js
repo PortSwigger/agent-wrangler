@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import { findTranscript as realFindTranscript } from '../../transcript-reader.js';
 import { createChatScanner } from '../../chat-events.js';
-import { capturePaneStyled } from '../../tmux-scraper.js';
+import { capturePaneStyled, paneModelLabel } from '../../tmux-scraper.js';
 import { parseGhostSuggestion } from '../../ghost-suggestion.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
@@ -117,13 +117,21 @@ export const chatHandler = {
     // so there is nothing to report for a dormant card anyway.
     // Claude only: Codex's composer is a different TUI and guessing at it would
     // be exactly the wrong-suggestion failure this is built to avoid.
-    const suggestion = (agent === 'claude' && node?.tmux)
-      ? parseGhostSuggestion(await (ctx.capturePaneStyled || capturePaneStyled)(node.tmux, 6, node.socket || ''))
-      : null;
+    // One capture, two readings — both are things the pane knows and the
+    // transcript does not.
+    const pane = (agent === 'claude' && node?.tmux)
+      ? await (ctx.capturePaneStyled || capturePaneStyled)(node.tmux, 6, node.socket || '')
+      : '';
+    const suggestion = pane ? parseGhostSuggestion(pane) : null;
+    // The model as the TUI itself reports it. Needed because a `/model` switch
+    // writes nothing to the transcript, so the graph's `modelPill` — built from
+    // the last assistant message's model — keeps naming the OLD model until the
+    // next turn runs, and the chip ends up contradicting the pane beside it.
+    const modelNow = pane ? paneModelLabel(pane) : null;
 
     const file = await findTranscript(convId);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
       return;
     }
 
@@ -131,7 +139,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
       return;
     }
 
@@ -155,7 +163,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
       return;
     }
     try {
@@ -233,7 +241,7 @@ export const chatHandler = {
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
         if (scanner) touchCache(convId, { scanner, offset, agent });
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion, modelNow });
         return;
       }
     } finally {
