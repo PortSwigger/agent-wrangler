@@ -83,6 +83,13 @@ test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, 
   assert.equal(byName.advisor.nudge, '');
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /AW_TASK_MEMORY/);
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /read_mail/);
+  // The send-tool disambiguation must ride the always-on nudge, not just the
+  // discoverable SKILL.md: it exists for the post-compaction case, where a
+  // session's memory of having used mcp send_message is gone and only the
+  // per-turn system prompt is left to steer it away from Claude Code's
+  // built-in SendMessage (which can't resolve a card id — live incident).
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /send_message/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /built-in `SendMessage`/);
 });
 
 test('taskMemory:false drops task-memory from the mandatory nudge and the Codex catalog — nothing else', () => {
