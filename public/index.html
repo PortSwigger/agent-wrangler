@@ -210,6 +210,10 @@
           <div class="mode-card-desc" id="m-mode-workflow-desc">Issue to PR autopilot.</div>
         </button>
       </div>
+      <!-- Why Workflow is dead, shown only when the destination makes it so (a
+           cloud VM never sees the --plugin-dir the issue-to-pr skill rides). A
+           disabled card with no reason reads as a bug. -->
+      <div class="dest-note hidden" id="m-mode-workflow-reason"></div>
       <label id="m-intent-label">Intent / first prompt</label>
       <textarea id="m-intent" rows="6" placeholder="What should the agent work on?"></textarea>
       <label>Folder (cwd)</label>
@@ -221,11 +225,45 @@
       <select id="m-model"></select>
       <label>Effort</label>
       <select id="m-effort"></select>
-      <label>Runtime</label>
-      <select id="m-runtime">
-        <option value="local">Local (host)</option>
-        <option value="devcontainer">Devcontainer</option>
-      </select>
+      <!-- Destination: WHERE the session runs. Replaces the old #m-runtime
+           <select> and reuses the .mode-card pattern above, but emits exactly the
+           same values (local|devcontainer|cloud) via data-dest, so
+           readDispatchFields keeps sending `runtime` byte-for-byte as before and
+           spawn_session payloads are unchanged. Hidden in schedule/fork modes,
+           exactly as the select was. -->
+      <label id="m-dest-label">Destination</label>
+      <div class="mode-cards dest-cards" id="m-dest-cards">
+        <button type="button" class="mode-card" id="m-dest-local" data-dest="local">
+          <div class="mode-card-head" id="m-dest-local-head">
+            <span class="mode-card-title" id="m-dest-local-title">This Mac</span>
+            <span class="mode-card-check" id="m-dest-local-check">✓</span>
+          </div>
+          <div class="mode-card-desc" id="m-dest-local-desc">Runs on the host, in the folder above.</div>
+        </button>
+        <button type="button" class="mode-card" id="m-dest-devcontainer" data-dest="devcontainer">
+          <div class="mode-card-head" id="m-dest-devcontainer-head">
+            <span class="mode-card-title" id="m-dest-devcontainer-title">Container</span>
+            <span class="mode-card-check" id="m-dest-devcontainer-check">✓</span>
+          </div>
+          <div class="mode-card-desc" id="m-dest-devcontainer-desc">Runs inside the repo's devcontainer.</div>
+        </button>
+        <button type="button" class="mode-card" id="m-dest-cloud" data-dest="cloud">
+          <div class="mode-card-head" id="m-dest-cloud-head">
+            <span class="mode-card-title" id="m-dest-cloud-title">☁ Cloud</span>
+            <span class="mode-card-check" id="m-dest-cloud-check">✓</span>
+          </div>
+          <div class="mode-card-desc" id="m-dest-cloud-desc">Runs on Claude's own machine. No local checkout, no cost tracking — Teleport to get those back.</div>
+        </button>
+      </div>
+      <!-- Cloud-only fields. No "paste an existing session id" input: adopting a
+           cloud session started on web/mobile is deliberately out of scope (v1). -->
+      <div class="cloud-fields hidden" id="m-cloud-fields">
+        <label for="m-cloud-env" id="m-cloud-env-label">Cloud environment</label>
+        <select id="m-cloud-env"></select>
+        <label for="m-cloud-ref" id="m-cloud-ref-label">Branch (ref)</label>
+        <input id="m-cloud-ref" autocomplete="off" placeholder="the repo's default branch" />
+        <div id="m-cloud-msg" class="cloud-msg hidden"></div>
+      </div>
       <div class="worktree-box">
         <div class="worktree-title">New worktree</div>
         <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
@@ -272,6 +310,22 @@
       <div class="modal-actions">
         <button id="fk-cancel" class="ghost">Cancel</button>
         <button id="fk-go" class="primary">Fork</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Steer a cloud session. A cloud card has no pane to type into, so this is the
+       ONLY way a human can talk to it — hence a dialog rather than reusing the
+       terminal. Sends the same `message` control type a local card's pane paste
+       uses; the cloud branch lives server-side (see control/handlers/message.js). -->
+  <div id="cloud-message-modal" class="hidden">
+    <div class="modal-card" id="cloud-message-card">
+      <h3 id="cloud-message-title">Send a message</h3>
+      <p class="fork-note" id="cloud-message-note">Steers the running cloud session. It arrives as a new turn — there's no live pane to type into, and nothing comes back here: a cloud session has no mailbox.</p>
+      <textarea id="cloud-message-text" rows="5" placeholder="What should it do next?"></textarea>
+      <div class="modal-actions" id="cloud-message-actions">
+        <button id="cloud-message-cancel" class="ghost">Cancel</button>
+        <button id="cloud-message-go" class="primary">Send</button>
       </div>
     </div>
   </div>
