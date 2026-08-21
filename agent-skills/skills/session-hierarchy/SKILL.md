@@ -46,20 +46,29 @@ get_session_info()
 
 Returns:
 - `sessionId`, `label`, `task` — your own identity and task.
-- `parent` (immediate `parentSession` id, or `null`) and `parentChain` (your
-  nesting ancestors, nearest first, up to root — each with its own id/label/task).
-- `spawnedBy` (immediate id, or `null`) and `spawnerChain` (your launch-lineage
-  ancestors, nearest first, up to root).
+- `parent` (immediate `parentSession` id, or `null`), `parentLabel` (that
+  session's name, or `null`), and `parentChain` (your nesting ancestors,
+  nearest first, up to root — each with its own id/label/task).
+- `spawnedBy` (immediate id, or `null`), `spawnedByLabel` (that session's
+  name, or `null`), and `spawnerChain` (your launch-lineage ancestors, nearest
+  first, up to root).
 
 This is the only path that's guaranteed correct after a re-nesting — the env
 var is frozen at launch, this tool reads live state.
+
+**When telling the user about your parent or spawner, use `parentLabel`/
+`spawnedByLabel` — not the raw `parent`/`spawnedBy` id, which means nothing to
+them.** The same rule applies to every id this skill deals with: a session id
+is for tool calls, its label is for people.
 
 ## Looking up ANOTHER session's lineage
 
 `get_session_info` only answers for the caller. To check another session's
 `parent`/`spawnedBy` (but not its full chain), use `list_sessions` — every row
 now carries `parentSession` and `spawnedBy` alongside the existing id/label/
-task/status fields.
+task/status fields. Those two are still bare ids with no label sibling on the
+row itself; look the id up against another row's `sessionId` in the same
+result to name it.
 
 ## Known limitations
 
