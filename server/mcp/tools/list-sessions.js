@@ -13,7 +13,12 @@ export const listSessionsTool = {
     + 'this session is nested under on the board (opt-in, changeable later via attach_session/'
     + 'detach_session); `spawnedBy` is who actually called spawn_session/spawn_workflow to launch '
     + 'it (set once at launch, only when launched that way — null for a session dispatched '
-    + 'directly from the board UI). Either can be set with the other null. Read-only.',
+    + 'directly from the board UI). Either can be set with the other null. Prefer `label` over '
+    + '`sessionId` when telling the user about a session — but labels aren\'t guaranteed unique '
+    + '(often intent-derived, so a session and one it spawned can share the same displayed label; '
+    + 'see the `session-hierarchy` skill), so when presenting more than one row pair the label '
+    + 'with a short id, e.g. `(<first 8 chars>, "<label>")`, rather than the label alone. '
+    + 'Read-only.',
   inputSchema: {},
   async handler({ deps, caller }) {
     const sessions = (deps.graph()?.sessions ?? []).map((s) => ({

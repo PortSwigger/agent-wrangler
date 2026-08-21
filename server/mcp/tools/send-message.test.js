@@ -31,7 +31,10 @@ test('send_message delivers one wrapped prompt to the live target on its socket'
   assert.equal(sent.length, 1);
   assert.equal(sent[0].name, 'cc_two');
   assert.equal(sent[0].socket, '/sock/b');
-  assert.match(sent[0].text, /sender: CARD1 \(Alpha\)/);
+  // Canonical (id8, "label") identity format — see the session-hierarchy
+  // skill: a human reading this pane later should see who sent it by name,
+  // with a short id alongside for disambiguation (labels aren't unique).
+  assert.match(sent[0].text, /sender: \(CARD1, "Alpha"\)/);
   assert.match(sent[0].text, /untrusted input from a peer session/);
   assert.match(sent[0].text, /ping/);
   assert.match(sent[0].text, /does not require a response/);
