@@ -622,6 +622,44 @@ test('analyze leaves a legacy sub-agent uncounted when its tool_result carries n
   assert.equal(r.subAgentUsd, 0);
 });
 
+// The "flash" bug: overlapping rebuild() ticks (a debounced file-watcher event
+// racing the 4s poll interval) used to each call analyze() independently, racing
+// on the shared per-session `state` object — a slower caller's stale stat.size
+// could look "truncated" against a faster caller's already-advanced state.offset,
+// wiping every subFiles tracker and resetting quietPolls to 0 for sub-agents that
+// finished long ago, so they all reported 'running' for a poll or two. Concurrent
+// callers for the same session must now coalesce into one in-flight scan instead
+// of racing.
+test('analyze: concurrent calls for the same session coalesce into one scan', async () => {
+  const projects = tmpProject('race1', jsonl(
+    { type: 'user', timestamp: '2026-07-09T09:00:00.000Z', message: { role: 'user', content: 'go' } },
+  ), {
+    'agent-done.meta.json': JSON.stringify({ agentType: 'x', description: 'y' }),
+    'agent-done.jsonl': jsonl({ type: 'assistant', timestamp: '2026-07-09T09:00:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }),
+  });
+  // Settle the sub-agent past its quiet-poll grace period, same as a long-finished
+  // background task in the real bug report.
+  await analyze('race1', projects);
+  await analyze('race1', projects);
+  const settled = await analyze('race1', projects);
+  assert.equal(settled.subAgents[0].status, 'completed');
+
+  // Two overlapping callers — the real trigger is an overlapping watcher-driven
+  // rebuild racing the interval tick — must share ONE scan, not each read/mutate
+  // the shared state independently.
+  const p1 = analyze('race1', projects);
+  const p2 = analyze('race1', projects);
+  assert.equal(p1, p2, 'concurrent analyze() calls for the same session must return the same in-flight promise');
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.equal(r1.subAgents[0].status, 'completed');
+  assert.equal(r2.subAgents[0].status, 'completed');
+
+  // Coalescing must release once settled, so a later call runs (and observes
+  // reality) normally rather than being permanently wedged.
+  const after = await analyze('race1', projects);
+  assert.equal(after.subAgents[0].status, 'completed');
+});
+
 // --- advisor consultations: usage.iterations[] classification -----------------
 // Claude Code's native advisor tool nests an extra "advisor_message" iteration
 // inside a turn's usage.iterations[], carrying its OWN model (independent of the
