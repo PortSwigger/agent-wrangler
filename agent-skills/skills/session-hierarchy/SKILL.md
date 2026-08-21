@@ -57,9 +57,8 @@ This is the only path that's guaranteed correct after a re-nesting — the env
 var is frozen at launch, this tool reads live state.
 
 **When telling the user about your parent or spawner, use `parentLabel`/
-`spawnedByLabel` — not the raw `parent`/`spawnedBy` id, which means nothing to
-them.** The same rule applies to every id this skill deals with: a session id
-is for tool calls, its label is for people.
+`spawnedByLabel`, not the raw `parent`/`spawnedBy` id** — but see "Naming a
+session for the user" below: a label alone is not always enough either.
 
 ## Looking up ANOTHER session's lineage
 
@@ -69,6 +68,35 @@ now carries `parentSession` and `spawnedBy` alongside the existing id/label/
 task/status fields. Those two are still bare ids with no label sibling on the
 row itself; look the id up against another row's `sessionId` in the same
 result to name it.
+
+## Naming a session for the user
+
+A raw session id (`sessionId`/`parent`/`spawnedBy`/…) means nothing to a
+human — always prefer the label. But **a label is not guaranteed unique**:
+it's frequently derived from the session's own launch intent (see
+`sessionLabel` in `state-reader.js`), so a session and a child it spawned to
+do "the same" nominal thing can easily end up sharing the identical displayed
+label. Real example seen on a live board — two unrelated rows both labeled
+"Haiku about squirrels" (a root session and its own child):
+
+```
+Haiku about squirrels   idle   root, spawned "Haiku about squirrels" child
+Haiku about squirrels   idle   child of the above
+```
+
+Label-only output like this is genuinely ambiguous to the user — there is no
+way to tell the two rows apart. **Whenever more than one session is in view
+at once** (a list, a table, a comparison — "the session that did X" vs "the
+one that did Y"), pair the label with a short id disambiguator:
+
+```
+(<first 8 chars of the id>, "<label>")
+```
+
+e.g. `(03f68d2a, "Story about Richard the sausage")`. A single, unambiguous
+reference to "the session" when only one is in play doesn't need this — the
+label alone reads fine. The full id is still what every tool call actually
+needs; only DISPLAYED text truncates it.
 
 ## Known limitations
 

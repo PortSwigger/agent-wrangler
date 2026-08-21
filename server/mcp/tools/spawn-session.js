@@ -19,8 +19,9 @@ export const spawnSessionTool = {
     + 'new session should do next, key files/paths) in `intent` — that is its launch prompt. Do '
     + 'NOT write handoff context into task memory: memory is enduring information about the task '
     + 'itself, not a channel for briefing another session. Returns the new session id and its '
-    + 'label — when telling the user about it, use the label, not the id, which means nothing to '
-    + 'them.',
+    + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
+    + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
+    + 'with a short id.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '

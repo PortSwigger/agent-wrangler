@@ -153,12 +153,15 @@ function compose(caller, deps, text) {
   return lines.join('\n');
 }
 
-// Name-first: this lands verbatim in the recipient's pane, where a human
-// attached to it reads it too — the id means nothing to them, so it trails in
-// parens as a lookup aid rather than leading.
+// This lands verbatim in the recipient's pane, where a human attached to it
+// reads it too. `(id8, "label")` — the canonical identity display format
+// (see the session-hierarchy skill): a bare label isn't safe on its own
+// (labels aren't guaranteed unique — often intent-derived, so a session and
+// one it spawned can share the same displayed label), and a full id means
+// nothing to a human, so it's truncated rather than dropped.
 function senderWho(caller, deps) {
   const label = labelFor(deps, caller);
-  return label ? `${label} (${caller})` : caller;
+  return label ? `(${caller.slice(0, 8)}, "${label}")` : caller;
 }
 
 function errorResult(message) {

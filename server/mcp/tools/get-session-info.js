@@ -51,8 +51,9 @@ export const getSessionInfoTool = {
     + 'spawnedBy is also available at boot (and after a resume) as the AW_SPAWNER_SESSION_ID env '
     + 'var, but that var never reflects `parent`/nesting at all, and goes stale if you get '
     + 're-nested after launch — this tool always reads live state. `parentLabel`/`spawnedByLabel` '
-    + 'name the id in the sibling field — use them, not the raw id, when telling the user about '
-    + 'your parent or spawner. Read-only.',
+    + 'name the id in the sibling field — prefer them over the raw id when telling the user about '
+    + 'your parent or spawner, but labels aren\'t guaranteed unique (see the `session-hierarchy` '
+    + 'skill), so if more than one session is in view pair the label with a short id. Read-only.',
   inputSchema: {},
   async handler({ deps, caller }) {
     if (!caller) return errorResult('No caller identity on this request — this tool answers for the calling session only.');
