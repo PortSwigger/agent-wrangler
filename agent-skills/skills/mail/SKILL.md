@@ -58,3 +58,19 @@ If you do send several messages to the same session in a short window anyway,
 you may hit a rate limit (a backstop against loops, not a routine limit) — its
 error message repeats this same guidance. That's a sign to stop, not to retry
 faster.
+
+## The right send tool — not Claude Code's built-in `SendMessage`
+
+Claude Code ships its own peer-messaging tools (`SendMessage`/`ListAgents`)
+that can also see wrangler-launched sessions — but they address peers by a
+`ListAgents` name (derived from the session's directory), not by card id.
+Calling the built-in `SendMessage` with a wrangler card id fails with
+"No agent named '<card id>' is reachable" even though the session is alive
+and its own mail to you keeps arriving. Retrying the same call, or checking
+`ListAgents`, won't fix it — the id will never be a name there.
+
+Always message a board session with the wrangler's `send_message` MCP tool
+(`mcp__agent-wrangler__send_message`), addressed by card id from
+`list_sessions` or a mail message's `from` field. This mistake typically
+appears right after a context compaction, when the memory of which tool you
+had been using is gone and `SendMessage` looks like the obvious name match.
