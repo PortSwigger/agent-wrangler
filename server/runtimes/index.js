@@ -1,9 +1,10 @@
 import { local } from './local.js';
 import { devcontainer } from './devcontainer.js';
+import { cloud } from './cloud.js';
 
 // The runtime registry answers "where does the agent process run" — the host
-// (`local`) or inside a container. A runtime is a small object; adding one is a new
-// module here plus an entry in `ALL`. Contract:
+// (`local`), inside a container, or in a Claude-hosted VM (`cloud`). A runtime is a
+// small object; adding one is a new module here plus an entry in `ALL`. Contract:
 //
 //   id           (required) the string stored on `entry.runtime` and matched by
 //                runtimeFor. `local` is stored as ABSENT (session-manager writes
@@ -13,11 +14,21 @@ import { devcontainer } from './devcontainer.js';
 //                inner command and returns it decorated (local: identity;
 //                devcontainer: a `devcontainer up && docker cp && exec` script).
 //                `workflow` is absent on fork (forks don't carry it).
-//   preflight    (optional) async ({ cwd }) → a human-facing error string to REFUSE
-//                the dispatch (thrown, surfaced on the board as a toast), or null to
-//                proceed. Runs before any dir/worktree side effect — devcontainer
-//                uses it to reject a repo with no .devcontainer config instead of
-//                dead-paning on `devcontainer up`.
+//   buildLaunch  (optional) ({ mode: 'dispatch'|'resume', cwd, sessionId, intent,
+//                entry, cloud, … }) → the inner command, REPLACING
+//                adapter.buildLaunch/buildResume rather than decorating it. Read at
+//                exactly two sites (session-manager dispatch + resume); a runtime
+//                that only decorates must NOT define it and stays on wrapLaunch.
+//                Cloud needs it because a cloud launch is a different claude
+//                invocation, not a wrapper around the local one.
+//   preflight    (optional) async ({ cwd, agent, workflow, cloud }) → a human-facing
+//                error string to REFUSE the dispatch (thrown, surfaced on the board
+//                as a toast), or null to proceed. Runs before any dir/worktree side
+//                effect — devcontainer uses it to reject a repo with no
+//                .devcontainer config instead of dead-paning on `devcontainer up`;
+//                cloud uses the agent/workflow/environment bag to refuse a
+//                combination the VM can't serve. Purely additive: devcontainer's
+//                `preflight({ cwd })` destructure is unaffected.
 //   skipsHostResumeGuard  (optional, default falsey) when true, resume bypasses the
 //                host `--resume` transcript/launch-dir guard — for a runtime whose
 //                transcript lives IN-container (unreadable on the host, so the guard
@@ -37,7 +48,7 @@ import { devcontainer } from './devcontainer.js';
 // adding it now would be dead code. A runtime that does (e.g. a firewalled sandbox
 // that strips host-MCP flags) adds the capability field + the single site that
 // reads it — see docs/superpowers/specs/2026-07-23-container-runtimes-unification.md.
-const ALL = [local, devcontainer];
+const ALL = [local, devcontainer, cloud];
 export const DEFAULT_RUNTIME = 'local';
 
 // `runtime` absent/blank ⇒ local (back-compat: every pre-runtime entry is a
