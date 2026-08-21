@@ -44,23 +44,26 @@ test('createRebuildCoalescer: several overlapping callers collapse into ONE trai
 test('createRebuildCoalescer: a caller awaiting the trailing run sees its own prior write reflected', async () => {
   // The property that rules out a silent-skip guard (like pollPrStatuses'): a
   // handler that mutates state then awaits rebuild() must see a run that started
-  // AFTER its mutation, not be starved by a same-tick overlap.
+  // AFTER its mutation, not be starved by a same-tick overlap. Recording what each
+  // *run* observed (not just the final value, which would be true either way once
+  // `mutated` is set) is what actually pins this — a skip-guard that never starts a
+  // second run would leave `observed` at `[false]` forever.
   const gate = deferred();
-  let mutationVisibleAtRunStart = null;
+  const observed = [];
   let mutated = false;
   const coalesced = createRebuildCoalescer(async () => {
-    mutationVisibleAtRunStart ??= mutated;
+    observed.push(mutated);
     await gate.promise;
   });
 
-  const first = coalesced(); // in flight, run started before the mutation below
+  const first = coalesced(); // in flight; run #1 already observed mutated === false
   mutated = true;
-  const second = coalesced(); // arrives after the mutation, mid-run-#1
+  const second = coalesced(); // arrives after the mutation, mid-run-#1 — queues a trailing run
 
   gate.resolve();
   await first;
-  await second; // waits for the trailing run, which starts fresh AFTER run #1 settles
-  assert.equal(mutated, true, 'the trailing run only starts once run #1 (and the mutation before it) has already happened');
+  await second; // the trailing run starts fresh AFTER run #1 settles, observing the mutation
+  assert.deepEqual(observed, [false, true], 'run #1 sees the pre-mutation state; the trailing run must start only after run #1 settles and observe the mutation');
 });
 
 test('createRebuildCoalescer: sequential (non-overlapping) calls each run independently', async () => {

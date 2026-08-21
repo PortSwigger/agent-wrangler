@@ -17,6 +17,10 @@
 // fresh once the in-flight run settles, and all of them resolve to that trailing
 // run's result. This also serializes every call through `run`, so at most one
 // `run()` executes at a time.
+//
+// `run` must be an async function (never throw synchronously, always return a
+// promise) — `rebuildOnce` is. A synchronous throw here would leave any queued
+// caller's deferred promise unsettled forever.
 export function createRebuildCoalescer(run) {
   let inFlight = null;
   let queued = null;

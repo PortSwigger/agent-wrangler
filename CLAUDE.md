@@ -365,16 +365,21 @@ don't re-derive it.
   (non-async) function that coalesces concurrent callers for the same
   `` `${projectsDir}\0${sessionId}\0${since}` `` into one shared in-flight promise
   rather than trying to make the truncation check itself safe under concurrent
-  mutation — don't rewrite it back to `async function` (that would give each
-  coalesced caller its own outer promise even when they share the same inner one).
-  `server/index.js`'s `rebuild()` is the main source of overlap (a 4s interval, an
-  80ms-debounced file watcher, and ~15 direct handler calls with no serialization
-  between them) and is now wrapped in `createRebuildCoalescer`
+  mutation — kept non-async so coalesced callers get the exact same promise
+  reference (an `async` wrapper would still coalesce correctly, just without that
+  identity). `server/index.js`'s `rebuild()` is the main source of overlap (a 4s
+  interval, an 80ms-debounced file watcher, and ~15 direct handler calls with no
+  serialization between them) and is now wrapped in `createRebuildCoalescer`
   (`rebuild-coalescer.js`) for the same reason — but deliberately with
   TRAILING-coalescing semantics, not `createFullSweepGuard`'s silent skip: several
   callers do `await rebuild()` right after a mutation (rename, dispatch, fork,
   attach) and rely on the resulting broadcast reflecting their change, so an
   overlapping call must queue one fresh trailing run rather than being dropped.
+  Today every path to `analyze()` funnels through `rebuildOnce` (verified: no other
+  caller reaches it outside `buildGraph`, and `buildGraph`'s own three enrichment
+  loops each `await` sequentially, never in parallel), so `rebuild()`'s guard alone
+  already prevents the race — `analyze()`'s own coalescing is defense-in-depth for
+  the day a future direct caller (a control handler, an MCP tool) bypasses it.
 - **Archive cascade.** Archiving a session with live descendants (transitive
   `parentSession` closure) offers to cascade in one handler call; the `archive_session`
   MCP `archive_children` defaults true. The worktree-deletion offer is withheld while

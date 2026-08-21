@@ -719,10 +719,11 @@ export function usageSince(entry) {
 // ms) excludes spend from before that instant — a fork's createdAt, so the parent
 // history replayed into its transcript isn't billed twice (see scanLine).
 //
-// Deliberately NOT an async function: it must return the SAME promise reference to
-// every caller that arrives while a scan for this sessionId is already in flight
-// (see the `inFlight` comment above), and wrapping the body in `async` would give
-// each caller its own outer promise even when they share the same inner one.
+// Deliberately NOT an async function: coalesced callers share the exact SAME
+// promise reference (see the `inFlight` comment above) rather than each getting
+// their own outer promise wrapping the shared inner one — wrapping the body in
+// `async` would still coalesce correctly, but this way a caller can compare
+// identity directly instead of relying on both settling to equal values.
 export function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0 } = {}) {
   const key = `${projectsDir}\0${sessionId}\0${since}`;
   const existing = inFlight.get(key);

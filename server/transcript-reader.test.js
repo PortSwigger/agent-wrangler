@@ -853,6 +853,23 @@ test('analyze without since is unchanged, so a non-fork card still bills its who
   assert.ok(Math.abs(r.usd - bothUsd) < 1e-9, `usd ${r.usd} should equal the full transcript ${bothUsd}`);
 });
 
+// The coalescing key must include `since`, not just (projectsDir, sessionId) — a
+// fork and its parent's bound-less view of the SAME transcript must never share an
+// in-flight scan: they need genuinely different totals (the fork excludes the
+// replayed parent history), and coalescing them onto one shared result would give
+// one of the two callers the other's answer.
+test('analyze: concurrent calls for the same session with different `since` do not coalesce', async () => {
+  const projects = tmpProject('race-since', `${inherited}\n${ownTurn}\n`);
+  const unbound = analyze('race-since', projects);
+  const bound = analyze('race-since', projects, { since: FORK_AT });
+  assert.notEqual(unbound, bound, 'different `since` values must not share an in-flight scan');
+  const [r1, r2] = await Promise.all([unbound, bound]);
+  const bothUsd = flat(OPUS, { input: 9000, output: 900 }) + flat(OPUS, { input: 1000, output: 200 });
+  const ownUsd = flat(OPUS, { input: 1000, output: 200 });
+  assert.ok(Math.abs(r1.usd - bothUsd) < 1e-9, `unbound usd ${r1.usd} should equal the full transcript ${bothUsd}`);
+  assert.ok(Math.abs(r2.usd - ownUsd) < 1e-9, `since-bound usd ${r2.usd} should equal only the fork's own spend ${ownUsd}`);
+});
+
 test('analyze with since drops the parent legacy sub-agents copied into a fork transcript', async () => {
   const projects = tmpProject('fork-legacy-subs', jsonl(
     { type: 'assistant', timestamp: '2026-07-09T09:00:00.000Z', message: { role: 'assistant', id: 'parent1', model: OPUS, usage: { input_tokens: 9000, output_tokens: 900 }, content: [{ type: 'tool_use', id: 'toolu_inherited', name: 'Agent', input: { subagent_type: 'Explore', description: 'parent look' } }] } },
