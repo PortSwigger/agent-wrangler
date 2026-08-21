@@ -26,6 +26,7 @@ import {
 import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
+import { shouldReturnToChat } from './chat-handoff.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
@@ -327,8 +328,24 @@ function applyGraph(graph) {
   const active = document.activeElement;
   const editing = active && active.id === 'rename-input';
   if (selectedSessionId && !editing) {
-    renderPanel(selectedSessionId);
     const sel = latestSessions.find((x) => x.sessionId === selectedSessionId);
+    // The return half of the needs-you round trip, checked BEFORE renderPanel so
+    // the panel it draws already shows the view we are switching to (otherwise
+    // the Chat/Terminal toggle would render one tick behind the pane it labels).
+    // applySessionView routes through renderSidebar, the single place that
+    // decides which view shows — so this also gets the terminal torn down for
+    // free rather than leaving one attached behind the hidden pane.
+    if (sel && shouldReturnToChat({
+      armedFor: chatHandoffFor,
+      selected: selectedSessionId,
+      status: displayStatus(sel),
+      view: viewForSession(selectedSessionId),
+    })) {
+      disarmChatHandoff();
+      setSessionView(selectedSessionId, 'chat');
+      applySessionView(selectedSessionId);
+    }
+    renderPanel(selectedSessionId);
     if (sel && holdForRestart(sel)) {
       // spinner held — don't attach the dying pane
     } else if (sel && sel.managed && viewForSession(sel.sessionId) !== 'chat' && (!current || current.sessionId !== selectedSessionId)) {
@@ -2544,6 +2561,11 @@ function selectSession(sessionId) {
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
   if (isDiffPanelOpen() && diffPanelSessionId() !== sessionId) closeDiffPanel();
+  // Selecting a different card ends any trip in progress. shouldReturnToChat
+  // already refuses to fire for a card that isn't the open one, so this is
+  // belt-and-braces — but it also means re-opening that card later doesn't
+  // inherit a stale arm.
+  if (selectedSessionId !== sessionId) disarmChatHandoff();
   selectedSessionId = sessionId;
   selectedNewSlot = null;
   acknowledge(sessionId);
@@ -3017,6 +3039,8 @@ function hideSidebar() {
   // deselecting while chat is showing needs its own unmount here. No-op when
   // nothing is mounted.
   chatView.unmount();
+  // Closing the panel ends the trip: there is no view left to return to.
+  disarmChatHandoff();
 }
 
 // Drag-to-resize the sidebar (stretch the terminal wider than the grid).
@@ -3195,6 +3219,17 @@ function setSessionView(sessionId, view) {
   try { localStorage.setItem(CHAT_VIEW_KEY, JSON.stringify(all)); } catch {}
 }
 
+// The card id currently on a "go answer the prompt, then come back" round trip
+// (armed by the chat view's `Terminal →` button). Deliberately in-memory and
+// NOT persisted alongside the view choice above: it describes a trip in
+// progress, so surviving a reload would drop someone into an automatic view
+// switch they could no longer connect to anything they did. See
+// chat-handoff.js for the return condition.
+let chatHandoffFor = null;
+function disarmChatHandoff() {
+  chatHandoffFor = null;
+}
+
 const PANEL_SA_SHOWN_KEY = 'wrangler.panelSubagentShown';
 const panelSubagentShownOverrides = (() => {
   try {
@@ -3335,6 +3370,12 @@ function renderPanel(sessionId) {
   panel.querySelectorAll('.chat-seg-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = btn.dataset.view;
+      // Disarmed BEFORE the no-op early return below, not after: pressing
+      // `Terminal` while already in the handoff's terminal is exactly how
+      // someone says "I want to stay here", and that press changes no view at
+      // all. Clearing after the return would ignore the one gesture that most
+      // needs to be honoured.
+      disarmChatHandoff();
       if (next === viewForSession(sessionId)) return;
       setSessionView(sessionId, next);
       applySessionView(sessionId);
@@ -4751,7 +4792,14 @@ const chatView = initChatView({
   send,
   onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
   onOpenDiff: (sid) => openDiffPanel(sid),
-  onGoTerminal: (sid) => { setSessionView(sid, 'terminal'); applySessionView(sid); renderPanel(sid); },
+  // Arms the round trip before switching: applyGraph brings the view back once
+  // the session leaves needs-you, i.e. once the prompt has been answered.
+  onGoTerminal: (sid) => {
+    chatHandoffFor = sid;
+    setSessionView(sid, 'terminal');
+    applySessionView(sid);
+    renderPanel(sid);
+  },
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();

@@ -347,6 +347,24 @@ don't re-derive it.
   which `pushClaude` advances for **every** user and assistant entry, including
   an assistant message that is nothing but a `tool_use` and therefore emits no
   event at all: exactly the case the indicator exists to cover.
+- **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
+  signalled.** `Terminal →` on the chat view's needs-you bar arms
+  `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
+  `applyGraph` switches back once `shouldReturnToChat` (`public/chat-handoff.js`,
+  four guards, unit-tested) says the session has left `needs-you` — nothing on
+  the wire says "the prompt was answered", and leaving `needs-you` is what that
+  looks like from outside the pane. Three things are load-bearing:
+  **the disarm in the `.chat-seg-btn` handler must come BEFORE its no-op early
+  return** (pressing `Terminal` while already in the handoff's terminal is
+  exactly how someone says "I want to stay here", and that press changes no
+  view, so a disarm placed after the return would ignore the one gesture that
+  most needs honouring); **the check must run BEFORE `renderPanel`** in
+  `applyGraph`, or the toggle renders a tick behind the pane it labels *and*
+  the `openTerminal` branch below it still sees `terminal` and re-attaches into
+  the hidden pane (the 80-column bug that branch's comment describes); and the
+  armed id is **deliberately in-memory, never persisted** beside the view choice
+  — it describes a trip in progress, so surviving a reload would drop someone
+  into an automatic switch they cannot connect to anything they did.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message
