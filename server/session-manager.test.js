@@ -9,6 +9,7 @@ import {
   resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions,
   shouldReloadWorkflowSkill,
 } from './session-manager.js';
+import { adapterFor } from './agents/index.js';
 import { readBranch } from './state-reader.js';
 import { linkPathFor, addDirFor } from './memory-store.js';
 import { writeConfig } from './config-store.js';
@@ -658,6 +659,88 @@ test('_doResume: a devcontainer workflow session resumes with the issue-to-pr sk
 // transcript/rollout IO (discover-id agent, cached live id trusted), so these
 // coalescing tests exercise the guard around killForSession + _newSession
 // without needing a real ~/.claude transcript on disk.
+// A codex card with no cached live id falls back to discovering one from its launch
+// directory. That fallback must be bounded by when the card was created: a rollout
+// written before the card existed cannot be its conversation, and the resolved id is
+// persisted (resumeEntry), so one bad guess binds the card to the wrong conversation
+// for good. Unbounded, the newest cwd-matching rollout of ANY age won — reviving a
+// months-old session in a directory that has since been reused.
+function codexSessionsFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cx-resume-'));
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cx-proj-'));
+  const write = (day, uuid, mtimeMs) => {
+    const dir = path.join(root, day);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `rollout-${day.replaceAll('/', '-')}T09-00-00-${uuid}.jsonl`);
+    fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd: fs.realpathSync(proj) } }) + '\n');
+    fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000);
+  };
+  return { root, proj, write };
+}
+
+test('codex resume never binds a card to a rollout older than the card itself', async () => {
+  const { root, proj, write } = codexSessionsFixture();
+  const stale = '11111111-1111-4111-8111-111111111111';
+  const mine = '22222222-2222-4222-8222-222222222222';
+  const cardCreatedAt = new Date(2026, 5, 1).getTime(); // card minted June; the stale rollout is from January
+  // Same directory, reused months apart. The stale rollout is deliberately given the
+  // NEWER mtime — resuming an old conversation rewrites its file, which is exactly how
+  // a superseded rollout becomes the best mtime match for everything in that directory.
+  write('2026/01/05', stale, cardCreatedAt + 5_000);
+  write('2026/06/10', mine, cardCreatedAt + 1_000);
+
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('card-old', { agent: 'codex', cwd: proj, createdAt: cardCreatedAt });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => [];
+  let launched = '';
+  sm._newSession = async (_tmux, _dir, cmd) => { launched = cmd; };
+
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  // Bind the real discovery to the fixture tree; the floor under test is the one the
+  // resume path chooses, which is what this asserts.
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  try {
+    await sm._doResume('card-old', proj, {});
+  } finally {
+    codex.discoverLiveId = original;
+  }
+
+  assert.doesNotMatch(launched, new RegExp(stale), 'resumed a rollout predating the card');
+  assert.match(launched, new RegExp(mine), 'should resume the rollout written after the card was created');
+  assert.equal(sm.map.get('card-old').liveSessionId, mine, 'and must not persist the stale id');
+});
+
+test('codex resume with no createdAt still refuses nothing it can already resolve', async () => {
+  // Legacy entries predate createdAt. They keep the old unbounded behaviour rather
+  // than becoming unresumable — documented, not accidental.
+  const { root, proj, write } = codexSessionsFixture();
+  const only = '33333333-3333-4333-8333-333333333333';
+  write('2026/01/05', only, 1_000_000);
+
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('card-legacy', { agent: 'codex', cwd: proj });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => [];
+  let launched = '';
+  sm._newSession = async (_tmux, _dir, cmd) => { launched = cmd; };
+
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  try {
+    await sm._doResume('card-legacy', proj, {});
+  } finally {
+    codex.discoverLiveId = original;
+  }
+  assert.match(launched, new RegExp(only));
+});
+
 function resumableCodex(cardId = 'card-race') {
   const sm = new SessionManager();
   sm.map.clear();
