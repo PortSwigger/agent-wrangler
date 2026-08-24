@@ -282,6 +282,68 @@ don't re-derive it.
   A skill that MUST run at session start (task-memory) opts into a sidecar `WRANGLER.md`
   whose text is force-injected (`--append-system-prompt` / Codex `developer_instructions`);
   a plain discoverable skill does not reliably self-invoke. Most skills should have none.
+- **Archive-time memory review's excerpt is HUMAN TURNS ONLY — never assistant
+  text or tool output — and this is a deliberate trade-off with a real, verified
+  failure mode.** `buildExcerpt` (`archive-review-runner.js`) keeps only
+  `type: 'user'` entries. Rationale: assistant/tool content is the overwhelming
+  majority of transcript bytes and carries almost none of the durable signal
+  (stated preferences, corrections, decisions) this feature exists to capture —
+  a user's own correction already carries the pitfall it's correcting. **But
+  verified against a real transcript: when a decision is reversed via the
+  ASSISTANT's investigation (not restated by the user afterward — e.g. "I
+  checked, PR #93 already rejected this, 14+ import sites, don't reopen"), the
+  human-turns-only excerpt has no way to see the reversal and reports the
+  superseded original instruction as current.** This is not a bug to fix by
+  widening the excerpt back to full-transcript (that reintroduces the diluted,
+  narrative-heavy input the design deliberately avoids) — it's an accepted,
+  documented accuracy risk, same category as "nothing removes a wrong bullet
+  once written." Two independent real-transcript samples otherwise validated
+  cleanly: specific, checkable facts (file paths, config keys, line numbers)
+  that were genuinely present in the user's own words, not hallucinated.
+- **Archive-time memory review (`server/archive-review-runner.js`) is opt-in
+  (`archiveReviewEnabled`, default false) and MUST use `entry.liveSessionId`, never
+  the card id — the card id is never a conversation id.** Hooked via a
+  `this._archiveReview` seam on `SessionManager` (mirrors `_ensureCodexTrust`), a
+  no-op by default so every existing archive test stays inert. Fired unawaited
+  from the end of `archive()`, and only when the session wasn't ALREADY archived
+  (`archive()` is "set aside", not end-of-life — `resume` clears `archivedAt`, so
+  a naive hook would re-review the same growing transcript on every
+  archive→resume→archive cycle). The excerpt sent to Haiku is bounded by
+  `max(usageSince(entry), entry.archiveReviewedAt)`: the `usageSince` half matters
+  independently of the not-again guard, because a **fork's transcript replays the
+  parent's entire history with no on-disk marker** (same invariant as the cost
+  scanners below) — without it, archiving a fork would write the parent's work
+  into memory.md a second time.
+- **The reviewer subprocess uses `--session-id <fresh uuid>`, never
+  `--no-session-persistence`.** The uuid is pushed onto the archived card's
+  `entry.priorLiveSessionIds`, so the review's own spend is picked up by the
+  existing cost scanners (`usage-report.js`, `cost-report.mjs`) for free — that
+  field is deliberately excluded from `cardForLive`, so nothing will ever try to
+  resume it. `--bare` looked like the way to cut the CLI's ~16k-token system
+  prompt but is **unusable**: verified against the real binary, it fails with
+  `api_error` because it reads only `ANTHROPIC_API_KEY`, never OAuth/keychain.
+- **Haiku sometimes ignores the "output NONE if nothing durable" instruction and
+  emits confused prose instead — verified live, and only on a THIN excerpt.**
+  A short (~200-char) transcript reliably (5/5 in testing) made Haiku respond
+  "I don't see a transcript excerpt in your message..." rather than `NONE`,
+  while a realistic (45KB) excerpt reliably produced correct bullets. The fix is
+  output-side, not prompt-side: `looksLikeBullets()` requires the response's
+  FIRST non-blank line to start with `-`/`*` — anything else (including the
+  literal string `NONE`) is treated as "nothing to write" and never appended.
+  **Never relax this to "contains a bullet somewhere" or remove it on the
+  assumption the prompt alone is reliable enough** — it isn't, and this is the
+  only thing standing between a bad model response and confused prose landing
+  permanently in a human-and-agent-shared memory file.
+- **`server/test-setup.js` redirects `AW_DATA_DIR` (not just `CODEX_HOME`) to a
+  per-process temp dir.** Added alongside the archive-review feature: before this,
+  `config-store.test.js` had to snapshot-and-restore the real
+  `~/.agent-wrangler/config.json` for lack of any alternative (there is no path
+  injection in `config-store.js`/`memory-store.js`) — and once `archiveReviewEnabled`
+  is a real flag, a live install with it turned on would have made `npm test`
+  spawn real billed `claude -p` subprocesses and append to real task memory. Same
+  class of incident `CODEX_HOME`'s redirect exists for, with a bill attached. Runs
+  before any `data-dir.js` import (via `node --test --import`), so the module's
+  `DATA_DIR` const picks it up for the whole test run.
 
 ## How subsystems hang together (pointers, not mechanics)
 

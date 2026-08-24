@@ -287,6 +287,12 @@ export class SessionManager {
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
     this._ensureCodexTrust = ensureCodexTrust;
+    // Seam (like _ensureCodexTrust) for archive()'s fire-and-forget "review this
+    // transcript into task memory" side effect — a no-op by default so every
+    // existing archive-path test stays inert; server/index.js binds the real
+    // runArchiveReview (server/archive-review-runner.js) with memoryStore
+    // injected, keeping this class free of that dependency.
+    this._archiveReview = async () => 'skipped';
     this._load();
   }
 
@@ -359,6 +365,10 @@ export class SessionManager {
   // mapping yet — adopt it (using the caller's snapshot) so it too can be
   // archived and later resumed.
   archive(sessionId, snapshot = {}) {
+    // Captured BEFORE archivedAt is (re)stamped below: archive() is "set aside",
+    // not end-of-life (resume clears archivedAt), so a re-archive of a session
+    // already archived once must not trigger a second review of the same span.
+    const wasArchived = this.isArchived(sessionId);
     let entry = this.map.get(sessionId);
     if (!entry) {
       entry = {
@@ -391,6 +401,20 @@ export class SessionManager {
     // a resumed session re-derives its label from the running agent.
     if (snapshot.label) entry.lastLabel = snapshot.label;
     this._save();
+    // Fire-and-forget: archive never waits on this. Skipped for a re-archive of
+    // an already-archived session (see wasArchived above) — otherwise archive→
+    // resume→archive would review the same growing transcript every time.
+    if (!wasArchived) {
+      this._archiveReview(sessionId, entry, snapshot.task, {
+        onStamp: ({ reviewLiveSessionId, advanceReviewedAt }) => {
+          const prior = new Set(entry.priorLiveSessionIds || []);
+          prior.add(reviewLiveSessionId);
+          entry.priorLiveSessionIds = [...prior];
+          if (advanceReviewedAt) entry.archiveReviewedAt = Date.now();
+          this._save();
+        },
+      }).catch(() => {});
+    }
     return true;
   }
 

@@ -42,9 +42,11 @@ async function withChildFullViewDefault(value, fn) {
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
 // the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
 // scratch dir inside the source tree made every blank-cwd session report the
-// wrangler's own branch — the "branch bleeding between sessions" bug.
-test('scratch SESSIONS_DIR lives under ~/.agent-wrangler, outside the checkout', () => {
-  assert.equal(SESSIONS_DIR, path.join(os.homedir(), '.agent-wrangler', 'sessions'));
+// wrangler's own branch — the "branch bleeding between sessions" bug. Compares
+// against DATA_DIR (not a hardcoded ~/.agent-wrangler) so this holds under
+// AW_DATA_DIR-redirected test runs too (see test-setup.js).
+test('scratch SESSIONS_DIR lives under the data dir, outside the checkout', () => {
+  assert.equal(SESSIONS_DIR, path.join(DATA_DIR, 'sessions'));
 });
 
 test('readBranch leaks the enclosing repo branch for a scratch dir nested in a repo', async () => {
@@ -334,6 +336,61 @@ test('archive() stamps viaTaskArchive only when the caller passes it; isArchived
   assert.equal(sm.entryFor('s1').viaTaskArchive, 'T1');
   // Plain solo archive (no viaTaskArchive passed): the key is absent, not undefined.
   assert.equal('viaTaskArchive' in sm.entryFor('s2'), false);
+});
+
+// archive()'s fire-and-forget review side effect (server/archive-review-runner.js)
+// is a seam precisely so a test never needs to spawn a real `claude -p`
+// subprocess to assert this wiring — same reasoning as _ensureCodexTrust.
+test('archive() calls the _archiveReview seam once, with the task snapshot, on a fresh archive', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  const calls = [];
+  sm._archiveReview = async (sessionId, entry, task) => { calls.push({ sessionId, entry, task }); return 'written'; };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  // Unawaited in archive() itself — give its promise a tick to run.
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionId, 's1');
+  assert.equal(calls[0].task.id, 'T1');
+  assert.equal(calls[0].entry, sm.entryFor('s1'));
+});
+
+test('archive() does NOT call _archiveReview again for a re-archive of an already-archived session', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  let count = 0;
+  sm._archiveReview = async () => { count += 1; return 'written'; };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  await new Promise((r) => setTimeout(r, 0));
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } }); // still archived — resume() was never called
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(count, 1);
+});
+
+test('_archiveReview\'s onStamp records priorLiveSessionIds and archiveReviewedAt (only on success)', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm._archiveReview = async (sessionId, entry, task, { onStamp }) => {
+    onStamp({ reviewLiveSessionId: 'REVIEW1', advanceReviewedAt: true });
+    return 'written';
+  };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  await new Promise((r) => setTimeout(r, 0));
+  const entry = sm.entryFor('s1');
+  assert.deepEqual(entry.priorLiveSessionIds, ['REVIEW1']);
+  assert.ok(typeof entry.archiveReviewedAt === 'number');
+});
+
+test('a default (unstubbed) _archiveReview is an inert no-op — every existing archive test stays unaffected', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  assert.doesNotThrow(() => sm.archive('s1', { cwd: '/repo' }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(sm.entryFor('s1').priorLiveSessionIds, undefined);
 });
 
 test('resumeEntry defaults a missing intent/createdAt and leaves workflow/parentSession undefined for a plain entry', () => {

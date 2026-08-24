@@ -112,6 +112,19 @@ export class MemoryStore {
     this._hasMemory.delete(taskId);
   }
 
+  // Append (never read-modify-write) a chunk to the task's memory.md — the
+  // archive-review runner's write path. A single synchronous O_APPEND syscall
+  // can't race set-memory's whole-file write() or a concurrent append: both
+  // land intact regardless of interleaving, unlike write()'s read-then-replace
+  // shape, which would silently drop whichever writer finished first.
+  append(taskId, md) {
+    if (!isSafeSegment(taskId)) return;
+    const p = this.taskPath(taskId);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.appendFileSync(p, md);
+    this._hasMemory.delete(taskId);
+  }
+
   // True iff the task file exists and has non-whitespace content. Drives the
   // tile's "has memory" dot without shipping the content in the graph. Cached
   // (invalidated by write()/the watcher) and statSize-gated so the common empty

@@ -22,7 +22,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -42,6 +42,7 @@ import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
+import { runArchiveReview } from './archive-review-runner.js';
 
 const open = openModule.default || openModule;
 
@@ -58,6 +59,12 @@ ensurePtyHelperExecutable();
 const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
 const memoryStore = new MemoryStore();
+// Bind the archive-review seam (default no-op in the class, see session-manager.js)
+// to the real runner with memoryStore injected — keeps SessionManager itself
+// free of that dependency, and every test that doesn't stub _archiveReview
+// stays a no-op by construction.
+sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
+  runArchiveReview(sessionId, entry, task, { memoryStore, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
 const terminalRegistry = new TerminalRegistry();
@@ -507,6 +514,7 @@ async function rebuild() {
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
+  graph.archiveReviewEnabled = archiveReviewEnabled();
   lastGraph = graph;
 
   for (const sid of autoArchived) {

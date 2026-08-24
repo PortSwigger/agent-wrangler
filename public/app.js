@@ -118,6 +118,7 @@ let subagentsExpandedByDefault = false; // server config flag, carried on every 
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
+let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -299,6 +300,7 @@ function applyGraph(graph) {
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
+  archiveReviewEnabled = graph.archiveReviewEnabled === true;
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -4199,6 +4201,7 @@ initSettings({
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
+      if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       return undefined;
     },
     set: (id, value) => {
@@ -4217,6 +4220,9 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'archiveReviewEnabled') {
+        archiveReviewEnabled = Boolean(value);
+        send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
       }
     },
   },
