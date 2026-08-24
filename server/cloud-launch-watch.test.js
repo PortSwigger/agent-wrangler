@@ -17,7 +17,13 @@ const noSleep = async () => {};
 
 function fakeManager() {
   const noted = [];
-  return { noted, noteCloudSession: (sessionId, payload) => noted.push({ sessionId, ...payload }) };
+  const errors = [];
+  return {
+    noted,
+    errors,
+    noteCloudSession: (sessionId, payload) => noted.push({ sessionId, ...payload }),
+    noteCloudCreateError: (sessionId, message) => errors.push({ sessionId, message }),
+  };
 }
 
 test('watchCloudLaunch records the scraped id and URL from the piped log', async () => {
@@ -69,6 +75,35 @@ test('watchCloudLaunch records an attach refusal exactly once and notes no sessi
   assert.equal(res.attachRefused, true);
   assert.equal(refusals, 1);
   assert.deepEqual(sm.noted, []);
+});
+
+test('watchCloudLaunch records a create error exactly once and stops polling', async () => {
+  const sm = fakeManager();
+  let reads = 0;
+  const res = await watchCloudLaunch({
+    sessionManager: sm, sessionId: 'card', tmux: 'cl_1', logPath: '/log',
+    readLog: async () => {
+      reads += 1;
+      return 'Error: no GitHub remote was detected in this directory.\n'
+        + '{"ok":false,"error":"no GitHub remote was detected in this directory."}\n';
+    },
+    sleep: noSleep,
+  });
+  assert.equal(res.cloudSessionId, null);
+  assert.equal(res.createError, 'no GitHub remote was detected in this directory.');
+  assert.equal(reads, 1); // returned on the first poll — the pane is already dead
+  assert.deepEqual(sm.errors, [{ sessionId: 'card', message: 'no GitHub remote was detected in this directory.' }]);
+  assert.deepEqual(sm.noted, []);
+});
+
+test('watchCloudLaunch swallows a noteCloudCreateError failure (a scrape must never break a launch)', async () => {
+  const res = await watchCloudLaunch({
+    sessionManager: { noteCloudCreateError: () => { throw new Error('boom'); } },
+    sessionId: 'card', tmux: 'cl_1', logPath: '/log',
+    readLog: async () => 'Error: no GitHub remote was detected in this directory.\n',
+    sleep: noSleep,
+  });
+  assert.equal(res.createError, 'no GitHub remote was detected in this directory.');
 });
 
 test('watchCloudLaunch gives up at its deadline without noting anything', async () => {

@@ -702,6 +702,16 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     });
     const markedLabel = withForkMark(label, entry);
     const parentFields = deriveParentSession(entry);
+    // A cloud card that scraped a CREATE failure (cloud-launch-watch.js's
+    // createError, persisted via noteCloudCreateError) is the one dormant-loop
+    // case with a real, known fact worth surfacing — every other dormant card is
+    // legitimately just idle. Borrowing needs-you here (rather than a
+    // cloud-specific status the client doesn't know) is what puts the actual
+    // error text in front of the user: notifier.js's diffNeedsYou fires the
+    // ordinary needs-you toast off `status`/`waitingFor` with no runtime filter,
+    // and cardState()/barWord() (public/app.js) let it through their cloud
+    // branch instead of the calm 'cloud' class.
+    const cloudCreateFailed = entry.runtime === 'cloud' && Boolean(entry.cloud?.createError) && !entry.cloud?.sessionId;
     const session = {
       id: `session:${sid}`,
       type: 'session',
@@ -709,10 +719,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       pid: null,
       label: markedLabel,
       agent: agentId,
-      status: 'idle',
+      status: cloudCreateFailed ? 'needs-you' : 'idle',
       hasBackgroundShell: false, // dormant — no live pane to have one
       rawStatus: null,
-      waitingFor: null,
+      waitingFor: cloudCreateFailed ? entry.cloud.createError : null,
       kind: 'managed',
       cwd,
       branch: await branchFor(cwd),
@@ -737,7 +747,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       worktree: await worktreeStatus(entry.worktree),
       jobId: null,
       tasks: null,
-      updatedAt: null,
+      // Real for a cloud create failure so the client's isAcknowledged() can tell
+      // this one needs-you episode apart from a bare null (see the managed-loop
+      // comment above); null everywhere else, where this loop has no needs-you
+      // episode to distinguish at all.
+      updatedAt: cloudCreateFailed ? (entry.cloud.createErrorAt || null) : null,
       lastActivity: enrichment?.lastActivity ?? null,
       tty: null,
       cpu: null,

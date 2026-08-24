@@ -190,6 +190,32 @@ test('cloudChips: no sessionId yet shows a throbbing "starting" chip instead of 
   assert.doesNotMatch(html, />☁ Prod runners</);
 });
 
+test('cloudChips: a recorded createError shows a red "create failed" chip instead of "starting", with the message on hover', () => {
+  const html = cloudChips(cloudSess({}, { sessionId: null, createError: 'no GitHub remote was detected' }), ctx());
+  assert.match(html, /runtime-cloud--failed/);
+  assert.match(html, /☁ create failed/);
+  assert.doesNotMatch(html, /runtime-cloud--starting/);
+  assert.doesNotMatch(html, /☁ starting…/);
+  assert.match(html, /title="no GitHub remote was detected"/);
+});
+
+test('cloudChips: the createError message is escaped, never interpolated raw', () => {
+  const html = cloudChips(cloudSess({}, { sessionId: null, createError: '<img src=x onerror=alert(1)>' }), ctx());
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img/);
+});
+
+test('cloudChips: a createError never overrides a real sessionId (mutually exclusive outcomes)', () => {
+  const html = cloudChips(cloudSess({}, { createError: 'stale' }), ctx());
+  assert.doesNotMatch(html, /runtime-cloud--failed/);
+  assert.doesNotMatch(html, /create failed/);
+});
+
+test('cloudChips: an archived session never shows create-failed even with a stray createError', () => {
+  const html = cloudChips(cloudSess({}, { sessionId: null, archivedAt: 123, createError: 'stale' }), ctx());
+  assert.doesNotMatch(html, /runtime-cloud--failed/);
+});
+
 test('cloudChips: a known sessionId shows the ordinary env chip, no starting throb', () => {
   const html = cloudChips(cloudSess(), ctx());
   assert.doesNotMatch(html, /runtime-cloud--starting/);

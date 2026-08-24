@@ -1835,6 +1835,10 @@ body.system-banner-open { padding-top: 30px; }
    throb rather than showing an env label that might be wrong for seconds. */
 .card-tag.runtime-cloud--starting { animation: bar-throb 1.4s ease-in-out infinite; animation-delay: var(--throb-delay, 0s); }
 @media (prefers-reduced-motion: reduce) { .card-tag.runtime-cloud--starting { animation: none; } }
+/* A create that failed outright (no parseable git source, a dead pool, …) gets
+   the same danger red as the dc bring-up failure above — this is the one cloud
+   fact worth an alert rather than the calm --rt hue. */
+.card-tag.runtime-cloud--failed { color: var(--red-fg); background: color-mix(in srgb, var(--red) 18%, var(--surface-2)); }
 /* Blue reads as an in-progress/transient state — the session's tmux is being torn
    down and relaunched. Same tinted-wash convention as .card-tag.automerge. */
 .card-tag.restarting { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); }

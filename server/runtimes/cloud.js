@@ -202,11 +202,20 @@ const URL_IN_TEXT = /https:\/\/[^\s'"<>)\]\x07\x1B]+/;
 //   sawCreated — distinguishes "created, but the id never made it into the log"
 //     from "nothing happened at all", which the watcher needs to decide whether to
 //     keep polling or give up quietly.
+//   createError — the CLI's own reason the CREATE failed outright (e.g. "no
+//     GitHub remote was detected" for a BYOC pool with no parseable git source —
+//     see the CLAUDE.md cloud bullets). Preferred source is the self-hosted
+//     `--output-format json` line's `error` field (`{"ok":false,"error":"…"}`); a
+//     bare `Error: …` line (the interactive form's own stderr-to-pane text) is the
+//     fallback. Deliberately null whenever `cloudSessionId` is set OR
+//     `attachRefused` is true — a successful create or an attach refusal are
+//     their own distinct outcomes, and must never also read as a create error.
 export function parseCloudLaunchLog(text) {
   const raw = stripAnsi(text);
   const lines = raw.split('\n');
   let cloudSessionId = null;
   let jsonUrl = null;
+  let jsonError = null;
   for (const line of lines) {
     const t = line.trim();
     if (!t.startsWith('{')) continue;
@@ -222,6 +231,9 @@ export function parseCloudLaunchLog(text) {
       jsonUrl = claudeAiUrl(obj?.url);
       break;
     }
+    if (!jsonError && obj?.ok === false && typeof obj?.error === 'string' && obj.error.trim()) {
+      jsonError = obj.error.trim();
+    }
   }
   if (!cloudSessionId) {
     const m = raw.match(/session_[A-Za-z0-9]+/);
@@ -232,11 +244,15 @@ export function parseCloudLaunchLog(text) {
   if (viewLine) url = claudeAiUrl(viewLine.match(URL_IN_TEXT)?.[0]);
   if (!url) url = jsonUrl;
   if (!url) url = claudeAiUrl(raw.match(/https:\/\/claude\.ai\/[^\s'"<>)\]\x07\x1B]+/)?.[0]);
+  const attachRefused = raw.includes('Attaching to an existing cloud session is not enabled');
+  const errorLine = raw.match(/^Error: (.+)$/m)?.[1]?.trim() || null;
+  const createError = cloudSessionId || attachRefused ? null : (jsonError || errorLine);
   return {
     cloudSessionId,
     url,
-    attachRefused: raw.includes('Attaching to an existing cloud session is not enabled'),
+    attachRefused,
     sawCreated: raw.includes('Created cloud session'),
+    createError,
   };
 }
 

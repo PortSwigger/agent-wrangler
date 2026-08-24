@@ -113,6 +113,19 @@ export async function watchCloudLaunch({
       }
       return { ...parsed, sawCreated };
     }
+    // The CLI printed its own reason the create failed outright (e.g. no
+    // parseable git source on a BYOC pool) and exited — nothing more will ever
+    // appear in this pane, so stop polling now rather than riding out the
+    // deadline. Persisting it is what lets the card surface WHY instead of
+    // sitting forever with a null sessionId and a silent "☁ starting…" chip.
+    if (parsed.createError && mode === 'create') {
+      try {
+        sessionManager?.noteCloudCreateError?.(sessionId, parsed.createError);
+      } catch (e) {
+        console.error('[cloud] recording the cloud create error failed:', e?.message || e);
+      }
+      return { ...parsed, sawCreated };
+    }
     await sleep(pollMs);
   }
   // An attach that ran the whole window without the refusal line is the only

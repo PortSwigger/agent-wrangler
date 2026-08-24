@@ -1581,6 +1581,27 @@ test('noteCloudSession records the scraped id once and never clobbers it', () =>
   assert.equal(sm.noteCloudSession('h', { cloudSessionId: 'session_x' }), false); // never writes a non-cloud entry
 });
 
+test('noteCloudCreateError records once, never clobbers, and never fights a successful create', () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.map.set('c', { runtime: 'cloud', cloud: { sessionId: null, url: null } });
+  sm.map.set('h', {});
+  assert.equal(sm.noteCloudCreateError('c', 'no GitHub remote was detected', 100), true);
+  assert.equal(sm.map.get('c').cloud.createError, 'no GitHub remote was detected');
+  assert.equal(sm.map.get('c').cloud.createErrorAt, 100);
+  // Idempotent: a later stray match never overwrites the first recorded error.
+  assert.equal(sm.noteCloudCreateError('c', 'a different error', 200), false);
+  assert.equal(sm.map.get('c').cloud.createError, 'no GitHub remote was detected');
+  // Never writes a non-cloud entry, and a blank message is a no-op.
+  assert.equal(sm.noteCloudCreateError('h', 'x'), false);
+  assert.equal(sm.noteCloudCreateError('c', '   '), false);
+  // A session that already has a real id succeeded — an error can never land on it.
+  sm.map.set('s', { runtime: 'cloud', cloud: { sessionId: 'session_ok' } });
+  assert.equal(sm.noteCloudCreateError('s', 'too late'), false);
+  assert.equal(sm.map.get('s').cloud.createError, undefined);
+});
+
 test('markCloudArchived stamps once', () => {
   const sm = new SessionManager();
   sm.map.clear();

@@ -556,6 +556,26 @@ export class SessionManager {
     return true;
   }
 
+  // Record the CLI's own reason a cloud CREATE failed outright (see
+  // cloud-launch-watch.js's createError). Without this, a card whose create pane
+  // died immediately (no parseable GitHub remote, a dead BYOC pool, …) just sits
+  // forever with a null `cloud.sessionId` and no visible signal — state-reader.js
+  // reads `entry.cloud.createError` back out to drive the card into `needs-you`
+  // (the one real alarm-worthy fact a cloud card can ever report). Idempotent
+  // (won't clobber an earlier recorded error) and mutually exclusive with
+  // `noteCloudSession`: a session id already means the create actually
+  // succeeded, so a stray later "Error:" match in the same pane's scrollback
+  // must never overwrite it.
+  noteCloudCreateError(sessionId, message, now = Date.now()) {
+    const entry = this.map.get(sessionId);
+    const text = String(message || '').trim();
+    if (!entry || entry.runtime !== 'cloud' || !text) return false;
+    if (entry.cloud?.sessionId || entry.cloud?.createError) return false;
+    entry.cloud = { ...(entry.cloud || {}), createError: text, createErrorAt: now };
+    this._save();
+    return true;
+  }
+
   // The cloud session is gone (a steer came back saying it's archived). Stamped
   // rather than only toasted so the card keeps showing it — there is no other
   // signal a cloud session has ended, so a lost toast would leave a card that

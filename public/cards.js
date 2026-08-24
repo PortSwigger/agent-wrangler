@@ -239,18 +239,29 @@ export function cloudChips(s, ctx = {}) {
     return `<span class="card-tag runtime-cloud" title="${esc(wasTitle)}">was ☁</span>${link}`;
   }
   const archived = Boolean(cloud.archivedAt);
-  // No `sessionId` yet means the launch pane hasn't been scraped for one — the
-  // session may not exist as far as claude.ai is concerned. That's a real,
-  // already-known fact (not a guessed working/idle status), so it's worth its
-  // own chip: "starting…" rather than the env label, reusing the dc bring-up
-  // chip's brightness throb so it reads as in-progress the same way.
-  const starting = !cloud.sessionId && !archived;
-  const envTitle = starting
-    ? `${envLabel}${envId ? ` (${envId})` : ''} — waiting for the cloud session to start`
-    : `${envId || 'Account default'}${archived ? ' — this cloud session is archived' : ''}`;
-  const env = starting
-    ? `<span class="card-tag runtime-cloud runtime-cloud--starting" title="${esc(envTitle)}">☁ starting…</span>`
-    : `<span class="card-tag runtime-cloud" title="${esc(envTitle)}">☁ ${esc(envLabel)}</span>`;
+  // The CLI scraped its own reason the create failed outright (cloud-
+  // launch-watch.js's createError — e.g. no parseable GitHub remote on a BYOC
+  // pool) and will never scrape a sessionId now. Mirrors devcontainer's
+  // `runtime-dc--failed` bring-up chip: red, and the actual message is right in
+  // the title rather than left to the (also red, needs-you) card state alone.
+  const failed = Boolean(cloud.createError) && !cloud.sessionId && !archived;
+  // No `sessionId` yet and no error either means the launch pane just hasn't
+  // been scraped for one yet — the session may not exist as far as claude.ai is
+  // concerned. That's a real, already-known fact (not a guessed working/idle
+  // status), so it's worth its own chip: "starting…" rather than the env label,
+  // reusing the dc bring-up chip's brightness throb so it reads as in-progress
+  // the same way.
+  const starting = !cloud.sessionId && !archived && !failed;
+  const envTitle = failed
+    ? cloud.createError
+    : starting
+      ? `${envLabel}${envId ? ` (${envId})` : ''} — waiting for the cloud session to start`
+      : `${envId || 'Account default'}${archived ? ' — this cloud session is archived' : ''}`;
+  const env = failed
+    ? `<span class="card-tag runtime-cloud runtime-cloud--failed" title="${esc(envTitle)}">☁ create failed</span>`
+    : starting
+      ? `<span class="card-tag runtime-cloud runtime-cloud--starting" title="${esc(envTitle)}">☁ starting…</span>`
+      : `<span class="card-tag runtime-cloud" title="${esc(envTitle)}">☁ ${esc(envLabel)}</span>`;
   // Archived is said twice on purpose, both cheap: the env chip's title (hover
   // lands on the chip that identifies the session) plus one plain `archived`
   // chip so it is legible without hovering. Deliberately NOT its own colour or

@@ -305,7 +305,13 @@ function barWord(s) {
   // an attach the account may not even permit. Deliberately NOT wired into
   // unread/justFinished — those are the human bookmark + finish alarm and must
   // stay untouched (see CLAUDE.md's mail/unread naming rule).
-  if (s.runtime === 'cloud') return 'cloud';
+  // The one exception: a scraped CREATE failure (server sets `status:
+  // 'needs-you'` off `cloud.createError`, see state-reader.js) is a real, known
+  // fact, not a guess — let it read the same as any other needs-you rather than
+  // hiding behind the calm 'cloud' word. Handled fully inside this branch (not a
+  // fall-through) so it can never reach the `!s.managed` dormant check right
+  // below, which would otherwise offer a 'resume' a cloud card must never show.
+  if (s.runtime === 'cloud') return s.status === 'needs-you' ? STATUS_WORDS['needs-you'] : 'cloud';
   // Every dormant card — suspended, crashed, or rebooted — needs the same action:
   // click to resume. So the bar word is the affordance ('resume'), not the cause.
   // A restarting card is only momentarily unmanaged (tmux down between kill and
@@ -622,7 +628,13 @@ function cardState(s) {
   // every other branch (justFinished, needs-you, unread, the snooze alarm), because
   // none of those signals exist for a session with no transcript and no pane. One
   // dedicated class, no alarm — there is nothing here to be alarmed about yet.
-  if (s.runtime === 'cloud') return 'cloud';
+  // Except a scraped CREATE failure genuinely IS something to be alarmed about
+  // (see barWord's matching comment) — reuse needs-you's red flash/focused
+  // treatment instead of inventing a second alarm class.
+  if (s.runtime === 'cloud') {
+    if (s.status === 'needs-you') return isAcknowledged(s) ? 'needs-you focused' : 'needs-you';
+    return 'cloud';
+  }
   let base = justFinished.has(s.sessionId)
     ? 'just-finished'
     : (s.status === 'needs-you' && isAcknowledged(s) ? 'needs-you focused' : displayStatus(s));

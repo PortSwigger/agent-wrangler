@@ -148,6 +148,7 @@ test('parseCloudLaunchLog: the interactive Created/View/Resume block', () => {
     url: 'https://claude.ai/code/session_01ABCdef',
     attachRefused: false,
     sawCreated: true,
+    createError: null,
   });
 });
 
@@ -178,15 +179,39 @@ test('parseCloudLaunchLog: the attach refusal line is detected verbatim', () => 
   assert.equal(parsed.attachRefused, true);
   assert.equal(parsed.sawCreated, false);
   assert.equal(parsed.cloudSessionId, null);
+  // The refusal is its own outcome, not a create error, even though the line
+  // it's read off of also starts with "Error: ".
+  assert.equal(parsed.createError, null);
 });
 
 test('parseCloudLaunchLog: a log with none of the markers is all-null/false', () => {
   assert.deepEqual(parseCloudLaunchLog('$ \nsome unrelated pane noise\n'), {
-    cloudSessionId: null, url: null, attachRefused: false, sawCreated: false,
+    cloudSessionId: null, url: null, attachRefused: false, sawCreated: false, createError: null,
   });
   assert.deepEqual(parseCloudLaunchLog(''), {
-    cloudSessionId: null, url: null, attachRefused: false, sawCreated: false,
+    cloudSessionId: null, url: null, attachRefused: false, sawCreated: false, createError: null,
   });
+});
+
+test('parseCloudLaunchLog: a self-hosted create failure is read off the JSON error field', () => {
+  const text = 'Error: The selected environment "ccpool_x" requires a git source, but no GitHub remote was detected in this directory. Check that `git remote get-url origin` returns a GitHub URL.\n'
+    + '{"ok":false,"error":"The selected environment \\"ccpool_x\\" requires a git source, but no GitHub remote was detected in this directory. Check that `git remote get-url origin` returns a GitHub URL."}\n';
+  const parsed = parseCloudLaunchLog(text);
+  assert.equal(parsed.cloudSessionId, null);
+  assert.equal(parsed.attachRefused, false);
+  assert.equal(parsed.createError, 'The selected environment "ccpool_x" requires a git source, but no GitHub remote was detected in this directory. Check that `git remote get-url origin` returns a GitHub URL.');
+});
+
+test('parseCloudLaunchLog: a bare Error: line is the fallback when there is no JSON line', () => {
+  const parsed = parseCloudLaunchLog('Error: Could not create a cloud environment.\n');
+  assert.equal(parsed.createError, 'Could not create a cloud environment.');
+});
+
+test('parseCloudLaunchLog: a successful create with an incidental Error: line never sets createError', () => {
+  const text = 'Error: retrying after a transient hiccup\n{"session_id":"session_01ABCdef","url":"https://claude.ai/code/session_01ABCdef"}\n';
+  const parsed = parseCloudLaunchLog(text);
+  assert.equal(parsed.cloudSessionId, 'session_01ABCdef');
+  assert.equal(parsed.createError, null);
 });
 
 test('parseCloudLaunchLog: a non-claude.ai (or non-https) View URL is dropped, not stored', () => {

@@ -570,6 +570,40 @@ test('buildGraph: a devcontainer entry with no alive tmux is NOT synthesized (st
   assert.equal(node.managed, false);
 });
 
+// A cloud create failure (cloud-launch-watch.js's createError, persisted via
+// noteCloudCreateError) is the one dormant-loop fact worth an alarm — see the
+// long comment at its call site in buildGraph.
+test('buildGraph: a cloud entry with a recorded create error surfaces as needs-you with the error text', async () => {
+  const mgr = makeDormantManager([
+    {
+      sessionId: 'cl1', agent: 'claude', runtime: 'cloud', cwd: '/nonexistent/repo',
+      cloud: { sessionId: null, url: null, createError: 'no GitHub remote was detected', createErrorAt: 555 },
+    },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const node = graph.sessions.find((s) => s.sessionId === 'cl1');
+  assert.ok(node, 'dormant node present');
+  assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingFor, 'no GitHub remote was detected');
+  assert.equal(node.updatedAt, 555);
+});
+
+// A create error is mutually exclusive with a successful create — a stray
+// leftover error string must never win over an actual session id.
+test('buildGraph: a cloud entry that already has a real session id never reads as needs-you, even with a stray createError', async () => {
+  const mgr = makeDormantManager([
+    {
+      sessionId: 'cl2', agent: 'claude', runtime: 'cloud', cwd: '/nonexistent/repo',
+      cloud: { sessionId: 'session_ok', url: null, createError: 'stale' },
+    },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const node = graph.sessions.find((s) => s.sessionId === 'cl2');
+  assert.ok(node, 'dormant node present');
+  assert.equal(node.status, 'idle');
+  assert.equal(node.waitingFor, null);
+});
+
 // Scope guard (the binding constraint): the synthesis MUST fire only for a
 // devcontainer runtime — a LOCAL/host session's pane IS `claude`, so it's always
 // discovered normally and must never be synthesized off tmux liveness alone.
