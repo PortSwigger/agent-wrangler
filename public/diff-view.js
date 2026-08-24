@@ -1,10 +1,11 @@
-import { send, latestSessions, setMaximized, renderGridIfVisible } from './app.js';
+import { send, latestSessions, setMaximized, renderGridIfVisible, taskForSession } from './app.js';
 import { toast } from './toast.js';
 import { X_ICON, MAXIMIZE_ICON, MINIMIZE_ICON } from './icons.js';
 import {
-  draftsStorageKey, buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
+  buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
   diffLineKeys, partitionDrafts, isStaleReply, shouldDeferDiffRender,
-  draftKey, rangeSnapshot, draftSpanKeys, dragRange,
+  draftKey, rangeSnapshot, draftSpanKeys, dragRange, diffPrLinks,
+  draftStorageKeysForSource, clearSubmittedDraftSource,
 } from './diff.js';
 import {
   noticeEl, fileHeaderEl, hunkHeadEl, binaryEl, lineEl, editorEl, detachedSectionEl, fileListEl,
@@ -18,6 +19,7 @@ import {
 // this only renders the `diff` reply and batches inline review comments.
 
 const REFRESH_MS = 3000;
+const PR_REFRESH_MS = 30000;
 // Defensive ceiling on the view-diff in-flight guard: if a reply is lost (WS blip),
 // clear the flag so polling isn't wedged forever. Well above a normal slow git diff
 // so it never fires for a merely-slow-but-alive request.
@@ -37,6 +39,7 @@ const closeBtn = document.getElementById('diff-close');
 const fullscreenBtn = document.getElementById('diff-fullscreen');
 const modeWtBtn = document.getElementById('diff-mode-wt');
 const modeBranchBtn = document.getElementById('diff-mode-branch');
+const modePrsEl = document.getElementById('diff-mode-prs');
 
 // One-time icon fill (icons are JS strings, so the static HTML leaves the slot
 // empty). Close is icon-only; the send button keeps its text label.
@@ -48,6 +51,8 @@ let openSid = null;        // session whose diff is shown, or null when closed
 let diffFullscreen = false; // the diff panel's own fullscreen (hides #sidebar); reset on close
 let sessionLabel = '';     // the session label shown in diff-sub, before any baseRef suffix
 let diffMode = 'working-tree'; // 'working-tree' (uncommitted only) or 'branch' (vs origin/branch)
+let prLinks = [];
+let selectedPr = null;
 let pollTimer = null;
 let hideTimer = null;
 let lastDiff = null;       // the last APPLIED `diff` reply, for in-place re-render
@@ -67,6 +72,10 @@ let inFlight = false;      // a view-diff request is outstanding (poll skips whi
 let inFlightTimer = null;  // defensive clear so a lost reply can't wedge polling
 let submitTimer = null;    // bounds a diff-comments submit (Fix C)
 let submitSid = null;      // the session a still-outstanding submit belongs to
+let submitSourceKey = null;// localStorage draft key submitted with the outstanding send
+let submitLegacyKey = null;// legacy localStorage draft key claimed by the outstanding send
+let draftsLoadedFromLegacyKey = null;
+let lastPrRequestAtByKey = new Map(); // PR diffs shell out to gh; refresh them less aggressively
 let dragAnchor = null;     // {file,side,line} where a click-drag range select started
 let dragCurrentLine = null;// last in-range line the drag extended to (same file/side)
 let dragging = false;      // real movement happened → a drag, not a plain click
@@ -98,12 +107,12 @@ export function openDiffPanel(sessionId) {
   const switching = openSid && openSid !== sessionId;
   openSid = sessionId;
   if (switching) { cancelDrag(); resetSessionState(); clearSubmit(); }
-  else loadDrafts();
   // Reset the mode toggle back to the default on every genuinely fresh open (a new
   // session, or reopening after a close) — but NOT on a redundant re-invoke for the
   // session already showing, which is just a refresh and shouldn't yank the user back
   // to "Uncommitted" mid-review.
-  if (!alreadyOpenSame) applyMode('working-tree');
+  if (!alreadyOpenSame) { selectedPr = null; applyMode('working-tree'); }
+  loadDrafts();
   // Don't reset `sending` on a re-open of the SAME session while a submit is still
   // genuinely outstanding — otherwise the reopened panel would re-enable Send and
   // allow a duplicate delivery before the first result lands (Fix C). A switch above
@@ -113,6 +122,9 @@ export function openDiffPanel(sessionId) {
   pendingDiff = null; inFlight = false; clearTimeout(inFlightTimer);
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   sessionLabel = s ? s.label : sessionId;
+  prLinks = diffPrLinks(s, taskForSession(sessionId));
+  renderPrModeButtons();
+  applyMode(diffMode);
   updateSubText();
   showPanel();
   updateSendBtn();
@@ -186,7 +198,6 @@ function showPanel() {
 function resetSessionState() {
   drafts = {};
   pendingDiff = null;
-  loadDrafts();
 }
 
 // Settle an outstanding diff-comments submit (used when switching sessions): cancel
@@ -196,18 +207,35 @@ function clearSubmit() {
   clearTimeout(submitTimer);
   sending = false;
   submitSid = null;
+  submitSourceKey = null;
+  submitLegacyKey = null;
 }
 
 function loadDrafts() {
-  try { drafts = parseDrafts(localStorage.getItem(draftsStorageKey(openSid))); }
-  catch { drafts = {}; }
+  try {
+    const { primary, legacy } = draftKeysForCurrentSource();
+    let raw = localStorage.getItem(primary);
+    const fromLegacy = raw == null && legacy && localStorage.getItem(legacy) != null;
+    if (fromLegacy) raw = localStorage.getItem(legacy);
+    drafts = parseDrafts(raw);
+    draftsLoadedFromLegacyKey = fromLegacy ? legacy : null;
+    if (fromLegacy && Object.keys(drafts).length) {
+      try {
+        localStorage.setItem(primary, JSON.stringify(drafts));
+      } catch {
+        persistError = 'Comments kept in memory but could not be saved — a reload may lose them.';
+      }
+    }
+  } catch { drafts = {}; draftsLoadedFromLegacyKey = null; }
 }
 
 function persistDrafts() {
   try {
-    const key = draftsStorageKey(openSid);
-    if (Object.keys(drafts).length === 0) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(drafts));
+    const { primary, legacy } = draftKeysForCurrentSource();
+    if (Object.keys(drafts).length === 0) localStorage.removeItem(primary);
+    else localStorage.setItem(primary, JSON.stringify(drafts));
+    if (legacy && draftsLoadedFromLegacyKey === legacy) localStorage.removeItem(legacy);
+    draftsLoadedFromLegacyKey = null;
     persistError = null;
   } catch {
     // localStorage quota exceeded (or a disabled store): the drafts still live in
@@ -222,12 +250,18 @@ function persistDrafts() {
 // open/switch/mode-change (bypasses the poll's in-flight gate — those must always go).
 function requestDiff() {
   if (!openSid) return;
+  refreshPrLinks();
   reqSeq += 1;
   lastReqId = reqSeq;
   inFlight = true;
   clearTimeout(inFlightTimer);
   inFlightTimer = setTimeout(() => { inFlight = false; }, INFLIGHT_TIMEOUT_MS);
-  send({ type: 'view-diff', sessionId: openSid, reqId: reqSeq, mode: diffMode });
+  const msg = { type: 'view-diff', sessionId: openSid, reqId: reqSeq, mode: diffMode };
+  if (diffMode === 'pr' && selectedPr) {
+    msg.prUrl = selectedPr.url;
+    lastPrRequestAtByKey.set(prRequestKey(), Date.now());
+  }
+  send(msg);
 }
 
 // Set the diff-titles sub line: the session label, plus the resolved base ref (once
@@ -236,7 +270,10 @@ function requestDiff() {
 // always what's resolved — see resolveBranchBase's fallbacks server-side).
 function updateSubText() {
   const baseRef = diffMode === 'branch' ? lastDiff?.baseRef : null;
-  subEl.textContent = baseRef ? `${sessionLabel} · vs ${baseRef}` : sessionLabel;
+  const prText = diffMode === 'pr' && selectedPr
+    ? `${selectedPr.repo || 'linked PR'} #${selectedPr.number || ''}`.trim()
+    : null;
+  subEl.textContent = baseRef ? `${sessionLabel} · vs ${baseRef}` : prText ? `${sessionLabel} · ${prText}` : sessionLabel;
 }
 
 // Toggle the mode buttons' visual state and the tracked mode, without side effects
@@ -246,6 +283,9 @@ function applyMode(mode) {
   diffMode = mode;
   modeWtBtn.classList.toggle('on', mode === 'working-tree');
   modeBranchBtn.classList.toggle('on', mode === 'branch');
+  for (const btn of modePrsEl.querySelectorAll('.diff-mode-btn')) {
+    btn.classList.toggle('on', mode === 'pr' && btn.dataset.prUrl === selectedPr?.url);
+  }
 }
 
 // User-initiated mode switch: close any open editor/drag first (a re-render is about
@@ -257,11 +297,85 @@ function setMode(mode) {
   if (activeKey) closeEditor();
   cancelDrag();
   applyMode(mode);
+  loadDrafts();
+  updateSendBtn();
   updateSubText();
   lastDiff = null;
   pendingDiff = null;
   renderLoading();
   requestDiff();
+}
+
+function setPrMode(url) {
+  const pr = prLinks.find((l) => l.url === url);
+  if (!pr || (diffMode === 'pr' && selectedPr?.url === url) || !openSid) return;
+  if (activeKey) closeEditor();
+  cancelDrag();
+  selectedPr = pr;
+  applyMode('pr');
+  loadDrafts();
+  updateSendBtn();
+  updateSubText();
+  lastDiff = null;
+  pendingDiff = null;
+  renderLoading();
+  requestDiff();
+}
+
+function prDraftKey(pr = selectedPr) {
+  if (!pr) return null;
+  return pr.repo && pr.number ? `${pr.repo}#${pr.number}` : pr.url;
+}
+
+function draftKeysForCurrentSource() {
+  return draftStorageKeysForSource(openSid, diffMode, diffMode === 'pr' ? prDraftKey() : null);
+}
+
+function prRequestKey() {
+  return `${openSid}:${selectedPr?.url || ''}`;
+}
+
+function refreshPrLinks() {
+  const s = latestSessions.find((x) => x.sessionId === openSid);
+  const nextLinks = diffPrLinks(s, taskForSession(openSid));
+  const changed = JSON.stringify(nextLinks) !== JSON.stringify(prLinks);
+  prLinks = nextLinks;
+  const stillLinked = diffMode === 'pr' && selectedPr
+    ? prLinks.find((l) => prDraftKey(l) === prDraftKey(selectedPr))
+    : null;
+  if (diffMode === 'pr' && selectedPr && !stillLinked) {
+    selectedPr = null;
+    applyMode('working-tree');
+    loadDrafts();
+    updateSendBtn();
+    updateSubText();
+    renderPrModeButtons();
+    lastDiff = null;
+    pendingDiff = null;
+    renderLoading();
+    toast('Linked PR removed; showing uncommitted diff');
+    return;
+  }
+  if (stillLinked) selectedPr = stillLinked;
+  if (changed) {
+    renderPrModeButtons();
+    applyMode(diffMode);
+  }
+}
+
+function renderPrModeButtons() {
+  modePrsEl.replaceChildren();
+  for (const pr of prLinks) {
+    const btn = document.createElement('button');
+    btn.className = 'diff-mode-btn';
+    btn.type = 'button';
+    btn.dataset.prUrl = pr.url;
+    btn.textContent = pr.label;
+    btn.title = pr.repo ? `${pr.repo} pull request` : 'Linked pull request';
+    btn.classList.toggle('on', diffMode === 'pr' && pr.url === selectedPr?.url);
+    btn.addEventListener('click', () => setPrMode(pr.url));
+    modePrsEl.append(btn);
+  }
 }
 
 // Poll for a fresh diff while open, but skip the tick while a comment box is being
@@ -271,7 +385,11 @@ function setMode(mode) {
 // lands (or the defensive timeout clears inFlight).
 function startPolling() {
   stopPolling();
-  pollTimer = setInterval(() => { if (openSid && !activeKey && !inFlight && !dragSelecting) requestDiff(); }, REFRESH_MS);
+  pollTimer = setInterval(() => {
+    if (!openSid || activeKey || inFlight || dragSelecting) return;
+    if (diffMode === 'pr' && Date.now() - (lastPrRequestAtByKey.get(prRequestKey()) || 0) < PR_REFRESH_MS) return;
+    requestDiff();
+  }, REFRESH_MS);
 }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
@@ -308,14 +426,22 @@ export function onDiffCommentsResult(msg) {
   sending = false;
   submitSid = null;
   if (msg.ok) {
-    drafts = {};
-    persistDrafts();
+    const currentKey = draftKeysForCurrentSource().primary;
+    const { removeKey, clearCurrent } = clearSubmittedDraftSource({ currentKey, submittedKey: submitSourceKey });
+    try { if (removeKey) localStorage.removeItem(removeKey); } catch {}
+    try { if (submitLegacyKey) localStorage.removeItem(submitLegacyKey); } catch {}
+    if (clearCurrent) {
+      drafts = {};
+      persistDrafts();
+    }
     sendError = null;
     toast('Review comments sent to the agent');
   } else {
     // Keep the drafts so the user can retry; surface the error inline.
     sendError = msg.error || 'Send failed.';
   }
+  submitSourceKey = null;
+  submitLegacyKey = null;
   updateSendBtn();
   renderDiff();
 }
@@ -368,7 +494,8 @@ function renderDiff() {
   if (st === 'not-a-repo') {
     frag.append(noticeEl("This session's folder isn't a git repository."));
   } else if (st === 'empty') {
-    frag.append(noticeEl(lastDiff.baseRef ? `No differences from ${lastDiff.baseRef}.` : 'No uncommitted changes.'));
+    if (diffMode === 'pr' && lastDiff.prNumber) frag.append(noticeEl(`No changes in PR #${lastDiff.prNumber}.`));
+    else frag.append(noticeEl(lastDiff.baseRef ? `No differences from ${lastDiff.baseRef}.` : 'No uncommitted changes.'));
   } else if (st === 'no-remote') {
     const msg = lastDiff.reason === 'no-head'
       ? 'No commits yet — nothing to compare against a remote branch.'
@@ -676,6 +803,11 @@ function submit() {
   if (sending || comments.length === 0 || !openSid) return;
   sending = true;
   submitSid = openSid;
+  {
+    const keys = draftKeysForCurrentSource();
+    submitSourceKey = keys.primary;
+    submitLegacyKey = draftsLoadedFromLegacyKey === keys.legacy ? keys.legacy : null;
+  }
   sendError = null;
   updateSendBtn();
   // Bound the wait for diff-comments-result: if it never arrives (WS blip), un-stick
@@ -686,11 +818,19 @@ function submit() {
     if (!sending) return;
     sending = false;
     submitSid = null;
+    submitSourceKey = null;
+    submitLegacyKey = null;
     sendError = "Couldn't confirm delivery — drafts kept, try again.";
     updateSendBtn();
     renderDiff();
   }, SUBMIT_TIMEOUT_MS);
-  send({ type: 'diff-comments', sessionId: openSid, comments });
+  const msg = { type: 'diff-comments', sessionId: openSid, comments, mode: diffMode };
+  if (diffMode === 'pr' && selectedPr) {
+    msg.prUrl = selectedPr.url;
+    msg.prNumber = selectedPr.number;
+    msg.prRepo = selectedPr.repo;
+  }
+  send(msg);
 }
 
 // --- events ---
@@ -698,8 +838,8 @@ function submit() {
 closeBtn.addEventListener('click', () => closeDiffPanel());
 fullscreenBtn.addEventListener('click', () => setDiffFullscreen(!diffFullscreen));
 sendBtn.addEventListener('click', () => submit());
-modeWtBtn.addEventListener('click', () => setMode('working-tree'));
-modeBranchBtn.addEventListener('click', () => setMode('branch'));
+modeWtBtn.addEventListener('click', () => { selectedPr = null; setMode('working-tree'); });
+modeBranchBtn.addEventListener('click', () => { selectedPr = null; setMode('branch'); });
 
 // Delegated clicks in the scroll body: draft edit/delete (line comments themselves
 // are opened via the click-and-drag gesture below, not a click handler here).
@@ -848,5 +988,3 @@ document.addEventListener('keydown', (e) => {
 function cssEscape(s) {
   return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g, '\\$&');
 }
-
-

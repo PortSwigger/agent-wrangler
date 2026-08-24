@@ -19,9 +19,17 @@ function tempRepo() {
 }
 
 // ctx double: entryFor returns the given entry; sessionFromGraph the given node.
-function ctx({ entry = null, node = null, projectsDir = undefined } = {}) {
+function ctx({ entry = null, node = null, projectsDir = undefined, sessionLinks = [], taskLinks = [], prDiff = null } = {}) {
   const sent = [];
-  return { sent, sessionManager: { entryFor: () => entry }, sessionFromGraph: () => node, reply: (o) => sent.push(o), projectsDir };
+  return {
+    sent,
+    sessionManager: { entryFor: () => entry, getLinks: () => sessionLinks },
+    taskStore: { taskFor: () => ({ id: 'T1' }), getLinks: () => taskLinks },
+    sessionFromGraph: () => node,
+    pullRequestDiff: prDiff,
+    reply: (o) => sent.push(o),
+    projectsDir,
+  };
 }
 
 // A projects/ tree like ~/.claude/projects: <bucket>/<liveSessionId>.jsonl, with
@@ -114,6 +122,60 @@ test('view-diff: an unrecognised mode falls back to working-tree', async () => {
   await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1', mode: 'bogus' }, c);
   assert.equal(c.sent[0].mode, 'working-tree');
   assert.equal(c.sent[0].state, 'ok');
+});
+
+test('view-diff: mode "pr" routes to the selected linked PR diff', async () => {
+  const calls = [];
+  const prUrl = 'https://github.com/acme/widgets/pull/42';
+  const c = ctx({
+    sessionLinks: [{ type: 'pr', url: prUrl, repo: 'acme/widgets', number: 42 }],
+    prDiff: async (url) => {
+      calls.push(url);
+      return { state: 'ok', files: [{ path: 'a.js', hunks: [] }], truncated: { droppedLines: 0, droppedFiles: 0 } };
+    },
+  });
+
+  await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1', reqId: 9, mode: 'pr', prUrl }, c);
+
+  assert.deepEqual(calls, [prUrl]);
+  assert.equal(c.sent[0].type, 'diff');
+  assert.equal(c.sent[0].sessionId, 'S1');
+  assert.equal(c.sent[0].reqId, 9);
+  assert.equal(c.sent[0].mode, 'pr');
+  assert.equal(c.sent[0].prUrl, prUrl);
+  assert.equal(c.sent[0].prRepo, 'acme/widgets');
+  assert.equal(c.sent[0].prNumber, 42);
+  assert.equal(c.sent[0].state, 'ok');
+});
+
+test('view-diff: mode "pr" can use a PR linked on the assigned task', async () => {
+  const prUrl = 'https://github.com/acme/widgets/pull/43';
+  const c = ctx({
+    taskLinks: [{ type: 'pr', url: prUrl, repo: 'acme/widgets', number: 43 }],
+    prDiff: async () => ({ state: 'empty' }),
+  });
+
+  await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1', mode: 'pr', prUrl }, c);
+
+  assert.equal(c.sent[0].mode, 'pr');
+  assert.equal(c.sent[0].prNumber, 43);
+  assert.equal(c.sent[0].state, 'empty');
+});
+
+test('view-diff: mode "pr" rejects an unlinked PR URL', async () => {
+  const calls = [];
+  const c = ctx({
+    sessionLinks: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }],
+    prDiff: async (url) => { calls.push(url); return { state: 'empty' }; },
+  });
+
+  await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1', reqId: 10, mode: 'pr', prUrl: 'https://github.com/acme/widgets/pull/99' }, c);
+
+  assert.deepEqual(calls, []);
+  assert.equal(c.sent[0].mode, 'pr');
+  assert.equal(c.sent[0].reqId, 10);
+  assert.equal(c.sent[0].state, 'error');
+  assert.match(c.sent[0].error, /not linked/i);
 });
 
 test('view-diff: falls back to the transcript\'s drifted cwd when the launch cwd is not a repo', async () => {

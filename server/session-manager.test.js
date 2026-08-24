@@ -42,11 +42,12 @@ async function withChildFullViewDefault(value, fn) {
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
 // the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
 // scratch dir inside the source tree made every blank-cwd session report the
-// wrangler's own branch — the "branch bleeding between sessions" bug. Compares
-// against DATA_DIR (not a hardcoded ~/.agent-wrangler) so this holds under
-// AW_DATA_DIR-redirected test runs too (see test-setup.js).
-test('scratch SESSIONS_DIR lives under the data dir, outside the checkout', () => {
+// wrangler's own branch — the "branch bleeding between sessions" bug.
+test('scratch SESSIONS_DIR follows DATA_DIR (defaulting to ~/.agent-wrangler)', () => {
   assert.equal(SESSIONS_DIR, path.join(DATA_DIR, 'sessions'));
+  if (!process.env.AW_DATA_DIR) {
+    assert.equal(SESSIONS_DIR, path.join(os.homedir(), '.agent-wrangler', 'sessions'));
+  }
 });
 
 test('readBranch leaks the enclosing repo branch for a scratch dir nested in a repo', async () => {
@@ -1092,6 +1093,22 @@ test('dispatch persists entry.effort and passes it to buildLaunch', async () => 
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', effort: 'high' });
   assert.equal(sm.map.get(sessionId).effort, 'high');
   assert.match(captured, /--effort' 'high'/);
+});
+
+test('dispatch passes Codex the real task memory root, never the by-session symlink', async () => {
+  const sm = smForDispatch();
+  sm._resolveLiveId = async () => 'codex-live';
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  const memoryDir = path.join(os.tmpdir(), 'aw-memory', 'tasks', 'T1');
+  const memoryPath = path.join(memoryDir, 'memory.md');
+  await sm.dispatch({
+    cwd: os.tmpdir(), intent: 'x', agent: 'codex',
+    bindMemory: () => ({ memoryDir, memoryPath }),
+  });
+  assert.match(captured, new RegExp(`AW_TASK_MEMORY='${memoryPath}'`));
+  assert.ok(captured.includes(`'--add-dir' '${memoryDir}'`));
+  assert.doesNotMatch(captured, /by-session/);
 });
 
 // Trust is no longer part of the launch command (verified against the real

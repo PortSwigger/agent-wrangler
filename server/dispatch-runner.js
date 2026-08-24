@@ -60,9 +60,9 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
       ? { issue: rawIssue, phase: { label: 'starting', kind: 'active', at: now }, startedAt: now }
       : (opts.workflow || undefined),
     parentSession: opts.parentSession || undefined,
-    // Repoint the memory symlink before the process launches — the agent reads
-    // AW_TASK_MEMORY / --add-dir at boot — keyed on the chosen task (opts.taskId,
-    // before the assign below lands).
+    // Bind memory before the process launches, keyed on the chosen task
+    // (opts.taskId, before the assign below lands). Claude launches through the
+    // stable symlink; Codex consumes bindSession's returned real target.
     bindMemory: (sid) => memoryStore.bindSession(sid, opts.taskId || null),
   });
   // Optional task targeting: assign is a no-op if the task was deleted between

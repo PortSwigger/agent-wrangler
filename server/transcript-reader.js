@@ -17,6 +17,17 @@ const SUBAGENT_QUIET_POLLS = 2;
 
 // sessionId -> { transcript, offset, totals, subAgents, leftover }
 const cache = new Map();
+// `${projectsDir}\0${sessionId}\0${since}` -> in-flight analyze() promise.
+// analyze() reads AND mutates the shared `state` object above in place (advancing
+// state.offset, replacing state.subFiles), so two overlapping callers for the same
+// session race on it — a slower caller's own (now-stale) stat.size can compare as
+// smaller than the offset a faster, already-finished caller advanced past,
+// tripping the "file truncated/rotated" branch and wiping every subFiles tracker
+// (resetting quietPolls to 0 for sub-agents that finished long ago, so they all
+// flash 'running' again for a poll or two). Coalescing concurrent callers into one
+// shared scan removes the race outright, rather than trying to make the
+// truncation check itself safe under concurrent mutation.
+const inFlight = new Map();
 // `${projectsDir}\0${sessionId}` -> resolved transcript path. Keyed by the
 // projects dir so test dirs can't collide with the real tree. Only *positive*
 // results are stored: a freshly launched session is analysed before its first
@@ -711,7 +722,24 @@ export function usageSince(entry) {
 // Incrementally analyse a session transcript for cost + sub-agents. `since` (epoch
 // ms) excludes spend from before that instant — a fork's createdAt, so the parent
 // history replayed into its transcript isn't billed twice (see scanLine).
-export async function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0 } = {}) {
+//
+// Deliberately NOT an async function: coalesced callers share the exact SAME
+// promise reference (see the `inFlight` comment above) rather than each getting
+// their own outer promise wrapping the shared inner one — wrapping the body in
+// `async` would still coalesce correctly, but this way a caller can compare
+// identity directly instead of relying on both settling to equal values.
+export function analyze(sessionId, projectsDir = PROJECTS_DIR, { since = 0 } = {}) {
+  const key = `${projectsDir}\0${sessionId}\0${since}`;
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const p = analyzeOnce(sessionId, projectsDir, since).finally(() => {
+    if (inFlight.get(key) === p) inFlight.delete(key);
+  });
+  inFlight.set(key, p);
+  return p;
+}
+
+async function analyzeOnce(sessionId, projectsDir, since) {
   const transcript = await findTranscript(sessionId, projectsDir);
   if (!transcript) return { usd: null, subAgentUsd: 0, advisorUsd: 0, tokens: null, subAgents: [] };
 

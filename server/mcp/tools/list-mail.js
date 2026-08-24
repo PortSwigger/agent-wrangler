@@ -11,7 +11,10 @@ export const listMailTool = {
     'List every message in your own mailbox (unread, read, and undeliverable), oldest-first, '
     + 'as metadata only — id, sender, timestamp, size, read state, and a short excerpt. Never '
     + 'includes a full body, even for a small message. Use it to find a message\'s id, then '
-    + 'read_mail({id}) to fetch it in full.',
+    + 'read_mail({id}) to fetch it in full. Each entry carries both `from` (a raw session id) and '
+    + '`fromLabel` (that session\'s name) — prefer `fromLabel` when telling the user who a message '
+    + 'is from, but labels aren\'t guaranteed unique (see the `session-hierarchy` skill), so if '
+    + 'more than one sender is in view pair the label with a short id.',
   inputSchema: {},
   async handler({ deps, caller }) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no mailbox to list.');

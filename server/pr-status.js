@@ -149,6 +149,23 @@ export async function fetchUnresolvedThreadCount(url, run = defaultUnresolvedRun
   }
 }
 
+function defaultDiffRun(url) {
+  return new Promise((resolve, reject) => {
+    execFile('gh', ['pr', 'diff', url], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        err.stderr = stderr || err.stderr;
+        reject(err);
+        return;
+      }
+      resolve({ stdout: stdout || '' });
+    });
+  });
+}
+
+export async function fetchPrDiff(url, run = defaultDiffRun) {
+  return run(url);
+}
+
 // Merge a PR via gh, returning { ok, error }. Never throws — a failed merge
 // (branch protection, conflicts, method not allowed) is surfaced to the user as
 // a toast/pane nudge so they can merge manually, never a crash. The error text

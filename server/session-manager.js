@@ -9,7 +9,7 @@ import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/clau
 import { adapterFor, isOwnedTmux } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
-import { addDirFor, linkPathFor } from './memory-store.js';
+import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
@@ -862,9 +862,10 @@ export class SessionManager {
       dir = lp.dir;
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
+    const memory = resolvedMemoryBindingFor(sessionId);
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
-      memoryDir: addDirFor(sessionId), memoryPath: linkPathFor(sessionId),
+      ...memory,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
       // issue-to-pr skill plugin so a suspended/rebooted autopilot run keeps it —
       // see shouldReloadWorkflowSkill for what disqualifies a worker (modern or
@@ -910,11 +911,13 @@ export class SessionManager {
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
+    // Bind before building the command: Codex needs the resolved real task dir,
+    // while Claude continues to derive and use the stable per-session symlink.
+    const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
-      memoryDir: addDirFor(sessionId), memoryPath: linkPathFor(sessionId),
+      ...memory,
     });
-    bindMemory?.(sessionId);
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
     });
@@ -1316,14 +1319,12 @@ export class SessionManager {
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy });
-    // Bind the per-session memory link to its task (or scratch) BEFORE launch, so
-    // AW_TASK_MEMORY and --add-dir resolve the moment the agent boots — and BEFORE
-    // wrapLaunch, so the devcontainer runtime's `docker cp` of the memory dir sees
-    // a real symlink target rather than a not-yet-created one. dispatch mints the
-    // sessionId, so the caller hands in a binder rather than doing it after the
-    // launch returns.
-    bindMemory?.(sessionId);
+    // Bind before building the command. Claude uses the stable by-session link;
+    // Codex 0.149+ rejects symlinked writable roots, so its adapter receives the
+    // resolved real task/scratch directory returned by the binder. dispatch mints
+    // sessionId, hence callers still provide a binder rather than a prebuilt path.
+    const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);

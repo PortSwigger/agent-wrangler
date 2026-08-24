@@ -601,6 +601,11 @@ function assignedTaskId(sessionId) {
   return id && latestTasks.tasks.some((t) => t.id === id && !t.archivedAt) ? id : null;
 }
 
+export function taskForSession(sessionId) {
+  const id = assignedTaskId(sessionId);
+  return id ? latestTasks.tasks.find((t) => t.id === id) || null : null;
+}
+
 // Read-only link chips for a task tile / session card / panel: jira (key, links
 // to the issue) and pr (#number, links to the PR, with a CI status dot the
 // server polls). All mutation is via MCP — there's deliberately no add/remove
