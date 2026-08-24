@@ -2504,9 +2504,8 @@ async function teleportSession(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   const result = await confirmDialog({
     title: 'Teleport this cloud session?',
-    body: 'A fresh detached git worktree is created here and the cloud session is checked out into it.\n\n'
-      + 'The card then becomes an ordinary local session: cost, diff, the terminal, mail and PR watching all start working. '
-      + 'It stops being a cloud card — this is one-way.',
+    body: 'A fresh detached git worktree is created here and the cloud session is checked out into it. '
+      + 'It will only take committed changes and will fork the session, with future messages not synced',
     okLabel: 'Teleport',
   });
   if (result !== 'ok') return;
@@ -3229,8 +3228,7 @@ function renderCloudPanel(s) {
     <p>This session is running on Claude's own machine, so there's no local terminal to attach.</p>
     <p class="muted">${esc(ATTACH_UNSUPPORTED_REASON)}</p>
     ${url ? `<p><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open it on claude.ai ↗</a></p>` : ''}
-    <button id="cloud-teleport-btn">Teleport to a local worktree…</button>
-    <p class="muted">Teleport checks the cloud session out into a fresh detached git worktree here and converts the card to a local session — after which cost, diff, mail and PR watching all start working.</p>
+    <button id="cloud-teleport-btn">Teleport session locally</button>
   </div>`;
   term.querySelector('#cloud-teleport-btn').addEventListener('click', () => teleportSession(s.sessionId));
 }
