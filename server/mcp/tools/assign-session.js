@@ -4,9 +4,9 @@ import { descendantsOf } from '../../control/handlers/archive.js';
 // Move a session (default: the caller) onto a task, or back to Ad-hoc — the
 // session-to-session counterpart of dragging a card onto a task tile. Mirrors
 // the /ws task-assign handler (server/control/handlers/tasks.js): assign, then
-// rebind the AW_TASK_MEMORY symlink to the new task's memory file (or scratch,
-// for Ad-hoc) BEFORE rebuilding, so a running session's next file access already
-// sees the right memory — the same order dispatch/resume/fork keep it in. Also
+// rebind memory to the new task's file (or scratch, for Ad-hoc) BEFORE rebuilding.
+// A running Claude follows the repointed symlink immediately; Codex uses a real
+// launch-time path and follows the new binding on its next relaunch. Also
 // cascades to the target's transitive parentSession family (same as the ws
 // handler) so a parent doesn't leave its children assigned to the old task.
 export const assignSessionTool = {

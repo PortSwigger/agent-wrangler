@@ -12,13 +12,17 @@ function tmpDir() {
 test('bindSession creates the task folder and links to it (relative dir symlink)', () => {
   const dir = tmpDir();
   const store = new MemoryStore(dir);
-  store.bindSession('s1', 't_a');
+  const binding = store.bindSession('s1', 't_a');
   const link = store.linkPath('s1');
   assert.equal(fs.readlinkSync(link), path.join('..', 'tasks', 't_a'));
   assert.ok(fs.existsSync(store.taskPath('t_a'))); // memory.md touched
   // The link resolves to the task's real folder, and writes through it land in
   // the canonical task file.
   assert.equal(fs.realpathSync(link), fs.realpathSync(store.taskDir('t_a')));
+  assert.deepEqual(binding, {
+    memoryDir: fs.realpathSync(store.taskDir('t_a')),
+    memoryPath: path.join(fs.realpathSync(store.taskDir('t_a')), 'memory.md'),
+  });
   fs.writeFileSync(path.join(link, 'memory.md'), 'via link');
   assert.equal(store.read('t_a'), 'via link');
 });

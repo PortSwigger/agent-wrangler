@@ -82,9 +82,9 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   if (!ensureLaunchDir({ dir, recreateDir, reply: ctx.reply, sessionId })) {
     return;
   }
-  // Bind memory BEFORE the relaunch so the forked agent's AW_TASK_MEMORY /
-  // --add-dir resolve at boot. Keyed on the owner id (sessionId), stable
-  // across the fork, per the resume-fork invariant.
+  // Bind memory BEFORE relaunch so Claude's link and Codex's resolved real path
+  // both target the current task at boot. Keyed on the owner id (sessionId),
+  // stable across the fork, per the resume-fork invariant.
   // A session resumed on its own while its task is STILL archived (i.e. the
   // task wasn't restored in this same operation) falls back to Ad-hoc rather
   // than keeping a stale assignment — otherwise it would silently resurface
