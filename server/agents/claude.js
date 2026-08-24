@@ -89,6 +89,16 @@ export function withCleanClaudeEnv(cmd) {
   return `env ${vars.map((v) => `-u ${v}`).join(' ')} ${cmd}`;
 }
 
+// Same strip, as an env OBJECT rather than a shell-wrapped command — for a
+// direct execFile() call (archive-review-runner.js's headless Haiku review),
+// which has no shell to prefix with `env -u`. Single source of truth for the
+// var list, shared with withCleanClaudeEnv above.
+export function cleanClaudeEnv(env = process.env) {
+  const dynamic = Object.keys(env).filter((k) => k.startsWith('CLAUDE_CODE_'));
+  const strip = new Set([...NESTED_CLAUDE_ENV, ...dynamic]);
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
+}
+
 export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, taskMemory }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
   // skill discovery alone isn't reliable for one that must be followed at every

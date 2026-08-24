@@ -22,3 +22,20 @@ process.env.CODEX_HOME = dir;
 process.on('exit', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// Same problem, a different real file: data-dir.js resolves DATA_DIR from
+// AW_DATA_DIR at import time, and config-store.js/memory-store.js build on top
+// of it with no path injection of their own — config-store.test.js already
+// documents that it shares (and restores) the real ~/.agent-wrangler/config.json
+// for lack of an alternative. Redirecting AW_DATA_DIR here, before any of those
+// modules are imported, gives every test its own throwaway data dir instead —
+// the archive-review feature (server/archive-review-runner.js) reads
+// archiveReviewEnabled() off the real config.json and, if a real install ever
+// turns it on, would otherwise make a dispatch/resume/fork/archive test spawn a
+// real billed `claude -p` subprocess and append to real task memory. Same class
+// of incident as the CODEX_HOME redirect above, with a bill attached.
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-data-dir-'));
+process.env.AW_DATA_DIR = dataDir;
+process.on('exit', () => {
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});

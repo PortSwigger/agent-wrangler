@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -132,6 +132,15 @@ test('childFullViewByDefault defaults to off (compact); only an explicit true en
   assert.equal(childFullViewByDefault({}), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: false }), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: true }), true);
+});
+
+// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// Default OFF (unlike most of these): archive review spends real money per
+// archive and grows a task's memory.md unbounded, so it must be an explicit opt-in.
+test('archiveReviewEnabled defaults to off; only an explicit true enables', () => {
+  assert.equal(archiveReviewEnabled({}), false);
+  assert.equal(archiveReviewEnabled({ archiveReviewEnabled: false }), false);
+  assert.equal(archiveReviewEnabled({ archiveReviewEnabled: true }), true);
 });
 
 test('autoFixPrChecksDefault defaults to on; only an explicit false disables', () => {

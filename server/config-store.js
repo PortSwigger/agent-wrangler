@@ -92,6 +92,18 @@ export function subagentsExpandedByDefault(cfg = readConfig()) {
   return cfg.subagentsExpandedByDefault === true;
 }
 
+// Whether archiving a Claude session spawns a headless `claude -p --model
+// haiku` review of its transcript, appending a short learnings note to its
+// task's memory.md (server/archive-review-runner.js). Default OFF — this
+// spends real (if small) money per archive and grows the task's memory file
+// unbounded, so it's opt-in rather than a silent new cost; toggled from the
+// board's settings modal (config.json `archiveReviewEnabled: true`). Takes cfg
+// (like subagentsExpandedByDefault) so tests never write the shared
+// config.json.
+export function archiveReviewEnabled(cfg = readConfig()) {
+  return cfg.archiveReviewEnabled === true;
+}
+
 // Whether a Codex launch/resume/fork marks that invocation's cwd trusted
 // (`-c projects."<cwd>".trust_level="trusted"`), skipping Codex's own
 // trust-folder prompt — Agent Wrangler already sandboxes the session
