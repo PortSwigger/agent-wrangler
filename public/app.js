@@ -4073,8 +4073,10 @@ function currentAgent() {
 // local — the old "a stale non-local selection must not survive an agent swap" rule,
 // widened from devcontainer to cover cloud. Workflow runs ARE supported in a
 // container (the issue-to-pr skill dir is copied in) but NOT in the cloud (the skill
-// rides --plugin-dir, which never reaches a VM), so cloud disables the Workflow card
-// and says why.
+// rides --plugin-dir, which never reaches a VM), so cloud and Workflow disable each
+// other symmetrically — whichever the user picked first wins and the other card
+// dies with a reason, rather than letting a launch silently promise a skill the VM
+// can't run.
 function syncDestination() {
   const v = destinationFieldVisibility({
     dest: dispatchDest, agent: currentAgent(), mode: modalMode,
@@ -4087,13 +4089,17 @@ function syncDestination() {
   document.getElementById('m-dest-cloud').disabled = !v.cloudCardEnabled;
   for (const btn of document.querySelectorAll('#m-dest-cards .mode-card')) {
     btn.classList.toggle('selected', btn.dataset.dest === dispatchDest);
-    // Two different reasons can disable a card; naming the wrong one is worse than
-    // naming none. Cloud in a schedule is the out-of-scope case, everything else is
-    // the Claude-only one.
+    // Three different reasons can disable the cloud card (Workflow mode picked,
+    // scheduling, non-Claude agent); naming the wrong one is worse than naming
+    // none. v.cloudCardDisabledReason is the one case cloud-ui.js can name for
+    // certain (Workflow mode); the other two are caller-side because they don't
+    // need cloud-ui.js's state to tell apart.
     btn.title = !btn.disabled ? ''
-      : (btn.dataset.dest === 'cloud' && currentAgent() === 'claude')
-        ? "Scheduling a cloud session isn't supported yet."
-        : 'Only available for Claude sessions.';
+      : (btn.dataset.dest === 'cloud' && v.cloudCardDisabledReason)
+        ? v.cloudCardDisabledReason
+        : (btn.dataset.dest === 'cloud' && currentAgent() === 'claude')
+          ? "Scheduling a cloud session isn't supported yet."
+          : 'Only available for Claude sessions.';
   }
   document.querySelector('.worktree-box').classList.toggle('hidden', !v.worktreeBox);
   document.getElementById('m-cloud-fields').classList.toggle('hidden', !v.cloudEnv);

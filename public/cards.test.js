@@ -183,10 +183,23 @@ test('cloudChips: the untrusted environment id is escaped, never interpolated ra
   assert.match(html, /&lt;img src=x&gt;/);
 });
 
-test('cloudChips: says the spend is untracked rather than leaving a blank meta line', () => {
+test('cloudChips: no sessionId yet shows a throbbing "starting" chip instead of the env label', () => {
+  const html = cloudChips(cloudSess({}, { sessionId: null }), ctx({ cloudEnvironments: [{ label: 'Prod runners', id: 'env_123' }] }));
+  assert.match(html, /runtime-cloud--starting/);
+  assert.match(html, /☁ starting…/);
+  assert.doesNotMatch(html, />☁ Prod runners</);
+});
+
+test('cloudChips: a known sessionId shows the ordinary env chip, no starting throb', () => {
   const html = cloudChips(cloudSess(), ctx());
-  assert.match(html, /☁ cost untracked/);
-  assert.match(html, /title="No local transcript[^"]*"/);
+  assert.doesNotMatch(html, /runtime-cloud--starting/);
+  assert.match(html, /☁ env_123/);
+});
+
+test('cloudChips: an archived session with no sessionId reads archived, not starting', () => {
+  const html = cloudChips(cloudSess({}, { sessionId: null, archivedAt: 123 }), ctx());
+  assert.doesNotMatch(html, /runtime-cloud--starting/);
+  assert.match(html, />archived</);
 });
 
 test('cloudChips: the claude.ai link is a real link chip, in href-safe form', () => {
@@ -205,12 +218,11 @@ test('cloudChips: a url that is not https-on-claude.ai never becomes an href', (
   }
 });
 
-test('cloudChips: a teleported card keeps only its provenance — no "cost untracked" lie about a session we CAN cost', () => {
+test('cloudChips: a teleported card keeps only its provenance chip, not the env label', () => {
   const s = cloudSess({ runtime: undefined });
   const html = cloudChips(s, ctx({ cloudEnvironments: [{ label: 'Prod runners', id: 'env_123' }] }));
   assert.match(html, />was ☁</);
   assert.match(html, /title="Started as a cloud session in Prod runners \(env_123\)[^"]*"/);
-  assert.doesNotMatch(html, /cost untracked/);
   // The link to the (now superseded) cloud session is still worth keeping.
   assert.match(html, /claude.ai\/code ↗/);
 });
@@ -229,7 +241,6 @@ test('sessionCardHtml: a cloud card renders the cloud chips in the runtime slot 
   // if a stray number arrives (a mis-scoped scan, a half-finished teleport).
   const html = sessionCardHtml(cloudSess({ usd: 9.99 }), ctx());
   assert.match(html, /☁ env_123/);
-  assert.match(html, /☁ cost untracked/);
   assert.doesNotMatch(html, /9\.99/);
   assert.doesNotMatch(html, /title="cost so far"/);
   assert.doesNotMatch(html, /runtime-dc/);

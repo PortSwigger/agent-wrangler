@@ -296,8 +296,9 @@ export const cloud = {
   // the board would cost a transcript under the CARD id, or pick up the local
   // `--cloud` CLIENT's own conversation and render its spend as this card's. A real
   // object short-circuits the `||`, which is what actually keeps the `$` pill off a
-  // cloud card in favour of `☁ cost untracked`. Same shape `transcript-reader.js`'s
-  // `analyze` returns for a transcript that doesn't exist.
+  // cloud card (there is nothing to cost, so nothing renders in its place — see
+  // cloudChips in cards.js). Same shape `transcript-reader.js`'s `analyze` returns
+  // for a transcript that doesn't exist.
   async analyze() {
     return { usd: null, subAgentUsd: 0, advisorUsd: 0, tokens: null, subAgents: [] };
   },

@@ -1826,9 +1826,15 @@ body.system-banner-open { padding-top: 30px; }
    runtime hue rather than claiming a new colour token: --rt/--rt-fg already means
    "this session runs somewhere other than this Mac", the two chips are mutually
    exclusive on a card (sessionCardHtml picks one), and the ☁/⬢ glyphs are what
-   tell them apart. The plain `☁ cost untracked` / `archived` chips stay bare
-   .card-tag — they qualify the session, they don't identify where it runs. */
+   tell them apart. The plain `archived` chip stays bare .card-tag — it qualifies
+   the session, it doesn't identify where it runs. */
 .card-tag.runtime-cloud { color: var(--rt-fg); background: color-mix(in srgb, var(--rt) 18%, var(--surface-2)); }
+/* Same "starting" convention as .card-tag.runtime-dc--starting: before the launch
+   pane's scrape finds a session_… id, the env chip can't honestly claim the
+   session exists yet, so it swaps to "☁ starting…" with the same brightness
+   throb rather than showing an env label that might be wrong for seconds. */
+.card-tag.runtime-cloud--starting { animation: bar-throb 1.4s ease-in-out infinite; animation-delay: var(--throb-delay, 0s); }
+@media (prefers-reduced-motion: reduce) { .card-tag.runtime-cloud--starting { animation: none; } }
 /* Blue reads as an in-progress/transient state — the session's tmux is being torn
    down and relaunched. Same tinted-wash convention as .card-tag.automerge. */
 .card-tag.restarting { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); }

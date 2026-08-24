@@ -232,20 +232,25 @@ export function cloudChips(s, ctx = {}) {
   const link = url ? linkChipsHtml([{ type: 'cloud', key: CLOUD_LINK_LABEL, url }], ctx) : '';
   // A teleported card (entry.cloud retained, runtime flipped back to local) is an
   // ordinary local session from that moment on: real transcript, real cost, real
-  // diff. So it keeps only the provenance chip and the link — a `☁ cost
-  // untracked` chip here would be an outright lie about a session we CAN cost.
+  // diff. So it keeps only the provenance chip and the link, not the env chip —
+  // the environment it launched in no longer describes where it's running.
   if (s.runtime !== 'cloud') {
     const wasTitle = `Started as a cloud session in ${envLabel}${envId ? ` (${envId})` : ''}, teleported to this local checkout`;
     return `<span class="card-tag runtime-cloud" title="${esc(wasTitle)}">was ☁</span>${link}`;
   }
   const archived = Boolean(cloud.archivedAt);
-  const envTitle = `${envId || 'Account default'}${archived ? ' — this cloud session is archived' : ''}`;
-  const env = `<span class="card-tag runtime-cloud" title="${esc(envTitle)}">☁ ${esc(envLabel)}</span>`;
-  // Not "$0.00" and not a blank meta line: a cloud session writes no local
-  // transcript, so its spend is absent from the usage cache, every rollup and
-  // cost-report.mjs alike — permanently, not pending. The chip says so out loud
-  // so nobody reads a missing $ pill as "this session was free".
-  const cost = '<span class="card-tag" title="No local transcript exists for a cloud session, so there is nothing to cost — this spend is invisible to the board, the usage cache and the cost report">☁ cost untracked</span>';
+  // No `sessionId` yet means the launch pane hasn't been scraped for one — the
+  // session may not exist as far as claude.ai is concerned. That's a real,
+  // already-known fact (not a guessed working/idle status), so it's worth its
+  // own chip: "starting…" rather than the env label, reusing the dc bring-up
+  // chip's brightness throb so it reads as in-progress the same way.
+  const starting = !cloud.sessionId && !archived;
+  const envTitle = starting
+    ? `${envLabel}${envId ? ` (${envId})` : ''} — waiting for the cloud session to start`
+    : `${envId || 'Account default'}${archived ? ' — this cloud session is archived' : ''}`;
+  const env = starting
+    ? `<span class="card-tag runtime-cloud runtime-cloud--starting" title="${esc(envTitle)}">☁ starting…</span>`
+    : `<span class="card-tag runtime-cloud" title="${esc(envTitle)}">☁ ${esc(envLabel)}</span>`;
   // Archived is said twice on purpose, both cheap: the env chip's title (hover
   // lands on the chip that identifies the session) plus one plain `archived`
   // chip so it is legible without hovering. Deliberately NOT its own colour or
@@ -254,7 +259,7 @@ export function cloudChips(s, ctx = {}) {
   const arch = archived
     ? '<span class="card-tag" title="This cloud session is archived — it can no longer be steered; Teleport it to keep working locally">archived</span>'
     : '';
-  return `${env}${cost}${link}${arch}`;
+  return `${env}${link}${arch}`;
 }
 
 // The mail-badge pill: `.card-name-row`, immediately left of the agent icon —
@@ -292,9 +297,9 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // A cloud session has no transcript, so `usd` is null already — the explicit
   // gate is here so that a stray number reaching a cloud card (a mis-scoped
   // scan, a half-finished teleport) can never render as this session's spend;
-  // cloudChips' `☁ cost untracked` is the honest chip instead. Keyed on the
-  // RUNTIME, not on s.cloud: a teleported card is local, has a real transcript,
-  // and must keep its ordinary cost pill.
+  // there is simply no cost pill for it. Keyed on the RUNTIME, not on s.cloud: a
+  // teleported card is local, has a real transcript, and must keep its ordinary
+  // cost pill.
   const cloudRuntime = s.runtime === 'cloud';
   const cost = !cloudRuntime && typeof s.usd === 'number' && s.usd > 0
     ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
@@ -405,8 +410,7 @@ export function workerRowHtml(s, ctx) {
   const estimated = s.agent === 'codex';
   // Same cloud gate as the full card (sessionCardHtml) — a collapsed cloud child
   // must not show a $ pill either, or the two renderings of one session would
-  // disagree about whether its spend is knowable. The row has no room for the
-  // `☁ cost untracked` explanation; the card it expands into carries that.
+  // disagree about whether its spend is knowable.
   const cloudRuntime = s.runtime === 'cloud';
   const cost = !cloudRuntime && typeof s.usd === 'number' && s.usd > 0
     ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`

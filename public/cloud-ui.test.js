@@ -88,6 +88,24 @@ test('destinationFieldVisibility: workflow and review mode still hide the worktr
   assert.equal(destinationFieldVisibility({ reviewMode: true }).worktreeBox, false);
 });
 
+test('destinationFieldVisibility: workflow mode disables the cloud card, symmetric with cloud disabling workflow', () => {
+  const v = destinationFieldVisibility({ dest: 'local', agent: 'claude', mode: 'launch', dispatchMode: 'workflow' });
+  assert.equal(v.cloudCardEnabled, false);
+  assert.match(v.cloudCardDisabledReason, /plugin dir/);
+});
+
+test('destinationFieldVisibility: a stale cloud selection snaps to local when workflow mode is picked', () => {
+  const v = destinationFieldVisibility({ dest: 'cloud', agent: 'claude', mode: 'launch', dispatchMode: 'workflow' });
+  assert.equal(v.effectiveDest, 'local');
+  assert.equal(v.cloudEnv, false);
+});
+
+test('destinationFieldVisibility: cloudCardDisabledReason is null when something else (agent, schedule) is the reason', () => {
+  assert.equal(destinationFieldVisibility({ dest: 'cloud', agent: 'codex', mode: 'launch' }).cloudCardDisabledReason, null);
+  assert.equal(destinationFieldVisibility({ dest: 'cloud', agent: 'claude', mode: 'schedule-create' }).cloudCardDisabledReason, null);
+  assert.equal(destinationFieldVisibility({ dest: 'local', agent: 'claude', mode: 'launch' }).cloudCardDisabledReason, null);
+});
+
 // --- cloudPreflightPills ---
 
 test('cloudPreflightPills: refusals render red and block, warnings amber and do not', () => {

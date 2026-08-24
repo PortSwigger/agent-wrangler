@@ -25,6 +25,11 @@
 // shortens.
 export const NO_LOCAL_CHECKOUT_REASON = 'No local checkout until you Teleport.';
 export const ATTACH_UNSUPPORTED_REASON = "Attaching to a cloud session isn't enabled for this account.";
+// Shared verbatim between workflowDisabledReason (cloud picked ⇒ Workflow card
+// dies) and cloudCardDisabledReason (Workflow picked ⇒ Cloud card dies) — the
+// two disables are the same rule read from either side, so the wording must
+// say the same thing regardless of which control the user touched first.
+export const WORKFLOW_NEEDS_LOCAL_PLUGIN_REASON = 'Workflow mode needs a local plugin dir, which a cloud VM never sees.';
 
 // The single expression of the "all four touch points agree" rule (§11a). The
 // destination row, the worktree box, the cloud fields and the Workflow mode card
@@ -52,14 +57,16 @@ export function destinationFieldVisibility({
   // selection must not survive an agent swap — resolve it here rather than trusting
   // whatever the control still holds.
   const claude = agent === 'claude';
-  // Cloud additionally requires launch mode: a SCHEDULE targeting cloud is
-  // deliberately out of scope for v1, and the cheapest way to guarantee no saved
-  // schedule can ever carry runtime 'cloud' is to make the card unpickable there.
-  const cloudAllowed = claude && mode === 'launch';
+  const wf = dispatchMode === 'workflow';
+  // Cloud additionally requires launch mode (a SCHEDULE targeting cloud is
+  // deliberately out of scope for v1) AND standard dispatch mode: the
+  // issue-to-pr skill Workflow runs on rides `--plugin-dir`, which never
+  // reaches a VM, so the two controls disable each other symmetrically —
+  // picking either one first must make the other unpickable.
+  const cloudAllowed = claude && mode === 'launch' && !wf;
   const stale = (dest === 'cloud' && !cloudAllowed) || (dest === 'devcontainer' && !claude);
   const effectiveDest = stale ? 'local' : dest;
   const cloud = effectiveDest === 'cloud';
-  const wf = dispatchMode === 'workflow';
   return {
     destRowVisible,
     effectiveDest,
@@ -69,16 +76,20 @@ export function destinationFieldVisibility({
     cloudEnv: cloud,
     cloudRef: cloud,
     cloudMsg: cloud,
-    // The issue-to-pr skill rides `--plugin-dir`, which never reaches a VM — so
     // Workflow is not merely hidden but disabled, with a reason, when cloud is
     // picked. (The mode CARD row itself stays visible; only workflow is dead.)
     workflowEnabled: !cloud,
-    workflowDisabledReason: cloud
-      ? 'Workflow mode needs a local plugin dir, which a cloud VM never sees.'
-      : null,
+    workflowDisabledReason: cloud ? WORKFLOW_NEEDS_LOCAL_PLUGIN_REASON : null,
     // Mirrors the old syncRuntimeToggle rule, widened from devcontainer to both
-    // non-local destinations — plus cloud's extra launch-mode-only constraint.
+    // non-local destinations — plus cloud's extra launch-mode-only and
+    // standard-mode-only constraints.
     cloudCardEnabled: cloudAllowed,
+    // Only set when a Claude agent in launch mode is the reason cloud is still
+    // dead — i.e. Workflow mode is what's blocking it. Non-Claude and
+    // non-launch already have their own caller-side messages, and leaving this
+    // null there (rather than guessing) is what lets the caller fall back to
+    // the right one instead of the wrong reason winning a coin toss.
+    cloudCardDisabledReason: claude && mode === 'launch' && wf ? WORKFLOW_NEEDS_LOCAL_PLUGIN_REASON : null,
     devcontainerCardEnabled: claude,
   };
 }
