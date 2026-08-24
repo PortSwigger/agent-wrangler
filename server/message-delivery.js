@@ -3,6 +3,7 @@ import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
+import { cloudSteerWins, sendCloudMessage as defaultSendCloudMessage } from './cloud-steer.js';
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
 // shared primitive behind send_message (MCP) and the `message` WS control handler.
@@ -21,12 +22,25 @@ export async function deliverMessage(id, text, deps) {
   const sendText = deps.sendText ?? defaultSendText;
 
   const target = tmuxFor(id);
+  const entry = sessionManager.entryFor(id);
+
+  // Cloud route, ahead of the live-pane paste (see cloudSteerWins on why the
+  // ordering is load-bearing). It lives HERE rather than in
+  // control/handlers/message.js because send_message's legacyPushFallback — the
+  // path every cloud card takes, since mailCapable is false for cloud — also
+  // ends up in deliverMessage; one branch here covers the human-typed card
+  // message and peer mail's direct push both. This does NOT unify the two
+  // delivery paths: mailbox-delivery.js keeps its own cloud branch and its own
+  // guards, and what they share is a shell-out leaf, not a routing decision.
+  if (cloudSteerWins({ entry, tmux: target, attachSupported: cloudAttachSupportedFor(deps) })) {
+    return deliverToCloud(id, text, entry, deps);
+  }
+
   if (target) {
     await sendText(target, text, socketFor(id));
     return { mode: 'live' };
   }
 
-  const entry = sessionManager.entryFor(id);
   if (!entry) return { mode: 'error', error: `Session ${id} not found (it may have been archived).` };
   if (entry.archivedAt) {
     return { mode: 'error', error: `Session ${id} is archived; messaging an archived session isn't supported.` };
@@ -76,4 +90,36 @@ export async function deliverMessage(id, text, deps) {
     return { mode: 'error', error: err?.message || String(err) };
   }
   return { mode: 'dormant' };
+}
+
+// A cloud card is never resumed to receive a message — there is no host
+// transcript to resume and the session is running somewhere we don't control.
+// 'live' on success: the message reached the agent, which is what the caller's
+// 'live' means; there is no dormant/wake concept for cloud.
+async function deliverToCloud(id, text, entry, deps) {
+  const steer = deps.sendCloudMessage ?? defaultSendCloudMessage;
+  // Same hard refusal as the local path: an archived card left the board on
+  // purpose. Checked here too because the generic check below sits after the
+  // live-pane branch this one jumps ahead of.
+  if (entry.archivedAt) {
+    return { mode: 'error', error: `Session ${id} is archived; messaging an archived session isn't supported.` };
+  }
+  const res = await steer({ cloudSessionId: entry.cloud?.sessionId, text });
+  if (res.ok) return { mode: 'live' };
+  // Mark the card, don't just toast: an archived cloud session is a permanent
+  // state the board should show, and the steer refusal is the only evidence of
+  // it we ever get (nothing polls a cloud session's lifecycle).
+  if (res.archived) deps.sessionManager.markCloudArchived?.(id);
+  return { mode: 'error', error: res.error };
+}
+
+// The attach gate's answer, read off the graph field the server already emits
+// rather than by importing cloud-attach.js — that keeps the gate's "one module
+// asks the question" property (this consumes the published answer, exactly as
+// the client's Terminal-button greying does) and needs no new deps wiring.
+// A missing or stale graph reads as unsupported, which routes to the steer: the
+// safe direction, since a cloud card's only live pane while attach is off is the
+// exiting create pane.
+function cloudAttachSupportedFor(deps) {
+  return Boolean(deps.graph?.()?.cloudAttachSupported);
 }

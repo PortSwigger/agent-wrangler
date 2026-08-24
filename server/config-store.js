@@ -123,6 +123,31 @@ export function childFullViewByDefault(cfg = readConfig()) {
   return cfg.childFullViewByDefault === true;
 }
 
+// The cloud environments a dispatch may target, as `[{ label, id }]`. Purely a
+// wrangler-side registry typed into the settings modal — there is no API listing
+// and Claude's own settings are never read, so this file is the only source of
+// what the Destination dropdown offers. Validation is load-bearing rather than
+// cosmetic: the id's PREFIX is what picks the launch form (`env_` → the
+// interactive `--cloud` create, `ccpool_` → the `-p --environment` one), so a row
+// with a garbage id would reach `classifyEnvironmentId`'s throw at launch time
+// instead of being dropped here. Rows without a label are dropped too — the
+// dropdown would render a blank option that nobody can identify. Takes cfg (like
+// taskMemoryEnabled) so tests never write the shared config.json.
+export function cloudEnvironments(cfg = readConfig()) {
+  const rows = Array.isArray(cfg?.cloudEnvironments) ? cfg.cloudEnvironments : [];
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const id = String(row?.id ?? '').trim();
+    const label = String(row?.label ?? '').trim();
+    if (!label || !(id.startsWith('env_') || id.startsWith('ccpool_'))) continue;
+    if (seen.has(id)) continue; // first spelling of an id wins, so the dropdown can't be ambiguous
+    seen.add(id);
+    out.push({ label, id });
+  }
+  return out;
+}
+
 // The fallback for a session's `autoFixPrChecks` (the PR check-failure and
 // merge-conflict pane nudge) when that session has no explicit choice of its
 // own — the per-card toggle always wins over this, so flipping the default

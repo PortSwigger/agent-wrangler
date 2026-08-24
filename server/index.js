@@ -23,7 +23,8 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, cloudEnvironments, readConfig } from './config-store.js';
+import { cloudAttachSupported } from './cloud-attach.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -344,6 +345,10 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
   mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore,
+  // The delivery paths read the attach gate off the graph rather than importing
+  // cloud-attach.js, so this sweeper needs one too — without it a cloud recipient
+  // would keep being steered by CLI even after attach ships and a live pane exists.
+  graph: () => lastGraph,
   onError: (to, err) => console.error(`[mail] delivery failed for ${to}:`, err?.message || err),
 }, { onWoken: () => rebuild() });
 
@@ -510,6 +515,14 @@ async function rebuildOnce() {
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
+  // The cloud pair. `cloudAttachSupported` is the SINGLE published answer to the
+  // attach question (server/cloud-attach.js) — the client greys its Terminal button
+  // off it and the two delivery paths read it from here rather than importing the
+  // gate, which is what keeps that module's one-question-one-answer property.
+  // `cloudEnvironments` rides the graph so the dispatch dialog can populate its
+  // Destination dropdown without a second round trip.
+  graph.cloudAttachSupported = cloudAttachSupported();
+  graph.cloudEnvironments = cloudEnvironments();
   lastGraph = graph;
 
   for (const sid of autoArchived) {

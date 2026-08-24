@@ -467,6 +467,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       modelPill: modelPillFor(agentId, enrichment?.currentModel, mapEntry?.model),
       snooze: mapEntry?.snooze || null,
       runtime: mapEntry?.runtime || null,
+      // Carried on ALL THREE emit loops so a cloud card renders identically whichever
+      // loop produced it. Retained after a Teleport conversion (runtime back to null)
+      // so the card can still show a `was ☁` chip.
+      cloud: mapEntry?.cloud || null,
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
@@ -627,6 +631,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
       snooze: appEntry?.snooze || null,
       runtime: appEntry?.runtime || null,
+      cloud: appEntry?.cloud || null,
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,
@@ -720,6 +725,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       modelPill: modelPillFor(agentId, enrichment?.currentModel, entry.model),
       snooze: entry.snooze || null,
       runtime: entry.runtime || null,
+      cloud: entry.cloud || null,
       workflow: parentFields.workflow,
       parentSession: parentFields.parentSession,
       spawnedBy: parentFields.spawnedBy,

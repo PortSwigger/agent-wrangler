@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
-  linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
+  linkChipsHtml, sessionCardHtml, devcontainerChip, cloudChips, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
@@ -141,6 +142,128 @@ test('sessionCardHtml: the dc bring-up chip renders on the card meta line for a 
   assert.match(html, /runtime-dc--starting/);
   // A local session never gets a dc chip regardless of status/waitingFor.
   assert.doesNotMatch(sessionCardHtml(sess({ status: 'working', waitingFor: 'starting container' }), ctx()), /runtime-dc/);
+});
+
+// ── Cloud cards (§11b) ──────────────────────────────────────────────────────
+// A cloud session's entry.cloud shape (see the plan's §4): the sessionId/url are
+// scraped from pane output, so both are untrusted text.
+const cloudSess = (over = {}, cloudOver = {}) => sess({
+  runtime: 'cloud',
+  cloud: {
+    sessionId: 'session_abc', url: 'https://claude.ai/code/session_abc',
+    environmentId: 'env_123', kind: 'anthropic', createdAt: 1, ...cloudOver,
+  },
+  ...over,
+});
+
+test('cloudChips: nothing at all for a session that was never in the cloud', () => {
+  assert.equal(cloudChips(sess(), ctx()), '');
+  assert.equal(cloudChips(sess({ runtime: 'devcontainer' }), ctx()), '');
+});
+
+test('cloudChips: the env chip shows the registry label, with the raw id on hover', () => {
+  const html = cloudChips(cloudSess(), ctx({ cloudEnvironments: [{ label: 'Prod runners', id: 'env_123' }] }));
+  assert.match(html, /<span class="card-tag runtime-cloud" title="env_123">☁ Prod runners<\/span>/);
+});
+
+test('cloudChips: an unregistered id shows raw (never relabelled), a null id reads "Account default"', () => {
+  // The id is what picks the launch form, so an id we do not recognise must be
+  // shown as-is rather than quietly presented as the default.
+  const unknown = cloudChips(cloudSess({}, { environmentId: 'ccpool_zz' }), ctx({ cloudEnvironments: [{ label: 'Prod', id: 'env_123' }] }));
+  assert.match(unknown, /title="ccpool_zz">☁ ccpool_zz</);
+  const dflt = cloudChips(cloudSess({}, { environmentId: null }), ctx());
+  assert.match(dflt, /title="Account default">☁ Account default</);
+  // No registry on the graph yet (a push that predates the setting) still renders.
+  assert.match(cloudChips(cloudSess(), ctx()), /☁ env_123/);
+});
+
+test('cloudChips: the untrusted environment id is escaped, never interpolated raw', () => {
+  const html = cloudChips(cloudSess({}, { environmentId: 'env_"><img src=x>' }), ctx());
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img src=x&gt;/);
+});
+
+test('cloudChips: says the spend is untracked rather than leaving a blank meta line', () => {
+  const html = cloudChips(cloudSess(), ctx());
+  assert.match(html, /☁ cost untracked/);
+  assert.match(html, /title="No local transcript[^"]*"/);
+});
+
+test('cloudChips: the claude.ai link is a real link chip, in href-safe form', () => {
+  const html = cloudChips(cloudSess(), ctx());
+  assert.match(html, /<a class="link-chip" href="https:\/\/claude.ai\/code\/session_abc" target="_blank" rel="noopener">claude.ai\/code ↗<\/a>/);
+});
+
+test('cloudChips: a url that is not https-on-claude.ai never becomes an href', () => {
+  // The url is scraped agent output — same threat model as a PR link's url.
+  for (const url of ['javascript:alert(1)', 'https://evil.example/code/session_abc', 'http://claude.ai/code/session_abc', 'data:text/html,x', 'claude.ai/code/x', null]) {
+    const html = cloudChips(cloudSess({}, { url }), ctx());
+    assert.doesNotMatch(html, /<a /, `${url} must not render an anchor`);
+    assert.doesNotMatch(html, /link-chip/, `${url} must not render a link chip at all`);
+    // …and the rest of the chip set still renders, so the card isn't blanked.
+    assert.match(html, /☁ env_123/);
+  }
+});
+
+test('cloudChips: a teleported card keeps only its provenance — no "cost untracked" lie about a session we CAN cost', () => {
+  const s = cloudSess({ runtime: undefined });
+  const html = cloudChips(s, ctx({ cloudEnvironments: [{ label: 'Prod runners', id: 'env_123' }] }));
+  assert.match(html, />was ☁</);
+  assert.match(html, /title="Started as a cloud session in Prod runners \(env_123\)[^"]*"/);
+  assert.doesNotMatch(html, /cost untracked/);
+  // The link to the (now superseded) cloud session is still worth keeping.
+  assert.match(html, /claude.ai\/code ↗/);
+});
+
+test('cloudChips: an archived cloud session says so on the env chip title AND as its own chip', () => {
+  const html = cloudChips(cloudSess({}, { archivedAt: 123 }), ctx());
+  assert.match(html, /title="env_123 — this cloud session is archived"/);
+  assert.match(html, /<span class="card-tag" title="This cloud session is archived[^"]*">archived<\/span>/);
+  // Not a new card state / colour — an archived cloud session is stale, not an alarm.
+  assert.doesNotMatch(html, /runtime-cloud[^"]*archived/);
+  assert.doesNotMatch(cloudChips(cloudSess(), ctx()), />archived</);
+});
+
+test('sessionCardHtml: a cloud card renders the cloud chips in the runtime slot and NO $ pill', () => {
+  // usd should already be null for cloud; the card must refuse to render one even
+  // if a stray number arrives (a mis-scoped scan, a half-finished teleport).
+  const html = sessionCardHtml(cloudSess({ usd: 9.99 }), ctx());
+  assert.match(html, /☁ env_123/);
+  assert.match(html, /☁ cost untracked/);
+  assert.doesNotMatch(html, /9\.99/);
+  assert.doesNotMatch(html, /title="cost so far"/);
+  assert.doesNotMatch(html, /runtime-dc/);
+});
+
+test('sessionCardHtml: devcontainer still wins the runtime slot; a teleported card keeps its real $ pill', () => {
+  const dc = sessionCardHtml(cloudSess({ runtime: 'devcontainer' }), ctx());
+  assert.match(dc, /runtime-dc/);
+  assert.doesNotMatch(dc, /runtime-cloud/);
+  const teleported = sessionCardHtml(cloudSess({ runtime: undefined, usd: 1.5 }), ctx());
+  assert.match(teleported, /title="cost so far"/);
+  assert.match(teleported, /1\.50/);
+  assert.match(teleported, />was ☁</);
+});
+
+test('workerRowHtml: a collapsed cloud child shows no $ pill either — the two renderings must agree', () => {
+  const html = workerRowHtml(cloudSess({ usd: 9.99 }), ctx());
+  assert.doesNotMatch(html, /9\.99/);
+  assert.doesNotMatch(html, /card-tag/);
+  // A teleported child is an ordinary local session again.
+  assert.match(workerRowHtml(cloudSess({ runtime: undefined, usd: 1.5 }), ctx()), /1\.50/);
+});
+
+// Byte-identity guard for the non-cloud path: the cloud work must be additive.
+// Hashes (not a golden literal — the card embeds a big inline SVG) captured from
+// the pre-change builders for a fully deterministic session: `idle` so no
+// throb-delay style, no lastActivity so no timeAgo. If you INTENTIONALLY change
+// non-cloud card/row markup, re-capture these; if you didn't, you changed the
+// shared path by accident.
+test('sessionCardHtml / workerRowHtml: a non-cloud card is byte-identical to before cloud chips existed', () => {
+  const plain = sess({ status: 'idle', usd: 1.5 });
+  const sha = (x) => createHash('sha256').update(x).digest('hex');
+  assert.equal(sha(sessionCardHtml(plain, ctx())), '039d97a187986c97a8edadefd476ab3fe117a70436ffd830bc106efa33dd85de');
+  assert.equal(sha(workerRowHtml(plain, ctx())), 'ff368d8692fb62833a845c189172680c507a74165aca1d2959cb191f94083de4');
 });
 
 test('sessionCardHtml: the sub-agent zone nests INSIDE the card, not after it — so it always reads as belonging to this card', () => {

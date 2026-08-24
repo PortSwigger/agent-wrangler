@@ -194,6 +194,42 @@ test('spawn_session passes spawnedBy as undefined when caller is null', async ()
   assert.equal(d.calls.dispatch[0].spawnedBy, undefined);
 });
 
+test('spawn_session maps destination + cloud knobs into the dispatch bag', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, {
+    intent: 'x', destination: 'cloud', cloud_environment_id: 'env_abc', cloud_ref: 'main',
+  });
+  const bag = d.calls.dispatch[0];
+  assert.equal(bag.runtime, 'cloud');
+  assert.equal(bag.cloudEnvironmentId, 'env_abc');
+  assert.equal(bag.cloudRef, 'main');
+});
+
+test('spawn_session leaves runtime undefined with no destination, so dispatch owns the local default', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+  assert.equal(d.calls.dispatch[0].runtime, undefined);
+  assert.equal(d.calls.dispatch[0].cloudEnvironmentId, '');
+  assert.equal(d.calls.dispatch[0].cloudRef, '');
+});
+
+test('spawn_session accepts devcontainer as a destination', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', destination: 'devcontainer' });
+  assert.equal(d.calls.dispatch[0].runtime, 'devcontainer');
+});
+
+test('spawn_session inputSchema advertises the destination enum and the cloud constraints', () => {
+  const { destination, cloud_environment_id: envId, cloud_ref: ref } = spawnSessionTool.inputSchema;
+  assert.deepEqual(destination.unwrap().options, ['local', 'devcontainer', 'cloud']);
+  assert.ok(envId);
+  assert.ok(ref);
+  // An agent must learn the Claude-only / no-workflow limits from the description
+  // rather than from a dispatch refusal.
+  assert.match(spawnSessionTool.description, /Claude-only|claude agent only/i);
+  assert.match(spawnSessionTool.description, /workflow/i);
+});
+
 test('spawn_session surfaces a dispatch failure as an error result', async () => {
   const d = deps({ deps: { dispatch: async () => { throw new Error('Branch feat already exists'); } } });
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', worktree: true });

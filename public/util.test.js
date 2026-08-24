@@ -97,6 +97,17 @@ test('isWorktree: false for a normal cwd', () => {
 test('isWorktree: false when cwd is absent', () => {
   assert.equal(isWorktree({}), false);
 });
+// A teleport landing pad is a real worktree named `<repo>-teleport-<short>`, which
+// the path heuristic reads as an ordinary folder — the stored `worktree` decides.
+test('isWorktree: true from entry.worktree even when the folder name says nothing', () => {
+  assert.equal(isWorktree({ cwd: '/vcs/repo-teleport-0a77f814', worktree: { path: '/vcs/repo-teleport-0a77f814' } }), true);
+});
+// A cloud card's cwd is only where the launch was fired from — the agent runs in a
+// VM with no local checkout — so the pill (titled "Running in a git worktree") must
+// not claim it, however the folder is named.
+test('isWorktree: false for a cloud card, even in a worktree folder', () => {
+  assert.equal(isWorktree({ cwd: '/vcs/repo/.claude/worktrees/feat', runtime: 'cloud' }), false);
+});
 
 // ── branchBadge ───────────────────────────────────────────────────────────────
 test('branchBadge: returns empty string for falsy branch', () => {

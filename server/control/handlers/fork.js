@@ -11,6 +11,15 @@ export const forkHandler = {
     // and the board id is itself the branch point.
     const s = ctx.sessionFromGraph(msg.sessionId);
     const parentEntry = ctx.sessionManager.entryFor(msg.sessionId);
+    // A cloud card has nothing to fork: `--fork-session` is a HOST-transcript
+    // operation and the cloud runtime has no buildFork equivalent, so without this
+    // the chain below would resolve a `sourceId` (the card id, since a cloud entry
+    // carries no liveSessionId) and hand it to a nonsense `claude --resume
+    // --fork-session <card id>` — which fails open into a fresh empty local
+    // session (see CLAUDE.md's resume-fails-open rule). Refuse early instead.
+    if (parentEntry?.runtime === 'cloud') {
+      throw new Error('A cloud session can\'t be forked — its conversation lives in the cloud, not in a local transcript. Teleport it to a worktree first, then fork the local card.');
+    }
     // Prefer the graph's live id (tracks a running fork), then the mapping entry's
     // stored live id — authoritative for a preset-id agent and the fallback when the
     // graph node carries no live id yet (e.g. a devcontainer whose in-container status

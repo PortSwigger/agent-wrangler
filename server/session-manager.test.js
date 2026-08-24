@@ -1438,3 +1438,319 @@ test('syncNotesToContainer: docker cp -L notes for a live devcontainer session; 
   assert.equal(cps.length, 1);                       // only the devcontainer entry copies
   assert.ok(cps[0].join(' ').includes(':/tmp/aw-d/notes')); // into the container's notes dir
 });
+
+// ---------------------------------------------------------------------------
+// Cloud sessions
+// ---------------------------------------------------------------------------
+
+// THE self-archive regression test. A cloud CREATE pane exits 0 the moment the
+// CLI has printed the new session's id — the exact clean-exit signature
+// archivableExits sweeps — so without the runtime filter every cloud card
+// archived itself seconds after appearing.
+test('archivableExits skips a cloud entry (its exit-0 create pane is not a finished agent)', () => {
+  const rows = archivableExits([
+    { tmux: 'cc_a', sessionId: 'local', status: 0, archived: false },
+    { tmux: 'cl_b', sessionId: 'cloudy', status: 0, archived: false, runtime: 'cloud' },
+  ]);
+  assert.deepEqual(rows.map((r) => r.sessionId), ['local']);
+});
+
+test('reconcileExitedSessions feeds runtime through, so a dead cloud tmux is never auto-archived', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('cloudy', { tmux: 'cl_z', runtime: 'cloud', cloud: { sessionId: 'session_abc' } });
+  sm.map.set('local', { tmux: 'cc_z' });
+  sm.dead = new Set(['cl_z', 'cc_z']);
+  sm.deadStatus = new Map([['cl_z', 0], ['cc_z', 0]]);
+  sm._save = () => {};
+  sm.killForSession = async () => {};
+  const archived = await sm.reconcileExitedSessions();
+  assert.deepEqual(archived, ['local']);
+  assert.equal(sm.map.get('cloudy').archivedAt, undefined);
+});
+
+test('_tmuxName gives a cloud launch the cl_ prefix and leaves the agent prefixes alone', () => {
+  const sm = new SessionManager();
+  assert.equal(sm._tmuxName('claude', 'abcd', 'cloud'), 'cl_abcd');
+  assert.equal(sm._tmuxName('claude', 'abcd', 'devcontainer'), 'cc_abcd');
+  assert.equal(sm._tmuxName('claude', 'abcd'), 'cc_abcd');
+  assert.equal(sm._tmuxName('codex', 'abcd'), 'cx_abcd');
+});
+
+// The runtime object is a module singleton, so swapping its preflight is the
+// cheapest way to keep dispatch's git/env probing out of these tests (the real
+// preflight is covered exhaustively in cloud-preflight.test.js).
+async function withStubbedCloudPreflight(fn) {
+  const { cloud } = await import('./runtimes/cloud.js');
+  const real = cloud.preflight;
+  cloud.preflight = async () => null;
+  try {
+    return await fn();
+  } finally {
+    cloud.preflight = real;
+  }
+}
+
+function cloudManager() {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._pipePaneToFile = async () => '/tmp/never-read-in-this-test.log';
+  return sm;
+}
+
+test('dispatch(runtime: cloud) builds the interactive create form in a cl_ tmux and mints no live id', async () => {
+  await withStubbedCloudPreflight(async () => {
+    const sm = cloudManager();
+    let captured = {};
+    sm._newSession = async (tmux, dir, inner) => { captured = { tmux, dir, inner }; };
+    const seen = [];
+    sm._cloudLaunch = (args) => { seen.push(args); };
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'fix the flaky test', runtime: 'cloud' });
+    assert.match(captured.tmux, /^cl_/);
+    assert.match(captured.inner, /claude --cloud 'fix the flaky test'/);
+    assert.doesNotMatch(captured.inner, /--session-id/);   // no preset conversation id
+    assert.doesNotMatch(captured.inner, /--mcp-config/);   // nothing in the VM can reach 127.0.0.1
+    assert.doesNotMatch(captured.inner, /AW_TASK_MEMORY/); // ...including a host memory path
+    const entry = sm.map.get(sessionId);
+    assert.equal(entry.runtime, 'cloud');
+    assert.equal(entry.liveSessionId, undefined);
+    assert.equal(entry.mailCapable, false);
+    assert.deepEqual(
+      { sessionId: entry.cloud.sessionId, url: entry.cloud.url, environmentId: entry.cloud.environmentId, kind: entry.cloud.kind },
+      { sessionId: null, url: null, environmentId: null, kind: 'anthropic' },
+    );
+    // The scrape is wired to the seam, on the pane that was just created.
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].sessionId, sessionId);
+    assert.equal(seen[0].tmux, captured.tmux);
+  });
+});
+
+test('dispatch(runtime: cloud) with a ccpool_ environment builds the self-hosted form and records its kind', async () => {
+  await withStubbedCloudPreflight(async () => {
+    const sm = cloudManager();
+    let inner = '';
+    sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+    sm._cloudLaunch = () => {};
+    const { sessionId } = await sm.dispatch({
+      cwd: os.tmpdir(), intent: 'run the suite', runtime: 'cloud',
+      cloudEnvironmentId: 'ccpool_abc', cloudRef: 'main',
+    });
+    assert.match(inner, /claude -p 'run the suite' --environment 'ccpool_abc' --ref 'main' --output-format json/);
+    const cloudEntry = sm.map.get(sessionId).cloud;
+    assert.equal(cloudEntry.kind, 'self-hosted');
+    assert.equal(cloudEntry.environmentId, 'ccpool_abc');
+  });
+});
+
+test('dispatch(runtime: cloud) with an env_ id carries the inline remote default-environment setting', async () => {
+  await withStubbedCloudPreflight(async () => {
+    const sm = cloudManager();
+    let inner = '';
+    sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+    sm._cloudLaunch = () => {};
+    await sm.dispatch({ cwd: os.tmpdir(), intent: 'go', runtime: 'cloud', cloudEnvironmentId: 'env_42', cloudRef: 'main' });
+    assert.match(inner, /--settings '\{"remote":\{"defaultEnvironmentId":"env_42"\}\}'/);
+    assert.doesNotMatch(inner, /--ref/); // --ref is self-hosted only
+  });
+});
+
+test('dispatch refuses cloud + worktree (a cloud session has no local checkout to branch)', async () => {
+  await withStubbedCloudPreflight(async () => {
+    const sm = cloudManager();
+    sm._newSession = async () => { throw new Error('should not launch'); };
+    await assert.rejects(
+      () => sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'cloud', worktree: true }),
+      /mutually exclusive/,
+    );
+  });
+});
+
+test('noteCloudSession records the scraped id once and never clobbers it', () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.map.set('c', { runtime: 'cloud', cloud: { sessionId: null, url: null } });
+  sm.map.set('h', {});
+  assert.equal(sm.noteCloudSession('c', { cloudSessionId: 'session_one', url: 'https://claude.ai/code/session_one' }), true);
+  assert.equal(sm.map.get('c').cloud.sessionId, 'session_one');
+  assert.equal(sm.noteCloudSession('c', { cloudSessionId: 'session_two' }), false);
+  assert.equal(sm.map.get('c').cloud.sessionId, 'session_one');
+  assert.equal(sm.noteCloudSession('h', { cloudSessionId: 'session_x' }), false); // never writes a non-cloud entry
+});
+
+test('markCloudArchived stamps once', () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.map.set('c', { runtime: 'cloud', cloud: { sessionId: 'session_a' } });
+  assert.equal(sm.markCloudArchived('c', 111), true);
+  assert.equal(sm.map.get('c').cloud.archivedAt, 111);
+  assert.equal(sm.markCloudArchived('c', 222), false);
+  assert.equal(sm.map.get('c').cloud.archivedAt, 111);
+});
+
+test('convertCloudToLocal stores local as ABSENT runtime, retains entry.cloud, and refuses without a live id', () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.map.set('c', { runtime: 'cloud', cwd: '/repo', mailCapable: false, cloud: { sessionId: 'session_a' } });
+  assert.equal(sm.convertCloudToLocal('c', { worktree: { path: '/wt' } }), false); // no live id → no half-conversion
+  assert.equal(sm.map.get('c').runtime, 'cloud');
+  assert.equal(sm.convertCloudToLocal('c', { worktree: { path: '/wt', branch: 'HEAD' }, liveSessionId: 'LIVE' }), true);
+  const e = sm.map.get('c');
+  assert.equal(e.runtime, undefined);            // absent, not the string 'local'
+  assert.equal(e.liveSessionId, 'LIVE');
+  assert.equal(e.mailCapable, true);
+  assert.equal(e.cloud.sessionId, 'session_a');  // kept, so the card can render `was ☁`
+  assert.deepEqual(e.worktree, { path: '/wt', branch: 'HEAD' });
+});
+
+test('resumeEntry carries a cloud entry forward and keeps mailCapable false', () => {
+  const cloudy = resumeEntry({ runtime: 'cloud', cloud: { sessionId: 'session_a' }, intent: 'i' }, {
+    short: 'x', tmux: 'cl_x', cwd: '/c', agent: 'claude', resumeId: undefined, socket: 's', now: 1,
+  });
+  assert.equal(cloudy.runtime, 'cloud');
+  assert.equal(cloudy.cloud.sessionId, 'session_a');
+  assert.equal(cloudy.mailCapable, false);
+  assert.equal(cloudy.liveSessionId, undefined);
+  // A local entry is unaffected.
+  const localEntry = resumeEntry({ intent: 'i' }, { short: 'x', tmux: 'cc_x', cwd: '/c', agent: 'claude', resumeId: 'R', socket: 's', now: 1 });
+  assert.equal(localEntry.mailCapable, true);
+});
+
+test('resume of a cloud card refuses while the attach gate is off, launching nothing', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => {};
+  sm._cloudAttachSupported = () => false;
+  let inner = '';
+  sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+  sm.map.set('c', { runtime: 'cloud', agent: 'claude', cwd: os.tmpdir(), cloud: { sessionId: 'session_zz' } });
+  await assert.rejects(() => sm.resume('c', os.tmpdir()), /isn't enabled for this account/);
+  assert.equal(inner, '');
+});
+
+test('resume of a cloud card attaches by its session_ id (never --resume) once the gate is on', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => {};
+  sm._cloudAttachSupported = () => true;
+  // Both seams stubbed: the real pair would write into the developer's DATA_DIR and
+  // then poll a tmux pane for two minutes.
+  sm._pipePaneToFile = async () => '/tmp/never-read-in-this-test.log';
+  const watched = [];
+  sm._cloudLaunch = (args) => { watched.push(args); };
+  let captured = {};
+  sm._newSession = async (tmux, dir, cmd) => { captured = { tmux, dir, cmd }; };
+  sm.map.set('c', { runtime: 'cloud', agent: 'claude', cwd: os.tmpdir(), cloud: { sessionId: 'session_zz' } });
+  await sm.resume('c', os.tmpdir());
+  assert.match(captured.tmux, /^cl_/);
+  assert.match(captured.cmd, /claude --cloud 'session_zz'/);
+  assert.doesNotMatch(captured.cmd, /--resume/);
+  const e = sm.map.get('c');
+  assert.equal(e.runtime, 'cloud');
+  assert.equal(e.liveSessionId, undefined);  // the card id is never stored as a conversation id
+  assert.equal(e.mailCapable, false);
+  assert.equal(e.cloud.sessionId, 'session_zz');
+  // The attach pane is watched in 'attach' mode — the only launch that can print
+  // the refusal line, and so the only one that can move the gate's answer.
+  assert.equal(watched.length, 1);
+  assert.equal(watched[0].mode, 'attach');
+  assert.equal(watched[0].tmux, captured.tmux);
+});
+
+test('teleport refuses before creating anything when the cloud session id was never scraped', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm._newSession = async () => { throw new Error('should not launch'); };
+  sm.map.set('c', { runtime: 'cloud', cwd: os.tmpdir(), cloud: { sessionId: null } });
+  await assert.rejects(() => sm.teleport('c'), /hasn't been read back/);
+  sm.map.set('h', { cwd: os.tmpdir() });
+  await assert.rejects(() => sm.teleport('h'), /Only a cloud session/);
+});
+
+// Real git here (like worktree.test.js): the whole point of this test is that the
+// detached worktree really is created, really is cleaned up on failure, and really
+// reports a detached HEAD as its branch.
+test('teleport: converts the card in place, keeps entry.cloud, and refuses when the teleport pane dies', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-teleport-'));
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args]).toString();
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  let inner = '';
+  const killed = [];
+  sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+  sm.killForSession = async (id) => killed.push(id);
+  sm._tmux = async () => ({ stdout: '' });   // the failure path kills the launched pane
+  sm.map.set('c', { runtime: 'cloud', agent: 'claude', cwd: repo, mailCapable: false, cloud: { sessionId: 'session_tp' } });
+
+  // The pane died → the CLI refused the teleport, so NO conversion (a local runtime
+  // whose conversation will never exist is unresumable), the pane's own words are in
+  // the error rather than a "go look at the pane" that the cleanup then destroys, and
+  // the empty worktree this attempt created is cleaned up rather than left behind for
+  // every retry to accumulate.
+  sm._paneDeadOutput = async () => 'Error: could not find that cloud session';
+  await assert.rejects(() => sm.teleport('c', { tries: 2, pollMs: 1 }), /could not find that cloud session/);
+  assert.deepEqual(killed, ['c']); // the old cl_ create pane is reaped up front
+  assert.equal(sm.map.get('c').runtime, 'cloud');
+  // The launch presets the local conversation id — without --session-id there would
+  // be nothing to convert the card to (no transcript exists until the first message).
+  const presetId = inner.match(/--session-id '([0-9a-f-]{36})'/)?.[1];
+  assert.match(inner, /claude --teleport 'session_tp'/);
+  assert.ok(presetId, `expected a preset --session-id uuid in: ${inner}`);
+  // Exactly one worktree line = the main checkout only. (Counting lines rather
+  // than grepping the folder name: the temp REPO's own path would match it too.)
+  assert.equal((git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length, 1);
+
+  // The pane stayed alive → the card becomes local, in place, keeping its id and its
+  // cloud provenance, with the preset uuid as its liveSessionId.
+  sm._paneDeadOutput = async () => null;
+  const res = await sm.teleport('c', { tries: 2, pollMs: 1 });
+  const e = sm.map.get('c');
+  assert.equal(e.runtime, undefined);
+  assert.equal(e.liveSessionId, inner.match(/--session-id '([0-9a-f-]{36})'/)[1]);
+  assert.notEqual(e.liveSessionId, presetId);   // a fresh uuid per attempt, not a reused one
+  assert.equal(e.mailCapable, true);
+  assert.equal(e.cloud.sessionId, 'session_tp');
+  assert.match(e.tmux, /^cc_/);      // a local Claude session from here on
+  assert.equal(e.cwd, res.cwd);
+  assert.equal(res.branch, 'HEAD');  // detached is a legitimate answer, stored as-is
+  assert.equal(e.worktree.branch, 'HEAD');
+  fs.rmSync(res.cwd, { recursive: true, force: true });
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// The teleport watch's convert/refuse decision rests entirely on this helper, so
+// its three answers are worth pinning: alive, dead-with-output, and a tmux that
+// errored (which must read as ALIVE — killing a conversion over a transient tmux
+// hiccup is the worse mistake, and the pane-death case is the one with evidence).
+test('_paneDeadOutput: null while alive, the pane tail once dead, null when tmux errors', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm._tmux = async () => ({ stdout: '0\n' });
+  assert.equal(await sm._paneDeadOutput('cc_x'), null);
+  sm._tmux = async () => { throw new Error('no such session'); };
+  assert.equal(await sm._paneDeadOutput('cc_x'), null);
+  // Dead: the returned string is the pane's own words, which is what the teleport
+  // error shows the human — the pane itself is killed moments later.
+  sm._tmux = async () => ({ stdout: '1\n' });
+  sm._capturePane = async () => 'Error: no access to that cloud session\n\n';
+  const out = await sm._paneDeadOutput('cc_x');
+  assert.match(out, /no access to that cloud session/);
+  assert.ok(!out.endsWith('\n'));
+});

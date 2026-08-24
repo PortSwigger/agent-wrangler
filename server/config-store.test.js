@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, cloudEnvironments, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -138,4 +138,27 @@ test('autoFixPrChecksDefault defaults to on; only an explicit false disables', (
   assert.equal(autoFixPrChecksDefault({}), true);
   assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: true }), true);
   assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: false }), false);
+});
+
+// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// The validation is load-bearing rather than cosmetic: an id's PREFIX is what picks
+// the launch form, so a garbage row must die here rather than at launch time.
+test('cloudEnvironments keeps only labelled env_/ccpool_ rows, deduped by id', () => {
+  assert.deepEqual(cloudEnvironments({}), []);
+  assert.deepEqual(cloudEnvironments({ cloudEnvironments: 'nope' }), []);
+  assert.deepEqual(cloudEnvironments({
+    cloudEnvironments: [
+      { label: 'Hosted', id: 'env_1' },
+      { label: 'Pool', id: 'ccpool_2' },
+      { label: '', id: 'env_3' },        // no label => a blank, unidentifiable option
+      { label: 'Bad', id: 'nonsense' },  // neither prefix => would throw at launch
+      { label: 'Missing id' },
+      { label: 'Dupe', id: 'env_1' },    // first spelling of an id wins
+      { label: '  Spaced  ', id: '  env_4 ' },
+    ],
+  }), [
+    { label: 'Hosted', id: 'env_1' },
+    { label: 'Pool', id: 'ccpool_2' },
+    { label: 'Spaced', id: 'env_4' },
+  ]);
 });

@@ -4,7 +4,8 @@
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
 // app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
 //   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
-//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID }
+//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
+//     cloudEnvironments }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
@@ -180,6 +181,82 @@ export function devcontainerChip(s) {
   return '<span class="card-tag runtime-dc" title="Running inside the repo devcontainer">⬢ dc</span>';
 }
 
+// The visible label of the cloud link chip. The ↗ is the same "leaves the board"
+// hint the link-overflow menu uses; the host is spelled out because a cloud
+// session's only real home is that page.
+const CLOUD_LINK_LABEL = 'claude.ai/code ↗';
+
+// A cloud session's URL is scraped out of pane output (parseCloudLaunchLog), so
+// it is agent-provided text and gets the same treatment as a PR link's url —
+// safeHttpUrl for the protocol — plus a host pin: https on claude.ai is the only
+// place a cloud session's page can legitimately live, so anything else (an
+// attacker-chosen host that happens to be https, a `javascript:` payload) is
+// refused here rather than handed to an <a href>.
+const CLOUD_URL_HOSTS = new Set(['claude.ai', 'www.claude.ai']);
+function cloudSessionUrl(url) {
+  const safe = safeHttpUrl(url);
+  if (!safe) return null;
+  try {
+    const u = new URL(safe);
+    return u.protocol === 'https:' && CLOUD_URL_HOSTS.has(u.hostname.toLowerCase()) ? safe : null;
+  } catch {
+    return null;
+  }
+}
+
+// Every chip a cloud card carries, as one string for sessionCardHtml's runtime
+// slot — beside devcontainerChip because the two answer the same question
+// ("where does this session actually run") and a card picks exactly one of them.
+//
+// The environment registry is a server setting (config.json → the graph), so it
+// rides `ctx` exactly as taskMemoryEnabled does rather than a module global —
+// cards.js stays a pure builder over the ctx it is handed. Defaulting to []
+// means a card still renders correctly on a graph push that predates the
+// setting: an unmatched id simply shows raw, which is honest.
+export function cloudChips(s, ctx = {}) {
+  const cloud = s.cloud;
+  if (!cloud) return '';
+  const registry = Array.isArray(ctx.cloudEnvironments) ? ctx.cloudEnvironments : [];
+  // null/'' is the account default (there is no id to show); a registered id
+  // shows its human label with the id on hover; an unregistered one shows the
+  // raw id — never silently relabelled, since the id is what picks the launch form.
+  const envId = cloud.environmentId || null;
+  const envLabel = (envId ? registry.find((e) => e && e.id === envId)?.label : null)
+    || envId || 'Account default';
+  const url = cloudSessionUrl(cloud.url);
+  // A link chip whose href was refused would render as an inert span labelled
+  // like a link — worse than nothing — so an unsafe/absent url drops the chip
+  // entirely. The safe case goes through linkChipsHtml so it is byte-for-byte
+  // the same chip as a Jira/PR link (`type` is unknown to it, which is exactly
+  // right: no icon, no CI dot, just the label + href).
+  const link = url ? linkChipsHtml([{ type: 'cloud', key: CLOUD_LINK_LABEL, url }], ctx) : '';
+  // A teleported card (entry.cloud retained, runtime flipped back to local) is an
+  // ordinary local session from that moment on: real transcript, real cost, real
+  // diff. So it keeps only the provenance chip and the link — a `☁ cost
+  // untracked` chip here would be an outright lie about a session we CAN cost.
+  if (s.runtime !== 'cloud') {
+    const wasTitle = `Started as a cloud session in ${envLabel}${envId ? ` (${envId})` : ''}, teleported to this local checkout`;
+    return `<span class="card-tag runtime-cloud" title="${esc(wasTitle)}">was ☁</span>${link}`;
+  }
+  const archived = Boolean(cloud.archivedAt);
+  const envTitle = `${envId || 'Account default'}${archived ? ' — this cloud session is archived' : ''}`;
+  const env = `<span class="card-tag runtime-cloud" title="${esc(envTitle)}">☁ ${esc(envLabel)}</span>`;
+  // Not "$0.00" and not a blank meta line: a cloud session writes no local
+  // transcript, so its spend is absent from the usage cache, every rollup and
+  // cost-report.mjs alike — permanently, not pending. The chip says so out loud
+  // so nobody reads a missing $ pill as "this session was free".
+  const cost = '<span class="card-tag" title="No local transcript exists for a cloud session, so there is nothing to cost — this spend is invisible to the board, the usage cache and the cost report">☁ cost untracked</span>';
+  // Archived is said twice on purpose, both cheap: the env chip's title (hover
+  // lands on the chip that identifies the session) plus one plain `archived`
+  // chip so it is legible without hovering. Deliberately NOT its own colour or
+  // card state — an archived cloud session is stale, not an alarm, and
+  // cardState()/barWord() (app.js) own a card's actual signal.
+  const arch = archived
+    ? '<span class="card-tag" title="This cloud session is archived — it can no longer be steered; Teleport it to keep working locally">archived</span>'
+    : '';
+  return `${env}${cost}${link}${arch}`;
+}
+
 // The mail-badge pill: `.card-name-row`, immediately left of the agent icon —
 // metadata about the card's identity ("this session has mail"), not what it's
 // doing (that's `.card-meta`). Call it `mail`/`mail-badge`, NEVER `unread` —
@@ -212,7 +289,14 @@ export function modelPillHtml(model) {
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   const estimated = s.agent === 'codex';
-  const cost = typeof s.usd === 'number' && s.usd > 0
+  // A cloud session has no transcript, so `usd` is null already — the explicit
+  // gate is here so that a stray number reaching a cloud card (a mis-scoped
+  // scan, a half-finished teleport) can never render as this session's spend;
+  // cloudChips' `☁ cost untracked` is the honest chip instead. Keyed on the
+  // RUNTIME, not on s.cloud: a teleported card is local, has a real transcript,
+  // and must keep its ordinary cost pill.
+  const cloudRuntime = s.runtime === 'cloud';
+  const cost = !cloudRuntime && typeof s.usd === 'number' && s.usd > 0
     ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
     : '';
   // Dormant (no live tmux) gets the hollow "resume" bar and a dimmed name; the
@@ -220,7 +304,13 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // tells these apart, not the status class. A restarting card is only briefly
   // unmanaged (tmux down between kill and relaunch) — keep its live skin so it
   // doesn't flicker to the dormant look, and show a small badge instead.
-  const dormant = (s.managed || s.restarting) ? '' : ' dormant';
+  // A CLOUD card is never dormant either, and for a stronger reason: it has no
+  // live pane by design (the create client exits), yet the session is running
+  // somewhere we can't see. The dormant skin's whole message is "nothing is
+  // running here, click to resume", which for cloud is a lie the styles would
+  // otherwise tell on every card (the .dormant rules also out-specify the .cloud
+  // bar). cardState() already returns a dedicated 'cloud' state.
+  const dormant = (s.managed || s.restarting || s.runtime === 'cloud') ? '' : ' dormant';
   const agentName = s.agent || 'claude';
   const wtTag = isWorktree(s);
   const wt = wtTag
@@ -229,7 +319,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const automerge = s.autoMergeOnPass
     ? `<span class="card-tag automerge" title="Automatically merges the PR when checks pass">${MERGE_ICON}auto-merge</span>`
     : '';
-  const runtimeChip = s.runtime === 'devcontainer' ? devcontainerChip(s) : '';
+  const runtimeChip = s.runtime === 'devcontainer' ? devcontainerChip(s) : s.cloud ? cloudChips(s, ctx) : '';
   const restarting = s.restarting
     ? '<span class="card-tag restarting" title="Tmux is being killed and relaunched">restarting</span>'
     : '';
@@ -310,10 +400,15 @@ export function workerRowHtml(s, ctx) {
   const state = ctx.cardState(s);
   // Same restarting exemption as the top-level card (sessionCardHtml): a worker/child
   // row being restarted is only briefly unmanaged — don't flicker it to the dormant skin.
-  const dormant = (s.managed || s.restarting) ? '' : ' dormant';
+  const dormant = (s.managed || s.restarting || s.runtime === 'cloud') ? '' : ' dormant';
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
   const estimated = s.agent === 'codex';
-  const cost = typeof s.usd === 'number' && s.usd > 0
+  // Same cloud gate as the full card (sessionCardHtml) — a collapsed cloud child
+  // must not show a $ pill either, or the two renderings of one session would
+  // disagree about whether its spend is knowable. The row has no room for the
+  // `☁ cost untracked` explanation; the card it expands into carries that.
+  const cloudRuntime = s.runtime === 'cloud';
+  const cost = !cloudRuntime && typeof s.usd === 'number' && s.usd > 0
     ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
     : '';
   const advisorNote = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
