@@ -46,9 +46,9 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       addDirs,
       ...buildDispatch({ caller, callerEntry }),
       spawnedBy: caller || undefined,
-      // Bind the memory symlink to the resolved task BEFORE launch — the agent
-      // reads AW_TASK_MEMORY / --add-dir at boot. dispatch mints the card id, so
-      // we hand in a binder rather than binding after it returns.
+      // Bind memory to the resolved task BEFORE launch. Claude uses the stable
+      // symlink; Codex uses bindSession's returned real target. dispatch mints the
+      // card id, so we hand in a binder rather than binding after it returns.
       bindMemory: (sid) => deps.memoryStore.bindSession(sid, taskId),
     });
   } catch (e) {

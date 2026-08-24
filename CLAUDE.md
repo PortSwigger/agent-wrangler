@@ -298,9 +298,12 @@ don't re-derive it.
 - **Per-task memory follows the session, not the launch.** Canonical file
   `~/.agent-wrangler/memory/tasks/<taskId>/memory.md`; the agent reads a fixed
   `AW_TASK_MEMORY` per-session **symlink** the server repoints on every reassignment
-  (Claude re-resolves it per file access, so a running session follows a mid-flight
-  repoint). Injected at **dispatch/resume/fork, keyed on card id — keep the three in
-  sync.** `memory-store` rejects non-segment ids (path-traversal guard).
+  when running Claude (Claude re-resolves it per file access, so a running Claude
+  session follows a mid-flight repoint). **Codex 0.149+ rejects symlinked writable
+  roots**, so Codex receives the resolved real task/scratch directory at each
+  dispatch/resume/fork; a running Codex session therefore picks up a reassignment
+  only on its next relaunch. Keep those three launch paths in sync. `memory-store`
+  rejects non-segment ids (path-traversal guard).
 - **Suspend reclaims RAM by reusing the dormant state.** Idle ≥ `suspendIdleHours`
   (default 8, on) tears down tmux but keeps the entry (one-click resumable); never
   touches working/needs-you/attached. `config.json suspendEnabled:false` is the global
