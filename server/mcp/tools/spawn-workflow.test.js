@@ -47,6 +47,24 @@ test('spawn_workflow wraps the raw issue into the issue-to-pr launch prompt', as
   assert.match(opts.intent, /ENT-42/);
 });
 
+// Same gap as spawn_session: without this, the caller has no name to refer to
+// the new run by, only its raw card id.
+test('spawn_workflow returns the new run’s label so the caller can refer to it by name', async () => {
+  const d = deps({
+    deps: { graph: () => ({ sessions: [{ sessionId: 'NEWCARD', label: 'Fix login bug' }] }) },
+  });
+  const out = await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'fix the login bug' });
+
+  assert.equal(out.structuredContent.label, 'Fix login bug');
+});
+
+test('spawn_workflow reports a null label when the graph has no row for the new run yet', async () => {
+  const d = deps();
+  const out = await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'fix the login bug' });
+
+  assert.equal(out.structuredContent.label, null);
+});
+
 test('spawn_workflow forces a fresh auto worktree on, branched off the raw issue', async () => {
   const d = deps();
   await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'fix the login bug' });

@@ -46,9 +46,9 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       addDirs,
       ...buildDispatch({ caller, callerEntry }),
       spawnedBy: caller || undefined,
-      // Bind the memory symlink to the resolved task BEFORE launch — the agent
-      // reads AW_TASK_MEMORY / --add-dir at boot. dispatch mints the card id, so
-      // we hand in a binder rather than binding after it returns.
+      // Bind memory to the resolved task BEFORE launch. Claude uses the stable
+      // symlink; Codex uses bindSession's returned real target. dispatch mints the
+      // card id, so we hand in a binder rather than binding after it returns.
       bindMemory: (sid) => deps.memoryStore.bindSession(sid, taskId),
     });
   } catch (e) {
@@ -61,8 +61,14 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   await deps.rebuild();
 
   const task = deps.taskStore.taskFor(result.sessionId) ?? null;
+  // The caller's only way to name the session it just created — without this,
+  // reporting it to the user means quoting the raw card id, which is never
+  // meaningful to a human. Read post-rebuild so it reflects the label the new
+  // card actually resolved to (see get-session-info.js's identical pattern).
+  const label = deps.graph?.()?.sessions?.find((s) => s.sessionId === result.sessionId)?.label ?? null;
   const structuredContent = {
     sessionId: result.sessionId,
+    label,
     cwd: result.cwd ?? null,
     agent,
     task,

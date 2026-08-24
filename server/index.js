@@ -18,6 +18,7 @@ import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
+import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
@@ -484,7 +485,9 @@ function broadcast(obj) {
   }
 }
 
-async function rebuild() {
+// Wrapped below in createRebuildCoalescer — see there for why an overlapping call
+// must trail rather than skip or race.
+async function rebuildOnce() {
   await sessionManager.refreshAlive();
   // Sweep cleanly-exited agents into the archive before building the graph, so a
   // self-stopped session goes straight there rather than flickering through a
@@ -523,6 +526,8 @@ async function rebuild() {
   broadcastStylesIfChanged();
   return graph;
 }
+
+const rebuild = createRebuildCoalescer(rebuildOnce);
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();

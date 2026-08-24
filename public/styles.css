@@ -1897,6 +1897,7 @@ main.diff-fullscreen #drag-handle { display: none; }
 /* Working-tree vs full-branch toggle — same segmented-pill language as
    .sched-action-btn, sized down to fit the diff panel's slim header row. */
 .diff-mode { display: flex; gap: 4px; flex: 0 0 auto; }
+.diff-mode-prs { display: contents; }
 .diff-mode-btn {
   padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);

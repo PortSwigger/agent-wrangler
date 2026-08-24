@@ -5,10 +5,43 @@ import {
   buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
   diffLineKeys, partitionDrafts, isStaleReply, shouldDeferDiffRender,
   rangeSnapshot, rangeLabel, draftAnchoredAt, draftSpanKeys, dragRange,
+  diffPrLinks, draftStorageKeysForSource, clearSubmittedDraftSource,
 } from './diff.js';
 
 test('draftsStorageKey: namespaced per session id', () => {
   assert.equal(draftsStorageKey('card-1'), 'aw:diff-drafts:card-1');
+});
+
+test('draftStorageKeysForSource: working-tree keeps the legacy key as a fallback', () => {
+  assert.deepEqual(draftStorageKeysForSource('card-1', 'working-tree'), {
+    primary: 'aw:diff-drafts:card-1:working-tree',
+    legacy: 'aw:diff-drafts:card-1',
+  });
+});
+
+test('draftStorageKeysForSource: branch also keeps the legacy key as a fallback', () => {
+  assert.deepEqual(draftStorageKeysForSource('card-1', 'branch'), {
+    primary: 'aw:diff-drafts:card-1:branch',
+    legacy: 'aw:diff-drafts:card-1',
+  });
+});
+
+test('draftStorageKeysForSource: PR uses only source-specific keys', () => {
+  assert.deepEqual(draftStorageKeysForSource('card-1', 'pr', 'https://github.com/a/b/pull/5'), {
+    primary: 'aw:diff-drafts:card-1:pr:https://github.com/a/b/pull/5',
+    legacy: null,
+  });
+});
+
+test('clearSubmittedDraftSource: clears current drafts only when the submitted source is still current', () => {
+  assert.deepEqual(clearSubmittedDraftSource({ currentKey: 'aw:diff-drafts:S1:branch', submittedKey: 'aw:diff-drafts:S1:branch' }), {
+    removeKey: 'aw:diff-drafts:S1:branch',
+    clearCurrent: true,
+  });
+  assert.deepEqual(clearSubmittedDraftSource({ currentKey: 'aw:diff-drafts:S1:working-tree', submittedKey: 'aw:diff-drafts:S1:pr:acme/widgets#42' }), {
+    removeKey: 'aw:diff-drafts:S1:pr:acme/widgets#42',
+    clearCurrent: false,
+  });
 });
 
 test('lineSide: deletions address the old file, everything else the new', () => {
@@ -229,6 +262,28 @@ test('shouldDeferDiffRender: defers while an editor is open (flag OR DOM node)',
   assert.equal(shouldDeferDiffRender('a|new|1', null), true);  // activeKey set
   assert.equal(shouldDeferDiffRender(null, {}), true);         // editor node in DOM
   assert.equal(shouldDeferDiffRender(null, null), false);      // nothing open — render
+});
+
+test('diffPrLinks: combines session and task PR links with stable labels', () => {
+  const session = { links: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }] };
+  const task = { links: [{ type: 'pr', url: 'https://github.com/acme/api/pull/7', repo: 'acme/api', number: 7 }] };
+
+  assert.deepEqual(diffPrLinks(session, task), [
+    { url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42, label: 'PR #42' },
+    { url: 'https://github.com/acme/api/pull/7', repo: 'acme/api', number: 7, label: 'PR #7' },
+  ]);
+});
+
+test('diffPrLinks: de-duplicates task/session PR links by repo and number', () => {
+  const session = { links: [{ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42 }] };
+  const task = { links: [
+    { type: 'pr', url: 'https://github.com/acme/widgets/pull/42?plain=1', repo: 'acme/widgets', number: 42 },
+    { type: 'jira', key: 'ENT-1' },
+  ] };
+
+  assert.deepEqual(diffPrLinks(session, task), [
+    { url: 'https://github.com/acme/widgets/pull/42', repo: 'acme/widgets', number: 42, label: 'PR #42' },
+  ]);
 });
 
 test('dragRange: normalises a drag into an inclusive same-side range (order-agnostic)', () => {

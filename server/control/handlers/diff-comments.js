@@ -3,6 +3,7 @@ import os from 'node:os';
 import { sendText as defaultSendText } from '../../tmux-scraper.js';
 import { resolveResumeDir } from '../../transcript-reader.js';
 import { waitForPaneReady } from './resume.js';
+import { linkedPrForUrl } from './pr-links.js';
 
 // After a resume the freshly-launched TUI may not be accepting input yet, so a
 // paste can be dropped/mangled. Settle briefly before delivery on the resume path
@@ -24,7 +25,7 @@ const RESUME_SETTLE_POLL_MS = 250;
 // the marker would be double-nested and unreadable. Tolerates a legacy
 // single-line comment carrying `line` instead of startLine/endLine, and a legacy
 // (pre-context) plain-text snapshot with no marker of its own.
-export function formatDiffComments(comments) {
+export function formatDiffComments(comments, source = {}) {
   const list = Array.isArray(comments) ? comments : [];
   const byFile = new Map();
   for (const c of list) {
@@ -44,7 +45,16 @@ export function formatDiffComments(comments) {
       blocks.push(`${c.file}:${span}${side}\n${snapshot}\n    ${body}`);
     }
   }
-  return `Review comments on the working-tree diff (${list.length}):\n\n${blocks.join('\n\n')}`;
+  let heading = 'the working-tree diff';
+  let note = '';
+  if (source.mode === 'branch') {
+    heading = 'the full branch diff';
+  } else if (source.mode === 'pr') {
+    const label = source.prNumber ? `PR #${source.prNumber}` : 'the linked PR';
+    heading = `${label}${source.prRepo ? ` (${source.prRepo})` : ''}${source.prUrl ? ` ${source.prUrl}` : ''}`;
+    note = '\nLine numbers refer to the PR diff.';
+  }
+  return `Review comments on ${heading} (${list.length}):${note}\n\n${blocks.join('\n\n')}`;
 }
 
 // Deliver diff review comments into the target session's live pane. The delivery
@@ -64,7 +74,15 @@ export const diffCommentsHandler = {
         ctx.reply({ type: 'diff-comments-result', sessionId, ok: false, error: 'No comments to submit.' });
         return;
       }
-      const message = formatDiffComments(comments);
+      let source = {
+        mode: msg.mode,
+      };
+      if (msg.mode === 'pr') {
+        const pr = linkedPrForUrl(sessionId, msg.prUrl, ctx);
+        if (!pr) throw new Error('That PR is not linked to this session or its task.');
+        source = { mode: 'pr', prUrl: pr.url, prNumber: pr.number, prRepo: pr.repo };
+      }
+      const message = formatDiffComments(comments, source);
 
       // Live iff the wrangler owns a live tmux pane for it (tmuxFor truthy) —
       // mirrors runSessionAction's liveness branch.

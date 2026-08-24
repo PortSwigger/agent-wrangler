@@ -45,8 +45,8 @@ export const forkHandler = {
       cwd: dir,
       prompt: msg.prompt || '',
       name: msg.name || '',
-      // Bind the fork's memory to the parent's task BEFORE launch, so the new
-      // agent's AW_TASK_MEMORY / --add-dir resolve at boot — same as dispatch.
+      // Bind the fork's memory to the parent's task BEFORE launch. The binder's
+      // real target feeds Codex; Claude keeps using the stable symlink.
       bindMemory: (sid) => ctx.memoryStore.bindSession(sid, ctx.taskStore.taskFor(msg.sessionId)?.id || null),
     });
     // Land the fork in the parent's task (no-op if unassigned or the task was since

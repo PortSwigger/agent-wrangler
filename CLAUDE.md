@@ -457,9 +457,12 @@ don't re-derive it.
 - **Per-task memory follows the session, not the launch.** Canonical file
   `~/.agent-wrangler/memory/tasks/<taskId>/memory.md`; the agent reads a fixed
   `AW_TASK_MEMORY` per-session **symlink** the server repoints on every reassignment
-  (Claude re-resolves it per file access, so a running session follows a mid-flight
-  repoint). Injected at **dispatch/resume/fork, keyed on card id — keep the three in
-  sync.** `memory-store` rejects non-segment ids (path-traversal guard).
+  when running Claude (Claude re-resolves it per file access, so a running Claude
+  session follows a mid-flight repoint). **Codex 0.149+ rejects symlinked writable
+  roots**, so Codex receives the resolved real task/scratch directory at each
+  dispatch/resume/fork; a running Codex session therefore picks up a reassignment
+  only on its next relaunch. Keep those three launch paths in sync. `memory-store`
+  rejects non-segment ids (path-traversal guard).
 - **Suspend reclaims RAM by reusing the dormant state.** Idle ≥ `suspendIdleHours`
   (default 8, on) tears down tmux but keeps the entry (one-click resumable); never
   touches working/needs-you/attached. `config.json suspendEnabled:false` is the global
@@ -512,6 +515,33 @@ don't re-derive it.
 - **Sub-agents are read-only artifacts read off disk, never sessions** (no tmux, no
   card id). Discriminator: a `subagents/` dir ⇒ emit from the files; no dir ⇒ emit the
   parent's `tool_use` pairs — **never both, or every modern sub-agent double-counts.**
+- **`transcript-reader.js`'s `analyze()` must never run concurrently for the same
+  sessionId — it reads AND mutates a shared per-session `state` object (module-level
+  `cache` Map) in place, so two overlapping callers race on it.** A slower caller's
+  own (now-stale) `stat.size` can compare as smaller than the `state.offset` a
+  faster, already-finished caller advanced past, tripping the "file
+  truncated/rotated" branch and wiping every `subFiles` tracker — resetting
+  `quietPolls` to 0 for sub-agents that finished long ago, so they ALL flash
+  `'running'` again for a poll or two (the live bug this fixed: every sub-agent
+  under a task briefly flashing running then reverting). `analyze()` is a plain
+  (non-async) function that coalesces concurrent callers for the same
+  `` `${projectsDir}\0${sessionId}\0${since}` `` into one shared in-flight promise
+  rather than trying to make the truncation check itself safe under concurrent
+  mutation — kept non-async so coalesced callers get the exact same promise
+  reference (an `async` wrapper would still coalesce correctly, just without that
+  identity). `server/index.js`'s `rebuild()` is the main source of overlap (a 4s
+  interval, an 80ms-debounced file watcher, and ~15 direct handler calls with no
+  serialization between them) and is now wrapped in `createRebuildCoalescer`
+  (`rebuild-coalescer.js`) for the same reason — but deliberately with
+  TRAILING-coalescing semantics, not `createFullSweepGuard`'s silent skip: several
+  callers do `await rebuild()` right after a mutation (rename, dispatch, fork,
+  attach) and rely on the resulting broadcast reflecting their change, so an
+  overlapping call must queue one fresh trailing run rather than being dropped.
+  Today every path to `analyze()` funnels through `rebuildOnce` (verified: no other
+  caller reaches it outside `buildGraph`, and `buildGraph`'s own three enrichment
+  loops each `await` sequentially, never in parallel), so `rebuild()`'s guard alone
+  already prevents the race — `analyze()`'s own coalescing is defense-in-depth for
+  the day a future direct caller (a control handler, an MCP tool) bypasses it.
 - **Archive cascade.** Archiving a session with live descendants (transitive
   `parentSession` closure) offers to cascade in one handler call; the `archive_session`
   MCP `archive_children` defaults true. The worktree-deletion offer is withheld while

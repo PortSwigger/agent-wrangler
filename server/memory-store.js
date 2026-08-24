@@ -7,11 +7,12 @@ import { DATA_DIR } from './data-dir.js';
 // Per-task freeform markdown memory, edited interchangeably by the human (in the
 // dashboard or their own editor) and by the agent running under that task. Each
 // task gets its OWN folder so the agent can be granted only that folder — never
-// the whole memory tree. The agent reaches its memory through a per-session
+// the whole memory tree. Claude reaches its memory through a per-session
 // *directory* symlink the server repoints on every assignment change, so both
 // the path injected at launch (AW_TASK_MEMORY) and the granted dir (--add-dir)
-// resolve to the current task's folder — even after a running session is
-// reassigned, because Claude re-resolves the link on each file access (verified).
+// resolve to the current task's folder — even after a running Claude session is
+// reassigned. Codex receives the resolved real target at launch instead because
+// Codex 0.149+ rejects symlinked writable roots.
 // On disk under ~/.agent-wrangler/memory/:
 //   tasks/<taskId>/memory.md       canonical per-task memory (human + agent edit)
 //   scratch/<sessionId>/memory.md  per-session fallback used while unassigned
@@ -25,12 +26,27 @@ export function linkPathFor(sessionId) {
   return path.join(MEMORY_DIR, 'by-session', sessionId, 'memory.md');
 }
 
-// The directory passed as --add-dir: the per-session symlink itself, which
-// resolves to the current task's folder. Scopes the agent to ONLY that task's
+// The directory passed to Claude as --add-dir: the per-session symlink itself,
+// which resolves to the current task's folder. Scopes Claude to ONLY that task's
 // memory (sibling task folders stay out of the allowed set), yet follows a
 // reassignment because Claude re-resolves the link on each access.
 export function addDirFor(sessionId) {
   return path.join(MEMORY_DIR, 'by-session', sessionId);
+}
+
+// Codex 0.149+ rejects a writable root when any component is a symlink. Resolve
+// the per-session link at launch time so Codex receives the real task/scratch
+// directory while Claude can keep using the stable link (and therefore follows
+// live reassignments). If a caller asks before bindSession has created the link,
+// fall back to the real scratch path; normal launch paths bind first.
+export function resolvedMemoryBindingFor(sessionId) {
+  let memoryDir;
+  try {
+    memoryDir = fs.realpathSync(addDirFor(sessionId));
+  } catch {
+    memoryDir = path.join(MEMORY_DIR, 'scratch', sessionId);
+  }
+  return { memoryDir, memoryPath: path.join(memoryDir, 'memory.md') };
 }
 
 // taskId/sessionId become path segments, and a client can send arbitrary values
@@ -81,22 +97,28 @@ export class MemoryStore {
   // Idempotent: a no-op when the link already resolves to the right target. An
   // unsafe taskId falls back to scratch rather than building a dir from it.
   bindSession(sessionId, taskId) {
-    if (!isSafeSegment(sessionId)) return;
+    if (!isSafeSegment(sessionId)) return null;
     const targetDir = isSafeSegment(taskId) ? this.taskDir(taskId) : this.scratchDir(sessionId);
     fs.mkdirSync(targetDir, { recursive: true });
     const file = path.join(targetDir, 'memory.md');
     if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+    // Canonicalise every component, not just the by-session leaf. AW_DATA_DIR
+    // itself may have been configured through a symlink, which Codex would also
+    // reject as part of a writable root.
+    const realTargetDir = fs.realpathSync(targetDir);
+    const binding = { memoryDir: realTargetDir, memoryPath: path.join(realTargetDir, 'memory.md') };
     const link = this.linkPath(sessionId);
     // Relative so the memory dir stays movable; resolves from the link's own dir.
     const rel = path.relative(path.dirname(link), targetDir);
     let current = null;
     try { current = fs.readlinkSync(link); } catch { /* no link yet */ }
-    if (current === rel) return;
+    if (current === rel) return binding;
     // symlink-then-rename so a concurrent reader never sees a missing link.
     const tmp = `${link}.tmp`;
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* none */ }
     fs.symlinkSync(rel, tmp);
     fs.renameSync(tmp, link);
+    return binding;
   }
 
   read(taskId) {
