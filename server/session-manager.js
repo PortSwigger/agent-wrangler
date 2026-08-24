@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
+import { discoverClaudeSessions, tmuxesForSession, capturePane } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, CLOUD_TMUX_PREFIX } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
@@ -12,7 +12,6 @@ import { containerIdFor } from './runtimes/devcontainer.js';
 import { classifyEnvironmentId, buildTeleportCommand } from './runtimes/cloud.js';
 import { cloudAttachSupported, CLOUD_ATTACH_UNSUPPORTED_MSG } from './cloud-attach.js';
 import { watchCloudLaunch, pruneCloudLaunchLogs } from './cloud-launch-watch.js';
-import { discoverClaudeLiveIdAfter } from './agents/claude-discover.js';
 import { addDirFor, linkPathFor } from './memory-store.js';
 import { createWorktree, addDetachedWorktree, gitRepoRoot, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
@@ -88,13 +87,14 @@ export function archivableExits(deadEntries) {
   );
 }
 
-// How long `teleport` waits for the pulled-down session to write its first
-// transcript line and for git to report the worktree's HEAD. ~60 s, far wider than
-// `_resolveLiveId`'s Codex-calibrated 3 s, because `claude --teleport` fetches the
-// remote session and checks out its ref before it writes anything at all — and
-// giving up early means telling the human it failed while it is succeeding.
-const TELEPORT_DISCOVERY_TRIES = 400;
-const TELEPORT_DISCOVERY_POLL_MS = 150;
+// How long `teleport` watches its new pane before converting the card. Not a
+// discovery window — the local conversation id is preset via `--session-id`, so
+// there is nothing to wait for; this is purely long enough for a teleport the CLI
+// is going to REFUSE to have exited (it does so in a second or two), because a
+// still-live pane is the only evidence of success there is. ~5 s, so a teleport
+// that works still feels immediate.
+const TELEPORT_WATCH_TRIES = 10;
+const TELEPORT_WATCH_POLL_MS = 500;
 
 // A long snooze (>= 1h) also reclaims a session's RAM by suspending it. A shorter
 // snooze is a pure visibility hide (no resume cost on a quick re-open).
@@ -326,6 +326,11 @@ export class SessionManager {
     // `node --test` may not write (it's the developer's real data dir), so the one
     // caller that acts on the answer reads it through here.
     this._cloudAttachSupported = cloudAttachSupported;
+    // Fourth seam. The teleport watch reads a pane's dying words to put them in the
+    // error it throws; a test needs to supply that text without a real tmux, and the
+    // scraper's own `capturePane` swallows its failures so it can't be stubbed by
+    // making tmux fail.
+    this._capturePane = capturePane;
     this._load();
   }
 
@@ -1258,15 +1263,16 @@ export class SessionManager {
   //
   // The worktree is DETACHED because `claude --teleport` checks out whatever ref the
   // cloud session was on; pre-deciding a branch would either fight that checkout or
-  // record a name the session never used. The branch and the live conversation id
-  // are therefore both DISCOVERED after launch (the codex-discover shape), and if
-  // the conversation never appears we deliberately do NOT convert: a half-converted
-  // card (local runtime, no live id) would be unresumable, which is strictly worse
-  // than a cloud card that failed to teleport.
-  // `discoverLiveId`/`tries`/`pollMs` are injectable purely so a test can assert the
-  // conversion (and the failure cleanup) without a real `claude --teleport` or a
-  // 60-second wait.
-  async teleport(sessionId, { discoverLiveId = discoverClaudeLiveIdAfter, tries = TELEPORT_DISCOVERY_TRIES, pollMs = TELEPORT_DISCOVERY_POLL_MS } = {}) {
+  // record a name the session never used — so the BRANCH is read back after launch.
+  // The live conversation id is not discovered but PRESET (`--session-id`): a
+  // teleported session writes no transcript at all until its first human message, so
+  // there is nothing on disk to find. If the teleport itself fails we deliberately do
+  // NOT convert: a half-converted card (local runtime, no live id, no conversation)
+  // would be unresumable, which is strictly worse than a cloud card that failed to
+  // teleport.
+  // `tries`/`pollMs` are injectable purely so a test can assert the conversion (and
+  // the failure cleanup) without a real `claude --teleport` or a 5-second wait.
+  async teleport(sessionId, { tries = TELEPORT_WATCH_TRIES, pollMs = TELEPORT_WATCH_POLL_MS } = {}) {
     const prev = this.map.get(sessionId);
     if (!prev) throw new Error('No such session.');
     if (prev.runtime !== 'cloud') throw new Error('Only a cloud session can be teleported.');
@@ -1292,24 +1298,40 @@ export class SessionManager {
       // A local Claude session from this moment on, so it takes the ordinary `cc_`
       // prefix rather than `cl_` — the pane really is a local agent now.
       tmux = this._tmuxName('claude', short);
-      const launchedAt = Date.now();
-      await this._newSession(tmux, wt.path, buildTeleportCommand({ cloudSessionId }), this.socket);
-      // Both discoveries race the launch: the checkout and the first transcript line
-      // both happen after the process starts. The window is deliberately much wider
-      // than `_resolveLiveId`'s (which is calibrated for a Codex rollout, written
-      // immediately): `claude --teleport` has to fetch the remote session and check
-      // out its ref before it writes a single transcript line, so a six-second bound
-      // reports "no conversation appeared" while the teleport is in fact working.
-      let liveSessionId = null;
+      // PRESET, never discovered. A teleported session writes nothing under
+      // ~/.claude/projects until its first human message, so the recency scan this
+      // used to do could only ever time out on a teleport that was working
+      // perfectly — it made the conversion unreachable. `--session-id` is honoured
+      // by `--teleport` (probed live, claude 2.1.241: the transcript lands at
+      // exactly this uuid on the first message), which is strictly more robust than
+      // matching on mtime anyway.
+      const liveSessionId = crypto.randomUUID();
+      await this._newSession(tmux, wt.path, buildTeleportCommand({ cloudSessionId, liveSessionId }), this.socket);
+      // The success signal is the pane STAYING ALIVE for the whole window. A
+      // teleport the CLI refuses (unknown id, no access, auth) exits within a second
+      // or two; a successful one sits at an interactive prompt indefinitely.
+      // Deliberately NOT a match on the CLI's "Session resumed" wording — a string
+      // that can change under us must not be what decides whether a card converts.
+      // The loop runs to the end rather than breaking early on the branch: the
+      // branch (a detached `HEAD`) is readable on the first tick, so breaking on it
+      // would leave the liveness check with a single sample and convert a card whose
+      // teleport died a second later.
       let branch = null;
       for (let i = 0; i < tries; i++) {
-        liveSessionId = liveSessionId || await discoverLiveId({ cwd: wt.path, launchedAt });
-        branch = branch || await this._readWorktreeBranch(wt.path);
-        if (liveSessionId && branch) break;
         await new Promise((r) => setTimeout(r, pollMs));
-      }
-      if (!liveSessionId) {
-        throw new Error("Teleport launched but no local conversation appeared — leaving the card as a cloud session rather than converting it into one that can't be resumed. Check the pane for what `claude --teleport` said.");
+        const dead = await this._paneDeadOutput(tmux);
+        if (dead) {
+          // The pane text is captured HERE, before the finally block kills it — the
+          // whole reason a human reads this error is to find out what the CLI said,
+          // and telling them to "check the pane" would point at something we are
+          // about to destroy.
+          throw new Error(`Teleport failed — \`claude --teleport\` exited instead of opening a session, so the card stays a cloud session rather than becoming a local one that can't be resumed. The pane said:\n${dead}`);
+        }
+        // `claude --teleport` checks out the cloud session's ref after the process
+        // starts, so keep the LAST reading rather than the first: a checkout that
+        // lands mid-window should be the name we record.
+        const b = await this._readWorktreeBranch(wt.path);
+        if (b) branch = b;
       }
       // `HEAD` (still detached) is a legitimate answer, so store it as-is rather
       // than inventing a branch name the session isn't on.
@@ -1338,6 +1360,27 @@ export class SessionManager {
         await this._removeEmptyWorktree(wt.path, repoRoot);
       }
     }
+  }
+
+  // "Has this pane exited, and if so what did it leave on screen?" — the teleport
+  // watch's one question, answered in one call. Returns the pane's trailing output
+  // (always a non-empty string, so the caller can treat it as truthy) once the pane
+  // is dead, else null. `remain-on-exit` is what makes the text still readable; a
+  // tmux error (pane already gone entirely) reads as "not dead" rather than
+  // inventing a failure, since killing the conversion on a transient tmux hiccup
+  // would be the worse mistake.
+  async _paneDeadOutput(tmux) {
+    let dead = false;
+    try {
+      const { stdout } = await this._tmux(this.socket, ['list-panes', '-t', tmux, '-F', '#{pane_dead}']);
+      dead = String(stdout || '').trim().split('\n').some((l) => l.trim() === '1');
+    } catch {
+      return null;
+    }
+    if (!dead) return null;
+    const text = await this._capturePane(tmux, 40, this.socket).catch(() => '');
+    const trimmed = String(text || '').split('\n').map((l) => l.trimEnd()).filter(Boolean).slice(-12).join('\n');
+    return trimmed || '(the pane exited without printing anything)';
   }
 
   // The checked-out branch of a just-created worktree, or null while git hasn't

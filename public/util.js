@@ -103,10 +103,21 @@ export function locationLabel(cwd) {
   return `📁 ${esc(repo)}`;
 }
 
-// Whether a session runs inside a git worktree (cwd is a wrangler-created
-// `<repo>-worktree-<branch>` sibling or a `.claude/worktrees/` dir). Surfaced as
-// the `⌥ wt` pill on the card meta line.
+// Whether a session runs inside a git worktree. Surfaced as the `⌥ wt` pill on the
+// card meta line, whose title reads "Running in a git worktree" — so both halves
+// have to be true, which is why cloud comes first: a cloud card's cwd is only the
+// folder the launch was FIRED from (its agent runs in a VM with no local checkout
+// at all), and that folder being a worktree would otherwise make the pill assert
+// something the card isn't doing.
+// `entry.worktree` is the authoritative signal for anything the wrangler created,
+// and it is checked ahead of the path heuristic because not every wrangler worktree
+// is named `<repo>-worktree-<branch>`: teleport's landing pad is
+// `<repo>-teleport-<short>`, which the heuristic alone reads as an ordinary folder.
+// The heuristic stays as the fallback for adopted and legacy entries that carry no
+// `worktree` field.
 export function isWorktree(s) {
+  if (s.runtime === 'cloud') return false;
+  if (s.worktree?.path) return true;
   const cwd = s.cwd || '';
   return cwd.includes('-worktree-') || cwd.includes('/.claude/worktrees/');
 }

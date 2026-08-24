@@ -128,8 +128,31 @@ export function buildCloudAttachCommand({ cloudSessionId } = {}) {
 
 // Pull a cloud session down into a local checkout — the one-way conversion that
 // gives a card back transcript, cost, diff, mail and PR watching.
-export function buildTeleportCommand({ cloudSessionId } = {}) {
-  return withCleanClaudeEnv(`claude --teleport ${shellQuote(assertCloudSessionId(cloudSessionId, 'teleport'))}`);
+//
+// `--session-id <uuid>` is REQUIRED, and it is what makes the conversion possible
+// at all: a teleported session writes NOTHING under `~/.claude/projects` until its
+// first human message (verified live against claude 2.1.241 — "Session resumed" in
+// the pane, empty project bucket on disk), so there is no transcript to *discover*
+// the local conversation id from at launch time. Presetting it means the id is
+// known by construction, exactly as an ordinary local dispatch does with
+// `adapter.presetsSessionId`. The uuid is a THIRD-namespace-safe value: it is the
+// card's future `liveSessionId`, never the `session_…` id next to it.
+export function buildTeleportCommand({ cloudSessionId, liveSessionId } = {}) {
+  return withCleanClaudeEnv(`claude --teleport ${shellQuote(assertCloudSessionId(cloudSessionId, 'teleport'))}`
+    + ` --session-id ${shellQuote(assertLiveSessionId(liveSessionId))}`);
+}
+
+// The preset local conversation id. `claude` rejects a non-uuid outright, so a
+// caller that hands over a card id (`s-…`) or, worse, the `session_…` id would
+// dead-pane the teleport — check the shape here where the error can still name the
+// three namespaces.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function assertLiveSessionId(id) {
+  const v = String(id ?? '').trim();
+  if (!UUID_RE.test(v)) {
+    throw new Error(`Cannot teleport without a uuid to preset as the local conversation id (got ${v ? `"${v}"` : 'nothing'}) — a card id or a session_… id is not one.`);
+  }
+  return v;
 }
 
 // Guards against the three-namespace confusion: handing a card id or a

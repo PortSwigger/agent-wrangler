@@ -115,13 +115,21 @@ test('attach / teleport: byte-exact, and only for a session_ id', () => {
   const attach = buildCloudAttachCommand({ cloudSessionId: 'session_01ABCdef' });
   assertCleanEnv(attach);
   assert.equal(invocation(attach), "claude --cloud 'session_01ABCdef'");
-  const teleport = buildTeleportCommand({ cloudSessionId: 'session_01ABCdef' });
+  // Teleport PRESETS the local conversation id: a teleported session writes no
+  // transcript until its first message, so discovering the id afterwards is
+  // impossible and `--session-id` is the only way the card can know it.
+  const teleport = buildTeleportCommand({ cloudSessionId: 'session_01ABCdef', liveSessionId: '9f1c0b6e-1111-4222-8333-444455556666' });
   assertCleanEnv(teleport);
-  assert.equal(invocation(teleport), "claude --teleport 'session_01ABCdef'");
+  assert.equal(invocation(teleport), "claude --teleport 'session_01ABCdef' --session-id '9f1c0b6e-1111-4222-8333-444455556666'");
   // A card id or a liveSessionId uuid is a different namespace and must be refused.
   assert.throws(() => buildCloudAttachCommand({ cloudSessionId: 's-1770000000000-ab12' }), /without a session_… id/);
-  assert.throws(() => buildTeleportCommand({ cloudSessionId: '9f1c0b6e-1111-4222-8333-444455556666' }), /without a session_… id/);
+  assert.throws(() => buildTeleportCommand({ cloudSessionId: '9f1c0b6e-1111-4222-8333-444455556666', liveSessionId: '9f1c0b6e-1111-4222-8333-444455556666' }), /without a session_… id/);
   assert.throws(() => buildCloudAttachCommand({}), /without a session_… id/);
+  // …and the reverse confusion: the uuid slot must not accept a card id or the
+  // session_… id, both of which `claude` would reject outright and dead-pane.
+  assert.throws(() => buildTeleportCommand({ cloudSessionId: 'session_01ABCdef' }), /without a uuid/);
+  assert.throws(() => buildTeleportCommand({ cloudSessionId: 'session_01ABCdef', liveSessionId: 'session_01ABCdef' }), /without a uuid/);
+  assert.throws(() => buildTeleportCommand({ cloudSessionId: 'session_01ABCdef', liveSessionId: 's-1770000000000-ab12' }), /without a uuid/);
 });
 
 const INTERACTIVE_LOG = [

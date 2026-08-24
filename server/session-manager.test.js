@@ -1680,7 +1680,7 @@ test('teleport refuses before creating anything when the cloud session id was ne
 // Real git here (like worktree.test.js): the whole point of this test is that the
 // detached worktree really is created, really is cleaned up on failure, and really
 // reports a detached HEAD as its branch.
-test('teleport: converts the card in place, keeps entry.cloud, and refuses without a discovered live id', async () => {
+test('teleport: converts the card in place, keeps entry.cloud, and refuses when the teleport pane dies', async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-teleport-'));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args]).toString();
   git('init', '-q', '-b', 'main');
@@ -1698,23 +1698,32 @@ test('teleport: converts the card in place, keeps entry.cloud, and refuses witho
   sm._tmux = async () => ({ stdout: '' });   // the failure path kills the launched pane
   sm.map.set('c', { runtime: 'cloud', agent: 'claude', cwd: repo, mailCapable: false, cloud: { sessionId: 'session_tp' } });
 
-  // Discovery fails → NO conversion (a local runtime with no live id is
-  // unresumable), and the empty worktree this attempt created is cleaned up rather
-  // than left behind for every retry to accumulate.
-  await assert.rejects(() => sm.teleport('c', { discoverLiveId: async () => null, tries: 2, pollMs: 1 }), /no local conversation appeared/);
+  // The pane died → the CLI refused the teleport, so NO conversion (a local runtime
+  // whose conversation will never exist is unresumable), the pane's own words are in
+  // the error rather than a "go look at the pane" that the cleanup then destroys, and
+  // the empty worktree this attempt created is cleaned up rather than left behind for
+  // every retry to accumulate.
+  sm._paneDeadOutput = async () => 'Error: could not find that cloud session';
+  await assert.rejects(() => sm.teleport('c', { tries: 2, pollMs: 1 }), /could not find that cloud session/);
   assert.deepEqual(killed, ['c']); // the old cl_ create pane is reaped up front
   assert.equal(sm.map.get('c').runtime, 'cloud');
+  // The launch presets the local conversation id — without --session-id there would
+  // be nothing to convert the card to (no transcript exists until the first message).
+  const presetId = inner.match(/--session-id '([0-9a-f-]{36})'/)?.[1];
   assert.match(inner, /claude --teleport 'session_tp'/);
+  assert.ok(presetId, `expected a preset --session-id uuid in: ${inner}`);
   // Exactly one worktree line = the main checkout only. (Counting lines rather
   // than grepping the folder name: the temp REPO's own path would match it too.)
   assert.equal((git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length, 1);
 
-  // Discovery succeeds → the card becomes local, in place, keeping its id and its
-  // cloud provenance.
-  const res = await sm.teleport('c', { discoverLiveId: async () => 'LIVE-ID', tries: 2, pollMs: 1 });
+  // The pane stayed alive → the card becomes local, in place, keeping its id and its
+  // cloud provenance, with the preset uuid as its liveSessionId.
+  sm._paneDeadOutput = async () => null;
+  const res = await sm.teleport('c', { tries: 2, pollMs: 1 });
   const e = sm.map.get('c');
   assert.equal(e.runtime, undefined);
-  assert.equal(e.liveSessionId, 'LIVE-ID');
+  assert.equal(e.liveSessionId, inner.match(/--session-id '([0-9a-f-]{36})'/)[1]);
+  assert.notEqual(e.liveSessionId, presetId);   // a fresh uuid per attempt, not a reused one
   assert.equal(e.mailCapable, true);
   assert.equal(e.cloud.sessionId, 'session_tp');
   assert.match(e.tmux, /^cc_/);      // a local Claude session from here on
@@ -1723,4 +1732,25 @@ test('teleport: converts the card in place, keeps entry.cloud, and refuses witho
   assert.equal(e.worktree.branch, 'HEAD');
   fs.rmSync(res.cwd, { recursive: true, force: true });
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// The teleport watch's convert/refuse decision rests entirely on this helper, so
+// its three answers are worth pinning: alive, dead-with-output, and a tmux that
+// errored (which must read as ALIVE — killing a conversion over a transient tmux
+// hiccup is the worse mistake, and the pane-death case is the one with evidence).
+test('_paneDeadOutput: null while alive, the pane tail once dead, null when tmux errors', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm._tmux = async () => ({ stdout: '0\n' });
+  assert.equal(await sm._paneDeadOutput('cc_x'), null);
+  sm._tmux = async () => { throw new Error('no such session'); };
+  assert.equal(await sm._paneDeadOutput('cc_x'), null);
+  // Dead: the returned string is the pane's own words, which is what the teleport
+  // error shows the human — the pane itself is killed moments later.
+  sm._tmux = async () => ({ stdout: '1\n' });
+  sm._capturePane = async () => 'Error: no access to that cloud session\n\n';
+  const out = await sm._paneDeadOutput('cc_x');
+  assert.match(out, /no access to that cloud session/);
+  assert.ok(!out.endsWith('\n'));
 });

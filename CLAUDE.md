@@ -153,10 +153,15 @@ don't re-derive it.
   `resumeId` degrades to the card-id fallback, so `claude --resume` fails open
   (the standing rule) into a blank local session while the real work keeps
   running in the cloud, unreachable. `control/handlers/fork.js` refuses cloud
-  before any id resolution for the same reason. `cloud.analyze` returning an
-  explicit `null` is load-bearing, not decorative: a *missing* `analyze` makes
-  state-reader fall through to `enrich(entry.liveSessionId || sid)` — i.e. a
-  transcript scan under the **card id**.
+  before any id resolution for the same reason. `cloud.analyze` returning a
+  **TRUTHY empty analysis** — not `null`, and not merely absent — is load-bearing,
+  not decorative: state-reader's two enrichment sites read
+  `(runtime.analyze ? await runtime.analyze(…) : null) || <host transcript scan>`,
+  where the `||` exists for devcontainer (whose `analyze` returns `null` when the
+  container is down and MUST fall back to the host). So `null` from cloud does not
+  suppress the host scan at all — it falls through to
+  `enrich(entry.liveSessionId || sid)`, i.e. a transcript scan under the **card
+  id**, exactly what the absence of `liveSessionId` was supposed to prevent.
 - **`claude --cloud "<desc>"` needs a TTY, and `-p` + a description silently runs
   LOCALLY.** Hence a real tmux pane and never `-p` on the Anthropic-hosted create.
   The silent local run is the dangerous outcome (work happening on this Mac behind
@@ -201,12 +206,28 @@ don't re-derive it.
   one-way conversion back to full local capability, and its worktree is
   **`--detach`** on purpose: `claude --teleport` checks out whatever ref the cloud
   session was on, so pre-deciding a branch would fight that checkout or record a
-  name the session never used (branch *and* `liveSessionId` are both discovered
-  post-launch — `agents/claude-discover.js`, the `codex-discover` shape). It
-  **refuses to convert** when the local conversation never appears — a local
-  runtime with no live id is unresumable, strictly worse than a cloud card that
-  failed to teleport — and removes the empty worktree it just made (`git worktree
-  remove` refusing a dirty one is the guard that spares anything with content).
+  name the session never used — the BRANCH is therefore read back post-launch
+  (`HEAD`, still detached, is a legitimate answer and is stored as-is). The
+  `liveSessionId`, by contrast, is **PRESET via `--session-id`, never discovered**:
+  a teleported session prints `Session resumed` and then writes **nothing** under
+  `~/.claude/projects` until its first human message (verified live, claude
+  2.1.241 — empty project bucket), so a recency scan for "the transcript that just
+  appeared" waits forever on a teleport that is working perfectly. That is not a
+  tuning problem, it is why the discovery approach was deleted: `--teleport` accepts
+  `--session-id <uuid>` and honours it exactly (the transcript lands at that uuid on
+  the first message), the same shape an ordinary local dispatch already uses. Since
+  the id is then known by construction, the convert/refuse decision hangs on
+  **whether the teleport pane is still alive** — a refused teleport (unknown id, no
+  access, auth) exits in a second or two, a live one sits at a prompt indefinitely —
+  deliberately not on matching the CLI's `Session resumed` wording. It **refuses to
+  convert** when that pane dies — a local runtime whose conversation will never
+  exist is unresumable, strictly worse than a cloud card that failed to teleport —
+  putting the pane's own dying words in the error (captured BEFORE the cleanup kills
+  it: "go and look at the pane" would point at something already destroyed) and
+  removing the empty worktree it just made (`git worktree remove` refusing a dirty
+  one is the guard that spares anything with content). A teleported transcript does
+  NOT replay the cloud turns as billable lines (checked on a real round-trip), so
+  unlike a fork it needs no `usageSince` bound.
 - **One instance per `DATA_DIR` — enforced.** Two servers sharing a `DATA_DIR`
   clobber each other's `mappings.json`/`tasks.json` (whole-snapshot writes). **A
   different `PORT` does NOT isolate — only `AW_DATA_DIR` does.** `main()` takes a
