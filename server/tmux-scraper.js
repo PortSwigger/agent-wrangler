@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
+import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const exec = promisify(execFile);
 
@@ -307,6 +308,34 @@ async function pasteBlock(name, text, socket = '', run = tmux) {
   } finally {
     fs.rmSync(tmpFile, { force: true });
   }
+}
+
+// Empty the pane's composer, and CONFIRM it rather than assuming.
+//
+// Why this is needed at all: interrupting a turn makes Claude Code restore the
+// interrupted prompt into its OWN composer. Verified against a live pane — and it
+// is length-dependent, which is what makes it so easy to miss: a 72-character
+// prompt was not restored, a 281-character one was. Every paste from the chat view
+// lands at the cursor, so a restored prompt silently fuses with whatever is pasted
+// next and the agent receives ONE concatenated prompt (the exact reported bug:
+// "…count from 1 to 40.OK, I am running the toolbox now…").
+//
+// Ctrl+U kills to the start of the line, so a multi-line draft needs one press per
+// line — hence a bounded loop that re-reads the pane instead of a fixed number of
+// presses. `capture-pane -e` is required: paneComposerIsEmpty has to tell faint
+// ghost text (not content, and replaced by a paste anyway) from something typed,
+// and it fails safe by reporting NOT empty when it cannot tell. Returns true only
+// on a confirmed-empty composer, so a caller can decide what to do when the pane
+// will not come clean rather than pasting into it blind.
+export async function clearComposer(name, socket = '', { capture = capturePaneStyled, run = tmux, maxPresses = 12 } = {}) {
+  for (let i = 0; i <= maxPresses; i += 1) {
+    if (paneComposerIsEmpty(await capture(name, 6, socket))) return true;
+    await run(socket, ['send-keys', '-t', name, 'C-u']);
+    // The TUI redraws asynchronously, so re-reading immediately would judge the
+    // previous frame and burn the whole budget in a few milliseconds.
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return paneComposerIsEmpty(await capture(name, 6, socket));
 }
 
 // Prefill a pane's input with text but DON'T submit it — no Enter, so a human reviews

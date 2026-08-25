@@ -51,6 +51,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   //    never be turned into an arbitrary path for the agent to read.
   let attachments = [];
 
+  // Set when THIS view interrupted a turn, because that interrupt makes Claude
+  // Code restore the interrupted prompt into the PANE's composer as well as ours.
+  // Every send is a paste at the pane's cursor, so without clearing that first the
+  // edited prompt fuses onto the original and the agent receives one concatenated
+  // prompt. Length-dependent in the TUI, which is why it looked intermittent: a
+  // short prompt is not restored, a long one is.
+  //
+  // Armed here rather than measured at submit time on purpose. The pane composer
+  // being non-empty is not on its own a reason to wipe it — a draft the human typed
+  // in the terminal is theirs. Only the case the wrangler caused gets cleaned up.
+  let paneRestoreArmed = false;
+
   // The live row's three inputs — the last reply's pending tool call, the
   // timestamp of the newest transcript line, and the last known session status
   // — arrive on separate asynchronous paths (onChatReply and setStatus), so all
@@ -203,7 +215,15 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
-    send({ type: 'message', sessionId, text, ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}) });
+    send({
+      type: 'message', sessionId, text,
+      ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
+      ...(paneRestoreArmed ? { clearComposer: true } : {}),
+    });
+    // Disarmed by the send that consumed it: the restored prompt is gone from the
+    // pane once this lands, and a later message must not wipe a pane draft that
+    // this view had nothing to do with.
+    paneRestoreArmed = false;
     input.value = '';
     input.style.height = 'auto';
     // Cleared on send, not on reply: they have left with the message, and leaving
@@ -219,6 +239,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // restore, and it is sent even when there is nothing to restore.
   function interruptAndRestore() {
     if (!sessionId) return;
+    paneRestoreArmed = true;
     send({ type: 'interrupt', sessionId });
     // Never over a draft: if something is already typed, that is newer than the
     // prompt being cancelled and is what the human wants to keep. Stopping still
@@ -464,6 +485,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // else's conversation.
       attachments = [];
       renderAttachments();
+      paneRestoreArmed = false;
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
@@ -506,6 +528,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // else's conversation.
       attachments = [];
       renderAttachments();
+      paneRestoreArmed = false;
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;

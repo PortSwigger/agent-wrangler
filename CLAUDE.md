@@ -541,6 +541,26 @@ don't re-derive it.
   `[Image #10]` and a "Image #2" chip would contradict the text beside it. Deliberately
   no thumbnail — `GET /file` is markdown-only by design and widening it to serve
   arbitrary image paths would open a read surface for one decoration.
+- **Interrupting a turn makes Claude Code restore the interrupted prompt into the
+  PANE's composer, so the chat view's Esc-then-edit flow must CLEAR it before the
+  next send — and the restore is length-dependent, which is why the resulting bug
+  looks intermittent.** Measured against a live pane: a 72-character prompt was NOT
+  restored, a 281-character one WAS. The chat view restores the same prompt into the
+  browser composer (`interruptAndRestore`), and every send is a paste at the pane's
+  cursor, so without a clear the edited prompt fuses onto the restored original and
+  the agent receives ONE concatenated prompt — reproduced byte-for-byte
+  ("…count from 1 to 40.OK, I am running the toolbox now…", 409 chars for two
+  prompts of 281 and 128). `clearComposer` (`tmux-scraper.js`) presses **Ctrl+U,
+  which kills to the start of the LINE only**, so a multi-line draft needs one press
+  per line — hence a bounded loop that re-reads the pane via `capture-pane -e` and
+  `paneComposerIsEmpty` rather than a fixed number of presses, and it returns false
+  (never a cheerful true) when the pane will not come clean. **Armed by the client,
+  not inferred from a non-empty composer:** `paneRestoreArmed` (`public/chat-view.js`)
+  is set only when THIS view interrupted, because a draft the human typed directly in
+  the terminal is theirs and silently wiping it would be its own bug. A clear request
+  also has to force the paste route on a dormant session — the `resumeCarriesIntent`
+  shortcut hands the text to the CLI as a launch argument and never touches a
+  composer, so it would skip the clear entirely.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message
