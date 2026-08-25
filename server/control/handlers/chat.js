@@ -105,8 +105,17 @@ export const chatHandler = {
     // id. Resolve card → liveSessionId off the graph, falling back to the card id
     // for legacy pre-split entries — the same resolution subagent-detail.js does.
     const node = ctx.sessionFromGraph?.(msg.sessionId);
-    const convId = node?.liveSessionId || msg.sessionId;
-    const agent = node?.agent === 'codex' ? 'codex' : 'claude';
+    // The graph node only carries `liveSessionId` while the session is LIVE — a
+    // dormant node deliberately omits it, because it names the conversation id of
+    // a running process and there isn't one. So the entry is consulted next, the
+    // same precedence fork.js and view-diff.js already use (graph → entry → card
+    // id, the last for legacy pre-split entries). Without the entry step every
+    // dormant session resolved to its CARD id, found no transcript under that
+    // name, and rendered an empty stream — which broke the one thing this view
+    // does that the terminal cannot.
+    const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
+    const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
+    const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
 
     // Claude Code's suggested next prompt — the one thing in this view that is
     // not transcript-sourced, because it exists nowhere else (see

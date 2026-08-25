@@ -424,3 +424,52 @@ test('chat: a missing transcript still carries the suggestion field', async () =
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(c.sent[0].suggestion, 'point 5', 'read before the transcript lookup, so it survives its failure');
 });
+
+// --- dormant sessions: the graph node has no liveSessionId to offer ---
+
+// The regression this covers: a dormant node deliberately omits liveSessionId, so
+// the handler fell back to the CARD id, found no transcript under that name and
+// rendered an empty stream — breaking the one thing this view does that the
+// terminal cannot.
+test('chat: a dormant session resolves its conversation id from the entry', async () => {
+  const file = await tmpTranscript([userLine('still here', '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file, { agent: 'claude', dormant: true }); // node WITHOUT liveSessionId
+  c.sessionManager = { entryFor: () => ({ liveSessionId: 'live-1', agent: 'claude' }) };
+  let asked = null;
+  c.findTranscript = async (id) => { asked = id; return file; };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(asked, 'live-1', 'looked the transcript up by the conversation id, not the card id');
+  assert.equal(c.sent[0].events.length, 1);
+});
+
+test('chat: the graph node still wins over the entry when it has one', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'from-graph', agent: 'claude' });
+  c.sessionManager = { entryFor: () => ({ liveSessionId: 'from-entry' }) };
+  let asked = null;
+  c.findTranscript = async (id) => { asked = id; return file; };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(asked, 'from-graph');
+});
+
+// Legacy pre-split entries have neither, and the card id IS the conversation id.
+test('chat: falls back to the card id when neither source has one', async () => {
+  const file = await tmpTranscript([userLine('legacy', '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file, { agent: 'claude' });
+  c.sessionManager = { entryFor: () => ({}) };
+  let asked = null;
+  c.findTranscript = async (id) => { asked = id; return file; };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(asked, 'card-1');
+});
+
+// A dormant Codex session must still be recognised as Codex for event mapping.
+test('chat: the agent falls back to the entry too', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctx(file, { dormant: true });
+  c.sessionManager = { entryFor: () => ({ liveSessionId: 'live-1', agent: 'codex' }) };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  // A Claude-shaped line yields nothing under the Codex mapper, which is how we
+  // can tell the agent was read from the entry rather than defaulted to claude.
+  assert.deepEqual(c.sent[0].events, []);
+});
