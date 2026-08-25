@@ -344,6 +344,165 @@ don't re-derive it.
   class of incident `CODEX_HOME`'s redirect exists for, with a bill attached. Runs
   before any `data-dir.js` import (via `node --test --import`), so the module's
   `DATA_DIR` const picks it up for the whole test run.
+- **The chat view's read path must not apply the fork bound and must not price anything.**
+  A fork replaying parent history is correct for *reading*; `usageSince` bounds spend only.
+  Three cost scanners already have to agree on `iterations[]`/advisor/fork rules — the chat
+  path deliberately shows model only so it never becomes a fourth (no tokens are produced or
+  rendered anywhere on this path). `subagent.usd`
+  is forwarded from `transcript-reader.js`, not recomputed (`server/chat-events.js`).
+- **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
+  `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
+  it silently renders a timeline with no tool outputs. Codex `reasoning` is `encrypted_content`
+  with `summary: []`, so Codex thinking is a presence marker and can never have text.
+- **`mightCarryChat`'s Claude gate is role-based, so any non-`message` line needs
+  its own marker added or it is silently invisible.** The gate is a cheap substring
+  test run before `JSON.parse`, and for Claude it looks for `"role":"user"` /
+  `"role":"assistant"`. Claude Code's end-of-turn recap is a `type:'system'`,
+  `subtype:'away_summary'` line with a bare `content` string and **no `message`
+  object at all**, so it matches neither — `"away_summary"` had to go in the gate
+  *and* be handled before `pushClaude`'s `entry.message` guard, which would
+  otherwise drop it. Both halves are needed; adding either alone silently emits
+  nothing. Same shape applies to the other system subtypes on disk
+  (`turn_duration`, `stop_hook_summary`) if they are ever surfaced. The recap's
+  stored `content` has no `※ recap:` prefix (the TUI adds that) but does carry a
+  trailing `(disable recaps in /config)` — stripped by `recapOf`, because it tells
+  the reader to type a slash command and slash commands stay in the pane by design.
+  `recapOf` splits the "Next:" / "Next action:" sentence on the **last** marker:
+  the summary half is free prose that can contain the word itself.
+- **`server/chat-events.js` is a leaf and must stay one.** It deliberately duplicates
+  `search/extract.js`'s *shape* while keeping the tool calls that module drops — opposite
+  goals, do not merge them.
+- **The chat view's whole type scale is `em`-relative to `#chat-wrap`'s own
+  `font-size`, which is `var(--chat-font-size)`.** That one variable (set on
+  `<html>` by `applyChatFontSize`, `public/app.js`, from the `cm-chat-fontsize`
+  localStorage key via the `chat-font.js` leaf) is what the "Chat font size"
+  setting moves, and it only works because *every* size in the pane — prose,
+  chips, tool rows, the composer, the buttons — is a fraction of it. **A new
+  chat rule that sets `font-size` in px silently opts that element out of the
+  setting**, which is how the pane previously ended up with big prose beside
+  unchanged 11px machinery. Two deliberate exceptions: `.chat-seg-btn` (the
+  Chat/Terminal toggle lives in the panel header, outside the pane) and the
+  `14px` fallback on `#chat-wrap` itself (the variable is JS-set, so the pane
+  must still render if that never runs). Separate from the terminal's size on
+  purpose — `term-font.js` and `chat-font.js` are sibling leaves with different
+  presets and defaults, and `chat-font.test.js` asserts they have not converged.
+- **Every `ctx.reply` in `server/control/handlers/chat.js` MUST echo `token`.** The chat view
+  correlates each poll reply to the mount that requested it by an opaque token it sends and
+  the handler echoes back (`token: msg.token ?? null`); the client drops any reply whose
+  token does not match its current generation. There are five reply paths (missing transcript,
+  failed stat, failed open, no-complete-line, success) and **a new reply path that omits the
+  token makes the chat view silently stop updating for that session, forever** — the client
+  cannot distinguish "token absent" from "stale era", and there is no retry. Nothing catches
+  this automatically: no lint rule, and the replies are separate object literals rather than
+  going through a shared builder. `chat.test.js` pins two of the five paths; a new path needs
+  its own assertion. The token exists because `server/index.js`'s control-socket handler invokes
+  `routeControlMessage` **without awaiting**, so concurrent requests interleave and the
+  handler's async reads can complete out of order. An earlier attempt correlated replies with
+  a FIFO queue and was provably inverted by that (it dropped the valid reply and applied the
+  stale one) — so do not "simplify" the token back to positional correlation.
+  The same all-paths rule now applies to **`lastTs`** (the newest transcript
+  timestamp the scanner has consumed, `createChatScanner().lastTs()`): it is the
+  chat view's elapsed clock for its live "working" row, so a reply path that
+  omits it freezes that clock. It is deliberately server-sourced rather than
+  measured from when the view mounted — mount-relative timing reports "3s" for a
+  session that has already been grinding for five minutes. It reads `prevTs`,
+  which `pushClaude` advances for **every** user and assistant entry, including
+  an assistant message that is nothing but a `tool_use` and therefore emits no
+  event at all: exactly the case the indicator exists to cover.
+- **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
+  signalled.** `Terminal →` on the chat view's needs-you bar arms
+  `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
+  `applyGraph` switches back once `shouldReturnToChat` (`public/chat-handoff.js`,
+  four guards, unit-tested) says the session has left `needs-you` — nothing on
+  the wire says "the prompt was answered", and leaving `needs-you` is what that
+  looks like from outside the pane. Three things are load-bearing:
+  **the disarm in the `.chat-seg-btn` handler must come BEFORE its no-op early
+  return** (pressing `Terminal` while already in the handoff's terminal is
+  exactly how someone says "I want to stay here", and that press changes no
+  view, so a disarm placed after the return would ignore the one gesture that
+  most needs honouring); **the check must run BEFORE `renderPanel`** in
+  `applyGraph`, or the toggle renders a tick behind the pane it labels *and*
+  the `openTerminal` branch below it still sees `terminal` and re-attaches into
+  the hidden pane (the 80-column bug that branch's comment describes); and the
+  armed id is **deliberately in-memory, never persisted** beside the view choice
+  — it describes a trip in progress, so surviving a reload would drop someone
+  into an automatic switch they cannot connect to anything they did.
+- **The suggested next prompt is the ONE deliberate exception to "the chat view
+  is transcript-sourced" — and it is scraped, because it exists nowhere else.**
+  Verified against a live session while the suggestion was on screen: absent from
+  the session jsonl (it lands only after acceptance, as an ordinary user message
+  indistinguishable from typing), `atis-latch`'s `atis` field empty in all 181
+  occurrences across 150 transcripts, no file written under `~/.claude` when it
+  appears, and `history.jsonl` holds only submitted prompts. The rendered pane is
+  its only external representation. So `parseGhostSuggestion`
+  (`server/ghost-suggestion.js`, a leaf) reads it off `capturePaneStyled` —
+  **`capture-pane -e`, which is why that is a SEPARATE helper from
+  `capturePane`**: every existing caller feeds plain text to `stripAnsi`/
+  `classify`, and the escapes are the entire basis of this parser, since the
+  faint attribute (SGR 2) is the only thing distinguishing ghost text from what
+  the human is typing. Governing rule is **hide on any doubt** — a missed
+  suggestion is just the old behaviour, a wrong one echoes someone's own
+  half-written draft back as the agent's idea — so it bails on typed text before
+  the run, an unterminated run (a wrapped suggestion, where reporting line one
+  would load a TRUNCATED prompt), trailing text, over-long text, and escape-
+  stripped input. Read in the chat handler rather than `buildGraph`: one tmux
+  exec for the one session being viewed instead of every card, at the 2s poll
+  rather than the ~4s graph, and a dormant card has no pane anyway. **Claude
+  only** — Codex's composer is a different TUI and guessing at it is exactly the
+  failure this is built to avoid. Carried on every reply under the same all-paths
+  rule as `token`/`lastTs`.
+- **`/model <name>` is the ONE slash command the chat view is allowed to send,
+  and `entry.model` must NOT be updated when it does.** The "slash commands stay
+  in the pane" rule exists because a slash command's output is a TUI dialog this
+  view cannot render (`/clear`, `/compact`, `/config`, …). `/model <name>` is the
+  exception that proves it: it takes its argument inline and applies silently,
+  with no dialog to miss. Its accepted alias list is
+  `["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]","fable[1m]",
+  "opusplan"]`, a superset of every value the Claude adapter offers, so
+  `set-session-model.js` validates against the adapter's own list and no second
+  model vocabulary exists. **`entry.model` stays the LAUNCH model** — it is what
+  a resume re-launches with, so writing it would change what a later resume does
+  on the strength of a runtime toggle.
+  **`/model` is NOT session-scoped, despite a string in the binary saying it is
+  — it writes `"model"` into `~/.claude/settings.json`.** Measured, not read:
+  the file gained `"model": "sonnet"` the moment the handler sent
+  `/model sonnet`. So a switch here changes the default for **every new Claude
+  session on the machine**, wrangler-launched or not. That is `/model`'s own
+  behaviour and matches what the feature was asked for, but it is surprising
+  enough that the menu says so in a header rather than leaving it to be
+  discovered. Don't restore the old value afterwards — that fights the tool and
+  races the user's own settings edits.
+  **A `/model` switch is invisible to the transcript**, so `modelPill` (built
+  from the last assistant `message.model`) keeps naming the OLD model until the
+  next turn runs — it is right for a dormant card and wrong for exactly the
+  moment after a switch. The live source is the pane's status bar via
+  `paneModelLabel` (`tmux-scraper.js`), carried on the chat reply as `modelNow`
+  and preferred over the pill by the chip. Its label is SHORT ("Sonnet 5") and
+  does not distinguish the 200K/1M variants, which is why `currentModelValue`
+  (`public/model-menu.js`) decides the menu's tick over the whole set and ticks
+  nothing when two rows are indistinguishable — a wrong tick is worse than none.
+  **Slash-command plumbing must stay out of the stream:** the invocation
+  (`<command-name>…`) and its output (`<local-command-stdout>`) arrive as
+  ordinary user messages with no `isMeta`, so they are filtered by name in
+  `chat-events.js`'s `SYNTHETIC_PREFIXES` — without that they render as raw tag
+  soup in a user bubble. Three refusals are load-bearing and mirrored client-side by
+  `canSwitchModel` (`public/app.js`) so the menu is only offered where it would
+  be honoured: **Claude only** (Codex's model is a launch choice and its TUI is a
+  different program), **idle only** (composer input during a turn is queued as
+  the next PROMPT, so the session would answer "/model sonnet" as a question),
+  and **pane composer confirmed empty** via `paneComposerIsEmpty`
+  (`ghost-suggestion.js`) — the paste lands at the cursor, so a draft already
+  there fuses with the command into one mangled prompt that the Enter submits.
+  That guard is fail-safe: it returns false whenever emptiness cannot be
+  confirmed.
+- **The chat view cannot stream a partial turn, and no indicator should imply it
+  does.** Claude Code writes whole messages to the transcript — there is no
+  partial or delta line to tail — so between the start of a turn and the message
+  landing there is genuinely nothing to render. The live row (`.chat-live`, last
+  child of the stream, `chat-view.js`) is the honest substitute: presence gated
+  on the session's real status, decorated with the pending tool name when there
+  is one, plus the elapsed clock above. Don't replace it with something that
+  looks like text arriving.
 
 ## How subsystems hang together (pointers, not mechanics)
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -284,4 +284,42 @@ test('parsePaneLine rejoins a pane_title containing pipes', () => {
   const p = parsePaneLine('cc_1|100|/p|%0|0|✳ fix a | b | c');
   assert.equal(p.paneId, '%0');
   assert.equal(p.paneTitle, '✳ fix a | b | c');
+});
+
+// --- paneModelLabel: the live model, which the transcript never records ---
+
+test('paneModelLabel reads the model out of the status bar', () => {
+  const E = '\x1b';
+  // Shape taken from a real capture of a live session.
+  const pane = [
+    `${E}[39m❯ `,
+    `${E}[39m  ${E}[38;5;153m◆ Sonnet 5${E}[38;5;246m ${E}[38;5;248m|${E}[38;5;246m ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`,
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(paneModelLabel(pane), 'Sonnet 5');
+});
+
+// The leading glyph varies between models (✦, ◆), so it is stripped structurally
+// rather than matched against a list a new glyph would break.
+test('paneModelLabel copes with a different leading glyph', () => {
+  assert.equal(paneModelLabel('  ✦ Opus 5 | ██░ 22% | 📅 $14'), 'Opus 5');
+  assert.equal(paneModelLabel('  ◆ Fable 5 | █░ 13% | 📅 $8'), 'Fable 5');
+});
+
+// Identified by the context meter, not by position, so prose cannot masquerade.
+test('paneModelLabel ignores lines that are not the status bar', () => {
+  assert.equal(paneModelLabel('we discussed a | b and 50 percent of it'), null);
+  assert.equal(paneModelLabel('just some output'), null);
+  assert.equal(paneModelLabel(''), null);
+  assert.equal(paneModelLabel(null), null);
+});
+
+test('paneModelLabel takes the last status bar, which is the live one', () => {
+  const pane = ['  ✦ Opus 5 | █ 5% | x', 'chatter', '  ◆ Sonnet 5 | █ 7% | x'].join('\n');
+  assert.equal(paneModelLabel(pane), 'Sonnet 5');
+});
+
+// A wrong label misreports live state, so an unrecognisable one is dropped.
+test('paneModelLabel rejects an implausibly long first segment', () => {
+  assert.equal(paneModelLabel(`  ◆ ${'x'.repeat(60)} | █ 7% | y`), null);
 });

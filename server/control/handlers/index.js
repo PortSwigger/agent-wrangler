@@ -19,6 +19,8 @@ import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
+import { chatViewDefaultHandler } from './chat-view-default.js';
+import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
   taskRenameHandler,
@@ -47,6 +49,8 @@ import { openTerminalForSessionHandler } from './open-terminal-for-session.js';
 import { viewDiffHandler } from './view-diff.js';
 import { diffCommentsHandler } from './diff-comments.js';
 import { subagentDetailHandler } from './subagent-detail.js';
+import { chatHandler } from './chat.js';
+import { interruptHandler } from './interrupt.js';
 import { usageHandler } from './usage.js';
 import { searchHandler, searchStatusHandler, searchReindexHandler } from './search.js';
 import { adoptConversationHandler } from './adopt.js';
@@ -81,6 +85,8 @@ export const CONTROL_HANDLERS = [
   archiveReviewEnabledHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
+  chatViewDefaultHandler,
+  setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
@@ -104,6 +110,8 @@ export const CONTROL_HANDLERS = [
   viewDiffHandler,
   diffCommentsHandler,
   subagentDetailHandler,
+  chatHandler,
+  interruptHandler,
   usageHandler,
   searchHandler,
   searchStatusHandler,

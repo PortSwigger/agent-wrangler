@@ -23,7 +23,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -518,6 +518,7 @@ async function rebuildOnce() {
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
+  graph.chatViewDefault = chatViewDefault();
   lastGraph = graph;
 
   for (const sid of autoArchived) {

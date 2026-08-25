@@ -170,6 +170,24 @@ export async function capturePane(name, lines = 60, socket = '') {
   }
 }
 
+// capture-pane WITH escape sequences, and only the last few lines. Separate from
+// capturePane above on purpose: every existing caller feeds plain text to
+// stripAnsi/classify, and switching the shared helper to -e would push escapes
+// into all of them. The escapes are the entire point here — parseGhostSuggestion
+// (ghost-suggestion.js) tells a suggestion from typed text by the faint
+// attribute, and cannot do its job without them. Defaults to 6 lines because the
+// only thing it reads is the composer.
+export async function capturePaneStyled(name, lines = 6, socket = '') {
+  try {
+    const { stdout } = await tmux(socket, ['capture-pane', '-t', name, '-p', '-e', '-S', `-${lines}`], {
+      maxBuffer: 256 * 1024,
+    });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
 // Derive live state from the pane: only the "esc to interrupt" working signal
 // vs idle. The "needs you" (waiting) state comes from Claude's own session
 // file (status: 'waiting'), not from scraping the pane — pane scraping produced
@@ -223,6 +241,30 @@ const BACKGROUND_SHELL_PATTERNS = {
   claude: /·\s*\d+\s+shells?\b/,
   codex: /\d+\s+background terminals?\s+running/i,
 };
+
+// The model named in the TUI's own status bar — the ONLY live source for it.
+// A `/model` switch is not recorded in the transcript at all (verified: the line
+// types written are the command's own plumbing, none carrying a model), so the
+// board's `modelPill` — derived from the last assistant message's `message.model`
+// — keeps reporting the OLD model until the next turn actually runs. That made
+// the chat view's chip contradict the pane sitting next to it.
+//
+// The status bar looks like `◆ Sonnet 5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`.
+// Identified by the context meter's percentage next to a pipe rather than by
+// position, so it is not confused with conversation text, and the LAST match
+// wins because the bar is at the bottom. The leading glyph varies (✦, ◆) so it
+// is stripped as "everything before the first letter or digit" rather than
+// matched against a list that a new glyph would silently break.
+export function paneModelLabel(paneText) {
+  if (typeof paneText !== 'string') return null;
+  const line = stripAnsi(paneText).split('\n').filter((l) => /\|/.test(l) && /\d+%/.test(l)).pop();
+  if (!line) return null;
+  const first = line.slice(0, line.indexOf('|'));
+  const label = first.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+  // Bounded, and rejected outright if it is not the shape of a model name — a
+  // wrong label here would misreport live state, so no label beats a bad one.
+  return label && label.length <= 40 ? label : null;
+}
 
 export function hasBackgroundShell(paneText, agent = 'claude') {
   const pattern = BACKGROUND_SHELL_PATTERNS[agent];

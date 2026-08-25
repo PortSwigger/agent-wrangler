@@ -347,6 +347,10 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-border)
 button.danger:hover { background: var(--danger-bg); border-color: var(--danger-strong); }
 
 #term-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* An explicit display out-specifies the UA's default [hidden] { display: none },
+   so an element toggled via the hidden attribute (not a class — see chat-view.js)
+   needs its own [hidden] override. Same fix as .diff-panel[hidden] above. */
+#term-wrap[hidden] { display: none; }
 /* #term is the backdrop wrapper: it paints --term-bg (rgba honored) and the
    xterm canvas inside is made transparent for dark translucent themes (see
    readTerminalTheme), so the cells AND the inset take this one bg uniformly —
@@ -472,37 +476,49 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 10px 14px; color: var(--fg); font-size: 13px; line-height: 1.6; box-sizing: border-box;
 }
-.memory-preview > :first-child { margin-top: 0; }
-.memory-preview > :last-child { margin-bottom: 0; }
+/* .chat-prose (the chat view's rendered-markdown block, styles.css:~2190) shares
+   every one of these ELEMENT rules — same renderer, same markdown shape — so it
+   rides alongside .memory-preview here rather than duplicating them. It does NOT
+   join the boxed-panel rule above (min-height/max-height/background/border/
+   padding): a chat message is a bubble in a stream, not a bordered preview pane. */
+.memory-preview > :first-child, .chat-prose > :first-child { margin-top: 0; }
+.memory-preview > :last-child, .chat-prose > :last-child { margin-bottom: 0; }
 .memory-preview h1, .memory-preview h2, .memory-preview h3,
-.memory-preview h4, .memory-preview h5, .memory-preview h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; }
-.memory-preview h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
-.memory-preview h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
-.memory-preview h3 { font-size: 1.15em; }
-.memory-preview p { margin: 0.6em 0; }
-.memory-preview ul, .memory-preview ol { margin: 0.6em 0; padding-left: 1.5em; }
-.memory-preview li { margin: 0.2em 0; }
-.memory-preview li > ul, .memory-preview li > ol { margin: 0.2em 0; }
-.memory-preview a { color: var(--blue-fg); text-decoration: none; }
-.memory-preview a:hover { text-decoration: underline; }
-.memory-preview strong { color: var(--fg); font-weight: 600; }
-.memory-preview em { font-style: italic; }
-.memory-preview code {
+.memory-preview h4, .memory-preview h5, .memory-preview h6,
+.chat-prose h1, .chat-prose h2, .chat-prose h3,
+.chat-prose h4, .chat-prose h5, .chat-prose h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; }
+.memory-preview h1, .chat-prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.memory-preview h2, .chat-prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.memory-preview h3, .chat-prose h3 { font-size: 1.15em; }
+.memory-preview p, .chat-prose p { margin: 0.6em 0; }
+.memory-preview ul, .memory-preview ol, .chat-prose ul, .chat-prose ol { margin: 0.6em 0; padding-left: 1.5em; }
+.memory-preview li, .chat-prose li { margin: 0.2em 0; }
+.memory-preview li > ul, .memory-preview li > ol, .chat-prose li > ul, .chat-prose li > ol { margin: 0.2em 0; }
+.memory-preview a, .chat-prose a { color: var(--blue-fg); text-decoration: none; }
+.memory-preview a:hover, .chat-prose a:hover { text-decoration: underline; }
+.memory-preview strong, .chat-prose strong { color: var(--fg); font-weight: 600; }
+.memory-preview em, .chat-prose em { font-style: italic; }
+.memory-preview code, .chat-prose code {
   background: var(--surface-2); color: var(--blue-fg);
   padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.memory-preview pre {
+.memory-preview pre, .chat-prose pre {
   background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 6px;
   padding: 10px 12px; overflow: auto; margin: 0.6em 0;
 }
-.memory-preview pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
-.memory-preview blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
-.memory-preview hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
-.memory-preview table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
-.memory-preview th, .memory-preview td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
-.memory-preview th { background: var(--surface-2); color: var(--fg); font-weight: 600; }
-.memory-preview img { max-width: 100%; }
+/* .chat-prose only, not merged above: a chat message sits inside the scrolling
+   .chat-stream, not its own bordered pane, so an unwrapped long line (a stack
+   trace, a URL) would scroll the WHOLE stream sideways instead of just the code
+   block. .memory-preview keeps its plain horizontal-scroll pre unchanged. */
+.chat-prose pre { white-space: pre-wrap; word-break: break-word; }
+.memory-preview pre code, .chat-prose pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
+.memory-preview blockquote, .chat-prose blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
+.memory-preview hr, .chat-prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.memory-preview table, .chat-prose table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
+.memory-preview th, .memory-preview td, .chat-prose th, .chat-prose td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.memory-preview th, .chat-prose th { background: var(--surface-2); color: var(--fg); font-weight: 600; }
+.memory-preview img, .chat-prose img { max-width: 100%; }
 /* Frosted glass (matches .context-menu): keep the theme's translucent surface,
    but blur the busy wallpaper/board behind so dialog text stays readable without
    going dark/opaque. The shadow lifts it off the blurred backdrop. */
@@ -2207,3 +2223,367 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-children { display: flex; flex-direction: column; gap: 6px; margin-left: 13px; padding-left: 14px; }
 
 .search-wf { color: var(--wf); border-color: color-mix(in srgb, var(--wf) 35%, transparent); background: color-mix(in srgb, var(--wf) 14%, transparent); }
+
+/* ── Chat view ──────────────────────────────────────────────────────────────
+   Layout premise (direction C, see the design spec): prose reads first and
+   machinery is a quieter register underneath it. Everything below follows from
+   that one split — assistant text gets the reading measure and the largest
+   type on the surface; tool calls, thinking and sub-agents get chips, muted
+   colour, smaller type, and are the only things that ever collapse. */
+
+/* The segmented toggle borrows .diff-mode-btn's shape deliberately: same job
+   (two views of one thing), so it should look like the same control. Left as
+   the original two-button pair on purpose — restyling it into a single-track
+   segmented control would leave the diff view's identical toggle looking
+   unrelated, which is a separate change to make to both at once. */
+.chat-seg { display: flex; gap: 4px; flex: 0 0 auto; }
+.chat-seg-btn {
+  padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);
+}
+.chat-seg-btn:hover { color: var(--fg); border-color: var(--border-muted); }
+.chat-seg-btn.on, .chat-seg-btn.on:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
+
+/* Same cascade problem as #term-wrap (styles.css:349) and .diff-panel[hidden]:
+   an explicit display beats the UA's [hidden] { display: none }, so anything
+   toggled via the hidden attribute needs its own override here too. */
+/* --card-bg, the same single translucent wash #panel uses, so the chat continues
+   the header's surface rather than exposing the wallpaper behind the prose
+   (#sidebar is deliberately transparent and each pane paints its own backdrop —
+   #term does the same with --term-bg). One layer, on the wrapper: painting the
+   stream and the composer separately would double it. */
+/* THE type scale for this whole pane. Every size below is an `em` fraction of
+   this one value, so the "Chat font size" setting (app.js applyChatFontSize sets
+   --chat-font-size on <html>) moves the prose, the chips, the tool rows and the
+   composer together. Sizing them in px independently is what made a 16px
+   setting produce big prose beside unchanged 11px machinery.
+   The px fallback matters: --chat-font-size is set by JS, and the pane must
+   still render correctly if that never runs. */
+#chat-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--card-bg);
+  font-size: var(--chat-font-size, 14px); }
+#chat-wrap[hidden] { display: none; }
+
+.chat-stream {
+  flex: 1; overflow-y: auto; padding: 20px 22px 26px;
+  display: flex; flex-direction: column;
+  scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
+}
+.chat-stream::-webkit-scrollbar { width: 10px; }
+.chat-stream::-webkit-scrollbar-track { background: transparent; }
+.chat-stream::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.chat-stream::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; }
+/* Rhythm is per-item margin, not one stream-wide `gap`, because the gaps are
+   not all the same size and are not supposed to be: a new turn opens further
+   from what precedes it than a tool chip does from the prose it belongs to.
+   A flat gap made the stream read as one undifferentiated list. */
+.chat-stream > * { margin-top: 9px; flex: none; }
+.chat-stream > :first-child { margin-top: 0; }
+.chat-user { margin-top: 26px; }
+.chat-assistant { margin-top: 16px; }
+
+/* 1em and the same leading as .chat-prose, deliberately: the user's words and
+   the agent's words are the same kind of content and were reading at different
+   sizes (the bubble inherited the app's 13px body type while the prose set its
+   own), which made every exchange look like two different documents. The agent's
+   measure won because it is the side you read most. */
+.chat-user {
+  align-self: flex-end; width: fit-content; max-width: 84%;
+  background: var(--surface-2); border: 1px solid var(--border-muted); color: var(--fg);
+  /* One squared corner on the sender's side — the standard bubble tail, which
+     is what makes an unlabelled right-aligned block read as "you said this". */
+  border-radius: 14px 14px 5px 14px;
+  padding: 9px 14px; font-size: 1em; line-height: 1.62;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.chat-assistant { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+/* .chat-prose's element rules (headings/links/code/pre/tables/…) live with
+   .memory-preview's, styles.css:~474 — same renderer, same markdown shape.
+   The measure and leading are set here, not there: this is body copy in a
+   reading column, where .memory-preview is a compact preview pane. */
+.chat-prose { font-size: 1em; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
+/* Held at half opacity at rest and lifted on hover. The model id repeats on
+   every prose block in a turn and almost never changes, so at full strength it
+   is three identical pills of noise per answer — but it is real provenance, so
+   it is dimmed rather than dropped. Opacity, not display, because the row must
+   not change height on hover. :focus-within so it is reachable without a
+   pointer. */
+.chat-turn-foot { display: flex; align-items: center; gap: 8px; opacity: .5; transition: opacity .12s; }
+.chat-assistant:hover .chat-turn-foot, .chat-assistant:focus-within .chat-turn-foot { opacity: 1; }
+/* A pill, not bare text: the model id sat directly under the last line of
+   prose with nothing distinguishing it, so it read as a dangling fragment of
+   the message rather than metadata about it. */
+.chat-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  color: var(--fg-subtle); background: var(--surface-2);
+  border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
+}
+
+.chat-activity, .chat-thinking { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+
+/* One shape for both disclosure chips — an activity run and a thinking block
+   are the same control (a button revealing its sibling body), so chat-view.js
+   wires them identically and they must look identical too. */
+.chat-activity-chip, .chat-thinking-chip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  font: inherit; font-size: 0.83em; font-weight: 500;
+  border: 1px solid var(--border-muted); border-radius: 999px;
+  padding: 3px 12px 3px 10px;
+  background: var(--surface); color: var(--fg-muted);
+  cursor: pointer; width: fit-content;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.chat-activity-chip:hover, .chat-thinking-chip:hover {
+  background: var(--surface-2); border-color: var(--border); color: var(--fg);
+}
+/* Caret keyed off the button's own aria-expanded, so the drawn state cannot
+   drift from the announced one — there is no second source of truth to sync. */
+.chat-activity-chip::before, .chat-thinking-chip::before {
+  content: ''; flex: none; width: 0; height: 0; opacity: .65;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  transform-origin: 30% 50%; transition: transform .12s;
+}
+.chat-activity-chip[aria-expanded="true"]::before,
+.chat-thinking-chip[aria-expanded="true"]::before { transform: rotate(90deg); }
+.chat-activity-label, .chat-thinking-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The textless thinking case (the common one: Claude's thinking is usually
+   blank, Codex's is presence-only) gets no button — a hollow dot says
+   "something happened here and there is nothing to open". */
+.chat-thinking > .chat-thinking-label {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.83em; font-style: italic; color: var(--fg-subtle); padding-left: 2px;
+}
+.chat-thinking > .chat-thinking-label::before {
+  content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--border);
+}
+/* + and − carry the green/red they mean everywhere else in the app, which a
+   flat "+14 −3" inside the label text could not. activityTitle keeps the flat
+   form for the chip's tooltip. */
+.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em; }
+.chat-adds { color: var(--green-fg); }
+.chat-dels { color: var(--red-fg); }
+
+/* The rail is what attaches a body to the chip that opened it. Without it an
+   expanded run was raw text floating in the stream with no visible owner. */
+.chat-activity-body, .chat-thinking-body {
+  display: flex; flex-direction: column; gap: 6px;
+  align-self: stretch; min-width: 0;
+  margin-left: 6px; padding-left: 13px; border-left: 2px solid var(--border-muted);
+}
+.chat-activity-body[data-collapsed="1"], .chat-thinking-body[data-collapsed="1"] { display: none; }
+.chat-thinking-body { font-size: 0.87em; line-height: 1.55; color: var(--fg-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.chat-tool-row { border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface); overflow: hidden; min-width: 0; }
+.chat-tool-head { display: flex; align-items: baseline; gap: 9px; padding: 5px 10px; min-width: 0; }
+/* Uppercased and small so the tool name reads as a category label rather than
+   competing with the target beside it, which is the part you actually scan. */
+.chat-tool-name { flex: none; font-size: 0.72em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+.chat-tool-target {
+  min-width: 0; font-size: 0.83em; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-tool-target, .chat-tool-output { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chat-tool-output {
+  margin: 0; padding: 7px 10px; border-top: 1px solid var(--border-muted);
+  /* --surface-2, this file's established code-block shade (.chat-prose pre,
+     .memory-preview pre use it with the same border): --field-bg is #0d1117 in
+     dark but #ffffff in light, so it would have made the output block vanish
+     into the row on the light theme. */
+  background: var(--surface-2); color: var(--fg-muted);
+  font-size: 0.79em; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 200px; overflow: auto;
+}
+.chat-tool-output[data-truncated="1"]::after { content: ' …truncated'; color: var(--fg-subtle); }
+/* A failure is tinted on the whole row, not just the tool name: the name is
+   three uppercase characters in the corner, which is not enough to notice
+   while scrolling past an expanded run. */
+.chat-tool-row[data-failed="1"] { border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.chat-tool-row[data-failed="1"] .chat-tool-name { color: var(--red-fg); }
+.chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--surface-2)); }
+
+/* Neutral, not violet — violet (--wf) is this codebase's workflow-nested-child
+   colour (see .workflow-box), a deliberately distinct concept from a sub-agent.
+   Matches .subagent-row's own resting style so a sub-agent reads the same way
+   here as it does on the board card. Sized to its content rather than the full
+   stream width, which made it read as an empty input field. */
+.chat-subagent {
+  display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%;
+  border: 1px solid var(--border-muted); background: var(--surface);
+  border-radius: 8px; padding: 5px 11px 5px 9px; font-size: 0.83em;
+  color: var(--fg-muted); cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.chat-subagent:hover { background: var(--surface-2); border-color: var(--border); color: var(--fg); }
+.chat-subagent::before { content: '↳'; flex: none; color: var(--fg-subtle); }
+/* Hover-only, because the row's clickability is the affordance being hinted at
+   — a permanently visible arrow on every sub-agent row is just noise. */
+.chat-subagent::after { content: '→'; flex: none; color: var(--fg-subtle); opacity: 0; transition: opacity .12s; }
+.chat-subagent:hover::after { opacity: 1; }
+.chat-subagent-name { min-width: 0; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chat-notice {
+  display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 11px;
+  font-size: 0.83em; color: var(--fg-muted);
+}
+/* Filled dot against .chat-thinking-label's hollow one: the same 5px mark in
+   the same lane, reading as "resolved" vs "nothing to see". */
+.chat-notice::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .8; }
+.chat-notice-text { min-width: 0; overflow-wrap: anywhere; }
+.chat-notice[data-notice-kind="denied"] {
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red-fg);
+}
+
+.chat-notice-bar { display: flex; align-items: center; gap: 10px; font-size: 0.83em; color: var(--fg);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--red) 55%, transparent); padding: 9px 14px; }
+.chat-notice-bar[hidden] { display: none; }
+/* --warn/--text (brief names, aspirational) map to this file's real vars: --red is
+   the documented needs-you identity (see the --snooze comment above, which spells
+   out --red/--snooze/--just-finished as separate alarm roles) — --snooze reads as
+   "snoozed" everywhere else on the board, so using it here would send the wrong
+   signal, not just a less-precise one. --red-fg is its established foreground
+   partner (same pairing as .pill.needs-you), used for the button's text. */
+.chat-notice-go { margin-left: auto; font: inherit; font-size: 0.83em; font-weight: 600;
+  border: 1px solid var(--red); border-radius: 6px; padding: 3px 9px;
+  background: transparent; color: var(--red-fg); cursor: pointer; white-space: nowrap; }
+.chat-notice-go:hover { background: color-mix(in srgb, var(--red) 18%, transparent); }
+
+.chat-composer { border-top: 1px solid var(--border); padding: 11px 14px 12px; }
+/* Claude Code's suggested next prompt, sitting where the terminal shows it —
+   directly above the input. Styled like the recap's next step (same accent, same
+   arrow) because it is the same kind of offer: press it and the composer fills.
+   Quieter than the recap card though: this one appears and disappears with the
+   pane's own state, so it must not draw the eye every time it arrives. */
+.chat-suggestion {
+  display: block; width: 100%; text-align: left; margin-bottom: 8px;
+  font: inherit; font-size: 0.8em; line-height: 1.45;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px; padding: 5px 10px;
+  background: transparent; color: var(--fg-muted); cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+/* Same [hidden] trap as #term-wrap / #chat-wrap / .chat-notice-bar / .chat-working:
+   the explicit display above out-specifies the UA's [hidden] { display: none },
+   and chat-view.js toggles this element by attribute. */
+.chat-suggestion[hidden] { display: none; }
+.chat-suggestion:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); color: var(--fg);
+}
+/* Dashed border and a leading arrow rather than a label: it reads as "not yours
+   yet", which is exactly what ghost text means in the pane it came from. */
+.chat-suggestion::before { content: '→ '; color: var(--fg-subtle); }
+.chat-box {
+  display: flex; align-items: flex-end; gap: 8px;
+  border: 1px solid var(--border); border-radius: 12px; padding: 8px 8px 8px 13px;
+  background: var(--field-bg); transition: border-color .12s, box-shadow .12s;
+}
+/* On the wrapper, not the textarea: the textarea has no border of its own, so
+   without this the only focus signal was the caret. */
+.chat-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.chat-box textarea { flex: 1; resize: none; border: 0; background: transparent; outline: none;
+  color: var(--fg); font: inherit; font-size: 1em; line-height: 1.5; max-height: 140px; padding: 3px 0; }
+.chat-box textarea::placeholder { color: var(--fg-subtle); }
+.chat-box[data-blocked="1"] { opacity: .55; }
+/* Send is the primary action of the surface, so it takes the accent treatment
+   directly rather than via button.primary — the class would have to be carried
+   in markup for a button that is never anything else. Hover mirrors
+   button.primary's mix so the two stay visually identical. */
+.chat-send { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.chat-send:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
+.chat-send:disabled, .chat-send:disabled:hover { background: var(--accent); opacity: .45; cursor: default; }
+.chat-stop { background: transparent; color: var(--red-fg); border-color: color-mix(in srgb, var(--red) 55%, transparent); }
+.chat-stop:hover { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: var(--red); }
+
+/* Hint left, current model right — the model belongs by the editor (that is what
+   the request asked for) and this is the only row down here, so it costs no
+   vertical space to put it there. */
+.chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
+/* Which model the session is on RIGHT NOW, as opposed to .chat-model, which
+   records the model of one past turn. Deliberately a little stronger than that
+   one: it is live state, not provenance. */
+.chat-current-model {
+  margin-left: auto; flex: none; max-width: 45%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  color: var(--fg-muted); background: var(--surface-2);
+  border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Same [hidden] trap as the other attribute-toggled chat elements. */
+.chat-current-model[hidden] { display: none; }
+/* Pressable only where the switch would be honoured (see canSwitchModel): the
+   hover affordance has to appear exactly where the click does something. */
+.chat-current-model[data-switchable="1"] { cursor: pointer; }
+.chat-current-model[data-switchable="1"]:hover { color: var(--fg); border-color: var(--border); background: var(--surface); }
+/* The global `button:hover` rule would still light up a chip that cannot be
+   pressed, so the disabled state has to restate its resting colours. */
+.chat-current-model:disabled { cursor: default; }
+.chat-current-model:disabled:hover {
+  background: var(--surface-2); border-color: var(--border-muted); color: var(--fg-muted);
+}
+/* Buttons carry an absolute 12px from the global `button` rule, which would sit
+   unchanged beside prose the size setting had scaled. */
+.chat-send, .chat-stop { font-size: 0.86em; }
+
+/* The live row. It sits IN the stream as its last child (chat-view.js keeps it
+   there) rather than above the composer, because what it answers is "the stream
+   looks dead mid-turn" — and it is styled as an event, not as a status bar, so
+   it reads as the next thing about to appear. */
+.chat-live {
+  display: flex; align-items: center; gap: 9px; margin-top: 12px;
+  align-self: flex-start; max-width: 100%;
+  font-size: 0.83em; color: var(--fg-muted);
+}
+/* Green pulsing dot: this row is the one thing on the surface that means "right
+   now", and the board already reads a pulse as live (see .card-bar's bar-throb). */
+.chat-live::before {
+  content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); animation: chat-live-pulse 1.4s ease-in-out infinite;
+}
+.chat-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Tabular figures so a 1s tick doesn't reflow the row as digits change width. */
+.chat-live-elapsed { flex: none; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+@keyframes chat-live-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+/* Recap — Claude Code's end-of-turn summary. Given a left accent rail and the
+   accent hue rather than a chip: it is the only thing in the stream that is
+   ABOUT the conversation rather than part of it, and its next step is an offer
+   to act, so it should invite a look instead of receding like machinery does. */
+.chat-recap {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+  margin-top: 16px; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px 9px 9px 4px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.chat-recap-label { font-size: 0.7em; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--blue-fg); }
+.chat-recap-text { font-size: 0.9em; line-height: 1.55; color: var(--fg); overflow-wrap: anywhere; }
+/* The proposed next step is a button because pressing it loads the composer.
+   Left-aligned text, not centred: it is a sentence, and it wraps. */
+.chat-recap-next {
+  font: inherit; font-size: 0.85em; text-align: left; max-width: 100%;
+  border: 1px solid var(--accent); border-radius: 7px; padding: 5px 11px;
+  background: transparent; color: var(--blue-fg); cursor: pointer;
+  transition: background .12s;
+}
+.chat-recap-next:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* An arrow leading the sentence, marking it as "do this next" rather than as a
+   quotation of the recap's last line. */
+.chat-recap-next::before { content: '→ '; color: var(--fg-subtle); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-live::before { animation: none; }
+  .chat-activity-chip::before, .chat-thinking-chip::before,
+  .chat-subagent::after, .chat-box, .chat-subagent, .chat-recap-next, .chat-suggestion,
+  .chat-activity-chip, .chat-thinking-chip, .chat-turn-foot { transition: none; }
+}

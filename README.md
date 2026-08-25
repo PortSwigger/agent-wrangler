@@ -26,6 +26,25 @@ otherwise it behaves exactly as a Claude-only board.
   wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
+- **Chat and Terminal views** — chat reads dormant and exited sessions via transcript, while
+  terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
+  events — enough that a typical session is visible whole — but history older than that window
+  is not reachable from the UI. It surfaces Claude Code's end-of-turn recap, and offers the
+  recap's proposed next step as a one-click prompt (loaded into the composer, never sent for
+  you). Permission prompts only exist in the pane, so chat offers a one-click hop to the
+  terminal to answer one and brings you back by itself once it is answered — switching view by
+  hand while you are there cancels the return. Esc (or Stop) interrupts a running turn and hands
+  the prompt back for editing, as it does in the pane; a draft you have already started is never
+  overwritten. The session's current model shows beside the composer, read from the
+  pane so it is right the moment it changes, and on an idle Claude session you can click it to
+  switch mid-conversation. That runs `/model`, which also saves the choice as your default for
+  new Claude sessions — the menu says so. Its font size is its own setting, separate from the terminal's.
+  Claude Code's suggested next prompt is offered above the composer too — that one is read off
+  the pane, since it exists nowhere else, so it shows only for live Claude sessions and stays
+  hidden whenever it can't be told apart from something you were typing.
+  Because the transcript records whole messages rather than a token stream, chat cannot show a
+  reply arriving word by word the way the terminal does; while a turn is running it shows a
+  live row naming the tool in flight and how long the session has been busy.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)

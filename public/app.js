@@ -24,6 +24,11 @@ import {
   TERM_FONT_SIZES, DEFAULT_TERM_FONT_SIZE, normalizeFontSize,
 } from './term-font.js';
 import {
+  CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
+} from './chat-font.js';
+import { shouldReturnToChat } from './chat-handoff.js';
+import { currentModelValue } from './model-menu.js';
+import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
@@ -40,6 +45,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
+import { initChatView } from './chat-view.js';
 
 let currentView = 'grid';
 
@@ -119,6 +125,7 @@ let trustCodexLaunchCwd = true; // server config flag, carried on every graph pu
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
+let chatViewDefault = false; // server config flag, carried on every graph push
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -301,6 +308,7 @@ function applyGraph(graph) {
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
+  chatViewDefault = graph.chatViewDefault === true;
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -323,11 +331,34 @@ function applyGraph(graph) {
   const active = document.activeElement;
   const editing = active && active.id === 'rename-input';
   if (selectedSessionId && !editing) {
-    renderPanel(selectedSessionId);
     const sel = latestSessions.find((x) => x.sessionId === selectedSessionId);
+    // The return half of the needs-you round trip, checked BEFORE renderPanel so
+    // the panel it draws already shows the view we are switching to (otherwise
+    // the Chat/Terminal toggle would render one tick behind the pane it labels).
+    // applySessionView routes through renderSidebar, the single place that
+    // decides which view shows — so this also gets the terminal torn down for
+    // free rather than leaving one attached behind the hidden pane.
+    if (sel && shouldReturnToChat({
+      armedFor: chatHandoffFor,
+      selected: selectedSessionId,
+      status: displayStatus(sel),
+      view: viewForSession(selectedSessionId),
+    })) {
+      disarmChatHandoff();
+      setSessionView(selectedSessionId, 'chat');
+      applySessionView(selectedSessionId);
+    }
+    renderPanel(selectedSessionId);
     if (sel && holdForRestart(sel)) {
       // spinner held — don't attach the dying pane
-    } else if (sel && sel.managed && (!current || current.sessionId !== selectedSessionId)) {
+    } else if (sel && sel.managed && viewForSession(sel.sessionId) !== 'chat' && (!current || current.sessionId !== selectedSessionId)) {
+      // viewForSession guard: renderSidebar's chat branch calls closeTerminal(), which
+      // nulls `current` — without this check, the very next ~4s graph tick re-attaches
+      // a terminal into the hidden #term-wrap. FitAddon can't measure a display:none
+      // element, so xterm stays at its 80x24 default and /pty opens tmux attach at
+      // cols=80&rows=24, squeezing the agent's REAL pane (and any co-attached terminal)
+      // to 80 columns for as long as the chat view stays open — plus a stolen focus()
+      // that silently clears the needs-you flash, and a leaked pty/socket per session.
       openTerminal(sel);
     }
   }
@@ -1554,6 +1585,57 @@ function openActionsMenu(sessionId, x, y) {
   mountMenu(items, x, y);
 }
 
+// Mirrors set-session-model.js's own refusals, so the chat view only offers the
+// menu where the server would honour it. Kept as one named predicate rather than
+// inline conditions because the two sides have to agree: a mismatch here shows a
+// menu whose every choice fails.
+function canSwitchModel(s) {
+  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+}
+
+// What this browser last asked for, per card id. Needed only to break one
+// ambiguity: the pane's status bar says "Sonnet 5" for both `sonnet` and
+// `sonnet[1m]`, so the label alone cannot say which row to tick. In-memory and
+// unpersisted — it is a tie-break, not a record, and it is only trusted when the
+// pane still agrees with it (see isCurrentModel).
+const lastModelSet = new Map();
+
+// Pick a model for a live session — the chat view's model chip. Sends the same
+// `/model <name>` the pane takes; the board confirms it on the next turn via
+// modelPill (read from the transcript), so nothing is assumed here.
+function openModelMenu(sessionId, x, y) {
+  const s = latestSessions.find((sess) => sess.sessionId === sessionId);
+  if (!canSwitchModel(s)) return;
+  const claude = availableAgents.find((a) => a.id === 'claude');
+  const models = claude?.models || [];
+  if (!models.length) return;
+  // Ticked against what the CHIP shows, which is the pane's own live label —
+  // not s.modelPill, which is derived from the last assistant message and so
+  // still names the old model right after a switch. That mismatch was the bug:
+  // the menu claimed Opus was selected while the pane said Sonnet.
+  const current = chatView.currentModelLabel();
+  const ticked = currentModelValue(models, current, lastModelSet.get(sessionId));
+  mountMenu([
+    // Said once, up front, because it is genuinely surprising: /model is not
+    // scoped to this session. Verified — it writes "model" into
+    // ~/.claude/settings.json, so it becomes the default for every new Claude
+    // session, wrangler-launched or not.
+    { header: 'Also becomes your default for new sessions' },
+    ...models.map((m) => ({
+      label: m.label,
+      // `trailing` rather than `icon`, and present on every row even when empty:
+      // that is what reserves the slot so the labels stay aligned instead of the
+      // checked row sitting indented from the rest (same idiom as the auto-fix and
+      // auto-merge menu items).
+      trailing: m.value === ticked ? CHECK_ICON : '',
+      run: () => {
+        lastModelSet.set(sessionId, m.value);
+        send({ type: 'set-session-model', sessionId, model: m.value });
+      },
+    })),
+  ], x, y);
+}
+
 // The task tile's kebab menu — the header's action buttons collapsed into one menu,
 // reusing the same mountMenu primitive as the card/pane menus. `taskId` is the bucket
 // id (a real task id or ADHOC_ID). Distinct from openTaskMenu (the cell right-click
@@ -2538,6 +2620,11 @@ function selectSession(sessionId) {
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
   if (isDiffPanelOpen() && diffPanelSessionId() !== sessionId) closeDiffPanel();
+  // Selecting a different card ends any trip in progress. shouldReturnToChat
+  // already refuses to fire for a card that isn't the open one, so this is
+  // belt-and-braces — but it also means re-opening that card later doesn't
+  // inherit a stale arm.
+  if (selectedSessionId !== sessionId) disarmChatHandoff();
   selectedSessionId = sessionId;
   selectedNewSlot = null;
   acknowledge(sessionId);
@@ -3005,6 +3092,14 @@ function hideSidebar() {
   // panel (close / deselect / Search switch) closes the diff too — it must never
   // outlive the session it belongs to. No-op when the diff is already closed.
   closeDiffPanel();
+  // Same reasoning for the chat view: its 2s poll must not keep running for a
+  // session nobody is looking at once the panel closes. renderSidebar mounts it
+  // per-session but only unmounts on a SWITCH to the terminal view, so closing/
+  // deselecting while chat is showing needs its own unmount here. No-op when
+  // nothing is mounted.
+  chatView.unmount();
+  // Closing the panel ends the trip: there is no view left to return to.
+  disarmChatHandoff();
 }
 
 // Drag-to-resize the sidebar (stretch the terminal wider than the grid).
@@ -3040,6 +3135,33 @@ function hideSidebar() {
 // Managed sessions get a live terminal; others get an explanation + Resume.
 function renderSidebar(s) {
   showSidebar();
+  // The view branch goes here, not in selectSession: this function owns the whole
+  // terminal lifecycle (openTerminal / closeTerminal / the dormant + exited notes
+  // it writes into #term), so branching anywhere else would let a terminal attach
+  // land on top of the chat view.
+  if (viewForSession(s.sessionId) === 'chat') {
+    // Chat renders from the transcript on disk, so it works for dormant and exited
+    // sessions alike — none of the managed/unmanaged handling below applies, and
+    // that is the point: this view shows sessions the terminal cannot. NOT archived:
+    // renderSidebar is only reached via selectSession/applySessionView, both of which
+    // look the session up in latestSessions, which excludes archived sessions.
+    document.getElementById('term-wrap').hidden = true;
+    closeTerminal(); // no-op when nothing is attached
+    chatView.mount(s.sessionId);
+    // AFTER mount, which resets the view's cached status to null: selectSession calls
+    // renderPanel (the only other setStatus caller) BEFORE this function, so without
+    // re-seeding here an already-working session shows no "Working — running X" line
+    // until the next ~4s graph rebuild, while Stop — driven off the same status — is
+    // already visible. The two must never disagree.
+    chatView.setStatus(displayStatus(s));
+    // Same reasoning for the model: mount clears it so a session switch cannot
+    // leave the previous session's model showing, which means it has to be
+    // re-seeded here or the chip stays blank until the next graph rebuild.
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+    return;
+  }
+  chatView.unmount();
+  document.getElementById('term-wrap').hidden = false;
   if (s.managed) {
     if (holdForRestart(s)) return; // restart in flight — hold the spinner, not the dead pane
     resuming.delete(s.sessionId); // resumed — drop the in-flight placeholder
@@ -3072,6 +3194,14 @@ function renderSidebar(s) {
     send({ type: 'resume', sessionId: s.sessionId });
     toast('Resuming…');
   });
+}
+
+// Re-apply the current view choice for a session already selected — what the
+// Chat/Terminal toggle calls. Routes through renderSidebar so there is exactly ONE
+// place that decides which view is showing.
+function applySessionView(sessionId) {
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s) renderSidebar(s);
 }
 
 // Swap the panel title for an input to rename the session. Enter/blur commits,
@@ -3126,6 +3256,43 @@ function beginRename(sessionId) {
 // on every fresh page load — there's no session-switch reset to write here at
 // all (contrast the old code, which had to remember to reset a transient flag);
 // each session's own state is just looked up fresh from its Map/Set.
+// Which view each session's sidebar shows. Keyed on the CARD id (never the live
+// id) like every other per-session field, and persisted so a reload keeps your
+// choice. A session toggled by hand keeps it no matter how chatViewDefault moves.
+const CHAT_VIEW_KEY = 'cm-session-view';
+// Type-checked like panelSubagentShownOverrides below: a corrupted/tampered
+// value that still parses as valid JSON (a bare string, number, etc.) is not an
+// object, so setSessionView's `all[sessionId] = view` — outside any try/catch —
+// would throw a strict-mode TypeError assigning a property to a primitive.
+// Falling back to {} here keeps that assignment always safe.
+function readSessionViews() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_VIEW_KEY));
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+}
+function viewForSession(sessionId) {
+  const stored = readSessionViews()[sessionId];
+  if (stored === 'chat' || stored === 'terminal') return stored;
+  return chatViewDefault ? 'chat' : 'terminal';
+}
+function setSessionView(sessionId, view) {
+  const all = readSessionViews();
+  all[sessionId] = view;
+  try { localStorage.setItem(CHAT_VIEW_KEY, JSON.stringify(all)); } catch {}
+}
+
+// The card id currently on a "go answer the prompt, then come back" round trip
+// (armed by the chat view's `Terminal →` button). Deliberately in-memory and
+// NOT persisted alongside the view choice above: it describes a trip in
+// progress, so surviving a reload would drop someone into an automatic view
+// switch they could no longer connect to anything they did. See
+// chat-handoff.js for the return condition.
+let chatHandoffFor = null;
+function disarmChatHandoff() {
+  chatHandoffFor = null;
+}
+
 const PANEL_SA_SHOWN_KEY = 'wrangler.panelSubagentShown';
 const panelSubagentShownOverrides = (() => {
   try {
@@ -3166,8 +3333,13 @@ function renderPanel(sessionId) {
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
+  const view = viewForSession(sessionId);
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
+  if (view === 'chat') {
+    chatView.setStatus(displayStatus(s));
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+  }
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];
@@ -3200,6 +3372,10 @@ function renderPanel(sessionId) {
         <div class="sess-row1">
           <span class="sess-name" id="session-name" title="Double-click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
+            <span class="chat-seg" role="group" aria-label="Session view">
+              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
+              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+            </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
             <span class="sess-acts-divider"></span>
             <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
@@ -3257,6 +3433,21 @@ function renderPanel(sessionId) {
     const r = actionsBtn.getBoundingClientRect();
     openActionsMenu(sessionId, r.left, r.bottom + 4);
   });
+  panel.querySelectorAll('.chat-seg-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.view;
+      // Disarmed BEFORE the no-op early return below, not after: pressing
+      // `Terminal` while already in the handoff's terminal is exactly how
+      // someone says "I want to stay here", and that press changes no view at
+      // all. Clearing after the return would ignore the one gesture that most
+      // needs to be honoured.
+      disarmChatHandoff();
+      if (next === viewForSession(sessionId)) return;
+      setSessionView(sessionId, next);
+      applySessionView(sessionId);
+      renderPanel(sessionId);
+    });
+  });
 }
 
 // --- terminal ---
@@ -3286,6 +3477,35 @@ function setTermFontSize(size) {
 function fontSizeRowHtml() {
   const cur = termFontSize();
   return TERM_FONT_SIZES.map((size) =>
+    `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
+}
+
+// --- chat font size ---
+// A separate preference from the terminal's, with its own key, presets and
+// default (see chat-font.js): the two surfaces are read completely differently —
+// one is a fixed-width grid of program output, the other is prose — so one
+// number cannot serve both.
+//
+// Applied as a CSS custom property rather than by restyling elements, because
+// every size inside the chat view is an `em` fraction of #chat-wrap's own
+// font-size (see styles.css): setting the one variable scales the prose, the
+// chips, the tool rows and the composer together. Set on <html> so it survives
+// the chat pane being absent from the DOM tree's render path while hidden.
+const CHAT_FONT_KEY = 'cm-chat-fontsize';
+function chatFontSize() {
+  try { return normalizeChatFontSize(localStorage.getItem(CHAT_FONT_KEY)); } catch { return DEFAULT_CHAT_FONT_SIZE; }
+}
+function applyChatFontSize(n) {
+  document.documentElement.style.setProperty('--chat-font-size', `${n}px`);
+}
+function setChatFontSize(size) {
+  const n = normalizeChatFontSize(size);
+  try { localStorage.setItem(CHAT_FONT_KEY, String(n)); } catch {}
+  applyChatFontSize(n);
+}
+function chatFontSizeRowHtml() {
+  const cur = chatFontSize();
+  return CHAT_FONT_SIZES.map((size) =>
     `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
 }
 function closeTerminal() {
@@ -4191,6 +4411,11 @@ function cancelModal() {
 }
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
+// Seed --chat-font-size from the stored preference at startup. The terminal's
+// size needs no equivalent: it is read per-terminal at construction, whereas
+// this one is a CSS variable that has to exist before the chat view first
+// renders (nothing else would ever set it on a page that never opens Settings).
+applyChatFontSize(chatFontSize());
 // Global settings live in their own module (registry + centered #settings-modal),
 // opened from the bottom-rail gear (#settings-btn). initSettings wires both.
 // The server bridge backs scope:'server' entries: reads come off the flag the
@@ -4207,6 +4432,7 @@ initSettings({
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
+      if (id === 'chatViewDefault') return chatViewDefault;
       return undefined;
     },
     set: (id, value) => {
@@ -4228,14 +4454,19 @@ initSettings({
       } else if (id === 'archiveReviewEnabled') {
         archiveReviewEnabled = Boolean(value);
         send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
+      } else if (id === 'chatViewDefault') {
+        chatViewDefault = Boolean(value);
+        send({ type: 'set-chat-view-default', enabled: chatViewDefault });
       }
     },
   },
   appearance: {
     themeRowsHtml: renderThemeRows,
     fontSizeRowHtml,
+    chatFontSizeRowHtml,
     onThemeSelect: selectStyle,
     onFontSize: setTermFontSize,
+    onChatFontSize: setChatFontSize,
   },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
@@ -4383,6 +4614,10 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // Success is silent on purpose: the model chip changes on the next turn, off
+    // the transcript, which is real confirmation rather than this reply's
+    // optimism. Only a refusal needs saying, because nothing else would show it.
+    else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
@@ -4476,6 +4711,7 @@ function connect() {
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
     else if (msg.type === 'styles') setCustomStyles(msg.styles);
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
+    else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
@@ -4623,6 +4859,23 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
 initStyles();
+
+// Constructed once: renderSidebar/applySessionView mount/unmount it per session,
+// and the WS dispatch below feeds it every 'chat' poll reply.
+const chatView = initChatView({
+  send,
+  onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
+  onOpenDiff: (sid) => openDiffPanel(sid),
+  // Arms the round trip before switching: applyGraph brings the view back once
+  // the session leaves needs-you, i.e. once the prompt has been answered.
+  onPickModel: (sid, rect) => openModelMenu(sid, rect.left, rect.bottom + 6),
+  onGoTerminal: (sid) => {
+    chatHandoffFor = sid;
+    setSessionView(sid, 'terminal');
+    applySessionView(sid);
+    renderPanel(sid);
+  },
+});
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
 // Restore the deep link on load. #view=search (or a legacy #view=history
