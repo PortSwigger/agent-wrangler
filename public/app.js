@@ -124,6 +124,7 @@ let subagentsExpandedByDefault = false; // server config flag, carried on every 
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
+let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -306,6 +307,7 @@ function applyGraph(graph) {
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
+  archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
   trackJustFinished(latestSessions);
   detectNewTask();
@@ -4429,6 +4431,7 @@ initSettings({
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
+      if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
       return undefined;
     },
@@ -4448,6 +4451,9 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'archiveReviewEnabled') {
+        archiveReviewEnabled = Boolean(value);
+        send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });

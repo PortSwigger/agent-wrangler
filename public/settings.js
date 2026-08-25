@@ -67,6 +67,14 @@ export const SETTINGS = [
     default: true,
   },
   {
+    id: 'archiveReviewEnabled',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Auto-review archived sessions into task memory',
+    help: 'When archiving a Claude session, spend a small amount to have a cheap model (Haiku) read its transcript and append a short learnings note (pitfalls, explicit requests, decisions) to the task\'s memory file. Off by default — this costs a little per archive and grows the task\'s memory file over time.',
+    default: false,
+  },
+  {
     id: 'childFullViewByDefault',
     type: 'toggle',
     scope: 'server',

@@ -339,6 +339,61 @@ test('archive() stamps viaTaskArchive only when the caller passes it; isArchived
   assert.equal('viaTaskArchive' in sm.entryFor('s2'), false);
 });
 
+// archive()'s fire-and-forget review side effect (server/archive-review-runner.js)
+// is a seam precisely so a test never needs to spawn a real `claude -p`
+// subprocess to assert this wiring — same reasoning as _ensureCodexTrust.
+test('archive() calls the _archiveReview seam once, with the task snapshot, on a fresh archive', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  const calls = [];
+  sm._archiveReview = async (sessionId, entry, task) => { calls.push({ sessionId, entry, task }); return 'written'; };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  // Unawaited in archive() itself — give its promise a tick to run.
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionId, 's1');
+  assert.equal(calls[0].task.id, 'T1');
+  assert.equal(calls[0].entry, sm.entryFor('s1'));
+});
+
+test('archive() does NOT call _archiveReview again for a re-archive of an already-archived session', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  let count = 0;
+  sm._archiveReview = async () => { count += 1; return 'written'; };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  await new Promise((r) => setTimeout(r, 0));
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } }); // still archived — resume() was never called
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(count, 1);
+});
+
+test('_archiveReview\'s onStamp records priorLiveSessionIds and archiveReviewedAt (only on success)', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm._archiveReview = async (sessionId, entry, task, { onStamp }) => {
+    onStamp({ reviewLiveSessionId: 'REVIEW1', advanceReviewedAt: true });
+    return 'written';
+  };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  await new Promise((r) => setTimeout(r, 0));
+  const entry = sm.entryFor('s1');
+  assert.deepEqual(entry.priorLiveSessionIds, ['REVIEW1']);
+  assert.ok(typeof entry.archiveReviewedAt === 'number');
+});
+
+test('a default (unstubbed) _archiveReview is an inert no-op — every existing archive test stays unaffected', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  assert.doesNotThrow(() => sm.archive('s1', { cwd: '/repo' }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(sm.entryFor('s1').priorLiveSessionIds, undefined);
+});
+
 test('resumeEntry defaults a missing intent/createdAt and leaves workflow/parentSession undefined for a plain entry', () => {
   const e = resumeEntry(undefined, { short: 's', tmux: 'cc_s', cwd: '/w', agent: 'claude', resumeId: 'L', socket: '', now: 999 });
   assert.equal(e.intent, '(resumed)');

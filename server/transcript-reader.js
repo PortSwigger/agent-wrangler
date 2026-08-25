@@ -629,7 +629,9 @@ function toolTarget(input) {
 }
 
 // message.content is a string OR an array of blocks — return its text either way.
-function textOf(content) {
+// Exported for archive-review-runner.js, which builds a plain-text excerpt from
+// the same user/assistant text blocks subagentDetail reads below.
+export function textOf(content) {
   if (typeof content === 'string') return content.trim() || null;
   if (Array.isArray(content)) {
     const t = content
@@ -642,7 +644,9 @@ function textOf(content) {
   return null;
 }
 
-async function readLines(file) {
+// Exported for archive-review-runner.js — the same whole-file JSONL parse it
+// needs for a one-shot, archive-time transcript read.
+export async function readLines(file) {
   const out = [];
   const raw = await fsp.readFile(file, 'utf8');
   for (const line of raw.split('\n')) {
