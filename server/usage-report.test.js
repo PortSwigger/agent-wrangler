@@ -336,6 +336,28 @@ test('attributes Codex spend to its createdAt day and flags it estimated', async
   assert.equal(day.total.estimatedUsd, day.total.usd, 'all codex spend is estimated');
 });
 
+// mappings.json stores createdAt as epoch ms (every write is Date.now()/launchedAt),
+// not the ISO string the sibling test above happens to use — and Date.parse of a
+// number is NaN, which silently dropped every Codex session from the report.
+test('attributes Codex spend when createdAt is epoch ms, as mappings.json stores it', async () => {
+  const d = makeDirs();
+  const uuid = '66666666-6666-4666-8666-666666666666';
+  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
+  fs.writeFileSync(roll, [
+    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, cached_input_tokens: 500, output_tokens: 1000 } } } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: {
+    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T09:59:00.000Z') },
+  } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.estimatedIncluded, true, 'codex is the only estimated source — false means it was skipped');
+  const day = r.buckets.find((b) => b.key === '2026-07-11');
+  assert.ok(day, 'codex bucketed at its createdAt day');
+  assert.ok(day.total.estimatedUsd > 0);
+});
+
 test('skips a Codex session with no usable createdAt without crashing', async () => {
   const d = makeDirs();
   const uuid = '55555555-5555-5555-5555-555555555555';
