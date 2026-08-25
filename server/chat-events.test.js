@@ -437,3 +437,116 @@ test('a human prompt that talks about a slash command still renders', () => {
   const line = metaUser('Please run /model sonnet for me');
   assert.deepEqual(scanChatText(line, 'claude').events.map((e) => e.kind), ['user']);
 });
+
+test('a pasted image: the [Image: source: …] plumbing block is stripped, the [Image #1] marker stays, and a chip is emitted', () => {
+  // Shape verified against a live transcript: prose carrying the marker, a real
+  // base64 image block, then a trailing source block holding the absolute path.
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: '[Image #1]Describe the shape:' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: '[Image: source: /Users/x/.agent-wrangler/memory/by-session/s1/pastes/paste-1-ab.png]' },
+        ],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  // The absolute path is plumbing the reader cannot act on, and long enough to
+  // bury the actual prompt.
+  assert.equal(user.text, '[Image #1]Describe the shape:');
+  // The marker survives because the prose can refer to it.
+  assert.ok(user.text.includes('[Image #1]'));
+  assert.deepEqual(user.images, [{ label: 'Image #1', name: 'paste-1-ab.png' }]);
+});
+
+test('a pasted image with no prose still emits the turn — gating on text alone would drop it', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: '[Image: source: /tmp/pastes/shot.png]' },
+        ],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.equal(user.text, '');
+  assert.deepEqual(user.images, [{ label: 'Image #1', name: 'shot.png' }]);
+});
+
+test('several images are numbered in order, and one missing its source block still gets an unnamed chip', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Compare these:' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'B' } },
+          { type: 'text', text: '[Image: source: /p/one.png]' },
+        ],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.equal(user.text, 'Compare these:');
+  // Paired by order — the transcript offers no key linking an image block to its
+  // source line, so the second is honestly unnamed rather than mislabelled.
+  assert.deepEqual(user.images, [
+    { label: 'Image #1', name: 'one.png' },
+    { label: 'Image #2', name: '' },
+  ]);
+});
+
+test('an ordinary user message carries no images key at all', () => {
+  const { events } = scanChatText(claudeLines(
+    { type: 'user', timestamp: '2026-08-25T10:00:00Z', message: { role: 'user', content: 'just words' } },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.equal(user.text, 'just words');
+  assert.equal('images' in user, false);
+});
+
+test('a user message keeps its line breaks verbatim (the composer sends multi-line prompts)', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: { role: 'user', content: [{ type: 'text', text: "I'm seeing this:\n\nERROR: NOT WORKING" }] },
+    },
+  ), 'claude');
+  assert.equal(events.find((e) => e.kind === 'user').text, "I'm seeing this:\n\nERROR: NOT WORKING");
+});
+
+test('a chip label follows the marker in the prose, not a count from one (the TUI numbers per session)', () => {
+  // Verified against a live session: the second image of a message was
+  // [Image #10], so labelling its chip "Image #2" would contradict the text
+  // sitting next to it and the pane.
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: '[Image #9] [Image #10]Name each colour.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'B' } },
+        ],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.deepEqual(user.images.map((i) => i.label), ['Image #9', 'Image #10']);
+});

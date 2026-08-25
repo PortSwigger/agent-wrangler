@@ -40,6 +40,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const hint = document.getElementById('chat-hint');
   const suggestionBtn = document.getElementById('chat-suggestion');
   const modelEl = document.getElementById('chat-current-model');
+  const attachEl = document.getElementById('chat-attachments');
+
+  // Attachments are held as SERVER-MINTED NAMES, never paths, and never in the
+  // textarea. Two independent reasons, both load-bearing:
+  //  - the path has to reach the pane as its own isolated paste (a path inside
+  //    multi-line prose stays literal text the model cannot see), so it must not
+  //    be mixed into the prose here;
+  //  - the name is all the server will accept back, so a value from this page can
+  //    never be turned into an arbitrary path for the agent to read.
+  let attachments = [];
 
   // The live row's three inputs — the last reply's pending tool call, the
   // timestamp of the newest transcript line, and the last known session status
@@ -179,15 +189,28 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     if (show) suggestionBtn.textContent = lastSuggestion;
   }
 
+  // An attached image is a complete prompt on its own (the TUI submits the bare
+  // `[Image #1]`), so Send has to stay live for an empty box that holds one.
+  function renderSendability() {
+    if (lastStatus === 'needs-you') return; // setStatus owns the button while blocked
+    sendBtn.disabled = !input.value.trim() && !attachments.length;
+  }
+
   function submit() {
     const text = input.value.trim();
-    if (!text || !sessionId) return;
+    if (!sessionId || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
-    // is peer-only.
-    send({ type: 'message', sessionId, text });
+    // is peer-only. Only NAMES go over the wire — the server resolves them back
+    // to paths inside this session's own pastes folder.
+    send({ type: 'message', sessionId, text, ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}) });
     input.value = '';
     input.style.height = 'auto';
+    // Cleared on send, not on reply: they have left with the message, and leaving
+    // them on screen would invite sending the same image twice.
+    attachments = [];
+    renderAttachments();
+    renderSendability();
   }
 
   sendBtn.addEventListener('click', submit);
@@ -224,7 +247,106 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
     // Typing withdraws the suggestion, and clearing the box brings it back.
     renderSuggestion();
+    renderSendability();
   });
+
+  // --- pasted images ---------------------------------------------------------
+  // Cmd+V of an image in the pane works because Claude Code reads the HOST
+  // clipboard itself, which a browser cannot reach: the bytes are in this page,
+  // on possibly another machine. So the round trip is upload → the server writes
+  // the file inside the session's own --add-dir → the path goes in the prompt →
+  // the agent auto-attaches it. Verified against a live pane: a path inside
+  // pasted prompt text becomes a real inline image, not a Read tool call.
+  //
+  // Bounded per paste. A clipboard can hold a whole screenshot burst, and each
+  // one costs a base64 frame plus a file, so a slip is capped rather than
+  // unbounded — the human can always paste again.
+  const MAX_IMAGES_PER_PASTE = 4;
+  // Tokens are era-stamped with the generation so a reply that lands after the
+  // view moved to another session is dropped rather than typing a stale path
+  // into someone else's composer. Same reasoning as the poll's token, different
+  // reply type, so deliberately its own counter.
+  let pasteSeq = 0;
+  const pendingPastes = new Set();
+  // Shown on the hint line instead of a toast: chat-view.js has no toast seam,
+  // and the hint is already the place this view explains what the composer is
+  // doing. Held rather than written directly because renderHint() rebuilds the
+  // line from scratch on every status change and would otherwise erase it.
+  let pasteNote = null;
+  function setPasteNote(text) {
+    pasteNote = text || null;
+    renderHint();
+  }
+
+  function renderAttachments() {
+    attachEl.hidden = !attachments.length;
+    attachEl.textContent = ''; // rebuilt each time rather than accumulating children
+    attachments.forEach((a, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'chat-attachment';
+      const label = document.createElement('span');
+      label.className = 'chat-attachment-label';
+      // Numbered to match what the TUI will call it once pasted, so the chip and
+      // the sent message agree.
+      label.textContent = `Image #${i + 1}`;
+      chip.appendChild(label);
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.className = 'chat-attachment-drop';
+      // A mis-paste is easy and a screenshot is easy to confuse, so removing one
+      // has to be possible without clearing the whole prompt.
+      drop.setAttribute('aria-label', `Remove ${a.name}`);
+      drop.setAttribute('title', 'Remove');
+      drop.addEventListener('click', () => {
+        attachments = attachments.filter((x) => x !== a);
+        renderAttachments();
+        renderSendability();
+      });
+      chip.appendChild(drop);
+      attachEl.appendChild(chip);
+    });
+  }
+
+  input.addEventListener('paste', (e) => {
+    if (!sessionId) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const files = items
+      .filter((it) => it.kind === 'file' && typeof it.type === 'string' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter(Boolean);
+    // No image on the clipboard means this is an ordinary text paste, which must
+    // fall through untouched — preventDefault here would break pasting text.
+    if (!files.length) return;
+    e.preventDefault();
+    const take = files.slice(0, MAX_IMAGES_PER_PASTE);
+    const skipped = files.length - take.length;
+    setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
+    for (const file of take) {
+      const token = `${generation}#${++pasteSeq}`;
+      pendingPastes.add(token);
+      const reader = new FileReader();
+      reader.onerror = () => {
+        pendingPastes.delete(token);
+        setPasteNote('Could not read that image from the clipboard.');
+      };
+      reader.onload = () => {
+        // readAsDataURL gives "data:<mime>;base64,<payload>" — split once on the
+        // first comma so a payload containing one cannot truncate the split.
+        const raw = String(reader.result || '');
+        const comma = raw.indexOf(',');
+        const mime = /^data:([^;,]+)/.exec(raw)?.[1] || file.type;
+        if (comma < 0) {
+          pendingPastes.delete(token);
+          setPasteNote('Could not read that image from the clipboard.');
+          return;
+        }
+        send({ type: 'paste-image', sessionId, token, mime, dataBase64: raw.slice(comma + 1) });
+      };
+      reader.readAsDataURL(file);
+    }
+    if (skipped > 0) setPasteNote(`Attaching ${take.length} images — ${skipped} more were skipped.`);
+  });
+
   modelEl.addEventListener('click', () => {
     if (!sessionId || modelEl.disabled) return;
     // The menu is app.js's business (it owns mountMenu and the agent registry);
@@ -240,7 +362,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // advertising it permanently would promise a key that mostly does nothing.
   function renderHint() {
     const base = 'Enter sends · Shift+Enter newline';
-    hint.textContent = lastStatus === 'working' ? `${base} · Esc stops` : base;
+    const text = lastStatus === 'working' ? `${base} · Esc stops` : base;
+    // The paste note replaces the hint rather than appending to it: it is
+    // transient and specific, and two sentences competing on one narrow line is
+    // how the keyboard hint stopped being readable.
+    hint.textContent = pasteNote || text;
+    hint.dataset.note = pasteNote ? '1' : '0';
   }
   renderHint();
 
@@ -297,6 +424,22 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   return {
+    // The upload half of an image paste. Correlated by the era-stamped token the
+    // request carried, so a reply for a session the view has since left is
+    // discarded instead of pasting a path into the wrong composer.
+    onPasteImageResult(msg) {
+      const token = msg.token;
+      if (!pendingPastes.delete(token)) return;
+      if (!String(token).startsWith(`${generation}#`)) return;
+      if (!msg.ok) { setPasteNote(msg.error || 'Could not attach that image.'); return; }
+      attachments.push({ name: msg.name });
+      renderAttachments();
+      renderSendability();
+      input.focus();
+      // Cleared only once nothing is still in flight, so a multi-image paste does
+      // not flash "done" while the rest are still uploading.
+      setPasteNote(pendingPastes.size ? `Attaching ${pendingPastes.size} more…` : null);
+    },
     mount(id) {
       if (sessionId === id) return;
       sessionId = id;
@@ -311,6 +454,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastTs = null;
       lastSuggestion = null;
       lastUserText = null;
+      // In-flight uploads belong to the era being left: their tokens can never
+      // match the bumped generation again, so clearing them just stops the set
+      // growing.
+      pendingPastes.clear();
+      pasteNote = null;
+      // Attachments belong to the prompt being abandoned — carrying them into
+      // another session would silently attach one human's screenshot to someone
+      // else's conversation.
+      attachments = [];
+      renderAttachments();
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
@@ -343,6 +496,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastTs = null;
       lastSuggestion = null;
       lastUserText = null;
+      // In-flight uploads belong to the era being left: their tokens can never
+      // match the bumped generation again, so clearing them just stops the set
+      // growing.
+      pendingPastes.clear();
+      pasteNote = null;
+      // Attachments belong to the prompt being abandoned — carrying them into
+      // another session would silently attach one human's screenshot to someone
+      // else's conversation.
+      attachments = [];
+      renderAttachments();
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
@@ -441,7 +604,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       input.disabled = blocked;
       // A disabled input still retains its value, so without this a prompt typed
       // before the block started stays sendable via a click — defeating the guard.
+      // Unblocking hands the decision back to renderSendability rather than
+      // enabling outright, or clearing a needs-you would leave Send live over an
+      // empty composer with nothing attached.
       sendBtn.disabled = blocked;
+      if (!blocked) renderSendability();
       stopBtn.hidden = status !== 'working';
     },
   };

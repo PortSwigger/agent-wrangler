@@ -189,6 +189,57 @@ function textOf(content) {
     .trim();
 }
 
+// Claude Code emits an attached image as THREE things in one user message: the
+// prose (with a `[Image #1]` marker where the path used to be), a real base64
+// `image` block, and a trailing text block reading `[Image: source: <abs path>]`.
+// Verified against a live transcript, exact format included.
+//
+// The source block is plumbing and must not reach the reader: it is an absolute
+// local path they cannot act on, and it is long enough to bury the actual prompt.
+// The `[Image #1]` marker in the prose DOES stay — it is what the pane shows, and
+// the prose can refer to it ("compare [Image #1] with…"), so stripping it would
+// break a sentence to save nothing.
+const IMAGE_SOURCE_RE = /^\[Image: source: (.+)\]$/;
+
+// Paired by ORDER, not by id: an `image` block carries only its base64, so there
+// is no key linking it to its source line. Counting them separately and zipping
+// is therefore the most the transcript supports — an image whose source block is
+// missing still gets a chip, just an unnamed one, which is the honest outcome.
+function userTextAndImages(content) {
+  if (typeof content === 'string') return { text: content.trim(), images: [] };
+  if (!Array.isArray(content)) return { text: '', images: [] };
+  const parts = [];
+  const sources = [];
+  let imageCount = 0;
+  for (const b of content) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'image') { imageCount += 1; continue; }
+    if (b.type !== 'text' || typeof b.text !== 'string') continue;
+    const src = IMAGE_SOURCE_RE.exec(b.text.trim());
+    if (src) sources.push(src[1]);
+    else parts.push(b.text);
+  }
+  // A source block with no image block still counts: it is evidence an image was
+  // attached, and dropping it would silently under-report the message.
+  const total = Math.max(imageCount, sources.length);
+  const text = parts.join('\n').trim();
+  // The label comes from the marker IN THE PROSE, not from counting up from one.
+  // Claude Code numbers attachments cumulatively per session, so a message's
+  // second-ever image is `[Image #10]` — labelling its chip "Image #2" would
+  // disagree with the text right beside it and with the pane. Verified against a
+  // live session that produced `[Image #9] [Image #10]`. Positional fallback only
+  // when the prose carries no marker at all.
+  const marked = [...text.matchAll(/\[Image #(\d+)\]/g)].map((m) => m[1]);
+  const images = [];
+  for (let i = 0; i < total; i += 1) {
+    const src = sources[i];
+    // basename by hand rather than node:path — this module is a leaf that also
+    // has to stay trivially testable, and one split is cheaper than the import.
+    images.push({ label: `Image #${marked[i] ?? i + 1}`, name: src ? src.split('/').pop() : '' });
+  }
+  return { text, images };
+}
+
 // The cheap gate: one indexOf over the raw line is ~100x cheaper than parsing it
 // to discover the line can't contribute.
 export function mightCarryChat(line, agent) {
@@ -241,8 +292,13 @@ function pushClaude(entry, state) {
         if (notice) out.push({ ...notice, ts });
       }
     }
-    const text = textOf(msg.content);
-    if (text && !isSynthetic(text)) out.push({ kind: 'user', text, ts });
+    const { text, images } = userTextAndImages(msg.content);
+    // `images.length` is part of the emit test, not just a decoration: an
+    // image-only paste can leave no prose at all, and gating on text alone would
+    // drop that turn from the stream entirely.
+    if ((text || images.length) && !isSynthetic(text)) {
+      out.push({ kind: 'user', text, ts, ...(images.length ? { images } : {}) });
+    }
     state.prevTs = ts;
     return out;
   }
