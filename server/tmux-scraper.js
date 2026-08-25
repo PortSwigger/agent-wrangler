@@ -282,15 +282,27 @@ export async function sendKeys(name, keys, socket = '') {
 // submitting it (no Enter). Using the buffer — not `send-keys -l` — is what makes it
 // safe for the review-first prefill: send-keys injects embedded newlines literally, so
 // a TUI treats the first newline as Enter and submits early, and a leading `-` gets
-// misparsed as a tmux flag. A paste buffer lands the whole text as one atomic block
-// and never presses a key. `run` is the low-level tmux runner (test seam).
+// misparsed as a tmux flag.
+//
+// `-p` (BRACKETED paste) is load-bearing and must not be dropped — the buffer alone is
+// NOT enough. Measured against tmux + a real Claude TUI: `paste-buffer` without `-p`
+// puts a literal CR on the pty for every newline, so the TUI submits at the first one
+// and treats each following line as a separate queued message. A three-line prompt
+// landed in the transcript as two user messages; with `-p` the identical text landed as
+// ONE user message with its newlines intact (31-line paste verified too — full text,
+// never the TUI's `[Pasted text #N]` display placeholder). tmux only emits the
+// ESC[200~/ESC[201~ wrapper when the pane's app has enabled bracketed paste, so `-p` is
+// a no-op — byte-for-byte the old behaviour — against anything that hasn't (verified
+// against a plain `cat`), which is why it is safe to apply unconditionally rather than
+// per agent. Ordering keeps sendText's trailing Enter a submit and not a swallowed
+// newline: the end marker precedes it on the same byte stream.
 async function pasteBlock(name, text, socket = '', run = tmux) {
   const tmpFile = path.join(os.tmpdir(), `cm-${crypto.randomBytes(5).toString('hex')}.txt`);
   const buf = `cm${crypto.randomBytes(3).toString('hex')}`;
   fs.writeFileSync(tmpFile, text, 'utf8');
   try {
     await run(socket, ['load-buffer', '-b', buf, tmpFile]);
-    await run(socket, ['paste-buffer', '-b', buf, '-t', name]);
+    await run(socket, ['paste-buffer', '-p', '-b', buf, '-t', name]);
     await run(socket, ['delete-buffer', '-b', buf]).catch(() => {});
   } finally {
     fs.rmSync(tmpFile, { force: true });

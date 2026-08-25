@@ -237,7 +237,10 @@ test('prefillPane delivers multi-line text as one paste-buffer block and sends N
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer']);
   assert.equal(pastedContent, note, 'the entire multi-line note is pasted as one block');
   const paste = cmds.find((c) => c.args[0] === 'paste-buffer');
-  assert.deepEqual(paste.args, ['paste-buffer', '-b', paste.args[2], '-t', 'cc_x']);
+  // -p is asserted explicitly, not incidentally: without bracketed paste every newline
+  // in this note reaches the TUI as a CR and submits it line by line, which is the exact
+  // bug this flag exists to prevent (measured against a real Claude pane).
+  assert.deepEqual(paste.args, ['paste-buffer', '-p', '-b', paste.args[3], '-t', 'cc_x']);
   assert.equal(paste.socket, 'sockA');
   // …and NOTHING presses a key: no send-keys, and in particular no Enter/submit.
   assert.ok(!verbs.includes('send-keys'), 'prefill must not press any key');
@@ -266,8 +269,16 @@ test('sendText shares the paste block but DOES submit with a trailing Enter', as
   await sendText('cc_y', 'hello\nworld', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); });
   const verbs = cmds.map((a) => a[0]);
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer', 'send-keys']);
-  // The final send-keys is the submit.
+  // Bracketed, so the embedded newline stays a newline in ONE message rather than
+  // submitting the first line and queueing the second as its own prompt. This is the
+  // path the chat composer's Shift+Enter multi-line prompt takes, so the flag matters
+  // here as much as it does for the no-Enter prefill above.
+  const paste = cmds.find((a) => a[0] === 'paste-buffer');
+  assert.deepEqual(paste, ['paste-buffer', '-p', '-b', paste[3], '-t', 'cc_y']);
+  // The final send-keys is the submit — and it is the ONLY Enter, so a two-line message
+  // is one turn, not two.
   assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
+  assert.equal(cmds.filter((a) => a.includes('Enter')).length, 1);
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {

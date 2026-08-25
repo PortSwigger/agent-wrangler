@@ -274,6 +274,20 @@ don't re-derive it.
   live bug (a parent-with-children could never be dragged, and any drag in its
   task permanently dropped it from `sessionOrder`), not a "sessions with children
   sink last" feature.
+- **Every paste into a pane goes out BRACKETED (`paste-buffer -p`) — dropping the
+  `-p` silently splits one multi-line message into several turns.** `pasteBlock`
+  (`tmux-scraper.js`) is the single chokepoint for the composer, peer mail, PR nudges
+  and the snooze prefill. The paste *buffer* alone is not the fix: without `-p`, tmux
+  puts a literal CR on the pty for every newline, so the TUI submits at the first one
+  and queues each later line as its own prompt — measured against a real Claude pane, a
+  three-line prompt landed in the transcript as TWO user messages, and with `-p` the
+  same text landed as one with its newlines intact. Safe unconditionally because tmux
+  only emits the `ESC[200~`/`ESC[201~` wrapper when the pane's app has enabled bracketed
+  paste, so `-p` is byte-identical to the old behaviour against anything that hasn't
+  (verified against a plain `cat`) — no per-agent branch needed. `sendText`'s trailing
+  Enter stays a submit rather than a swallowed newline because the end marker precedes
+  it on the same byte stream. The TUI's `[Pasted text #N +k lines]` collapse is
+  DISPLAY-ONLY — a 31-line paste reached the transcript in full.
 - **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
   launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
   `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).
