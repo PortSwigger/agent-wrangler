@@ -541,6 +541,25 @@ don't re-derive it.
   `[Image #10]` and a "Image #2" chip would contradict the text beside it. Deliberately
   no thumbnail — `GET /file` is markdown-only by design and widening it to serve
   arbitrary image paths would open a read surface for one decoration.
+- **The chat composer is ONE textarea shared by every session, so mount/unmount must
+  swap its VALUE — resetting the state variables around it is not enough.** This was a
+  live cross-session leak, not a theoretical one: a prompt entered against one session
+  was still in the box, with Send enabled, after opening a sibling session, so it could
+  be delivered to the wrong agent. It also produced a confusing Esc symptom, because
+  `interruptAndRestore` deliberately declines to overwrite a non-empty box — the
+  carried-over draft masked the prompt the reader was trying to recover, which looked
+  like "Esc restored the wrong session's prompt". Fixed with a per-card-id `drafts` Map
+  (`public/chat-view.js`): `saveDraft(leaving)` then `loadDraft(id)`, **in that order**,
+  or the incoming draft gets filed under the outgoing id. Per-session rather than simply
+  cleared so switching away does not discard work in progress, and **in memory only, not
+  localStorage** — an unsent prompt is a thing of the moment, and surviving a reload
+  would put words in the composer the reader has forgotten writing (this is the opposite
+  choice from the diff view's review drafts, which DO persist, because those are notes
+  about a fixed artefact rather than a half-sent instruction). Attachments are stored
+  and restored WITH the text: a pasted image's filename only means anything inside the
+  session whose `pastes/` folder holds it, so it must follow its own prose and never
+  cross to another card. Anything else added to the composer (a second field, a mode
+  toggle) has to join the same save/load pair or it leaks the same way.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message

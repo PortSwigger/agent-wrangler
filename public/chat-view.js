@@ -51,6 +51,43 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   //    never be turned into an arbitrary path for the agent to read.
   let attachments = [];
 
+  // The composer is ONE textarea shared by every session, so its value has to be
+  // swapped explicitly on mount/unmount — resetting the state variables around it
+  // is not enough. Without this, a draft (typed, or restored by Esc) stayed on
+  // screen when the reader switched cards and could be SENT to the wrong session:
+  // reproduced on a real board, where a prompt entered against one session was
+  // still in the box, with Send enabled, after opening a sibling session. It also
+  // produced the reported Esc symptom, because interruptAndRestore declines to
+  // overwrite a non-empty box — so the carried-over draft masked the prompt the
+  // reader was actually trying to recover.
+  //
+  // Held per card id rather than simply cleared, so switching away does not throw
+  // away work in progress. In memory only, and deliberately not localStorage: an
+  // unsent prompt is a thing of the moment, and surviving a reload would put words
+  // in the composer the reader has long forgotten writing.
+  //
+  // Attachments travel WITH the text, because a pasted image's filename is only
+  // meaningful inside the session whose pastes folder holds it — restoring the
+  // prose without them would silently drop the images it refers to, and carrying
+  // them to a DIFFERENT session is the leak this whole store exists to stop.
+  const drafts = new Map();
+
+  function saveDraft(id) {
+    if (!id) return;
+    const text = input.value;
+    if (text.trim() || attachments.length) drafts.set(id, { text, attachments: attachments.slice() });
+    else drafts.delete(id);
+  }
+
+  function loadDraft(id) {
+    const d = (id && drafts.get(id)) || null;
+    input.value = d?.text ?? '';
+    attachments = d?.attachments ? d.attachments.slice() : [];
+    // Same reason loadComposer dispatches it: the auto-grow listener is what sizes
+    // the box, and a programmatic value set does not fire input.
+    input.dispatchEvent(new Event('input'));
+  }
+
   // The live row's three inputs — the last reply's pending tool call, the
   // timestamp of the newest transcript line, and the last known session status
   // — arrive on separate asynchronous paths (onChatReply and setStatus), so all
@@ -442,6 +479,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     },
     mount(id) {
       if (sessionId === id) return;
+      const leaving = sessionId;
       sessionId = id;
       offset = null;
       generation += 1;
@@ -459,10 +497,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // growing.
       pendingPastes.clear();
       pasteNote = null;
-      // Attachments belong to the prompt being abandoned — carrying them into
-      // another session would silently attach one human's screenshot to someone
-      // else's conversation.
-      attachments = [];
+      // The box is shared, so whatever is in it belongs to the card being LEFT.
+      // Put that away first, then bring in this card's own draft — in that order,
+      // or the incoming draft is what gets filed under the outgoing id.
+      saveDraft(leaving);
+      loadDraft(id);
       renderAttachments();
       liveModel = null;
       graphModel = null;
@@ -487,6 +526,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     unmount() {
       clearInterval(timer);
       timer = null;
+      const leaving = sessionId;
       sessionId = null;
       generation += 1;
       wrap.hidden = true;
@@ -501,10 +541,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // growing.
       pendingPastes.clear();
       pasteNote = null;
-      // Attachments belong to the prompt being abandoned — carrying them into
-      // another session would silently attach one human's screenshot to someone
-      // else's conversation.
-      attachments = [];
+      // Saved against the card being closed so reopening it restores the draft,
+      // then the shared box is emptied so nothing is left for the next card.
+      saveDraft(leaving);
+      loadDraft(null);
       renderAttachments();
       liveModel = null;
       graphModel = null;
