@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lastUserPrompt, chooseRestore, TAIL_BYTES } from './restore-prompt.js';
+import { lastUserPrompt, chooseRestore, FIRST_ATTEMPT_BYTES, MAX_READ_BYTES } from './restore-prompt.js';
 
 const line = (o) => JSON.stringify(o);
 const userLine = (text, ts = '2026-08-27T10:00:00.000Z') =>
@@ -8,11 +8,12 @@ const userLine = (text, ts = '2026-08-27T10:00:00.000Z') =>
 const asstLine = (text, ts = '2026-08-27T10:00:01.000Z') =>
   line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text }] } });
 
-const readerFor = (text) => async () => text;
+// atStart:true means "this is the whole file", which is what a small fixture is.
+const readerFor = (text) => async () => ({ text, atStart: true });
 
 test('lastUserPrompt returns the NEWEST user message, not the first', async () => {
   const text = [userLine('the older prompt'), asstLine('a reply'), userLine('the newest prompt')].join('\n');
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }), 'the newest prompt');
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }), 'the newest prompt');
 });
 
 test('lastUserPrompt reads FRESH, which is the whole point', async () => {
@@ -21,10 +22,10 @@ test('lastUserPrompt reads FRESH, which is the whole point', async () => {
   // back handed the PREVIOUS one to the composer. Reading at request time removes
   // the race rather than narrowing it.
   let current = [userLine('first')].join('\n');
-  const readFile = async () => current;
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile }), 'first');
+  const readTail = async () => ({ text: current, atStart: true });
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail }), 'first');
   current = [userLine('first'), userLine('second, sent moments ago')].join('\n');
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile }), 'second, sent moments ago');
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail }), 'second, sent moments ago');
 });
 
 test('lastUserPrompt keeps multi-line prompts exactly — no wrap guessing needed', async () => {
@@ -32,12 +33,12 @@ test('lastUserPrompt keeps multi-line prompts exactly — no wrap guessing neede
   // pane has already re-wrapped it.
   const prompt = "I'm seeing this error:\n\nERROR: NOT WORKING";
   const text = userLine(prompt);
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }), prompt);
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }), prompt);
 });
 
 test('lastUserPrompt tolerates a truncated first line — only the tail is read', async () => {
   const text = ['{"type":"user","messa', userLine('the real prompt')].join('\n');
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }), 'the real prompt');
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }), 'the real prompt');
 });
 
 test('lastUserPrompt skips a user turn that carried no prose', async () => {
@@ -47,20 +48,59 @@ test('lastUserPrompt skips a user turn that carried no prose', async () => {
     type: 'user', timestamp: '2026-08-27T10:00:05.000Z',
     message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } }] },
   })].join('\n');
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }), 'the prompt with words');
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }), 'the prompt with words');
 });
 
 test('lastUserPrompt is null for no file, an unreadable file, and an empty one', async () => {
   assert.equal(await lastUserPrompt(null), null);
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: async () => { throw new Error('EACCES'); } }), null);
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor('') }), null);
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: async () => { throw new Error('EACCES'); } }), null);
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor('') }), null);
 });
 
-test('lastUserPrompt asks for a bounded tail, never the whole transcript', async () => {
-  let asked = null;
-  await lastUserPrompt('/t.jsonl', 'claude', { readFile: async (f, bytes) => { asked = bytes; return userLine('x'); } });
-  assert.equal(asked, TAIL_BYTES);
-  assert.ok(TAIL_BYTES <= 1024 * 1024, 'a transcript can reach tens of MB; this stays a cheap read');
+test('the read starts small and WIDENS until a prompt is found', async () => {
+  // Transcript bytes are mostly tool output, not turns, so a fixed window is no
+  // guarantee of holding a single prompt — and too small a window can make
+  // selectLive prune away every prompt it does hold. Measured over 19 real
+  // transcripts bigger than the first attempt, a flat tail returned NULL on one
+  // where reading further back found the prompt.
+  const asked = [];
+  const got = await lastUserPrompt('/t.jsonl', 'claude', {
+    readTail: async (f, bytes) => {
+      asked.push(bytes);
+      // Only the third, widest attempt reaches far enough back to include one.
+      return { text: asked.length < 3 ? '' : userLine('the prompt'), atStart: false };
+    },
+  });
+  assert.equal(got, 'the prompt');
+  assert.deepEqual(asked, [FIRST_ATTEMPT_BYTES, FIRST_ATTEMPT_BYTES * 2, FIRST_ATTEMPT_BYTES * 4]);
+});
+
+test('widening stops at the start of the file', async () => {
+  let calls = 0;
+  const got = await lastUserPrompt('/t.jsonl', 'claude', {
+    readTail: async () => { calls += 1; return { text: asstLine('no prompts here'), atStart: true }; },
+  });
+  assert.equal(got, null);
+  assert.equal(calls, 1, 'nothing above this window, so no point asking for more');
+});
+
+test('widening is bounded, so a huge transcript cannot be read forever', async () => {
+  const asked = [];
+  await lastUserPrompt('/t.jsonl', 'claude', {
+    readTail: async (f, bytes) => { asked.push(bytes); return { text: asstLine('x'), atStart: false }; },
+  });
+  assert.ok(asked.at(-1) >= MAX_READ_BYTES, 'it stops at the ceiling');
+  assert.ok(asked.length < 20, 'and it terminates');
+});
+
+test('a window that starts mid-file drops its partial first line', async () => {
+  // lineUuids reads the parent/child pair straight off the raw line, so a
+  // truncated one contributes a bogus link to the tree selectLive prunes against.
+  const truncated = '{"type":"user","messa';
+  const got = await lastUserPrompt('/t.jsonl', 'claude', {
+    readTail: async () => ({ text: [truncated, userLine('the real prompt')].join('\n'), atStart: false }),
+  });
+  assert.equal(got, 'the real prompt');
 });
 
 test('chooseRestore: the pane wins when it has a draft', async () => {
@@ -97,7 +137,7 @@ test("Claude Code's own interruption notice is never restored as a prompt", asyn
   for (const marker of ['[Request interrupted by user]', '[Request interrupted by user for tool use]']) {
     const text = [userLine('the prompt the human actually wrote'), userLine(marker)].join('\n');
     assert.equal(
-      await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }),
+      await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }),
       'the prompt the human actually wrote',
       `must skip ${marker}`,
     );
@@ -107,10 +147,10 @@ test("Claude Code's own interruption notice is never restored as a prompt", asyn
 test('a prompt that merely mentions an interruption marker is still restored', async () => {
   // The filter is anchored, so a human quoting the notice is not swallowed by it.
   const prompt = 'I saw [Request interrupted by user] in the log — why?';
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(userLine(prompt)) }), prompt);
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(userLine(prompt)) }), prompt);
 });
 
 test('a transcript of nothing but interruption notices restores nothing', async () => {
   const text = [userLine('[Request interrupted by user]'), userLine('[Request interrupted by user]')].join('\n');
-  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readFile: readerFor(text) }), null);
+  assert.equal(await lastUserPrompt('/t.jsonl', 'claude', { readTail: readerFor(text) }), null);
 });

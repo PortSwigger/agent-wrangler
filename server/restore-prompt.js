@@ -1,11 +1,18 @@
 import fsp from 'node:fs/promises';
 import { scanChatText } from './chat-events.js';
 
-// How much of the tail of a transcript to read when looking for the newest user
-// message. Generous enough that a turn full of large tool output cannot push the
-// prompt out of the window, small enough that this stays a cheap read on a
-// transcript that has grown to tens of megabytes.
-export const TAIL_BYTES = 512 * 1024;
+// The read widens by RESULT, not by a flat byte tail, and that is load-bearing.
+// Transcript bytes are mostly tool output rather than turns, so a fixed window is
+// no guarantee of containing a single prompt — the same reason chat.js sizes its
+// initial window by event count. It also matters for pruning: scanChatText applies
+// selectLive, which needs its range read contiguously from a line boundary, and a
+// too-small window can prune away every prompt it holds. Measured over 19 real
+// transcripts larger than the first attempt, a flat tail returned NULL on one where
+// reading further back returned the prompt correctly.
+export const FIRST_ATTEMPT_BYTES = 256 * 1024;
+// The ceiling matches chat.js's MAX_INITIAL_BYTES: past this, reading more costs
+// more than the restore is worth, and the fallback is simply no restore.
+export const MAX_READ_BYTES = 8 * 1024 * 1024;
 
 // Claude Code writes its own interruption notice as a `user` message with no
 // isMeta flag, so nothing upstream filters it out. Anchored and narrow: only the
@@ -24,15 +31,32 @@ const INTERRUPT_MARKER = /^\[Request interrupted by user(?: for tool use)?\]$/;
 //
 // Only the tail is read, so the first line is usually a fragment; scanChatText
 // already tolerates an unparseable line, which is what makes that safe.
-export async function lastUserPrompt(file, agent = 'claude', { readFile = defaultTailRead } = {}) {
+export async function lastUserPrompt(file, agent = 'claude', { readTail = defaultTailRead } = {}) {
   if (!file) return null;
-  let text;
-  try {
-    text = await readFile(file, TAIL_BYTES);
-  } catch {
-    return null;
+  for (let bytes = FIRST_ATTEMPT_BYTES; ; bytes *= 2) {
+    let chunk;
+    try {
+      chunk = await readTail(file, bytes);
+    } catch {
+      return null;
+    }
+    if (!chunk) return null;
+    // An empty or prompt-less window is a reason to WIDEN, not to give up — the
+    // bytes in view may be nothing but one large tool result. Only the checks below
+    // (start of file reached, or the ceiling hit) end the search.
+    const found = chunk.text ? newestPromptIn(chunk, agent) : null;
+    // Widen only while there is more file to read and headroom to read it in.
+    if (found || chunk.atStart || bytes >= MAX_READ_BYTES) return found;
   }
-  if (!text) return null;
+}
+
+function newestPromptIn(chunk, agent) {
+  // A window that does not start at byte 0 begins mid-line. Dropping that fragment
+  // is not cosmetic: lineUuids reads the parent/child pair straight off the raw
+  // line, so a truncated one contributes a bogus link to the tree selectLive prunes
+  // against.
+  const text = chunk.atStart ? chunk.text : chunk.text.slice(chunk.text.indexOf('\n') + 1);
+  if (!text.trim()) return null;
   const { events } = scanChatText(text, agent);
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const e = events[i];
@@ -53,15 +77,18 @@ export async function lastUserPrompt(file, agent = 'claude', { readFile = defaul
   return null;
 }
 
+// Returns { text, atStart } — `atStart` is what tells the caller there is no more
+// file above this window, so it can stop widening and skip the partial-line trim.
 async function defaultTailRead(file, bytes) {
   const handle = await fsp.open(file, 'r');
   try {
     const { size } = await handle.stat();
     const start = Math.max(0, size - bytes);
-    const buf = Buffer.alloc(Math.min(size, bytes));
-    if (!buf.length) return '';
-    await handle.read(buf, 0, buf.length, start);
-    return buf.toString('utf8');
+    const len = Math.min(size, bytes);
+    if (!len) return { text: '', atStart: true };
+    const buf = Buffer.alloc(len);
+    await handle.read(buf, 0, len, start);
+    return { text: buf.toString('utf8'), atStart: start === 0 };
   } finally {
     await handle.close();
   }

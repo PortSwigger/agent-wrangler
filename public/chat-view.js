@@ -287,9 +287,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // composer, and every send is a paste at the pane's cursor — so the next send
     // has to clear it first or the edited prompt fuses onto the original.
     paneRestoreArmed = true;
-    // Era-stamped so a reply for a session this view has since left is dropped
-    // rather than typed into another session's composer.
-    restoreToken = `${generation}#${++restoreSeq}`;
+    // Stamped with pasteEra for the same reason an upload is, and NOT with the poll
+    // generation: generation also moves when a rewind rebuilds the stream, and an
+    // interrupt in flight at that moment is still the reader's — rebuildStream
+    // deliberately preserves the composer and anything in flight. What actually
+    // drops a reply from a session this view has left is restoreToken being nulled
+    // on mount/unmount; the prefix only keeps successive tokens distinct.
+    restoreToken = `${pasteEra}#${++restoreSeq}`;
     // Whether a draft was already in the box is decided HERE, not when the reply
     // lands: by then the human may have started typing in response to the stop,
     // and a prompt they are part-way through must not be overwritten by a restore

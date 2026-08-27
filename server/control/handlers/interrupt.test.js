@@ -35,7 +35,7 @@ function ctx({ tmux = 'cc_abc', agent = 'claude', panes = [EMPTY_PANE], transcri
     sendKeys: (name, keys, socket) => { calls.push({ verb: 'sendKeys', name, keys, socket }); },
     capturePaneStyled: async () => { const p = panes[Math.min(capture, panes.length - 1)]; capture += 1; return p; },
     findTranscript: async () => transcript,
-    readTranscriptTail: async () => tail,
+    readTranscriptTail: async () => ({ text: tail, atStart: true }),
     reply: (o) => replies.push(o),
     // Real time is not worth spending in a unit test; the polling logic is what
     // matters, not the wall clock.

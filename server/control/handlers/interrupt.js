@@ -79,7 +79,7 @@ export const interruptHandler = {
       // readTranscriptTail is a ctx seam for tests only (like findTranscript);
       // production leaves it unset and lastUserPrompt does its own bounded read.
       transcriptPrompt = await lastUserPrompt(await findTranscript(convId), agent,
-        ctx.readTranscriptTail ? { readFile: ctx.readTranscriptTail } : undefined);
+        ctx.readTranscriptTail ? { readTail: ctx.readTranscriptTail } : undefined);
     }
 
     const { text, source } = chooseRestore({ paneDraft, transcriptPrompt });

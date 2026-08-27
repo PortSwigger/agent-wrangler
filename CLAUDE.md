@@ -630,6 +630,17 @@ don't re-derive it.
   wider than the pane is hard-broken mid-word (verified: a 130-character path split as
   `…segment-s` / `gment-…`) and rejoining that silently corrupts it; also null on a
   `[Pasted text #N]` placeholder, on escape-stripped input, and over a length cap.
+  **The transcript fallback WIDENS its read by result, never a flat byte tail.**
+  `scanChatText` applies `selectLive`, so the read has to cover its range from a line
+  boundary, and transcript bytes are mostly tool output rather than turns — a fixed
+  window is no guarantee of holding a single prompt, and too small a window can prune
+  away every prompt it does hold. Measured over 31 real transcripts larger than the
+  first 256KB attempt, a flat 512KB tail returned NULL on one where widening found the
+  prompt correctly; after the fix, zero of the 31 differ from a whole-file read. An
+  empty or prompt-less window is therefore a reason to widen, NOT to give up — only
+  reaching byte 0 or the 8MB ceiling ends the search — and a window that does not start
+  at byte 0 must drop its partial first line, because `lineUuids` reads the parent/child
+  pair straight off the raw line and a truncated one feeds a bogus link to `selectLive`.
   **The transcript is the fallback and is read FRESH in the handler** — the old client
   held `lastUserText`, updated only when a 2s poll happened to deliver a `user` event,
   which is why Esc handed back the PREVIOUS prompt when it beat the poll. `lastUserText`
