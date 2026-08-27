@@ -428,23 +428,197 @@ function pushCodex(entry, state) {
   return out;
 }
 
+// ---- Branch pruning --------------------------------------------------------
+// A Claude transcript is a TREE, not a log, and nothing on disk marks which
+// branch is the live one. Rewind ("backtrack", Esc-Esc) does not truncate the
+// file: the new turn is appended with its `parentUuid` pointing back at the
+// rewind target and the abandoned turns stay where they are, line-for-line
+// indistinguishable from live ones. So a flat scan renders every version of the
+// conversation the reader ever backed out of — measured over 274 real
+// transcripts, 160 (58%) carry at least one abandoned line, and the worst case
+// showed 325 of 345 message lines dead.
+//
+// The rule is NOT "keep the newest line and its ancestors". That spine is too
+// narrow, because ordinary PARALLEL tool use branches the tree too: a second
+// `tool_use` line and the first call's `tool_result` are both written as
+// children of the first `tool_use`, so the spine silently drops live tool
+// results — it does so in 153 of those 274 transcripts.
+//
+// What actually distinguishes a rewind is a branch point with more than one
+// child whose SUBTREE CONTAINS A HUMAN PROMPT: two alternative histories. A
+// parallel-tool fan-out never has that (one side is a bare tool result), so it
+// is left alone. At such a point every prompt-bearing child but the LAST is
+// dead, along with its whole subtree. Against the same corpus this prunes 1.7%
+// of message lines and never drops a line the spine would have kept.
+//
+// `parentUuid: null` lines are grouped under one synthetic parent and compete
+// the same way: rewinding to before the very first prompt starts a whole second
+// root, which is how one recurring session accumulated eight of them. A uuid is
+// always 36 hyphenated hex characters, so this sentinel cannot collide with one.
+const ROOT = 'ROOT';
+
+// The exemption to that grouping is a `compact_boundary` root — /compact also
+// opens a new root, but it CONTINUES the conversation instead of replacing it,
+// and letting it compete hid 2104 pre-compact messages of a real session. Such
+// a node is also a WALL for the upward prompt walk, so the first prompt after a
+// compact is not read as a rewind of the pre-compact root.
+const COMPACT_MARKER = '"compact_boundary"';
+
+// The parents map lives as long as the cached scanner (across contiguous polls)
+// and there is one per session in that cache, so it needs a ceiling. Past the
+// cap tracking stops and nothing is pruned — the pre-fix behaviour, which is
+// the right way to fail: showing a dead branch is a cosmetic wrong, hiding a
+// live turn is not.
+export const MAX_TRACKED_LINES = 50000;
+
+// Pulled off the RAW line by substring search, never JSON.parse. The chain has
+// to include lines mightCarryChat deliberately never parses — an `attachment`
+// sitting between a user turn and its reply is part of the parent chain, and a
+// hole there orphans both sides — and some of those lines are multi-megabyte
+// tool results. `"uuid":"` cannot false-match `"parentUuid":"` or
+// `"leafUuid":"`: both capitalise the U, and neither has a quote before it.
+function afterKey(line, key) {
+  const at = line.indexOf(key);
+  if (at === -1) return null;
+  const from = at + key.length;
+  const end = line.indexOf('"', from);
+  return end === -1 ? null : line.slice(from, end);
+}
+
+export function lineUuids(line) {
+  const uuid = afterKey(line, '"uuid":"');
+  if (!uuid) return null;
+  // `"parentUuid":null` is a root — a real position in the tree, not "unknown".
+  return { uuid, parent: afterKey(line, '"parentUuid":"') || ROOT };
+}
+
+function track(line, state) {
+  const ids = lineUuids(line);
+  if (!ids || state.overflow) return ids;
+  state.parents.set(ids.uuid, ids.parent);
+  if (line.includes(COMPACT_MARKER)) state.walls.add(ids.uuid);
+  if (state.parents.size > MAX_TRACKED_LINES) {
+    state.overflow = true;
+    state.parents.clear();
+    state.walls.clear();
+    state.promptChild.clear();
+  }
+  return ids;
+}
+
+// Called for a line that emitted a human prompt. Walks up recording which child
+// each ancestor's prompt arrived through; an ancestor already recorded against a
+// DIFFERENT child means this prompt hangs a second history off that point — a
+// rewind. Amortised O(1): the walk stops the moment it reaches a node already
+// recorded with the same child, so a linear conversation re-walks nothing.
+function markPrompt(uuid, state) {
+  let child = uuid;
+  let node = state.parents.get(uuid);
+  while (node) {
+    const seen = state.promptChild.get(node);
+    if (seen === child) return;
+    if (seen !== undefined) state.rewound = true;
+    state.promptChild.set(node, child);
+    if (state.walls.has(node)) return;
+    child = node;
+    node = state.parents.get(node);
+  }
+}
+
+// Shared, and never mutated by any caller — selectLive only reads `events`.
+const NO_LINE = { uuid: null, events: [] };
+
 export function createChatScanner(agent = 'claude') {
-  const state = { agent, model: null, pending: new Map() };
+  const state = {
+    agent, model: null, pending: new Map(),
+    // Branch state, Claude only: a Codex rollout is a flat list with no parent
+    // links and no rewind representation, so there is nothing to prune.
+    parents: new Map(), walls: new Set(), promptChild: new Map(),
+    overflow: false, rewound: false,
+  };
+
+  function pushTagged(line) {
+    if (!line || !line.trim()) return NO_LINE;
+    // Tracking runs BEFORE the gate and on every line — see the tree comment above.
+    const ids = agent === 'claude' ? track(line, state) : null;
+    const uuid = ids?.uuid ?? null;
+    if (!mightCarryChat(line, agent)) return uuid ? { uuid, events: [] } : NO_LINE;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return uuid ? { uuid, events: [] } : NO_LINE; // a half-written trailing line is normal for a live session
+    }
+    const events = agent === 'codex' ? pushCodex(entry, state) : pushClaude(entry, state);
+    // "This line is a human prompt" is read off the emitted event rather than
+    // re-derived from the JSON: `kind: 'user'` already encodes isMeta, the
+    // synthetic slash-command wrappers and tool_result-only content, and a second
+    // copy of those rules would be a second thing to keep in step.
+    if (uuid && events.some((e) => e.kind === 'user')) markPrompt(uuid, state);
+    return { uuid, events };
+  }
+
   return {
+    // The uuid rides alongside the events rather than on them: pruning is decided
+    // over a whole range (selectLive) and an event object carries no trace of the
+    // line it came from, but nothing transcript-shaped should leak onto the wire.
+    pushTagged,
     push(line) {
-      if (!line || !line.trim()) return [];
-      if (!mightCarryChat(line, agent)) return [];
-      let entry;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        return []; // a half-written trailing line is normal for a live session
-      }
-      return agent === 'codex' ? pushCodex(entry, state) : pushClaude(entry, state);
+      return pushTagged(line).events;
     },
     pending() {
       const last = [...state.pending.values()].pop();
       return last ? { name: last.name, target: last.target } : null;
+    },
+    // Read-and-clear, and consumed on EVERY read rather than only the follow-up
+    // one: a scan that starts at the window's beginning walks the historic branch
+    // points too, and leaving the flag set would have the next poll rebuild a
+    // stream that was just built correctly — a rebuild every 2s, forever.
+    takeRewound() {
+      const was = state.rewound;
+      state.rewound = false;
+      return was;
+    },
+    // Drops the events of lines on an abandoned branch. Only meaningful for a
+    // scan that covers the range from its own start: it needs every line of that
+    // range in hand, and it can only decide liveness for events it is about to
+    // emit — it cannot retract events already delivered. A follow-up poll
+    // therefore emits unfiltered and relies on takeRewound() instead.
+    selectLive(tagged) {
+      if (state.overflow) return tagged.flatMap((t) => t.events);
+      const prompts = new Set();
+      for (const t of tagged) {
+        if (t.uuid && t.events.some((e) => e.kind === 'user')) prompts.add(t.uuid);
+      }
+      const kids = new Map();
+      for (const [uuid, parent] of state.parents) {
+        const list = kids.get(parent);
+        if (list) list.push(uuid);
+        else kids.set(parent, [uuid]);
+      }
+      // Reverse insertion order visits every child before its parent — a parent
+      // is always written to the transcript ahead of its children — so one pass
+      // is enough to lift "has a prompt below it" up the tree.
+      const order = [...state.parents.keys()];
+      const bearing = new Set();
+      for (let i = order.length - 1; i >= 0; i -= 1) {
+        const uuid = order[i];
+        if (prompts.has(uuid) || (kids.get(uuid) || []).some((c) => bearing.has(c))) bearing.add(uuid);
+      }
+      const deadRoots = new Set();
+      for (const list of kids.values()) {
+        if (list.length < 2) continue;
+        const rivals = list.filter((c) => bearing.has(c) && !state.walls.has(c));
+        for (let i = 0; i < rivals.length - 1; i += 1) deadRoots.add(rivals[i]);
+      }
+      if (!deadRoots.size) return tagged.flatMap((t) => t.events);
+      const dead = new Set();
+      for (const uuid of order) {
+        if (deadRoots.has(uuid) || dead.has(state.parents.get(uuid))) dead.add(uuid);
+      }
+      // A line carrying no uuid is always kept: there is nothing to place it in
+      // the tree with. Older transcript shapes and every test fixture are that.
+      return tagged.flatMap((t) => (t.uuid && dead.has(t.uuid) ? [] : t.events));
     },
     // The timestamp of the newest transcript line this scanner has consumed,
     // which is how long ago the session last produced anything. The chat view
@@ -460,9 +634,11 @@ export function createChatScanner(agent = 'claude') {
   };
 }
 
+// Whole-text scan, so branch pruning applies exactly as it does to the view's
+// first read of a window.
 export function scanChatText(text, agent = 'claude') {
   const scanner = createChatScanner(agent);
-  const events = [];
-  for (const line of text.split('\n')) events.push(...scanner.push(line));
-  return { events, pending: scanner.pending() };
+  const tagged = [];
+  for (const line of text.split('\n')) tagged.push(scanner.pushTagged(line));
+  return { events: scanner.selectLive(tagged), pending: scanner.pending() };
 }

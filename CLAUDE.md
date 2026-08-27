@@ -364,6 +364,54 @@ don't re-derive it.
   path deliberately shows model only so it never becomes a fourth (no tokens are produced or
   rendered anywhere on this path). `subagent.usd`
   is forwarded from `transcript-reader.js`, not recomputed (`server/chat-events.js`).
+- **A Claude transcript is a TREE, not a log, and the abandoned branches are
+  unmarked — so the chat view has to prune, and the pruning rule is NOT "the
+  newest line and its ancestors".** Rewind ("backtrack", Esc-Esc) does not
+  truncate the file: the new turn is appended with its `parentUuid` pointing back
+  at the rewind target and the old turns stay put, line-for-line indistinguishable
+  from live ones. Measured over 274 real transcripts, **160 (58%) carry at least
+  one abandoned line**, and one recurring session showed 325 of 345 message lines
+  dead — a flat scan rendered all of them, which is what "the chat view shows old
+  versions of the conversation" was. **The obvious spine walk is wrong**: ordinary
+  **parallel tool use branches the tree too** — a second `tool_use` line and the
+  first call's `tool_result` are both written as children of the first `tool_use`
+  — so ancestors-of-the-newest-line silently drops live tool results, in 153 of
+  those 274 files. What actually marks a rewind is a branch point with **more than
+  one child whose subtree contains a human prompt** (two alternative histories); a
+  fan-out never has that, since one side is a bare tool result. At such a point
+  every prompt-bearing child but the **last** dies with its whole subtree
+  (`selectLive`, `server/chat-events.js`) — 1.7% of message lines across the
+  corpus, never a line the spine would have kept. Three details are load-bearing:
+  chain tracking must see **every** line, not just the ones `mightCarryChat` lets
+  through (an `attachment` between a user turn and its reply is part of the parent
+  chain, and a hole there orphans both sides), which is why the uuid pair is
+  pulled off the raw line by `indexOf` and never `JSON.parse` — the lines it runs
+  on include multi-megabyte tool results; `parentUuid: null` lines are grouped
+  under one synthetic `ROOT` and compete like any siblings, because rewinding to
+  before the very first prompt starts a whole **second root** (one scheduled
+  session had eight); and a **`compact_boundary` root is exempt** — `/compact`
+  also opens a new root but *continues* the conversation, and letting it compete
+  hid **2104 pre-compact messages** of a real session. Past
+  `MAX_TRACKED_LINES` the scanner stops tracking and prunes nothing: showing a
+  dead branch is cosmetic, hiding a live turn is not.
+- **A rewind is delivered to the client as a moved `epoch`, because the stream is
+  append-only and cannot retract what it drew.** `selectLive` only works on a read
+  that covers its range from the start, so the initial read prunes and a follow-up
+  poll cannot — it holds only the newly appended lines. Instead the scanner reports
+  `takeRewound()` (a new line's prompt hanging off an ancestor that already had a
+  prompt-bearing child) and `chat.js` bumps a per-conversation `epoch`; the client
+  mirrors it and, when it moves, **clears the stream, resets `offset` and re-reads
+  the window** (`rebuildStream`, `public/chat-view.js`). Three things are subtle:
+  `takeRewound()` is **read-and-clear and consumed on every read** — an initial
+  read walks the historic branch points too, so a flag left set would rebuild a
+  correctly-built stream every 2s forever; the rebuild **must bump `generation`**,
+  since `offset` is back to `null` and the token gate is then the only thing
+  stopping an already-in-flight reply from re-appending the branch that just died;
+  and image-paste tokens are stamped with a **separate `pasteEra`**, bumped only on
+  mount/unmount, so a rebuild does not silently orphan an upload the reader just
+  started. The epoch counter lives **outside** the scanner cache because the
+  rebuild's fresh read replaces the scanner. Codex is exempt throughout: a rollout
+  is a flat list with no parent links and no rewind representation.
 - **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
   `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
   it silently renders a timeline with no tool outputs. Codex `reasoning` is `encrypted_content`
@@ -423,6 +471,10 @@ don't re-derive it.
   which `pushClaude` advances for **every** user and assistant entry, including
   an assistant message that is nothing but a `tool_use` and therefore emits no
   event at all: exactly the case the indicator exists to cover.
+  It applies to **`suggestion`/`modelNow`** for the same reason, and to
+  **`epoch`** (above) most sharply of all: an omitted `epoch` reads to the client
+  as `0`, and against a conversation whose counter has already moved that
+  rebuilds the whole stream on **every single poll**.
 - **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
   signalled.** `Terminal →` on the chat view's needs-you bar arms
   `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
