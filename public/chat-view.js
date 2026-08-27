@@ -79,6 +79,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // them to a DIFFERENT session is the leak this whole store exists to stop.
   const drafts = new Map();
 
+  // Set when THIS view interrupted a turn: the interrupt is what may leave a
+  // restored prompt in the PANE's composer, so the next send must clear it. Armed
+  // rather than inferred from a non-empty pane, because a draft the human typed
+  // straight into the terminal is theirs and wiping it would be its own bug.
+  let paneRestoreArmed = false;
+  // The in-flight interrupt's token, and whether the composer already held
+  // something when it was sent.
+  let restoreToken = null;
+  let restoreSeq = 0;
+  let restoreOverDraft = false;
+
   function saveDraft(id) {
     if (!id) return;
     const text = input.value;
@@ -107,13 +118,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // ghost-suggestion.js). Held like pending/lastTs because it too describes the
   // reply's own moment rather than any event.
   let lastSuggestion = null;
-  // The most recent thing the human sent, kept so Stop can put it back in the
-  // composer the way pressing Esc does in the pane. Read off the `user` events
-  // as they arrive rather than remembered at submit() time: submit() is not the
-  // only way a prompt reaches the session (the card's own message box and a
-  // peer's mail both land as user turns), and the transcript is what actually
-  // happened.
-  let lastUserText = null;
   // Two sources, deliberately kept apart. `graphModel` is the board's pill,
   // derived from the transcript's last assistant message — correct for a dormant
   // session but STALE right after a `/model` switch, which the transcript does
@@ -247,7 +251,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
-    send({ type: 'message', sessionId, text, ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}) });
+    send({
+      type: 'message', sessionId, text,
+      ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
+      ...(paneRestoreArmed ? { clearComposer: true } : {}),
+    });
+    // Disarmed by the send that consumed it: the restored prompt is gone from the
+    // pane once this lands, and a later message must not wipe a pane draft this
+    // view had nothing to do with.
+    paneRestoreArmed = false;
+    // A reply still in flight would land on an already-sent prompt.
+    restoreToken = null;
     input.value = '';
     input.style.height = 'auto';
     // Cleared on send, not on reply: they have left with the message, and leaving
@@ -258,16 +272,30 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   sendBtn.addEventListener('click', submit);
-  // Mimics pressing Esc in the pane: stop the turn, then hand the prompt back
-  // for editing. The interrupt goes first so the stop is never delayed by the
-  // restore, and it is sent even when there is nothing to restore.
+  // Mimics pressing Esc in the pane: stop the turn, then hand the prompt back for
+  // editing. The prompt is now RESOLVED BY THE SERVER and arrives as
+  // `interrupt-restore`; this view no longer replays its own last-polled user
+  // event, which is what made it hand back the PREVIOUS prompt whenever Esc beat
+  // the 2s poll.
+  //
+  // Nothing is loaded here, only requested — the reply takes a moment, because the
+  // server gives Claude Code a short window to restore the prompt into the pane,
+  // which is the one source that can reflect an edit made in the terminal.
   function interruptAndRestore() {
     if (!sessionId) return;
-    send({ type: 'interrupt', sessionId });
-    // Never over a draft: if something is already typed, that is newer than the
-    // prompt being cancelled and is what the human wants to keep. Stopping still
-    // happens — only the restore is skipped.
-    if (lastUserText && !input.value.trim()) loadComposer(lastUserText);
+    // Interrupting is what makes Claude Code restore the prompt into the PANE's
+    // composer, and every send is a paste at the pane's cursor — so the next send
+    // has to clear it first or the edited prompt fuses onto the original.
+    paneRestoreArmed = true;
+    // Era-stamped so a reply for a session this view has since left is dropped
+    // rather than typed into another session's composer.
+    restoreToken = `${generation}#${++restoreSeq}`;
+    // Whether a draft was already in the box is decided HERE, not when the reply
+    // lands: by then the human may have started typing in response to the stop,
+    // and a prompt they are part-way through must not be overwritten by a restore
+    // they asked for a moment earlier.
+    restoreOverDraft = Boolean(input.value.trim());
+    send({ type: 'interrupt', sessionId, token: restoreToken });
     renderSuggestion();
   }
 
@@ -437,7 +465,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   function appendItems(items) {
     const stick = atBottom();
     for (const item of items) {
-      if (item.type === 'user' && item.event.text) lastUserText = item.event.text;
       const node = dom.itemNode(item);
       if (item.type === 'subagent') {
         node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
@@ -499,6 +526,23 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   return {
+    // The answer to an interrupt: what to put back in the composer, resolved
+    // server-side from the pane (authoritative when Claude Code restored the
+    // prompt there) or else from a fresh transcript read. `source` is carried so
+    // this view never has to guess which it got.
+    onInterruptRestore(msg) {
+      // Exactly one in-flight interrupt per view, so an unmatched token means the
+      // reply belongs to a superseded request or another session's era.
+      if (!restoreToken || msg.token !== restoreToken) return;
+      restoreToken = null;
+      if (!msg.text) return;
+      // The draft check is the one made when Esc was pressed, not now: anything
+      // typed since is newer than the prompt being recovered and must survive.
+      if (restoreOverDraft) return;
+      loadComposer(msg.text);
+      renderSuggestion();
+      renderSendability();
+    },
     // The upload half of an image paste. Correlated by the era-stamped token the
     // request carried, so a reply for a session the view has since left is
     // discarded instead of pasting a path into the wrong composer.
@@ -531,12 +575,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastStatus = null;
       lastTs = null;
       lastSuggestion = null;
-      lastUserText = null;
       // In-flight uploads belong to the era being left: their tokens can never
       // match the bumped generation again, so clearing them just stops the set
       // growing.
       pendingPastes.clear();
       pasteNote = null;
+      // A restore in flight belongs to the era being left. Dropping the token is
+      // what makes its reply unmatchable, so it can never be typed into the
+      // composer of whichever session is open by the time it lands.
+      restoreToken = null;
+      restoreOverDraft = false;
+      paneRestoreArmed = false;
       // The box is shared, so whatever is in it belongs to the card being LEFT.
       // Put that away first, then bring in this card's own draft — in that order,
       // or the incoming draft is what gets filed under the outgoing id.
@@ -577,12 +626,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       lastStatus = null;
       lastTs = null;
       lastSuggestion = null;
-      lastUserText = null;
       // In-flight uploads belong to the era being left: their tokens can never
       // match the bumped generation again, so clearing them just stops the set
       // growing.
       pendingPastes.clear();
       pasteNote = null;
+      // A restore in flight belongs to the era being left. Dropping the token is
+      // what makes its reply unmatchable, so it can never be typed into the
+      // composer of whichever session is open by the time it lands.
+      restoreToken = null;
+      restoreOverDraft = false;
+      paneRestoreArmed = false;
       // Saved against the card being closed so reopening it restores the draft,
       // then the shared box is emptied so nothing is left for the next card.
       saveDraft(leaving);

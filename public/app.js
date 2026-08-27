@@ -4713,6 +4713,7 @@ function connect() {
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
+    else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);

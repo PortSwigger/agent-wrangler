@@ -612,6 +612,41 @@ don't re-derive it.
   session whose `pastes/` folder holds it, so it must follow its own prose and never
   cross to another card. Anything else added to the composer (a second field, a mode
   toggle) has to join the same save/load pair or it leaks the same way.
+- **The Esc-restore is resolved SERVER-SIDE, from the pane when it can be read and
+  a fresh transcript read otherwise — and the pane's own restore is unreliable, which
+  is the fact the whole design turns on.** Interrupting a turn *sometimes* makes
+  Claude Code restore the interrupted prompt into its own composer. Measured against a
+  live pane (2.1.247), composer wiped between runs: a 64-character prompt never
+  restored, a 212-character single-line one restored on one run and NOT on two later
+  runs of the identical prompt, and NO multi-line prompt ever restored (5 and 13 lines
+  tested). So absence is the common case and must never be read as "nothing was
+  pending". Two consequences, both load-bearing:
+  **`paneComposerDraft` (`ghost-suggestion.js`) hides on any doubt.** It locates the
+  composer between the last two `─` rules (continuation lines carry no `❯`, so the
+  mark alone cannot delimit them), takes the rule's own length as the wrap width — no
+  extra tmux call — strips faint runs, and rejoins wrapped lines with ONE space, which
+  is byte-exact when the wrap fell on a space (verified against a 212-character
+  prompt). It returns null on a line that reaches the full pane width, because a token
+  wider than the pane is hard-broken mid-word (verified: a 130-character path split as
+  `…segment-s` / `gment-…`) and rejoining that silently corrupts it; also null on a
+  `[Pasted text #N]` placeholder, on escape-stripped input, and over a length cap.
+  **The transcript is the fallback and is read FRESH in the handler** — the old client
+  held `lastUserText`, updated only when a 2s poll happened to deliver a `user` event,
+  which is why Esc handed back the PREVIOUS prompt when it beat the poll. `lastUserText`
+  is now gone from `chat-view.js`; the client sends an era-stamped token on `interrupt`
+  and loads whatever `interrupt-restore` echoes back, deciding "was a draft already
+  there?" at KEY-PRESS time rather than when the reply lands.
+  **`[Request interrupted by user]` is written by Claude Code as an ordinary `user`
+  message with no `isMeta`, so it is the newest user entry at exactly the moment the
+  restore is resolved.** Caught end-to-end, not reasoned about: the first version
+  returned that 29-character marker instead of the real 212-character prompt.
+  `restore-prompt.js` filters it and `[Request interrupted by user for tool use]`,
+  anchored so a prompt quoting one still restores; across 150 real transcripts those
+  are the only two forms. **Codex gets the interrupt but never a restore**, and that is
+  a pre-existing gap rather than a new one: this handler resolves the transcript the way
+  `chat.js` does, via `findTranscript` over `~/.claude/projects`, while Codex rollouts
+  live under `~/.codex/sessions` behind `codex-rollout.js`'s `findRollout`. Codex
+  degrades to no restore, never to a wrong one.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message

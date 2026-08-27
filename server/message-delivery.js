@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
-import { sendText as defaultSendText, prefillPane as defaultPrefillPane } from './tmux-scraper.js';
+import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
@@ -24,15 +24,26 @@ import { adapterFor } from './agents/index.js';
 // path can never simply be concatenated into `text` — the split is the mechanism,
 // not tidiness.
 // Returns { mode: 'live' } | { mode: 'dormant' } | { mode: 'error', error }.
-export async function deliverMessage(id, text, deps, { imagePaths = [] } = {}) {
+// `clearComposer` empties the pane's composer before anything is pasted. Set by
+// the chat view when IT armed the restore that put text there: interrupting a turn
+// makes Claude Code restore the interrupted prompt into the pane composer, and the
+// chat view restores the same prompt into the browser composer, so sending the
+// edited version pastes it onto the original and the agent gets both fused into one
+// prompt. Only the armed case clears — a draft the human typed in the pane directly
+// is theirs, and discarding it silently would be its own bug.
+export async function deliverMessage(id, text, deps, { imagePaths = [], clearComposer: wantClear = false } = {}) {
   const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
   const sendText = deps.sendText ?? defaultSendText;
   const prefillPane = deps.prefillPane ?? defaultPrefillPane;
+  const clearComposer = deps.clearComposer ?? defaultClearComposer;
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the
   // whole message, images and prose together, as ONE turn.
+  // Ordered: clear first, then attachments, then the prose. Clearing after an
+  // attachment would throw the attachment away with it.
   const attach = async (tmux, socket) => {
+    if (wantClear) await clearComposer(tmux, socket);
     for (const p of imagePaths) await prefillPane(tmux, p, socket);
   };
 
@@ -83,7 +94,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [] } = {}) {
   // Attachments force the paste route. The resume-intent shortcut hands the text
   // to the CLI as a launch argument, which has no composer for a path to be
   // absorbed into — the images would simply be dropped, silently.
-  const intentCarriesMessage = owned && !imagePaths.length && adapterFor(fresh.agent).resumeCarriesIntent;
+  const intentCarriesMessage = owned && !imagePaths.length && !wantClear && adapterFor(fresh.agent).resumeCarriesIntent;
   try {
     const res = await sessionManager.resume(id, dir, { intent: text });
     if (!intentCarriesMessage) {
