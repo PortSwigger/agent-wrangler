@@ -21,6 +21,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let sessionId = null;
   let offset = null;
   let timer = null;
+  // The server's branch epoch for the conversation on screen (see chat.js). A
+  // Claude transcript is a tree: a rewind in the pane retroactively turns turns
+  // already appended here into a dead branch, and an append-only stream has no
+  // way to express that. So the server moves this counter instead and the stream
+  // is rebuilt from a fresh window read. null until the first reply, so the
+  // opening value is adopted rather than read as a change.
+  let epoch = null;
   // Bumped on every mount/unmount so an in-flight reply from a closed-then-reopened
   // session (same session id, different era) can be told apart from one belonging
   // to what's on screen now — the session-id check alone can't see this, since
@@ -299,10 +306,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // one costs a base64 frame plus a file, so a slip is capped rather than
   // unbounded — the human can always paste again.
   const MAX_IMAGES_PER_PASTE = 4;
-  // Tokens are era-stamped with the generation so a reply that lands after the
-  // view moved to another session is dropped rather than typing a stale path
-  // into someone else's composer. Same reasoning as the poll's token, different
-  // reply type, so deliberately its own counter.
+  // Tokens are era-stamped so a reply that lands after the view moved to another
+  // session is dropped rather than typing a stale path into someone else's
+  // composer. Same reasoning as the poll's token, different reply type, so
+  // deliberately its own counter.
+  //
+  // Stamped with pasteEra, NOT the poll generation: generation also moves when a
+  // rewind rebuilds the stream (rebuildStream), and an upload in flight at that
+  // moment belongs to the composer, which the rebuild deliberately leaves alone.
+  // Sharing the counter would silently drop the image the reader had just pasted.
+  let pasteEra = 0;
   let pasteSeq = 0;
   const pendingPastes = new Set();
   // Shown on the hint line instead of a toast: chat-view.js has no toast seam,
@@ -359,7 +372,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const skipped = files.length - take.length;
     setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
     for (const file of take) {
-      const token = `${generation}#${++pasteSeq}`;
+      const token = `${pasteEra}#${++pasteSeq}`;
       pendingPastes.add(token);
       const reader = new FileReader();
       reader.onerror = () => {
@@ -460,6 +473,31 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     send({ type: 'chat', sessionId, token: generation, ...(offset == null ? {} : { sinceOffset: offset }) });
   }
 
+  // Throws away what is on screen and re-reads the window from the top, which is
+  // the only honest answer to a rewind: the server can prune the abandoned branch
+  // out of a fresh read, but it cannot un-append the events this view already
+  // drew. Bumping the generation is load-bearing — a reply that was already in
+  // flight carries the old token and would otherwise be applied on top of the
+  // cleared stream (offset is back to null, so nothing else would reject it),
+  // re-drawing the branch that just died.
+  //
+  // Deliberately narrow: the composer, its draft, any in-flight image upload and
+  // the live row's status all survive. The conversation changed underneath the
+  // reader; what they were typing did not.
+  function rebuildStream() {
+    generation += 1;
+    offset = null;
+    stream.textContent = '';
+    // The row was a child of the stream just cleared, so the handle is dangling —
+    // dropped here so the next render appends a fresh one instead of a detached
+    // node with a live timer against it.
+    live = null;
+    clearInterval(tick);
+    tick = null;
+    renderLive();
+    poll();
+  }
+
   return {
     // The upload half of an image paste. Correlated by the era-stamped token the
     // request carried, so a reply for a session the view has since left is
@@ -467,7 +505,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     onPasteImageResult(msg) {
       const token = msg.token;
       if (!pendingPastes.delete(token)) return;
-      if (!String(token).startsWith(`${generation}#`)) return;
+      if (!String(token).startsWith(`${pasteEra}#`)) return;
       if (!msg.ok) { setPasteNote(msg.error || 'Could not attach that image.'); return; }
       attachments.push({ name: msg.name });
       renderAttachments();
@@ -482,7 +520,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const leaving = sessionId;
       sessionId = id;
       offset = null;
+      epoch = null;
       generation += 1;
+      pasteEra += 1;
       stream.textContent = '';
       // A new era starts with no known pending call or status — otherwise the
       // previous session's working line would flash on screen until this
@@ -528,7 +568,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       timer = null;
       const leaving = sessionId;
       sessionId = null;
+      epoch = null;
       generation += 1;
+      pasteEra += 1;
       wrap.hidden = true;
       stream.textContent = '';
       lastPending = null;
@@ -562,6 +604,19 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Comparing the echoed token directly against the current generation needs
       // no ordering assumption, unlike a send-order queue would.
       if (msg.token !== generation) return;
+      // Checked before anything on this reply is applied. A moved epoch means the
+      // events already on screen include a branch the pane has since abandoned,
+      // so this reply's own events are worthless too — the rebuild's fresh read
+      // is what carries the pruned conversation. `?? 0` because a reply from a
+      // server that predates the field must read as a stable value rather than
+      // flapping against a real number.
+      const replyEpoch = msg.epoch ?? 0;
+      if (epoch != null && replyEpoch !== epoch) {
+        epoch = replyEpoch;
+        rebuildStream();
+        return;
+      }
+      epoch = replyEpoch;
       // Update the working line after the token check above but before the offset
       // gate below: pending describes this reply's OWN moment regardless of
       // whether it carried new events, so a same-offset "nothing new" reply must

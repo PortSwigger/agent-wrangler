@@ -60,6 +60,30 @@ function touchCache(convId, entry) {
   }
 }
 
+// The client's stream is append-only (chat-view.js: APPEND, NEVER RE-RENDER), so
+// a rewind — which retroactively kills events already on screen — cannot be
+// expressed as more events. It is expressed as `epoch`: a per-conversation
+// counter the client mirrors and compares on every reply, rebuilding its stream
+// from a fresh window read whenever it moves. Held OUTSIDE the scanner cache,
+// because that fresh read replaces the scanner and the counter has to outlive it.
+//
+// Evicting an entry resets its conversation to 0, which a client holding a
+// higher number reads as one more change: one extra rebuild, never wrong content.
+const MAX_TRACKED_EPOCHS = 200;
+const epochCache = new Map(); // convId -> integer
+
+function epochFor(convId) {
+  return epochCache.get(convId) ?? 0;
+}
+
+function bumpEpoch(convId) {
+  const next = epochFor(convId) + 1;
+  epochCache.delete(convId);
+  epochCache.set(convId, next);
+  if (epochCache.size > MAX_TRACKED_EPOCHS) epochCache.delete(epochCache.keys().next().value);
+  return next;
+}
+
 // Reuse the cached scanner ONLY when this request's sinceOffset is exactly the
 // offset the cache entry last returned. Every other case — no sinceOffset (a
 // fresh mount, which deliberately re-reads a window rather than resuming a
@@ -97,6 +121,10 @@ function getOrCreateScanner(convId, since, agent) {
 // ws 'message' handler) and can complete out of order. Every early return here
 // must carry it too, or a reply missing it looks to the client like the session
 // silently stopped updating.
+//
+// `epoch` obeys the same all-paths rule, for a symmetrical reason: a reply that
+// omits it reads to the client as epoch 0, and against a conversation whose
+// counter has moved that rebuilds the stream on every single poll.
 export const chatHandler = {
   type: 'chat',
   async handler(msg, ctx) {
@@ -140,7 +168,7 @@ export const chatHandler = {
 
     const file = await findTranscript(convId);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
       return;
     }
 
@@ -148,7 +176,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
       return;
     }
 
@@ -172,7 +200,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
       return;
     }
     try {
@@ -219,7 +247,11 @@ export const chatHandler = {
         // ever reuses a cached scanner when `since` is non-null, and a non-null
         // `since` never widens, so an attempt after a widen is always fresh here.
         let scanner = null;
-        const events = [];
+        let events = [];
+        // A rewind is only ACTED on for a follow-up poll. The initial read prunes
+        // the abandoned branch itself (selectLive), so the client has nothing to
+        // rebuild; a follow-up poll cannot — its events are already on screen.
+        let rewound = false;
         let offset;
         if (lastNl < from) {
           // No complete line in range. Resume from the line boundary we found, so
@@ -230,7 +262,16 @@ export const chatHandler = {
         } else {
           scanner = getOrCreateScanner(convId, since, agent);
           const complete = buf.subarray(from, lastNl + 1).toString('utf8');
-          for (const line of complete.split('\n')) events.push(...scanner.push(line));
+          const tagged = [];
+          for (const line of complete.split('\n')) tagged.push(scanner.pushTagged(line));
+          // Pruning needs the whole range in hand, which is exactly what an
+          // initial read has; a follow-up poll holds only the newly appended
+          // lines, so filtering them against a partial tree would be guesswork.
+          events = since == null ? scanner.selectLive(tagged) : tagged.flatMap((t) => t.events);
+          // Consumed unconditionally — takeRewound clears the flag, and leaving
+          // an initial read's historic branch points set would make the very next
+          // poll rebuild a stream that was just built correctly.
+          rewound = scanner.takeRewound() && since != null;
           offset = start + lastNl + 1;
         }
         // Too little conversation in view and older bytes to reach for: double the
@@ -250,7 +291,11 @@ export const chatHandler = {
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
         if (scanner) touchCache(convId, { scanner, offset, agent });
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion, modelNow });
+        // Bumped before the reply is built so this very reply carries the new
+        // value: the client is told to rebuild in the same message that would
+        // otherwise have appended events the rewind just killed.
+        if (rewound) bumpEpoch(convId);
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion, modelNow, epoch: epochFor(convId) });
         return;
       }
     } finally {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanChatText, createChatScanner, mightCarryChat, recapOf, MAX_TOOL_TEXT } from './chat-events.js';
+import { scanChatText, createChatScanner, mightCarryChat, recapOf, lineUuids, MAX_TOOL_TEXT } from './chat-events.js';
 
 const claudeLines = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n');
 
@@ -549,4 +549,130 @@ test('a chip label follows the marker in the prose, not a count from one (the TU
   ), 'claude');
   const user = events.find((e) => e.kind === 'user');
   assert.deepEqual(user.images.map((i) => i.label), ['Image #9', 'Image #10']);
+});
+
+// —— Branch pruning ————————————————————————————————————————————————————————————
+// Fixtures carry real uuid/parentUuid links, unlike the ones above: a transcript
+// is a tree, and the shapes below are the ones lifted off real files — a rewind
+// (two prompt-bearing children of one node), a parallel tool fan-out (a second
+// tool_use and the first call's result sharing a parent), and a compact boundary
+// (a second root that continues rather than replaces).
+const uu = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const at = (n, parent, o) => ({ uuid: uu(n), parentUuid: parent == null ? null : uu(parent), ...o });
+const say = (n, parent, text, ts = '2026-08-27T09:00:00.000Z') =>
+  at(n, parent, { type: 'user', timestamp: ts, message: { role: 'user', content: text } });
+const said = (n, parent, text, ts = '2026-08-27T09:00:01.000Z') =>
+  at(n, parent, { type: 'assistant', timestamp: ts, message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text }] } });
+const uses = (n, parent, id, ts = '2026-08-27T09:00:02.000Z') =>
+  at(n, parent, { type: 'assistant', timestamp: ts, message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `echo ${id}` } }] } });
+const result = (n, parent, id, ts = '2026-08-27T09:00:03.000Z') =>
+  at(n, parent, { type: 'user', timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `out ${id}` }] } });
+
+test('lineUuids: reads both ids off the raw line, and never confuses parentUuid or leafUuid for uuid', () => {
+  const line = JSON.stringify({ parentUuid: uu(1), leafUuid: uu(9), type: 'user', uuid: uu(2) });
+  assert.deepEqual(lineUuids(line), { uuid: uu(2), parent: uu(1) });
+  // A root's parent is a real position in the tree, so it gets the ROOT sentinel
+  // rather than null — roots compete with each other like any other siblings.
+  const root = JSON.stringify({ parentUuid: null, type: 'user', uuid: uu(3) });
+  assert.equal(lineUuids(root).uuid, uu(3));
+  assert.notEqual(lineUuids(root).parent, null);
+  assert.equal(lineUuids(JSON.stringify({ type: 'mode' })), null);
+});
+
+test('claude: a rewind drops the abandoned branch and keeps the one the pane is on', () => {
+  // Two prompts hang off the same parent: the reader backtracked and asked again.
+  const { events } = scanChatText(claudeLines(
+    say(1, null, 'first prompt'),
+    said(2, 1, 'first answer'),
+    say(3, 2, 'abandoned prompt'),
+    said(4, 3, 'abandoned answer'),
+    say(5, 2, 'the prompt that stuck'),
+    said(6, 5, 'the answer on screen'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['first prompt', 'first answer', 'the prompt that stuck', 'the answer on screen']);
+});
+
+test('claude: the LAST prompt-bearing branch wins, however many were abandoned', () => {
+  const { events } = scanChatText(claudeLines(
+    say(1, null, 'root'),
+    say(2, 1, 'try one'),
+    say(3, 1, 'try two'),
+    say(4, 1, 'try three'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['root', 'try three']);
+});
+
+test('claude: a parallel tool fan-out is NOT a rewind — the newest line and its ancestors are too narrow', () => {
+  // Both a second tool_use and the FIRST call's result are written as children of
+  // the first tool_use. A spine walk from the newest line drops one of the two
+  // results; only the prompt-bearing test keeps them, and 153 of 274 real
+  // transcripts have live lines off that spine.
+  const { events } = scanChatText(claudeLines(
+    say(1, null, 'run both'),
+    uses(2, 1, 'toolu_a'),
+    uses(3, 2, 'toolu_b'),
+    result(4, 2, 'toolu_a'),
+    result(5, 3, 'toolu_b'),
+    said(6, 5, 'both done'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.name ?? e.kind), ['user', 'Bash', 'Bash', 'assistant']);
+  assert.deepEqual(events.filter((e) => e.kind === 'tool').map((e) => e.output), ['out toolu_a', 'out toolu_b']);
+});
+
+test('claude: a compact_boundary root continues the conversation instead of replacing it', () => {
+  // /compact starts a second root, same as a rewind-to-the-very-start does. Letting
+  // it compete hid 2104 pre-compact messages of a real session.
+  const { events } = scanChatText(claudeLines(
+    say(1, null, 'before the compact'),
+    said(2, 1, 'answered before'),
+    at(3, null, { type: 'system', subtype: 'compact_boundary', timestamp: '2026-08-27T09:10:00.000Z' }),
+    say(4, 3, 'after the compact'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['before the compact', 'answered before', 'after the compact']);
+});
+
+test('claude: a second root with its own prompt IS a rewind to before the first prompt', () => {
+  const { events } = scanChatText(claudeLines(
+    say(1, null, 'the run that was backed out'),
+    said(2, 1, 'stale answer'),
+    say(3, null, 'the run that stands'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['the run that stands']);
+});
+
+test('takeRewound: reports a rewind arriving on a follow-up push, and is read-and-clear', () => {
+  const scanner = createChatScanner('claude');
+  const push = (o) => scanner.pushTagged(JSON.stringify(o));
+  push(say(1, null, 'first'));
+  push(said(2, 1, 'answer'));
+  push(say(3, 2, 'second'));
+  push(said(4, 3, 'answered'));
+  assert.equal(scanner.takeRewound(), false, 'a linear conversation is not a rewind');
+  // The shape a real backtrack writes: the new prompt is a SIBLING of the one it
+  // replaces, hanging off the line that preceded it.
+  push(say(5, 2, 'asked again after backtracking'));
+  assert.equal(scanner.takeRewound(), true);
+  assert.equal(scanner.takeRewound(), false, 'read-and-clear, or every later poll rebuilds the stream');
+});
+
+test('takeRewound: a parallel tool fan-out and a compact boundary are not reported as rewinds', () => {
+  const scanner = createChatScanner('claude');
+  const push = (o) => scanner.pushTagged(JSON.stringify(o));
+  push(say(1, null, 'run both'));
+  push(uses(2, 1, 'toolu_a'));
+  push(uses(3, 2, 'toolu_b'));
+  push(result(4, 2, 'toolu_a'));
+  push(result(5, 3, 'toolu_b'));
+  assert.equal(scanner.takeRewound(), false);
+  push(at(6, null, { type: 'system', subtype: 'compact_boundary', timestamp: '2026-08-27T09:10:00.000Z' }));
+  push(say(7, 6, 'after the compact'));
+  assert.equal(scanner.takeRewound(), false, 'a compact boundary is a wall, not a branch point');
+});
+
+test('claude: a line with no uuid at all is always kept — there is nothing to place it in the tree with', () => {
+  const { events } = scanChatText(claudeLines(
+    { type: 'user', timestamp: '2026-08-27T09:00:00.000Z', message: { role: 'user', content: 'no ids on this line' } },
+    say(1, null, 'rooted'),
+  ), 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['no ids on this line', 'rooted']);
 });

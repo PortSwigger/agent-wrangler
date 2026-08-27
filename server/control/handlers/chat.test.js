@@ -473,3 +473,78 @@ test('chat: the agent falls back to the entry too', async () => {
   // can tell the agent was read from the entry rather than defaulted to claude.
   assert.deepEqual(c.sent[0].events, []);
 });
+
+// —— Branch pruning / epoch ————————————————————————————————————————————————————
+// A Claude transcript is a tree and a rewind leaves the abandoned turns in the
+// file. An initial read prunes them; a follow-up poll can't (its events are
+// already on the client), so it moves `epoch` and the view rebuilds. Each test
+// uses its OWN conversation id — both the scanner cache and the epoch counter
+// are module-level and keyed on it.
+const uu = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const at = (n, parent, o) => ({ uuid: uu(n), parentUuid: parent == null ? null : uu(parent), ...o });
+const saidAt = (n, parent, text) => at(n, parent, {
+  type: 'assistant', timestamp: '2026-08-27T09:00:01.000Z',
+  message: { role: 'assistant', model: 'claude-x', content: [{ type: 'text', text }] },
+});
+const sayAt = (n, parent, text) => at(n, parent, {
+  type: 'user', timestamp: '2026-08-27T09:00:00.000Z', message: { role: 'user', content: text },
+});
+
+test('chat: the initial read drops the branch a rewind abandoned', async () => {
+  const file = await tmpTranscript([
+    sayAt(1, null, 'first prompt'),
+    saidAt(2, 1, 'first answer'),
+    sayAt(3, 2, 'abandoned prompt'),
+    saidAt(4, 3, 'abandoned answer'),
+    sayAt(5, 2, 'the prompt that stuck'),
+    saidAt(6, 5, 'the answer on screen'),
+  ]);
+  const c = ctx(file, { liveSessionId: 'live-prune', agent: 'claude' });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.deepEqual(c.sent[0].events.map((e) => e.text), ['first prompt', 'first answer', 'the prompt that stuck', 'the answer on screen']);
+});
+
+test('chat: every reply carries an epoch, including the early returns', async () => {
+  // Same all-paths rule as `token`: a reply that omits it reads to the client as
+  // epoch 0, which against a conversation whose counter has moved rebuilds the
+  // stream on every single poll.
+  const file = await tmpTranscript([userLine('one', '2026-08-27T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'live-epoch-paths', agent: 'claude' });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].epoch, 0);
+  const missing = ctx(null, { liveSessionId: 'live-epoch-paths', agent: 'claude' });
+  missing.findTranscript = async () => null;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, missing);
+  assert.equal(missing.sent[0].epoch, 0, 'the missing-transcript early return carries it too');
+});
+
+test('chat: a rewind appended after the first read moves the epoch', async () => {
+  const file = await tmpTranscript([
+    sayAt(1, null, 'first prompt'),
+    saidAt(2, 1, 'first answer'),
+    sayAt(3, 2, 'the prompt on screen'),
+    saidAt(4, 3, 'the answer on screen'),
+  ]);
+  const c = ctx(file, { liveSessionId: 'live-rewind', agent: 'claude' });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.deepEqual(first.events.map((e) => e.text), ['first prompt', 'first answer', 'the prompt on screen', 'the answer on screen']);
+  // The reader backtracks and asks again: a sibling of prompt 3.
+  await fsp.appendFile(file, JSON.stringify(sayAt(5, 2, 'asked again')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  assert.equal(c.sent[1].epoch, first.epoch + 1, 'the client is told to rebuild rather than append');
+  // And the rebuild's own read — no sinceOffset — comes back pruned, at the new epoch.
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[2].epoch, first.epoch + 1, 'stable once reported, or the view rebuilds every poll');
+  assert.deepEqual(c.sent[2].events.map((e) => e.text), ['first prompt', 'first answer', 'asked again']);
+});
+
+test('chat: an ordinary follow-up poll leaves the epoch alone', async () => {
+  const file = await tmpTranscript([sayAt(1, null, 'first prompt'), saidAt(2, 1, 'first answer')]);
+  const c = ctx(file, { liveSessionId: 'live-no-rewind', agent: 'claude' });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  await fsp.appendFile(file, JSON.stringify(sayAt(3, 2, 'next prompt')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: c.sent[0].offset }, c);
+  assert.deepEqual(c.sent[1].events.map((e) => e.text), ['next prompt']);
+  assert.equal(c.sent[1].epoch, c.sent[0].epoch);
+});
