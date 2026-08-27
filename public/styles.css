@@ -2507,6 +2507,48 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    vertical space to put it there. */
 .chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
 .chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
+/* A transient paste note borrows the hint line, so it needs to read as a status
+   rather than as the permanent keyboard hint it replaced. */
+.chat-hint[data-note="1"] { color: var(--fg-muted); }
+/* Attached-image chips inside a user bubble. em-relative like everything else in
+   the pane: a px size here would silently opt these out of the "Chat font size"
+   setting, which only works because every size in #chat-wrap is a fraction of
+   its own font-size. */
+.chat-user-images {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  /* Only when there is prose above them — an image-only message should not open
+     with a blank line. */
+  margin-top: 6px;
+}
+.chat-user-text:empty + .chat-user-images, .chat-user > .chat-user-images:first-child { margin-top: 0; }
+.chat-user-image {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--border-muted); background: var(--surface-1);
+  color: var(--fg-muted); font-size: 0.74em; line-height: 1.5;
+  /* The bubble sets pre-wrap for the human's own line breaks; a chip is markup,
+     not their text, so it opts back out or a wrapped label keeps stray spacing. */
+  white-space: nowrap;
+}
+/* Decoration, so a ::before rather than a text node — same rule the disclosure
+   carets and notice marks follow, which keeps it out of a copied selection. */
+.chat-user-image::before { content: "\1F5BC"; font-size: 0.9em; opacity: 0.75; }
+/* Composer attachments: the pending counterpart of .chat-user-image, sitting
+   above the box until the prompt is sent. em-relative for the same reason. */
+.chat-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.chat-attachment {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 4px 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border-muted); background: var(--surface-2);
+  color: var(--fg-muted); font-size: 0.74em; line-height: 1.6;
+}
+.chat-attachment-label::before { content: "\1F5BC"; margin-right: 4px; opacity: 0.75; }
+.chat-attachment-drop {
+  border: 0; background: none; cursor: pointer; padding: 0 3px;
+  color: var(--fg-subtle); font-size: 1.15em; line-height: 1;
+}
+.chat-attachment-drop::before { content: "\00D7"; }
+.chat-attachment-drop:hover { color: var(--fg); }
 /* Which model the session is on RIGHT NOW, as opposed to .chat-model, which
    records the model of one past turn. Deliberately a little stronger than that
    one: it is live state, not provenance. */

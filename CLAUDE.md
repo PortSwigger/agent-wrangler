@@ -274,6 +274,20 @@ don't re-derive it.
   live bug (a parent-with-children could never be dragged, and any drag in its
   task permanently dropped it from `sessionOrder`), not a "sessions with children
   sink last" feature.
+- **Every paste into a pane goes out BRACKETED (`paste-buffer -p`) — dropping the
+  `-p` silently splits one multi-line message into several turns.** `pasteBlock`
+  (`tmux-scraper.js`) is the single chokepoint for the composer, peer mail, PR nudges
+  and the snooze prefill. The paste *buffer* alone is not the fix: without `-p`, tmux
+  puts a literal CR on the pty for every newline, so the TUI submits at the first one
+  and queues each later line as its own prompt — measured against a real Claude pane, a
+  three-line prompt landed in the transcript as TWO user messages, and with `-p` the
+  same text landed as one with its newlines intact. Safe unconditionally because tmux
+  only emits the `ESC[200~`/`ESC[201~` wrapper when the pane's app has enabled bracketed
+  paste, so `-p` is byte-identical to the old behaviour against anything that hasn't
+  (verified against a plain `cat`) — no per-agent branch needed. `sendText`'s trailing
+  Enter stays a submit rather than a swallowed newline because the end marker precedes
+  it on the same byte stream. The TUI's `[Pasted text #N +k lines]` collapse is
+  DISPLAY-ONLY — a 31-line paste reached the transcript in full.
 - **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
   launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
   `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).
@@ -495,6 +509,38 @@ don't re-derive it.
   there fuses with the command into one mangled prompt that the Enter submits.
   That guard is fail-safe: it returns false whenever emptiness cannot be
   confirmed.
+- **An image pasted into the chat composer reaches the agent as a FILE PATH, and
+  that path must arrive as its own isolated paste — measured, and the rule is
+  narrow.** Claude Code's own Cmd+V reads the HOST clipboard, which a browser
+  cannot reach, so a file is the only bridge. The TUI rewrites a pasted image path
+  into a real inline `[Image #N]` attachment (a genuine base64 `image` block in the
+  transcript, no Read tool call, no permission prompt) **only when the pasted text
+  is a SINGLE LINE ending with the path.** Verified against a live pane: `<path>`,
+  `<path> `, `<path>\n` and `prose: <path>` all attach; `prose\n<path>` (multi-line,
+  path last), `<path> more words` and `a\nb\n<path>` all stay literal text the model
+  never sees. So `deliverMessage` pastes each path ALONE via `prefillPane` (no Enter)
+  and only then `sendText`s the prose — the split IS the mechanism, and concatenating
+  a path into `text` silently breaks every multi-line prompt.
+  **Destination is `<memoryDir>/pastes/`, and that is what makes this need no launch
+  change**: every Claude launch already passes `--add-dir addDirFor(sessionId)`, so a
+  file underneath it is readable by an ALREADY-RUNNING session (unlike
+  `entry.mailCapable`, which had to wait for a relaunch). `paste-store.js` owns the
+  two path forms and they are not interchangeable — write and stat against the
+  RESOLVED real dir (so nothing depends on the by-session link existing yet), but hand
+  the agent the by-session **symlink** form for Claude, because that is literally the
+  string `--add-dir` was given and the form verified live; Codex gets the real path
+  since it rejects a symlinked writable root. Safe to create a subdir there because
+  `watchIgnored` refuses anything that is not `tasks/<id>/memory.md` — widening that
+  filter to see pastes would reintroduce the chokidar fd leak.
+  **The composer sends back the server-minted NAME, never a path** (`isPasteFileName`
+  + an existence check inside that session's own pastes dir), so a frame can never
+  point the agent at an arbitrary file; a name that fails either check is dropped
+  rather than failing the send. And the chat view's chip label is taken from the
+  `[Image #N]` marker in the prose, **not** counted up from one: the TUI numbers
+  attachments cumulatively per session, so a message's second-ever image is
+  `[Image #10]` and a "Image #2" chip would contradict the text beside it. Deliberately
+  no thumbnail — `GET /file` is markdown-only by design and widening it to serve
+  arbitrary image paths would open a read surface for one decoration.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message

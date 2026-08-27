@@ -121,3 +121,45 @@ test('liveRow carries a label and an empty elapsed slot for chat-view to fill', 
   assert.ok(walk(row).some((n) => n.className === 'chat-live-label'));
   assert.ok(walk(row).some((n) => n.className === 'chat-live-elapsed'));
 });
+
+test('a user turn with no images keeps the plain single-node bubble', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '<p>nope</p>' });
+  const node = dom.itemNode({ type: 'user', event: { kind: 'user', text: 'hi', ts: 1, images: [] } });
+  assert.equal(node.className, 'chat-user');
+  assert.equal(node.children.length, 0, 'no wrapper is paid for when there is nothing to wrap');
+  assert.equal(node._text, 'hi');
+});
+
+test('a user turn with images renders a chip per image, as text and never markup', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '<p>nope</p>' });
+  const node = dom.itemNode({
+    type: 'user',
+    event: {
+      kind: 'user', ts: 1, text: 'Compare [Image #1] and [Image #2]:',
+      images: [{ label: 'Image #1', name: 'a.png' }, { label: 'Image #2', name: 'b.png' }],
+    },
+  });
+  const all = walk(node);
+  assert.equal(all.map((n) => n._html).filter(Boolean).join(''), '', 'a filename is untrusted content — never innerHTML');
+  const chips = all.filter((n) => n.className === 'chat-user-image');
+  assert.deepEqual(chips.map((c) => c._text), ['Image #1', 'Image #2']);
+  // The filename is the only part a reader might want, and often the only thing
+  // telling two pastes apart.
+  assert.deepEqual(chips.map((c) => c.attrs.title), ['a.png', 'b.png']);
+  assert.ok(all.some((n) => n.className === 'chat-user-text' && n._text === 'Compare [Image #1] and [Image #2]:'));
+});
+
+test('an image-only user turn renders the chips with no empty text node above them', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '<p>nope</p>' });
+  const node = dom.itemNode({ type: 'user', event: { kind: 'user', ts: 1, text: '', images: [{ label: 'Image #1', name: 's.png' }] } });
+  assert.equal(walk(node).some((n) => n.className === 'chat-user-text'), false);
+  assert.equal(walk(node).filter((n) => n.className === 'chat-user-image').length, 1);
+});
+
+test('a chip with no filename still renders its label, unnamed rather than mislabelled', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '<p>nope</p>' });
+  const node = dom.itemNode({ type: 'user', event: { kind: 'user', ts: 1, text: 'x', images: [{ label: 'Image #2', name: '' }] } });
+  const chip = walk(node).find((n) => n.className === 'chat-user-image');
+  assert.equal(chip._text, 'Image #2');
+  assert.equal(chip.attrs.title, undefined);
+});

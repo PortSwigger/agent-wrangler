@@ -91,7 +91,28 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
     if (item.type === 'activity') return activityNode(item);
     const e = item.event;
     if (item.type === 'user') {
-      return el('div', 'chat-user', e.text);
+      // The plain single-text-node bubble stays the shape for the overwhelmingly
+      // common case, and only a message that actually carries an attachment pays
+      // for the wrapper. `pre-wrap` on .chat-user is what keeps the human's own
+      // line breaks, so the text stays a text node either way rather than
+      // becoming markdown — this is their words verbatim, not prose to render.
+      if (!Array.isArray(e.images) || !e.images.length) return el('div', 'chat-user', e.text);
+      const wrap = el('div', 'chat-user');
+      if (e.text) wrap.appendChild(el('div', 'chat-user-text', e.text));
+      const row = el('div', 'chat-user-images');
+      for (const img of e.images) {
+        // A chip, not a thumbnail: GET /file is markdown-only by design and
+        // widening it to serve arbitrary image paths would open a read surface
+        // for one decoration. The chip is also exactly what the pane shows for
+        // an attached image, so the two views agree.
+        const chip = el('span', 'chat-user-image', img.label || 'Image');
+        // The filename is the only part a reader might want, and it is often the
+        // only thing telling two pastes apart.
+        if (img.name) chip.setAttribute('title', img.name);
+        row.appendChild(chip);
+      }
+      wrap.appendChild(row);
+      return wrap;
     }
     if (item.type === 'assistant') {
       const wrap = el('div', 'chat-assistant');
