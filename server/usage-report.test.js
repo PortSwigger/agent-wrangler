@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { scanAllDaily, rollup, buildUsage, _resetUsageFileCache, _usageFileCacheStats } from './usage-report.js';
+import { scanAllDaily, rollup, buildUsage, snapRange, windowBetween, MAX_BUCKETS, _resetUsageFileCache, _usageFileCacheStats } from './usage-report.js';
 import { costUsd, costUsdByType } from './pricing.js';
 import { analyze } from './transcript-reader.js';
 
@@ -449,6 +449,143 @@ test('unknown granularity falls back to day', async () => {
   writeStores(d.dataDir, { entries: {} });
   const scan = await scanAllDaily(d);
   assert.equal(rollup(scan, { granularity: 'annual', now: NOW }).granularity, 'day');
+});
+
+// ---- snapRange / windowBetween (arbitrary date-range support) --------------
+
+test('snapRange snaps a mid-period start back and a mid-period end forward, per granularity', () => {
+  const midWeekStart = Date.parse('2026-07-08T15:00:00.000Z'); // Wednesday
+  const midWeekEnd = Date.parse('2026-07-09T03:00:00.000Z'); // Thursday
+  const wk = snapRange(midWeekStart, midWeekEnd, 'week');
+  assert.equal(new Date(wk.start).toISOString(), '2026-07-06T00:00:00.000Z', 'snaps back to Monday');
+  assert.equal(new Date(wk.end).toISOString(), '2026-07-13T00:00:00.000Z', 'snaps forward past the week end');
+
+  const midMonthStart = Date.parse('2026-07-15T12:00:00.000Z');
+  const midMonthEnd = Date.parse('2026-07-20T12:00:00.000Z');
+  const mo = snapRange(midMonthStart, midMonthEnd, 'month');
+  assert.equal(new Date(mo.start).toISOString(), '2026-07-01T00:00:00.000Z');
+  assert.equal(new Date(mo.end).toISOString(), '2026-08-01T00:00:00.000Z');
+
+  // A range wholly inside one period snaps out to that whole period, never empty.
+  const day = snapRange(Date.parse('2026-07-10T09:00:00.000Z'), Date.parse('2026-07-10T18:00:00.000Z'), 'day');
+  assert.equal(new Date(day.start).toISOString(), '2026-07-10T00:00:00.000Z');
+  assert.equal(new Date(day.end).toISOString(), '2026-07-11T00:00:00.000Z');
+});
+
+test('windowBetween enumerates the snapped range with the same bucket shape as windowFor', () => {
+  const w = windowBetween('day', Date.parse('2026-07-01T00:00:00.000Z'), Date.parse('2026-07-04T00:00:00.000Z'));
+  assert.deepEqual(w.buckets.map((b) => b.key), ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04']);
+  assert.equal(w.clamped, false);
+  assert.equal(w.buckets[0].start, w.start);
+  assert.equal(w.buckets.at(-1).end, w.end);
+});
+
+test('windowBetween clamps to the newest MAX_BUCKETS buckets and raises start', () => {
+  const start = Date.parse('2020-01-01T00:00:00.000Z');
+  const end = Date.parse('2026-07-16T00:00:00.000Z'); // well over 400 days
+  const w = windowBetween('day', start, end);
+  assert.equal(w.clamped, true);
+  assert.equal(w.buckets.length, MAX_BUCKETS);
+  assert.equal(w.start, w.buckets[0].start, 'start raised to the first KEPT bucket');
+  // Newest-wins: the last bucket must still be the one abutting the (unclamped) end.
+  assert.equal(w.buckets.at(-1).end, w.end);
+});
+
+// ---- rollup with an explicit range ------------------------------------------
+
+test('rollup with neither start nor end is unchanged: windowFor(g, now), rangeClamped false', async () => {
+  const d = makeDirs();
+  writeStores(d.dataDir, { entries: {} });
+  const scan = await scanAllDaily(d);
+  const r = rollup(scan, { granularity: 'day', now: NOW });
+  assert.equal(r.buckets.length, 30);
+  assert.equal(r.rangeClamped, false);
+});
+
+test('rollup: null start resolves to the scan\'s earliest day; null end to the current period', async () => {
+  const d = makeDirs();
+  const sid = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1, output_tokens: 1 }, '2026-06-01T12:00:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 1, output_tokens: 1 }, '2026-07-10T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+  const scan = await scanAllDaily(d);
+
+  const r = rollup(scan, { granularity: 'day', now: NOW, start: null, end: null });
+  assert.equal(r.dataStart, '2026-06-01');
+  assert.equal(r.dataEnd, '2026-07-10');
+  assert.equal(new Date(r.rangeStart).toISOString().slice(0, 10), '2026-06-01', 'null start -> earliest day in the scan');
+  assert.equal(new Date(r.rangeEnd).toISOString().slice(0, 10), '2026-07-17', 'null end -> the current period (day after "now")');
+});
+
+test('rollup: null start on an empty scan falls back to one current period, not NaN', async () => {
+  const d = makeDirs();
+  writeStores(d.dataDir, { entries: {} });
+  const scan = await scanAllDaily(d);
+  const r = rollup(scan, { granularity: 'day', now: NOW, start: null, end: NOW });
+  assert.equal(r.dataStart, null);
+  assert.equal(r.dataEnd, null);
+  assert.ok(Number.isFinite(r.rangeStart));
+  assert.equal(new Date(r.rangeStart).toISOString().slice(0, 10), '2026-07-16');
+});
+
+test('rollup: an explicit range is snapped and rangeStart/rangeEnd reflect the SNAPPED window', async () => {
+  const d = makeDirs();
+  const sid = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 5, output_tokens: 5 }, '2026-07-05T12:00:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 7, output_tokens: 7 }, '2026-08-20T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+  const scan = await scanAllDaily(d);
+
+  // Jul 3 - Aug 20, Monthly: snaps out to the whole Jul + Aug months.
+  const r = rollup(scan, {
+    granularity: 'month', now: NOW,
+    start: Date.parse('2026-07-03T00:00:00.000Z'),
+    end: Date.parse('2026-08-20T00:00:00.000Z'),
+  });
+  assert.equal(new Date(r.rangeStart).toISOString(), '2026-07-01T00:00:00.000Z');
+  assert.equal(new Date(r.rangeEnd).toISOString(), '2026-09-01T00:00:00.000Z');
+  assert.deepEqual(r.buckets.map((b) => b.key), ['2026-07', '2026-08']);
+  assert.equal(r.buckets[0].total.tokens.input, 5);
+  assert.equal(r.buckets[1].total.tokens.input, 7);
+});
+
+test('rollup: dataStart/dataEnd reflect the scan\'s real min/max day, independent of the requested window', async () => {
+  const d = makeDirs();
+  const sid = '11111111-2222-3333-4444-555555555555';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1, output_tokens: 1 }, '2026-01-01T12:00:00.000Z'),
+    turn('m2', 'claude-opus', { input_tokens: 1, output_tokens: 1 }, '2026-07-10T12:00:00.000Z'),
+  ] });
+  writeStores(d.dataDir, { entries: { c: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' } } });
+  const scan = await scanAllDaily(d);
+
+  // A narrow requested window that excludes both real data points.
+  const r = rollup(scan, {
+    granularity: 'day', now: NOW,
+    start: Date.parse('2026-03-01T00:00:00.000Z'),
+    end: Date.parse('2026-03-02T00:00:00.000Z'),
+  });
+  assert.equal(r.dataStart, '2026-01-01');
+  assert.equal(r.dataEnd, '2026-07-10');
+  assert.equal(r.buckets.filter((b) => b.total.tokens.input > 0).length, 0, 'window excludes the real data');
+});
+
+test('rollup: the cap keeps the newest buckets and sets rangeClamped', async () => {
+  const d = makeDirs();
+  writeStores(d.dataDir, { entries: {} });
+  const scan = await scanAllDaily(d);
+  const r = rollup(scan, {
+    granularity: 'day', now: NOW,
+    start: Date.parse('2020-01-01T00:00:00.000Z'),
+    end: Date.parse('2026-07-16T00:00:00.000Z'),
+  });
+  assert.equal(r.rangeClamped, true);
+  assert.equal(r.buckets.length, MAX_BUCKETS);
+  assert.equal(r.buckets.at(-1).key, '2026-07-16', 'the newest buckets (up to the requested end) are kept');
 });
 
 // ---- per-file scan cache ----------------------------------------------------

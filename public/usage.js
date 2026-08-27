@@ -8,7 +8,11 @@
 // textContent — no chart dependency, and task/model text (agent-generated) never
 // goes in via innerHTML (the CodeQL DOM gate).
 import { send } from './app.js';
-import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, rankMembers as rankMembersOf, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesGranularity } from './usage-data.js';
+import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, rankMembers as rankMembersOf, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
+import {
+  RANGE_PRESETS, DEFAULT_RANGE, resolvePreset, allowedGranularities, coerceGranularity,
+  parseStoredRange, serialiseRange,
+} from './usage-range.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -35,8 +39,23 @@ const SLICES = [
   { v: 'type', label: 'Token type', dim: 'type' },
 ];
 
-const state = { granularity: 'day', metric: 'usd', sliceBy: 'task', filter: null, data: null };
+// Range and granularity are INDEPENDENT: rangeSel (a RANGE_PRESETS key) + from/to
+// (custom day keys, or null) resolve to the absolute {start, end} sent on the wire;
+// granularity is coerced against whatever that range allows (usage-range.js). `want`
+// is the {granularity, start, end} the most recently sent request was built from — the
+// exact thing replyMatchesWindow compares an incoming reply's echoed reqStart/reqEnd
+// against, so a reply for an abandoned selection never renders under live-looking
+// controls. Both range and granularity persist to localStorage independently (see
+// loadPrefs/persistRange*/persistGranularity below) since they're independent controls.
+const state = {
+  granularity: 'day', metric: 'usd', sliceBy: 'task', filter: null, data: null,
+  rangeSel: DEFAULT_RANGE, from: null, to: null, want: null,
+};
 let built = false;
+let prefsLoaded = false;
+
+const RANGE_KEY = 'cm-usage-range';
+const GRANULARITY_KEY = 'cm-usage-granularity';
 
 const el = (id) => document.getElementById(id);
 
@@ -58,28 +77,132 @@ const rankedMembers = () => (dimension() === 'type'
 const displaySlots = () => displaySlotsOf(rankedMembers(), CAT_VARS);
 const bucketSegments = (bucket, slots) => bucketSegmentsOf(bucket, slots, state.metric, state.filter, OTHER_VAR, dimension());
 
+// Whether the resolved range crosses a calendar-year boundary — bucketLabel below
+// needs this to decide whether to append a year to each tick.
+function rangeSpansMultipleYears() {
+  const d = state.data;
+  if (!d) return false;
+  return new Date(d.rangeStart).getUTCFullYear() !== new Date(d.rangeEnd - 1).getUTCFullYear();
+}
+
 function bucketLabel(startMs) {
   const d = new Date(startMs);
   const mo = MONTHS[d.getUTCMonth()];
-  return state.granularity === 'month' ? mo : `${mo} ${d.getUTCDate()}`;
+  const base = state.granularity === 'month' ? mo : `${mo} ${d.getUTCDate()}`;
+  // A multi-year monthly (or weekly) chart has ambiguous repeated ticks ("Jan", "Jan")
+  // without a year — append a two-digit one whenever the resolved range crosses a
+  // calendar-year boundary, regardless of granularity.
+  return rangeSpansMultipleYears() ? `${base} '${String(d.getUTCFullYear()).slice(-2)}` : base;
 }
+// Day-precision label reading the server's SNAPPED rangeStart/rangeEnd (never the
+// typed/preset-resolved dates) — a user who picks "Jul 3 – Aug 20" with Monthly
+// selected sees the snapped "Jul 1 – Aug 31" that was actually charted. Same-day
+// collapse so a one-day range doesn't read "Aug 27, 2026 – Aug 27, 2026".
 function rangeLabel() {
   const d = state.data;
   if (!d) return '';
   const a = new Date(d.rangeStart);
   const b = new Date(d.rangeEnd - 1);
-  const f = (x) => `${MONTHS[x.getUTCMonth()]} ${x.getUTCFullYear()}`;
-  return f(a) === f(b) ? f(a) : `${f(a)} – ${f(b)}`;
+  const full = (x) => `${MONTHS[x.getUTCMonth()]} ${x.getUTCDate()}, ${x.getUTCFullYear()}`;
+  const sameDay = a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+  if (sameDay) return full(a);
+  const sameYear = a.getUTCFullYear() === b.getUTCFullYear();
+  const short = (x) => `${MONTHS[x.getUTCMonth()]} ${x.getUTCDate()}`;
+  return `${sameYear ? short(a) : full(a)} – ${full(b)}`;
+}
+
+// ---- range/granularity selection (independent controls) -------------------
+
+// The {start, end} day keys (or null, unbounded) the current selection resolves to —
+// a preset resolves fresh against "now" every time (so a stored "Last 7 days" always
+// means the last 7 days, never the week it was chosen); custom uses the typed dates
+// verbatim. Swapped here (not just server-side) so state.want and the request payload
+// agree with whatever the server will actually echo back as reqStart/reqEnd, even for
+// a half-typed reversed custom pair.
+function resolvedRange() {
+  let { start, end } = state.rangeSel === 'custom' ? { start: state.from, end: state.to } : resolvePreset(state.rangeSel, Date.now());
+  if (start && end && start > end) { const t = start; start = end; end = t; }
+  return { start, end };
+}
+
+// Concrete [startMs, endMsExclusive) numbers for allowedGranularities, even for an
+// unbounded ("All time") side — falls back to the server's real data bounds once known,
+// else a generous placeholder. DELIBERATE ACCEPTED CONSEQUENCE: on a cold open the
+// client has no dataStart yet, so it cannot pre-grey Daily for an All-time selection —
+// the server's own MAX_BUCKETS cap covers that first request (rangeClamped + the
+// summary note), and this pre-grey tightens as soon as a reply lands.
+function currentRangeMs() {
+  const { start, end } = resolvedRange();
+  const dataStart = state.data?.dataStart;
+  const dataEnd = state.data?.dataEnd;
+  const startDay = start || dataStart;
+  const endDay = end || dataEnd || new Date().toISOString().slice(0, 10);
+  const DAY_MS = 86_400_000;
+  const startMs = startDay ? Date.parse(`${startDay}T00:00:00.000Z`) : Date.now() - 30 * DAY_MS;
+  const endMs = Date.parse(`${endDay}T00:00:00.000Z`) + DAY_MS; // exclusive: include the end day
+  return { startMs, endMs };
+}
+
+function persistRange() {
+  try { localStorage.setItem(RANGE_KEY, serialiseRange(state.rangeSel, state.from, state.to)); } catch { /* best-effort */ }
+}
+function persistGranularity() {
+  try { localStorage.setItem(GRANULARITY_KEY, state.granularity); } catch { /* best-effort */ }
+}
+
+// Seeded once, on first open, from localStorage — a stored PRESET re-resolves against
+// today (parseStoredRange only validates shape/known-ness, resolvedRange() above does
+// the re-resolution); a stored CUSTOM range restores its exact dates.
+function loadPrefs() {
+  if (prefsLoaded) return;
+  prefsLoaded = true;
+  let stored;
+  try { stored = parseStoredRange(localStorage.getItem(RANGE_KEY)); } catch { stored = { sel: DEFAULT_RANGE, from: null, to: null }; }
+  state.rangeSel = stored.sel; state.from = stored.from; state.to = stored.to;
+  let g = null;
+  try { g = localStorage.getItem(GRANULARITY_KEY); } catch { /* ignore */ }
+  state.granularity = ['day', 'week', 'month'].includes(g) ? g : 'day';
+}
+
+// Re-coerce the granularity against whatever the (possibly just-changed) range allows,
+// so a range change never renders an empty or one-bar chart.
+function coerceGranularityForRange() {
+  const { startMs, endMs } = currentRangeMs();
+  const allowed = allowedGranularities(startMs, endMs);
+  const next = coerceGranularity(state.granularity, allowed);
+  if (next !== state.granularity) { state.granularity = next; persistGranularity(); }
+}
+
+function onRangeSelectChange(sel) {
+  state.rangeSel = sel;
+  if (sel !== 'custom') { state.from = null; state.to = null; }
+  coerceGranularityForRange();
+  persistRange();
+  requestData();
+  renderControls();
+}
+function onCustomDateChange(which, value) {
+  if (which === 'from') state.from = value || null;
+  else state.to = value || null;
+  coerceGranularityForRange();
+  persistRange();
+  requestData();
+  renderControls();
 }
 
 // ---- rendering ------------------------------------------------------------
 function renderControls() {
+  const { startMs, endMs } = currentRangeMs();
+  const allowed = allowedGranularities(startMs, endMs);
   const g = el('usage-granularity');
   g.replaceChildren(...GRANULARITIES.map((o) => {
     const b = document.createElement('button');
     b.textContent = o.label;
     b.className = state.granularity === o.v ? 'active' : '';
-    b.addEventListener('click', () => { if (state.granularity !== o.v) { state.granularity = o.v; requestData(); renderControls(); } });
+    const a = allowed[o.v];
+    b.disabled = !a.ok;
+    if (a.reason) b.title = a.reason; else b.removeAttribute('title');
+    b.addEventListener('click', () => { if (a.ok && state.granularity !== o.v) { state.granularity = o.v; persistGranularity(); requestData(); renderControls(); } });
     return b;
   }));
   const m = el('usage-metric');
@@ -99,6 +222,31 @@ function renderControls() {
     b.addEventListener('click', () => { if (state.sliceBy !== o.v) { state.sliceBy = o.v; state.filter = null; renderAll(); } });
     return b;
   }));
+
+  const rangeSelect = el('usage-range-select');
+  rangeSelect.replaceChildren(...RANGE_PRESETS.map((o) => {
+    const opt = document.createElement('option');
+    opt.value = o.v;
+    opt.textContent = o.label;
+    return opt;
+  }));
+  rangeSelect.value = state.rangeSel;
+  rangeSelect.onchange = () => onRangeSelectChange(rangeSelect.value);
+
+  const customRow = el('usage-custom-row');
+  customRow.classList.toggle('hidden', state.rangeSel !== 'custom');
+  const fromInput = el('usage-date-from');
+  const toInput = el('usage-date-to');
+  fromInput.value = state.from || '';
+  toInput.value = state.to || '';
+  // Bound the pickers to recorded history once the server has told us what exists —
+  // before that first reply lands there's nothing to bound them to yet.
+  const dataStart = state.data?.dataStart;
+  const dataEnd = state.data?.dataEnd;
+  if (dataStart) { fromInput.min = dataStart; toInput.min = dataStart; } else { fromInput.removeAttribute('min'); toInput.removeAttribute('min'); }
+  if (dataEnd) { fromInput.max = dataEnd; toInput.max = dataEnd; } else { fromInput.removeAttribute('max'); toInput.removeAttribute('max'); }
+  fromInput.onchange = () => onCustomDateChange('from', fromInput.value);
+  toInput.onchange = () => onCustomDateChange('to', toInput.value);
 }
 
 function renderSummary() {
@@ -156,6 +304,17 @@ function renderSummary() {
     warn.className = 'usage-est';
     warn.textContent = `${d.failedFiles} transcript${d.failedFiles === 1 ? '' : 's'} unreadable — total may be understated`;
     box.appendChild(warn);
+  }
+  // No silent caps: the server clamped the requested window to its MAX_BUCKETS limit
+  // (windowBetween keeps the NEWEST buckets) — disclose the trim the same way every
+  // other incompleteness on this panel is disclosed, rather than quietly showing a
+  // shortened window as if it were what was asked for.
+  if (d.rangeClamped) {
+    const unit = d.granularity === 'day' ? 'days' : d.granularity === 'week' ? 'weeks' : 'months';
+    const note = document.createElement('div');
+    note.className = 'usage-est';
+    note.textContent = `Range trimmed to the most recent ${d.buckets.length} ${unit} — the selection covers more than the chart limit`;
+    box.appendChild(note);
   }
 }
 
@@ -327,16 +486,19 @@ function renderAll() { renderControls(); renderSummary(); renderChart(); renderL
 
 function requestData() {
   el('usage-chart').replaceChildren(Object.assign(document.createElement('div'), { className: 'usage-empty', textContent: 'Loading…' }));
-  send({ type: 'usage', granularity: state.granularity });
+  const { start, end } = resolvedRange();
+  state.want = { granularity: state.granularity, start, end };
+  send({ type: 'usage', granularity: state.granularity, start, end });
 }
 
 // ---- public API -----------------------------------------------------------
 export function onUsage(msg) {
-  // Drop a stale reply for a since-toggled granularity — replies are fire-and-forget
-  // and can resolve out of order, so a late Daily reply must not render under Monthly.
-  if (!replyMatchesGranularity(msg, state.granularity)) return;
+  // Drop a stale reply for a since-abandoned window (granularity + range) — replies
+  // are fire-and-forget and can resolve out of order, so a late "All time, monthly"
+  // reply must not render under a live "Last 7 days, daily" selection.
+  if (!replyMatchesWindow(msg, state.want)) return;
   state.data = msg;
-  // A filter can outlive its member (a granularity switch drops it from the range).
+  // A filter can outlive its member (a range/granularity change drops it from the window).
   if (state.filter && !members().some((m) => m.key === state.filter)) state.filter = null;
   if (!el('usage-modal').classList.contains('hidden')) renderAll();
 }
@@ -344,7 +506,7 @@ export function onUsage(msg) {
 export function openUsagePanel() {
   const modal = el('usage-modal');
   modal.classList.remove('hidden');
-  if (!built) { built = true; wire(); }
+  if (!built) { built = true; loadPrefs(); wire(); }
   renderControls();
   requestData();
 }
