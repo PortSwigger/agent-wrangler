@@ -14,6 +14,14 @@
 // CSS ::before/::after, never a text node: they are decoration, so keeping them
 // out of the DOM keeps them out of the accessibility tree and out of a copied
 // selection — and means this module never grows a glyph table.
+//
+// The user bubble is the second exception to "textContent only", and a narrow
+// one: it is still built node by node, never from a markup string — the linkifier
+// hands back plain segments and every one of them becomes a text node or a
+// control whose label is set with textContent. So the rule above is unchanged in
+// substance; a URL or a .md path in the human's own words just becomes clickable.
+
+import { linkSegments, MD_LINK_CLASS } from './text-links.js';
 
 export function activityTitle(item) {
   if (!item.adds && !item.dels) return item.label;
@@ -22,12 +30,46 @@ export function activityTitle(item) {
 
 const AGO = (ms) => `${Math.round(ms / 1000)}s`;
 
-export function createChatDom({ document: doc = globalThis.document, renderMarkdown } = {}) {
+// `baseDir` is the session's cwd — a getter, because one chat-dom instance serves
+// every session the view opens. It resolves a relative .md path the same way the
+// terminal's link provider does; with none, a relative path stays plain text.
+export function createChatDom({ document: doc = globalThis.document, renderMarkdown, baseDir = null } = {}) {
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.className = className;
     if (text != null) node.textContent = text;
     return node;
+  };
+
+  const baseOf = () => (typeof baseDir === 'function' ? baseDir() : baseDir) || null;
+
+  // Fill `parent` with the human's text, promoting URLs and local markdown paths
+  // to controls. The overwhelmingly common case is one segment, i.e. exactly the
+  // single text node this used to be. A .md path gets no href — nothing about it
+  // is a URL — and chat-view.js opens the preview modal from one delegated
+  // [data-md-path] handler; role/tabindex are what make a href-less anchor a
+  // real, focusable control. See text-links.js's linkedHtml for why it is an
+  // anchor rather than a <button>: the two builders must emit the same thing.
+  const fillLinked = (parent, text) => {
+    for (const seg of linkSegments(text, { baseDir: baseOf() })) {
+      if (seg.kind === 'url') {
+        const a = el('a', 'chat-link', seg.text);
+        a.setAttribute('href', seg.href);
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+        parent.appendChild(a);
+      } else if (seg.kind === 'file') {
+        const a = el('a', MD_LINK_CLASS, seg.text);
+        a.setAttribute('role', 'button');
+        a.setAttribute('tabindex', '0');
+        a.setAttribute('title', seg.path);
+        a.dataset.mdPath = seg.path;
+        parent.appendChild(a);
+      } else if (seg.text) {
+        parent.appendChild(doc.createTextNode(seg.text));
+      }
+    }
+    return parent;
   };
 
   // Shared by the activity and thinking chips: both are the same control (a
@@ -94,11 +136,13 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       // The plain single-text-node bubble stays the shape for the overwhelmingly
       // common case, and only a message that actually carries an attachment pays
       // for the wrapper. `pre-wrap` on .chat-user is what keeps the human's own
-      // line breaks, so the text stays a text node either way rather than
-      // becoming markdown — this is their words verbatim, not prose to render.
-      if (!Array.isArray(e.images) || !e.images.length) return el('div', 'chat-user', e.text);
+      // line breaks, so the text stays text nodes either way rather than becoming
+      // markdown — this is their words verbatim, not prose to render. fillLinked
+      // adds nothing to that: it only lifts a URL or a .md path out into its own
+      // control, leaving every other character exactly where it was.
+      if (!Array.isArray(e.images) || !e.images.length) return fillLinked(el('div', 'chat-user'), e.text);
       const wrap = el('div', 'chat-user');
-      if (e.text) wrap.appendChild(el('div', 'chat-user-text', e.text));
+      if (e.text) wrap.appendChild(fillLinked(el('div', 'chat-user-text'), e.text));
       const row = el('div', 'chat-user-images');
       for (const img of e.images) {
         // A chip, not a thumbnail: GET /file is markdown-only by design and

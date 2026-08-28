@@ -13,10 +13,36 @@ import { createRenderer } from './markdown-preview.js';
 const POLL_MS = 2000;
 const BOTTOM_SLACK_PX = 40;
 
-export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel } = {}) {
+export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
-  const dom = createChatDom({ renderMarkdown: createRenderer(window.markdownit) });
+  // The base directory a relative `.md` path linkifies against — read through
+  // app.js rather than held here, so it is always the cwd of the session on
+  // screen right now and there is no per-session field to keep in step. The same
+  // getter serves both halves of the view, because the human's plain-text bubble
+  // and the agent's rendered markdown must linkify identically.
+  const baseDir = () => (sessionId ? cwdFor?.(sessionId) : null) || null;
+  const dom = createChatDom({
+    renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir }),
+    baseDir,
+  });
+
+  // One delegated pair of handlers for every markdown-file control in the stream:
+  // the user bubble's controls are built by chat-dom, but the ones inside
+  // assistant prose come from a renderer rule and never pass through
+  // appendItems, so per-node wiring could not reach them. The keydown half is
+  // not optional — the control is a href-less anchor, so nothing activates it
+  // from the keyboard on its own.
+  const openMdPath = (e) => {
+    const hit = e.target?.closest?.('[data-md-path]');
+    if (!hit) return;
+    e.preventDefault();
+    onOpenFile?.(hit.dataset.mdPath);
+  };
+  stream.addEventListener('click', openMdPath);
+  stream.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') openMdPath(e);
+  });
 
   let sessionId = null;
   let offset = null;

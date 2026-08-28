@@ -4877,6 +4877,13 @@ const chatView = initChatView({
     applySessionView(sid);
     renderPanel(sid);
   },
+  // The same destination the terminal's .md link provider uses, so a path opens
+  // the same preview whichever view it was clicked in.
+  onOpenFile: (path) => openFilePreview(path),
+  // Looked up per click/render rather than pushed in on mount: the chat view only
+  // ever needs the cwd of the session it is showing, and latestSessions is already
+  // the live answer.
+  cwdFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.cwd || null,
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();

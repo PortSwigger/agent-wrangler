@@ -65,6 +65,16 @@ function stubDom() {
       // live row it queries is built by chat-dom through this same stub.
       querySelector(sel) { return descend(this, sel)[0] ?? null; },
       querySelectorAll(sel) { return descend(this, sel); },
+      // Enough for the stream's delegated markdown-link handler: an attribute
+      // selector and a class selector, walked up through _parent.
+      closest(sel) {
+        const attr = /^\[data-([\w-]+)\]$/.exec(sel);
+        const key = attr && attr[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        for (let n = this; n; n = n._parent) {
+          if (key ? n.dataset?.[key] != null : String(n.className || '').split(/\s+/).includes(sel.replace(/^\./, ''))) return n;
+        }
+        return null;
+      },
       get textContent() { return this._text; },
       set textContent(v) { this._text = v; this.children = []; },
       get innerHTML() { return this._html; },
@@ -91,7 +101,7 @@ function stubDom() {
   return { document, byId, listeners };
 }
 
-async function mountView({ onSend } = {}) {
+async function mountView({ onSend, cwd = null } = {}) {
   const { document, byId } = stubDom();
   globalThis.document = document;
   // Just enough markdown-it for createRenderer's constructor dance. This suite is
@@ -100,6 +110,9 @@ async function mountView({ onSend } = {}) {
   globalThis.window = {
     markdownit: () => ({
       renderer: { rules: {} },
+      // createRenderer's markdown-path rules escape through md.utils, so the stub
+      // has to carry it even though this suite never asserts on rendered prose.
+      utils: { escapeHtml: (s) => String(s ?? '') },
       render: (src) => String(src ?? ''),
     }),
   };
@@ -111,16 +124,22 @@ async function mountView({ onSend } = {}) {
   globalThis.clearInterval = () => {};
   const { initChatView } = await import('./chat-view.js');
   const sent = [];
+  const opened = [];
   const view = initChatView({
     send: (m) => { sent.push(m); onSend?.(m); },
     onSubagentClick() {},
     onOpenDiff() {},
     onGoTerminal() {},
     onPickModel() {},
+    onOpenFile: (p) => opened.push(p),
+    cwdFor: () => cwd,
   });
   const input = byId.get('chat-input');
   // Wire the auto-grow listener's dependency the way a browser would.
-  return { view, sent, byId, input, fire: (el, type) => el.dispatchEvent({ type }) };
+  return {
+    view, sent, byId, input, opened, document,
+    fire: (el, type) => el.dispatchEvent({ type }),
+  };
 }
 
 // --- the cross-session composer leak -----------------------------------------
@@ -328,4 +347,44 @@ test('sending clears the composer so the same prompt cannot go twice', async () 
   input.value = 'once';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
   assert.equal(input.value, '');
+});
+
+
+// --- markdown-file links -----------------------------------------------------
+// The controls inside assistant prose are built by a markdown-it renderer rule and
+// never pass through appendItems, so they can only be reached by delegation off
+// the stream — which is what this covers.
+
+test('a click on a markdown-file control opens the preview at its resolved path', async () => {
+  const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
+  view.mount('sess-1');
+  const btn = document.createElement('button');
+  btn.dataset.mdPath = '/repo/docs/plan.md';
+  byId.get('chat-stream').appendChild(btn);
+  let prevented = false;
+  byId.get('chat-stream').dispatchEvent({ type: 'click', target: btn, preventDefault: () => { prevented = true; } });
+  assert.deepEqual(opened, ['/repo/docs/plan.md']);
+  assert.equal(prevented, true);
+});
+
+test('a click on ordinary stream content opens nothing', async () => {
+  const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
+  view.mount('sess-1');
+  const plain = document.createElement('div');
+  byId.get('chat-stream').appendChild(plain);
+  byId.get('chat-stream').dispatchEvent({ type: 'click', target: plain, preventDefault() {} });
+  assert.deepEqual(opened, []);
+});
+
+test('Enter and Space activate a markdown-file control — it has no href to do it for us', async () => {
+  const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
+  view.mount('sess-1');
+  const link = document.createElement('a');
+  link.dataset.mdPath = '/repo/docs/plan.md';
+  byId.get('chat-stream').appendChild(link);
+  const press = (key) => byId.get('chat-stream').dispatchEvent({ type: 'keydown', key, target: link, preventDefault() {} });
+  press('Enter');
+  press(' ');
+  press('a');
+  assert.deepEqual(opened, ['/repo/docs/plan.md', '/repo/docs/plan.md'], 'an ordinary key opens nothing');
 });

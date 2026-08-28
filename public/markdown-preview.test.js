@@ -61,6 +61,75 @@ test('relative / in-repo link is left untouched (no target/rel)', () => {
   assert.doesNotMatch(html, /rel=/);
 });
 
+// ── markdown-file links (chat view only: mdPathBase supplied) ─────────────────
+const mdRender = createRenderer(markdownit, { mdPathBase: () => '/repo' });
+
+test('a bare .md path in prose becomes a preview control', () => {
+  const html = mdRender('wrote docs/plan.md');
+  assert.match(html, /<a class="md-file-link" role="button" tabindex="0" data-md-path="\/repo\/docs\/plan\.md" title="\/repo\/docs\/plan\.md">docs\/plan\.md<\/a>/);
+});
+
+// Backticked paths are how an agent normally writes one, so this is the common
+// case rather than an edge — and it is what the terminal view already linkifies.
+test('a .md path inside inline code becomes a preview control too', () => {
+  const html = mdRender('see `docs/plan.md`');
+  assert.match(html, /<code><a class="md-file-link"/);
+});
+
+// A fenced block is content to copy verbatim; an inline control in it fights both
+// the block styling and a drag-select.
+test('a fenced code block is left verbatim', () => {
+  const html = mdRender('```\ncat docs/plan.md\n```');
+  assert.doesNotMatch(html, /md-file-link/);
+  assert.match(html, /cat docs\/plan\.md/);
+});
+
+test('a markdown link to a local .md file loses its href and becomes a preview control', () => {
+  const html = mdRender('[the plan](docs/plan.md)');
+  assert.match(html, /<a class="md-file-link" role="button" tabindex="0" data-md-path="\/repo\/docs\/plan\.md" title="\/repo\/docs\/plan\.md">the plan<\/a>/);
+  // The href is what would navigate the board away from the app.
+  assert.doesNotMatch(html, /href=/);
+});
+
+test('a fragment on a local .md link is dropped — the modal renders whole files', () => {
+  assert.match(mdRender('[x](docs/plan.md#setup)'), /data-md-path="\/repo\/docs\/plan\.md"/);
+});
+
+test('a link to a non-markdown file is left as an ordinary relative link', () => {
+  const html = mdRender('[a](src/token.js)');
+  assert.match(html, /href="src\/token\.js"/);
+  assert.doesNotMatch(html, /md-file-link/);
+});
+
+// Nesting an anchor inside an anchor is invalid, and the inner control would eat
+// the click meant for the outer link.
+test('a path in a link label is not turned into a nested control', () => {
+  const html = mdRender('[see docs/plan.md here](https://example.com)');
+  assert.doesNotMatch(html, /md-file-link/);
+  assert.match(html, /target="_blank"/);
+});
+
+test('a relative path stays plain when the session has no cwd to resolve against', () => {
+  const html = createRenderer(markdownit, { mdPathBase: () => null })('wrote docs/plan.md');
+  assert.doesNotMatch(html, /md-file-link/);
+});
+
+test('an absolute .md path needs no cwd', () => {
+  const html = createRenderer(markdownit, { mdPathBase: () => null })('wrote /a/b.md');
+  assert.match(html, /data-md-path="\/a\/b\.md"/);
+});
+
+// The memory preview pane passes no mdPathBase, so it renders exactly as before.
+test('without mdPathBase nothing is linkified and raw HTML is still escaped', () => {
+  const html = render('wrote docs/plan.md with <b>x</b>');
+  assert.doesNotMatch(html, /md-file-link/);
+  assert.match(html, /&lt;b&gt;/);
+});
+
+test('text around a preview control is still escaped', () => {
+  assert.match(mdRender('<b>x</b> docs/plan.md'), /&lt;b&gt;/);
+});
+
 // ── input coercion ──────────────────────────────────────────────────────────────
 test('renders empty string for null/undefined source', () => {
   assert.equal(render(null), '');

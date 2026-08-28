@@ -18,7 +18,11 @@ function stubDocument() {
     };
     return el;
   };
-  return { createElement: make };
+  // Text nodes carry `children: []` so the `walk` helper below can recurse over a
+  // mixed subtree, and `_text` so a linkified bubble's plain runs assert exactly
+  // like the single text node it used to be.
+  const makeText = (v) => ({ nodeType: 3, children: [], _text: String(v), _html: null });
+  return { createElement: make, createTextNode: makeText };
 }
 
 const walk = (node, out = []) => {
@@ -26,6 +30,10 @@ const walk = (node, out = []) => {
   for (const c of node.children) walk(c, out);
   return out;
 };
+
+// A user bubble is now a run of text nodes and link controls rather than one text
+// node, so "what does this element say" is the concatenation of its subtree.
+const textOf = (node) => walk(node).map((n) => n._text ?? '').join('');
 
 test('tool output and targets never reach innerHTML', () => {
   const dom = createChatDom({ document: stubDocument(), renderMarkdown: (s) => `<p>${s}</p>` });
@@ -126,8 +134,11 @@ test('a user turn with no images keeps the plain single-node bubble', () => {
   const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '<p>nope</p>' });
   const node = dom.itemNode({ type: 'user', event: { kind: 'user', text: 'hi', ts: 1, images: [] } });
   assert.equal(node.className, 'chat-user');
-  assert.equal(node.children.length, 0, 'no wrapper is paid for when there is nothing to wrap');
-  assert.equal(node._text, 'hi');
+  // No wrapper is paid for when there is nothing to wrap: link-free text is one
+  // text node under the bubble, exactly as it was before linkification.
+  assert.equal(node.children.length, 1);
+  assert.equal(node.children[0].nodeType, 3);
+  assert.equal(textOf(node), 'hi');
 });
 
 test('a user turn with images renders a chip per image, as text and never markup', () => {
@@ -146,7 +157,8 @@ test('a user turn with images renders a chip per image, as text and never markup
   // The filename is the only part a reader might want, and often the only thing
   // telling two pastes apart.
   assert.deepEqual(chips.map((c) => c.attrs.title), ['a.png', 'b.png']);
-  assert.ok(all.some((n) => n.className === 'chat-user-text' && n._text === 'Compare [Image #1] and [Image #2]:'));
+  const textEl = all.find((n) => n.className === 'chat-user-text');
+  assert.equal(textOf(textEl), 'Compare [Image #1] and [Image #2]:');
 });
 
 test('an image-only user turn renders the chips with no empty text node above them', () => {
@@ -162,4 +174,57 @@ test('a chip with no filename still renders its label, unnamed rather than misla
   const chip = walk(node).find((n) => n.className === 'chat-user-image');
   assert.equal(chip._text, 'Image #2');
   assert.equal(chip.attrs.title, undefined);
+});
+
+// ── links in the human's own words (issues "Hyperlink URLs in user prompts" and
+//    "Link/preview Markdown links") ─────────────────────────────────────────────
+const linkDom = (baseDir) => createChatDom({
+  document: stubDocument(), renderMarkdown: () => '<p>nope</p>', baseDir,
+});
+
+test('a URL in a user prompt becomes an anchor that opens in a new tab', () => {
+  const node = linkDom(null).itemNode({ type: 'user', event: { kind: 'user', ts: 1, text: 'see https://example.com/a ok' } });
+  const a = walk(node).find((n) => n.tagName === 'A');
+  assert.equal(a._text, 'https://example.com/a');
+  assert.equal(a.attrs.href, 'https://example.com/a');
+  assert.equal(a.attrs.target, '_blank');
+  assert.equal(a.attrs.rel, 'noopener noreferrer');
+  // The rest of the prompt survives verbatim around it.
+  assert.equal(textOf(node), 'see https://example.com/a ok');
+});
+
+test('a markdown path in a user prompt becomes a preview control carrying the resolved path', () => {
+  const node = linkDom(() => '/repo').itemNode({ type: 'user', event: { kind: 'user', ts: 1, text: 'read docs/plan.md please' } });
+  const ctl = walk(node).find((n) => n.className === 'md-file-link');
+  // A href-less anchor, not a <button>: see text-links.js. No href is what stops
+  // it navigating; role + tabindex are what keep it a real control without one.
+  assert.equal(ctl.tagName, 'A');
+  assert.equal(ctl.attrs.href, undefined);
+  assert.equal(ctl.attrs.role, 'button');
+  assert.equal(ctl.attrs.tabindex, '0');
+  assert.equal(ctl.dataset.mdPath, '/repo/docs/plan.md');
+  assert.equal(ctl._text, 'docs/plan.md');
+  assert.equal(textOf(node), 'read docs/plan.md please');
+});
+
+// The getter is read per render, not captured once: one chat-dom instance serves
+// every session the view opens, and each has its own cwd.
+test('the cwd is read at render time, so a session switch resolves against the new one', () => {
+  let cwd = '/one';
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '', baseDir: () => cwd });
+  const first = dom.itemNode({ type: 'user', event: { kind: 'user', ts: 1, text: 'a/b.md' } });
+  cwd = '/two';
+  const second = dom.itemNode({ type: 'user', event: { kind: 'user', ts: 2, text: 'a/b.md' } });
+  const pathOf = (n) => walk(n).find((x) => x.className === 'md-file-link').dataset.mdPath;
+  assert.equal(pathOf(first), '/one/a/b.md');
+  assert.equal(pathOf(second), '/two/a/b.md');
+});
+
+test('linkifying a bubble still never reaches innerHTML', () => {
+  const node = linkDom(() => '/repo').itemNode({
+    type: 'user',
+    event: { kind: 'user', ts: 1, text: '<img src=x onerror=alert(1)> https://example.com docs/a.md' },
+  });
+  assert.equal(walk(node).map((n) => n._html).filter(Boolean).join(''), '');
+  assert.ok(textOf(node).includes('<img src=x'), 'the raw string is still carried as text');
 });

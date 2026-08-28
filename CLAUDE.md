@@ -669,6 +669,45 @@ don't re-derive it.
   on the session's real status, decorated with the pending tool name when there
   is one, plus the elapsed clock above. Don't replace it with something that
   looks like text arriving.
+- **What counts as a `.md` path has exactly ONE definition, and the chat view
+  linkifies it through TWO code paths that must keep agreeing.**
+  `markdownPathRegex`/`resolveTerminalPath` (`public/term-links.js`) is the
+  matcher the terminal's xterm link provider has always used; `public/text-links.js`
+  wraps it for the chat view and is the only new vocabulary — don't fork a second
+  regex, or the same string linkifies in one view and not the other (the exact
+  complaint the feature was raised for). The two paths are unavoidable because the
+  two halves of the stream are different kinds of content: the **user bubble is
+  plain text** (`chat-dom.js` `fillLinked` turns segments into text nodes and
+  controls — still never innerHTML, so the module's rule stands), while
+  **assistant prose is markdown** and goes through markdown-it renderer rules
+  (`markdown-preview.js`). A change to what linkifies must land in both.
+- **A markdown-file link is a href-LESS `<a role="button" tabindex="0"
+  data-md-path>` — not a `<button>`, and never an `href`.** Nothing about "open
+  the preview modal" is a URL, and the app hash-routes (`#session=`, `#view=`),
+  so an `href="#"` that ever escaped its `preventDefault` would navigate the
+  board. A real `<button>` was tried and **measured wrong**: Chrome coerces
+  `display: inline` on one straight back to `inline-block` (verified live —
+  `!important`, inline style and a `<span>` control all confirmed it is coercion,
+  not a cascade miss), so a long path wrapping INSIDE the control pushes the text
+  after it onto a fresh line. `role`/`tabindex` are what a bare href-less anchor
+  lacks, and `chat-view.js` must wire **keydown as well as click** — with no href
+  nothing activates it from the keyboard otherwise. Both go on ONE delegated
+  `[data-md-path]` listener pair on `#chat-stream`, because the controls inside
+  assistant prose are built by a renderer rule and never pass through
+  `appendItems`, so per-node wiring cannot reach them.
+- **`createRenderer`'s markdown-path rules are opt-in via `mdPathBase`, and three
+  of their exclusions are deliberate.** No `mdPathBase` (the memory preview pane)
+  installs no `text`/`code_inline` overrides at all, so that pane renders exactly
+  as before. With it: **fenced blocks are NOT linkified** (content to copy
+  verbatim, and an inline control fights a drag-select) though **inline code IS**
+  (backticks are how an agent normally writes a path, and the terminal linkifies
+  them); **URLs are not re-matched in prose** (`urls:false`) because markdown-it's
+  own `linkify:true` already made them anchors and a second pass nests a link in a
+  link; and `insideLink` stops a path in a link's own LABEL becoming a `<button>`
+  inside an `<a>`. In the user bubble, URLs ARE matched — the bubble is not
+  markdown, so nothing else would do it. Scheme-less hosts
+  (`example.com/x`) are deliberately not linkified: in a human's prompt that is at
+  least as likely to be prose, and a wrong link is worse than a missing one.
 
 ## How subsystems hang together (pointers, not mechanics)
 
