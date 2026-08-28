@@ -407,9 +407,12 @@ don't re-derive it.
   correctly-built stream every 2s forever; the rebuild **must bump `generation`**,
   since `offset` is back to `null` and the token gate is then the only thing
   stopping an already-in-flight reply from re-appending the branch that just died;
-  and image-paste tokens are stamped with a **separate `pasteEra`**, bumped only on
-  mount/unmount, so a rebuild does not silently orphan an upload the reader just
-  started. The epoch counter lives **outside** the scanner cache because the
+  and in-flight round trips are stamped with a **separate `requestEra`**, bumped only
+  on mount/unmount, so a rebuild does not silently orphan an upload the reader just
+  started. That counter is shared by every client→server round trip (an image upload
+  and the interrupt's restore today) and is named for the round trip rather than for
+  pastes for exactly that reason: anything added later must stamp itself with it and
+  not with `generation`. The epoch counter lives **outside** the scanner cache because the
   rebuild's fresh read replaces the scanner. Codex is exempt throughout: a rollout
   is a flat list with no parent links and no rewind representation.
 - **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
@@ -612,6 +615,52 @@ don't re-derive it.
   session whose `pastes/` folder holds it, so it must follow its own prose and never
   cross to another card. Anything else added to the composer (a second field, a mode
   toggle) has to join the same save/load pair or it leaks the same way.
+- **The Esc-restore is resolved SERVER-SIDE, from the pane when it can be read and
+  a fresh transcript read otherwise — and the pane's own restore is unreliable, which
+  is the fact the whole design turns on.** Interrupting a turn *sometimes* makes
+  Claude Code restore the interrupted prompt into its own composer. Measured against a
+  live pane (2.1.247), composer wiped between runs: a 64-character prompt never
+  restored, a 212-character single-line one restored on one run and NOT on two later
+  runs of the identical prompt, and NO multi-line prompt ever restored (5 and 13 lines
+  tested). So absence is the common case and must never be read as "nothing was
+  pending". Two consequences, both load-bearing:
+  **`paneComposerDraft` (`ghost-suggestion.js`) hides on any doubt.** It locates the
+  composer between the last two `─` rules (continuation lines carry no `❯`, so the
+  mark alone cannot delimit them), takes the rule's own length as the wrap width — no
+  extra tmux call — strips faint runs, and rejoins wrapped lines with ONE space, which
+  is byte-exact when the wrap fell on a space (verified against a 212-character
+  prompt). It returns null on a line that reaches the full pane width, because a token
+  wider than the pane is hard-broken mid-word (verified: a 130-character path split as
+  `…segment-s` / `gment-…`) and rejoining that silently corrupts it; also null on a
+  `[Pasted text #N]` placeholder, on escape-stripped input, and over a length cap.
+  **The transcript fallback WIDENS its read by result, never a flat byte tail.**
+  `scanChatText` applies `selectLive`, so the read has to cover its range from a line
+  boundary, and transcript bytes are mostly tool output rather than turns — a fixed
+  window is no guarantee of holding a single prompt, and too small a window can prune
+  away every prompt it does hold. Measured over 31 real transcripts larger than the
+  first 256KB attempt, a flat 512KB tail returned NULL on one where widening found the
+  prompt correctly; after the fix, zero of the 31 differ from a whole-file read. An
+  empty or prompt-less window is therefore a reason to widen, NOT to give up — only
+  reaching byte 0 or the 8MB ceiling ends the search — and a window that does not start
+  at byte 0 must drop its partial first line, because `lineUuids` reads the parent/child
+  pair straight off the raw line and a truncated one feeds a bogus link to `selectLive`.
+  **The transcript is the fallback and is read FRESH in the handler** — the old client
+  held `lastUserText`, updated only when a 2s poll happened to deliver a `user` event,
+  which is why Esc handed back the PREVIOUS prompt when it beat the poll. `lastUserText`
+  is now gone from `chat-view.js`; the client sends an era-stamped token on `interrupt`
+  and loads whatever `interrupt-restore` echoes back, deciding "was a draft already
+  there?" at KEY-PRESS time rather than when the reply lands.
+  **`[Request interrupted by user]` is written by Claude Code as an ordinary `user`
+  message with no `isMeta`, so it is the newest user entry at exactly the moment the
+  restore is resolved.** Caught end-to-end, not reasoned about: the first version
+  returned that 29-character marker instead of the real 212-character prompt.
+  `restore-prompt.js` filters it and `[Request interrupted by user for tool use]`,
+  anchored so a prompt quoting one still restores; across 150 real transcripts those
+  are the only two forms. **Codex gets the interrupt but never a restore**, and that is
+  a pre-existing gap rather than a new one: this handler resolves the transcript the way
+  `chat.js` does, via `findTranscript` over `~/.claude/projects`, while Codex rollouts
+  live under `~/.codex/sessions` behind `codex-rollout.js`'s `findRollout`. Codex
+  degrades to no restore, never to a wrong one.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message
