@@ -365,12 +365,22 @@
 
   <div id="usage-modal" class="hidden">
     <div class="modal-card usage-card">
-      <div class="usage-head">
+      <div class="usage-head" id="usage-head">
         <h3 id="usage-title">Usage &amp; spend</h3>
-        <div class="usage-toggles">
+        <div class="usage-toggles" id="usage-toggles">
           <div class="seg" id="usage-granularity" role="group" aria-label="Time granularity"></div>
           <div class="seg" id="usage-metric" role="group" aria-label="Metric"></div>
           <div class="seg" id="usage-slice" role="group" aria-label="Slice by"></div>
+        </div>
+      </div>
+      <div class="usage-range-row" id="usage-range-row">
+        <label for="usage-range-select" id="usage-range-label">Range</label>
+        <select id="usage-range-select" class="usage-range-select"></select>
+        <div class="usage-custom-row hidden" id="usage-custom-row">
+          <label for="usage-date-from" id="usage-date-from-label">From</label>
+          <input type="date" id="usage-date-from" class="usage-date-input">
+          <label for="usage-date-to" id="usage-date-to-label">To</label>
+          <input type="date" id="usage-date-to" class="usage-date-input">
         </div>
       </div>
       <div class="usage-summary" id="usage-summary"></div>

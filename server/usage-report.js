@@ -95,6 +95,43 @@ function windowFor(granularity, now) {
   return { start, end, buckets };
 }
 
+// Hard server-side cap on bucket count, shared by windowBetween below. Exported (and
+// deliberately DUPLICATED as its own literal in public/usage-range.js) because that
+// client leaf must stay import-free of server code — the client's copy exists only to
+// pre-grey a granularity before a round trip; this one is the authority.
+export const MAX_BUCKETS = 400;
+
+// Snap an arbitrary [startMs, endMs) request OUTWARD to whole granularity periods.
+// `end` stays exclusive, matching windowFor's contract and rollup's
+// `dayMs >= start && dayMs < end` test — so a range wholly inside one period snaps out
+// to that whole period, never an empty window.
+export function snapRange(startMs, endMs, granularity) {
+  const start = periodStartMs(startMs, granularity);
+  const end = nextPeriodMs(periodStartMs(endMs, granularity), granularity);
+  return { start, end };
+}
+
+// Enumerate an arbitrary (snapped) [startMs, endMs) window at a granularity, in the
+// same bucket shape ({key, start, end}) windowFor uses. If enumeration would exceed
+// MAX_BUCKETS, keep the NEWEST MAX_BUCKETS buckets and raise `start` to the first kept
+// bucket's start — newest-wins because the dashboard's question is almost always
+// "recent spend", so silently dropping the recent end would be the wrong half.
+// `clamped` is always a boolean (never undefined) — it's a user-facing reply field.
+export function windowBetween(granularity, startMs, endMs) {
+  let { start, end } = snapRange(startMs, endMs, granularity);
+  const buckets = [];
+  for (let s = start; s < end; s = nextPeriodMs(s, granularity)) {
+    buckets.push({ key: periodKeyOf(s, granularity), start: s, end: nextPeriodMs(s, granularity) });
+  }
+  let clamped = false;
+  if (buckets.length > MAX_BUCKETS) {
+    buckets.splice(0, buckets.length - MAX_BUCKETS);
+    start = buckets[0].start;
+    clamped = true;
+  }
+  return { start, end, buckets, clamped };
+}
+
 // ---- usage accumulation (mirrors transcript-reader.js addUsage) -----------
 function addUsage(totals, model, usage) {
   if (!usage) return;
@@ -725,10 +762,47 @@ export async function scanAllDaily({
 
 // ---- rollup: day bags -> the requested granularity + window ---------------
 // Pure over the scan result, so it's the cheap, unit-tested half of the split. `now`
-// is injectable for deterministic tests.
-export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
+// is injectable for deterministic tests. `start`/`end` (epoch ms, each independently
+// nullable meaning "unbounded on that side") let a caller ask for an explicit range —
+// "All time" is expressed as both null. The legacy default path (windowFor(g, now),
+// clamped always false) fires only when NEITHER KEY IS PRESENT on the options object —
+// not merely when both happen to be null — because the control handler always passes
+// both keys (possibly null after sanitisation) to ask for an explicit, independently-
+// resolved range, and that must NOT collapse to the old fixed 30-bucket-etc window.
+// This is what keeps buildUsage, the CLI and every pre-existing test (which never pass
+// these keys at all) byte-identical to before.
+export function rollup(scan, opts = {}) {
+  const { granularity = 'day', now = Date.now() } = opts;
+  const hasStart = Object.prototype.hasOwnProperty.call(opts, 'start');
+  const hasEnd = Object.prototype.hasOwnProperty.call(opts, 'end');
+  const reqStart = hasStart ? opts.start : null;
+  const reqEnd = hasEnd ? opts.end : null;
   const g = GRANULARITIES.includes(granularity) ? granularity : 'day';
-  const { start, end, buckets } = windowFor(g, now);
+
+  // The scan's real min/max day key, INDEPENDENT of the requested window — describes
+  // what data exists, and drives the client's date-input min/max. Day-key strings for
+  // a null-safe round-trip; null when the scan is empty.
+  let dataStart = null;
+  let dataEnd = null;
+  for (const s of scan.sessions) {
+    for (const day of Object.keys(s.days)) {
+      if (dataStart === null || day < dataStart) dataStart = day;
+      if (dataEnd === null || day > dataEnd) dataEnd = day;
+    }
+  }
+
+  let win;
+  if (!hasStart && !hasEnd) {
+    win = { ...windowFor(g, now), clamped: false };
+  } else {
+    // null start -> earliest day in the scan (else one current period, never NaN);
+    // null end -> now (windowBetween's outward snap then extends it to the end of the
+    // current period, matching windowFor). windowBetween itself stays pure over numbers.
+    const s0 = reqStart !== null ? reqStart : (dataStart !== null ? Date.parse(`${dataStart}T00:00:00.000Z`) : periodStartMs(now, g));
+    const e0 = reqEnd !== null ? reqEnd : now;
+    win = windowBetween(g, s0, e0);
+  }
+  const { start, end, buckets, clamped } = win;
   const blankByType = () => Object.fromEntries(TYPES.map((t) => [t, { usd: 0, tokens: blankTokens() }]));
   const bucketByKey = new Map(buckets.map((b) => [b.key, {
     key: b.key, start: b.start, end: b.end,
@@ -806,6 +880,9 @@ export function rollup(scan, { granularity = 'day', now = Date.now() } = {}) {
     generatedAt: scan.generatedAt,
     rangeStart: start,
     rangeEnd: end,
+    dataStart,
+    dataEnd,
+    rangeClamped: clamped,
     buckets: [...bucketByKey.values()],
     dimensions,
     tasks: taskDim, // back-compat alias for the Task dimension (dimensions.task)

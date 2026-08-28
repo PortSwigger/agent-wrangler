@@ -7,11 +7,27 @@
 // series rather than a cycled hue (dataviz non-negotiable). No second literal "6" here
 // to drift out of sync with the palette length.
 
-// A fire-and-forget usage reply for a granularity the user has since toggled away from
-// must not render (its day-buckets would land under a month axis, etc.). The reply
-// self-describes its granularity — accept it only when it still matches the live one.
-export function replyMatchesGranularity(msg, granularity) {
-  return !msg || !msg.granularity || msg.granularity === granularity;
+// A fire-and-forget usage reply for a window (granularity + date range) the user has
+// since abandoned must not render — a late "All time, monthly" reply landing after the
+// user has switched to "Last 7 days, daily" would otherwise chart the wrong data under
+// right-looking controls. `want` is {granularity, start, end}: the granularity and the
+// day keys (or null, for an unbounded side) the request was actually built from. The
+// reply self-describes what it was computed from (granularity, plus the handler's
+// echoed reqStart/reqEnd) — the comparison must be EXACT, not a containment test: an
+// abandoned WIDE selection's reply would otherwise contain a newly-chosen NARROW one
+// and be wrongly accepted. Comparing against rangeStart/rangeEnd instead can't work
+// client-side either — those are the server's SNAPPED ms window, and this module has
+// no third copy of the period math to un-snap them with.
+//
+// Keep the existing permissive treatment of a self-description a reply doesn't carry
+// (field absent -> accept that field) so a payload from a server that predates a field
+// isn't dropped outright — the panel just degrades to the older behaviour for it.
+export function replyMatchesWindow(msg, want) {
+  if (!msg) return true;
+  if (msg.granularity && msg.granularity !== want.granularity) return false;
+  if ('reqStart' in msg && msg.reqStart !== want.start) return false;
+  if ('reqEnd' in msg && msg.reqEnd !== want.end) return false;
+  return true;
 }
 
 export function fmtUsd(n) { return `$${n.toFixed(2)}`; }
