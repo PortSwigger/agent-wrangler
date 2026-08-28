@@ -2312,6 +2312,25 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
+/* Links inside the chat stream. Two kinds, deliberately styled the same as
+   .chat-prose's anchors (styles.css:~497) so a link reads as a link wherever it
+   appears in the conversation:
+     .chat-link    — a URL the human typed, an <a target="_blank">.
+     .md-file-link — a local markdown file: a href-less <a role="button">, so it
+                     needs the pointer cursor a real link gets for free, and a
+                     focus ring, since it is keyboard-reachable via tabindex.
+   A <button> was tried and rejected: Chrome coerces `display: inline` on one
+   straight back to inline-block, so a long path that wraps inside the control
+   pushes the text after it onto a fresh line. */
+.chat-link, .chat-stream .md-file-link {
+  color: var(--blue-fg); text-decoration: none; text-underline-offset: 2px;
+}
+.chat-link:hover, .chat-stream .md-file-link:hover { text-decoration: underline; }
+.chat-stream .md-file-link { cursor: pointer; overflow-wrap: anywhere; }
+.chat-stream .md-file-link:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px;
+}
+
 .chat-assistant { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 /* .chat-prose's element rules (headings/links/code/pre/tables/…) live with
    .memory-preview's, styles.css:~474 — same renderer, same markdown shape.
