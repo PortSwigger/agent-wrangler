@@ -14,7 +14,7 @@ function createView() {
   const v = {
     epoch: null,
     generation: 0,
-    pasteEra: 0,
+    requestEra: 0,
     offset: 10,
     stream: ['drawn'],
     rebuilds: 0,
@@ -43,7 +43,7 @@ function createView() {
   v.mount = () => {
     v.epoch = null;
     v.generation += 1;
-    v.pasteEra += 1;
+    v.requestEra += 1;
   };
   return v;
 }
@@ -86,17 +86,17 @@ test('a reply with no epoch field at all reads as 0 and does not flap', () => {
   assert.deepEqual(v.appended, ['a', 'b']);
 });
 
-test('a rebuild leaves the paste era alone, so an image upload in flight still lands', () => {
-  // pasteEra is deliberately NOT the poll generation: the rebuild answers a change
+test('a rebuild leaves the request era alone, so a round trip in flight still lands', () => {
+  // requestEra is deliberately NOT the poll generation: the rebuild answers a change
   // in the conversation, and the composer — including an image the reader pasted a
-  // moment ago — is not part of that.
+  // moment ago, or an interrupt they just triggered — is not part of that.
   const v = createView();
   v.onReply({ token: 0, epoch: 0, events: [] });
-  const token = `${v.pasteEra}#1`;
+  const token = `${v.requestEra}#1`;
   v.onReply({ token: 0, epoch: 1, events: [] });
   assert.equal(v.rebuilds, 1);
-  assert.ok(token.startsWith(`${v.pasteEra}#`), 'the upload still belongs to the era on screen');
+  assert.ok(token.startsWith(`${v.requestEra}#`), 'the upload still belongs to the era on screen');
   // Moving to another session is the one thing that DOES orphan it.
   v.mount();
-  assert.ok(!token.startsWith(`${v.pasteEra}#`));
+  assert.ok(!token.startsWith(`${v.requestEra}#`));
 });

@@ -39,6 +39,20 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // this exact case backwards under reordering).
   let generation = 0;
 
+  // The sibling of `generation`, and the era for ANY in-flight client→server round
+  // trip — an image upload and the interrupt's restore today. Lives here beside
+  // generation rather than next to either of its users, because the whole point is
+  // that it is NOT generation and a reader comparing the two should see them
+  // together.
+  //
+  // Bumped only on mount/unmount. generation ALSO moves when a rewind rebuilds the
+  // stream (rebuildStream), and a request in flight at that moment still belongs to
+  // the reader, whose composer the rebuild deliberately leaves alone — sharing
+  // generation would silently drop the image they had just pasted. Anything else
+  // added later must stamp itself with THIS counter, which is why it is named for
+  // the round trip and not for pastes.
+  let requestEra = 0;
+
   // Declared here (factory scope), not inside submit() — setStatus and a later
   // task both need to reach `input` to drive its placeholder/disabled state.
   const input = document.getElementById('chat-input');
@@ -287,13 +301,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // composer, and every send is a paste at the pane's cursor — so the next send
     // has to clear it first or the edited prompt fuses onto the original.
     paneRestoreArmed = true;
-    // Stamped with pasteEra for the same reason an upload is, and NOT with the poll
-    // generation: generation also moves when a rewind rebuilds the stream, and an
-    // interrupt in flight at that moment is still the reader's — rebuildStream
-    // deliberately preserves the composer and anything in flight. What actually
-    // drops a reply from a session this view has left is restoreToken being nulled
-    // on mount/unmount; the prefix only keeps successive tokens distinct.
-    restoreToken = `${pasteEra}#${++restoreSeq}`;
+    // Stamped with requestEra for the same reason an upload is (see its
+    // declaration). What actually drops a reply from a session this view has left
+    // is restoreToken being nulled on mount/unmount; the prefix only keeps
+    // successive tokens distinct.
+    restoreToken = `${requestEra}#${++restoreSeq}`;
     // Whether a draft was already in the box is decided HERE, not when the reply
     // lands: by then the human may have started typing in response to the stop,
     // and a prompt they are part-way through must not be overwritten by a restore
@@ -342,12 +354,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // session is dropped rather than typing a stale path into someone else's
   // composer. Same reasoning as the poll's token, different reply type, so
   // deliberately its own counter.
-  //
-  // Stamped with pasteEra, NOT the poll generation: generation also moves when a
-  // rewind rebuilds the stream (rebuildStream), and an upload in flight at that
-  // moment belongs to the composer, which the rebuild deliberately leaves alone.
-  // Sharing the counter would silently drop the image the reader had just pasted.
-  let pasteEra = 0;
   let pasteSeq = 0;
   const pendingPastes = new Set();
   // Shown on the hint line instead of a toast: chat-view.js has no toast seam,
@@ -404,7 +410,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const skipped = files.length - take.length;
     setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
     for (const file of take) {
-      const token = `${pasteEra}#${++pasteSeq}`;
+      const token = `${requestEra}#${++pasteSeq}`;
       pendingPastes.add(token);
       const reader = new FileReader();
       reader.onerror = () => {
@@ -553,7 +559,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     onPasteImageResult(msg) {
       const token = msg.token;
       if (!pendingPastes.delete(token)) return;
-      if (!String(token).startsWith(`${pasteEra}#`)) return;
+      if (!String(token).startsWith(`${requestEra}#`)) return;
       if (!msg.ok) { setPasteNote(msg.error || 'Could not attach that image.'); return; }
       attachments.push({ name: msg.name });
       renderAttachments();
@@ -570,7 +576,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       offset = null;
       epoch = null;
       generation += 1;
-      pasteEra += 1;
+      requestEra += 1;
       stream.textContent = '';
       // A new era starts with no known pending call or status — otherwise the
       // previous session's working line would flash on screen until this
@@ -623,7 +629,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sessionId = null;
       epoch = null;
       generation += 1;
-      pasteEra += 1;
+      requestEra += 1;
       wrap.hidden = true;
       stream.textContent = '';
       lastPending = null;

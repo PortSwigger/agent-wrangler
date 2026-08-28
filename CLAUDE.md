@@ -407,9 +407,12 @@ don't re-derive it.
   correctly-built stream every 2s forever; the rebuild **must bump `generation`**,
   since `offset` is back to `null` and the token gate is then the only thing
   stopping an already-in-flight reply from re-appending the branch that just died;
-  and image-paste tokens are stamped with a **separate `pasteEra`**, bumped only on
-  mount/unmount, so a rebuild does not silently orphan an upload the reader just
-  started. The epoch counter lives **outside** the scanner cache because the
+  and in-flight round trips are stamped with a **separate `requestEra`**, bumped only
+  on mount/unmount, so a rebuild does not silently orphan an upload the reader just
+  started. That counter is shared by every client→server round trip (an image upload
+  and the interrupt's restore today) and is named for the round trip rather than for
+  pastes for exactly that reason: anything added later must stamp itself with it and
+  not with `generation`. The epoch counter lives **outside** the scanner cache because the
   rebuild's fresh read replaces the scanner. Codex is exempt throughout: a rollout
   is a flat list with no parent links and no rewind representation.
 - **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
