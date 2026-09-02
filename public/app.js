@@ -3111,7 +3111,7 @@ window.addEventListener('keydown', (e) => {
   else onEnterSearchView();
 });
 
-// ---- Hint jump (Shift+⌘+F) --------------------------------------------------
+// ---- Hint jump (⌃⌘A) --------------------------------------------------
 // Label every session on the board with a letter, then type it to open that
 // session — a Vimium-style link hinter scoped to the grid. A hint activates its
 // target by clicking it, deliberately: wireGridEvents already decides what a
@@ -3282,7 +3282,7 @@ function deactivateHints() {
 function onHintKey(e) {
   if (['Shift', 'Meta', 'Control', 'Alt'].includes(e.key)) return;
   // Any other chord is meant for the browser or the board, not for us: stand
-  // down and let it through untouched (the Shift+⌘+F toggle itself is handled
+  // down and let it through untouched (the ⌃⌘A toggle itself is handled
   // by the listener below, which runs first).
   if (e.metaKey || e.ctrlKey || e.altKey) { deactivateHints(); return; }
   e.preventDefault();
@@ -3311,16 +3311,21 @@ function onHintKey(e) {
   paintHints();
 }
 
-// Shift+⌘+F opens hint mode (and closes it again — the chord is a toggle, so
-// the same keypress that put the labels up takes them down). Not part of the
-// Ctrl+⌘ family above: that family acts on the session already selected, while
-// this one is how you reach a different one. Same gating as the rest — grid
-// view only, inert behind a modal, a card menu or a real text input — and
-// capture phase for the same reason the family is, so it fires with the
-// terminal focused.
+// ⌃⌘A opens hint mode (and closes it again — the chord is a toggle, so the
+// same keypress that put the labels up takes them down). Kept OUT of
+// CTRL_CMD_KEYS despite sharing the modifiers: that family acts on the session
+// already selected, while this one is how you reach a different one. It was
+// Shift+⌘+F (Vimium's F), but Shift+⌘+<letter> is where Chrome keeps its own
+// chords — ⇧⌘F toggles fullscreen on macOS, reported live — and the handler's
+// gating means the browser wins on every view the hinter is inert in. ⌃⌘ is
+// the board's own namespace; the letter is the one free home-row key under the
+// left hand (S/D/F/G are the family or macOS Look Up / fullscreen). Same gating
+// as the rest — grid view only, inert behind a modal, a card menu or a real
+// text input — and capture phase for the same reason the family is, so it
+// fires with the terminal focused.
 window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.shiftKey || e.ctrlKey || e.altKey) return;
-  if (e.key.toLowerCase() !== 'f') return;
+  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (e.key.toLowerCase() !== 'a') return;
   if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
   if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
   if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;

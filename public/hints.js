@@ -1,4 +1,4 @@
-// Labels for the board's hint-jump (Shift+⌘+F): give every session on screen a
+// Labels for the board's hint-jump (⌃⌘A): give every session on screen a
 // letter, then narrow by what's typed. Split out as a leaf because the two
 // decisions here are the whole feature and both are easy to get subtly wrong.
 //
