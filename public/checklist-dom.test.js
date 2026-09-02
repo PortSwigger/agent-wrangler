@@ -266,3 +266,26 @@ test('parseChecklistOpen tolerates junk, missing and legacy values as all-collap
   const mixed = parseChecklistOpen(JSON.stringify({ CARD1: true, CARD2: 'yes', CARD3: 1 }));
   assert.deepEqual([...mixed], [['CARD1', true]]);
 });
+
+// Without these the row's two controls are a bare glyph and a bare ×, so every
+// row reads identically to a screen reader; and the single ellipsised line makes
+// a long item's tail unrecoverable without entering edit mode.
+test('a row names itself: item text becomes the controls\' accessible name and the text\'s title', () => {
+  const list = listStub();
+  dom().patch(list, { sessionId: 'CARD1', items: [{ id: 'ck_1', text: 'Migrate the auth middleware', done: false }] });
+  const row = list.children[0];
+  assert.equal(row.querySelector('.ck-text').getAttribute('title'), 'Migrate the auth middleware');
+  assert.equal(row.querySelector('.ck-check').getAttribute('aria-label'), 'Migrate the auth middleware');
+  assert.equal(row.querySelector('.ck-del').getAttribute('aria-label'), 'Delete: Migrate the auth middleware');
+});
+
+test('renaming an item re-labels its controls too, so they never name the old text', () => {
+  const d = dom();
+  const list = listStub();
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'ck_1', text: 'before', done: false }] });
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'ck_1', text: 'after', done: false }] });
+  const row = list.children[0];
+  assert.equal(row.querySelector('.ck-text').getAttribute('title'), 'after');
+  assert.equal(row.querySelector('.ck-check').getAttribute('aria-label'), 'after');
+  assert.equal(row.querySelector('.ck-del').getAttribute('aria-label'), 'Delete: after');
+});

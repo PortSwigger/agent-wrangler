@@ -2260,15 +2260,34 @@ function checklistFor(sessionId) {
 function renderChecklist(sessionId) {
   const el = document.getElementById('checklist');
   if (!el) return;
+  const items = sessionId ? checklistFor(sessionId) : [];
+  // Patch the collapsed chip's count here rather than re-rendering the whole
+  // panel: renderPanel calls THIS function, so calling it back would recurse.
+  // It has to happen before the early return below — an optimistic local edit
+  // must move the chip immediately, and the chip is only on screen while the
+  // panel is shut, i.e. exactly when this function returns early.
+  const pillCount = document.querySelector('#panel-checklist-toggle .ck-pill-count');
+  if (pillCount) pillCount.lastChild.textContent = checklistPillLabel(items);
   // Collapsed is the whole panel gone, not a shrunken one: the collapsed form is
-  // the disclosure chip in #panel's own meta row (renderPanel), which costs the
-  // terminal no height at all. Off by config or nothing selected hides it too.
+  // that chip in #panel's own meta row, which costs the terminal no height at
+  // all. Off by config or nothing selected hides it too.
   if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
   el.hidden = false;
-  const items = checklistFor(sessionId);
   document.getElementById('ck-count').textContent = checklistCountLabel(items);
   if (checklistDragActive || checklistEditing) return;
-  checklistDom.patch(document.getElementById('ck-list'), { sessionId, items });
+  const list = document.getElementById('ck-list');
+  checklistDom.patch(list, { sessionId, items });
+  syncChecklistScrollHint(list);
+}
+
+// The list is height-capped, so a long checklist clips its last visible row —
+// with no cue, that reads as a rendering glitch rather than "more below". Marks
+// the panel while there is content further down (and only then, so the hint
+// never sits over the last row once you have reached the bottom).
+function syncChecklistScrollHint(list) {
+  if (!list) return;
+  const more = list.scrollHeight - list.clientHeight - list.scrollTop > 2;
+  document.getElementById('checklist').classList.toggle('ck-more-below', more);
 }
 
 // Belt-and-braces alongside the `pending` class the patch puts on such a row
@@ -2305,6 +2324,7 @@ function beginChecklistAdd() {
   const input = document.createElement('input');
   input.className = 'ck-input';
   input.placeholder = 'New checklist item…';
+  input.setAttribute('aria-label', 'New checklist item');
   holder.appendChild(input);
   list.appendChild(holder);
   checklistEditing = true;
@@ -2344,6 +2364,7 @@ function beginChecklistEdit(row) {
   const input = document.createElement('input');
   input.className = 'ck-input';
   input.value = current;
+  input.setAttribute('aria-label', `Edit checklist item: ${current}`);
   span.textContent = '';
   span.appendChild(input);
   checklistEditing = true;
@@ -2440,6 +2461,7 @@ function initChecklist() {
     renderChecklist(sid);
   });
   list.addEventListener('dragend', endChecklistDrag);
+  list.addEventListener('scroll', () => syncChecklistScrollHint(list));
 }
 
 // Inject an inline input into the todo zone. Enter/blur commits, Escape cancels.
@@ -3893,7 +3915,7 @@ function renderPanel(sessionId) {
   if (checklistEnabled) {
     const open = checklistOpen(sessionId);
     const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
-    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}${icon}</button>`);
+    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
   }
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;

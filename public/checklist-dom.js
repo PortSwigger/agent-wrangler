@@ -53,9 +53,20 @@ export function createChecklistDom({ document }) {
   // Only write a property that actually changed: a no-op assignment to
   // textContent still replaces the text node, which would drop a selection the
   // user was making inside it on every poll tick.
+  //
+  // Both controls take the item's own text as their accessible name: the tick
+  // button's only visible content is a glyph and the delete button's is an ×, so
+  // without this every row reads identically to a screen reader. The text span
+  // gets it as `title` too — the row is one ellipsised line, so a long item's
+  // tail is otherwise unrecoverable without clicking into edit mode.
   function updateRow(row, item) {
     const text = row.querySelector('.ck-text');
-    if (text.textContent !== item.text) text.textContent = item.text;
+    if (text.textContent !== item.text) {
+      text.textContent = item.text;
+      text.setAttribute('title', item.text);
+      row.querySelector('.ck-check').setAttribute('aria-label', item.text);
+      row.querySelector('.ck-del').setAttribute('aria-label', `Delete: ${item.text}`);
+    }
     const done = Boolean(item.done);
     const className = ['ck-row', done ? 'done' : '', isPendingChecklistId(item.id) ? 'pending' : '']
       .filter(Boolean).join(' ');

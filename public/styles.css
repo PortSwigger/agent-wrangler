@@ -368,7 +368,7 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   padding: 7px 10px 6px; border-bottom: 1px solid var(--border-muted);
 }
 .ck-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-subtle); }
-.ck-count { font-size: 10px; color: var(--fg-subtle); }
+.ck-count { font-size: 10px; color: var(--fg-muted); }
 .ck-add {
   margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: transparent; color: var(--fg-muted);
@@ -377,13 +377,28 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 .ck-add:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* Capped so a long list scrolls inside the panel instead of pushing the terminal
    off the bottom of the sidebar. The patch-in-place render is what keeps this
-   scroll position across the ~4s graph poll. */
+   scroll position across the ~4s graph poll. A px cap, NOT a vh one: with `26vh`
+   the number of visible rows moved with the window height, so resizing the
+   window while scrolled shifted scrollTop out from under the reader (measured
+   live: 38.6 -> 25.5 on a 738 -> 789px window). The panel is opt-in (collapsed
+   by default), so a fixed budget is the predictable choice. */
 .ck-list {
   display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; max-height: 26vh; overflow-y: auto;
+  padding: 6px 8px; max-height: 190px; overflow-y: auto;
   scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
 .ck-list:empty { display: none; }
+/* "More below" cue for the capped list — without it the clipped last row reads
+   as a rendering glitch. Short and low-opacity so it never obscures the row it
+   overlays, and only present while there IS more below (see
+   syncChecklistScrollHint), so it doesn't sit over the final row at the bottom
+   of the list. position: relative on the panel is what anchors it. */
+#checklist { position: relative; }
+#checklist.ck-more-below::after {
+  content: ""; position: absolute; left: 1px; right: 1px; bottom: 0; height: 14px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--card-bg));
+}
 .ck-row {
   display: flex; align-items: center; gap: 7px;
   padding: 4px 8px; border-radius: 8px;
@@ -395,7 +410,10 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 .ck-check {
   flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; border-radius: 4px;
+  /* --border measured ~1.4:1 against the row fill; a --fg mix lightens in dark
+     mode and darkens in light mode, so one value strengthens both themes. */
+  border: 1px solid color-mix(in srgb, var(--fg) 45%, transparent);
   color: transparent; cursor: pointer;
 }
 .ck-check::before { content: "✓"; font-size: 10px; line-height: 1; }
