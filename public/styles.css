@@ -317,9 +317,9 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 /* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
    the session-action menu. The eight inline icons collapsed into this one entry. */
-.sess-actions-btn { height: 28px; padding: 0 9px 0 8px; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500; }
+.sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
 .sess-actions-btn:hover { color: var(--fg); background: var(--surface-2); }
-.sess-actions-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.sess-actions-btn svg { width: 15px; height: 15px; fill: currentColor; }
 /* Hairline between the Actions button and the inline window controls. */
 .sess-acts-divider { width: 1px; height: 18px; background: var(--border-muted); margin: 0 5px; }
 /* Window controls (fullscreen, close): ghost icon buttons — no border, lighter
@@ -2269,19 +2269,39 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    type on the surface; tool calls, thinking and sub-agents get chips, muted
    colour, smaller type, and are the only things that ever collapse. */
 
-/* The segmented toggle borrows .diff-mode-btn's shape deliberately: same job
-   (two views of one thing), so it should look like the same control. Left as
-   the original two-button pair on purpose — restyling it into a single-track
-   segmented control would leave the diff view's identical toggle looking
-   unrelated, which is a separate change to make to both at once. */
-.chat-seg { display: flex; gap: 4px; flex: 0 0 auto; }
+/* Sized to match .sess-actions-btn (its neighbour in .sess-acts) — same
+   fixed height, so both icon+text and text-only rows in .sess-acts line up.
+   A padding-driven height (relying on line-height alone, like .search-act
+   uses) doesn't work here: it made .chat-seg-btn's text-only row a
+   different height from the icon-carrying Actions button (flex stretches a
+   row to its tallest child, so the 15px icon there wins over this row's
+   text), and forcing line-height to match the icon height just shifted
+   where the glyph sits inside its own line box instead of centering it
+   (fonts don't split leading evenly above/below the baseline). A real
+   fixed height + align-items:center is the standard, font-metric-proof way
+   to center a label next to an icon — kept small (26px, not the original
+   28px) to match .search-act's real-world size instead of guessing at it.
+   Styled as a single-track segmented control like .search-seg's filter
+   groups: one shared outer border, a 1px divider between buttons instead
+   of a gap, so the pair reads as one control rather than two separate
+   buttons. */
+.chat-seg { display: inline-flex; height: 26px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; flex: 0 0 auto; }
+/* height is the wrapper's 26px minus its own 1px top+bottom border, i.e. the
+   wrapper's content-box exactly — not 26px again. Matching the wrapper's
+   outer height here overflows its content-box, and since the child isn't
+   auto-sized, flex's default align-items:stretch doesn't fix it: the child
+   sits flush at the top and the 2px excess is clipped off the bottom by
+   the wrapper's overflow:hidden, pushing the (correctly self-centered)
+   text down relative to what's visible. */
 .chat-seg-btn {
-  padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted);
+  height: 24px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 500; white-space: nowrap; border-radius: 0;
+  background: transparent; border: 0; border-right: 1px solid var(--border); color: var(--fg-muted);
 }
-.chat-seg-btn:hover { color: var(--fg); border-color: var(--border-muted); }
+.chat-seg-btn:last-child { border-right: 0; }
+.chat-seg-btn:hover { color: var(--fg); background: var(--surface-2); }
 .chat-seg-btn.on, .chat-seg-btn.on:hover {
-  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+  background: var(--accent); color: var(--accent-fg);
 }
 
 /* Same cascade problem as #term-wrap (styles.css:349) and .diff-panel[hidden]:
