@@ -1598,7 +1598,9 @@ body.system-banner-open { padding-top: 30px; }
   position: relative; display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 30px; border-radius: 8px;
   background: var(--surface); border: 1px solid var(--border-muted);
+  cursor: grab;
 }
+.todo-row:active { cursor: grabbing; }
 .todo-row .todo-text { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
 .todo-tooltip {
