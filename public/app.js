@@ -27,7 +27,7 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
-import { createChecklistDom, checklistCountLabel } from './checklist-dom.js';
+import { createChecklistDom, checklistCountLabel, isPendingChecklistId } from './checklist-dom.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -2250,8 +2250,12 @@ function renderChecklist(sessionId) {
   checklistDom.patch(document.getElementById('ck-list'), { sessionId, items });
 }
 
+// Belt-and-braces alongside the `pending` class the patch puts on such a row
+// (its controls are inert in CSS): a click that somehow lands must not send an
+// id the server has never heard of. See isPendingChecklistId.
 function toggleChecklistItem(itemId) {
   const sid = selectedSessionId;
+  if (isPendingChecklistId(itemId)) return;
   const item = checklistFor(sid).find((i) => i.id === itemId);
   if (!item) return;
   const done = !item.done;
@@ -2262,6 +2266,7 @@ function toggleChecklistItem(itemId) {
 
 function deleteChecklistItem(itemId) {
   const sid = selectedSessionId;
+  if (isPendingChecklistId(itemId)) return;
   send({ type: 'checklist-remove', sessionId: sid, itemId });
   latestChecklists[sid] = checklistFor(sid).filter((i) => i.id !== itemId);
   renderChecklist(sid);
@@ -2310,7 +2315,7 @@ function beginChecklistAdd() {
 // than the span itself, so the row element (and its drag handle) survives.
 function beginChecklistEdit(row) {
   const sid = selectedSessionId;
-  if (checklistEditing) return;
+  if (checklistEditing || isPendingChecklistId(row.dataset.ckid)) return;
   const span = row.querySelector('.ck-text');
   const itemId = row.dataset.ckid;
   const current = span.textContent;
@@ -2399,7 +2404,11 @@ function initChecklist() {
     if (!checklistDragActive) return;
     const sid = selectedSessionId;
     const order = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
-    send({ type: 'checklist-reorder', sessionId: sid, order });
+    // A `tmp_` id means an add is still in flight; the server would drop it from
+    // the order (it doesn't know it yet) and re-append it at the end. Keep the
+    // local order and skip the round trip — the next drag once the echo lands
+    // sends the real ids.
+    if (!order.some(isPendingChecklistId)) send({ type: 'checklist-reorder', sessionId: sid, order });
     // Optimistic reorder of the local snapshot, so the next patch agrees with
     // the DOM the drag already produced rather than snapping it back.
     const byId = new Map(checklistFor(sid).map((i) => [i.id, i]));

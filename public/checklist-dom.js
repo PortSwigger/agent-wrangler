@@ -13,12 +13,25 @@
 // element the user is mid-interaction with. So rows are reconciled by id —
 // reused, moved, updated or removed — and only genuinely new items allocate an
 // element.
+
+// An item the board has just added optimistically, before the server has echoed
+// back its real id. The server has never heard of a `tmp_` id, so a toggle,
+// rename, delete or reorder aimed at one would be rejected there while applying
+// locally — and the next graph would silently revert it. The window is not the
+// eyeblink it looks like: a rebuild refreshes every session and scrapes panes,
+// so on a busy board the echo is a second or more away. Rows in this state are
+// marked `pending` and their controls are inert (styles.css) rather than being
+// live buttons whose clicks quietly do nothing.
+export function isPendingChecklistId(id) {
+  return String(id ?? '').startsWith('tmp_');
+}
+
 export function createChecklistDom({ document }) {
   function makeRow(item) {
     const row = document.createElement('div');
     row.className = 'ck-row';
     row.dataset.ckid = item.id;
-    row.setAttribute('draggable', 'true');
+    row.setAttribute('draggable', String(!isPendingChecklistId(item.id)));
     const check = document.createElement('button');
     check.className = 'ck-check';
     check.setAttribute('type', 'button');
@@ -44,7 +57,8 @@ export function createChecklistDom({ document }) {
     const text = row.querySelector('.ck-text');
     if (text.textContent !== item.text) text.textContent = item.text;
     const done = Boolean(item.done);
-    const className = done ? 'ck-row done' : 'ck-row';
+    const className = ['ck-row', done ? 'done' : '', isPendingChecklistId(item.id) ? 'pending' : '']
+      .filter(Boolean).join(' ');
     if (row.className !== className) row.className = className;
     row.querySelector('.ck-check').setAttribute('aria-checked', String(done));
   }

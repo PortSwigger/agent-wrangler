@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createChecklistDom, checklistCountLabel } from './checklist-dom.js';
+import { createChecklistDom, checklistCountLabel, isPendingChecklistId } from './checklist-dom.js';
 
 // A DOM stub sufficient for the reconciliation assertions: no jsdom, matching how
 // the rest of public/ stays DOM-free. It tracks innerHTML writes so the
@@ -172,4 +172,35 @@ test('checklistCountLabel summarises progress, and is empty for an empty list', 
   assert.equal(checklistCountLabel([]), '');
   assert.equal(checklistCountLabel(), '');
   assert.equal(checklistCountLabel([{ done: false }, { done: true }, { done: true }]), '2/3 done');
+});
+
+test('isPendingChecklistId spots the optimistic local id and nothing else', () => {
+  assert.equal(isPendingChecklistId('tmp_1788379691136'), true);
+  assert.equal(isPendingChecklistId('ck_eb25e7eb'), false);
+  assert.equal(isPendingChecklistId(undefined), false);
+  assert.equal(isPendingChecklistId(null), false);
+});
+
+// An optimistically-added item has no server-known id yet, so a toggle, rename,
+// delete or reorder aimed at it would be rejected server-side while applying
+// locally — and the next graph would silently revert it. The row therefore
+// renders inert (and undraggable) rather than as live controls.
+test('an optimistic tmp_ row is marked pending and is not draggable', () => {
+  const d = dom();
+  const list = listStub();
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'tmp_1', text: 'just typed', done: false }] });
+  const row = list.children[0];
+  assert.equal(row.className, 'ck-row pending');
+  assert.equal(row.getAttribute('draggable'), 'false');
+});
+
+test('once the server echo replaces the tmp id, the row is a normal draggable row', () => {
+  const d = dom();
+  const list = listStub();
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'tmp_1', text: 'just typed', done: false }] });
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'ck_real', text: 'just typed', done: false }] });
+  const row = list.children[0];
+  assert.equal(row.className, 'ck-row');
+  assert.equal(row.getAttribute('draggable'), 'true');
+  assert.equal(list.children.length, 1, 'the tmp row is replaced, not left alongside');
 });

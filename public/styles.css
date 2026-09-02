@@ -417,6 +417,11 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px;
 }
 .ck-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
+/* An item added from the board but not yet echoed back by the server carries no
+   real id, so nothing can be done to it yet — shown as faint and inert rather
+   than as live controls whose clicks quietly revert a moment later. */
+.ck-row.pending { opacity: 0.55; cursor: default; }
+.ck-row.pending .ck-check, .ck-row.pending .ck-del, .ck-row.pending .ck-text { pointer-events: none; }
 
 #term-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 /* An explicit display out-specifies the UA's default [hidden] { display: none },
