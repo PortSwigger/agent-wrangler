@@ -35,6 +35,7 @@ import {
   todoEditHandler,
   todoDeleteHandler,
   todoMoveHandler,
+  todoReorderHandler,
 } from './todos.js';
 import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
@@ -99,6 +100,7 @@ export const CONTROL_HANDLERS = [
   todoEditHandler,
   todoDeleteHandler,
   todoMoveHandler,
+  todoReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,
