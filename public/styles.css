@@ -48,6 +48,10 @@
      pattern as --just-finished/--wf/--rt each getting their own name even
      where they currently share a value with something else. */
   --mail:#d29922; --mail-fg:#e3b341;
+  /* Hint-label hue (Shift+⌘+F jump-to-session). Its own role, and the same
+     values in both themes: the markers sit ON the board's cards rather than in
+     the page's own chrome, so they need to read as an overlay in either. */
+  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — teal/cyan, its own role distinct from
      --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
   --rt:#39c5cf; --rt-fg:#56d4dd;
@@ -94,6 +98,7 @@ body.light {
   --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
   --snooze:#9a6700; --snooze-fg:#7d4e00;
   --mail:#9a6700; --mail-fg:#7d4e00;
+  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
   --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
@@ -2681,3 +2686,27 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   .chat-subagent::after, .chat-box, .chat-subagent, .chat-recap-next, .chat-suggestion,
   .chat-activity-chip, .chat-thinking-chip, .chat-turn-foot { transition: none; }
 }
+
+/* Keyboard hint labels (Shift+⌘+F): one marker over every session card, worker
+   row and sub-agent row on the board, positioned in viewport coordinates by
+   app.js. Above the card menu (z-index 200) — while hint mode is up it is the
+   only thing the keyboard talks to. */
+.hint-layer { position: fixed; inset: 0; z-index: 300; pointer-events: none; }
+.hint-marker {
+  position: fixed; padding: 0 6px; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px; font-weight: 700; line-height: 24px; letter-spacing: 1.5px;
+  text-transform: uppercase; white-space: nowrap;
+  background: var(--hint); color: var(--hint-fg);
+  border: 1px solid var(--hint-border); box-shadow: 0 2px 6px var(--shadow);
+}
+/* The part already typed stays visible (so the label still reads as a whole)
+   but recedes, leaving the letters still to press as the emphasis. */
+.hint-marker .hint-typed { color: color-mix(in srgb, var(--hint-fg) 35%, transparent); }
+/* A left-anchored marker (a task header's "New session" button, which is too
+   small to sit under one) is centred on its target's midline rather than hung
+   from its top edge, then nudged back right by half its own width so it
+   straddles the button's left edge instead of standing clear of it. The shift
+   is in the marker's OWN width, which only CSS knows — app.js anchors the right
+   edge precisely because that width isn't measurable at position time. */
+.hint-marker.hint-left { transform: translate(50%, -50%); }

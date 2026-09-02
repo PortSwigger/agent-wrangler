@@ -27,6 +27,7 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
+import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
@@ -1235,6 +1236,10 @@ function wireGridEvents(el) {
   });
   wireGridDnd(el);
   wireTaskControls(el);
+  // A re-render replaces every element hint mode is pointing at, so re-resolve
+  // the markers here rather than letting the ~4s graph poll strand them over
+  // detached nodes. A no-op unless hint mode is up.
+  syncHints();
 }
 
 // Right-click menu on a session card: the same per-session actions as the detail
@@ -3105,6 +3110,224 @@ window.addEventListener('keydown', (e) => {
   if (currentView !== 'search') setView('search');
   else onEnterSearchView();
 });
+
+// ---- Hint jump (Shift+⌘+F) --------------------------------------------------
+// Label every session on the board with a letter, then type it to open that
+// session — a Vimium-style link hinter scoped to the grid. A hint activates its
+// target by clicking it, deliberately: wireGridEvents already decides what a
+// card, a worker row, a team row and a sub-agent row each do when clicked
+// (select, resume a dormant one, focus a team lead, open the sub-agent modal),
+// and none of that should exist twice.
+//
+// Everything the board treats as activatable is a target — .team-row rides on
+// .worker-row, so this selector is wireGridEvents' own list, plus each task
+// header's "New session" button: the one thing on the board worth reaching by
+// keyboard that isn't a session. Only the header button — .empty-new-sess and
+// .new-sess-row are the same action drawn elsewhere in the same tile, and two
+// labels for one action would just spend a letter twice.
+const HINT_TARGETS = '.session-card, .worker-row, .subagent-row, .task-new-sess';
+
+// { layer, hints: [{ key, el, label, marker }], typed, … listeners }, or null.
+let hintMode = null;
+
+// `el`'s visible rect after every scrolling ancestor has clipped it, or null if
+// there's nothing left to point at — see positionMarker for which of its edges
+// a given marker is anchored to. A card scrolled
+// out of its task tile still has a viewport rect — the tile clips painting, not
+// geometry — so without this a hint would float over whatever is drawn where
+// the hidden card would have been, and typing it would open a session that
+// isn't on screen.
+function hintRect(el) {
+  const r = el.getBoundingClientRect();
+  let [top, left, bottom, right] = [r.top, r.left, r.bottom, r.right];
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    if (st.overflow === 'visible' && st.overflowX === 'visible' && st.overflowY === 'visible') continue;
+    const pr = p.getBoundingClientRect();
+    top = Math.max(top, pr.top); left = Math.max(left, pr.left);
+    bottom = Math.min(bottom, pr.bottom); right = Math.min(right, pr.right);
+  }
+  top = Math.max(top, 0); left = Math.max(left, 0);
+  bottom = Math.min(bottom, window.innerHeight); right = Math.min(right, window.innerWidth);
+  if (bottom - top < 8 || right - left < 8) return null;
+  return { top, left, bottom, right };
+}
+
+// Targets in board order (DOM order is tile order, then session order within a
+// tile), each with a key that survives a re-render. A team row carries only its
+// lead's id and several members can share one lead, so the key counts repeats
+// rather than pretending the id is unique.
+function collectHintTargets() {
+  const grid = document.getElementById('grid');
+  if (!grid) return [];
+  const seen = new Map();
+  const out = [];
+  for (const el of grid.querySelectorAll(HINT_TARGETS)) {
+    const rect = hintRect(el);
+    if (!rect) continue;
+    // A New-session button belongs to its tile, not to any session, so it is
+    // keyed on the bucket it dispatches into — the same id its own click
+    // handler resolves, so the label survives the tile being reordered.
+    const isNew = el.classList.contains('task-new-sess');
+    const base = isNew
+      ? `new:${taskBodyBucketId(el) || ADHOC_ID}`
+      : el.classList.contains('subagent-row')
+        ? `sa:${el.dataset.ownerSid}/${el.dataset.subagentId}`
+        : el.classList.contains('team-row') ? `team:${el.dataset.leadSid}` : `s:${el.dataset.sid}`;
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    out.push({ key: `${base}#${n}`, el, rect, side: isNew ? 'left' : 'corner' });
+  }
+  return out;
+}
+
+// A marker's default home is its target's top-left corner: a card dwarfs a
+// label, so a corner marker hides nothing worth reading. A task header's "New
+// session" button is barely bigger than the label itself, so its marker goes to
+// the LEFT of the button and centred on it instead — covering the icon would
+// hide the very thing being labelled, and the header's other side is already up
+// against the kebab. Anchored by `right`, because the marker's own width isn't
+// known until it has been laid out; the vertical centring is the .hint-left
+// transform, for the same reason.
+const HINT_LEFT_GAP_PX = 4;
+
+function positionMarker(marker, t) {
+  if (t.side === 'left') {
+    marker.style.right = `${Math.max(0, window.innerWidth - t.rect.left + HINT_LEFT_GAP_PX)}px`;
+    marker.style.top = `${(t.rect.top + t.rect.bottom) / 2}px`;
+    return;
+  }
+  marker.style.left = `${t.rect.left}px`;
+  marker.style.top = `${t.rect.top}px`;
+}
+
+function buildHintMarkers(targets) {
+  hintMode.layer.innerHTML = '';
+  const labels = hintLabels(targets.length);
+  hintMode.hints = targets.map((t, i) => {
+    const marker = document.createElement('div');
+    marker.className = t.side === 'left' ? 'hint-marker hint-left' : 'hint-marker';
+    for (const ch of labels[i]) {
+      const span = document.createElement('span');
+      span.textContent = ch;
+      marker.appendChild(span);
+    }
+    positionMarker(marker, t);
+    hintMode.layer.appendChild(marker);
+    return { key: t.key, el: t.el, label: labels[i], marker };
+  });
+  paintHints();
+}
+
+// Show only the markers still matching, and grey the part already typed.
+function paintHints() {
+  for (const h of hintMode.hints) {
+    const on = h.label.startsWith(hintMode.typed);
+    h.marker.style.display = on ? '' : 'none';
+    [...h.marker.children].forEach((span, i) => span.classList.toggle('hint-typed', i < hintMode.typed.length));
+  }
+}
+
+// Called after every grid render (and on scroll/resize). Same targets ⇒ just
+// re-point at the fresh elements and move the markers. A different set means
+// the labels no longer mean what the user saw, so they're rebuilt and anything
+// half-typed is dropped — re-labelling under a live prefix would activate a
+// session nobody aimed at.
+function syncHints() {
+  if (!hintMode) return;
+  const targets = collectHintTargets();
+  if (!targets.length) { deactivateHints(); return; }
+  const same = targets.length === hintMode.hints.length
+    && targets.every((t, i) => t.key === hintMode.hints[i].key);
+  if (!same) { hintMode.typed = ''; buildHintMarkers(targets); return; }
+  targets.forEach((t, i) => {
+    const h = hintMode.hints[i];
+    h.el = t.el;
+    positionMarker(h.marker, t);
+  });
+}
+
+function activateHints() {
+  const targets = collectHintTargets();
+  if (!targets.length) return;
+  const layer = document.createElement('div');
+  layer.className = 'hint-layer';
+  document.body.appendChild(layer);
+  hintMode = {
+    layer, hints: [], typed: '',
+    onKey: (e) => onHintKey(e),
+    onReflow: () => syncHints(),
+    onDown: () => deactivateHints(),
+  };
+  buildHintMarkers(targets);
+  // Capture phase, and every accepted key is stopped dead there: the terminal
+  // usually holds focus when this is pressed, and a hint letter that reached
+  // xterm would be typed at the agent.
+  window.addEventListener('keydown', hintMode.onKey, true);
+  window.addEventListener('scroll', hintMode.onReflow, true);
+  window.addEventListener('resize', hintMode.onReflow);
+  window.addEventListener('mousedown', hintMode.onDown, true);
+}
+
+function deactivateHints() {
+  if (!hintMode) return;
+  window.removeEventListener('keydown', hintMode.onKey, true);
+  window.removeEventListener('scroll', hintMode.onReflow, true);
+  window.removeEventListener('resize', hintMode.onReflow);
+  window.removeEventListener('mousedown', hintMode.onDown, true);
+  hintMode.layer.remove();
+  hintMode = null;
+}
+
+function onHintKey(e) {
+  if (['Shift', 'Meta', 'Control', 'Alt'].includes(e.key)) return;
+  // Any other chord is meant for the browser or the board, not for us: stand
+  // down and let it through untouched (the Shift+⌘+F toggle itself is handled
+  // by the listener below, which runs first).
+  if (e.metaKey || e.ctrlKey || e.altKey) { deactivateHints(); return; }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.key === 'Escape') { deactivateHints(); return; }
+  if (e.key === 'Backspace') {
+    if (!hintMode.typed) deactivateHints();
+    else { hintMode.typed = hintMode.typed.slice(0, -1); paintHints(); }
+    return;
+  }
+  if (e.key.length !== 1) return;
+  const ch = e.key.toLowerCase();
+  if (!HINT_CHARS.includes(ch)) return; // swallowed, so a typo doesn't reach the terminal
+  const typed = hintMode.typed + ch;
+  const matches = hintMode.hints.filter((h) => h.label.startsWith(typed));
+  if (!matches.length) { deactivateHints(); return; }
+  // Labels are prefix-free (hints.js), so one survivor is the answer, not a
+  // step towards a longer one.
+  if (matches.length === 1) {
+    const el = matches[0].el;
+    deactivateHints();
+    el.click();
+    return;
+  }
+  hintMode.typed = typed;
+  paintHints();
+}
+
+// Shift+⌘+F opens hint mode (and closes it again — the chord is a toggle, so
+// the same keypress that put the labels up takes them down). Not part of the
+// Ctrl+⌘ family above: that family acts on the session already selected, while
+// this one is how you reach a different one. Same gating as the rest — grid
+// view only, inert behind a modal, a card menu or a real text input — and
+// capture phase for the same reason the family is, so it fires with the
+// terminal focused.
+window.addEventListener('keydown', (e) => {
+  if (!e.metaKey || !e.shiftKey || e.ctrlKey || e.altKey) return;
+  if (e.key.toLowerCase() !== 'f') return;
+  if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
+  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  activateHints();
+}, true);
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
 // keyboard shortcut has no click position to anchor the duration picker at —
