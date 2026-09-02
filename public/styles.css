@@ -48,7 +48,7 @@
      pattern as --just-finished/--wf/--rt each getting their own name even
      where they currently share a value with something else. */
   --mail:#d29922; --mail-fg:#e3b341;
-  /* Hint-label hue (Shift+⌘+F jump-to-session). Its own role, and the same
+  /* Hint-label hue (⌃⌘A jump-to-session). Its own role, and the same
      values in both themes: the markers sit ON the board's cards rather than in
      the page's own chrome, so they need to read as an overlay in either. */
   --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
@@ -2707,7 +2707,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   .chat-activity-chip, .chat-thinking-chip, .chat-turn-foot { transition: none; }
 }
 
-/* Keyboard hint labels (Shift+⌘+F): one marker over every session card, worker
+/* Keyboard hint labels (⌃⌘A): one marker over every session card, worker
    row and sub-agent row on the board, positioned in viewport coordinates by
    app.js. Above the card menu (z-index 200) — while hint mode is up it is the
    only thing the keyboard talks to. */
