@@ -89,6 +89,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const modelEl = document.getElementById('chat-current-model');
   const attachEl = document.getElementById('chat-attachments');
 
+  wrap.addEventListener('click', (e) => {
+    if (input.contains(e.target)) return;
+    if (e.target.closest('a, button, input, textarea, select, [role="button"], [tabindex]')) return;
+    if (e.target.closest('.chat-subagent')) return;
+    if (window.getSelection?.()?.toString()) return;
+    input.focus();
+  });
+
   // Attachments are held as SERVER-MINTED NAMES, never paths, and never in the
   // textarea. Two independent reasons, both load-bearing:
   //  - the path has to reach the pane as its own isolated paste (a path inside
@@ -622,11 +630,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       restoreToken = null;
       restoreOverDraft = false;
       paneRestoreArmed = false;
+      wrap.hidden = false;
       // The box is shared, so whatever is in it belongs to the card being LEFT.
       // Put that away first, then bring in this card's own draft — in that order,
       // or the incoming draft is what gets filed under the outgoing id.
       saveDraft(leaving);
       loadDraft(id);
+      input.focus();
       renderAttachments();
       liveModel = null;
       graphModel = null;
@@ -643,7 +653,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
       renderModel();
-      wrap.hidden = false;
       poll();
       clearInterval(timer);
       timer = setInterval(poll, POLL_MS);
