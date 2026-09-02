@@ -29,7 +29,8 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
-  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+  shouldShowChecklistPill, isChecklistOpen, toggleChecklistOpen, parseChecklistOpen,
+  serializeChecklistOpen,
 } from './checklist-dom.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -3909,13 +3910,17 @@ function renderPanel(sessionId) {
   // The checklist's COLLAPSED form: a disclosure chip in this row, styled and
   // toggled exactly like the sub-agents pill below (icon + count + a +/- state
   // icon, per-session and persisted). Collapsed therefore costs the terminal no
-  // height at all — the panel itself is simply not rendered. Shown even for an
-  // empty checklist (hence checklistPillLabel's "0/0"): while collapsed this
-  // chip is the only thing telling a human the feature exists on this session.
-  if (checklistEnabled) {
+  // height at all — the panel itself is simply not rendered. A session with NO
+  // items shows no chip either (shouldShowChecklistPill), so the feature is
+  // completely invisible on a session not using it. Creating the FIRST item is
+  // therefore the agent's job (its add_checklist_item tool); the board is for
+  // curating a list that already exists — ticking, rewording, reordering,
+  // deleting, and adding alongside what the agent put there.
+  const checklistItems = checklistFor(sessionId);
+  if (checklistEnabled && shouldShowChecklistPill(checklistItems, checklistOpen(sessionId))) {
     const open = checklistOpen(sessionId);
     const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
-    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
+    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistItems))}</span>${icon}</button>`);
   }
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;

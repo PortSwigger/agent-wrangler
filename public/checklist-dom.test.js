@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
-  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+  shouldShowChecklistPill, isChecklistOpen, toggleChecklistOpen, parseChecklistOpen,
+  serializeChecklistOpen,
 } from './checklist-dom.js';
 
 // A DOM stub sufficient for the reconciliation assertions: no jsdom, matching how
@@ -208,13 +209,32 @@ test('once the server echo replaces the tmp id, the row is a normal draggable ro
   assert.equal(list.children.length, 1, 'the tmp row is replaced, not left alongside');
 });
 
-// The collapsed form is a chip in the panel's meta row, so unlike the expanded
-// panel's label it must never render as empty — that chip is the only sign the
-// feature exists on this session while the panel is shut.
-test('checklistPillLabel always reads done/total, including 0/0 for an empty list', () => {
+test('checklistPillLabel reads done/total', () => {
+  assert.equal(checklistPillLabel([{ done: false }, { done: true }, { done: true }]), '2/3');
+  // Defensive only — shouldShowChecklistPill means an empty list renders no chip.
   assert.equal(checklistPillLabel([]), '0/0');
   assert.equal(checklistPillLabel(), '0/0');
-  assert.equal(checklistPillLabel([{ done: false }, { done: true }, { done: true }]), '2/3');
+});
+
+// A session not using the checklist must cost no chrome at all: no chip in the
+// meta row and no panel. Starting one is the Actions menu's "New checklist item".
+test('no chip for a session with no items', () => {
+  assert.equal(shouldShowChecklistPill([], false), false);
+  assert.equal(shouldShowChecklistPill(undefined, undefined), false);
+});
+
+test('one item is enough to earn a chip', () => {
+  assert.equal(shouldShowChecklistPill([{ done: false }], false), true);
+  assert.equal(shouldShowChecklistPill([{ done: true }], false), true);
+});
+
+// Deleting the last item while the panel is open must not strand it: the chip is
+// the only control that can collapse the panel, so it survives an empty list for
+// exactly as long as the panel is open.
+test('an open panel keeps its chip even once the last item is deleted', () => {
+  assert.equal(shouldShowChecklistPill([], true), true);
+  // Collapse it and both vanish together.
+  assert.equal(shouldShowChecklistPill([], false), false);
 });
 
 test('a session starts COLLAPSED — nothing remembered means the panel costs no height', () => {

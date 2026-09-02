@@ -24,7 +24,8 @@ otherwise it behaves exactly as a Claude-only board.
   You add, edit, tick, reorder and delete items from the board; the session writes to the same list
   through its own tools, so a glance tells you what it is working through without reading the pane.
   It starts collapsed to a small progress chip in the session's header — `2/5` — costing the
-  terminal no height until you open it, and each session remembers whether you left it open. It is
+  terminal no height until you open it, and each session remembers whether you left it open. A
+  session with no checklist shows nothing at all — the agent opens one by adding the first item. It is
   deliberately separate from the agent's own private planning tool — that stays internal scratch
   work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it

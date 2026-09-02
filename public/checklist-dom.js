@@ -116,11 +116,25 @@ export function checklistCountLabel(items = []) {
 }
 
 // The COLLAPSED form's label, for the disclosure chip in the panel's meta row —
-// always `done/total`, including "0/0", unlike checklistCountLabel above. That
-// difference is deliberate: the chip IS the only sign the feature exists on this
-// session while the panel is collapsed, so it can never render as empty.
+// `done/total`, unlike checklistCountLabel's "N/M done". Only ever rendered for
+// a non-empty list (see shouldShowChecklistPill), so the 0/0 case is a
+// defensive value rather than something a reader sees.
 export function checklistPillLabel(items = []) {
   return `${items.filter((i) => i.done).length}/${items.length}`;
+}
+
+// Whether the panel's meta row carries a checklist chip at all. A session with
+// no items shows NOTHING — no chip, no panel — so the feature costs a session
+// that isn't using it not one pixel of chrome. That makes creating the FIRST
+// item the agent's job (add_checklist_item); the board curates a list that
+// already exists rather than seeding one.
+//
+// The `open` term is what stops an empty-but-open panel becoming stranded:
+// delete your last item while the panel is open and the chip has to stay, since
+// it is the only control that can collapse the panel again. Collapse it and both
+// disappear together.
+export function shouldShowChecklistPill(items = [], open = false) {
+  return items.length > 0 || Boolean(open);
 }
 
 // --- per-session disclosure state ---

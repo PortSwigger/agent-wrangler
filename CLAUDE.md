@@ -278,10 +278,16 @@ don't re-derive it.
   `panelSubagentShownOverrides` — but with **no server-side default to fall back
   to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
   `parseChecklistOpen` fails towards collapsed for the same reason, since that's
-  the direction that costs no height. The chip renders even for an EMPTY
-  checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
-  while collapsed it's the only thing telling a human the feature exists on this
-  session. Caps (`MAX_ITEMS` 100,
+  the direction that costs no height. **A session with NO items shows no chip
+  either** (`shouldShowChecklistPill`), so the feature costs a session that isn't
+  using it not one pixel — which also means **the board cannot seed a list**:
+  with no items there is no chip and no panel, so creating the FIRST item is the
+  agent's job (`add_checklist_item`) and the UI is for curating a list that
+  already exists. A deliberate product call, not an oversight — don't "fix" it by
+  adding a New-checklist-item entry point. The predicate's `open` term is load-bearing and not
+  redundant: **delete your last item while the panel is open and the chip must
+  survive an empty list**, because it is the only control that can collapse the
+  panel — without that term the panel is stranded open with no way to shut it. Caps (`MAX_ITEMS` 100,
   `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
   the first store an agent can grow with no human in the loop.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
