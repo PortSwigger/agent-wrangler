@@ -12,6 +12,7 @@ import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore } from './mailbox-store.js';
+import { ChecklistStore } from './checklist-store.js';
 import { createMailSettleSweeper } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
@@ -23,7 +24,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -68,6 +69,7 @@ sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
   runArchiveReview(sessionId, entry, task, { memoryStore, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
+const checklistStore = new ChecklistStore();
 const terminalRegistry = new TerminalRegistry();
 
 // A one-off missed during downtime fires once when overdue, UNLESS it's older than
@@ -441,6 +443,9 @@ const mcpRequestHandler = createMcpRequestHandler({
   messageThrottle: createMessageThrottle(),
   // The durable mailbox send_message/read_mail/list_mail all share.
   mailStore,
+  // The per-session checklist the four *_checklist* tools write, resolved from
+  // the caller's own card id — never a session argument.
+  checklistStore,
   config: { jiraBaseUrl },
   onPrLinksChanged: (scope, ownerId) => { pollPrStatuses({ scope, ownerId }).catch(() => {}); },
   // create_terminal deps
@@ -519,6 +524,11 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
+  graph.checklistEnabled = checklistEnabled();
+  // Session-scoped, but carried as a whole-store snapshot rather than
+  // per-session enrichment inside buildGraph: the only consumer is the ONE
+  // selected session's Checklist panel, so there is nothing to enrich per card.
+  graph.checklists = checklistStore.snapshot();
   lastGraph = graph;
 
   for (const sid of autoArchived) {
@@ -557,6 +567,7 @@ controlWss.on('connection', (ws) => {
     memoryStore,
     scheduleStore,
     mailStore,
+    checklistStore,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,

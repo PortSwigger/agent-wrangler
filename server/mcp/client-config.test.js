@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MCP_SERVER_NAME, MCP_TOKEN_ENV, mcpUrl,
-  claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg,
+  claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg, CHECKLIST_TOOLS,
 } from './client-config.js';
 
 test('mcpUrl points at the loopback /mcp on the given port', () => {
@@ -75,5 +75,34 @@ test('allowedToolsArg grants read_mail and list_mail (the mailbox tools) — the
   for (const toolName of ['read_mail', 'list_mail']) {
     assert.ok(TOOLS.some((t) => t.name === toolName), `${toolName} must be registered in tools/index.js TOOLS`);
     assert.ok(names.includes(allowedToolName(toolName)), `${toolName} must be allow-listed in client-config.js ALLOWED_TOOLS`);
+  }
+});
+
+// Same two-place registration rule as read_mail/list_mail above, for the four
+// per-session checklist tools. `checklist: true` is passed explicitly so this
+// asserts the grant itself rather than whatever the developer's own config.json
+// happens to say.
+test('allowedToolsArg grants the four checklist tools — the two-place registration pair', async () => {
+  const { TOOLS } = await import('./tools/index.js');
+  const names = allowedToolsArg({ checklist: true }).split(',');
+  assert.equal(CHECKLIST_TOOLS.length, 4);
+  for (const toolName of CHECKLIST_TOOLS) {
+    assert.ok(TOOLS.some((t) => t.name === toolName), `${toolName} must be registered in tools/index.js TOOLS`);
+    assert.ok(names.includes(allowedToolName(toolName)), `${toolName} must be allow-listed in client-config.js ALLOWED_TOOLS`);
+  }
+});
+
+// `checklistEnabled: false` must leave a launch with no grant for these tools at
+// all — a tool an agent can never get a permission prompt answered for is worse
+// than one that isn't there.
+test('allowedToolsArg drops ONLY the checklist tools when the feature is off', () => {
+  const on = allowedToolsArg({ checklist: true }).split(',');
+  const off = allowedToolsArg({ checklist: false }).split(',');
+  for (const toolName of CHECKLIST_TOOLS) assert.ok(!off.includes(allowedToolName(toolName)));
+  assert.deepEqual(off, on.filter((n) => !CHECKLIST_TOOLS.map(allowedToolName).includes(n)));
+  // Every other always-on tool survives — a bad filter here would silently
+  // un-grant the mailbox or spawn tools.
+  for (const toolName of ['list_sessions', 'spawn_session', 'send_message', 'read_mail']) {
+    assert.ok(off.includes(allowedToolName(toolName)));
   }
 });

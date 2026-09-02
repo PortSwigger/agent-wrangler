@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MCP_SERVER_NAME } from './client-config.js';
-import { TOOLS } from './tools/index.js';
+import { activeTools } from './tools/index.js';
 
 // Resolve the calling session's CARD ID from an MCP request. Claude sends it as
 // a custom header (X-AW-Session); Codex can't send arbitrary headers, so it
@@ -23,10 +23,12 @@ export function extractCaller(req) {
 // Build a fresh MCP server bound to one caller. Stateless: a new server per
 // request, so each request's tools act as that request's caller. Tool handlers
 // are closed over { deps, caller }; the SDK passes parsed args as the first
-// callback param.
-export function buildMcpServer(deps, caller) {
+// callback param. `tools` comes from activeTools() so a feature-flagged tool
+// (the checklist four) is genuinely absent from the listing when disabled; it's
+// injectable so a test can pin the set without writing config.json.
+export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
-  for (const tool of TOOLS) {
+  for (const tool of tools) {
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.inputSchema },

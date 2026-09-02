@@ -351,6 +351,73 @@ body.dragging { user-select: none; cursor: col-resize; }
 button.danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--red-fg); }
 button.danger:hover { background: var(--danger-bg); border-color: var(--danger-strong); }
 
+/* Per-session Checklist panel — a #panel sibling inside #sidebar. Bordered and
+   sized to its content (never flex:1), so it takes only what it needs and the
+   terminal/chat pane below keeps the rest. Its own --card-bg matches #panel's
+   single-layer frosted backdrop over the wallpaper. */
+#checklist {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  border-bottom: 1px solid var(--border-muted); background: var(--card-bg);
+}
+/* An explicit display out-specifies the UA's default [hidden] { display: none },
+   so an element toggled via the hidden attribute needs its own override — same
+   fix as #term-wrap[hidden] / #chat-wrap[hidden] below. */
+#checklist[hidden] { display: none; }
+.ck-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 6px; border-bottom: 1px solid var(--border-muted);
+}
+.ck-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-subtle); }
+.ck-count { font-size: 10px; color: var(--fg-subtle); }
+.ck-add {
+  margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: transparent; color: var(--fg-muted);
+  border: 1px solid var(--border-muted); cursor: pointer;
+}
+.ck-add:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Capped so a long list scrolls inside the panel instead of pushing the terminal
+   off the bottom of the sidebar. The patch-in-place render is what keeps this
+   scroll position across the ~4s graph poll. */
+.ck-list {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; max-height: 26vh; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
+}
+.ck-list:empty { display: none; }
+.ck-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+  cursor: grab;
+}
+.ck-row:active { cursor: grabbing; }
+.ck-dragging { opacity: 0.45; }
+.ck-check {
+  flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: transparent; cursor: pointer;
+}
+.ck-check::before { content: "✓"; font-size: 10px; line-height: 1; }
+.ck-check:hover { border-color: var(--accent); color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.ck-row.done .ck-check { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); color: var(--fg); }
+/* Shrink-to-content (not flex:1) so the text cursor covers only the glyphs and
+   the rest of the row keeps its grab cursor — same reasoning as .todo-text. */
+.ck-text { flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.ck-row.done .ck-text { color: var(--fg-subtle); text-decoration: line-through; }
+/* Editing widens back to the full row — the shrink-to-content sizing above is
+   only for read-only display. */
+.ck-text:has(.ck-input) { flex: 1; }
+.ck-row.ck-editing { cursor: default; padding: 4px 8px; }
+.ck-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
+.ck-del {
+  flex: 0 0 auto; margin-left: auto; width: 18px; height: 18px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
+  background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px;
+}
+.ck-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
+
 #term-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 /* An explicit display out-specifies the UA's default [hidden] { display: none },
    so an element toggled via the hidden attribute (not a class — see chat-view.js)

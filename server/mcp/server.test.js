@@ -4,6 +4,7 @@ import http from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { extractCaller, buildMcpServer, createMcpRequestHandler } from './server.js';
+import { activeTools } from './tools/index.js';
 
 test('extractCaller reads X-AW-Session header', () => {
   assert.equal(extractCaller({ headers: { 'x-aw-session': 'CARD1' } }), 'CARD1');
@@ -33,8 +34,8 @@ function fakeDeps() {
   };
 }
 
-async function connect(deps, caller) {
-  const server = buildMcpServer(deps, caller);
+async function connect(deps, caller, opts) {
+  const server = buildMcpServer(deps, caller, opts);
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0' });
   await server.connect(serverT);
@@ -42,10 +43,23 @@ async function connect(deps, caller) {
   return { client, server };
 }
 
+// The tool set is feature-flag dependent (activeTools), so pin the flag rather
+// than inheriting whatever this developer's config.json says.
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
-  const { client, server } = await connect(fakeDeps(), 'CARD1');
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: true }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['add_checklist_item', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_info', 'list_checklist', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'remove_checklist_item', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_checklist_item', 'workflow_phase']);
+  await server.close();
+});
+
+test('checklistEnabled:false leaves the four checklist tools out of tools/list entirely', async () => {
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: false }) });
+  const { tools } = await client.listTools();
+  const names = tools.map((t) => t.name);
+  for (const n of ['add_checklist_item', 'update_checklist_item', 'remove_checklist_item', 'list_checklist']) {
+    assert.ok(!names.includes(n), `${n} must not be advertised when the feature is off`);
+  }
+  assert.ok(names.includes('list_sessions'), 'everything else still is');
   await server.close();
 });
 

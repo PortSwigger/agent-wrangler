@@ -129,6 +129,20 @@
       <div id="panel">
         <div class="panel-empty">Select a session to see details and its live terminal.</div>
       </div>
+      <!-- Per-session checklist (checklist-dom.js, wired in app.js). A #panel
+           sibling rather than part of it: it is its own bordered strip, sized to
+           its content (never flex:1), so it can't compete with the terminal/chat
+           pane for height. Rows are patched in place — the ~4s graph poll must
+           not reset the list's scroll or eat an inline edit. Hidden entirely
+           when `checklistEnabled` is off or no session is selected. -->
+      <div id="checklist" hidden>
+        <div class="ck-head">
+          <span class="ck-title">Checklist</span>
+          <span class="ck-count" id="ck-count"></span>
+          <button type="button" class="ck-add" id="ck-add" title="Add a checklist item">+ Add</button>
+        </div>
+        <div class="ck-list" id="ck-list"></div>
+      </div>
       <div id="term-wrap">
         <div id="term"></div>
       </div>

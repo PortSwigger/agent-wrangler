@@ -90,6 +90,14 @@ export const SETTINGS = [
     help: 'Whether a session\'s sidebar opens in the rich chat view or the terminal. A session you have switched by hand keeps its own choice regardless of this setting.',
     default: false,
   },
+  {
+    id: 'checklistEnabled',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Per-session checklist',
+    help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel, drops those tools, and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. An already-running session only gains or loses the tools when it is next resumed.',
+    default: true,
+  },
 ];
 
 let serverBridge = { get: () => undefined, set: () => {} };
