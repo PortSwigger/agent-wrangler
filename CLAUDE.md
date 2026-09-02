@@ -229,6 +229,61 @@ don't re-derive it.
   — a card can legitimately be human-bookmarked *and* hold unread mail at once,
   and mixing the two concepts into one signal was the exact bug this naming
   rule prevents.
+- **Three lists exist and none of them is the other: the task **TODO**
+  (task-scoped, human-only, `task-store.js`), the per-session **checklist**
+  (`checklist-store.js`, human AND agent), and the agent's own **native plan**
+  (`TaskCreate`/`TaskUpdate`, or Codex `update_plan`) which the wrangler never
+  reads, mirrors or reconciles.** "todo" and "task" were both already taken (the
+  latter by Claude's own tool *and* the board's `t_...` ids), which is why this
+  one is "checklist" everywhere — and never the bare field name `checks`, which
+  `pr-status.js`/`notifier.js` already own for PR check-run status. Surfacing the
+  native plan instead was investigated and rejected: it's undocumented internal
+  shape that already renamed once (`TodoWrite`→`TaskCreate`, which broke a stale
+  reference in `archive-review-runner.js`), and the two lists serve different
+  audiences on purpose.
+- **The per-session checklist is keyed on the card id and its four MCP tools take
+  NO `session` parameter — that omission is the access control.** Store is
+  `checklist-store.js` (`checklists.json`), the same synchronous-mutator mould as
+  `mailbox-store.js` and for the same reason: the human (control WS
+  `checklist-add`/`-update`/`-remove`/`-reorder`, `control/handlers/checklist.js`)
+  and the agent (MCP) both write from this one process, and an `await` between a
+  read and its write is where one clobbers the other. `add_checklist_item`/
+  `update_checklist_item`/`remove_checklist_item`/`list_checklist` resolve their
+  target from `extractCaller` alone, so a session can only ever touch its own
+  list — **adding a `session` argument would let a launched agent write into a
+  sibling's checklist** off an id it hallucinated or read from `list_sessions`.
+  They're granular per-item on purpose (no `set_checklist(items[])`): the human
+  edits the same list live, and a whole-list replace would let a stale agent read
+  silently wipe an edit made seconds earlier. Registered in BOTH places per the
+  two-place rule, and the whole feature is flag-gated (`checklistEnabled`,
+  default **true**) through **four** channels that must stay in step —
+  `activeTools()` (registration), `allowedToolsArg({checklist})` (the launch
+  grant, whose `CHECKLIST_TOOLS` name list lives in the `client-config.js` leaf so
+  the registry imports from it and never the reverse), `agent-skills.js`'s
+  `DISABLEABLE` map (the nudge + Codex catalog, same shape as `task-memory`), and
+  `graph.checklistEnabled` (the panel). Lifecycle mirrors the mailbox exactly:
+  resume keeps it, **archive keeps it** (set-aside, not end-of-life), a **fork
+  starts EMPTY** (fresh card id, no copy — deliberate, don't add one), and only a
+  purge (`control/handlers/remove.js`) calls `forget`. Item text is
+  **agent-written**, so `public/checklist-dom.js` renders it via `textContent`
+  only and the panel is patched in place rather than re-`innerHTML`'d — the ~4s
+  graph poll would otherwise reset the list's scroll every tick, and
+  `checklistDragActive`/`checklistEditing` (`app.js`) freeze the patch so a tick
+  can't reorder rows mid-drag or eat a half-typed item. **Collapsed is the panel
+  not rendered at all, and the collapsed form is a disclosure chip in `#panel`'s
+  own meta row** — deliberately the sub-agents-zone idiom (`.checklist-pill`
+  shares `.subagent-pill`'s two rules rather than forking a third pill style), so
+  a collapsed checklist costs the terminal ZERO height. Per-session and persisted
+  per browser in `wrangler.checklistOpen`, mirroring
+  `panelSubagentShownOverrides` — but with **no server-side default to fall back
+  to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
+  `parseChecklistOpen` fails towards collapsed for the same reason, since that's
+  the direction that costs no height. The chip renders even for an EMPTY
+  checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
+  while collapsed it's the only thing telling a human the feature exists on this
+  session. Caps (`MAX_ITEMS` 100,
+  `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
+  the first store an agent can grow with no human in the loop.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
@@ -255,10 +310,13 @@ don't re-derive it.
   childRowCounts`' `subagentRowCount`/`subagentZoneCount` loop must charge it too,
   not just non-absorbed sessions, or the tile comes out short and silently
   scrolls. Defaulting `absorbedChildCount` to `childRowCount` previously made
-  collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
-  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
-  session-scoped, so it rides
-  `taskStore.snapshot()` directly; don't go looking for it in `buildGraph`.
+  collapsing a workflow box grow the tile instead of shrinking it. **TODO and
+  checklist data are the two exceptions to "carried via `buildGraph`"** — both
+  ride their store's `snapshot()` on the graph directly (`taskStore.snapshot()`,
+  `checklistStore.snapshot()`), so don't go looking for either in `buildGraph`.
+  TODO because it's task-scoped rather than session-scoped; the checklist
+  *is* session-scoped but its only consumer is the ONE selected session's
+  sidebar panel, so there's nothing to enrich per card.
 - **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
   be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
   (`public/cards.js`) carry `data-sid` + `draggable="true"` and stand in for

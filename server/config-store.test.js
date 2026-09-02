@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -153,4 +153,13 @@ test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
   assert.equal(chatViewDefault({}), false);
   assert.equal(chatViewDefault({ chatViewDefault: true }), true);
   assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
+});
+
+test('checklistEnabled defaults to ON; only an explicit false disables', () => {
+  // Default-on is deliberate (see the design spec's Optionality section): a
+  // feature nobody discovers might as well not exist.
+  assert.equal(checklistEnabled({}), true);
+  assert.equal(checklistEnabled({ checklistEnabled: true }), true);
+  assert.equal(checklistEnabled({ checklistEnabled: false }), false);
+  assert.equal(checklistEnabled({ checklistEnabled: 'no' }), true, 'only a real boolean false opts out');
 });

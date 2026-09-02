@@ -20,6 +20,7 @@ import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
+import { checklistEnabledHandler } from './checklist-enabled.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
@@ -30,6 +31,12 @@ import {
   taskReorderHandler,
   taskReorderSessionsHandler,
 } from './tasks.js';
+import {
+  checklistAddHandler,
+  checklistUpdateHandler,
+  checklistRemoveHandler,
+  checklistReorderHandler,
+} from './checklist.js';
 import {
   todoAddHandler,
   todoEditHandler,
@@ -88,6 +95,7 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
+  checklistEnabledHandler,
   setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,
@@ -101,6 +109,10 @@ export const CONTROL_HANDLERS = [
   todoDeleteHandler,
   todoMoveHandler,
   todoReorderHandler,
+  checklistAddHandler,
+  checklistUpdateHandler,
+  checklistRemoveHandler,
+  checklistReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,
