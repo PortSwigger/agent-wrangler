@@ -1601,7 +1601,14 @@ body.system-banner-open { padding-top: 30px; }
   cursor: grab;
 }
 .todo-row:active { cursor: grabbing; }
-.todo-row .todo-text { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+/* Shrink-to-content, not flex:1 — so the text cursor only covers the actual
+   glyphs and the rest of the row (the empty space after short text) keeps the
+   row's own grab cursor. Still shrinks below its natural width on overflow
+   (min-width: 0 + flex-shrink), so the ellipsis still kicks in for long text. */
+.todo-row .todo-text { flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+/* Editing widens back to the full row — the shrink-to-content sizing above is
+   only for the read-only display; the input still wants the whole width. */
+.todo-row .todo-text:has(.todo-text-input) { flex: 1; }
 .todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
 .todo-tooltip {
   position: fixed; z-index: 60; display: none; pointer-events: none;
@@ -1618,7 +1625,9 @@ body.system-banner-open { padding-top: 30px; }
 .todo-spawn:hover .todo-tick { display: none; }
 .todo-spawn:hover .todo-play { display: inline-flex; }
 .todo-spawn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.todo-del { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+/* margin-left: auto pins it to the row's right edge regardless of how short
+   the (now shrink-to-content) text is — matches the old flex:1 text's layout. */
+.todo-del { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
 .todo-del svg { width: 13px; height: 13px; }
 .todo-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
 .todo-zone { display: flex; margin: 2px 2px 0; }
