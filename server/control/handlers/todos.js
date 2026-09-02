@@ -33,3 +33,11 @@ export const todoMoveHandler = {
     await ctx.rebuild();
   },
 };
+
+export const todoReorderHandler = {
+  type: 'todo-reorder',
+  async handler(msg, ctx) {
+    ctx.taskStore.reorderTodos(msg.taskId || null, Array.isArray(msg.order) ? msg.order : []);
+    await ctx.rebuild();
+  },
+};

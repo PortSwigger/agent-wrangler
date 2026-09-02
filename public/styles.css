@@ -1691,6 +1691,14 @@ body.system-banner-open { padding-top: 30px; }
   background: color-mix(in srgb, var(--blue) 10%, transparent);
   flex: 0 0 auto;
 }
+/* Row-sized counterpart for TODO reordering — same dashed-gap language as
+   .session-placeholder, sized to a .todo-row's own height by the drag code. */
+.todo-placeholder {
+  border: 1px dashed var(--blue);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  flex: 0 0 auto;
+}
 /* Tile-sized counterpart for task reordering: the dragged tile is pulled from
    the grid and this dashed gap shows where it will land as the board repacks. */
 .task-placeholder {

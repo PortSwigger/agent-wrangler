@@ -3,7 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX } from './todo.js';
+import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -464,6 +464,38 @@ function removePlaceholder() {
   if (placeholderEl && placeholderEl.parentNode) placeholderEl.parentNode.removeChild(placeholderEl);
 }
 
+// TODO reorder drag-and-drop: confined to the task the drag started in — a drop
+// on any other tile's cell never gets `dragover`'s preventDefault, so the browser
+// shows "no-drop" and never fires `drop` there at all; nothing to guard server-side.
+// Same placeholder-slides-through pattern as the session reorder above, its own
+// state so the two drags never interfere.
+let todoDragActive = false;
+let draggedTodoRow = null;
+let todoPlaceholderEl = null;
+function ensureTodoPlaceholder() {
+  if (!todoPlaceholderEl) {
+    todoPlaceholderEl = document.createElement('div');
+    todoPlaceholderEl.className = 'todo-placeholder';
+  }
+  return todoPlaceholderEl;
+}
+function removeTodoPlaceholder() {
+  if (todoPlaceholderEl && todoPlaceholderEl.parentNode) todoPlaceholderEl.parentNode.removeChild(todoPlaceholderEl);
+}
+
+// The todo row the placeholder should sit *before* for a given cursor Y, scoped to
+// direct-child todo rows only (mirrors dragAfterElement, todo-row flavoured — a
+// task-body can hold both session cards and todo rows, and this must never hit-test
+// the former). null means past the last row.
+function todoDragAfterElement(body, y) {
+  const rows = [...body.querySelectorAll(':scope > .todo-row[draggable="true"]:not(.dragging-hidden)')];
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (y < rect.top + rect.height / 2) return row;
+  }
+  return null;
+}
+
 // The card the placeholder should sit *before* for a given cursor Y — the first
 // card whose midpoint is below the cursor; null means past the last card (append
 // to the end). Continuous across cards and the gaps between them, so the
@@ -497,7 +529,7 @@ function gridHidden() {
 // so background re-renders (the ~4s poll, the just-finished timer) don't rebuild
 // the grid and steal focus / abort the drag.
 function gridEditing() {
-  if (dragActive || taskDragActive) return true;
+  if (dragActive || taskDragActive || todoDragActive) return true;
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
@@ -1766,17 +1798,27 @@ function wireGridDnd(el) {
     // Placeholder positioning lives entirely in the cell dragover handler below,
     // which computes the slot from the cursor Y against the card midpoints.
   });
-  // A TODO row drags across tiles to reassign (→ todo-move). It carries its own
-  // key so the drop handler can build the wire payload without touching session DnD.
+  // A TODO row reorders within its own task tile only — same hide-source +
+  // slide-placeholder pattern as the session card reorder above, confined by
+  // todoDragActive/draggedTodoRow instead of dragActive/draggedCard.
   el.querySelectorAll('.todo-row[draggable="true"]').forEach((row) => {
     row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', JSON.stringify({
-        kind: 'todo', todoId: row.dataset.todoid, fromTaskId: row.dataset.todoKey,
-      }));
-      setTimeout(() => { if (row.parentNode) row.classList.add('dragging-hidden'); }, 0);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'todo', todoId: row.dataset.todoid }));
+      draggedTodoRow = row;
+      todoDragActive = true;
+      setTimeout(() => {
+        if (draggedTodoRow !== row || !row.parentNode) return;
+        const ph = ensureTodoPlaceholder();
+        ph.style.height = `${row.offsetHeight}px`;
+        row.parentNode.insertBefore(ph, row);
+        row.classList.add('dragging-hidden');
+      }, 0);
     });
     row.addEventListener('dragend', () => {
       row.classList.remove('dragging-hidden');
+      removeTodoPlaceholder();
+      draggedTodoRow = null;
+      todoDragActive = false;
       if (currentView === 'grid') renderGrid();
     });
   });
@@ -1817,6 +1859,27 @@ function wireGridDnd(el) {
 
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('dragover', (e) => {
+      // A TODO drag is confined to the tile it started in: a foreign cell never
+      // calls preventDefault, so the browser shows "no-drop" and drop never fires
+      // there at all — cross-task todo drops need no server-side guard.
+      if (todoDragActive) {
+        if (!cell.contains(draggedTodoRow)) return;
+        e.preventDefault();
+        // The placeholder is only created by dragstart's deferred setTimeout — a
+        // dragover that beats it (vanishingly rare with a real pointer) skips the
+        // preview rather than inserting a not-yet-existent node.
+        const body = todoPlaceholderEl && cell.querySelector('.task-body');
+        if (body) {
+          const after = todoDragAfterElement(body, e.clientY);
+          if (after) body.insertBefore(todoPlaceholderEl, after);
+          else {
+            const zone = body.querySelector('.todo-zone');
+            if (zone) body.insertBefore(todoPlaceholderEl, zone);
+            else body.appendChild(todoPlaceholderEl);
+          }
+        }
+        return;
+      }
       e.preventDefault();
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
@@ -1840,6 +1903,23 @@ function wireGridDnd(el) {
     });
     cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
     cell.addEventListener('drop', (e) => {
+      if (todoDragActive) {
+        if (!cell.contains(draggedTodoRow)) return;
+        e.preventDefault();
+        const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
+        const beforeEl = todoPlaceholderEl?.nextElementSibling;
+        const beforeId = beforeEl?.classList.contains('todo-row') ? beforeEl.dataset.todoid : null;
+        const current = ((latestTasks.todos || {})[bucket] || []).map((td) => td.id);
+        const order = reorderedTodoIds(current, draggedTodoRow.dataset.todoid, beforeId);
+        // Optimistic update: reorder the actual todo objects to match, then
+        // re-render immediately (the server confirms on the next graph).
+        const todos = latestTasks.todos || (latestTasks.todos = {});
+        const byId = new Map((todos[bucket] || []).map((td) => [td.id, td]));
+        todos[bucket] = order.map((id) => byId.get(id)).filter(Boolean);
+        send({ type: 'todo-reorder', taskId: todoKeyToTaskId(bucket), order });
+        renderGrid();
+        return;
+      }
       e.preventDefault();
       cell.classList.remove('drop-target');
       let p;
@@ -1874,26 +1954,10 @@ function wireGridDnd(el) {
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
         } else send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
-      } else if (p.kind === 'todo') {
-        const toTaskId = todoKeyToTaskId(isNoTask ? ADHOC_ID : taskId);
-        const from = todoKeyToTaskId(p.fromTaskId);
-        if ((from || ADHOC_ID) !== ((toTaskId || ADHOC_ID))) {
-          send({ type: 'todo-move', todoId: p.todoId, fromTaskId: from, toTaskId });
-          // Optimistic update: splice client-side state and re-render immediately.
-          const todos = latestTasks.todos || (latestTasks.todos = {});
-          const fromKey = p.fromTaskId || ADHOC_ID;
-          const toKey = toTaskId || ADHOC_ID;
-          const fromList = todos[fromKey] || [];
-          const i = fromList.findIndex((td) => td.id === p.todoId);
-          if (i >= 0) {
-            const [td] = fromList.splice(i, 1);
-            (todos[toKey] || (todos[toKey] = [])).push(td);
-            renderGrid();
-          }
-        }
       }
-      // Task drops are handled by the #grid drop handler (commits at the
-      // current slot wherever the cursor lands).
+      // A TODO drop is handled entirely above (todoDragActive) — cross-task never
+      // reaches here at all (see the dragover guard). Task drops are handled by
+      // the #grid drop handler (commits at the current slot wherever the cursor lands).
     });
   });
 }

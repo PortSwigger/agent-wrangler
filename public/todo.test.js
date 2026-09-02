@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   TODO_STRIDE_PX, TODO_DIVIDER_PX, CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, ADHOC_ID,
   SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
-  todoKeyToTaskId, tileWeightWithTodos,
+  todoKeyToTaskId, tileWeightWithTodos, reorderedTodoIds,
   tooltipPosition, TOOLTIP_MARGIN_PX, TOOLTIP_GAP_PX,
 } from './todo.js';
 import { tileWeight, SNOOZE_DIVIDER_PX, SNOOZE_STRIDE_PX } from './snooze.js';
@@ -99,6 +99,23 @@ test('tileWeightWithTodos: N full-view children add N*cardStride px, not N*CHILD
 test('tileWeightWithTodos: zero full-view children add nothing over the child-row composition', () => {
   const base = { activeCount: 1, snoozedCount: 0, cardStride: 96, todoCount: 0, childRowCount: 2 };
   assert.equal(tileWeightWithTodos({ ...base, childFullViewCount: 0 }), tileWeightWithTodos(base));
+});
+
+test('reorderedTodoIds: moves the dragged id to before the target id', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', 'c'), ['b', 'a', 'c']);
+});
+
+test('reorderedTodoIds: a null beforeId appends the dragged id at the end', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', null), ['b', 'c', 'a']);
+});
+
+test('reorderedTodoIds: dropping back onto its own slot is a no-op', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'b', 'c'), ['a', 'b', 'c']);
+});
+
+test('reorderedTodoIds: an unknown beforeId falls back to appending at the end', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', 'nope'), ['b', 'c', 'a']);
 });
 
 test('tooltipPosition: anchors under the row with the gap when it fits', () => {

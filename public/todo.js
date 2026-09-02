@@ -69,6 +69,17 @@ export function todoKeyToTaskId(key) {
   return !key || key === ADHOC_ID ? null : key;
 }
 
+// The full order for a bucket after dragging `draggedId` to sit just before
+// `beforeId` (null = the end, or any id no longer in the list — the placeholder's
+// own position already fell back to appending there, so an unresolved id gets the
+// same treatment here). Pure so the drop handler's target computation stays
+// testable without a DOM.
+export function reorderedTodoIds(currentIds, draggedId, beforeId) {
+  const rest = currentIds.filter((id) => id !== draggedId);
+  const at = beforeId == null ? -1 : rest.indexOf(beforeId);
+  return at < 0 ? [...rest, draggedId] : [...rest.slice(0, at), draggedId, ...rest.slice(at)];
+}
+
 export const TOOLTIP_MARGIN_PX = 8;
 export const TOOLTIP_GAP_PX = 6;
 export function tooltipPosition(anchor, tip, viewport) {
