@@ -2404,11 +2404,12 @@ function initChecklist() {
     if (!checklistDragActive) return;
     const sid = selectedSessionId;
     const order = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
-    // A `tmp_` id means an add is still in flight; the server would drop it from
-    // the order (it doesn't know it yet) and re-append it at the end. Keep the
-    // local order and skip the round trip — the next drag once the echo lands
-    // sends the real ids.
-    if (!order.some(isPendingChecklistId)) send({ type: 'checklist-reorder', sessionId: sid, order });
+    // A `tmp_` id belongs to an add still in flight — the server has never heard
+    // of it, so sending it would just be ignored. Filter it out rather than
+    // skipping the whole round trip (skipping would let the next graph echo
+    // revert the drag). Reorder appends anything it isn't told about, and an
+    // optimistic item is always the last row anyway, so it lands where it was.
+    send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
     // Optimistic reorder of the local snapshot, so the next patch agrees with
     // the DOM the drag already produced rather than snapping it back.
     const byId = new Map(checklistFor(sid).map((i) => [i.id, i]));
