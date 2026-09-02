@@ -269,7 +269,19 @@ don't re-derive it.
   only and the panel is patched in place rather than re-`innerHTML`'d — the ~4s
   graph poll would otherwise reset the list's scroll every tick, and
   `checklistDragActive`/`checklistEditing` (`app.js`) freeze the patch so a tick
-  can't reorder rows mid-drag or eat a half-typed item. Caps (`MAX_ITEMS` 100,
+  can't reorder rows mid-drag or eat a half-typed item. **Collapsed is the panel
+  not rendered at all, and the collapsed form is a disclosure chip in `#panel`'s
+  own meta row** — deliberately the sub-agents-zone idiom (`.checklist-pill`
+  shares `.subagent-pill`'s two rules rather than forking a third pill style), so
+  a collapsed checklist costs the terminal ZERO height. Per-session and persisted
+  per browser in `wrangler.checklistOpen`, mirroring
+  `panelSubagentShownOverrides` — but with **no server-side default to fall back
+  to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
+  `parseChecklistOpen` fails towards collapsed for the same reason, since that's
+  the direction that costs no height. The chip renders even for an EMPTY
+  checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
+  while collapsed it's the only thing telling a human the feature exists on this
+  session. Caps (`MAX_ITEMS` 100,
   `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
   the first store an agent can grow with no human in the loop.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated

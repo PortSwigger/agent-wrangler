@@ -20,12 +20,13 @@ otherwise it behaves exactly as a Claude-only board.
   boxes — organize it however makes sense to you.
 - **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
   needs-you flag the moment a session is blocked on you.
-- **A checklist you and the agent share** — each session gets a short, visible checklist beside its
-  terminal. You add, edit, tick, reorder and delete items from the board; the session writes to the
-  same list through its own tools, so a glance tells you what it is working through without reading
-  the pane. It is deliberately separate from the agent's own private planning tool — that stays
-  internal scratch work and is never mirrored here. Turn the whole thing off in Settings if you'd
-  rather not have it.
+- **A checklist you and the agent share** — each session gets a short checklist beside its terminal.
+  You add, edit, tick, reorder and delete items from the board; the session writes to the same list
+  through its own tools, so a glance tells you what it is working through without reading the pane.
+  It starts collapsed to a small progress chip in the session's header — `2/5` — costing the
+  terminal no height until you open it, and each session remembers whether you left it open. It is
+  deliberately separate from the agent's own private planning tool — that stays internal scratch
+  work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
   run an issue → PR autopilot with no gates, in its own git worktree.
 - **Scheduling** — one-off or recurring sessions and nudges — agents can even schedule their own

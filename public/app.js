@@ -27,7 +27,10 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
-import { createChecklistDom, checklistCountLabel, isPendingChecklistId } from './checklist-dom.js';
+import {
+  createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
+  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+} from './checklist-dom.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -2231,6 +2234,23 @@ let checklistDragActive = false;
 let checklistDragRow = null;
 let checklistEditing = false;
 
+// Collapsed/expanded is per session and persisted per browser, exactly like the
+// panel's sub-agents zone (panelSubagentShownOverrides) — collapsing one
+// session's checklist must not touch another's, and the choice has to survive a
+// reload. Default collapsed; see isChecklistOpen for why there's no
+// server-side default to fall back to.
+const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
+const checklistOpenOverrides = (() => {
+  try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
+})();
+function checklistOpen(sessionId) {
+  return isChecklistOpen(checklistOpenOverrides, sessionId);
+}
+function toggleChecklist(sessionId) {
+  toggleChecklistOpen(checklistOpenOverrides, sessionId);
+  try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
+}
+
 // The live array for a session (not a copy) — the optimistic mutations below
 // write straight into it, exactly like the todo flow writes into latestTasks.
 function checklistFor(sessionId) {
@@ -2240,9 +2260,10 @@ function checklistFor(sessionId) {
 function renderChecklist(sessionId) {
   const el = document.getElementById('checklist');
   if (!el) return;
-  // Off by config, or nothing selected: hidden, not empty — an empty panel means
-  // "this session has no items yet", which is a different statement.
-  if (!checklistEnabled || !sessionId) { el.hidden = true; return; }
+  // Collapsed is the whole panel gone, not a shrunken one: the collapsed form is
+  // the disclosure chip in #panel's own meta row (renderPanel), which costs the
+  // terminal no height at all. Off by config or nothing selected hides it too.
+  if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
   el.hidden = false;
   const items = checklistFor(sessionId);
   document.getElementById('ck-count').textContent = checklistCountLabel(items);
@@ -2278,6 +2299,7 @@ function beginChecklistAdd() {
   const sid = selectedSessionId;
   if (!sid || checklistEditing) return;
   const list = document.getElementById('ck-list');
+  if (!list || document.getElementById('checklist').hidden) return;
   const holder = document.createElement('div');
   holder.className = 'ck-row ck-editing';
   const input = document.createElement('input');
@@ -3862,6 +3884,17 @@ function renderPanel(sessionId) {
   if (s.tokens) chips.push(`<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`);
   if (s.tasks?.running) chips.push(`<span class="card-tag">${esc(s.tasks.running)} running${s.tasks.kinds?.length ? ` (${s.tasks.kinds.map(esc).join(', ')})` : ''}</span>`);
   if (s.tasks?.queued) chips.push(`<span class="card-tag">${esc(s.tasks.queued)} queued</span>`);
+  // The checklist's COLLAPSED form: a disclosure chip in this row, styled and
+  // toggled exactly like the sub-agents pill below (icon + count + a +/- state
+  // icon, per-session and persisted). Collapsed therefore costs the terminal no
+  // height at all — the panel itself is simply not rendered. Shown even for an
+  // empty checklist (hence checklistPillLabel's "0/0"): while collapsed this
+  // chip is the only thing telling a human the feature exists on this session.
+  if (checklistEnabled) {
+    const open = checklistOpen(sessionId);
+    const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
+    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}${icon}</button>`);
+  }
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;
   if (saList.length) {
@@ -3933,6 +3966,8 @@ function renderPanel(sessionId) {
   if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
+  const ckToggle = panel.querySelector('#panel-checklist-toggle');
+  if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
   panel.querySelectorAll('.subagent-row').forEach((row) => {
     row.addEventListener('click', () => openSubagentModal(row.dataset.ownerSid, row.dataset.subagentId));
   });

@@ -96,10 +96,57 @@ export function createChecklistDom({ document }) {
   };
 }
 
-// The panel's count chip: "2/5 done", or '' for an empty list (the panel still
-// renders with its "+ Add" affordance so a human can see the feature exists on
-// this session — an empty panel is not a missing one).
+// The expanded panel's count chip: "2/5 done", or '' for an empty list (the
+// panel still renders with its "+ Add" affordance so a human can see the
+// feature exists on this session — an empty panel is not a missing one).
 export function checklistCountLabel(items = []) {
   if (!items.length) return '';
   return `${items.filter((i) => i.done).length}/${items.length} done`;
+}
+
+// The COLLAPSED form's label, for the disclosure chip in the panel's meta row —
+// always `done/total`, including "0/0", unlike checklistCountLabel above. That
+// difference is deliberate: the chip IS the only sign the feature exists on this
+// session while the panel is collapsed, so it can never render as empty.
+export function checklistPillLabel(items = []) {
+  return `${items.filter((i) => i.done).length}/${items.length}`;
+}
+
+// --- per-session disclosure state ---
+// Mirrors the sub-agents zone's own override map (app.js
+// panelSubagentShownOverrides): a { sessionId: boolean } map persisted per
+// browser, so collapsing one session's checklist never touches another's and the
+// choice survives a reload. Kept here (pure, no localStorage) so the two rules
+// that were actually asked for — collapsed by default, and persisted per session
+// — are unit-testable; app.js owns the storage round trip.
+//
+// Default is CLOSED, and unlike the sub-agents zone there is NO server-side
+// default to fall back to: a new session's checklist is empty, and the sidebar's
+// height belongs to the terminal until someone asks for the list.
+export function isChecklistOpen(overrides, sessionId) {
+  return Boolean(sessionId) && overrides.get(sessionId) === true;
+}
+
+export function toggleChecklistOpen(overrides, sessionId) {
+  if (!sessionId) return overrides;
+  overrides.set(sessionId, !isChecklistOpen(overrides, sessionId));
+  return overrides;
+}
+
+// Tolerant of anything on disk: a corrupt or legacy value reads as "nothing
+// remembered", i.e. every session collapsed — the safe direction, since it costs
+// no sidebar height. Non-boolean values are dropped rather than coerced, so a
+// garbage entry can't leave a session stuck open.
+export function parseChecklistOpen(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed).filter(([, v]) => typeof v === 'boolean'));
+  } catch {
+    return new Map();
+  }
+}
+
+export function serializeChecklistOpen(overrides) {
+  return JSON.stringify(Object.fromEntries(overrides));
 }

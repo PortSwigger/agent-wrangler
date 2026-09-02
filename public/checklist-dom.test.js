@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createChecklistDom, checklistCountLabel, isPendingChecklistId } from './checklist-dom.js';
+import {
+  createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
+  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+} from './checklist-dom.js';
 
 // A DOM stub sufficient for the reconciliation assertions: no jsdom, matching how
 // the rest of public/ stays DOM-free. It tracks innerHTML writes so the
@@ -203,4 +206,63 @@ test('once the server echo replaces the tmp id, the row is a normal draggable ro
   assert.equal(row.className, 'ck-row');
   assert.equal(row.getAttribute('draggable'), 'true');
   assert.equal(list.children.length, 1, 'the tmp row is replaced, not left alongside');
+});
+
+// The collapsed form is a chip in the panel's meta row, so unlike the expanded
+// panel's label it must never render as empty — that chip is the only sign the
+// feature exists on this session while the panel is shut.
+test('checklistPillLabel always reads done/total, including 0/0 for an empty list', () => {
+  assert.equal(checklistPillLabel([]), '0/0');
+  assert.equal(checklistPillLabel(), '0/0');
+  assert.equal(checklistPillLabel([{ done: false }, { done: true }, { done: true }]), '2/3');
+});
+
+test('a session starts COLLAPSED — nothing remembered means the panel costs no height', () => {
+  const overrides = new Map();
+  assert.equal(isChecklistOpen(overrides, 'CARD1'), false);
+  assert.equal(isChecklistOpen(overrides, undefined), false);
+  assert.equal(isChecklistOpen(overrides, null), false);
+});
+
+test('toggling is per session — one session opening never opens another', () => {
+  const overrides = new Map();
+  toggleChecklistOpen(overrides, 'CARD1');
+  assert.equal(isChecklistOpen(overrides, 'CARD1'), true);
+  assert.equal(isChecklistOpen(overrides, 'CARD2'), false, "a sibling session stays collapsed");
+  toggleChecklistOpen(overrides, 'CARD1');
+  assert.equal(isChecklistOpen(overrides, 'CARD1'), false, 'toggling again collapses it');
+  // An explicit "closed" is remembered as such, not as "never touched" — both
+  // read collapsed today, but the distinction is what a future
+  // expanded-by-default setting would need, and matches the sub-agents map.
+  assert.equal(overrides.get('CARD1'), false);
+});
+
+test('toggling with no session selected is a no-op rather than an undefined key', () => {
+  const overrides = new Map();
+  toggleChecklistOpen(overrides, null);
+  assert.equal(overrides.size, 0);
+});
+
+test('the open/collapsed choice survives a reload (serialize → parse round trip)', () => {
+  const overrides = new Map();
+  toggleChecklistOpen(overrides, 'CARD1');           // open
+  toggleChecklistOpen(overrides, 'CARD2');           // open
+  toggleChecklistOpen(overrides, 'CARD2');           // and closed again
+  const restored = parseChecklistOpen(serializeChecklistOpen(overrides));
+  assert.equal(isChecklistOpen(restored, 'CARD1'), true);
+  assert.equal(isChecklistOpen(restored, 'CARD2'), false);
+  assert.equal(isChecklistOpen(restored, 'CARD3'), false);
+});
+
+// Collapsed is the safe direction to fail towards: it costs the terminal no
+// height, so anything unreadable on disk reads as "every session collapsed"
+// rather than leaving a session stuck open.
+test('parseChecklistOpen tolerates junk, missing and legacy values as all-collapsed', () => {
+  for (const raw of [null, undefined, '', 'not json', '[]', '["CARD1"]', '42', '"CARD1"', 'null']) {
+    assert.deepEqual([...parseChecklistOpen(raw)], [], `${JSON.stringify(raw)} must read as nothing remembered`);
+  }
+  // A non-boolean value is dropped, not coerced — a garbage entry can't pin a
+  // session open.
+  const mixed = parseChecklistOpen(JSON.stringify({ CARD1: true, CARD2: 'yes', CARD3: 1 }));
+  assert.deepEqual([...mixed], [['CARD1', true]]);
 });

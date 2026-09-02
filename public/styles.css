@@ -1405,7 +1405,10 @@ body.system-banner-open { padding-top: 30px; }
    override — padding-right, tightened from .card-tag's 7px to 6px — mainly
    matters for the two pills ending in an icon (+/-) rather than text, where a
    full symmetric pad read as a gap, not an edge; applied to all three uses of
-   this class for one consistent pill rather than fragmenting further.
+   this class for one consistent pill rather than fragmenting further — and, for
+   the same reason, .checklist-pill (the checklist panel's own collapsed form,
+   which is the same concern: a .card-tag chip that is also a disclosure toggle)
+   shares these two rules instead of forking a third pill style.
    background is the other longhand override: --surface-2 and --surface (the
    card's own background) sit only ~7 RGB units apart in dark mode, so
    .card-tag's usual fill was reading as no pill at all on a card — nudged
@@ -1413,13 +1416,13 @@ body.system-banner-open { padding-top: 30px; }
    stays a small nudge rather than a fixed color in either theme) for the
    contrast .card-tag chips get for free elsewhere from having non-chip content
    around them. Scoped to this pill only, not .card-tag itself. */
-.subagent-pill { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
+.subagent-pill, .checklist-pill { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
 .subagent-toggle-icon { display: inline-flex; }
 /* Same tinted-fill convention as .card-tag.automerge: a light accent wash over
    the base chip fill, with --blue-fg (this codebase's readable-on-a-tint accent
    text, e.g. .search-act--adopt) rather than --accent-fg (reserved for solid-accent
    buttons — it's a stark white, too low-contrast on a mostly-neutral tint). */
-.subagent-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
+.subagent-pill.showing, .checklist-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
 /* The card's pill disables itself when no sub-agents are currently recent (see
    subagentPillHtml) — toggling it on would show nothing. aria-disabled, not
    :disabled — the button stays clickable so the click can fall through to the
