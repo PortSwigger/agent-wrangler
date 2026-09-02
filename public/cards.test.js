@@ -422,6 +422,22 @@ test('todoRowHtml / todoZoneHtml: rows escape text; empty zone is just the ancho
   assert.match(zone, /data-todoid="t1"/);
 });
 
+test('todoZoneHtml: shows the todo count in the divider, open by default', () => {
+  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc');
+  assert.match(zone, /class="todo-count">2</);
+  assert.match(zone, /todo-chevron">▾/);
+  assert.match(zone, /data-todoid="t1"/);
+  assert.match(zone, /data-todoid="t2"/);
+});
+
+test('todoZoneHtml: collapsed hides the rows but keeps the divider + count + anchor', () => {
+  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc', true);
+  assert.match(zone, /class="todo-count">2</);
+  assert.match(zone, /todo-chevron">▸/);
+  assert.doesNotMatch(zone, /data-todoid/);
+  assert.match(zone, /<div class="todo-zone" data-todo-key="adhoc"><\/div>$/);
+});
+
 test('tileHtml: placeholder tile renders a bare placeholder div', () => {
   assert.match(tileHtml({ kind: 'placeholder', col: 0, rowStart: 0, span: 1 }, ctx()), /task-placeholder/);
 });
@@ -433,6 +449,14 @@ test('tileHtml: notask tile is the Unassigned cell and reads todos from ADHOC_ID
   assert.match(html, /task-cell no-task/);
   assert.match(html, /Unassigned/);
   assert.equal(askedFor, 'adhoc');
+});
+
+test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse the zone', () => {
+  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
+  const c = ctx({ todosFor: () => [{ id: 't1', text: 'x' }], collapsedTodoZones: new Set(['T1']) });
+  const html = tileHtml(tile, c);
+  assert.match(html, /todo-chevron">▸/);
+  assert.doesNotMatch(html, /data-todoid="t1"/);
 });
 
 test('tileHtml: task tile shows the escaped name, its first link and a +N overflow', () => {

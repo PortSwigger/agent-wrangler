@@ -40,6 +40,20 @@ test('tileWeightWithTodos: N todos add DIVIDER + N*STRIDE px over the snooze com
   assert.equal(tileWeightWithTodos({ ...base, todoCount: 4 }), expected);
 });
 
+test('tileWeightWithTodos: a collapsed zone (todoVisibleCount 0) still charges the divider, drops the rows', () => {
+  const stride = 80;
+  const base = { activeCount: 2, snoozedCount: 3, cardStride: stride };
+  const snoozePx = (2 * stride + SNOOZE_DIVIDER_PX + 3 * SNOOZE_STRIDE_PX);
+  const expected = (snoozePx + TODO_DIVIDER_PX) / stride;
+  assert.equal(tileWeightWithTodos({ ...base, todoCount: 4, todoVisibleCount: 0 }), expected);
+});
+
+test('tileWeightWithTodos: todoVisibleCount defaults to todoCount (pre-collapse callers unchanged)', () => {
+  const stride = 80;
+  const base = { activeCount: 2, snoozedCount: 3, cardStride: stride, todoCount: 4 };
+  assert.equal(tileWeightWithTodos(base), tileWeightWithTodos({ ...base, todoVisibleCount: 4 }));
+});
+
 test('tileWeightWithTodos: todos render a tile even with no sessions', () => {
   const stride = 80;
   const w = tileWeightWithTodos({ activeCount: 0, snoozedCount: 0, cardStride: stride, todoCount: 2 });

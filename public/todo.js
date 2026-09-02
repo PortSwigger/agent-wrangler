@@ -93,16 +93,26 @@ export function tooltipPosition(anchor, tip, viewport) {
 // Tile height as fractional card-equivalents, composing the snooze weight with the
 // todo rows and any absorbed child-session rows: snooze px (active cards + snoozed
 // rows + their divider) plus, when any todos exist, a one-time todo divider and a
-// fractional stride per todo row, plus a fractional stride per visible child row
-// (no divider — see CHILD_STRIDE_PX). Feeds rowSpan(weight, perRow) in app.js.
+// fractional stride per VISIBLE todo row, plus a fractional stride per visible child
+// row (no divider — see CHILD_STRIDE_PX). Feeds rowSpan(weight, perRow) in app.js.
 // Computed off snooze.js's tileWeight so that module stays untouched (multiply
 // back to px, add todo/child px, divide back to units).
+//
+// `todoCount` (total todos) and `todoVisibleCount` (rows actually drawn) are
+// deliberately separate, mirroring childRowCount/absorbedChildCount and
+// workflowBoxCount/childRowCount above: collapsing a task's todo zone
+// (cards.js todoZoneHtml, app.js collapsedTodoZones) hides the rows but NOT the
+// divider — same chrome-stays-put rule as a collapsed workflow spine — so the
+// divider overhead is charged whenever any todos exist, while the per-row
+// stride is charged only for `todoVisibleCount`. Defaults `todoVisibleCount`
+// to `todoCount` so an untouched caller (nothing collapsed) keeps the old,
+// pre-collapse behavior unchanged.
 export function tileWeightWithTodos({
-  activeCount, snoozedCount, cardStride, todoCount = 0, childRowCount = 0, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
+  activeCount, snoozedCount, cardStride, todoCount = 0, todoVisibleCount = todoCount, childRowCount = 0,
+  workflowBoxCount = 0, subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
 }) {
   const px = tileWeight({ activeCount, snoozedCount, cardStride }) * cardStride
-    + (todoCount > 0 ? TODO_DIVIDER_PX + todoCount * TODO_STRIDE_PX : 0)
+    + (todoCount > 0 ? TODO_DIVIDER_PX + todoVisibleCount * TODO_STRIDE_PX : 0)
     + childRowCount * CHILD_STRIDE_PX
     // A full-view child draws as a real card, so it costs a whole cardStride,
     // not CHILD_STRIDE_PX — see cards.js childRowHtml / layout.js tileSpan.

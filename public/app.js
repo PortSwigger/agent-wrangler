@@ -703,6 +703,32 @@ function toggleWorkflowCollapse(sessionId) {
   if (currentView === 'grid') renderGrid();
 }
 
+// A task's (or the Ad-hoc bucket's) TODO zone, collapsed by the user — keyed on
+// the same todoKey as todosFor (a task id, or ADHOC_ID). Open by default (issue
+// ask), so — unlike subagentShownOverrides, which tracks explicit overrides
+// against a movable global default — this is a plain "collapsed" Set exactly
+// like collapsedWorkflows: absence means open, membership means collapsed, and
+// there is no separate default setting to fall back to.
+const COLLAPSED_TODO_KEY = 'wrangler.collapsedTodoZones';
+const collapsedTodoZones = (() => {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_TODO_KEY)) || []); } catch { return new Set(); }
+})();
+function persistCollapsedTodoZones() {
+  try { localStorage.setItem(COLLAPSED_TODO_KEY, JSON.stringify([...collapsedTodoZones])); } catch {}
+}
+function toggleTodoZoneCollapse(key) {
+  if (collapsedTodoZones.has(key)) collapsedTodoZones.delete(key);
+  else collapsedTodoZones.add(key);
+  persistCollapsedTodoZones();
+  if (currentView === 'grid') renderGrid();
+}
+// Uncollapses a zone without re-rendering — used right before beginTodoAdd
+// injects its inline input, so a TODO typed into a closed zone doesn't vanish
+// back under the divider the moment the add commits and the grid re-renders.
+function expandTodoZone(key) {
+  if (collapsedTodoZones.delete(key)) persistCollapsedTodoZones();
+}
+
 // The set of buckets (task ids, or ADHOC_ID) sorted by last activity rather than the
 // stored drag order — a client-only view preference like collapsedWorkflows, persisted
 // so it survives a refresh. While a bucket is in here, intra-task reorder is suppressed.
@@ -853,7 +879,7 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
+    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones, activitySortedTasks, restoredTaskId,
     justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
@@ -967,15 +993,17 @@ function renderGrid() {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
         const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
+        const todoVisibleCount = collapsedTodoZones.has(task.id) ? 0 : todoCount;
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, todoVisibleCount) }];
       })
     );
     const {
       visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount) });
+    const adhocTodoVisibleCount = collapsedTodoZones.has(ADHOC_ID) ? 0 : adhocTodoCount;
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, adhocTodoVisibleCount) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
     return computeLayout(tiles, columnsForWidth(el));
   }
@@ -1209,6 +1237,17 @@ function wireGridEvents(el) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWorkflowCollapse(sid); }
     });
   });
+  // Clicking a task's TODO divider folds its rows away (and back) — same
+  // chevron/collapse language as the workflow header above, keyed on the
+  // divider's own data-todo-key rather than a card id.
+  el.querySelectorAll('.todo-divider').forEach((div) => {
+    const key = div.dataset.todoKey;
+    if (!key) return;
+    div.addEventListener('click', () => toggleTodoZoneCollapse(key));
+    div.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTodoZoneCollapse(key); }
+    });
+  });
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1229,7 +1268,7 @@ function wireGridEvents(el) {
   // icon buttons, plus the genuinely new "New TODO".
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('contextmenu', (e) => {
-      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .workflow-head, button, input, .link-chip')) return;
+      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .todo-divider, .workflow-head, button, input, .link-chip')) return;
       e.preventDefault();
       openTaskMenu(cell, e.clientX, e.clientY);
     });
@@ -1790,7 +1829,7 @@ function openTaskMenu(cell, x, y) {
   const todoZone = cell.querySelector('.todo-zone');
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
-    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) beginTodoAdd(todoZone.dataset.todoKey, todoZone); } },
+    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },

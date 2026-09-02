@@ -1625,10 +1625,15 @@ body.system-banner-open { padding-top: 30px; }
 .todo-divider {
   display: flex; align-items: center; gap: 8px;
   color: var(--fg-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-  margin: 2px 2px 0;
+  margin: 2px 2px 0; cursor: pointer; user-select: none;
 }
 .todo-divider::before, .todo-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
+/* Chevron mirrors .wf-chevron's fixed-width text glyph (workflowBoxHtml's own
+   collapse control) so the two collapse affordances read as one visual language. */
+.todo-divider:hover .todo-chevron, .todo-divider:hover .todo-count { color: var(--purple); }
+.todo-chevron { font-size: 10px; color: var(--fg-subtle); width: 10px; text-align: center; }
 .todo-label { color: var(--purple); background: color-mix(in srgb, var(--purple) 35%, transparent); padding: 1px 8px; border-radius: 999px; }
+.todo-count { font-size: 10px; color: var(--fg-subtle); }
 .todo-row {
   position: relative; display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 30px; border-radius: 8px;

@@ -3,7 +3,7 @@
 // state each one reads (selection, flash sets, collapse set, the derived status
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
 // app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
-//   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
+//   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones,
 //     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
@@ -523,12 +523,23 @@ export function todoRowHtml(td, key) {
   </div>`;
 }
 
-// The todo zone: divider + rows when todos exist, plus an empty anchor div the
-// context-menu's inline-add injects into. No visible "+ todo" button.
-export function todoZoneHtml(todos, key) {
+// The todo zone: a collapsible divider (chevron + label + count, mirroring
+// workflowBoxHtml's chevron/collapse — see .wf-chevron in styles.css) + rows
+// when todos exist and it isn't collapsed, plus an empty anchor div the
+// context-menu's inline-add injects into (always rendered, even collapsed —
+// beginTodoAdd forces it visible directly, and app.js expands the zone before
+// adding so a freshly-typed TODO doesn't vanish back under a closed divider on
+// the next render). Open by default (`collapsed` false/undefined) — unlike the
+// sub-agent zone's default-off pill, a task's own TODOs are primary content
+// the user is expected to see, not read-only chrome.
+export function todoZoneHtml(todos, key, collapsed = false) {
   if (!todos.length) return `<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
-  const rows = todos.map((td) => todoRowHtml(td, key)).join('');
-  return `<div class="todo-divider"><span class="todo-label">todo</span></div>${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
+  const chevron = collapsed ? '▸' : '▾';
+  const divider = `<div class="todo-divider" data-todo-key="${esc(key)}" role="button" tabindex="0" title="${collapsed ? 'Show TODOs' : 'Hide TODOs'}">
+    <span class="todo-chevron">${chevron}</span><span class="todo-label">todo</span><span class="todo-count">${todos.length}</span>
+  </div>`;
+  const rows = collapsed ? '' : todos.map((td) => todoRowHtml(td, key)).join('');
+  return `${divider}${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
 }
 
 export function tileHtml(tile, ctx, { focusMode } = {}) {
@@ -542,7 +553,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
     + (asleep.length ? `<div class="snooze-divider"><span class="snooze-label">snoozed</span></div>${asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
   const todoKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
   const todos = ctx.todosFor(todoKey);
-  const todoZone = todoZoneHtml(todos, todoKey);
+  const todoZone = todoZoneHtml(todos, todoKey, ctx.collapsedTodoZones?.has(todoKey));
   // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
   // The lit target must sit where nav lands it — the *end* of the body — so on a
   // truly-empty tile we ring its big empty-state CTA, otherwise we append a compact
