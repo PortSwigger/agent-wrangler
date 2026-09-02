@@ -1717,11 +1717,26 @@ body.system-banner-open { padding-top: 30px; }
    and a "+ todo" add affordance. Mirrors the snooze block but lighter. ── */
 .todo-divider {
   display: flex; align-items: center; gap: 8px;
-  color: var(--fg-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   margin: 2px 2px 0;
 }
 .todo-divider::before, .todo-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
-.todo-label { color: var(--purple); background: color-mix(in srgb, var(--purple) 35%, transparent); padding: 1px 8px; border-radius: 999px; }
+/* The collapse toggle itself: a .card-tag pill (same base as every other card
+   chip — subagentPillHtml, model/cost/time chips, the panel's own disclosure
+   toggle) rather than a bare label + a separately-floating count, so the
+   count reads as part of one control instead of adjacent, disconnected text.
+   Colour is the original translucent wash (color: var(--purple) on a 35% tint,
+   not solid) — kept from the pre-pill `.todo-label`, deliberately not the
+   solid `.card-tag.wt` recipe: a solid fill read as too heavy/opaque for a
+   toggle that's open (i.e. visible) most of the time, unlike .wt's one-off
+   worktree marker. Compound selector, like every other .card-tag colour
+   variant, so it isn't shadowed by `.card-tag`'s own same-specificity rule. */
+.card-tag.todo-pill {
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--purple); background: color-mix(in srgb, var(--purple) 35%, transparent);
+  cursor: pointer;
+}
+.card-tag.todo-pill:hover { background: color-mix(in srgb, var(--purple) 45%, transparent); }
+.todo-toggle-icon { display: inline-flex; }
 .todo-row {
   position: relative; display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 30px; border-radius: 8px;
