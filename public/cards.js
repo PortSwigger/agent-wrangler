@@ -523,21 +523,28 @@ export function todoRowHtml(td, key) {
   </div>`;
 }
 
-// The todo zone: a collapsible divider (chevron + label + count, mirroring
-// workflowBoxHtml's chevron/collapse — see .wf-chevron in styles.css) + rows
-// when todos exist and it isn't collapsed, plus an empty anchor div the
-// context-menu's inline-add injects into (always rendered, even collapsed —
-// beginTodoAdd forces it visible directly, and app.js expands the zone before
-// adding so a freshly-typed TODO doesn't vanish back under a closed divider on
-// the next render). Open by default (`collapsed` false/undefined) — unlike the
-// sub-agent zone's default-off pill, a task's own TODOs are primary content
-// the user is expected to see, not read-only chrome.
+// The todo zone: a collapsible divider + rows when todos exist and it isn't
+// collapsed, plus an empty anchor div the context-menu's inline-add injects
+// into (always rendered, even collapsed — beginTodoAdd forces it visible
+// directly, and app.js expands the zone before adding so a freshly-typed TODO
+// doesn't vanish back under a closed divider on the next render). Open by
+// default (`collapsed` false/undefined) — unlike the sub-agent zone's
+// default-off pill, a task's own TODOs are primary content the user is
+// expected to see, not read-only chrome.
+//
+// The toggle itself is a `.card-tag` pill — same composition as the card's
+// own subagentPillHtml and the session panel's disclosure toggle
+// (renderPanel's `#panel-sa-toggle`, app.js): count + a +/- icon, never a
+// rotating chevron (icons.js: "a rotating chevron reads as 'which way is
+// open?'; +/- doesn't"). A bare unicode chevron floating next to a separate
+// plain-text count read as visually disconnected — one pill with the count
+// baked in reads as a single control, consistent with every other
+// show/hide toggle in the app.
 export function todoZoneHtml(todos, key, collapsed = false) {
   if (!todos.length) return `<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
-  const chevron = collapsed ? '▸' : '▾';
-  const divider = `<div class="todo-divider" data-todo-key="${esc(key)}" role="button" tabindex="0" title="${collapsed ? 'Show TODOs' : 'Hide TODOs'}">
-    <span class="todo-chevron">${chevron}</span><span class="todo-label">todo</span><span class="todo-count">${todos.length}</span>
-  </div>`;
+  const toggleIcon = `<span class="todo-toggle-icon">${collapsed ? PLUS_ICON : MINUS_ICON}</span>`;
+  const pill = `<button class="card-tag todo-pill" data-todo-key="${esc(key)}" title="${collapsed ? 'Show TODOs' : 'Hide TODOs'}">todo ${todos.length}${toggleIcon}</button>`;
+  const divider = `<div class="todo-divider">${pill}</div>`;
   const rows = collapsed ? '' : todos.map((td) => todoRowHtml(td, key)).join('');
   return `${divider}${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
 }

@@ -422,18 +422,20 @@ test('todoRowHtml / todoZoneHtml: rows escape text; empty zone is just the ancho
   assert.match(zone, /data-todoid="t1"/);
 });
 
-test('todoZoneHtml: shows the todo count in the divider, open by default', () => {
+test('todoZoneHtml: the toggle pill shows the todo count, open by default (minus icon, "Hide" title)', () => {
   const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc');
-  assert.match(zone, /class="todo-count">2</);
-  assert.match(zone, /todo-chevron">▾/);
+  assert.match(zone, /class="card-tag todo-pill"/);
+  assert.match(zone, />todo 2</);
+  assert.match(zone, /title="Hide TODOs"/);
+  assert.match(zone, /todo-toggle-icon/);
   assert.match(zone, /data-todoid="t1"/);
   assert.match(zone, /data-todoid="t2"/);
 });
 
-test('todoZoneHtml: collapsed hides the rows but keeps the divider + count + anchor', () => {
+test('todoZoneHtml: collapsed hides the rows but keeps the pill + count + anchor (plus icon, "Show" title)', () => {
   const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc', true);
-  assert.match(zone, /class="todo-count">2</);
-  assert.match(zone, /todo-chevron">▸/);
+  assert.match(zone, />todo 2</);
+  assert.match(zone, /title="Show TODOs"/);
   assert.doesNotMatch(zone, /data-todoid/);
   assert.match(zone, /<div class="todo-zone" data-todo-key="adhoc"><\/div>$/);
 });
@@ -455,7 +457,7 @@ test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse
   const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
   const c = ctx({ todosFor: () => [{ id: 't1', text: 'x' }], collapsedTodoZones: new Set(['T1']) });
   const html = tileHtml(tile, c);
-  assert.match(html, /todo-chevron">▸/);
+  assert.match(html, /title="Show TODOs"/);
   assert.doesNotMatch(html, /data-todoid="t1"/);
 });
 

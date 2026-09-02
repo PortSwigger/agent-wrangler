@@ -1237,16 +1237,13 @@ function wireGridEvents(el) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWorkflowCollapse(sid); }
     });
   });
-  // Clicking a task's TODO divider folds its rows away (and back) — same
-  // chevron/collapse language as the workflow header above, keyed on the
-  // divider's own data-todo-key rather than a card id.
-  el.querySelectorAll('.todo-divider').forEach((div) => {
-    const key = div.dataset.todoKey;
+  // The TODO divider's pill (cards.js todoZoneHtml) folds its rows away (and
+  // back) — a real <button>, so Enter/Space activation comes for free (unlike
+  // .workflow-head above, which is a plain div and needs its own keydown).
+  el.querySelectorAll('.todo-pill').forEach((pill) => {
+    const key = pill.dataset.todoKey;
     if (!key) return;
-    div.addEventListener('click', () => toggleTodoZoneCollapse(key));
-    div.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTodoZoneCollapse(key); }
-    });
+    pill.addEventListener('click', () => toggleTodoZoneCollapse(key));
   });
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
@@ -1268,7 +1265,7 @@ function wireGridEvents(el) {
   // icon buttons, plus the genuinely new "New TODO".
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('contextmenu', (e) => {
-      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .todo-divider, .workflow-head, button, input, .link-chip')) return;
+      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .workflow-head, button, input, .link-chip')) return;
       e.preventDefault();
       openTaskMenu(cell, e.clientX, e.clientY);
     });
