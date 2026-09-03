@@ -276,8 +276,10 @@ for (const [cardId, entry] of Object.entries(entries)) {
   } else if (agent === 'codex' && analyzeCodex) {
     // Codex rollouts aren't line-stamped the same way; attribute the whole
     // session to its createdAt month (estimated ChatGPT-plan pricing).
-    const created = entry.createdAt ? Date.parse(entry.createdAt) : NaN;
-    if (!created || created < monthStart || created >= monthEnd) continue;
+    // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
+    // silently drop every Codex session. new Date() takes both that and an ISO string.
+    const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
+    if (!Number.isFinite(created) || created < monthStart || created >= monthEnd) continue;
     const a = await analyzeCodex(entry.liveSessionId || cardId).catch(() => null);
     if (!a || a.usd == null) { unresolved++; continue; }
     const tok = a.tokens || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
