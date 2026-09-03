@@ -707,8 +707,10 @@ export async function scanAllDaily({
       // Codex rollouts aren't reliably line-stamped for cost, so attribute the whole
       // (estimated, ChatGPT-plan-equivalent) session to its createdAt day — sub-monthly
       // Codex is approximate. A session with no usable createdAt is skipped, not crashed.
-      const created = entry.createdAt ? Date.parse(entry.createdAt) : NaN;
-      if (!created) continue;
+      // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
+      // silently drop every Codex session. new Date() takes both that and an ISO string.
+      const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
+      if (!Number.isFinite(created)) continue;
       const sessionKey = entry.liveSessionId || cardId;
       const rolloutIndex = await codexRolloutIndex();
       const rolloutFile = rolloutIndex.get(sessionKey) || null;
