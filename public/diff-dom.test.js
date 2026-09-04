@@ -40,7 +40,7 @@ function makeDoc() {
 }
 globalThis.document = makeDoc();
 
-const { fileHeaderEl, hunkHeadEl, lineEl, draftBlockEl, noticeEl, editorEl, fileListEl, orderFilesForDisplay } = await import('./diff-dom.js');
+const { fileHeaderEl, hunkHeadEl, lineEl, pairRowEl, draftBlockEl, noticeEl, editorEl, fileListEl, orderFilesForDisplay } = await import('./diff-dom.js');
 
 // Recursively find the first element node carrying `cls` in its className.
 function byClass(node, cls) {
@@ -232,4 +232,98 @@ test('hunkHeadEl / noticeEl: content is inert textContent', () => {
   assert.equal(n.textContent, 'boom <img>');
   assert.equal(n.className, 'diff-notice diff-notice-error');
   assert.equal(elementCount(n), 0);
+});
+
+// --- pairRowEl (side-by-side layout) ---
+
+// Every element node carrying `cls`, anywhere under a node.
+function allByClass(node, cls, out = []) {
+  for (const c of node.childNodes || []) {
+    if (typeof c.className === 'string' && c.className.split(' ').includes(cls)) out.push(c);
+    allByClass(c, cls, out);
+  }
+  return out;
+}
+
+const DEL_LINE = { type: 'del', text: 'was', oldLine: 5, newLine: null };
+const ADD_LINE = { type: 'add', text: 'now', oldLine: null, newLine: 5 };
+
+test('pairRowEl: both cells are addressable .diff-line rows inside one .diff-row wrapper', () => {
+  const frag = pairRowEl('src/a.js', { left: DEL_LINE, right: ADD_LINE }, {});
+  assert.equal(frag.childNodes.length, 1, 'just the wrapper — no draft');
+  const wrap = frag.childNodes[0];
+  assert.ok(wrap.className.split(' ').includes('diff-row'));
+  const cells = allByClass(wrap, 'diff-line');
+  assert.equal(cells.length, 2);
+  assert.equal(cells[0].dataset.side, 'old');
+  assert.equal(cells[0].dataset.line, '5');
+  assert.equal(cells[1].dataset.side, 'new');
+  assert.equal(cells[1].dataset.line, '5');
+  assert.equal(cells[0].dataset.file, 'src/a.js');
+});
+
+test('pairRowEl: each cell shows only its own side\'s gutter', () => {
+  const frag = pairRowEl('src/a.js', { left: DEL_LINE, right: ADD_LINE }, {});
+  const [leftCell, rightCell] = allByClass(frag.childNodes[0], 'diff-line');
+  assert.ok(byClass(leftCell, 'diff-gutter-old'), 'left cell keeps the old gutter');
+  assert.equal(byClass(leftCell, 'diff-gutter-new'), null, 'left cell drops the new gutter');
+  assert.ok(byClass(rightCell, 'diff-gutter-new'), 'right cell keeps the new gutter');
+  assert.equal(byClass(rightCell, 'diff-gutter-old'), null, 'right cell drops the old gutter');
+});
+
+test('pairRowEl: a missing side is an inert .diff-cell-empty, never a .diff-line', () => {
+  const frag = pairRowEl('src/a.js', { left: null, right: ADD_LINE }, {});
+  const wrap = frag.childNodes[0];
+  assert.equal(allByClass(wrap, 'diff-line').length, 1, 'only the populated side is clickable');
+  assert.equal(allByClass(wrap, 'diff-cell-empty').length, 1);
+  // The filler carries no addressing at all, so the drag delegation can never
+  // resolve a gesture onto it.
+  assert.deepEqual(allByClass(wrap, 'diff-cell-empty')[0].dataset, {});
+});
+
+test('pairRowEl: a draft anchored on either side lands AFTER the wrapper, not inside a cell', () => {
+  const drafts = { 'src/a.js|old|5|5': { file: 'src/a.js', side: 'old', startLine: 5, endLine: 5, body: 'why?' } };
+  const frag = pairRowEl('src/a.js', { left: DEL_LINE, right: ADD_LINE }, drafts);
+  assert.equal(frag.childNodes.length, 2, 'wrapper then draft');
+  const [wrap, draft] = frag.childNodes;
+  assert.ok(wrap.className.split(' ').includes('diff-row'));
+  assert.ok(draft.className.split(' ').includes('diff-draft'));
+  assert.equal(allByClass(wrap, 'diff-draft').length, 0, 'never trapped in a grid cell');
+});
+
+test('pairRowEl: a context line renders in both cells and emits its draft once', () => {
+  const ctxLine = { type: 'context', text: 'same', oldLine: 6, newLine: 6 };
+  const drafts = { 'src/a.js|new|6|6': { file: 'src/a.js', side: 'new', startLine: 6, endLine: 6, body: 'note' } };
+  const frag = pairRowEl('src/a.js', { left: ctxLine, right: ctxLine }, drafts);
+  assert.equal(frag.childNodes.length, 2, 'wrapper then exactly ONE draft, not one per cell');
+  const cells = allByClass(frag.childNodes[0], 'diff-line');
+  assert.equal(cells.length, 2);
+  // Both cells address the same logical line (lineSide puts context on `new`),
+  // so clicking either opens the same draft.
+  assert.equal(cells[0].dataset.side, 'new');
+  assert.equal(cells[1].dataset.side, 'new');
+  assert.equal(cells[0].dataset.line, '6');
+  assert.equal(cells[1].dataset.line, '6');
+});
+
+test('pairRowEl: hostile line text lands as inert textContent in both cells', () => {
+  const frag = pairRowEl('src/a.js', {
+    left: { type: 'del', text: XSS, oldLine: 5, newLine: null },
+    right: { type: 'add', text: XSS, oldLine: null, newLine: 5 },
+  }, {});
+  const texts = allByClass(frag.childNodes[0], 'diff-text');
+  assert.equal(texts.length, 2);
+  for (const t of texts) {
+    assert.equal(t.textContent, XSS);
+    assert.equal(elementCount(t), 0, 'no parsed child elements from the payload');
+    assert.equal(t.innerHTML, '', 'never routed through innerHTML');
+  }
+});
+
+test('pairRowEl: selectedKeys tints a cell in an active range with .selected', () => {
+  const sel = new Set(['src/a.js|old|5']);
+  const frag = pairRowEl('src/a.js', { left: DEL_LINE, right: ADD_LINE }, {}, sel);
+  const [leftCell, rightCell] = allByClass(frag.childNodes[0], 'diff-line');
+  assert.ok(leftCell.className.split(' ').includes('selected'));
+  assert.ok(!rightCell.className.split(' ').includes('selected'));
 });

@@ -5,7 +5,7 @@ import {
   buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
   diffLineKeys, partitionDrafts, isStaleReply, shouldDeferDiffRender,
   rangeSnapshot, rangeLabel, draftAnchoredAt, draftSpanKeys, dragRange,
-  diffPrLinks, draftStorageKeysForSource, clearSubmittedDraftSource,
+  diffPrLinks, draftStorageKeysForSource, clearSubmittedDraftSource, pairHunkLines,
 } from './diff.js';
 
 test('draftsStorageKey: namespaced per session id', () => {
@@ -305,4 +305,74 @@ test('dragRange: rejects a drag onto a different file or side, or missing endpoi
   assert.equal(dragRange(a, { file: 'src/a.js', side: 'old', line: 12 }), null); // other side
   assert.equal(dragRange(a, null), null);
   assert.equal(dragRange(null, a), null);
+});
+
+// --- pairHunkLines (side-by-side layout) ---
+
+// Terse line builders so the pairing tests read as the diff shape they describe.
+const ctx = (oldLine, newLine, text = 'ctx') => ({ type: 'context', oldLine, newLine, text });
+const del = (oldLine, text = 'old') => ({ type: 'del', oldLine, newLine: null, text });
+const add = (newLine, text = 'new') => ({ type: 'add', oldLine: null, newLine, text });
+
+test('pairHunkLines: a pure insertion pairs every add against an empty left', () => {
+  const a1 = add(5), a2 = add(6);
+  assert.deepEqual(pairHunkLines([a1, a2]), [
+    { left: null, right: a1 },
+    { left: null, right: a2 },
+  ]);
+});
+
+test('pairHunkLines: a pure deletion pairs every del against an empty right', () => {
+  const d1 = del(5), d2 = del(6);
+  assert.deepEqual(pairHunkLines([d1, d2]), [
+    { left: d1, right: null },
+    { left: d2, right: null },
+  ]);
+});
+
+test('pairHunkLines: an even rewrite pairs del[i] against add[i]', () => {
+  const d1 = del(5), d2 = del(6), a1 = add(5), a2 = add(6);
+  assert.deepEqual(pairHunkLines([d1, d2, a1, a2]), [
+    { left: d1, right: a1 },
+    { left: d2, right: a2 },
+  ]);
+});
+
+test('pairHunkLines: an uneven run pads the shorter side with null', () => {
+  const d1 = del(5), d2 = del(6), d3 = del(7), a1 = add(5);
+  assert.deepEqual(pairHunkLines([d1, d2, d3, a1]), [
+    { left: d1, right: a1 },
+    { left: d2, right: null },
+    { left: d3, right: null },
+  ]);
+});
+
+test('pairHunkLines: a context line flushes the pending run and emits on both sides', () => {
+  const d1 = del(5), a1 = add(5), c = ctx(6, 6);
+  assert.deepEqual(pairHunkLines([d1, a1, c]), [
+    { left: d1, right: a1 },
+    { left: c, right: c },
+  ]);
+});
+
+test('pairHunkLines: consecutive change blocks separated by context do not bleed together', () => {
+  const d1 = del(5), a1 = add(5), c = ctx(6, 6), d2 = del(7), a2 = add(7);
+  assert.deepEqual(pairHunkLines([d1, a1, c, d2, a2]), [
+    { left: d1, right: a1 },
+    { left: c, right: c },
+    { left: d2, right: a2 },
+  ]);
+});
+
+test('pairHunkLines: a del after an add starts a fresh run rather than joining it', () => {
+  const a1 = add(5), d1 = del(5);
+  assert.deepEqual(pairHunkLines([a1, d1]), [
+    { left: null, right: a1 },
+    { left: d1, right: null },
+  ]);
+});
+
+test('pairHunkLines: null/empty input yields no pairs', () => {
+  assert.deepEqual(pairHunkLines(null), []);
+  assert.deepEqual(pairHunkLines([]), []);
 });
