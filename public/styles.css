@@ -794,16 +794,26 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .sched-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; }
 .sched-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 2px; line-height: 1.5; }
 
-/* Settings panel: a centered .modal-card, one scrolling body split into
-   Appearance / Behavior / Shortcuts sections (settings.js composes them; the
-   Appearance widgets themselves are rendered by theme.js/app.js and spliced in). */
-.settings-card { width: 560px; }
-.settings-body { display: flex; flex-direction: column; gap: 20px; max-height: 64vh; overflow-y: auto; }
-.settings-section-title {
-  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--fg-muted); margin-bottom: 8px;
+/* Settings panel: a wider, responsive card with focused tab panels. */
+.settings-card {
+  box-sizing: border-box; width: 720px; max-width: 92vw; height: 70vh;
+  display: flex; flex-direction: column;
 }
-.settings-section + .settings-section { padding-top: 16px; border-top: 1px solid var(--border-muted); }
+.settings-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.settings-tabs {
+  display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 14px;
+  overflow-x: auto;
+}
+.settings-tab {
+  appearance: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; color: var(--fg-muted); font: inherit; font-size: 13px; font-weight: 500;
+  margin-bottom: -1px; padding: 8px 12px; cursor: pointer;
+}
+.settings-tab:hover { color: var(--fg); background: var(--surface-2); }
+.settings-tab.active { background: transparent; color: var(--fg); border-bottom-color: var(--accent); }
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-panels { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.settings-panel.hidden { display: none; }
 .settings-list { display: flex; flex-direction: column; gap: 4px; }
 .settings-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 2px; }
 .setting-row {
@@ -864,6 +874,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 
 /* Shortcuts section: a hand-maintained reference table, grouped by context. */
 .shortcuts-list { display: flex; flex-direction: column; gap: 14px; }
+.settings-panel .shortcuts-list { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-muted); }
 .shortcuts-group-title {
   font-size: 12px; font-weight: 600; color: var(--fg); margin-bottom: 4px;
 }
@@ -2067,9 +2078,6 @@ main.diff-fullscreen #drag-handle { display: none; }
 /* Working-tree vs full-branch toggle — same segmented-pill language as
    .sched-action-btn, sized down to fit the diff panel's slim header row. */
 .diff-mode { display: flex; gap: 4px; flex: 0 0 auto; }
-/* Same segmented shape as .diff-mode (and it reuses .diff-mode-btn), but it lives in
-   the header's action group: this is how the diff is DRAWN, not what's being diffed. */
-.diff-layout { display: flex; gap: 4px; flex: 0 0 auto; }
 .diff-mode-prs { display: contents; }
 .diff-mode-btn {
   padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -2223,26 +2231,6 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-sign { flex: 0 0 12px; text-align: center; user-select: none; color: var(--fg-subtle); }
 .diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 12px; color: var(--fg); }
-/* Side-by-side layout. One grid row per pair, so both cells stretch to the taller
-   of the two — a long line wrapping on one side can't let the columns drift out of
-   step, which is the whole reason the pair is wrapped rather than laid out flat.
-   1fr/1fr with min-width:0 on the cells keeps the split even at any panel width:
-   the toggle is honoured however narrow the panel is (line text already wraps), so
-   nothing here may depend on a minimum column width. */
-.diff-row { display: grid; grid-template-columns: 1fr 1fr; }
-.diff-row > * { min-width: 0; }
-.diff-row > * + * { border-left: 1px solid var(--border-muted); }
-/* Filler where a pair has nothing on one side (a pure insertion or deletion). Faint
-   neutral wash rather than an add/del tint — it represents absence, not a change —
-   and deliberately NOT a .diff-line, so the drag delegation can never target it. */
-.diff-cell-empty { background: color-mix(in srgb, var(--fg) 4%, transparent); }
-/* Comment boxes and saved draft cards hang off the pair wrapper, so they're already
-   full width — the inline layout's deep indent (clearing both gutters) would just push
-   them off-centre under a two-column row. The detached-comments section keeps its own
-   indent either way: it isn't anchored to a line at all. */
-.diff-body.diff-split .diff-editor,
-.diff-body.diff-split .diff-file:not(.diff-detached) .diff-draft { margin-left: 12px; }
-
 .diff-binary { padding: 8px 14px; font-size: 12px; font-style: italic; color: var(--fg-muted); }
 
 /* Inline comment box, attached below a line (indented past the gutters). */
