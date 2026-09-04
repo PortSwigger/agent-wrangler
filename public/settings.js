@@ -23,10 +23,8 @@
 // bridge app.js hands to initSettings — read off the latest graph, write via the
 // control WS — so this module stays free of app.js imports.
 //
-// The modal is split into three sections: Appearance (theme + terminal font size —
-// bespoke widgets owned by theme.js/app.js, composed in via the `appearance` bridge
-// below, the same pattern as the `server` bridge), Behavior (this registry), and
-// Shortcuts (a static reference table from shortcuts.js).
+// The modal is split into focused tabs. Appearance includes bespoke widgets owned
+// by theme.js/app.js; Shortcuts includes the static reference from shortcuts.js.
 
 import { esc } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
@@ -122,6 +120,36 @@ export const SETTINGS = [
   },
 ];
 
+export const SETTINGS_TABS = [
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  {
+    id: 'sessions',
+    label: 'Sessions',
+    settingIds: [
+      'taskMemoryEnabled', 'subagentsExpandedByDefault', 'soundOnFinish',
+      'childFullViewByDefault', 'chatViewDefault', 'checklistEnabled',
+    ],
+  },
+  {
+    id: 'automation',
+    label: 'Automation',
+    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
+  },
+  { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
+];
+
+export function tabIndexAfterKey(index, key, count) {
+  if (key === 'ArrowRight') return (index + 1) % count;
+  if (key === 'ArrowLeft') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return index;
+}
+
+export function isOpenSettingsKey(event) {
+  return Boolean(event.key === ',' && event.metaKey && event.ctrlKey && !event.shiftKey && !event.altKey);
+}
+
 let serverBridge = { get: () => undefined, set: () => {} };
 // { themeRowsHtml(), fontSizeRowHtml(), onThemeSelect(id), onFontSize(n) } — supplied
 // by app.js, which owns both the live theme and the live terminal.
@@ -202,13 +230,6 @@ function rowHtml(def) {
   return '';
 }
 
-function sectionHtml(title, inner) {
-  return `<div class="settings-section">
-      <div class="settings-section-title">${esc(title)}</div>
-      ${inner}
-    </div>`;
-}
-
 // Same label + help styling as a Behavior row (.setting-label/.setting-help), so
 // Appearance's theme picker and font-size row read consistently with the toggles
 // below them even though they have their own row of buttons instead of a switch.
@@ -220,17 +241,46 @@ function appearanceItemHtml(label, help, body) {
     </div>`;
 }
 
-function render(body) {
-  const behaviorRows = SETTINGS.map(rowHtml).join('') || '<div class="settings-empty">No settings yet.</div>';
-  body.innerHTML = [
-    sectionHtml('Appearance', [
+function tabPanelHtml(tab, selected) {
+  const rows = tab.settingIds.map((id) => rowHtml(byId.get(id))).join('');
+  let inner = `<div class="settings-list">${rows}</div>`;
+  if (tab.id === 'appearance') {
+    inner = [
       appearanceItemHtml('Theme', null, `<div class="theme-rows">${appearanceBridge.themeRowsHtml()}</div>`),
       appearanceItemHtml('Terminal font size', null, `<div class="fontsize-row">${appearanceBridge.fontSizeRowHtml()}</div>`),
       appearanceItemHtml('Chat font size', 'Applies to the rich chat view only — the terminal keeps its own size above.', `<div class="fontsize-row" data-kind="chat">${appearanceBridge.chatFontSizeRowHtml()}</div>`),
-    ].join('')),
-    sectionHtml('Behavior', `<div class="settings-list">${behaviorRows}</div>`),
-    sectionHtml('Shortcuts', `<div class="shortcuts-list">${shortcutsHtml()}</div>`),
-  ].join('');
+      inner,
+    ].join('');
+  } else if (tab.id === 'shortcuts') {
+    inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
+  }
+  return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
+      role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
+}
+
+function render(body) {
+  const selectedId = SETTINGS_TABS[0].id;
+  const tabs = SETTINGS_TABS.map((tab) => `<button type="button" id="settings-tab-${tab.id}"
+      class="settings-tab${tab.id === selectedId ? ' active' : ''}" role="tab"
+      aria-selected="${tab.id === selectedId ? 'true' : 'false'}"
+      aria-controls="settings-panel-${tab.id}" tabindex="${tab.id === selectedId ? '0' : '-1'}"
+      data-tab="${tab.id}">${esc(tab.label)}</button>`).join('');
+  const panels = SETTINGS_TABS.map((tab) => tabPanelHtml(tab, tab.id === selectedId)).join('');
+  body.innerHTML = `<div class="settings-tabs" role="tablist" aria-label="Settings sections">${tabs}</div>
+    <div class="settings-panels">${panels}</div>`;
+}
+
+function selectTab(body, tabId, focus = false) {
+  body.querySelectorAll('.settings-tab').forEach((tab) => {
+    const selected = tab.dataset.tab === tabId;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focus) tab.focus();
+  });
+  body.querySelectorAll('.settings-panel').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.id !== `settings-panel-${tabId}`);
+  });
 }
 
 // Wire the gear button + modal once at startup. Reuses the shared modal overlay
@@ -256,10 +306,25 @@ export function initSettings({ server, appearance, onChange } = {}) {
 
   if (btn) btn.addEventListener('click', open);
   closeBtn?.addEventListener('click', close);
+  window.addEventListener('keydown', (e) => {
+    if (!isOpenSettingsKey(e)) return;
+    if (!modal.classList.contains('hidden')) {
+      e.preventDefault();
+      return;
+    }
+    if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+    e.preventDefault();
+    open();
+  }, true);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
 
   body.addEventListener('click', (e) => {
+    const tab = e.target.closest('.settings-tab');
+    if (tab) {
+      selectTab(body, tab.dataset.tab);
+      return;
+    }
     const themeRow = e.target.closest('.theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
@@ -302,5 +367,15 @@ export function initSettings({ server, appearance, onChange } = {}) {
     setSetting(def.id, next);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
+  });
+
+  body.addEventListener('keydown', (e) => {
+    const tab = e.target.closest('.settings-tab');
+    if (!tab) return;
+    const index = SETTINGS_TABS.findIndex(({ id }) => id === tab.dataset.tab);
+    const next = tabIndexAfterKey(index, e.key, SETTINGS_TABS.length);
+    if (next === index) return;
+    e.preventDefault();
+    selectTab(body, SETTINGS_TABS[next].id, true);
   });
 }

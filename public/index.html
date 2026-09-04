@@ -68,13 +68,6 @@
             <span class="diff-sub" id="diff-sub"></span>
           </div>
           <div class="diff-head-acts">
-            <!-- How the diff is DRAWN, deliberately separate from .diff-mode above
-                 (which is what's being diffed, and whose PR buttons are rendered
-                 dynamically) — same view concern as the fullscreen button beside it. -->
-            <div class="diff-layout" role="group" aria-label="Diff layout">
-              <button id="diff-layout-inline" class="diff-mode-btn on" type="button" data-layout="inline" title="One column of unified-diff lines">Inline</button>
-              <button id="diff-layout-split" class="diff-mode-btn" type="button" data-layout="split" title="Old and new side by side">Side-by-side</button>
-            </div>
             <button id="diff-send" class="primary" type="button" hidden>Send to agent (0)</button>
             <button id="diff-fullscreen" class="icon-ghost" type="button" title="Fullscreen"></button>
             <button id="diff-close" class="icon-ghost" type="button" title="Close (Esc)"></button>
@@ -416,7 +409,7 @@
   <div id="settings-modal" class="hidden">
     <div class="modal-card settings-card">
       <h3 id="settings-title">Settings</h3>
-      <!-- Sections injected by settings.js: Appearance, Behavior, Shortcuts. -->
+      <!-- Tabbed sections injected by settings.js. -->
       <div id="settings-body" class="settings-body"></div>
       <div class="modal-actions">
         <button id="settings-close" class="primary">Done</button>

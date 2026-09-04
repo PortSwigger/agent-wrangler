@@ -18,6 +18,7 @@ const SHORTCUTS = [
       ['⌃⌘S', 'Snooze / unsnooze the selected session'],
       ['⌃⌘G', 'Toggle the working-tree diff panel'],
       ['⌃⌘A', 'Jump to any session: label every card with a letter, then type it'],
+      ['⌃⌘,', 'Open Settings'],
       ['⌃⌘⌫ / Delete', 'Archive the selected session'],
       ['Escape', 'Close the open dialog or panel'],
     ],
