@@ -1546,10 +1546,15 @@ function peerReviewSession(sessionId) {
 // the grid can't yank it out from under the click that's still running — unlike
 // the poll-driven renderGridIfVisible() (gated on !cardMenuEl for exactly that
 // reason against OTHER in-flight interactions, e.g. Rename's captured input).
-// `s` is the live latestSessions entry (not a copy — see openCardMenu/
-// openActionsMenu), so mutating it directly is what renderGrid's next pass
-// reads; the server round-trip + next graph poll still reconcile afterwards.
+// `s` is the live latestSessions entry AT THE TIME THE MENU OPENED — but a
+// graph poll (every ~4s) reassigns `latestSessions` to brand-new objects even
+// while the menu stays open (applyGraph only skips the *render* while
+// cardMenuEl is set, not the reassignment), so `s` can go stale/detached
+// mid-menu. `run` below re-resolves the CURRENT entry by id and mutates that
+// one too, or the immediate renderGrid() reads the untouched array and
+// silently no-ops until the menu closes and a later poll catches up.
 function childFullViewMenuItem(s) {
+  const sessionId = s.sessionId;
   let on = isChildFullView(s);
   return {
     label: 'Full view',
@@ -1557,9 +1562,11 @@ function childFullViewMenuItem(s) {
     trailing: on ? CHECK_ICON : '',
     keepOpen: true,
     run: (e) => {
-      on = !on;
+      const live = latestSessions.find((x) => x.sessionId === sessionId);
+      on = !(live ? isChildFullView(live) : on);
+      if (live) live.childFullView = on;
       s.childFullView = on;
-      toggleChildFullView(s.sessionId, on);
+      toggleChildFullView(sessionId, on);
       const t = e.currentTarget.querySelector('.context-menu-trailing');
       if (t) t.innerHTML = on ? CHECK_ICON : '';
       if (currentView === 'grid') renderGrid();
