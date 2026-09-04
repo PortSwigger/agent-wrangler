@@ -5,10 +5,17 @@
 // its persistence, and getSetting() all derive from it, no other wiring needed.
 // Read a value anywhere with getSetting(id); it reads localStorage live, so a
 // consumer that calls it per-use (e.g. on each keypress) always sees the current
-// choice with no change-event plumbing.
+// choice with no change-event plumbing. A setting whose effect must be visible
+// the INSTANT it's flipped (layout, not behaviour — terminalSide) has nothing
+// to re-read it at that moment, so those hang off the `onChange` bridge below
+// instead; prefer read-per-use where it works, since it can't fall out of sync.
 //
 // Each entry: { id, label, help, type, default }.
 //   type 'toggle' → boolean, rendered as a switch; getSetting returns a boolean.
+//   type 'segmented' → one of `options` ([{ value, label }]), rendered as a row of
+//     pills sharing the Appearance font-size row's styling; getSetting returns the
+//     chosen `value` string. An unknown stored value (hand-edited, or left behind
+//     by a renamed option) falls back to `default` rather than reaching a consumer.
 // New types extend renderRow()/readStored()/writeStored() + getSetting().
 //
 // scope: 'server' marks a setting persisted in the server's config.json (shared
@@ -98,6 +105,14 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'terminalSide',
+    type: 'segmented',
+    options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }],
+    label: 'Terminal position',
+    help: 'Which side of the board the selected session\'s terminal / chat pane sits on. Per-browser rather than shared, like the theme and the pane\'s own drag-resized width — which side of the screen it wants to be on is a property of the machine you are sitting at. The nav rail stays on the far left either way.',
+    default: 'right',
+  },
+  {
     id: 'checklistEnabled',
     type: 'toggle',
     scope: 'server',
@@ -114,6 +129,8 @@ let appearanceBridge = {
   themeRowsHtml: () => '', fontSizeRowHtml: () => '', chatFontSizeRowHtml: () => '',
   onThemeSelect: () => {}, onFontSize: () => {}, onChatFontSize: () => {},
 };
+// (id, value) after every write, either scope — see initSettings' `onChange`.
+let changeBridge = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -125,6 +142,11 @@ function readStored(def) {
   const raw = localStorage.getItem(STORE_PREFIX + def.id);
   if (raw == null) return def.default;
   if (def.type === 'toggle') return raw === '1';
+  // Validated, not trusted: localStorage outlives the option list that wrote it,
+  // so a value no entry still offers must not reach a consumer switching on it.
+  if (def.type === 'segmented') {
+    return def.options.some((o) => o.value === raw) ? raw : def.default;
+  }
   return raw;
 }
 
@@ -143,7 +165,9 @@ export function getSetting(id) {
 
 export function setSetting(id, value) {
   const def = byId.get(id);
-  if (def) writeStored(def, value);
+  if (!def) return;
+  writeStored(def, value);
+  changeBridge(id, value);
 }
 
 function rowHtml(def) {
@@ -160,6 +184,19 @@ function rowHtml(def) {
           aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(def.label)}">
           <span class="setting-knob"></span>
         </button>
+      </div>`;
+  }
+  if (def.type === 'segmented') {
+    const opts = def.options.map((o) => `<button type="button" role="radio"
+          class="setting-seg-opt${o.value === on ? ' active' : ''}"
+          aria-checked="${o.value === on ? 'true' : 'false'}"
+          data-value="${esc(o.value)}">${esc(o.label)}</button>`).join('');
+    return `<div class="setting-row" data-id="${esc(def.id)}">
+        <div class="setting-copy">
+          <div class="setting-label">${esc(def.label)}</div>
+          ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
+        </div>
+        <div class="setting-seg" role="radiogroup" aria-label="${esc(def.label)}">${opts}</div>
       </div>`;
   }
   return '';
@@ -199,10 +236,12 @@ function render(body) {
 // Wire the gear button + modal once at startup. Reuses the shared modal overlay
 // styling (centered, backdrop-dismiss, Escape) like every other -modal.
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
-// `appearance` is the theme/font-size bridge described above.
-export function initSettings({ server, appearance } = {}) {
+// `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
+// fires after every write, either scope.
+export function initSettings({ server, appearance, onChange } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
+  if (onChange) changeBridge = onChange;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -237,6 +276,21 @@ export function initSettings({ server, appearance } = {}) {
       // .fontsize-row groups now, and a body-wide query would clear the other
       // setting's highlight on every click, showing no selection at all for it.
       row?.querySelectorAll('.fontsize-opt').forEach((r) => r.classList.toggle('active', r === fontOpt));
+      return;
+    }
+    const segOpt = e.target.closest('.setting-seg-opt');
+    if (segOpt) {
+      const segRow = segOpt.closest('.setting-row');
+      const segDef = byId.get(segRow?.dataset.id);
+      if (!segDef || segDef.type !== 'segmented') return;
+      setSetting(segDef.id, segOpt.dataset.value);
+      // Scoped to this row's group, like the two .fontsize-row groups above: a
+      // body-wide query would clear another segmented row's highlight too.
+      segRow.querySelectorAll('.setting-seg-opt').forEach((b) => {
+        const active = b === segOpt;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
       return;
     }
     const toggle = e.target.closest('.setting-toggle');
