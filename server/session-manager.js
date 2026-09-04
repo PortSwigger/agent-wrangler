@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, isOwnedTmux } from './agents/index.js';
+import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
@@ -830,7 +830,7 @@ export class SessionManager {
     } else if (prev?.liveSessionId && prev.liveSessionId !== sessionId) {
       resumeId = prev.liveSessionId;
     } else {
-      resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0 });
+      resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
     }
     if (!resumeId) {
       throw new Error(`Could not locate a ${agent} session to resume (no rollout found under ${dir}).`);

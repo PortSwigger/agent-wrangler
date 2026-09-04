@@ -11,6 +11,18 @@ function uuidFromName(name) {
   return m ? m[1] : null;
 }
 
+// When a rollout was minted, from its own filename (`rollout-<YYYY-MM-DD>T<HH-MM-SS>-<uuid>.jsonl`,
+// written in local time). mtime can't answer this: resuming an old conversation rewrites
+// its file, so a superseded rollout can carry today's mtime. Null when the name doesn't
+// carry a timestamp — callers treat that as "unknown, don't exclude".
+function mintedAtFromName(name) {
+  const m = name.match(/^rollout-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  const t = new Date(y, mo - 1, d, h, mi, s).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
 // Read the SessionMeta cwd from the first line of a rollout. A freshly-launched
 // session is never pre-compressed, so plain .jsonl only here.
 function rolloutCwd(file) {
@@ -54,11 +66,18 @@ async function allRollouts(sessionsDir) {
 // The Codex session id for a session launched in `cwd` at `launchedAt` (ms):
 // newest rollout written at/after launch whose SessionMeta cwd matches. A small
 // negative slop on launchedAt absorbs clock/rounding skew vs the file mtime.
-export async function discoverCodexLiveId({ cwd, launchedAt = 0, sessionsDir = CODEX_SESSIONS } = {}) {
+// `mintedAfter` additionally excludes rollouts minted before that time — for callers
+// resolving an id long after launch, where mtime says only when a file was last
+// touched and cwd alone would match any session the directory has ever hosted.
+export async function discoverCodexLiveId({ cwd, launchedAt = 0, mintedAfter = 0, sessionsDir = CODEX_SESSIONS } = {}) {
   const floor = launchedAt - 2000;
   const target = realpathOrSelf(cwd);
   for (const r of await allRollouts(sessionsDir)) {
     if (r.mtimeMs < floor) break; // sorted newest-first; nothing older can match
+    if (mintedAfter) {
+      const minted = mintedAtFromName(r.name);
+      if (minted != null && minted < mintedAfter) continue; // predates the caller's session
+    }
     const rc = rolloutCwd(r.full);
     if (rc != null && realpathOrSelf(rc) === target) return uuidFromName(r.name);
   }

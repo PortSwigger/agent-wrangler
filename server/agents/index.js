@@ -23,6 +23,17 @@ export function modelPillFor(agentId, currentModel, launchModel) {
   return entry ? { label: entry.pillLabel, title: launchModel } : { label: launchModel, title: launchModel };
 }
 
+// Mint-time floor for the fallback id lookup a discover-id agent (Codex) does when an
+// entry has no cached live id. A rollout minted before the card existed cannot be that
+// card's conversation, and whatever is resolved gets persisted — so an unbounded scan
+// lets a superseded session in a since-reused directory capture the card for good.
+// Legacy entries predate createdAt: they keep the old unbounded behaviour rather than
+// becoming unresumable.
+export function discoveryFloor(entry) {
+  const created = Number(entry?.createdAt);
+  return Number.isFinite(created) && created > 0 ? created : 0;
+}
+
 export function adapterForProcess(command) {
   return ALL.find((a) => a.matchProcess(command)) || null;
 }
