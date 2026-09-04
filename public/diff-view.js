@@ -5,11 +5,11 @@ import {
   buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
   diffLineKeys, partitionDrafts, isStaleReply, shouldDeferDiffRender,
   draftKey, rangeSnapshot, draftSpanKeys, dragRange, diffPrLinks,
-  draftStorageKeysForSource, clearSubmittedDraftSource,
+  draftStorageKeysForSource, clearSubmittedDraftSource, pairHunkLines,
 } from './diff.js';
 import {
-  noticeEl, fileHeaderEl, hunkHeadEl, binaryEl, lineEl, editorEl, detachedSectionEl, fileListEl,
-  orderFilesForDisplay,
+  noticeEl, fileHeaderEl, hunkHeadEl, binaryEl, lineEl, pairRowEl, editorEl, detachedSectionEl,
+  fileListEl, orderFilesForDisplay,
 } from './diff-dom.js';
 
 // The working-tree diff panel: a slide-in over the #grid slot (the terminal
@@ -40,6 +40,8 @@ const fullscreenBtn = document.getElementById('diff-fullscreen');
 const modeWtBtn = document.getElementById('diff-mode-wt');
 const modeBranchBtn = document.getElementById('diff-mode-branch');
 const modePrsEl = document.getElementById('diff-mode-prs');
+const layoutInlineBtn = document.getElementById('diff-layout-inline');
+const layoutSplitBtn = document.getElementById('diff-layout-split');
 
 // One-time icon fill (icons are JS strings, so the static HTML leaves the slot
 // empty). Close is icon-only; the send button keeps its text label.
@@ -51,6 +53,12 @@ let openSid = null;        // session whose diff is shown, or null when closed
 let diffFullscreen = false; // the diff panel's own fullscreen (hides #sidebar); reset on close
 let sessionLabel = '';     // the session label shown in diff-sub, before any baseRef suffix
 let diffMode = 'working-tree'; // 'working-tree' (uncommitted only) or 'branch' (vs origin/branch)
+// 'inline' (one unified column) or 'split' (old | new side by side). Unlike diffMode
+// — a scope choice that resets to Uncommitted on every fresh open — this is a viewing
+// preference, so it's persisted globally alongside cm-diff-filelist-w and the theme
+// keys and survives both a panel switch and a reload.
+const LAYOUT_KEY = 'cm-diff-layout';
+let diffLayout = localStorage.getItem(LAYOUT_KEY) === 'split' ? 'split' : 'inline';
 let prLinks = [];
 let selectedPr = null;
 let pollTimer = null;
@@ -288,6 +296,30 @@ function applyMode(mode) {
   }
 }
 
+// Toggle the layout buttons' visual state and the tracked layout, without side
+// effects — the mirror of applyMode, used to reflect the persisted preference at
+// startup before anything is rendered.
+function applyLayout(layout) {
+  diffLayout = layout;
+  layoutInlineBtn.classList.toggle('on', layout === 'inline');
+  layoutSplitBtn.classList.toggle('on', layout === 'split');
+  bodyEl.classList.toggle('diff-split', layout === 'split');
+}
+applyLayout(diffLayout);
+
+// User-initiated layout switch. Same close-the-editor/cancel-the-drag preamble as
+// setMode (a re-render is about to replace the body), but deliberately NO re-request:
+// the diff data is identical, only the rendering changes.
+function setLayout(layout) {
+  if (layout === diffLayout) return;
+  cancelDrag();
+  applyLayout(layout);
+  localStorage.setItem(LAYOUT_KEY, layout);
+  // closeEditor re-renders on its own (and applies any diff stashed while the box was
+  // open), so let it do the one render rather than paying for two.
+  if (activeKey) closeEditor(); else renderDiff();
+}
+
 // User-initiated mode switch: close any open editor/drag first (a re-render is about
 // to replace the body), apply the new mode, and immediately re-request — same
 // bypass-the-in-flight-gate treatment as the initial open, since the user is waiting
@@ -519,7 +551,11 @@ function renderDiff() {
       } else {
         for (const h of f.hunks || []) {
           section.append(hunkHeadEl(h.header));
-          for (const ln of h.lines || []) section.append(lineEl(f.path, ln, drafts, selectedKeys));
+          if (diffLayout === 'split') {
+            for (const pair of pairHunkLines(h.lines)) section.append(pairRowEl(f.path, pair, drafts, selectedKeys));
+          } else {
+            for (const ln of h.lines || []) section.append(lineEl(f.path, ln, drafts, selectedKeys));
+          }
         }
       }
       frag.append(section);
@@ -700,6 +736,16 @@ function findLineRow(file, side, line) {
   return null;
 }
 
+// The element a comment box / draft block hangs off for a given line row. Inline that's
+// the row itself; in the side-by-side layout the row is a cell inside a `.diff-row`
+// grid container, and mounting the editor there would place it as a grid item beside
+// the code instead of full-width beneath the pair — so climb to the wrapper. Same
+// placement pairRowEl already gives an anchored draft, which is what keeps
+// openEditor's "is my draft the next sibling?" check working in both layouts.
+function mountRowFor(row) {
+  return row ? (row.closest('.diff-row') ?? row) : null;
+}
+
 // Manually tint the rows of a MULTI-line selection while its editor is open — a render
 // is deferred during editing (it would destroy the box), so renderDiff's own span
 // highlight can't run yet. Single-line selections get no tint (preserve today's look).
@@ -729,11 +775,16 @@ function openEditor(target) {
   const snapshot = existing ? existing.snapshot : rangeSnapshot(lastDiff, file, side, startLine, endLine);
   // Anchor the editor under the LAST line of the span (or its own draft block); a
   // detached draft's lines aren't rendered, so fall back to its `.diff-draft` item.
-  const anchorRow = findLineRow(file, side, endLine);
+  const anchorRow = mountRowFor(findLineRow(file, side, endLine));
   let mount = anchorRow;
   if (anchorRow) {
-    const next = anchorRow.nextElementSibling;
-    if (next?.classList?.contains('diff-draft') && next.dataset.key === key) mount = next;
+    // Scan the whole run of draft cards hanging off this row, not just the first: a
+    // side-by-side pair can carry TWO (an old-side note and a new-side one), and
+    // mounting the box on the wrapper when the match is the second would drop it
+    // above the other side's card. Inline, the run is at most one — same behaviour.
+    for (let n = anchorRow.nextElementSibling; n?.classList?.contains('diff-draft'); n = n.nextElementSibling) {
+      if (n.dataset.key === key) { mount = n; break; }
+    }
   } else {
     mount = bodyEl.querySelector(`.diff-draft[data-key="${cssEscape(key)}"]`);
   }
@@ -840,6 +891,8 @@ fullscreenBtn.addEventListener('click', () => setDiffFullscreen(!diffFullscreen)
 sendBtn.addEventListener('click', () => submit());
 modeWtBtn.addEventListener('click', () => { selectedPr = null; setMode('working-tree'); });
 modeBranchBtn.addEventListener('click', () => { selectedPr = null; setMode('branch'); });
+layoutInlineBtn.addEventListener('click', () => setLayout('inline'));
+layoutSplitBtn.addEventListener('click', () => setLayout('split'));
 
 // Delegated clicks in the scroll body: draft edit/delete (line comments themselves
 // are opened via the click-and-drag gesture below, not a click handler here).

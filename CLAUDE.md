@@ -288,6 +288,27 @@ don't re-derive it.
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
   keyed on the card id.
+- **The diff view has TWO layouts, and in side-by-side a `.diff-line` is no longer a
+  direct child of its file section.** `cm-diff-layout` picks inline (one unified
+  column) or split, where `pairHunkLines` (`diff.js`) zips a hunk's deletion run
+  POSITIONALLY against the addition run that follows it and `pairRowEl`
+  (`diff-dom.js`) wraps each pair in a `.diff-row` two-column grid. The wrapper is
+  what keeps the columns aligned — both cells sit in one grid row, so a long line
+  wrapping on one side stretches BOTH; a flat grid of `grid-column`-placed cells
+  can't, because anything inserted between the two cells pushes the second onto its
+  own row. The cells keep the same `file`/`side`/`line` `data-*` a unified row
+  carries, which is what lets `findLineRow`/`highlightRange`/`paintDragRange`/
+  `dragRange` and the drag handler stay layout-agnostic — **but anything that mounts
+  DOM relative to a line row must go through `mountRowFor` (`diff-view.js`)**, or a
+  comment box lands as a grid item beside the code instead of full width beneath the
+  pair. A pair can carry TWO drafts (an old-side note and a new-side one) where an
+  inline row only ever carries one, so a "my draft is the next sibling" check has to
+  walk the whole run. A missing side renders `.diff-cell-empty`, deliberately **not**
+  a `.diff-line`, so the drag delegation's `.closest('.diff-line')` can never resolve
+  onto filler. A context line is one logical line drawn in both cells (`lineSide`
+  addresses it on `new` from either), so its single draft is de-duplicated by key.
+  **No width-threshold fallback to inline** — the toggle is honoured at any panel
+  width, so nothing here may depend on a minimum column width.
 - **`tileSpan` (`public/layout.js`) takes THREE child counts and they must stay
   distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
   subtracted to get the top-level active count; `childRowCount` (only rows currently

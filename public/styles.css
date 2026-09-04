@@ -2067,6 +2067,9 @@ main.diff-fullscreen #drag-handle { display: none; }
 /* Working-tree vs full-branch toggle — same segmented-pill language as
    .sched-action-btn, sized down to fit the diff panel's slim header row. */
 .diff-mode { display: flex; gap: 4px; flex: 0 0 auto; }
+/* Same segmented shape as .diff-mode (and it reuses .diff-mode-btn), but it lives in
+   the header's action group: this is how the diff is DRAWN, not what's being diffed. */
+.diff-layout { display: flex; gap: 4px; flex: 0 0 auto; }
 .diff-mode-prs { display: contents; }
 .diff-mode-btn {
   padding: 4px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -2220,6 +2223,26 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-sign { flex: 0 0 12px; text-align: center; user-select: none; color: var(--fg-subtle); }
 .diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 12px; color: var(--fg); }
+/* Side-by-side layout. One grid row per pair, so both cells stretch to the taller
+   of the two — a long line wrapping on one side can't let the columns drift out of
+   step, which is the whole reason the pair is wrapped rather than laid out flat.
+   1fr/1fr with min-width:0 on the cells keeps the split even at any panel width:
+   the toggle is honoured however narrow the panel is (line text already wraps), so
+   nothing here may depend on a minimum column width. */
+.diff-row { display: grid; grid-template-columns: 1fr 1fr; }
+.diff-row > * { min-width: 0; }
+.diff-row > * + * { border-left: 1px solid var(--border-muted); }
+/* Filler where a pair has nothing on one side (a pure insertion or deletion). Faint
+   neutral wash rather than an add/del tint — it represents absence, not a change —
+   and deliberately NOT a .diff-line, so the drag delegation can never target it. */
+.diff-cell-empty { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+/* Comment boxes and saved draft cards hang off the pair wrapper, so they're already
+   full width — the inline layout's deep indent (clearing both gutters) would just push
+   them off-centre under a two-column row. The detached-comments section keeps its own
+   indent either way: it isn't anchored to a line at all. */
+.diff-body.diff-split .diff-editor,
+.diff-body.diff-split .diff-file:not(.diff-detached) .diff-draft { margin-left: 12px; }
+
 .diff-binary { padding: 8px 14px; font-size: 12px; font-style: italic; color: var(--fg-muted); }
 
 /* Inline comment box, attached below a line (indented past the gutters). */

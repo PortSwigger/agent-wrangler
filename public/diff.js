@@ -57,6 +57,44 @@ export function lineNumberFor(line) {
   return lineSide(line.type) === 'old' ? line.oldLine : line.newLine;
 }
 
+// Reshape a hunk's flat unified-diff lines into left/right pairs for the
+// side-by-side layout: `[{ left, right }]`, either side null where that column
+// has nothing to show. A context line is the same line on both sides; a run of
+// deletions is zipped POSITIONALLY against the run of additions that follows it,
+// so a rewrite reads old-against-new line-for-line and the longer run's tail
+// pairs against empty cells.
+//
+// The zip is positional rather than content-matched on purpose — pairing by
+// similarity would reorder lines relative to the unified view, and the two
+// layouts have to agree on what line 5 is. A `del` seen after an `add` flushes
+// and starts a fresh run: unified diff always writes `-` before `+` within one
+// change block, so that only ever guards malformed input, but without it a
+// later deletion would silently pair against an earlier block's additions.
+export function pairHunkLines(lines) {
+  const out = [];
+  let dels = [];
+  let adds = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(dels.length, adds.length); i++) {
+      out.push({ left: dels[i] ?? null, right: adds[i] ?? null });
+    }
+    dels = []; adds = [];
+  };
+  for (const ln of lines || []) {
+    if (ln.type === 'del') {
+      if (adds.length) flush();
+      dels.push(ln);
+    } else if (ln.type === 'add') {
+      adds.push(ln);
+    } else {
+      flush();
+      out.push({ left: ln, right: ln });
+    }
+  }
+  flush();
+  return out;
+}
+
 // Stable identity for a draft / a comment box: file path + side + the inclusive
 // line RANGE it addresses. A single-line comment is startLine === endLine, so the
 // key is range-aware for every draft (`file|side|start|end`) and re-opening the
