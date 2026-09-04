@@ -50,6 +50,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
+import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 
@@ -3700,6 +3701,17 @@ function hideSidebar() {
   disarmChatHandoff();
 }
 
+// Which side of the board the session pane sits on. Per-browser (like the theme
+// and the pane's own width) rather than shared: it describes the screen you're
+// sitting at, not the board. `main.term-left` is the whole mechanism — styles.css
+// reorders #sidebar/#drag-handle and moves the border; nothing here measures or
+// positions anything, so there's no geometry to keep in sync and no xterm refit
+// (the pane's width doesn't change, only where the row puts it).
+function applyTerminalSide(side = getSetting('terminalSide')) {
+  document.querySelector('main').classList.toggle('term-left', side === 'left');
+}
+applyTerminalSide();
+
 // Drag-to-resize the sidebar (stretch the terminal wider than the grid).
 (function initSidebarResize() {
   const handle = document.getElementById('drag-handle');
@@ -3715,7 +3727,15 @@ function hideSidebar() {
   });
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const w = Math.min(window.innerWidth - 200, Math.max(280, window.innerWidth - e.clientX));
+    // The clamp + which-edge-to-measure-from lives in the sidebar-side leaf so it
+    // can be unit-tested from both sides; the side is read per-drag rather than
+    // captured, so flipping the setting mid-session needs no re-wiring here.
+    const w = sidebarWidthFromDrag({
+      clientX: e.clientX,
+      rect: sidebar.getBoundingClientRect(),
+      viewportWidth: window.innerWidth,
+      onLeft: getSetting('terminalSide') === 'left',
+    });
     sidebar.style.width = `${w}px`;
   });
   window.addEventListener('mouseup', () => {
@@ -5084,6 +5104,11 @@ initSettings({
         renderChecklist(selectedSessionId);
       }
     },
+  },
+  // Settings whose effect is LAYOUT rather than behaviour: nothing re-reads them
+  // on its own, so they have to be applied on the flip itself.
+  onChange: (id, value) => {
+    if (id === 'terminalSide') applyTerminalSide(value);
   },
   appearance: {
     themeRowsHtml: renderThemeRows,

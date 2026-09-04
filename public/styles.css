@@ -241,6 +241,25 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 }
 #sidebar.collapsed { display: none; }
 
+/* "Terminal position: Left" (per-browser, settings.js `terminalSide`): move the
+   session pane and its resize handle to the head of <main>'s flex row. `order`
+   rather than `flex-direction: row-reverse` deliberately — main's other children
+   (#grid, #search, #diff-panel) are content siblings that must keep their own
+   order, and reversing the row would drag them along for no reason. Everything
+   else defaults to order 0, so these two negatives are the whole flip. The
+   border moves to the pane's new inner edge; the nav rail is outside <main> and
+   stays on the far left either way. */
+main.term-left #sidebar {
+  order: -2;
+  border-left: 0;
+  border-right: 1px solid var(--border-muted);
+}
+main.term-left #drag-handle {
+  order: -1;
+  border-left: 0;
+  border-right: 1px solid var(--border-muted);
+}
+
 /* In-app maximize: expand the agent window to fill the content area, hiding the
    task board (the nav rail lives outside <main>, so it stays). Layout-only — no
    colors — so it's theme-safe by construction. #search is defensive: hideSidebar
@@ -827,13 +846,18 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .theme-row .icon { width: 16px; height: 16px; flex: 0 0 auto; }
-.fontsize-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.fontsize-opt {
+/* A Behavior row's `segmented` control (settings.js) shares these three rules
+   rather than forking a fourth pill style — same idiom as .checklist-pill riding
+   .subagent-pill. It differs only in sitting in a space-between .setting-row, so
+   it must not shrink away from its label; the Appearance rows stack instead. */
+.fontsize-row, .setting-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.setting-seg { flex: 0 0 auto; }
+.fontsize-opt, .setting-seg-opt {
   padding: 5px 10px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px;
   background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
 }
-.fontsize-opt:hover { background: var(--surface-2); color: var(--fg); }
-.fontsize-opt.active {
+.fontsize-opt:hover, .setting-seg-opt:hover { background: var(--surface-2); color: var(--fg); }
+.fontsize-opt.active, .setting-seg-opt.active {
   color: var(--fg); border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
