@@ -1665,7 +1665,12 @@ function openActionsMenu(sessionId, x, y) {
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
-    ...(s.managed ? [{ label: 'Open terminal', icon: TERMINAL_ICON, trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
+    // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
+    // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
+    // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
+    // the handler's own error) and doesn't care whether the panel is showing Chat or
+    // Terminal for this session.
+    ...(s.cwd ? [{ label: 'Open terminal', icon: TERMINAL_ICON, trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
     isAsleep(s)
       ? { label: 'Unsnooze', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => wakeSession(sessionId) }
       : { label: 'Snooze…', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
@@ -3271,6 +3276,20 @@ function isTypingTarget(el) {
   return false;
 }
 
+// Same idea, but for the Ctrl+Cmd+<letter> chord family (and Ctrl+Cmd+A hint
+// mode) only: that modifier combo never inserts a character into any field on
+// any OS/browser, so the chat composer has no more claim on it than the xterm
+// helper textarea does — unlike bare Enter or Shift+Cmd+arrows (real typing/
+// text-selection inside the composer), which must keep using isTypingTarget
+// above and treat #chat-input as occupied.
+function isTypingTargetForChords(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'INPUT') return true;
+  if (el.tagName === 'TEXTAREA') return el.id !== 'chat-input' && !el.classList.contains('xterm-helper-textarea');
+  return false;
+}
+
 // Shift+Cmd+arrows navigate the board's session selection (see moveTaskFocus /
 // moveSessionFocus): Left/Right switches task, Up/Down switches session within
 // it — matches how the board is laid out (tasks side by side, sessions stacked).
@@ -3325,15 +3344,20 @@ window.addEventListener('keydown', (e) => {
 // empty task — deletes that task; Ctrl+Cmd+T is a toggle for a plain shell
 // terminal in the selected session's cwd. Opening it is the same "Open
 // terminal" action as the Actions menu (`open-terminal-for-session`) — so you
-// can drop a shell alongside the agent's terminal without reaching for the
-// mouse mid-conversation — gated on `current.sessionId === selectedSessionId`
-// (the agent terminal for this session is actually open, i.e. it's a
-// live/managed session) rather than just `selectedSessionId`, so it's a no-op
-// on a dormant/no selection instead of erroring server-side. But if a shell
-// terminal for this session is ALREADY open, the same chord closes it instead
-// (closeShellTerminal() — a pure client-side teardown, so it's allowed even if
-// the agent session has since gone dormant) rather than replacing it with a
-// fresh one, mirroring how M is a single toggle for maximize/restore.
+// can drop a shell alongside the agent's terminal (or its chat view — the
+// shell pane mounts as its own sibling under #sidebar, independent of
+// #term-wrap/#chat-wrap, so it's visible either way) without reaching for the
+// mouse mid-conversation. Gated on `selectedSession?.cwd` (matching the
+// Actions menu row, and the only thing the server handler actually needs) —
+// NOT on `current.sessionId === selectedSessionId` (the agent's own terminal
+// being attached) as it used to be, since that's false whenever the panel is
+// showing Chat instead of Terminal for a perfectly live session (openTerminal
+// deliberately skips attaching then, see viewForSession guard above) and made
+// this chord a no-op there. If a shell terminal for this session is ALREADY
+// open, the same chord closes it instead (closeShellTerminal() — a pure
+// client-side teardown, so it's allowed even if the agent session has since
+// gone dormant) rather than replacing it with a fresh one, mirroring how M is
+// a single toggle for maximize/restore.
 //
 // Ctrl+Cmd+B forks the selected session ("Branch" — Ctrl+Cmd+F was the natural
 // letter but collides with macOS/Chrome's own Enter Full Screen chord).
@@ -3345,15 +3369,19 @@ window.addEventListener('keydown', (e) => {
 // (snoozeSelected()). Ctrl+Cmd+D toggles the working-tree diff panel for the
 // selected session (open, or close if already showing it). All are no-ops without
 // a selected session, and (per the Actions menu they mirror) work on a
-// dormant/unmanaged session too — unlike T, they don't require a live terminal.
+// dormant/unmanaged session too — except R (Restart), which genuinely needs a
+// live tmux to kill and relaunch.
 //
 // A separate family from Shift+Cmd nav — Ctrl+Cmd+<key> is essentially never
 // browser-reserved (unlike Cmd+N / Shift+Cmd+N) and emits no terminal bytes, so
 // it survives both. The terminal's Cmd+⌫ clear-line chord requires no Ctrl, so
 // it's swallowed separately below before it can fire for this Ctrl+Cmd+Backspace
 // chord. Same gating as nav: grid view only, inert while a modal, context menu,
-// or real text input is in play (the xterm helper textarea is NOT a typing
-// target, so these chain straight off an attached terminal).
+// or real text input is in play — via isTypingTargetForChords, not
+// isTypingTarget: neither the xterm helper textarea NOR the chat composer
+// (#chat-input) is a typing target for THIS family, since Ctrl+Cmd+<letter>
+// never inserts a character into either one, so both chain straight off an
+// attached terminal or a mid-prompt chat composer alike.
 //
 // CAPTURE PHASE, deliberately (third arg true). This is the real fix for the
 // long-broken Ctrl+Cmd+D "open diff from a focused terminal": Ctrl+Cmd+D is
@@ -3379,7 +3407,7 @@ window.addEventListener('keydown', (e) => {
   // so in those contexts they don't over-suppress the browser/OS shortcuts on those
   // same chords (they fall through the gate untouched).
   if (key === 'g') e.preventDefault();
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
+  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
   if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
   // Past the gate the chord is definitely ours — suppress the browser/OS default for
   // the whole family (this is the original, pre-diff-feature behaviour for the rest;
@@ -3389,7 +3417,8 @@ window.addEventListener('keydown', (e) => {
   if (key === 't') {
     if (!selectedSessionId) return;
     if (currentShellTerm && currentShellTerm.sessionId === selectedSessionId) { closeShellTerminal(); return; }
-    if (current && current.sessionId === selectedSessionId) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
+    const ts = latestSessions.find((x) => x.sessionId === selectedSessionId);
+    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
     return;
   }
   if (key === 'b') { if (selectedSessionId) openFork(selectedSessionId); return; }
@@ -3634,13 +3663,15 @@ function onHintKey(e) {
 // the board's own namespace; the letter is the one free home-row key under the
 // left hand (S/D/F/G are the family or macOS Look Up / fullscreen). Same gating
 // as the rest — grid view only, inert behind a modal, a card menu or a real
-// text input — and capture phase for the same reason the family is, so it
-// fires with the terminal focused.
+// text input (isTypingTargetForChords, same as the family above: neither the
+// xterm helper textarea nor the chat composer counts) — and capture phase for
+// the same reason the family is, so it fires with the terminal OR the chat
+// composer focused.
 window.addEventListener('keydown', (e) => {
   if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
   if (e.key.toLowerCase() !== 'a') return;
   if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
+  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
   if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
   e.preventDefault();
   e.stopImmediatePropagation();
