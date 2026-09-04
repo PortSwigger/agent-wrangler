@@ -53,6 +53,7 @@ import { initSettings, getSetting } from './settings.js';
 import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
+import { supportsChatView, viewForSession as resolveSessionView } from './session-view.js';
 
 let currentView = 'grid';
 
@@ -3928,9 +3929,9 @@ function readSessionViews() {
   } catch { return {}; }
 }
 function viewForSession(sessionId) {
+  const session = latestSessions.find((s) => s.sessionId === sessionId);
   const stored = readSessionViews()[sessionId];
-  if (stored === 'chat' || stored === 'terminal') return stored;
-  return chatViewDefault ? 'chat' : 'terminal';
+  return resolveSessionView(session, stored, chatViewDefault);
 }
 function setSessionView(sessionId, view) {
   const all = readSessionViews();
@@ -4043,10 +4044,10 @@ function renderPanel(sessionId) {
         <div class="sess-row1">
           <span class="sess-name" id="session-name" title="Double-click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
-            <span class="chat-seg" role="group" aria-label="Session view">
+            ${supportsChatView(s) ? `<span class="chat-seg" role="group" aria-label="Session view">
               <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
               <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
-            </span>
+            </span>`}
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
             <span class="sess-acts-divider"></span>
             <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
