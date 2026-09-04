@@ -145,6 +145,11 @@ export const chatHandler = {
     const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
     const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
 
+    if (agent === 'codex') {
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion: null, modelNow: null, epoch: epochFor(convId) });
+      return;
+    }
+
     // Claude Code's suggested next prompt — the one thing in this view that is
     // not transcript-sourced, because it exists nowhere else (see
     // ghost-suggestion.js). Read here rather than in buildGraph for three

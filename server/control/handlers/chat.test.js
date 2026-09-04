@@ -76,6 +76,15 @@ test('chat: a missing transcript replies with an empty stream, not an error', as
   assert.equal(c.sent[0].offset, 0);
 });
 
+test('chat: Codex sessions are refused before any transcript read', async () => {
+  const c = ctx(null, { liveSessionId: 'live-1', agent: 'codex' });
+  c.findTranscript = async () => { throw new Error('must not read Codex chat'); };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 4 }, c);
+  assert.deepEqual(c.sent[0].events, []);
+  assert.equal(c.sent[0].offset, 0);
+  assert.equal(c.sent[0].token, 4);
+});
+
 test('chat: echoes the client token verbatim on a normal reply', async () => {
   // The client (chat-view.js) compares this against its own current generation
   // to tell a reply from an earlier mount era apart from the current one, since
