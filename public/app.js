@@ -3832,16 +3832,19 @@ function renderSidebar(s) {
     term.innerHTML = '<div class="term-note"><p>Resuming…</p></div>';
     return;
   }
-  const where = s.exitOutput
-    ? `its previous terminal exited`
+  const intro = s.exitOutput
+    ? `This session's terminal has exited, so there's nothing live to attach — here's what was on screen when it did.`
     : s.tty && s.tty !== '??'
-    ? `it's running in another terminal (<code>${esc(s.tty)}</code>)`
-    : `it has no controlling terminal (detached/background)`;
+    ? `This session isn't running in tmux, so its live terminal can't be attached — it's running in another terminal (<code>${esc(s.tty)}</code>).`
+    : `This session isn't running in tmux, so its live terminal can't be attached — it has no controlling terminal (detached/background).`;
   const exitBlock = s.exitOutput
-    ? `<p class="muted">Last output from the exited terminal:</p><pre class="term-exit">${esc(s.exitOutput)}</pre>`
+    ? `<div class="term-exit-panel">
+        <p class="term-exit-caption">Last screen before it exited</p>
+        <pre class="term-exit">${esc(s.exitOutput)}</pre>
+      </div>`
     : '';
   term.innerHTML = `<div class="term-note">
-    <p>This session isn't running in tmux, so its live terminal can't be attached — ${where}.</p>
+    <p>${intro}</p>
     ${exitBlock}
     <button id="resume-btn">▶ Resume a copy in a new terminal</button>
     <p class="muted">Runs <code>claude --resume --fork-session</code> to branch a copy of this conversation into a fresh tmux session you can attach to here. The original process keeps running independently.</p>

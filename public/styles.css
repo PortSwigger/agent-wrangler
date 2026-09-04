@@ -496,7 +496,13 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 .term-restarting p { margin: 0; }
 .term-restarting .spinner { width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: term-spin 0.7s linear infinite; }
 @keyframes term-spin { to { transform: rotate(360deg); } }
-.term-exit { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 4px 0 10px; color: var(--red); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+/* The exit recording reads as a labeled, read-only snapshot (caption + de-emphasized
+   monospace text), not as a live/broken terminal — deliberately no --red or --term-*
+   vars here, since a normal suspend-and-kill looks identical to a crash in this box
+   and the framing shouldn't imply an error occurred. */
+.term-exit-panel { margin: 4px 0 10px; border: 1px solid var(--border-muted); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.term-exit-caption { margin: 0; padding: 6px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-subtle); background: var(--surface-2); border-bottom: 1px solid var(--border-muted); }
+.term-exit { margin: 0; padding: 10px 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
 
 /* Drag handle between the agent terminal and the shell terminal pane — mirrors #drag-handle. */
 .shell-term-drag-handle {
