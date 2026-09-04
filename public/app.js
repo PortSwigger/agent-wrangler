@@ -4047,7 +4047,7 @@ function renderPanel(sessionId) {
             ${supportsChatView(s) ? `<span class="chat-seg" role="group" aria-label="Session view">
               <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
               <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
-            </span>`}
+            </span>` : ''}
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
             <span class="sess-acts-divider"></span>
             <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
