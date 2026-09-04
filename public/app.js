@@ -51,6 +51,7 @@ import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
 import { initChatView } from './chat-view.js';
+import { playSound } from './sound.js';
 
 let currentView = 'grid';
 
@@ -2679,10 +2680,18 @@ function trackJustFinished(sessions) {
   const nextRaw = new Map();
   const nextSettled = new Map();
   let jfChanged = false;
+  // At most ONE finish cue per poll tick, however many sessions land in the same
+  // one — five simultaneous finishes should not stack five overlapping chimes.
+  // A first load can't ring: prevStatusById starts empty, so nothing reads as a
+  // transition until the second poll.
+  let playFinishCue = false;
   for (const s of sessions) {
     const prev = prevStatusById.get(s.sessionId);
     const settled = settledStatus(s, prev);
-    if (prev === 'working' && settled === 'idle') { justFinished.add(s.sessionId); jfChanged = true; }
+    if (prev === 'working' && settled === 'idle') {
+      justFinished.add(s.sessionId); jfChanged = true;
+      if (!playFinishCue && getSetting('soundOnFinish') && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+    }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
     // (never scraped), so it doesn't flap, and clearing an ack only ever re-arms
@@ -2702,6 +2711,7 @@ function trackJustFinished(sessions) {
   if (jfChanged) persistJustFinished();
   prevStatusById = nextSettled;
   lastRawById = nextRaw;
+  if (playFinishCue) playSound('finished');
 }
 
 // Post-archive toast with an immediate Resume action; drops the selection if the
@@ -5385,6 +5395,9 @@ function focusSuppresses(scope, ownerId) {
 function notify(session) {
   if (focusSuppresses('session', session.sessionId)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
+  // Same opt-in as the finish chime (one setting, two tones) — this path is
+  // already focus-suppressed above, so it needs no gate of its own.
+  if (getSetting('soundOnFinish')) playSound('needs-you');
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification('Claude needs you', { body });
     n.onclick = () => { window.focus(); selectSession(session.sessionId); };
