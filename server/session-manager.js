@@ -10,7 +10,7 @@ import { adapterFor, isOwnedTmux } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, linkedWorktreeCommonGitDir } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -268,6 +268,17 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   // worktree dir is gone (repoRootForWorktree falls back to suffix-stripping for
   // legacy entries that predate this).
   return { cwd: res.path, branch: res.branch, worktree: { path: res.path, branch: res.branch, repoRoot: res.repoRoot } };
+}
+
+// Codex-only: fold a linked worktree's common git-dir into addDirs so its
+// sandbox can write index.lock/objects/refs there (see
+// linkedWorktreeCommonGitDir's comment — that dir lives in the main checkout,
+// a sibling directory the sandbox never grants otherwise). No-op for any
+// other agent (no OS sandbox) or a non-worktree session.
+async function withCodexWorktreeAddDir(agent, worktree, addDirs) {
+  if (agent !== 'codex' || !worktree?.path) return addDirs;
+  const gitDir = await linkedWorktreeCommonGitDir(worktree.path);
+  return gitDir ? [...addDirs, gitDir] : addDirs;
 }
 
 export class SessionManager {
@@ -863,8 +874,10 @@ export class SessionManager {
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
+    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, []);
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
+      addDirs,
       ...memory,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
       // issue-to-pr skill plugin so a suspended/rebooted autopilot run keeps it —
@@ -914,8 +927,10 @@ export class SessionManager {
     // Bind before building the command: Codex needs the resolved real task dir,
     // while Claude continues to derive and use the stable per-session symlink.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    const addDirs = await withCodexWorktreeAddDir(agent, parentEntry?.worktree, []);
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
+      addDirs,
       ...memory,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
@@ -1324,6 +1339,7 @@ export class SessionManager {
     // resolved real task/scratch directory returned by the binder. dispatch mints
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
     const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
