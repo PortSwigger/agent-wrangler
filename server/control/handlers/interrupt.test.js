@@ -34,7 +34,7 @@ function ctx({ tmux = 'cc_abc', agent = 'claude', panes = [EMPTY_PANE], transcri
     socketFor: () => 'sock',
     sendKeys: (name, keys, socket) => { calls.push({ verb: 'sendKeys', name, keys, socket }); },
     capturePaneStyled: async () => { const p = panes[Math.min(capture, panes.length - 1)]; capture += 1; return p; },
-    findTranscript: async () => transcript,
+    findConversationFile: async () => transcript,
     readTranscriptTail: async () => ({ text: tail, atStart: true }),
     reply: (o) => replies.push(o),
     // Real time is not worth spending in a unit test; the polling logic is what
@@ -89,7 +89,7 @@ test('the settle window is bounded — a pane that never restores does not hang 
 test('the transcript is not read at all when the pane already answered', async () => {
   let read = false;
   const c = ctx({ panes: [pane('from the pane')] });
-  c.findTranscript = async () => { read = true; return '/t.jsonl'; };
+  c.findConversationFile = async () => { read = true; return '/t.jsonl'; };
   await interruptHandler.handler({ sessionId: 'card-1', token: 't5' }, c);
   assert.equal(read, false, 'the tail read is the more expensive of the two');
 });
@@ -103,16 +103,53 @@ test('codex is still interrupted, but its pane is never parsed', async () => {
   assert.deepEqual(c.calls[0].keys, ['Escape'], 'but it is still interrupted');
 });
 
-test('codex gets no restored prompt, because findTranscript cannot see its rollout', async () => {
-  // PRE-EXISTING gap, asserted here so it is visible rather than surprising: this
-  // handler resolves the transcript the same way chat.js does, with findTranscript,
-  // which searches ~/.claude/projects. Codex rollouts live under ~/.codex/sessions
-  // and are found by codex-rollout.js's findRollout instead, so the chat view
-  // already shows nothing for a Codex session. Wiring that up is its own change;
-  // what matters here is that Codex degrades to "no restore" rather than to a
-  // WRONG restore.
-  const c = ctx({ agent: 'codex', transcript: null });
+const codexUserLine = (text, ts) => JSON.stringify({
+  timestamp: ts, type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+});
+
+test('codex now gets a transcript restore, resolved from its ROLLOUT', async () => {
+  // Previously a documented gap: this handler resolved every session with
+  // findTranscript, which only walks ~/.claude/projects, so a Codex rollout was
+  // never found and Esc always answered "nothing". findConversationFile routes
+  // the lookup by agent, and the rollout parser was already agent-aware.
+  const c = ctx({
+    agent: 'codex',
+    transcript: '/rollout.jsonl',
+    tail: [
+      codexUserLine('the older prompt', '2026-09-06T10:00:00.000Z'),
+      codexUserLine('resume the migration and re-run the suite', '2026-09-06T10:05:00.000Z'),
+    ].join('\n') + '\n',
+  });
   await interruptHandler.handler({ sessionId: 'card-1', token: 't6b' }, c);
+  assert.deepEqual(
+    { text: c.replies[0].text, source: c.replies[0].source },
+    { text: 'resume the migration and re-run the suite', source: 'transcript' },
+  );
+});
+
+test('codex: an injected AGENTS.md block is never restored as if it were the human prompt', async () => {
+  // The failure this restore must never have. Codex writes its injected
+  // instructions as an ordinary role:user message, and on real rollouts that
+  // block is the most common user turn of all — so the NEWEST user message right
+  // after an interrupt is routinely multiple KB of AGENTS.md rather than
+  // anything anyone typed. Pasting it into the composer would be exactly the
+  // "wrong text, not no text" outcome Codex is supposed to be protected from.
+  const c = ctx({
+    agent: 'codex',
+    transcript: '/rollout.jsonl',
+    tail: [
+      codexUserLine('deploy the branch', '2026-09-06T10:00:00.000Z'),
+      codexUserLine('# AGENTS.md instructions\n\n<INSTRUCTIONS>\nDo not add comments.\n', '2026-09-06T10:06:00.000Z'),
+    ].join('\n') + '\n',
+  });
+  await interruptHandler.handler({ sessionId: 'card-1', token: 't6c' }, c);
+  assert.equal(c.replies[0].text, 'deploy the branch');
+});
+
+test('codex: no user turn in reach degrades to no restore, never to a wrong one', async () => {
+  const c = ctx({ agent: 'codex', transcript: '/rollout.jsonl', tail: '' });
+  await interruptHandler.handler({ sessionId: 'card-1', token: 't6d' }, c);
   assert.deepEqual(
     { text: c.replies[0].text, source: c.replies[0].source },
     { text: null, source: 'none' },

@@ -676,3 +676,122 @@ test('claude: a line with no uuid at all is always kept — there is nothing to 
   ), 'claude');
   assert.deepEqual(events.map((e) => e.text), ['no ids on this line', 'rooted']);
 });
+
+
+// --- Codex custom-tool shape ---------------------------------------------
+// The dominant tool shape on modern rollouts, and one no substring of the older
+// function_call gate matches. Measured over 170 real rollouts: adding it took
+// tool events from 1823 to 2689 — 866 calls, a third of the total, that the chat
+// view could not see at all.
+
+const ctc = (callId, name, input, ts) => ({
+  type: 'response_item', timestamp: ts,
+  payload: { type: 'custom_tool_call', id: `ctc_x${callId}`, call_id: callId, name, input },
+});
+
+const ctcOut = (callId, blocks, ts) => ({
+  type: 'response_item', timestamp: ts,
+  payload: { type: 'custom_tool_call_output', id: `ctco_x${callId}`, call_id: callId, output: blocks },
+});
+
+test('codex: mightCarryChat lets a custom_tool_call through the gate', () => {
+  // The gate runs before JSON.parse, so a shape it does not name is dropped
+  // before any parser can see it — the same silent invisibility CLAUDE.md
+  // documents for Claude's away_summary line.
+  const call = JSON.stringify(ctc('call_1', 'exec', 'ls', '2026-09-06T10:00:00.000Z'));
+  const out = JSON.stringify(ctcOut('call_1', [{ type: 'input_text', text: 'ok' }], '2026-09-06T10:00:01.000Z'));
+  assert.equal(mightCarryChat(call, 'codex'), true);
+  assert.equal(mightCarryChat(out, 'codex'), true);
+});
+
+test('codex: a custom_tool_call pairs with its output on call_id and flattens content blocks', () => {
+  const text = codexLines(
+    ctc('call_1', 'exec', 'tools.exec_command({"cmd":"npm test"})', '2026-09-06T10:00:00.000Z'),
+    // Two blocks, as a real rollout writes them: a wall-time header and the body.
+    ctcOut('call_1', [
+      { type: 'input_text', text: 'Script completed' },
+      { type: 'input_text', text: 'all green' },
+    ], '2026-09-06T10:00:09.000Z'),
+  );
+  const { events } = scanChatText(text, 'codex');
+  assert.equal(events.length, 1);
+  const [tool] = events;
+  assert.equal(tool.kind, 'tool');
+  assert.equal(tool.name, 'exec');
+  assert.equal(tool.id, 'call_1', 'keyed on call_id — the ctc_/ctco_ ids never match each other');
+  assert.equal(tool.target, 'tools.exec_command({"cmd":"npm test"})');
+  // Stringifying the array (the pre-fix fallback) would put raw JSON here.
+  assert.equal(tool.output, 'Script completed\nall green');
+});
+
+test("codex: a custom_tool_call's raw input survives for the expanded row, one-lined only for the target", () => {
+  const script = 'const a = 1;\nconst b = 2;\ntext(a + b);';
+  const { events } = scanChatText(codexLines(
+    ctc('call_2', 'exec', script, '2026-09-06T10:00:00.000Z'),
+    ctcOut('call_2', [{ type: 'input_text', text: '3' }], '2026-09-06T10:00:01.000Z'),
+  ), 'codex');
+  assert.equal(events[0].input.input, script, 'the expanded row is the only place this script exists');
+  assert.equal(events[0].target, 'const a = 1; const b = 2; text(a + b);');
+});
+
+test('codex: an unpaired custom_tool_call is reported as pending, so the view can show what is running', () => {
+  const scanner = createChatScanner('codex');
+  scanner.push(JSON.stringify(ctc('call_3', 'exec', 'sleep 30', '2026-09-06T10:00:00.000Z')));
+  assert.deepEqual(scanner.pending(), { name: 'exec', target: 'sleep 30' });
+});
+
+test('codex: lastTs advances on a tool-call line, so the elapsed clock runs through a long command', () => {
+  // The live "working" row measures from lastTs. A tool-call line emits no event
+  // of its own, so if it did not advance prevTs the clock would freeze at the
+  // last message for the whole length of the command.
+  const scanner = createChatScanner('codex');
+  scanner.push(JSON.stringify(ctc('call_4', 'exec', 'npm test', '2026-09-06T10:00:07.000Z')));
+  assert.equal(scanner.lastTs(), Date.parse('2026-09-06T10:00:07.000Z'));
+});
+
+test('codex: injected role:user wrappers are dropped rather than shown as human prompts', () => {
+  // Measured over 170 real rollouts these removed 108 fake user turns, and the
+  // AGENTS.md block was the single most common user message of all. They
+  // matter twice: they would open the view on a multi-KB instructions blob, and
+  // restore-prompt.js reads "the newest user turn" through this same scanner, so
+  // an unfiltered one is what Esc would paste into the composer.
+  const say = (text, ts) => ({
+    type: 'response_item', timestamp: ts,
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  });
+  const { events } = scanChatText(codexLines(
+    say('# AGENTS.md instructions\n\n<INSTRUCTIONS>\nUse the Atlassian MCP.\n', '2026-09-06T10:00:00.000Z'),
+    say('<recommended_plugins>\nHere is a list of plugins\n', '2026-09-06T10:00:01.000Z'),
+    say('<in-app-browser-context source="ambient-ui-state">x', '2026-09-06T10:00:02.000Z'),
+    say('<user_shell_command>\n<command>open artifacts</command>', '2026-09-06T10:00:03.000Z'),
+    say('[Agent Wrangler] \u{1F4EC} New mail — 1 message', '2026-09-06T10:00:04.000Z'),
+    say('what is the status?', '2026-09-06T10:00:05.000Z'),
+  ), 'codex');
+  assert.deepEqual(
+    events.map((e) => e.text),
+    // Peer mail was really delivered into the session, so it stays on screen.
+    ['[Agent Wrangler] \u{1F4EC} New mail — 1 message', 'what is the status?'],
+  );
+});
+
+
+test('codex: an apply_patch arriving as a custom_tool_call still reports its +/- counts', () => {
+  // apply_patch uses the custom-tool shape, with the whole diff as raw `input`
+  // text (58 of them across 170 real rollouts). editCounts reads
+  // that body from `input.patch`/`input.input`, so keying the raw text under any
+  // other name reports every patch as +0/-0 while looking entirely healthy.
+  const patch = [
+    '*** Begin Patch',
+    '*** Update File: server/thing.js',
+    '+const added = 1;',
+    '+const alsoAdded = 2;',
+    '-const removed = 3;',
+    '*** End Patch',
+  ].join('\n');
+  const { events } = scanChatText(codexLines(
+    ctc('call_5', 'apply_patch', patch, '2026-09-06T10:00:00.000Z'),
+    ctcOut('call_5', [{ type: 'input_text', text: 'Success' }], '2026-09-06T10:00:01.000Z'),
+  ), 'codex');
+  assert.equal(events[0].adds, 2);
+  assert.equal(events[0].dels, 1);
+});

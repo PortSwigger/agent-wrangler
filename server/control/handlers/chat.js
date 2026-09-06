@@ -1,5 +1,5 @@
 import fsp from 'node:fs/promises';
-import { findTranscript as realFindTranscript } from '../../transcript-reader.js';
+import { findConversationFile as realFindConversationFile } from '../../conversation-file.js';
 import { createChatScanner } from '../../chat-events.js';
 import { capturePaneStyled, paneModelLabel } from '../../tmux-scraper.js';
 import { parseGhostSuggestion } from '../../ghost-suggestion.js';
@@ -109,8 +109,10 @@ function getOrCreateScanner(convId, since, agent) {
 
 // On-demand, uncached read of one session's conversation. A fresh, TARGETED reply
 // to the requesting client only (like subagent-detail / get-memory), never
-// broadcast — only the reader of this session needs it. findTranscript is a ctx
-// seam for test isolation.
+// broadcast — only the reader of this session needs it. findConversationFile is a
+// ctx seam for test isolation, and is what resolves a Claude transcript or a
+// Codex rollout from the SAME card — the whole path below is agent-agnostic
+// after it, because the scanner already is.
 //
 // `token`, like `sessionId`, is echoed back verbatim and unvalidated on EVERY
 // reply path below — the server never interprets it. The client (chat-view.js)
@@ -128,7 +130,7 @@ function getOrCreateScanner(convId, since, agent) {
 export const chatHandler = {
   type: 'chat',
   async handler(msg, ctx) {
-    const findTranscript = ctx.findTranscript || realFindTranscript;
+    const findConversationFile = ctx.findConversationFile || realFindConversationFile;
     // The client sends the CARD id; the transcript is named by the CONVERSATION
     // id. Resolve card → liveSessionId off the graph, falling back to the card id
     // for legacy pre-split entries — the same resolution subagent-detail.js does.
@@ -144,11 +146,6 @@ export const chatHandler = {
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
     const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
     const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
-
-    if (agent === 'codex') {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion: null, modelNow: null, epoch: epochFor(convId) });
-      return;
-    }
 
     // Claude Code's suggested next prompt — the one thing in this view that is
     // not transcript-sourced, because it exists nowhere else (see
@@ -171,7 +168,7 @@ export const chatHandler = {
     // next turn runs, and the chip ends up contradicting the pane beside it.
     const modelNow = pane ? paneModelLabel(pane) : null;
 
-    const file = await findTranscript(convId);
+    const file = await findConversationFile(convId, agent);
     if (!file) {
       ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
       return;

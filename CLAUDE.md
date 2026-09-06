@@ -494,14 +494,67 @@ don't re-derive it.
   not with `generation`. The epoch counter lives **outside** the scanner cache because the
   rebuild's fresh read replaces the scanner. Codex is exempt throughout: a rollout
   is a flat list with no parent links and no rewind representation.
-- **Codex `function_call` pairs on `call_id`, never `id`.** Both exist (`fc_…` and
-  `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does not throw —
-  it silently renders a timeline with no tool outputs. Codex `reasoning` is `encrypted_content`
-  with `summary: []`, so Codex thinking is a presence marker and can never have text.
-- **`mightCarryChat`'s Claude gate is role-based, so any non-`message` line needs
-  its own marker added or it is silently invisible.** The gate is a cheap substring
-  test run before `JSON.parse`, and for Claude it looks for `"role":"user"` /
-  `"role":"assistant"`. Claude Code's end-of-turn recap is a `type:'system'`,
+- **A conversation's file is resolved by AGENT, through `server/conversation-file.js`,
+  and getting that wrong degrades to an EMPTY VIEW rather than an error.** Claude
+  transcripts sit in per-cwd project buckets under `~/.claude/projects`
+  (`findTranscript`); Codex rollouts sit under
+  `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<uuid>.jsonl` (`findRollout`,
+  `agents/codex-rollout.js`). `chat.js` resolving every session with
+  `findTranscript` is the whole reason the chat view had to be disabled for Codex
+  (PR #94) — nothing threw, Codex cards just rendered blank. Both read paths
+  (`chat.js`, `interrupt.js`) go through the one resolver, and a third must too.
+  **`findRollout` caches like `findTranscript` and for the same two reasons**: the
+  view polls every 2s, so the first open pays one name-only walk of the sessions
+  tree (measured 2ms over 169 rollouts) and every poll after it pays one
+  `existsSync`. Positive results ONLY — Codex discovers a live id post-launch, so
+  a rollout can appear moments after the first lookup and a cached miss would
+  leave that card permanently blank with nothing to invalidate it; there is
+  deliberately no negative TTL, which would buy one walk in exchange for an empty
+  view that cannot self-heal. A cached hit is re-checked and evicted the moment it
+  stops resolving — the Codex half of #96. The walk is split into a name-only
+  `rolloutPaths` (the uuid is in the filename, so resolving one id needs no
+  `stat`) with **order unchanged**, because `findRollout` and `buildRolloutIndex`
+  both resolve a duplicate uuid to the first one walked and have to keep agreeing.
+- **Codex tool calls pair on `call_id`, never `id` — and there are TWO call shapes,
+  only one of which the original parser knew about.** Both ids exist (`fc_…`/`ctc_…`
+  and `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does
+  not throw — it silently renders a timeline with no tool outputs. The shapes:
+  `function_call` carries its args in `arguments` (a JSON **string**) and its
+  result in `output` (a **string**); `custom_tool_call` carries them in `input` (a
+  raw string, typically a whole script) and its result in `output` as an **array of
+  `{type:'input_text', text}` content blocks**. Treating the latter's output as a
+  string dumps raw JSON into the tool row. `custom_tool_call` is not an edge case:
+  measured over all 170 rollouts on one machine it was **866 of 2689 tool calls
+  (32%)**, and every one was dropped by `mightCarryChat`'s gate before any parser
+  saw it — see the gate bullet below. **The key the raw `input` lands under is
+  load-bearing**: `codexCustomInput` stores it as `input` because `editCounts`
+  reads an apply_patch body from `input.patch`/`input.input`, and **apply_patch
+  really does arrive as a `custom_tool_call`** (58 of them in that corpus) — key it
+  as anything else and every patch silently reports +0/-0 while looking healthy.
+  It is kept RAW rather than one-lined because a patch body and an `exec` script
+  are both multi-line and the expanded row is the only place they exist;
+  `toolTarget` one-lines a copy for the collapsed summary. Codex `reasoning` is
+  `encrypted_content` with `summary: []`, so Codex thinking is a presence marker
+  and can never have text.
+- **Codex injects instructions as ordinary `role:'user'` messages, so the chat view
+  needs its OWN synthetic-prefix list and it is load-bearing twice over.**
+  `CODEX_SYNTHETIC_PREFIXES` (`chat-events.js`) is separate from the Claude
+  `SYNTHETIC_PREFIXES` list because the vocabulary is different: `# AGENTS.md
+  instructions`, `<recommended_plugins>`, `<in-app-browser-context`,
+  `<user_shell_command>`. Measured over 170 real rollouts these removed 108 fake
+  user turns, and the AGENTS.md block was the single most common one on disk. Unfiltered it renders a multi-KB
+  instructions blob in a human bubble — but worse, `restore-prompt.js` reads "the
+  newest user turn" through this same scanner, so it is also what Esc would paste
+  into the composer. **`[Agent Wrangler] 📬 New mail …` is deliberately NOT in the
+  list**: that one really was delivered into the session and belongs on screen.
+- **`mightCarryChat` is a substring allow-list, so a line shape it does not name
+  is silently invisible — this bites BOTH agents and has now bitten both.** The
+  gate is a cheap substring test run before `JSON.parse`. For Codex it is a list
+  of payload-type markers, and `custom_tool_call` shares no substring with the
+  older `"function_call` marker, so a third of all tool calls in a real corpus were
+  dropped here — the parser handling them was necessary but not sufficient, and
+  adding either half alone still emits nothing. For Claude it looks for
+  `"role":"user"` / `"role":"assistant"`. Claude Code's end-of-turn recap is a `type:'system'`,
   `subtype:'away_summary'` line with a bare `content` string and **no `message`
   object at all**, so it matches neither — `"away_summary"` had to go in the gate
   *and* be handled before `pushClaude`'s `entry.message` guard, which would
@@ -745,11 +798,14 @@ don't re-derive it.
   returned that 29-character marker instead of the real 212-character prompt.
   `restore-prompt.js` filters it and `[Request interrupted by user for tool use]`,
   anchored so a prompt quoting one still restores; across 150 real transcripts those
-  are the only two forms. **Codex gets the interrupt but never a restore**, and that is
-  a pre-existing gap rather than a new one: this handler resolves the transcript the way
-  `chat.js` does, via `findTranscript` over `~/.claude/projects`, while Codex rollouts
-  live under `~/.codex/sessions` behind `codex-rollout.js`'s `findRollout`. Codex
-  degrades to no restore, never to a wrong one.
+  are the only two forms. **Codex now gets a transcript restore too**, via
+  `findConversationFile` — it previously got none at all, because this handler
+  resolved with `findTranscript` over `~/.claude/projects` and a rollout is never
+  there. What makes that safe rather than merely present is
+  `CODEX_SYNTHETIC_PREFIXES`: without it the newest `role:'user'` message on a
+  rollout is routinely the injected AGENTS.md block, and Esc would paste multiple
+  KB of it into the composer. Codex still gets no PANE read — that parser is
+  Claude's TUI — so it degrades to no restore, never to a wrong one.
 - **The chat view cannot stream a partial turn, and no indicator should imply it
   does.** Claude Code writes whole messages to the transcript — there is no
   partial or delta line to tail — so between the start of a turn and the message
