@@ -33,13 +33,26 @@ const inFlight = new Map();
 // results are stored: a freshly launched session is analysed before its first
 // turn is written, and caching that miss would leave its cost + last-activity
 // blank for the whole session — so a miss is always re-checked until the
-// transcript appears, while a found path (which never moves) stays cached.
+// transcript appears, while a found path normally never moves once written.
+// EXCEPT: a resume/relaunch that lands in a directory the session id wasn't
+// bucketed in (e.g. adopting a worktree) can silently start a second, empty
+// transcript for the SAME id in a different bucket (see CLAUDE.md's "Resume
+// fails open"). If the scan below ever finds that second bucket first, a hit
+// here can go stale the moment the original stub is cleaned up — every later
+// analyze() would stat() a dead path and freeze forever (verified live: a
+// session's cost/sub-agents stuck for 20+ min while its real, growing
+// transcript sat in a different bucket). So a cached hit is re-checked with a
+// cheap existsSync before being trusted, and evicted (falling through to a
+// fresh scan) the moment it no longer resolves.
 const pathCache = new Map();
 
 export async function findTranscript(sessionId, projectsDir = PROJECTS_DIR) {
   const key = `${projectsDir}\0${sessionId}`;
   const hit = pathCache.get(key);
-  if (hit) return hit;
+  if (hit) {
+    if (fs.existsSync(hit)) return hit;
+    pathCache.delete(key);
+  }
   let found = null;
   try {
     const dirs = await fsp.readdir(projectsDir);

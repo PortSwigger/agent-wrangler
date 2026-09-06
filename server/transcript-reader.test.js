@@ -342,6 +342,22 @@ test('findTranscript does not cache a miss, so a late-written transcript is foun
   assert.equal(await findTranscript('late', dir), file);
 });
 
+test('findTranscript evicts a cached path that no longer exists, instead of freezing on it forever', async () => {
+  // A resume/relaunch into a directory the session id wasn't bucketed in (e.g.
+  // adopting a worktree) can leave a second, stub transcript for the same id in a
+  // different bucket. If that stub is the one this cached first (directory scan
+  // order isn't guaranteed), and it's later cleaned up, every later analyze() must
+  // still be able to find the real, still-growing transcript elsewhere — not keep
+  // stat()-ing a dead path forever.
+  const dir = makeProjects();
+  const stub = writeTranscript(dir, { sessionId: 'moved', cwd: '/old/stub-bucket', ageDays: 1 });
+  assert.equal(await findTranscript('moved', dir), stub);
+
+  fs.rmSync(stub);
+  const real = writeTranscript(dir, { sessionId: 'moved', cwd: '/real/worktree-bucket', ageDays: 1 });
+  assert.equal(await findTranscript('moved', dir), real);
+});
+
 test('recentCwds orders distinct cwds most-recently-seen first', async () => {
   const dir = makeProjects();
   const bucket = path.join(dir, 'bucket');
