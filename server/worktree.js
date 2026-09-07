@@ -106,6 +106,33 @@ export function worktreeDirName(repoRoot, branch) {
   return `${path.basename(repoRoot)}-worktree-${branch}`;
 }
 
+// The absolute COMMON git-dir (the main checkout's own `.git`) for a cwd that
+// is itself a LINKED worktree — outside the worktree directory entirely, in a
+// SIBLING directory. Codex's sandbox (unlike Claude's, which has none) grants
+// filesystem write only to the workspace roots it's launched with (cwd + each
+// `--add-dir`), so a linked worktree needs this added explicitly or `git add`/
+// `git commit` fails with EPERM (see codex.js's `worktree`-aware callers).
+// Granting only the worktree-private git-dir (`<repoRoot>/.git/worktrees/
+// <name>`, what --git-dir resolves to) is NOT enough — verified against the
+// real binary: `index.lock` then succeeds but `git add` still fails writing a
+// new blob under `objects/`, and `git commit` still fails writing the branch
+// ref under `refs/heads/`, both of which live in the COMMON dir, shared
+// across every worktree. The common dir must be granted directly (not via its
+// parent `repoRoot`) — Codex's sandbox auto-adds a read-only override for
+// `<workspace_root>/.git` on every workspace root, which would otherwise
+// re-lock this exact directory as read-only. Null for a plain (non-worktree)
+// repo (cwd IS the common dir — nothing extra to grant) or a path outside any
+// git repo.
+export async function linkedWorktreeCommonGitDir(cwd) {
+  try {
+    const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']);
+    const [gitDir, commonDir] = stdout.trim().split('\n');
+    return (gitDir && commonDir && gitDir !== commonDir) ? commonDir : null;
+  } catch {
+    return null;
+  }
+}
+
 export class WorktreeError extends Error {}
 
 export async function branchExists(repoRoot, branch) {
