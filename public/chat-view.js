@@ -10,7 +10,23 @@ import { groupChatEvents } from './chat-group.js';
 import { createChatDom } from './chat-dom.js';
 import { createRenderer } from './markdown-preview.js';
 
-const POLL_MS = 2000;
+export const POLL_MS = 2000;
+// Send → "my own message is on screen" waits on two things: the TUI writing the
+// turn to the transcript, and the next poll happening to fall after that write.
+// The write is irreducible — measured ~330ms median for BOTH agents (Claude
+// 316-424ms, Codex 231-829ms), and the same while the session is mid-turn, since
+// a queued prompt is persisted immediately. The scheduling wait is not, and it
+// dominated: worse than POLL_MS suggests, because a tick landing inside the write
+// window finds nothing and costs a FULL further period, which is what put the
+// measured end-to-end at ~2.3s rather than 2s.
+//
+// So a send brings these extra polls forward. The first is deliberately BELOW the
+// median write: a poll that finds nothing costs one incremental read (15-34ms
+// even against a 32MB transcript, since the window read is bounded) while one
+// that lands early saves a whole period — so "too early" is the cheap direction
+// to be wrong in. The last stays inside one period, so a burst can never outlive
+// the interval it front-runs. Exported for the test that pins those invariants.
+export const SEND_BURST_MS = [220, 440, 700, 1050, 1450];
 const BOTTOM_SLACK_PX = 40;
 
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
@@ -47,6 +63,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let sessionId = null;
   let offset = null;
   let timer = null;
+  // The pending burst, cancelled by anything that puts `offset` back to null —
+  // mount, unmount and a rewind rebuild all re-read the window from the top, and
+  // a burst poll landing in that gap would ask for a second full window instead
+  // of the increment it was scheduled for.
+  let burst = [];
   // The server's branch epoch for the conversation on screen (see chat.js). A
   // Claude transcript is a tree: a rewind in the pane retroactively turns turns
   // already appended here into a dead branch, and an append-only stream has no
@@ -317,6 +338,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     attachments = [];
     renderAttachments();
     renderSendability();
+    // Nothing is on screen until a poll reads the turn back — this view is
+    // strictly transcript-sourced and deliberately does not echo the message
+    // locally, since an optimistically drawn bubble has no uuid to live in the
+    // append-only stream and would be a lie for a send the server refuses.
+    kickBurst();
   }
 
   sendBtn.addEventListener('click', submit);
@@ -551,6 +577,25 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     send({ type: 'chat', sessionId, token: generation, ...(offset == null ? {} : { sinceOffset: offset }) });
   }
 
+  function clearBurst() {
+    for (const t of burst) clearTimeout(t);
+    burst = [];
+  }
+
+  // Called on send only. Each step is the ordinary poll, so this adds no reply
+  // path and needs nothing new echoed back — the token gate and the
+  // forward-progress offset check already drop a stale or duplicate reply.
+  function kickBurst() {
+    clearBurst();
+    burst = SEND_BURST_MS.map((ms) => setTimeout(poll, ms));
+    // Re-phased from the send, so an interval tick cannot fire a few ms after a
+    // burst step and re-ask for the same increment.
+    if (timer) {
+      clearInterval(timer);
+      timer = setInterval(poll, POLL_MS);
+    }
+  }
+
   // Throws away what is on screen and re-reads the window from the top, which is
   // the only honest answer to a rewind: the server can prune the abandoned branch
   // out of a fresh read, but it cannot un-append the events this view already
@@ -565,6 +610,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   function rebuildStream() {
     generation += 1;
     offset = null;
+    clearBurst();
     stream.textContent = '';
     // The row was a child of the stream just cleared, so the handle is dangling —
     // dropped here so the next render appends a fresh one instead of a detached
@@ -616,6 +662,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sessionId = id;
       offset = null;
       epoch = null;
+      // A burst armed against the card being left would poll this one instead,
+      // duplicating mount's own window read.
+      clearBurst();
       generation += 1;
       requestEra += 1;
       stream.textContent = '';
@@ -667,6 +716,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     unmount() {
       clearInterval(timer);
       timer = null;
+      clearBurst();
       const leaving = sessionId;
       sessionId = null;
       epoch = null;

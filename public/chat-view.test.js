@@ -122,6 +122,19 @@ async function mountView({ onSend, cwd = null } = {}) {
   // runner never exits — so they are no-ops here.
   globalThis.setInterval = () => 0;
   globalThis.clearInterval = () => {};
+  // The send burst is the one timer this suite DOES assert on, so its callbacks
+  // are captured rather than dropped: `timers` records what was scheduled and at
+  // what delay, and cancelled entries are marked so a test can tell "armed" from
+  // "armed then called off".
+  const timers = [];
+  globalThis.setTimeout = (fn, ms) => {
+    timers.push({ fn, ms, cancelled: false });
+    return timers.length;
+  };
+  globalThis.clearTimeout = (id) => {
+    const t = timers[id - 1];
+    if (t) t.cancelled = true;
+  };
   const { initChatView } = await import('./chat-view.js');
   const sent = [];
   const opened = [];
@@ -137,8 +150,11 @@ async function mountView({ onSend, cwd = null } = {}) {
   const input = byId.get('chat-input');
   // Wire the auto-grow listener's dependency the way a browser would.
   return {
-    view, sent, byId, input, opened, document,
+    view, sent, byId, input, opened, document, timers,
     fire: (el, type) => el.dispatchEvent({ type }),
+    // Only the still-live ones — a cancelled timeout is exactly what a browser
+    // would never run.
+    runTimers: () => { for (const t of timers) if (!t.cancelled) t.fn(); },
   };
 }
 
@@ -417,4 +433,77 @@ test('a measurement taken while unrendered never becomes the composer height', a
   input.scrollHeight = 900;
   fire(input, 'input');
   assert.equal(input.style.height, '140px', 'the cap still applies');
+});
+
+// A send, the way a human makes one — Enter in the composer.
+const send = (input) => input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
+
+// --- the send burst ----------------------------------------------------------
+// A send is invisible until a poll reads the turn back, and the measured write is
+// ~330ms for both agents while the poll cadence is 2s — so the scheduling wait,
+// not the write, was most of the delay a human saw. These pin the burst that
+// closes it and, just as importantly, the cases where it must be called off.
+
+test('the burst schedule brackets the write without outliving one poll period', async () => {
+  const { SEND_BURST_MS, POLL_MS } = await import('./chat-view.js');
+  assert.ok(SEND_BURST_MS.length > 1, 'a single early poll would just lose the race and wait the full period');
+  for (let i = 1; i < SEND_BURST_MS.length; i++) {
+    assert.ok(SEND_BURST_MS[i] > SEND_BURST_MS[i - 1], 'strictly increasing');
+  }
+  // Below the ~330ms median write: a poll that finds nothing is cheap, one that
+  // lands early saves a whole period.
+  assert.ok(SEND_BURST_MS[0] < 330, 'the first poll must not coin-flip against the median write');
+  // Past the ~850ms worst write measured, so the burst still covers the outliers.
+  assert.ok(SEND_BURST_MS[SEND_BURST_MS.length - 1] > 850);
+  assert.ok(SEND_BURST_MS[SEND_BURST_MS.length - 1] < POLL_MS, 'a burst must never outlive the interval it front-runs');
+});
+
+test('sending brings the next polls forward instead of waiting for the tick', async () => {
+  const { view, sent, input, timers, runTimers } = await mountView();
+  const { SEND_BURST_MS } = await import('./chat-view.js');
+  view.mount('s1');
+  view.setStatus('idle');
+  const before = sent.filter((m) => m.type === 'chat').length;
+  input.value = 'hello';
+  send(input);
+  assert.deepEqual(timers.filter((t) => !t.cancelled).map((t) => t.ms), SEND_BURST_MS);
+  runTimers();
+  assert.equal(sent.filter((m) => m.type === 'chat').length - before, SEND_BURST_MS.length);
+});
+
+test('a burst poll carries the current token, so a stale one is still dropped', async () => {
+  const { view, sent, input, runTimers } = await mountView();
+  view.mount('s1');
+  view.setStatus('idle');
+  input.value = 'hello';
+  send(input);
+  runTimers();
+  const polls = sent.filter((m) => m.type === 'chat');
+  const last = polls[polls.length - 1];
+  assert.equal(last.sessionId, 's1');
+  assert.equal(typeof last.token, 'number');
+});
+
+test('switching session calls the burst off — it would poll the wrong card', async () => {
+  const { view, sent, input, runTimers } = await mountView();
+  view.mount('s1');
+  view.setStatus('idle');
+  input.value = 'hello';
+  send(input);
+  view.mount('s2');
+  const before = sent.filter((m) => m.type === 'chat').length;
+  runTimers();
+  assert.equal(sent.filter((m) => m.type === 'chat').length, before, 'nothing left armed after the remount');
+});
+
+test('closing the view calls the burst off', async () => {
+  const { view, sent, input, runTimers } = await mountView();
+  view.mount('s1');
+  view.setStatus('idle');
+  input.value = 'hello';
+  send(input);
+  view.unmount();
+  const before = sent.filter((m) => m.type === 'chat').length;
+  runTimers();
+  assert.equal(sent.filter((m) => m.type === 'chat').length, before);
 });
