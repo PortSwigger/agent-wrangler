@@ -620,6 +620,32 @@ don't re-derive it.
   **`epoch`** (above) most sharply of all: an omitted `epoch` reads to the client
   as `0`, and against a conversation whose counter has already moved that
   rebuilds the whole stream on **every single poll**.
+- **A send kicks a short burst of extra polls (`SEND_BURST_MS`, `chat-view.js`),
+  and it must stay a REUSE of the existing poll rather than a new reply path.**
+  The view is transcript-sourced, so your own message is invisible until a poll
+  reads it back — and the poll was a fixed 2s tick that sending never kicked.
+  Measured: the TUI's write is ~330ms for both agents (Claude 316-424ms, Codex
+  231-829ms, and the same mid-turn, since a queued prompt is persisted
+  immediately), but end-to-end ran to **~2.3s, not 2s**, because a tick landing
+  inside that write window finds nothing and costs a FULL further period.
+  Bringing the next polls forward took Claude 415-2288ms → 440-472ms and Codex
+  472-2272ms → ~441ms. Three things are load-bearing. The first step sits
+  **below** the median write on purpose — a poll that finds nothing costs one
+  incremental read (15-34ms even against a 32MB transcript, since the window
+  read is bounded), while one that lands early saves a whole period, so "too
+  early" is the cheap direction to be wrong in. The burst is **cancelled
+  wherever `offset` goes back to null** — `mount`, `unmount` and
+  `rebuildStream` all re-read the window from the top, and a step landing in
+  that gap asks for a second full window instead of the increment it was
+  scheduled for (the forward-progress `offset` check would drop the duplicate
+  reply, so this is about not doing the work twice, not correctness). And it
+  adds **no `ctx.reply` site**: each step is the ordinary `{type:'chat'}` poll,
+  which is the only reason the all-paths `token`/`lastTs`/`suggestion`/
+  `modelNow`/`epoch` rule above isn't in play — a design that needs its own
+  reply path is the signal to back off, since nothing lints that rule.
+  **Not optimistic echo, deliberately**: a locally drawn bubble has no uuid and
+  no place in the append-only, epoch-rebuilt stream, and would be a lie for a
+  send `deliverMessage` refuses (an archived session).
 - **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
   signalled.** `Terminal →` on the chat view's needs-you bar arms
   `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
