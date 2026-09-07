@@ -244,9 +244,18 @@ function userTextAndImages(content) {
 // to discover the line can't contribute.
 export function mightCarryChat(line, agent) {
   if (agent === 'codex') {
+    // `"custom_tool_call` covers both custom_tool_call and its …_output, the
+    // same way `"function_call` covers both of those. It is not optional: on
+    // modern rollouts the custom-tool shape is what Codex writes for ordinary
+    // shell work, and it shares no substring with the older function_call one —
+    // measured over all 170 rollouts on one machine, adding it took tool events
+    // from 1823 to 2689 (866 of them, a third of the total) that were dropped
+    // here before reaching pushCodex, so the chat view rendered prose and
+    // thinking with barely two thirds of the session's tool activity. Same class
+    // of silent invisibility as the Claude gate's away_summary bullet in CLAUDE.md.
     return line.includes('"type":"message"') || line.includes('"function_call')
-      || line.includes('"reasoning"') || line.includes('"tool_search')
-      || line.includes('"turn_context"');
+      || line.includes('"custom_tool_call') || line.includes('"reasoning"')
+      || line.includes('"tool_search') || line.includes('"turn_context"');
   }
   // away_summary carries no `message` at all, so the role checks can't see it —
   // its own marker has to be in the gate or the recap never reaches the parser.
@@ -334,6 +343,28 @@ function pushClaude(entry, state) {
   return out;
 }
 
+// Wrappers Codex injects as ordinary role:user messages — the same problem the
+// Claude SYNTHETIC_PREFIXES list solves, with a different vocabulary, so it is a
+// separate list rather than a widening of that one. Measured over 60 real
+// rollouts these are the only recurring non-human user turns, and the AGENTS.md
+// block alone was the single most common user message on the board.
+//
+// This filter is what stops the chat view opening on a multi-KB instructions
+// blob in a human bubble — and, because restore-prompt.js reads "the newest user
+// turn" through this same scanner, it is also what stops Esc pasting that blob
+// into the composer. Codex must degrade to no restore, never to a wrong one.
+//
+// `[Agent Wrangler] 📬 New mail …` is deliberately NOT here: that one really was
+// delivered into the session, so it belongs on screen.
+const CODEX_SYNTHETIC_PREFIXES = [
+  '# AGENTS.md instructions', '<recommended_plugins>', '<in-app-browser-context',
+  '<user_shell_command>',
+];
+function isSyntheticCodex(text) {
+  const head = text.slice(0, 40).trimStart();
+  return CODEX_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+
 function codexText(content) {
   if (typeof content === 'string') return content.trim();
   if (!Array.isArray(content)) return '';
@@ -352,6 +383,28 @@ function codexArgs(raw) {
   } catch {
     return { command: oneLine(raw) };
   }
+}
+
+// custom_tool_call carries its argument as `input`: raw text, never JSON, so it
+// does not go through codexArgs at all. The key it lands under is load-bearing —
+// editCounts reads an apply_patch body from `input.patch` or `input.input`, and
+// apply_patch really does arrive in this shape (58 of them across 170 real
+// rollouts), so keying it as anything else silently reports every patch as
+// +0/-0 while the row otherwise looks entirely healthy. Kept RAW rather than one-lined for the same reason: the diff
+// body and an `exec` script are both multi-line, the expanded row is the only
+// place they exist, and toolTarget one-lines a copy for the collapsed summary.
+function codexCustomInput(raw) {
+  if (typeof raw === 'string') return { input: raw };
+  return raw && typeof raw === 'object' ? raw : null;
+}
+
+// Codex tool output is a string on function_call_output but an array of content
+// blocks on custom_tool_call_output. Stringifying the array (the old fallback)
+// put raw JSON in the tool row where the text belongs.
+function codexOutput(raw) {
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) return codexText(raw);
+  return JSON.stringify(raw ?? '');
 }
 
 function pushCodex(entry, state) {
@@ -374,7 +427,7 @@ function pushCodex(entry, state) {
     if (!role) return out;
     const text = codexText(p.content);
     if (!text) return out;
-    if (role === 'user' && isSynthetic(text)) return out;
+    if (role === 'user' && (isSynthetic(text) || isSyntheticCodex(text))) return out;
     if (role === 'user') out.push({ kind: 'user', text, ts });
     else out.push({ kind: 'assistant', text, ts, model: state.model || null });
     state.prevTs = ts;
@@ -390,11 +443,14 @@ function pushCodex(entry, state) {
     return out;
   }
 
-  if (p.type === 'function_call' || p.type === 'tool_search_call') {
-    // BOTH ids exist: `id` is fc_…/tsc_…, `call_id` is call_…. The output only
-    // ever carries call_id, so keying on `id` silently orphans every result.
+  if (p.type === 'function_call' || p.type === 'tool_search_call' || p.type === 'custom_tool_call') {
+    // BOTH ids exist: `id` is fc_…/ctc_…/tsc_…, `call_id` is call_…. The output
+    // only ever carries call_id, so keying on `id` silently orphans every result.
     if (!p.call_id) return out;
-    const input = codexArgs(p.arguments);
+    // The two shapes name their argument differently and encode it differently:
+    // function_call uses `arguments` (a JSON string), custom_tool_call uses
+    // `input` (raw text — a shell script, or a whole apply_patch body).
+    const input = p.type === 'custom_tool_call' ? codexCustomInput(p.input) : codexArgs(p.arguments);
     setPending(state.pending, p.call_id, {
       id: p.call_id, name: p.name || p.type, target: toolTarget(input), input,
     });
@@ -402,11 +458,11 @@ function pushCodex(entry, state) {
     return out;
   }
 
-  if (p.type === 'function_call_output' || p.type === 'tool_search_output') {
+  if (p.type === 'function_call_output' || p.type === 'tool_search_output' || p.type === 'custom_tool_call_output') {
     const open = state.pending.get(p.call_id);
     if (!open) return out;
     state.pending.delete(p.call_id);
-    const { text: output, truncated: outputTruncated } = cap(typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? ''));
+    const { text: output, truncated: outputTruncated } = cap(codexOutput(p.output));
     // Cap a COPY at emission — apply_patch embeds a full diff body, so this
     // needs the same bound as Claude's Write/Edit input. The uncapped original
     // stays in `open.input`/`state.pending` because a later task derives

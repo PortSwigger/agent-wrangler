@@ -1,5 +1,5 @@
 import { sendKeys as realSendKeys, capturePaneStyled as realCapture } from '../../tmux-scraper.js';
-import { findTranscript as realFindTranscript } from '../../transcript-reader.js';
+import { findConversationFile as realFindConversationFile } from '../../conversation-file.js';
 import { paneComposerDraft } from '../../ghost-suggestion.js';
 import { lastUserPrompt, chooseRestore } from '../../restore-prompt.js';
 
@@ -17,9 +17,15 @@ export const RESTORE_POLL_MS = 150;
 //
 // Escape is what both TUIs read as "interrupt", so that part stays agent-agnostic;
 // if the two ever diverge, the key belongs in the agent adapter, not here. Reading
-// the prompt back is Claude-only, because the pane parsing is Claude's TUI and
-// guessing at Codex's would be exactly the wrong-text failure this is built to
-// avoid — Codex still gets the interrupt and the transcript fallback.
+// the prompt back off the PANE is Claude-only, because that parsing is Claude's TUI
+// and guessing at Codex's would be exactly the wrong-text failure this is built to
+// avoid — Codex goes straight to the transcript fallback, which now genuinely
+// resolves for it (findConversationFile reaches ~/.codex/sessions; findTranscript,
+// which this used to call, only ever walked the Claude project buckets, so every
+// Codex restore silently answered "nothing"). What makes that fallback safe rather
+// than merely present is chat-events.js's CODEX_SYNTHETIC_PREFIXES: without it the
+// newest role:user message on a Codex rollout is routinely an injected AGENTS.md
+// instructions blob, and Esc would paste multiple KB of it into the composer.
 //
 // The reply is what the chat view loads; it never uses its own last-polled value
 // for this any more, which is what removes the "restored the previous prompt" race.
@@ -28,7 +34,7 @@ export const interruptHandler = {
   async handler(msg, ctx) {
     const sendKeys = ctx.sendKeys || realSendKeys;
     const capturePaneStyled = ctx.capturePaneStyled || realCapture;
-    const findTranscript = ctx.findTranscript || realFindTranscript;
+    const findConversationFile = ctx.findConversationFile || realFindConversationFile;
     const settleMs = Number.isFinite(ctx.restoreSettleMs) ? ctx.restoreSettleMs : RESTORE_SETTLE_MS;
     const pollMs = Number.isFinite(ctx.restorePollMs) ? ctx.restorePollMs : RESTORE_POLL_MS;
     const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -78,7 +84,7 @@ export const interruptHandler = {
       const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
       // readTranscriptTail is a ctx seam for tests only (like findTranscript);
       // production leaves it unset and lastUserPrompt does its own bounded read.
-      transcriptPrompt = await lastUserPrompt(await findTranscript(convId), agent,
+      transcriptPrompt = await lastUserPrompt(await findConversationFile(convId, agent), agent,
         ctx.readTranscriptTail ? { readTail: ctx.readTranscriptTail } : undefined);
     }
 

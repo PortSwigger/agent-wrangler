@@ -11,7 +11,12 @@ function uuidFromName(name) {
   return m ? m[1] : null;
 }
 
-async function allRollouts(sessionsDir) {
+// Paths only, in readdir order. Split out from allRollouts because resolving ONE
+// id needs nothing but the filenames — the uuid is in the name — and a stat per
+// file is the expensive half of the walk. Order is deliberately unchanged from
+// the stat-ing version: findRollout and buildRolloutIndex both resolve a
+// duplicate uuid to the first one walked, and they have to keep agreeing.
+async function rolloutPaths(sessionsDir) {
   const out = [];
   async function walk(dir) {
     let ents;
@@ -19,21 +24,57 @@ async function allRollouts(sessionsDir) {
     for (const e of ents) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) await walk(full);
-      else if (e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
-        const st = await fsp.stat(full).catch(() => null);
-        if (st) out.push({ full, name: e.name, mtimeMs: st.mtimeMs });
-      }
+      else if (e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) out.push(full);
     }
   }
   await walk(sessionsDir);
   return out;
 }
 
-async function findRollout(sessionId, sessionsDir) {
-  for (const r of await allRollouts(sessionsDir)) {
-    if (uuidFromName(r.name) === sessionId) return r.full;
+async function allRollouts(sessionsDir) {
+  const out = [];
+  for (const full of await rolloutPaths(sessionsDir)) {
+    const st = await fsp.stat(full).catch(() => null);
+    if (st) out.push({ full, name: path.basename(full), mtimeMs: st.mtimeMs });
   }
-  return null;
+  return out;
+}
+
+// `${sessionsDir}\0${sessionId}` -> resolved rollout path. Deliberately the same
+// shape as transcript-reader.js's pathCache, because it exists for the same
+// reason and carries the same two rules:
+//
+//  - Only POSITIVE results are cached. A miss stays a miss and is re-walked, so
+//    a rollout that appears after the first lookup is picked up on the next one
+//    rather than being remembered as absent forever. There is no negative-TTL
+//    variant: it would buy one directory walk while introducing a chat view that
+//    renders empty and does not self-heal for the length of the TTL, and the
+//    client has no retry of its own.
+//  - A cached hit is re-checked with a cheap existsSync and evicted the moment
+//    it stops resolving (the fix #96 had to make for Claude transcripts). A
+//    rollout deleted or pruned under a cached path would otherwise freeze that
+//    session's chat view and cost forever.
+//
+// This is what makes the chat view's 2s poll cheap: the first open pays one
+// name-only walk of the sessions tree, every poll after it pays one existsSync.
+const pathCache = new Map();
+
+export async function findRollout(sessionId, sessionsDir = CODEX_SESSIONS) {
+  const key = `${sessionsDir}\0${sessionId}`;
+  const hit = pathCache.get(key);
+  if (hit) {
+    if (fs.existsSync(hit)) return hit;
+    pathCache.delete(key);
+  }
+  let found = null;
+  for (const full of await rolloutPaths(sessionsDir)) {
+    if (uuidFromName(path.basename(full)) === sessionId) {
+      found = full;
+      break;
+    }
+  }
+  if (found) pathCache.set(key, found);
+  return found;
 }
 
 // One sessionId -> rollout-file map for the whole tree, so a caller resolving many

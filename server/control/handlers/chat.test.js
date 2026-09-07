@@ -15,8 +15,36 @@ async function tmpTranscript(lines) {
 
 function ctx(file, node = { liveSessionId: 'live-1', agent: 'claude' }) {
   const sent = [];
-  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findTranscript: async () => file };
+  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findConversationFile: async () => file };
 }
+
+// --- Codex rollout shapes ------------------------------------------------
+// A rollout is a flat jsonl of `response_item` lines under ~/.codex/sessions,
+// not a Claude project-bucket transcript — different directory, different
+// envelope. The one thing the chat path shares with Claude is the scanner.
+async function tmpRollout(lines) {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'aw-rollout-'));
+  const file = path.join(dir, 'rollout-2026-09-06T10-00-00-live-codex.jsonl');
+  await fsp.writeFile(file, lines.map((o) => JSON.stringify(o)).join('\n') + '\n');
+  return file;
+}
+
+const codexUser = (text, ts) => ({
+  timestamp: ts, type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+});
+
+// The modern Codex tool shape: `input` is a raw string (not `arguments`) and the
+// output arrives as content BLOCKS, not a string. Both differ from function_call.
+const codexToolCall = (callId, name, input, ts) => ({
+  timestamp: ts, type: 'response_item',
+  payload: { type: 'custom_tool_call', id: `ctc_${callId}`, call_id: callId, name, input },
+});
+
+const codexToolOutput = (callId, text, ts) => ({
+  timestamp: ts, type: 'response_item',
+  payload: { type: 'custom_tool_call_output', id: `ctco_${callId}`, call_id: callId, output: [{ type: 'input_text', text }] },
+});
 
 const userLine = (t, ts) => ({ type: 'user', timestamp: ts, message: { role: 'user', content: t } });
 
@@ -70,19 +98,25 @@ test('chat: a long transcript returns a bounded window with more:true', async ()
 
 test('chat: a missing transcript replies with an empty stream, not an error', async () => {
   const c = ctx(null);
-  c.findTranscript = async () => null;
+  c.findConversationFile = async () => null;
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.deepEqual(c.sent[0].events, []);
   assert.equal(c.sent[0].offset, 0);
 });
 
-test('chat: Codex sessions are refused before any transcript read', async () => {
-  const c = ctx(null, { liveSessionId: 'live-1', agent: 'codex' });
-  c.findTranscript = async () => { throw new Error('must not read Codex chat'); };
+test('chat: a Codex session resolves its ROLLOUT, not a Claude transcript', async () => {
+  // The bug PR #94 papered over: every session was resolved with findTranscript,
+  // which only walks ~/.claude/projects, so a Codex card found nothing and the
+  // view rendered empty. The agent must reach the resolver, which is the only
+  // thing that can send the lookup to ~/.codex/sessions instead.
+  const file = await tmpRollout([codexUser('do the thing', '2026-09-06T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'live-codex', agent: 'codex' });
+  let askedAgent = null;
+  c.findConversationFile = async (id, agent) => { askedAgent = agent; return file; };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 4 }, c);
-  assert.deepEqual(c.sent[0].events, []);
-  assert.equal(c.sent[0].offset, 0);
+  assert.equal(askedAgent, 'codex');
   assert.equal(c.sent[0].token, 4);
+  assert.deepEqual(c.sent[0].events.map((e) => [e.kind, e.text]), [['user', 'do the thing']]);
 });
 
 test('chat: echoes the client token verbatim on a normal reply', async () => {
@@ -101,7 +135,7 @@ test('chat: echoes the client token on the missing-transcript early return too',
   // make the client permanently ignore replies for that session, since a token
   // of `undefined` never matches a real generation.
   const c = ctx(null);
-  c.findTranscript = async () => null;
+  c.findConversationFile = async () => null;
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 3 }, c);
   assert.equal(c.sent[0].token, 3);
 });
@@ -217,6 +251,60 @@ test('chat: a tool_use in one poll and its tool_result in the next still pairs i
   assert.ok(toolEvent, 'the tool_result must pair with the tool_use seen in the PREVIOUS poll, not be lost');
   assert.equal(toolEvent.name, 'Bash');
   assert.equal(toolEvent.target, 'npm test');
+});
+
+test('chat: a Codex custom_tool_call in one poll pairs with its output in the next', async () => {
+  // The Codex half of the regression above, and the test that proves incremental
+  // polling actually works for a rollout rather than only for a Claude
+  // transcript. A `custom_tool_call` and its `custom_tool_call_output` are split
+  // across polls by however long the command runs — the scanner cache is what
+  // carries the open call across, and it is keyed on the conversation id AND the
+  // agent, so a Codex conversation has to reach it under agent 'codex'.
+  const file = await tmpRollout([
+    codexUser('run the suite', '2026-09-06T10:00:00.000Z'),
+    codexToolCall('call_1', 'exec', 'tools.exec_command({"cmd":"npm test"})', '2026-09-06T10:00:01.000Z'),
+  ]);
+  const c = ctx(file, { liveSessionId: 'live-codex-poll', agent: 'codex' });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.deepEqual(
+    first.pending,
+    { name: 'exec', target: 'tools.exec_command({"cmd":"npm test"})' },
+    'the custom_tool_call is still open after poll 1',
+  );
+  // prevTs advances on the tool-call line too, so the view's elapsed clock keeps
+  // running through a long command instead of freezing at the last message.
+  assert.equal(first.lastTs, Date.parse('2026-09-06T10:00:01.000Z'));
+
+  await fsp.appendFile(file, JSON.stringify(codexToolOutput('call_1', 'Script completed\nOutput:\nall green', '2026-09-06T10:00:09.000Z')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  const second = c.sent[1];
+  const toolEvent = second.events.find((e) => e.kind === 'tool');
+  assert.ok(toolEvent, 'the output must pair with the call seen in the PREVIOUS poll, not be lost');
+  assert.equal(toolEvent.name, 'exec');
+  // Flattened from content blocks — a JSON dump of the array here is the symptom
+  // of treating Codex output as a plain string.
+  assert.equal(toolEvent.output, 'Script completed\nOutput:\nall green');
+  assert.equal(second.pending, null, 'and the call is no longer open');
+  assert.equal(second.lastTs, Date.parse('2026-09-06T10:00:09.000Z'));
+});
+
+test('chat: a Codex reply carries every all-paths field, with no Claude-only pane reads', async () => {
+  // CLAUDE.md's all-paths rule (token/lastTs/suggestion/modelNow/epoch). The two
+  // pane-sourced fields are Claude-only by design — Codex's composer is a
+  // different TUI — so they must be present and NULL, never absent: an absent
+  // epoch reads to the client as 0 and rebuilds the stream on every poll.
+  const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'live-codex-fields', agent: 'codex', tmux: 'cx_card_1' });
+  c.capturePaneStyled = async () => { throw new Error('a Codex pane must not be scraped for a suggestion'); };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 11 }, c);
+  const reply = c.sent[0];
+  for (const key of ['token', 'lastTs', 'suggestion', 'modelNow', 'epoch', 'offset', 'more', 'pending']) {
+    assert.ok(key in reply, `reply is missing ${key}`);
+  }
+  assert.equal(reply.suggestion, null);
+  assert.equal(reply.modelNow, null);
+  assert.equal(reply.epoch, 0, 'a rollout has no rewind representation, so its epoch never moves');
 });
 
 test(
@@ -445,7 +533,7 @@ test('chat: a dormant session resolves its conversation id from the entry', asyn
   const c = ctx(file, { agent: 'claude', dormant: true }); // node WITHOUT liveSessionId
   c.sessionManager = { entryFor: () => ({ liveSessionId: 'live-1', agent: 'claude' }) };
   let asked = null;
-  c.findTranscript = async (id) => { asked = id; return file; };
+  c.findConversationFile = async (id) => { asked = id; return file; };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(asked, 'live-1', 'looked the transcript up by the conversation id, not the card id');
   assert.equal(c.sent[0].events.length, 1);
@@ -456,7 +544,7 @@ test('chat: the graph node still wins over the entry when it has one', async () 
   const c = ctx(file, { liveSessionId: 'from-graph', agent: 'claude' });
   c.sessionManager = { entryFor: () => ({ liveSessionId: 'from-entry' }) };
   let asked = null;
-  c.findTranscript = async (id) => { asked = id; return file; };
+  c.findConversationFile = async (id) => { asked = id; return file; };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(asked, 'from-graph');
 });
@@ -467,7 +555,7 @@ test('chat: falls back to the card id when neither source has one', async () => 
   const c = ctx(file, { agent: 'claude' });
   c.sessionManager = { entryFor: () => ({}) };
   let asked = null;
-  c.findTranscript = async (id) => { asked = id; return file; };
+  c.findConversationFile = async (id) => { asked = id; return file; };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(asked, 'card-1');
 });
@@ -522,7 +610,7 @@ test('chat: every reply carries an epoch, including the early returns', async ()
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(c.sent[0].epoch, 0);
   const missing = ctx(null, { liveSessionId: 'live-epoch-paths', agent: 'claude' });
-  missing.findTranscript = async () => null;
+  missing.findConversationFile = async () => null;
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, missing);
   assert.equal(missing.sent[0].epoch, 0, 'the missing-transcript early return carries it too');
 });
