@@ -388,3 +388,33 @@ test('Enter and Space activate a markdown-file control — it has no href to do 
   press('a');
   assert.deepEqual(opened, ['/repo/docs/plan.md', '/repo/docs/plan.md'], 'an ordinary key opens nothing');
 });
+
+// --- the composer collapsing to nothing ---------------------------------------
+
+// The auto-grow listener sizes the box from scrollHeight, and an element that is
+// not rendered (display:none somewhere above it — the sidebar hidden by the diff
+// view's fullscreen, the pane hidden on unmount) reports 0. Writing that 0px back
+// as the height leaves a textarea nobody can see or click once the pane returns,
+// which is exactly what a human saw as "the prompt box is just an empty space".
+test('a measurement taken while unrendered never becomes the composer height', async () => {
+  const { view, input, fire } = await mountView();
+  // The real sequence: the box was sized while visible, THEN the pane went
+  // display:none and loadDraft fired — so seed a stale pixel height first, or a
+  // listener that never ran at all would pass the assertions below unnoticed.
+  input.scrollHeight = 54;
+  fire(input, 'input');
+  assert.equal(input.style.height, '54px');
+  input.scrollHeight = 0; // what a display:none ancestor makes the browser report
+  view.mount('sess-1');
+  assert.equal(input.style.height, 'auto', 'mount must reset the stale height and never pin 0px');
+  input.value = 'typed while the pane happened to be hidden';
+  fire(input, 'input');
+  assert.equal(input.style.height, 'auto', 'nor may the auto-grow listener');
+  // Once rendered again the measurement is real and must be honoured as before.
+  input.scrollHeight = 54;
+  fire(input, 'input');
+  assert.equal(input.style.height, '54px');
+  input.scrollHeight = 900;
+  fire(input, 'input');
+  assert.equal(input.style.height, '140px', 'the cap still applies');
+});

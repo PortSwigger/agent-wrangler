@@ -530,6 +530,16 @@ don't re-derive it.
   must still render if that never runs). Separate from the terminal's size on
   purpose — `term-font.js` and `chat-font.js` are sibling leaves with different
   presets and defaults, and `chat-font.test.js` asserts they have not converged.
+- **The chat composer's auto-grow must never persist a measurement taken while
+  the textarea is unrendered.** `scrollHeight` is 0 under any `display:none`
+  ancestor, and the `input` listener (`chat-view.js`) runs in exactly those states
+  via `loadDraft`/`loadComposer` — `unmount` hides the pane before it clears the
+  box, and `main.diff-fullscreen` hides the whole `#sidebar` while the view stays
+  mounted. Writing that 0 back as `height: 0px` outlived the hide: nothing
+  re-measures when the pane returns unless a `mount` happens to, so the reader
+  found an empty, unfocusable strip where the box should be (reproduced live:
+  chat open → diff fullscreen → select another session → diff closes). A zero
+  measurement leaves the height at `auto`, where `rows="1"` draws a real row.
 - **Every `ctx.reply` in `server/control/handlers/chat.js` MUST echo `token`.** The chat view
   correlates each poll reply to the mount that requested it by an opaque token it sends and
   the handler echoes back (`token: msg.token ?? null`); the client drops any reply whose

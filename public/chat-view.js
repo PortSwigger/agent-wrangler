@@ -366,7 +366,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+    // An unrendered element (display:none somewhere above — the sidebar hidden by
+    // the diff view's fullscreen, the pane hidden on unmount) reports scrollHeight
+    // 0, and this listener runs in exactly those states via loadDraft/loadComposer.
+    // Pinning 0px then outlives the hide: nothing re-measures when the pane comes
+    // back unless a mount happens to, so the reader found an empty, unfocusable
+    // strip where the box should be. Left at `auto`, rows="1" draws a real row.
+    const measured = input.scrollHeight;
+    if (measured) input.style.height = `${Math.min(measured, 140)}px`;
     // Typing withdraws the suggestion, and clearing the box brings it back.
     renderSuggestion();
     renderSendability();
