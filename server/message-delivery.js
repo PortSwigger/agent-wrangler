@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
-import { sendText as defaultSendText } from './tmux-scraper.js';
+import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
@@ -15,13 +15,41 @@ import { adapterFor } from './agents/index.js';
 // incoming messages, uniformly across live and dormant. Archived is the one hard
 // refusal: it left the board on purpose, and resume() would resurrect it by dropping
 // archivedAt.
+// `imagePaths` are ABSOLUTE, already resolved and existence-checked server-side
+// (paste-store.js) — never a raw client value. Each is pasted as its OWN block,
+// alone and before the prose, because that is the only shape Claude Code's TUI
+// turns back into an attached image. Measured against a live pane: a bare path on
+// its own line becomes `[Image #1]`, but the same path inside a MULTI-LINE paste,
+// or with anything following it, stays literal text the model cannot see. So the
+// path can never simply be concatenated into `text` — the split is the mechanism,
+// not tidiness.
 // Returns { mode: 'live' } | { mode: 'dormant' } | { mode: 'error', error }.
-export async function deliverMessage(id, text, deps) {
+// `clearComposer` empties the pane's composer before anything is pasted. Set by
+// the chat view when IT armed the restore that put text there: interrupting a turn
+// makes Claude Code restore the interrupted prompt into the pane composer, and the
+// chat view restores the same prompt into the browser composer, so sending the
+// edited version pastes it onto the original and the agent gets both fused into one
+// prompt. Only the armed case clears — a draft the human typed in the pane directly
+// is theirs, and discarding it silently would be its own bug.
+export async function deliverMessage(id, text, deps, { imagePaths = [], clearComposer: wantClear = false } = {}) {
   const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
   const sendText = deps.sendText ?? defaultSendText;
+  const prefillPane = deps.prefillPane ?? defaultPrefillPane;
+  const clearComposer = deps.clearComposer ?? defaultClearComposer;
+
+  // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
+  // each path into its composer and the single sendText below is what submits the
+  // whole message, images and prose together, as ONE turn.
+  // Ordered: clear first, then attachments, then the prose. Clearing after an
+  // attachment would throw the attachment away with it.
+  const attach = async (tmux, socket) => {
+    if (wantClear) await clearComposer(tmux, socket);
+    for (const p of imagePaths) await prefillPane(tmux, p, socket);
+  };
 
   const target = tmuxFor(id);
   if (target) {
+    await attach(target, socketFor(id));
     await sendText(target, text, socketFor(id));
     return { mode: 'live' };
   }
@@ -63,13 +91,16 @@ export async function deliverMessage(id, text, deps) {
   // ANY joined resume ignores it too — both fall back to sendText once resume()
   // resolves with a live pane, mirroring deliverPrNudge.
   const owned = !sessionManager.isResuming(id);
-  const intentCarriesMessage = owned && adapterFor(fresh.agent).resumeCarriesIntent;
+  // Attachments force the paste route. The resume-intent shortcut hands the text
+  // to the CLI as a launch argument, which has no composer for a path to be
+  // absorbed into — the images would simply be dropped, silently.
+  const intentCarriesMessage = owned && !imagePaths.length && !wantClear && adapterFor(fresh.agent).resumeCarriesIntent;
   try {
     const res = await sessionManager.resume(id, dir, { intent: text });
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';
-      if (tmux) await sendText(tmux, text, socket);
+      if (tmux) { await attach(tmux, socket); await sendText(tmux, text, socket); }
       else return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
     }
   } catch (err) {

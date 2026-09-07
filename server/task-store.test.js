@@ -430,6 +430,48 @@ test('moveTodo reassigns across buckets; keeps map sparse; no-op for same/unknow
   assert.deepEqual(new TaskStore(file).snapshot().todos[ADHOC].map((x) => x.id), [td.id]);
 });
 
+test('reorderTodos sets a bucket\'s order verbatim; persists; no-op when unchanged', () => {
+  const file = tmpFile();
+  const store = new TaskStore(file);
+  const t = store.createTask({ name: 'Work' });
+  const a = store.addTodo(t.id, 'a', 1);
+  const b = store.addTodo(t.id, 'b', 2);
+  const c = store.addTodo(t.id, 'c', 3);
+  assert.equal(store.reorderTodos(t.id, [c.id, a.id, b.id]), true);
+  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.id), [c.id, a.id, b.id]);
+  assert.equal(store.reorderTodos(t.id, [c.id, a.id, b.id]), false);
+  assert.deepEqual(new TaskStore(file).snapshot().todos[t.id].map((x) => x.id), [c.id, a.id, b.id]);
+});
+
+test('reorderTodos appends any ids missing from the given order rather than dropping them', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Work' });
+  const a = store.addTodo(t.id, 'a', 1);
+  const b = store.addTodo(t.id, 'b', 2);
+  store.addTodo(t.id, 'c', 3);
+  assert.equal(store.reorderTodos(t.id, [b.id, a.id]), true);
+  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.text), ['b', 'a', 'c']);
+});
+
+test('reorderTodos ignores unknown ids in the given order; no-op for an unknown/empty bucket', () => {
+  const store = new TaskStore(tmpFile());
+  const t = store.createTask({ name: 'Work' });
+  const a = store.addTodo(t.id, 'a', 1);
+  const b = store.addTodo(t.id, 'b', 2);
+  assert.equal(store.reorderTodos(t.id, ['td_nope', b.id, a.id]), true);
+  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.id), [b.id, a.id]);
+  assert.equal(store.reorderTodos('t_nope', [a.id, b.id]), false);
+  assert.equal(store.reorderTodos(t.id, 'not-an-array'), false);
+});
+
+test('reorderTodos supports the adhoc bucket via the null wire form', () => {
+  const store = new TaskStore(tmpFile());
+  const a = store.addTodo(ADHOC, 'a', 1);
+  const b = store.addTodo(ADHOC, 'b', 2);
+  assert.equal(store.reorderTodos(null, [b.id, a.id]), true);
+  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.id), [b.id, a.id]);
+});
+
 test('snapshot().todos is a deep copy (mutating it does not mutate the store)', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Work' });

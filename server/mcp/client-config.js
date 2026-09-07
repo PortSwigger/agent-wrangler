@@ -1,4 +1,5 @@
 import { serverPort } from '../runtime.js';
+import { checklistEnabled } from '../config-store.js';
 
 // Single source of truth for how a launched session's MCP client is pointed back
 // at this server. Imports only serverPort, so the agents layer (a leaf) can use
@@ -46,12 +47,22 @@ export function allowedToolName(tool) {
   return `mcp__${MCP_SERVER_NAME}__${tool}`;
 }
 
+// The per-session checklist's four tools, gated as a set by `checklistEnabled`.
+// The NAMES live in this leaf (and the registry imports them from here, never
+// the other way round) for the same reason ALLOWED_TOOLS does: tools/index.js
+// pulls in session-manager, and the agents layer must be able to read this
+// without cycling back through itself.
+export const CHECKLIST_TOOLS = ['add_checklist_item', 'update_checklist_item', 'remove_checklist_item', 'list_checklist'];
+
 // The wrangler MCP tools a launched session is granted without a per-call
 // prompt. Lives here (the leaf the agents import) rather than in the tools
 // registry, since that registry pulls in session-manager and would cycle back
 // through the agents layer. Keep in sync when a new always-on tool is added.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'read_mail', 'list_mail'];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'read_mail', 'list_mail', ...CHECKLIST_TOOLS];
 
-export function allowedToolsArg() {
-  return ALLOWED_TOOLS.map(allowedToolName).join(',');
+// `checklist` is injectable (defaulting to the live config read) so tests never
+// write the shared config.json — same seam as taskMemoryEnabled's callers.
+export function allowedToolsArg({ checklist = checklistEnabled() } = {}) {
+  const names = checklist ? ALLOWED_TOOLS : ALLOWED_TOOLS.filter((n) => !CHECKLIST_TOOLS.includes(n));
+  return names.map(allowedToolName).join(',');
 }

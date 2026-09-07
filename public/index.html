@@ -68,6 +68,13 @@
             <span class="diff-sub" id="diff-sub"></span>
           </div>
           <div class="diff-head-acts">
+            <!-- How the diff is DRAWN, deliberately separate from .diff-mode above
+                 (which is what's being diffed, and whose PR buttons are rendered
+                 dynamically) — same view concern as the fullscreen button beside it. -->
+            <div class="diff-layout" role="group" aria-label="Diff layout">
+              <button id="diff-layout-inline" class="diff-mode-btn on" type="button" data-layout="inline" title="One column of unified-diff lines">Inline</button>
+              <button id="diff-layout-split" class="diff-mode-btn" type="button" data-layout="split" title="Old and new side by side">Side-by-side</button>
+            </div>
             <button id="diff-send" class="primary" type="button" hidden>Send to agent (0)</button>
             <button id="diff-fullscreen" class="icon-ghost" type="button" title="Fullscreen"></button>
             <button id="diff-close" class="icon-ghost" type="button" title="Close (Esc)"></button>
@@ -129,8 +136,42 @@
       <div id="panel">
         <div class="panel-empty">Select a session to see details and its live terminal.</div>
       </div>
+      <!-- Per-session checklist (checklist-dom.js, wired in app.js). A #panel
+           sibling rather than part of it: it is its own bordered strip, sized to
+           its content (never flex:1), so it can't compete with the terminal/chat
+           pane for height. Rows are patched in place — the ~4s graph poll must
+           not reset the list's scroll or eat an inline edit. Hidden entirely
+           when `checklistEnabled` is off or no session is selected. -->
+      <div id="checklist" hidden>
+        <div class="ck-head">
+          <span class="ck-title">Checklist</span>
+          <span class="ck-count" id="ck-count"></span>
+          <button type="button" class="ck-add" id="ck-add" title="Add a checklist item">+ Add</button>
+        </div>
+        <div class="ck-list" id="ck-list"></div>
+      </div>
       <div id="term-wrap">
         <div id="term"></div>
+      </div>
+      <div id="chat-wrap" hidden>
+        <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+        <div id="chat-notice-bar" class="chat-notice-bar" hidden></div>
+        <div id="chat-composer" class="chat-composer">
+          <button type="button" id="chat-suggestion" class="chat-suggestion" hidden></button>
+          <!-- Pasted images ride here as chips rather than as a path in the
+               textarea: the path has to be pasted into the pane on its OWN, so
+               keeping it out of the prose is the mechanism, not a nicety. -->
+          <div id="chat-attachments" class="chat-attachments" hidden></div>
+          <div class="chat-box">
+            <textarea id="chat-input" rows="1" placeholder="Send a prompt…"></textarea>
+            <button type="button" id="chat-stop" class="chat-stop" hidden>Stop</button>
+            <button type="button" id="chat-send" class="chat-send">Send</button>
+          </div>
+          <div class="chat-foot">
+            <div class="chat-hint" id="chat-hint"></div>
+            <button type="button" class="chat-current-model" id="chat-current-model" hidden></button>
+          </div>
+        </div>
       </div>
     </aside>
   </main>
@@ -345,12 +386,22 @@
 
   <div id="usage-modal" class="hidden">
     <div class="modal-card usage-card">
-      <div class="usage-head">
+      <div class="usage-head" id="usage-head">
         <h3 id="usage-title">Usage &amp; spend</h3>
-        <div class="usage-toggles">
+        <div class="usage-toggles" id="usage-toggles">
           <div class="seg" id="usage-granularity" role="group" aria-label="Time granularity"></div>
           <div class="seg" id="usage-metric" role="group" aria-label="Metric"></div>
           <div class="seg" id="usage-slice" role="group" aria-label="Slice by"></div>
+        </div>
+      </div>
+      <div class="usage-range-row" id="usage-range-row">
+        <label for="usage-range-select" id="usage-range-label">Range</label>
+        <select id="usage-range-select" class="usage-range-select"></select>
+        <div class="usage-custom-row hidden" id="usage-custom-row">
+          <label for="usage-date-from" id="usage-date-from-label">From</label>
+          <input type="date" id="usage-date-from" class="usage-date-input">
+          <label for="usage-date-to" id="usage-date-to-label">To</label>
+          <input type="date" id="usage-date-to" class="usage-date-input">
         </div>
       </div>
       <div class="usage-summary" id="usage-summary"></div>
@@ -365,7 +416,7 @@
   <div id="settings-modal" class="hidden">
     <div class="modal-card settings-card">
       <h3 id="settings-title">Settings</h3>
-      <!-- Sections injected by settings.js: Appearance, Behavior, Shortcuts. -->
+      <!-- Tabbed sections injected by settings.js. -->
       <div id="settings-body" class="settings-body"></div>
       <div class="modal-actions">
         <button id="settings-close" class="primary">Done</button>

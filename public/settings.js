@@ -5,10 +5,17 @@
 // its persistence, and getSetting() all derive from it, no other wiring needed.
 // Read a value anywhere with getSetting(id); it reads localStorage live, so a
 // consumer that calls it per-use (e.g. on each keypress) always sees the current
-// choice with no change-event plumbing.
+// choice with no change-event plumbing. A setting whose effect must be visible
+// the INSTANT it's flipped (layout, not behaviour — terminalSide) has nothing
+// to re-read it at that moment, so those hang off the `onChange` bridge below
+// instead; prefer read-per-use where it works, since it can't fall out of sync.
 //
 // Each entry: { id, label, help, type, default }.
 //   type 'toggle' → boolean, rendered as a switch; getSetting returns a boolean.
+//   type 'segmented' → one of `options` ([{ value, label }]), rendered as a row of
+//     pills sharing the Appearance font-size row's styling; getSetting returns the
+//     chosen `value` string. An unknown stored value (hand-edited, or left behind
+//     by a renamed option) falls back to `default` rather than reaching a consumer.
 // New types extend renderRow()/readStored()/writeStored() + getSetting().
 //
 // scope: 'server' marks a setting persisted in the server's config.json (shared
@@ -16,10 +23,8 @@
 // bridge app.js hands to initSettings — read off the latest graph, write via the
 // control WS — so this module stays free of app.js imports.
 //
-// The modal is split into three sections: Appearance (theme + terminal font size —
-// bespoke widgets owned by theme.js/app.js, composed in via the `appearance` bridge
-// below, the same pattern as the `server` bridge), Behavior (this registry), and
-// Shortcuts (a static reference table from shortcuts.js).
+// The modal is split into focused tabs. Appearance includes bespoke widgets owned
+// by theme.js/app.js; Shortcuts includes the static reference from shortcuts.js.
 
 import { esc } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
@@ -75,6 +80,13 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'soundOnFinish',
+    type: 'toggle',
+    label: 'Play a sound when a session finishes',
+    help: 'A short rising chime when a session stops working, and a lower double-beep when one starts waiting on you. Per-browser rather than shared, since it is the machine you are sitting at that should make the noise; while focus mode is on, other tasks stay silent like their toasts do.',
+    default: false,
+  },
+  {
     id: 'childFullViewByDefault',
     type: 'toggle',
     scope: 'server',
@@ -82,12 +94,71 @@ export const SETTINGS = [
     help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for newly-nested children; a child you have toggled by hand (its card menu\'s "Full view") keeps its own choice regardless.',
     default: false,
   },
+  {
+    id: 'chatViewDefault',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Open sessions in chat view',
+    help: 'Whether a session\'s sidebar opens in the rich chat view or the terminal. A session you have switched by hand keeps its own choice regardless of this setting.',
+    default: false,
+  },
+  {
+    id: 'terminalSide',
+    type: 'segmented',
+    options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }],
+    label: 'Terminal position',
+    help: 'Which side of the board the selected session\'s terminal / chat pane sits on. Per-browser rather than shared, like the theme and the pane\'s own drag-resized width — which side of the screen it wants to be on is a property of the machine you are sitting at. The nav rail stays on the far left either way.',
+    default: 'right',
+  },
+  {
+    id: 'checklistEnabled',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Per-session checklist',
+    help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel, drops those tools, and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. An already-running session only gains or loses the tools when it is next resumed.',
+    default: true,
+  },
 ];
+
+export const SETTINGS_TABS = [
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  {
+    id: 'sessions',
+    label: 'Sessions',
+    settingIds: [
+      'taskMemoryEnabled', 'subagentsExpandedByDefault', 'soundOnFinish',
+      'childFullViewByDefault', 'chatViewDefault', 'checklistEnabled',
+    ],
+  },
+  {
+    id: 'automation',
+    label: 'Automation',
+    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
+  },
+  { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
+];
+
+export function tabIndexAfterKey(index, key, count) {
+  if (key === 'ArrowRight') return (index + 1) % count;
+  if (key === 'ArrowLeft') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return index;
+}
+
+export function isOpenSettingsKey(event) {
+  return Boolean(event.key === ',' && event.metaKey && event.ctrlKey && !event.shiftKey && !event.altKey);
+}
 
 let serverBridge = { get: () => undefined, set: () => {} };
 // { themeRowsHtml(), fontSizeRowHtml(), onThemeSelect(id), onFontSize(n) } — supplied
 // by app.js, which owns both the live theme and the live terminal.
-let appearanceBridge = { themeRowsHtml: () => '', fontSizeRowHtml: () => '', onThemeSelect: () => {}, onFontSize: () => {} };
+let appearanceBridge = {
+  themeRowsHtml: () => '', fontSizeRowHtml: () => '', chatFontSizeRowHtml: () => '',
+  onThemeSelect: () => {}, onFontSize: () => {}, onChatFontSize: () => {},
+};
+// (id, value) after every write, either scope — see initSettings' `onChange`.
+let changeBridge = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -99,6 +170,11 @@ function readStored(def) {
   const raw = localStorage.getItem(STORE_PREFIX + def.id);
   if (raw == null) return def.default;
   if (def.type === 'toggle') return raw === '1';
+  // Validated, not trusted: localStorage outlives the option list that wrote it,
+  // so a value no entry still offers must not reach a consumer switching on it.
+  if (def.type === 'segmented') {
+    return def.options.some((o) => o.value === raw) ? raw : def.default;
+  }
   return raw;
 }
 
@@ -117,7 +193,9 @@ export function getSetting(id) {
 
 export function setSetting(id, value) {
   const def = byId.get(id);
-  if (def) writeStored(def, value);
+  if (!def) return;
+  writeStored(def, value);
+  changeBridge(id, value);
 }
 
 function rowHtml(def) {
@@ -136,14 +214,20 @@ function rowHtml(def) {
         </button>
       </div>`;
   }
+  if (def.type === 'segmented') {
+    const opts = def.options.map((o) => `<button type="button" role="radio"
+          class="setting-seg-opt${o.value === on ? ' active' : ''}"
+          aria-checked="${o.value === on ? 'true' : 'false'}"
+          data-value="${esc(o.value)}">${esc(o.label)}</button>`).join('');
+    return `<div class="setting-row" data-id="${esc(def.id)}">
+        <div class="setting-copy">
+          <div class="setting-label">${esc(def.label)}</div>
+          ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
+        </div>
+        <div class="setting-seg" role="radiogroup" aria-label="${esc(def.label)}">${opts}</div>
+      </div>`;
+  }
   return '';
-}
-
-function sectionHtml(title, inner) {
-  return `<div class="settings-section">
-      <div class="settings-section-title">${esc(title)}</div>
-      ${inner}
-    </div>`;
 }
 
 // Same label + help styling as a Behavior row (.setting-label/.setting-help), so
@@ -157,25 +241,57 @@ function appearanceItemHtml(label, help, body) {
     </div>`;
 }
 
-function render(body) {
-  const behaviorRows = SETTINGS.map(rowHtml).join('') || '<div class="settings-empty">No settings yet.</div>';
-  body.innerHTML = [
-    sectionHtml('Appearance', [
+function tabPanelHtml(tab, selected) {
+  const rows = tab.settingIds.map((id) => rowHtml(byId.get(id))).join('');
+  let inner = `<div class="settings-list">${rows}</div>`;
+  if (tab.id === 'appearance') {
+    inner = [
       appearanceItemHtml('Theme', null, `<div class="theme-rows">${appearanceBridge.themeRowsHtml()}</div>`),
       appearanceItemHtml('Terminal font size', null, `<div class="fontsize-row">${appearanceBridge.fontSizeRowHtml()}</div>`),
-    ].join('')),
-    sectionHtml('Behavior', `<div class="settings-list">${behaviorRows}</div>`),
-    sectionHtml('Shortcuts', `<div class="shortcuts-list">${shortcutsHtml()}</div>`),
-  ].join('');
+      appearanceItemHtml('Chat font size', 'Applies to the rich chat view only — the terminal keeps its own size above.', `<div class="fontsize-row" data-kind="chat">${appearanceBridge.chatFontSizeRowHtml()}</div>`),
+      inner,
+    ].join('');
+  } else if (tab.id === 'shortcuts') {
+    inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
+  }
+  return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
+      role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
+}
+
+function render(body) {
+  const selectedId = SETTINGS_TABS[0].id;
+  const tabs = SETTINGS_TABS.map((tab) => `<button type="button" id="settings-tab-${tab.id}"
+      class="settings-tab${tab.id === selectedId ? ' active' : ''}" role="tab"
+      aria-selected="${tab.id === selectedId ? 'true' : 'false'}"
+      aria-controls="settings-panel-${tab.id}" tabindex="${tab.id === selectedId ? '0' : '-1'}"
+      data-tab="${tab.id}">${esc(tab.label)}</button>`).join('');
+  const panels = SETTINGS_TABS.map((tab) => tabPanelHtml(tab, tab.id === selectedId)).join('');
+  body.innerHTML = `<div class="settings-tabs" role="tablist" aria-label="Settings sections">${tabs}</div>
+    <div class="settings-panels">${panels}</div>`;
+}
+
+function selectTab(body, tabId, focus = false) {
+  body.querySelectorAll('.settings-tab').forEach((tab) => {
+    const selected = tab.dataset.tab === tabId;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focus) tab.focus();
+  });
+  body.querySelectorAll('.settings-panel').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.id !== `settings-panel-${tabId}`);
+  });
 }
 
 // Wire the gear button + modal once at startup. Reuses the shared modal overlay
 // styling (centered, backdrop-dismiss, Escape) like every other -modal.
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
-// `appearance` is the theme/font-size bridge described above.
-export function initSettings({ server, appearance } = {}) {
+// `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
+// fires after every write, either scope.
+export function initSettings({ server, appearance, onChange } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
+  if (onChange) changeBridge = onChange;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -190,10 +306,25 @@ export function initSettings({ server, appearance } = {}) {
 
   if (btn) btn.addEventListener('click', open);
   closeBtn?.addEventListener('click', close);
+  window.addEventListener('keydown', (e) => {
+    if (!isOpenSettingsKey(e)) return;
+    if (!modal.classList.contains('hidden')) {
+      e.preventDefault();
+      return;
+    }
+    if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+    e.preventDefault();
+    open();
+  }, true);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
 
   body.addEventListener('click', (e) => {
+    const tab = e.target.closest('.settings-tab');
+    if (tab) {
+      selectTab(body, tab.dataset.tab);
+      return;
+    }
     const themeRow = e.target.closest('.theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
@@ -202,8 +333,29 @@ export function initSettings({ server, appearance } = {}) {
     }
     const fontOpt = e.target.closest('.fontsize-opt');
     if (fontOpt) {
-      appearanceBridge.onFontSize(Number(fontOpt.dataset.size));
-      body.querySelectorAll('.fontsize-opt').forEach((r) => r.classList.toggle('active', r === fontOpt));
+      const row = fontOpt.closest('.fontsize-row');
+      const size = Number(fontOpt.dataset.size);
+      if (row?.dataset.kind === 'chat') appearanceBridge.onChatFontSize(size);
+      else appearanceBridge.onFontSize(size);
+      // Scoped to the clicked row, NOT the whole modal body: there are two
+      // .fontsize-row groups now, and a body-wide query would clear the other
+      // setting's highlight on every click, showing no selection at all for it.
+      row?.querySelectorAll('.fontsize-opt').forEach((r) => r.classList.toggle('active', r === fontOpt));
+      return;
+    }
+    const segOpt = e.target.closest('.setting-seg-opt');
+    if (segOpt) {
+      const segRow = segOpt.closest('.setting-row');
+      const segDef = byId.get(segRow?.dataset.id);
+      if (!segDef || segDef.type !== 'segmented') return;
+      setSetting(segDef.id, segOpt.dataset.value);
+      // Scoped to this row's group, like the two .fontsize-row groups above: a
+      // body-wide query would clear another segmented row's highlight too.
+      segRow.querySelectorAll('.setting-seg-opt').forEach((b) => {
+        const active = b === segOpt;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
       return;
     }
     const toggle = e.target.closest('.setting-toggle');
@@ -215,5 +367,15 @@ export function initSettings({ server, appearance } = {}) {
     setSetting(def.id, next);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
+  });
+
+  body.addEventListener('keydown', (e) => {
+    const tab = e.target.closest('.settings-tab');
+    if (!tab) return;
+    const index = SETTINGS_TABS.findIndex(({ id }) => id === tab.dataset.tab);
+    const next = tabIndexAfterKey(index, e.key, SETTINGS_TABS.length);
+    if (next === index) return;
+    e.preventDefault();
+    selectTab(body, SETTINGS_TABS[next].id, true);
   });
 }

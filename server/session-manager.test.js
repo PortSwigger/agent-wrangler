@@ -575,6 +575,63 @@ test('fork() threads trustCodexLaunchCwd into ensureCodexTrust for a codex paren
   assert.deepEqual(trusted, ['/repo']);
 });
 
+// Codex's sandbox grants filesystem write only to the workspace roots it's
+// launched with; a linked worktree's common git-dir (the main checkout's own
+// `.git`) lives in a SIBLING directory that's never one of them, so `git add`/
+// `git commit` fails (index.lock, then object writes, then ref updates —
+// verified against the real binary) unless it's added explicitly (see
+// linkedWorktreeCommonGitDir in worktree.js). Claude has no OS sandbox and
+// needs no such grant.
+function realWorktreeRepo(rawRoot) {
+  const root = fs.realpathSync(rawRoot); // macOS: /var -> /private/var, same as git's own resolution
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+  const wt = path.join(root, 'proj-worktree-feature');
+  git('worktree', 'add', '-q', wt, '-b', 'feature');
+  return { repo, worktreePath: wt, gitDir: path.join(repo, '.git') };
+}
+
+test('fork() adds the linked worktree common git-dir via --add-dir for a codex parent', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-fork-wt-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', cwd: worktreePath, worktree: { path: worktreePath, branch: 'feature', repoRoot: path.dirname(worktreePath) } },
+    cwd: worktreePath,
+  });
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('fork() does not add a worktree common git-dir for a claude parent (no OS sandbox to feed)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-fork-wt2-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'claude', cwd: worktreePath, worktree: { path: worktreePath, branch: 'feature', repoRoot: path.dirname(worktreePath) } },
+    cwd: worktreePath,
+  });
+  assert.ok(!captured.includes(gitDir), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('fork() never calls ensureCodexTrust for a claude parent', async () => {
   const sm = new SessionManager();
   sm._newSession = async () => {};
@@ -846,6 +903,26 @@ test('resume() threads trustCodexLaunchCwd into ensureCodexTrust, keyed on the e
   // A worktree entry trusts the worktree's MAIN checkout, not the worktree
   // path itself — Codex resolves a linked worktree's trust to that root.
   assert.deepEqual(trusted, ['/repo']);
+});
+
+test('resume() adds the linked worktree common git-dir via --add-dir for a codex entry', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-resume-wt-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('card-wt', {
+    agent: 'codex', cwd: worktreePath, liveSessionId: 'live-wt',
+    worktree: { path: worktreePath, branch: 'feature', repoRoot: path.dirname(worktreePath) },
+  });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => [];
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-wt', worktreePath);
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('resolveWorktree creates a worktree and returns its path + branch', async () => {
@@ -1209,6 +1286,45 @@ test('dispatch threads trustCodexLaunchCwd into ensureCodexTrust for a codex ses
   // Default config.json has no trustCodexLaunchCwd override — reads the on
   // default, so the launch cwd is trusted.
   assert.deepEqual(trusted, [os.tmpdir()]);
+});
+
+test('dispatch: worktree mode adds the linked worktree common git-dir via --add-dir for codex', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-wt-'))); // macOS: /var -> /private/var
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({
+    cwd: repo, intent: 'fix the bug', agent: 'codex', worktree: true, worktreeAuto: true,
+  });
+  assert.ok(captured.includes(`'--add-dir' '${path.join(repo, '.git')}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude (no OS sandbox to feed)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-wt2-'));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: repo, intent: 'fix the bug', worktree: true, worktreeAuto: true }); // default agent: claude
+  assert.doesNotMatch(captured, /worktrees/);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('dispatch never calls ensureCodexTrust for a claude session', async () => {

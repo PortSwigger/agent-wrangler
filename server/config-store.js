@@ -146,3 +146,24 @@ export function childFullViewByDefault(cfg = readConfig()) {
 export function autoFixPrChecksDefault(cfg = readConfig()) {
   return cfg.autoFixPrChecksDefault !== false;
 }
+
+// Which view a session's sidebar opens in for cards the user hasn't explicitly
+// toggled either way. Default off (terminal) to preserve today's behaviour;
+// toggled from the board's settings modal (config.json `chatViewDefault: true`).
+// Takes cfg (like subagentsExpandedByDefault) so tests never write the shared
+// config.json — `node --test` runs files in parallel against the same real file.
+export function chatViewDefault(cfg = readConfig()) {
+  return cfg.chatViewDefault === true;
+}
+
+// Whether the per-session checklist exists at all: the four MCP tools
+// (registration AND the launch --allowedTools grant), the always-on nudge
+// pointing at the `checklist` skill, and the board's Checklist panel. Default
+// ON — a feature nobody discovers might as well not exist, and the panel is
+// the whole point (see the design spec's Optionality section). Off is
+// deliberately shallow: checklists.json and every stored item stay intact, so
+// re-enabling restores every list. Takes cfg (like taskMemoryEnabled) so tests
+// never write the shared config.json.
+export function checklistEnabled(cfg = readConfig()) {
+  return cfg.checklistEnabled !== false;
+}

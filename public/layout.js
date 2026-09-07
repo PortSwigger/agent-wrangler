@@ -380,14 +380,22 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 // added to the UNCAPPED primary count instead, alongside `topLevelActiveCount`;
 // `totalWeight` already charges it at a full `cardStride` (see todo.js), so
 // this only moves it from capped to uncapped — never a double count.
+//
+// `todoVisibleCount` is `todoCount`'s collapse-aware twin, same split as
+// childRowCount/absorbedChildCount: `todoCount` (total todos on the task)
+// still decides whether the divider's one-time overhead is charged at all
+// (todo.js tileWeightWithTodos), while `todoVisibleCount` (0 when the task's
+// todo zone is collapsed — app.js collapsedTodoZones) is what the per-row
+// stride is charged against. Defaults to `todoCount` so an untouched caller
+// keeps the pre-collapse behavior.
 export function tileSpan(
   sessions, perRow, todoCount = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, todoVisibleCount = todoCount,
 ) {
   const snoozedCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
   const topLevelActiveCount = sessions.length - snoozedCount - absorbedChildCount;
   const totalWeight = tileWeightWithTodos({
-    activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, todoCount, childRowCount, workflowBoxCount,
+    activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, todoCount, todoVisibleCount, childRowCount, workflowBoxCount,
     subagentRowCount, subagentZoneCount, childFullViewCount,
   });
   const uncappedCount = topLevelActiveCount + childFullViewCount;

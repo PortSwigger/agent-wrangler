@@ -216,8 +216,14 @@ export function detachedSectionEl(detached) {
 // append-into-the-same-fragment preserves. `selectedKeys` (optional Set of `file|side|
 // line` presence keys) drives the `.selected` range highlight — a line in the current
 // selection or an active draft's span gets it, so a multi-line comment reads as a span.
-export function lineEl(file, ln, drafts, selectedKeys) {
-  const frag = document.createDocumentFragment();
+// One diff line as an addressable, clickable row. `gutter` picks which line-number
+// columns it carries: 'both' for the inline layout's full-width row, or 'old'/'new'
+// for one cell of a side-by-side pair, where each column shows only its own file's
+// numbering. Everything the comment delegation needs (file/side/line in data-*, the
+// .diff-line class it hit-tests with .closest) is identical either way, which is what
+// lets findLineRow, highlightRange, paintDragRange and the drag handler stay layout-
+// agnostic.
+export function lineRowEl(file, ln, selectedKeys, gutter = 'both') {
   const side = lineSide(ln.type);
   const num = lineNumberFor(ln);
   const sign = ln.type === 'add' ? '+' : ln.type === 'del' ? '−' : ' ';
@@ -229,15 +235,53 @@ export function lineEl(file, ln, drafts, selectedKeys) {
   row.dataset.side = side;
   row.dataset.line = String(num);
   row.title = 'Click to comment on this line, or drag to comment on a range';
-  row.append(
-    el('span', 'diff-gutter diff-gutter-old', ln.oldLine == null ? '' : String(ln.oldLine)),
-    el('span', 'diff-gutter diff-gutter-new', ln.newLine == null ? '' : String(ln.newLine)),
-    el('span', 'diff-sign', sign), el('span', 'diff-text', ln.text),
-  );
-  frag.append(row);
+  if (gutter !== 'new') row.append(el('span', 'diff-gutter diff-gutter-old', ln.oldLine == null ? '' : String(ln.oldLine)));
+  if (gutter !== 'old') row.append(el('span', 'diff-gutter diff-gutter-new', ln.newLine == null ? '' : String(ln.newLine)));
+  row.append(el('span', 'diff-sign', sign), el('span', 'diff-text', ln.text));
+  return row;
+}
 
-  const anchored = draftAnchoredAt(drafts, file, side, num);
+export function lineEl(file, ln, drafts, selectedKeys) {
+  const frag = document.createDocumentFragment();
+  frag.append(lineRowEl(file, ln, selectedKeys, 'both'));
+  const anchored = draftAnchoredAt(drafts, file, lineSide(ln.type), lineNumberFor(ln));
   if (anchored) frag.append(draftBlockEl(anchored.key, anchored.draft));
+  return frag;
+}
+
+// One row of the side-by-side layout: a `.diff-row` grid wrapper holding the old-file
+// cell and the new-file cell (from pairHunkLines), followed by any drafts anchored on
+// either side. The wrapper is what makes the two columns line up — both cells sit in a
+// single CSS grid row, so a long line wrapping on one side stretches BOTH and the
+// columns can't drift apart.
+//
+// A missing side is a `.diff-cell-empty`, deliberately not a `.diff-line`: the drag
+// delegation hit-tests with .closest('.diff-line'), so filler can never be resolved as
+// a gesture target and needs no defensive dataset check.
+//
+// Drafts hang off the wrapper rather than the cell, so a draft block is never trapped
+// inside a grid column (the same reason openEditor mounts its box on the wrapper).
+// A context line is one logical line rendered twice — lineSide addresses it on the new
+// side from either cell — so its single draft is de-duplicated by key rather than
+// emitted once per cell. A del/add pair legitimately yields two distinct drafts (an
+// old-side note and a new-side one), and both render.
+export function pairRowEl(file, pair, drafts, selectedKeys) {
+  const frag = document.createDocumentFragment();
+  const wrap = el('div', 'diff-row');
+  wrap.append(
+    pair.left ? lineRowEl(file, pair.left, selectedKeys, 'old') : el('div', 'diff-cell-empty'),
+    pair.right ? lineRowEl(file, pair.right, selectedKeys, 'new') : el('div', 'diff-cell-empty'),
+  );
+  frag.append(wrap);
+
+  const seen = new Set();
+  for (const ln of [pair.left, pair.right]) {
+    if (!ln) continue;
+    const anchored = draftAnchoredAt(drafts, file, lineSide(ln.type), lineNumberFor(ln));
+    if (!anchored || seen.has(anchored.key)) continue;
+    seen.add(anchored.key);
+    frag.append(draftBlockEl(anchored.key, anchored.draft));
+  }
   return frag;
 }
 

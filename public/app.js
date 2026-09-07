@@ -3,7 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX } from './todo.js';
+import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -24,6 +24,16 @@ import {
   TERM_FONT_SIZES, DEFAULT_TERM_FONT_SIZE, normalizeFontSize,
 } from './term-font.js';
 import {
+  CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
+} from './chat-font.js';
+import { shouldReturnToChat } from './chat-handoff.js';
+import {
+  createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
+  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+} from './checklist-dom.js';
+import { HINT_CHARS, hintLabels } from './hints.js';
+import { currentModelValue } from './model-menu.js';
+import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
@@ -40,6 +50,10 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
+import { sidebarWidthFromDrag } from './sidebar-side.js';
+import { initChatView } from './chat-view.js';
+import { playSound } from './sound.js';
+import { viewForSession as resolveSessionView } from './session-view.js';
 
 let currentView = 'grid';
 
@@ -119,6 +133,12 @@ let trustCodexLaunchCwd = true; // server config flag, carried on every graph pu
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
+let chatViewDefault = false; // server config flag, carried on every graph push
+let checklistEnabled = true; // server config flag, carried on every graph push
+// Whole-store snapshot { cardId: [{id,text,done,createdAt}] } off the graph —
+// session-scoped, but the only consumer is the ONE selected session's panel, so
+// it rides the graph as a snapshot rather than being enriched onto every card.
+let latestChecklists = {};
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -301,6 +321,9 @@ function applyGraph(graph) {
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
+  chatViewDefault = graph.chatViewDefault === true;
+  checklistEnabled = graph.checklistEnabled !== false;
+  latestChecklists = graph.checklists || {};
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -323,11 +346,34 @@ function applyGraph(graph) {
   const active = document.activeElement;
   const editing = active && active.id === 'rename-input';
   if (selectedSessionId && !editing) {
-    renderPanel(selectedSessionId);
     const sel = latestSessions.find((x) => x.sessionId === selectedSessionId);
+    // The return half of the needs-you round trip, checked BEFORE renderPanel so
+    // the panel it draws already shows the view we are switching to (otherwise
+    // the Chat/Terminal toggle would render one tick behind the pane it labels).
+    // applySessionView routes through renderSidebar, the single place that
+    // decides which view shows — so this also gets the terminal torn down for
+    // free rather than leaving one attached behind the hidden pane.
+    if (sel && shouldReturnToChat({
+      armedFor: chatHandoffFor,
+      selected: selectedSessionId,
+      status: displayStatus(sel),
+      view: viewForSession(selectedSessionId),
+    })) {
+      disarmChatHandoff();
+      setSessionView(selectedSessionId, 'chat');
+      applySessionView(selectedSessionId);
+    }
+    renderPanel(selectedSessionId);
     if (sel && holdForRestart(sel)) {
       // spinner held — don't attach the dying pane
-    } else if (sel && sel.managed && (!current || current.sessionId !== selectedSessionId)) {
+    } else if (sel && sel.managed && viewForSession(sel.sessionId) !== 'chat' && (!current || current.sessionId !== selectedSessionId)) {
+      // viewForSession guard: renderSidebar's chat branch calls closeTerminal(), which
+      // nulls `current` — without this check, the very next ~4s graph tick re-attaches
+      // a terminal into the hidden #term-wrap. FitAddon can't measure a display:none
+      // element, so xterm stays at its 80x24 default and /pty opens tmux attach at
+      // cols=80&rows=24, squeezing the agent's REAL pane (and any co-attached terminal)
+      // to 80 columns for as long as the chat view stays open — plus a stolen focus()
+      // that silently clears the needs-you flash, and a leaked pty/socket per session.
       openTerminal(sel);
     }
   }
@@ -466,6 +512,38 @@ function removePlaceholder() {
   if (placeholderEl && placeholderEl.parentNode) placeholderEl.parentNode.removeChild(placeholderEl);
 }
 
+// TODO reorder drag-and-drop: confined to the task the drag started in — a drop
+// on any other tile's cell never gets `dragover`'s preventDefault, so the browser
+// shows "no-drop" and never fires `drop` there at all; nothing to guard server-side.
+// Same placeholder-slides-through pattern as the session reorder above, its own
+// state so the two drags never interfere.
+let todoDragActive = false;
+let draggedTodoRow = null;
+let todoPlaceholderEl = null;
+function ensureTodoPlaceholder() {
+  if (!todoPlaceholderEl) {
+    todoPlaceholderEl = document.createElement('div');
+    todoPlaceholderEl.className = 'todo-placeholder';
+  }
+  return todoPlaceholderEl;
+}
+function removeTodoPlaceholder() {
+  if (todoPlaceholderEl && todoPlaceholderEl.parentNode) todoPlaceholderEl.parentNode.removeChild(todoPlaceholderEl);
+}
+
+// The todo row the placeholder should sit *before* for a given cursor Y, scoped to
+// direct-child todo rows only (mirrors dragAfterElement, todo-row flavoured — a
+// task-body can hold both session cards and todo rows, and this must never hit-test
+// the former). null means past the last row.
+function todoDragAfterElement(body, y) {
+  const rows = [...body.querySelectorAll(':scope > .todo-row[draggable="true"]:not(.dragging-hidden)')];
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (y < rect.top + rect.height / 2) return row;
+  }
+  return null;
+}
+
 // The card the placeholder should sit *before* for a given cursor Y — the first
 // card whose midpoint is below the cursor; null means past the last card (append
 // to the end). Continuous across cards and the gaps between them, so the
@@ -499,12 +577,16 @@ function gridHidden() {
 // so background re-renders (the ~4s poll, the just-finished timer) don't rebuild
 // the grid and steal focus / abort the drag.
 function gridEditing() {
-  if (dragActive || taskDragActive) return true;
+  if (dragActive || taskDragActive || todoDragActive) return true;
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
     || a.classList.contains('todo-add-input')
-    || a.classList.contains('todo-text-input');
+    || a.classList.contains('todo-text-input')
+    // The checklist's inline input lives in the sidebar, not #grid — but the
+    // grid re-render is what steals focus from whatever is focused anywhere, so
+    // it has to be listed here like the todo inputs.
+    || a.classList.contains('ck-input');
 }
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
@@ -637,6 +719,32 @@ function toggleWorkflowCollapse(sessionId) {
   else collapsedWorkflows.add(sessionId);
   try { localStorage.setItem(COLLAPSED_WF_KEY, JSON.stringify([...collapsedWorkflows])); } catch {}
   if (currentView === 'grid') renderGrid();
+}
+
+// A task's (or the Ad-hoc bucket's) TODO zone, collapsed by the user — keyed on
+// the same todoKey as todosFor (a task id, or ADHOC_ID). Open by default (issue
+// ask), so — unlike subagentShownOverrides, which tracks explicit overrides
+// against a movable global default — this is a plain "collapsed" Set exactly
+// like collapsedWorkflows: absence means open, membership means collapsed, and
+// there is no separate default setting to fall back to.
+const COLLAPSED_TODO_KEY = 'wrangler.collapsedTodoZones';
+const collapsedTodoZones = (() => {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_TODO_KEY)) || []); } catch { return new Set(); }
+})();
+function persistCollapsedTodoZones() {
+  try { localStorage.setItem(COLLAPSED_TODO_KEY, JSON.stringify([...collapsedTodoZones])); } catch {}
+}
+function toggleTodoZoneCollapse(key) {
+  if (collapsedTodoZones.has(key)) collapsedTodoZones.delete(key);
+  else collapsedTodoZones.add(key);
+  persistCollapsedTodoZones();
+  if (currentView === 'grid') renderGrid();
+}
+// Uncollapses a zone without re-rendering — used right before beginTodoAdd
+// injects its inline input, so a TODO typed into a closed zone doesn't vanish
+// back under the divider the moment the add commits and the grid re-renders.
+function expandTodoZone(key) {
+  if (collapsedTodoZones.delete(key)) persistCollapsedTodoZones();
 }
 
 // The set of buckets (task ids, or ADHOC_ID) sorted by last activity rather than the
@@ -789,7 +897,7 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
+    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones, activitySortedTasks, restoredTaskId,
     justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
@@ -903,15 +1011,17 @@ function renderGrid() {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
         const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
+        const todoVisibleCount = collapsedTodoZones.has(task.id) ? 0 : todoCount;
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, todoVisibleCount) }];
       })
     );
     const {
       visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount) });
+    const adhocTodoVisibleCount = collapsedTodoZones.has(ADHOC_ID) ? 0 : adhocTodoCount;
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, adhocTodoVisibleCount) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
     return computeLayout(tiles, columnsForWidth(el));
   }
@@ -1145,6 +1255,14 @@ function wireGridEvents(el) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWorkflowCollapse(sid); }
     });
   });
+  // The TODO divider's pill (cards.js todoZoneHtml) folds its rows away (and
+  // back) — a real <button>, so Enter/Space activation comes for free (unlike
+  // .workflow-head above, which is a plain div and needs its own keydown).
+  el.querySelectorAll('.todo-pill').forEach((pill) => {
+    const key = pill.dataset.todoKey;
+    if (!key) return;
+    pill.addEventListener('click', () => toggleTodoZoneCollapse(key));
+  });
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1172,6 +1290,10 @@ function wireGridEvents(el) {
   });
   wireGridDnd(el);
   wireTaskControls(el);
+  // A re-render replaces every element hint mode is pointing at, so re-resolve
+  // the markers here rather than letting the ~4s graph poll strand them over
+  // detached nodes. A no-op unless hint mode is up.
+  syncHints();
 }
 
 // Right-click menu on a session card: the same per-session actions as the detail
@@ -1427,10 +1549,15 @@ function peerReviewSession(sessionId) {
 // the grid can't yank it out from under the click that's still running — unlike
 // the poll-driven renderGridIfVisible() (gated on !cardMenuEl for exactly that
 // reason against OTHER in-flight interactions, e.g. Rename's captured input).
-// `s` is the live latestSessions entry (not a copy — see openCardMenu/
-// openActionsMenu), so mutating it directly is what renderGrid's next pass
-// reads; the server round-trip + next graph poll still reconcile afterwards.
+// `s` is the live latestSessions entry AT THE TIME THE MENU OPENED — but a
+// graph poll (every ~4s) reassigns `latestSessions` to brand-new objects even
+// while the menu stays open (applyGraph only skips the *render* while
+// cardMenuEl is set, not the reassignment), so `s` can go stale/detached
+// mid-menu. `run` below re-resolves the CURRENT entry by id and mutates that
+// one too, or the immediate renderGrid() reads the untouched array and
+// silently no-ops until the menu closes and a later poll catches up.
 function childFullViewMenuItem(s) {
+  const sessionId = s.sessionId;
   let on = isChildFullView(s);
   return {
     label: 'Full view',
@@ -1438,9 +1565,11 @@ function childFullViewMenuItem(s) {
     trailing: on ? CHECK_ICON : '',
     keepOpen: true,
     run: (e) => {
-      on = !on;
+      const live = latestSessions.find((x) => x.sessionId === sessionId);
+      on = !(live ? isChildFullView(live) : on);
+      if (live) live.childFullView = on;
       s.childFullView = on;
-      toggleChildFullView(s.sessionId, on);
+      toggleChildFullView(sessionId, on);
       const t = e.currentTarget.querySelector('.context-menu-trailing');
       if (t) t.innerHTML = on ? CHECK_ICON : '';
       if (currentView === 'grid') renderGrid();
@@ -1538,7 +1667,12 @@ function openActionsMenu(sessionId, x, y) {
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
-    ...(s.managed ? [{ label: 'Open terminal', icon: TERMINAL_ICON, trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
+    // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
+    // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
+    // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
+    // the handler's own error) and doesn't care whether the panel is showing Chat or
+    // Terminal for this session.
+    ...(s.cwd ? [{ label: 'Open terminal', icon: TERMINAL_ICON, trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
     isAsleep(s)
       ? { label: 'Unsnooze', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => wakeSession(sessionId) }
       : { label: 'Snooze…', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
@@ -1552,6 +1686,57 @@ function openActionsMenu(sessionId, x, y) {
     { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
+}
+
+// Mirrors set-session-model.js's own refusals, so the chat view only offers the
+// menu where the server would honour it. Kept as one named predicate rather than
+// inline conditions because the two sides have to agree: a mismatch here shows a
+// menu whose every choice fails.
+function canSwitchModel(s) {
+  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+}
+
+// What this browser last asked for, per card id. Needed only to break one
+// ambiguity: the pane's status bar says "Sonnet 5" for both `sonnet` and
+// `sonnet[1m]`, so the label alone cannot say which row to tick. In-memory and
+// unpersisted — it is a tie-break, not a record, and it is only trusted when the
+// pane still agrees with it (see isCurrentModel).
+const lastModelSet = new Map();
+
+// Pick a model for a live session — the chat view's model chip. Sends the same
+// `/model <name>` the pane takes; the board confirms it on the next turn via
+// modelPill (read from the transcript), so nothing is assumed here.
+function openModelMenu(sessionId, x, y) {
+  const s = latestSessions.find((sess) => sess.sessionId === sessionId);
+  if (!canSwitchModel(s)) return;
+  const claude = availableAgents.find((a) => a.id === 'claude');
+  const models = claude?.models || [];
+  if (!models.length) return;
+  // Ticked against what the CHIP shows, which is the pane's own live label —
+  // not s.modelPill, which is derived from the last assistant message and so
+  // still names the old model right after a switch. That mismatch was the bug:
+  // the menu claimed Opus was selected while the pane said Sonnet.
+  const current = chatView.currentModelLabel();
+  const ticked = currentModelValue(models, current, lastModelSet.get(sessionId));
+  mountMenu([
+    // Said once, up front, because it is genuinely surprising: /model is not
+    // scoped to this session. Verified — it writes "model" into
+    // ~/.claude/settings.json, so it becomes the default for every new Claude
+    // session, wrangler-launched or not.
+    { header: 'Also becomes your default for new sessions' },
+    ...models.map((m) => ({
+      label: m.label,
+      // `trailing` rather than `icon`, and present on every row even when empty:
+      // that is what reserves the slot so the labels stay aligned instead of the
+      // checked row sitting indented from the rest (same idiom as the auto-fix and
+      // auto-merge menu items).
+      trailing: m.value === ticked ? CHECK_ICON : '',
+      run: () => {
+        lastModelSet.set(sessionId, m.value);
+        send({ type: 'set-session-model', sessionId, model: m.value });
+      },
+    })),
+  ], x, y);
 }
 
 // The task tile's kebab menu — the header's action buttons collapsed into one menu,
@@ -1671,7 +1856,7 @@ function openTaskMenu(cell, x, y) {
   const todoZone = cell.querySelector('.todo-zone');
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
-    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) beginTodoAdd(todoZone.dataset.todoKey, todoZone); } },
+    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
@@ -1768,17 +1953,27 @@ function wireGridDnd(el) {
     // Placeholder positioning lives entirely in the cell dragover handler below,
     // which computes the slot from the cursor Y against the card midpoints.
   });
-  // A TODO row drags across tiles to reassign (→ todo-move). It carries its own
-  // key so the drop handler can build the wire payload without touching session DnD.
+  // A TODO row reorders within its own task tile only — same hide-source +
+  // slide-placeholder pattern as the session card reorder above, confined by
+  // todoDragActive/draggedTodoRow instead of dragActive/draggedCard.
   el.querySelectorAll('.todo-row[draggable="true"]').forEach((row) => {
     row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', JSON.stringify({
-        kind: 'todo', todoId: row.dataset.todoid, fromTaskId: row.dataset.todoKey,
-      }));
-      setTimeout(() => { if (row.parentNode) row.classList.add('dragging-hidden'); }, 0);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'todo', todoId: row.dataset.todoid }));
+      draggedTodoRow = row;
+      todoDragActive = true;
+      setTimeout(() => {
+        if (draggedTodoRow !== row || !row.parentNode) return;
+        const ph = ensureTodoPlaceholder();
+        ph.style.height = `${row.offsetHeight}px`;
+        row.parentNode.insertBefore(ph, row);
+        row.classList.add('dragging-hidden');
+      }, 0);
     });
     row.addEventListener('dragend', () => {
       row.classList.remove('dragging-hidden');
+      removeTodoPlaceholder();
+      draggedTodoRow = null;
+      todoDragActive = false;
       if (currentView === 'grid') renderGrid();
     });
   });
@@ -1819,6 +2014,27 @@ function wireGridDnd(el) {
 
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('dragover', (e) => {
+      // A TODO drag is confined to the tile it started in: a foreign cell never
+      // calls preventDefault, so the browser shows "no-drop" and drop never fires
+      // there at all — cross-task todo drops need no server-side guard.
+      if (todoDragActive) {
+        if (!cell.contains(draggedTodoRow)) return;
+        e.preventDefault();
+        // The placeholder is only created by dragstart's deferred setTimeout — a
+        // dragover that beats it (vanishingly rare with a real pointer) skips the
+        // preview rather than inserting a not-yet-existent node.
+        const body = todoPlaceholderEl && cell.querySelector('.task-body');
+        if (body) {
+          const after = todoDragAfterElement(body, e.clientY);
+          if (after) body.insertBefore(todoPlaceholderEl, after);
+          else {
+            const zone = body.querySelector('.todo-zone');
+            if (zone) body.insertBefore(todoPlaceholderEl, zone);
+            else body.appendChild(todoPlaceholderEl);
+          }
+        }
+        return;
+      }
       e.preventDefault();
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
@@ -1842,6 +2058,23 @@ function wireGridDnd(el) {
     });
     cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
     cell.addEventListener('drop', (e) => {
+      if (todoDragActive) {
+        if (!cell.contains(draggedTodoRow)) return;
+        e.preventDefault();
+        const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
+        const beforeEl = todoPlaceholderEl?.nextElementSibling;
+        const beforeId = beforeEl?.classList.contains('todo-row') ? beforeEl.dataset.todoid : null;
+        const current = ((latestTasks.todos || {})[bucket] || []).map((td) => td.id);
+        const order = reorderedTodoIds(current, draggedTodoRow.dataset.todoid, beforeId);
+        // Optimistic update: reorder the actual todo objects to match, then
+        // re-render immediately (the server confirms on the next graph).
+        const todos = latestTasks.todos || (latestTasks.todos = {});
+        const byId = new Map((todos[bucket] || []).map((td) => [td.id, td]));
+        todos[bucket] = order.map((id) => byId.get(id)).filter(Boolean);
+        send({ type: 'todo-reorder', taskId: todoKeyToTaskId(bucket), order });
+        renderGrid();
+        return;
+      }
       e.preventDefault();
       cell.classList.remove('drop-target');
       let p;
@@ -1876,26 +2109,10 @@ function wireGridDnd(el) {
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
         } else send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
-      } else if (p.kind === 'todo') {
-        const toTaskId = todoKeyToTaskId(isNoTask ? ADHOC_ID : taskId);
-        const from = todoKeyToTaskId(p.fromTaskId);
-        if ((from || ADHOC_ID) !== ((toTaskId || ADHOC_ID))) {
-          send({ type: 'todo-move', todoId: p.todoId, fromTaskId: from, toTaskId });
-          // Optimistic update: splice client-side state and re-render immediately.
-          const todos = latestTasks.todos || (latestTasks.todos = {});
-          const fromKey = p.fromTaskId || ADHOC_ID;
-          const toKey = toTaskId || ADHOC_ID;
-          const fromList = todos[fromKey] || [];
-          const i = fromList.findIndex((td) => td.id === p.todoId);
-          if (i >= 0) {
-            const [td] = fromList.splice(i, 1);
-            (todos[toKey] || (todos[toKey] = [])).push(td);
-            renderGrid();
-          }
-        }
       }
-      // Task drops are handled by the #grid drop handler (commits at the
-      // current slot wherever the cursor lands).
+      // A TODO drop is handled entirely above (todoDragActive) — cross-task never
+      // reaches here at all (see the dragover guard). Task drops are handled by
+      // the #grid drop handler (commits at the current slot wherever the cursor lands).
     });
   });
 }
@@ -2051,6 +2268,251 @@ function wireTaskControls(el) {
       }
     })
   );
+}
+
+// --- per-session checklist panel ---
+// A session-scoped list written by BOTH the human (this panel) and the launched
+// agent (its four MCP tools) — deliberately not the task-level TODO list (that
+// one is task-scoped and human-only) and not a mirror of the agent's own private
+// planning tool. Rows are patched in place by checklist-dom.js rather than
+// rebuilt from a string, so the ~4s graph poll can't reset the list's scroll.
+const checklistDom = createChecklistDom({ document });
+// Two freeze flags, both load-bearing: a poll tick landing mid-gesture would
+// otherwise reorder rows out from under the cursor, or replace the very input
+// someone is typing into. Optimistic local mutation (below) is what keeps the
+// panel honest in the meantime — the server echo is up to a poll away.
+let checklistDragActive = false;
+let checklistDragRow = null;
+let checklistEditing = false;
+
+// Collapsed/expanded is per session and persisted per browser, exactly like the
+// panel's sub-agents zone (panelSubagentShownOverrides) — collapsing one
+// session's checklist must not touch another's, and the choice has to survive a
+// reload. Default collapsed; see isChecklistOpen for why there's no
+// server-side default to fall back to.
+const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
+const checklistOpenOverrides = (() => {
+  try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
+})();
+function checklistOpen(sessionId) {
+  return isChecklistOpen(checklistOpenOverrides, sessionId);
+}
+function toggleChecklist(sessionId) {
+  toggleChecklistOpen(checklistOpenOverrides, sessionId);
+  try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
+}
+
+// The live array for a session (not a copy) — the optimistic mutations below
+// write straight into it, exactly like the todo flow writes into latestTasks.
+function checklistFor(sessionId) {
+  return latestChecklists[sessionId] || [];
+}
+
+function renderChecklist(sessionId) {
+  const el = document.getElementById('checklist');
+  if (!el) return;
+  const items = sessionId ? checklistFor(sessionId) : [];
+  // Patch the collapsed chip's count here rather than re-rendering the whole
+  // panel: renderPanel calls THIS function, so calling it back would recurse.
+  // It has to happen before the early return below — an optimistic local edit
+  // must move the chip immediately, and the chip is only on screen while the
+  // panel is shut, i.e. exactly when this function returns early.
+  const pillCount = document.querySelector('#panel-checklist-toggle .ck-pill-count');
+  if (pillCount) pillCount.lastChild.textContent = checklistPillLabel(items);
+  // Collapsed is the whole panel gone, not a shrunken one: the collapsed form is
+  // that chip in #panel's own meta row, which costs the terminal no height at
+  // all. Off by config or nothing selected hides it too.
+  if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
+  el.hidden = false;
+  document.getElementById('ck-count').textContent = checklistCountLabel(items);
+  if (checklistDragActive || checklistEditing) return;
+  const list = document.getElementById('ck-list');
+  checklistDom.patch(list, { sessionId, items });
+  syncChecklistScrollHint(list);
+}
+
+// The list is height-capped, so a long checklist clips its last visible row —
+// with no cue, that reads as a rendering glitch rather than "more below". Marks
+// the panel while there is content further down (and only then, so the hint
+// never sits over the last row once you have reached the bottom).
+function syncChecklistScrollHint(list) {
+  if (!list) return;
+  const more = list.scrollHeight - list.clientHeight - list.scrollTop > 2;
+  document.getElementById('checklist').classList.toggle('ck-more-below', more);
+}
+
+// Belt-and-braces alongside the `pending` class the patch puts on such a row
+// (its controls are inert in CSS): a click that somehow lands must not send an
+// id the server has never heard of. See isPendingChecklistId.
+function toggleChecklistItem(itemId) {
+  const sid = selectedSessionId;
+  if (isPendingChecklistId(itemId)) return;
+  const item = checklistFor(sid).find((i) => i.id === itemId);
+  if (!item) return;
+  const done = !item.done;
+  send({ type: 'checklist-update', sessionId: sid, itemId, done });
+  item.done = done;
+  renderChecklist(sid);
+}
+
+function deleteChecklistItem(itemId) {
+  const sid = selectedSessionId;
+  if (isPendingChecklistId(itemId)) return;
+  send({ type: 'checklist-remove', sessionId: sid, itemId });
+  latestChecklists[sid] = checklistFor(sid).filter((i) => i.id !== itemId);
+  renderChecklist(sid);
+}
+
+// Inline add: an input appended as the last row. Enter/blur commits, Escape
+// cancels — same contract as the todo zone's inline add.
+function beginChecklistAdd() {
+  const sid = selectedSessionId;
+  if (!sid || checklistEditing) return;
+  const list = document.getElementById('ck-list');
+  if (!list || document.getElementById('checklist').hidden) return;
+  const holder = document.createElement('div');
+  holder.className = 'ck-row ck-editing';
+  const input = document.createElement('input');
+  input.className = 'ck-input';
+  input.placeholder = 'New checklist item…';
+  input.setAttribute('aria-label', 'New checklist item');
+  holder.appendChild(input);
+  list.appendChild(holder);
+  checklistEditing = true;
+  input.focus();
+  let settled = false;
+  const finish = (save) => {
+    if (settled) return;
+    settled = true;
+    checklistEditing = false;
+    const text = input.value.trim();
+    if (holder.parentNode) holder.parentNode.removeChild(holder);
+    if (save && text) {
+      send({ type: 'checklist-add', sessionId: sid, text });
+      // Optimistic: a tmp id the next graph replaces with the server's real one.
+      latestChecklists[sid] = [...checklistFor(sid), { id: `tmp_${Date.now()}`, text, done: false, createdAt: Date.now() }];
+    }
+    renderChecklist(sid);
+  };
+  input.addEventListener('keydown', (e) => {
+    // stopPropagation: finish() synchronously removes this input, so a bubbling
+    // Enter would reach the window handler with the input already gone and the
+    // isTypingTarget guard would miss it (same reason as the todo inputs).
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// Click-to-edit one item's text. The input replaces the span's text node rather
+// than the span itself, so the row element (and its drag handle) survives.
+function beginChecklistEdit(row) {
+  const sid = selectedSessionId;
+  if (checklistEditing || isPendingChecklistId(row.dataset.ckid)) return;
+  const span = row.querySelector('.ck-text');
+  const itemId = row.dataset.ckid;
+  const current = span.textContent;
+  const input = document.createElement('input');
+  input.className = 'ck-input';
+  input.value = current;
+  input.setAttribute('aria-label', `Edit checklist item: ${current}`);
+  span.textContent = '';
+  span.appendChild(input);
+  checklistEditing = true;
+  input.focus();
+  input.select();
+  let settled = false;
+  const finish = (save) => {
+    if (settled) return;
+    settled = true;
+    checklistEditing = false;
+    const text = input.value.trim();
+    if (input.parentNode) input.parentNode.removeChild(input);
+    span.textContent = current;
+    if (save && text && text !== current) {
+      send({ type: 'checklist-update', sessionId: sid, itemId, text });
+      const item = checklistFor(sid).find((i) => i.id === itemId);
+      if (item) item.text = text;
+    }
+    renderChecklist(sid);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// The row the dragged one should sit BEFORE for a given cursor Y (null = the
+// end). Scoped to the list's own rows, so it can never hit-test anything else in
+// the sidebar.
+function checklistDragBefore(list, y) {
+  for (const row of list.children) {
+    if (row === checklistDragRow) continue;
+    const r = row.getBoundingClientRect();
+    if (y < r.top + r.height / 2) return row;
+  }
+  return null;
+}
+
+// Idempotent: `drop` fires before `dragend`, and a drag can also end with no
+// drop at all, so both call this.
+function endChecklistDrag() {
+  if (checklistDragRow) checklistDragRow.classList.remove('ck-dragging');
+  checklistDragActive = false;
+  checklistDragRow = null;
+}
+
+// One delegated listener pair on the list, wired once — rows are created and
+// destroyed by the patch, so per-row wiring would have to be redone on every
+// tick and would miss any row the patch reused.
+function initChecklist() {
+  const list = document.getElementById('ck-list');
+  document.getElementById('ck-add').addEventListener('click', beginChecklistAdd);
+  list.addEventListener('click', (e) => {
+    const row = e.target.closest('.ck-row');
+    if (!row || !row.dataset.ckid) return;
+    if (e.target.closest('.ck-check')) { toggleChecklistItem(row.dataset.ckid); return; }
+    if (e.target.closest('.ck-del')) { deleteChecklistItem(row.dataset.ckid); return; }
+    if (e.target.closest('.ck-text')) beginChecklistEdit(row);
+  });
+  list.addEventListener('dragstart', (e) => {
+    const row = e.target.closest('.ck-row[draggable="true"]');
+    if (!row) return;
+    checklistDragRow = row;
+    checklistDragActive = true;
+    e.dataTransfer.effectAllowed = 'move';
+    // A payload is required for the drag to start at all in some browsers; the
+    // drop reads the resulting DOM order, not this.
+    e.dataTransfer.setData('text/plain', row.dataset.ckid);
+    row.classList.add('ck-dragging');
+  });
+  list.addEventListener('dragover', (e) => {
+    if (!checklistDragActive || !checklistDragRow) return;
+    e.preventDefault();
+    const before = checklistDragBefore(list, e.clientY);
+    if (before !== checklistDragRow) list.insertBefore(checklistDragRow, before);
+  });
+  list.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (!checklistDragActive) return;
+    const sid = selectedSessionId;
+    const order = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
+    // A `tmp_` id belongs to an add still in flight — the server has never heard
+    // of it, so sending it would just be ignored. Filter it out rather than
+    // skipping the whole round trip (skipping would let the next graph echo
+    // revert the drag). Reorder appends anything it isn't told about, and an
+    // optimistic item is always the last row anyway, so it lands where it was.
+    send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
+    // Optimistic reorder of the local snapshot, so the next patch agrees with
+    // the DOM the drag already produced rather than snapping it back.
+    const byId = new Map(checklistFor(sid).map((i) => [i.id, i]));
+    latestChecklists[sid] = order.map((id) => byId.get(id)).filter(Boolean);
+    endChecklistDrag();
+    renderChecklist(sid);
+  });
+  list.addEventListener('dragend', endChecklistDrag);
+  list.addEventListener('scroll', () => syncChecklistScrollHint(list));
 }
 
 // Inject an inline input into the todo zone. Enter/blur commits, Escape cancels.
@@ -2232,10 +2694,18 @@ function trackJustFinished(sessions) {
   const nextRaw = new Map();
   const nextSettled = new Map();
   let jfChanged = false;
+  // At most ONE finish cue per poll tick, however many sessions land in the same
+  // one — five simultaneous finishes should not stack five overlapping chimes.
+  // A first load can't ring: prevStatusById starts empty, so nothing reads as a
+  // transition until the second poll.
+  let playFinishCue = false;
   for (const s of sessions) {
     const prev = prevStatusById.get(s.sessionId);
     const settled = settledStatus(s, prev);
-    if (prev === 'working' && settled === 'idle') { justFinished.add(s.sessionId); jfChanged = true; }
+    if (prev === 'working' && settled === 'idle') {
+      justFinished.add(s.sessionId); jfChanged = true;
+      if (!playFinishCue && getSetting('soundOnFinish') && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+    }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
     // (never scraped), so it doesn't flap, and clearing an ack only ever re-arms
@@ -2255,6 +2725,7 @@ function trackJustFinished(sessions) {
   if (jfChanged) persistJustFinished();
   prevStatusById = nextSettled;
   lastRawById = nextRaw;
+  if (playFinishCue) playSound('finished');
 }
 
 // Post-archive toast with an immediate Resume action; drops the selection if the
@@ -2538,6 +3009,11 @@ function selectSession(sessionId) {
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
   if (isDiffPanelOpen() && diffPanelSessionId() !== sessionId) closeDiffPanel();
+  // Selecting a different card ends any trip in progress. shouldReturnToChat
+  // already refuses to fire for a card that isn't the open one, so this is
+  // belt-and-braces — but it also means re-opening that card later doesn't
+  // inherit a stale arm.
+  if (selectedSessionId !== sessionId) disarmChatHandoff();
   selectedSessionId = sessionId;
   selectedNewSlot = null;
   acknowledge(sessionId);
@@ -2802,6 +3278,20 @@ function isTypingTarget(el) {
   return false;
 }
 
+// Same idea, but for the Ctrl+Cmd+<letter> chord family (and Ctrl+Cmd+A hint
+// mode) only: that modifier combo never inserts a character into any field on
+// any OS/browser, so the chat composer has no more claim on it than the xterm
+// helper textarea does — unlike bare Enter or Shift+Cmd+arrows (real typing/
+// text-selection inside the composer), which must keep using isTypingTarget
+// above and treat #chat-input as occupied.
+function isTypingTargetForChords(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'INPUT') return true;
+  if (el.tagName === 'TEXTAREA') return el.id !== 'chat-input' && !el.classList.contains('xterm-helper-textarea');
+  return false;
+}
+
 // Shift+Cmd+arrows navigate the board's session selection (see moveTaskFocus /
 // moveSessionFocus): Left/Right switches task, Up/Down switches session within
 // it — matches how the board is laid out (tasks side by side, sessions stacked).
@@ -2856,15 +3346,20 @@ window.addEventListener('keydown', (e) => {
 // empty task — deletes that task; Ctrl+Cmd+T is a toggle for a plain shell
 // terminal in the selected session's cwd. Opening it is the same "Open
 // terminal" action as the Actions menu (`open-terminal-for-session`) — so you
-// can drop a shell alongside the agent's terminal without reaching for the
-// mouse mid-conversation — gated on `current.sessionId === selectedSessionId`
-// (the agent terminal for this session is actually open, i.e. it's a
-// live/managed session) rather than just `selectedSessionId`, so it's a no-op
-// on a dormant/no selection instead of erroring server-side. But if a shell
-// terminal for this session is ALREADY open, the same chord closes it instead
-// (closeShellTerminal() — a pure client-side teardown, so it's allowed even if
-// the agent session has since gone dormant) rather than replacing it with a
-// fresh one, mirroring how M is a single toggle for maximize/restore.
+// can drop a shell alongside the agent's terminal (or its chat view — the
+// shell pane mounts as its own sibling under #sidebar, independent of
+// #term-wrap/#chat-wrap, so it's visible either way) without reaching for the
+// mouse mid-conversation. Gated on `selectedSession?.cwd` (matching the
+// Actions menu row, and the only thing the server handler actually needs) —
+// NOT on `current.sessionId === selectedSessionId` (the agent's own terminal
+// being attached) as it used to be, since that's false whenever the panel is
+// showing Chat instead of Terminal for a perfectly live session (openTerminal
+// deliberately skips attaching then, see viewForSession guard above) and made
+// this chord a no-op there. If a shell terminal for this session is ALREADY
+// open, the same chord closes it instead (closeShellTerminal() — a pure
+// client-side teardown, so it's allowed even if the agent session has since
+// gone dormant) rather than replacing it with a fresh one, mirroring how M is
+// a single toggle for maximize/restore.
 //
 // Ctrl+Cmd+B forks the selected session ("Branch" — Ctrl+Cmd+F was the natural
 // letter but collides with macOS/Chrome's own Enter Full Screen chord).
@@ -2876,15 +3371,19 @@ window.addEventListener('keydown', (e) => {
 // (snoozeSelected()). Ctrl+Cmd+D toggles the working-tree diff panel for the
 // selected session (open, or close if already showing it). All are no-ops without
 // a selected session, and (per the Actions menu they mirror) work on a
-// dormant/unmanaged session too — unlike T, they don't require a live terminal.
+// dormant/unmanaged session too — except R (Restart), which genuinely needs a
+// live tmux to kill and relaunch.
 //
 // A separate family from Shift+Cmd nav — Ctrl+Cmd+<key> is essentially never
 // browser-reserved (unlike Cmd+N / Shift+Cmd+N) and emits no terminal bytes, so
 // it survives both. The terminal's Cmd+⌫ clear-line chord requires no Ctrl, so
 // it's swallowed separately below before it can fire for this Ctrl+Cmd+Backspace
 // chord. Same gating as nav: grid view only, inert while a modal, context menu,
-// or real text input is in play (the xterm helper textarea is NOT a typing
-// target, so these chain straight off an attached terminal).
+// or real text input is in play — via isTypingTargetForChords, not
+// isTypingTarget: neither the xterm helper textarea NOR the chat composer
+// (#chat-input) is a typing target for THIS family, since Ctrl+Cmd+<letter>
+// never inserts a character into either one, so both chain straight off an
+// attached terminal or a mid-prompt chat composer alike.
 //
 // CAPTURE PHASE, deliberately (third arg true). This is the real fix for the
 // long-broken Ctrl+Cmd+D "open diff from a focused terminal": Ctrl+Cmd+D is
@@ -2910,7 +3409,7 @@ window.addEventListener('keydown', (e) => {
   // so in those contexts they don't over-suppress the browser/OS shortcuts on those
   // same chords (they fall through the gate untouched).
   if (key === 'g') e.preventDefault();
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
+  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
   if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
   // Past the gate the chord is definitely ours — suppress the browser/OS default for
   // the whole family (this is the original, pre-diff-feature behaviour for the rest;
@@ -2920,7 +3419,8 @@ window.addEventListener('keydown', (e) => {
   if (key === 't') {
     if (!selectedSessionId) return;
     if (currentShellTerm && currentShellTerm.sessionId === selectedSessionId) { closeShellTerminal(); return; }
-    if (current && current.sessionId === selectedSessionId) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
+    const ts = latestSessions.find((x) => x.sessionId === selectedSessionId);
+    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
     return;
   }
   if (key === 'b') { if (selectedSessionId) openFork(selectedSessionId); return; }
@@ -2954,6 +3454,231 @@ window.addEventListener('keydown', (e) => {
   if (currentView !== 'search') setView('search');
   else onEnterSearchView();
 });
+
+// ---- Hint jump (⌃⌘A) --------------------------------------------------
+// Label every session on the board with a letter, then type it to open that
+// session — a Vimium-style link hinter scoped to the grid. A hint activates its
+// target by clicking it, deliberately: wireGridEvents already decides what a
+// card, a worker row, a team row and a sub-agent row each do when clicked
+// (select, resume a dormant one, focus a team lead, open the sub-agent modal),
+// and none of that should exist twice.
+//
+// Everything the board treats as activatable is a target — .team-row rides on
+// .worker-row, so this selector is wireGridEvents' own list, plus each task
+// header's "New session" button: the one thing on the board worth reaching by
+// keyboard that isn't a session. Only the header button — .empty-new-sess and
+// .new-sess-row are the same action drawn elsewhere in the same tile, and two
+// labels for one action would just spend a letter twice.
+const HINT_TARGETS = '.session-card, .worker-row, .subagent-row, .task-new-sess';
+
+// { layer, hints: [{ key, el, label, marker }], typed, … listeners }, or null.
+let hintMode = null;
+
+// `el`'s visible rect after every scrolling ancestor has clipped it, or null if
+// there's nothing left to point at — see positionMarker for which of its edges
+// a given marker is anchored to. A card scrolled
+// out of its task tile still has a viewport rect — the tile clips painting, not
+// geometry — so without this a hint would float over whatever is drawn where
+// the hidden card would have been, and typing it would open a session that
+// isn't on screen.
+function hintRect(el) {
+  const r = el.getBoundingClientRect();
+  let [top, left, bottom, right] = [r.top, r.left, r.bottom, r.right];
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    if (st.overflow === 'visible' && st.overflowX === 'visible' && st.overflowY === 'visible') continue;
+    const pr = p.getBoundingClientRect();
+    top = Math.max(top, pr.top); left = Math.max(left, pr.left);
+    bottom = Math.min(bottom, pr.bottom); right = Math.min(right, pr.right);
+  }
+  top = Math.max(top, 0); left = Math.max(left, 0);
+  bottom = Math.min(bottom, window.innerHeight); right = Math.min(right, window.innerWidth);
+  if (bottom - top < 8 || right - left < 8) return null;
+  return { top, left, bottom, right };
+}
+
+// Targets in board order (DOM order is tile order, then session order within a
+// tile), each with a key that survives a re-render. A team row carries only its
+// lead's id and several members can share one lead, so the key counts repeats
+// rather than pretending the id is unique.
+function collectHintTargets() {
+  const grid = document.getElementById('grid');
+  if (!grid) return [];
+  const seen = new Map();
+  const out = [];
+  for (const el of grid.querySelectorAll(HINT_TARGETS)) {
+    const rect = hintRect(el);
+    if (!rect) continue;
+    // A New-session button belongs to its tile, not to any session, so it is
+    // keyed on the bucket it dispatches into — the same id its own click
+    // handler resolves, so the label survives the tile being reordered.
+    const isNew = el.classList.contains('task-new-sess');
+    const base = isNew
+      ? `new:${taskBodyBucketId(el) || ADHOC_ID}`
+      : el.classList.contains('subagent-row')
+        ? `sa:${el.dataset.ownerSid}/${el.dataset.subagentId}`
+        : el.classList.contains('team-row') ? `team:${el.dataset.leadSid}` : `s:${el.dataset.sid}`;
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    out.push({ key: `${base}#${n}`, el, rect, side: isNew ? 'left' : 'corner' });
+  }
+  return out;
+}
+
+// A marker's default home is its target's top-left corner: a card dwarfs a
+// label, so a corner marker hides nothing worth reading. A task header's "New
+// session" button is barely bigger than the label itself, so its marker goes to
+// the LEFT of the button and centred on it instead — covering the icon would
+// hide the very thing being labelled, and the header's other side is already up
+// against the kebab. Anchored by `right`, because the marker's own width isn't
+// known until it has been laid out; the vertical centring is the .hint-left
+// transform, for the same reason.
+const HINT_LEFT_GAP_PX = 4;
+
+function positionMarker(marker, t) {
+  if (t.side === 'left') {
+    marker.style.right = `${Math.max(0, window.innerWidth - t.rect.left + HINT_LEFT_GAP_PX)}px`;
+    marker.style.top = `${(t.rect.top + t.rect.bottom) / 2}px`;
+    return;
+  }
+  marker.style.left = `${t.rect.left}px`;
+  marker.style.top = `${t.rect.top}px`;
+}
+
+function buildHintMarkers(targets) {
+  hintMode.layer.innerHTML = '';
+  const labels = hintLabels(targets.length);
+  hintMode.hints = targets.map((t, i) => {
+    const marker = document.createElement('div');
+    marker.className = t.side === 'left' ? 'hint-marker hint-left' : 'hint-marker';
+    for (const ch of labels[i]) {
+      const span = document.createElement('span');
+      span.textContent = ch;
+      marker.appendChild(span);
+    }
+    positionMarker(marker, t);
+    hintMode.layer.appendChild(marker);
+    return { key: t.key, el: t.el, label: labels[i], marker };
+  });
+  paintHints();
+}
+
+// Show only the markers still matching, and grey the part already typed.
+function paintHints() {
+  for (const h of hintMode.hints) {
+    const on = h.label.startsWith(hintMode.typed);
+    h.marker.style.display = on ? '' : 'none';
+    [...h.marker.children].forEach((span, i) => span.classList.toggle('hint-typed', i < hintMode.typed.length));
+  }
+}
+
+// Called after every grid render (and on scroll/resize). Same targets ⇒ just
+// re-point at the fresh elements and move the markers. A different set means
+// the labels no longer mean what the user saw, so they're rebuilt and anything
+// half-typed is dropped — re-labelling under a live prefix would activate a
+// session nobody aimed at.
+function syncHints() {
+  if (!hintMode) return;
+  const targets = collectHintTargets();
+  if (!targets.length) { deactivateHints(); return; }
+  const same = targets.length === hintMode.hints.length
+    && targets.every((t, i) => t.key === hintMode.hints[i].key);
+  if (!same) { hintMode.typed = ''; buildHintMarkers(targets); return; }
+  targets.forEach((t, i) => {
+    const h = hintMode.hints[i];
+    h.el = t.el;
+    positionMarker(h.marker, t);
+  });
+}
+
+function activateHints() {
+  const targets = collectHintTargets();
+  if (!targets.length) return;
+  const layer = document.createElement('div');
+  layer.className = 'hint-layer';
+  document.body.appendChild(layer);
+  hintMode = {
+    layer, hints: [], typed: '',
+    onKey: (e) => onHintKey(e),
+    onReflow: () => syncHints(),
+    onDown: () => deactivateHints(),
+  };
+  buildHintMarkers(targets);
+  // Capture phase, and every accepted key is stopped dead there: the terminal
+  // usually holds focus when this is pressed, and a hint letter that reached
+  // xterm would be typed at the agent.
+  window.addEventListener('keydown', hintMode.onKey, true);
+  window.addEventListener('scroll', hintMode.onReflow, true);
+  window.addEventListener('resize', hintMode.onReflow);
+  window.addEventListener('mousedown', hintMode.onDown, true);
+}
+
+function deactivateHints() {
+  if (!hintMode) return;
+  window.removeEventListener('keydown', hintMode.onKey, true);
+  window.removeEventListener('scroll', hintMode.onReflow, true);
+  window.removeEventListener('resize', hintMode.onReflow);
+  window.removeEventListener('mousedown', hintMode.onDown, true);
+  hintMode.layer.remove();
+  hintMode = null;
+}
+
+function onHintKey(e) {
+  if (['Shift', 'Meta', 'Control', 'Alt'].includes(e.key)) return;
+  // Any other chord is meant for the browser or the board, not for us: stand
+  // down and let it through untouched (the ⌃⌘A toggle itself is handled
+  // by the listener below, which runs first).
+  if (e.metaKey || e.ctrlKey || e.altKey) { deactivateHints(); return; }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.key === 'Escape') { deactivateHints(); return; }
+  if (e.key === 'Backspace') {
+    if (!hintMode.typed) deactivateHints();
+    else { hintMode.typed = hintMode.typed.slice(0, -1); paintHints(); }
+    return;
+  }
+  if (e.key.length !== 1) return;
+  const ch = e.key.toLowerCase();
+  if (!HINT_CHARS.includes(ch)) return; // swallowed, so a typo doesn't reach the terminal
+  const typed = hintMode.typed + ch;
+  const matches = hintMode.hints.filter((h) => h.label.startsWith(typed));
+  if (!matches.length) { deactivateHints(); return; }
+  // Labels are prefix-free (hints.js), so one survivor is the answer, not a
+  // step towards a longer one.
+  if (matches.length === 1) {
+    const el = matches[0].el;
+    deactivateHints();
+    el.click();
+    return;
+  }
+  hintMode.typed = typed;
+  paintHints();
+}
+
+// ⌃⌘A opens hint mode (and closes it again — the chord is a toggle, so the
+// same keypress that put the labels up takes them down). Kept OUT of
+// CTRL_CMD_KEYS despite sharing the modifiers: that family acts on the session
+// already selected, while this one is how you reach a different one. It was
+// Shift+⌘+F (Vimium's F), but Shift+⌘+<letter> is where Chrome keeps its own
+// chords — ⇧⌘F toggles fullscreen on macOS, reported live — and the handler's
+// gating means the browser wins on every view the hinter is inert in. ⌃⌘ is
+// the board's own namespace; the letter is the one free home-row key under the
+// left hand (S/D/F/G are the family or macOS Look Up / fullscreen). Same gating
+// as the rest — grid view only, inert behind a modal, a card menu or a real
+// text input (isTypingTargetForChords, same as the family above: neither the
+// xterm helper textarea nor the chat composer counts) — and capture phase for
+// the same reason the family is, so it fires with the terminal OR the chat
+// composer focused.
+window.addEventListener('keydown', (e) => {
+  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (e.key.toLowerCase() !== 'a') return;
+  if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
+  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  activateHints();
+}, true);
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
 // keyboard shortcut has no click position to anchor the duration picker at —
@@ -3005,7 +3730,26 @@ function hideSidebar() {
   // panel (close / deselect / Search switch) closes the diff too — it must never
   // outlive the session it belongs to. No-op when the diff is already closed.
   closeDiffPanel();
+  // Same reasoning for the chat view: its 2s poll must not keep running for a
+  // session nobody is looking at once the panel closes. renderSidebar mounts it
+  // per-session but only unmounts on a SWITCH to the terminal view, so closing/
+  // deselecting while chat is showing needs its own unmount here. No-op when
+  // nothing is mounted.
+  chatView.unmount();
+  // Closing the panel ends the trip: there is no view left to return to.
+  disarmChatHandoff();
 }
+
+// Which side of the board the session pane sits on. Per-browser (like the theme
+// and the pane's own width) rather than shared: it describes the screen you're
+// sitting at, not the board. `main.term-left` is the whole mechanism — styles.css
+// reorders #sidebar/#drag-handle and moves the border; nothing here measures or
+// positions anything, so there's no geometry to keep in sync and no xterm refit
+// (the pane's width doesn't change, only where the row puts it).
+function applyTerminalSide(side = getSetting('terminalSide')) {
+  document.querySelector('main').classList.toggle('term-left', side === 'left');
+}
+applyTerminalSide();
 
 // Drag-to-resize the sidebar (stretch the terminal wider than the grid).
 (function initSidebarResize() {
@@ -3022,7 +3766,15 @@ function hideSidebar() {
   });
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const w = Math.min(window.innerWidth - 200, Math.max(280, window.innerWidth - e.clientX));
+    // The clamp + which-edge-to-measure-from lives in the sidebar-side leaf so it
+    // can be unit-tested from both sides; the side is read per-drag rather than
+    // captured, so flipping the setting mid-session needs no re-wiring here.
+    const w = sidebarWidthFromDrag({
+      clientX: e.clientX,
+      rect: sidebar.getBoundingClientRect(),
+      viewportWidth: window.innerWidth,
+      onLeft: getSetting('terminalSide') === 'left',
+    });
     sidebar.style.width = `${w}px`;
   });
   window.addEventListener('mouseup', () => {
@@ -3040,6 +3792,33 @@ function hideSidebar() {
 // Managed sessions get a live terminal; others get an explanation + Resume.
 function renderSidebar(s) {
   showSidebar();
+  // The view branch goes here, not in selectSession: this function owns the whole
+  // terminal lifecycle (openTerminal / closeTerminal / the dormant + exited notes
+  // it writes into #term), so branching anywhere else would let a terminal attach
+  // land on top of the chat view.
+  if (viewForSession(s.sessionId) === 'chat') {
+    // Chat renders from the transcript on disk, so it works for dormant and exited
+    // sessions alike — none of the managed/unmanaged handling below applies, and
+    // that is the point: this view shows sessions the terminal cannot. NOT archived:
+    // renderSidebar is only reached via selectSession/applySessionView, both of which
+    // look the session up in latestSessions, which excludes archived sessions.
+    document.getElementById('term-wrap').hidden = true;
+    closeTerminal(); // no-op when nothing is attached
+    chatView.mount(s.sessionId);
+    // AFTER mount, which resets the view's cached status to null: selectSession calls
+    // renderPanel (the only other setStatus caller) BEFORE this function, so without
+    // re-seeding here an already-working session shows no "Working — running X" line
+    // until the next ~4s graph rebuild, while Stop — driven off the same status — is
+    // already visible. The two must never disagree.
+    chatView.setStatus(displayStatus(s));
+    // Same reasoning for the model: mount clears it so a session switch cannot
+    // leave the previous session's model showing, which means it has to be
+    // re-seeded here or the chip stays blank until the next graph rebuild.
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+    return;
+  }
+  chatView.unmount();
+  document.getElementById('term-wrap').hidden = false;
   if (s.managed) {
     if (holdForRestart(s)) return; // restart in flight — hold the spinner, not the dead pane
     resuming.delete(s.sessionId); // resumed — drop the in-flight placeholder
@@ -3072,6 +3851,14 @@ function renderSidebar(s) {
     send({ type: 'resume', sessionId: s.sessionId });
     toast('Resuming…');
   });
+}
+
+// Re-apply the current view choice for a session already selected — what the
+// Chat/Terminal toggle calls. Routes through renderSidebar so there is exactly ONE
+// place that decides which view is showing.
+function applySessionView(sessionId) {
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s) renderSidebar(s);
 }
 
 // Swap the panel title for an input to rename the session. Enter/blur commits,
@@ -3126,6 +3913,42 @@ function beginRename(sessionId) {
 // on every fresh page load — there's no session-switch reset to write here at
 // all (contrast the old code, which had to remember to reset a transient flag);
 // each session's own state is just looked up fresh from its Map/Set.
+// Which view each session's sidebar shows. Keyed on the CARD id (never the live
+// id) like every other per-session field, and persisted so a reload keeps your
+// choice. A session toggled by hand keeps it no matter how chatViewDefault moves.
+const CHAT_VIEW_KEY = 'cm-session-view';
+// Type-checked like panelSubagentShownOverrides below: a corrupted/tampered
+// value that still parses as valid JSON (a bare string, number, etc.) is not an
+// object, so setSessionView's `all[sessionId] = view` — outside any try/catch —
+// would throw a strict-mode TypeError assigning a property to a primitive.
+// Falling back to {} here keeps that assignment always safe.
+function readSessionViews() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_VIEW_KEY));
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+}
+function viewForSession(sessionId) {
+  const stored = readSessionViews()[sessionId];
+  return resolveSessionView(stored, chatViewDefault);
+}
+function setSessionView(sessionId, view) {
+  const all = readSessionViews();
+  all[sessionId] = view;
+  try { localStorage.setItem(CHAT_VIEW_KEY, JSON.stringify(all)); } catch {}
+}
+
+// The card id currently on a "go answer the prompt, then come back" round trip
+// (armed by the chat view's `Terminal →` button). Deliberately in-memory and
+// NOT persisted alongside the view choice above: it describes a trip in
+// progress, so surviving a reload would drop someone into an automatic view
+// switch they could no longer connect to anything they did. See
+// chat-handoff.js for the return condition.
+let chatHandoffFor = null;
+function disarmChatHandoff() {
+  chatHandoffFor = null;
+}
+
 const PANEL_SA_SHOWN_KEY = 'wrangler.panelSubagentShown';
 const panelSubagentShownOverrides = (() => {
   try {
@@ -3162,12 +3985,21 @@ function togglePanelSubagentShowFinished(sessionId) {
 function renderPanel(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   if (!s) return;
+  // The Checklist panel is a #panel SIBLING, not part of its markup — rendered
+  // from here purely so there is one call site that can't drift out of sync with
+  // panel renders (selection, the ~4s poll, every pill toggle).
+  renderChecklist(sessionId);
   // Both persisted per session id (see the two maps above) — looked up fresh
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
+  const view = viewForSession(sessionId);
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
+  if (view === 'chat') {
+    chatView.setStatus(displayStatus(s));
+    chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+  }
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.
   const chips = [];
@@ -3178,6 +4010,17 @@ function renderPanel(sessionId) {
   if (s.tokens) chips.push(`<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`);
   if (s.tasks?.running) chips.push(`<span class="card-tag">${esc(s.tasks.running)} running${s.tasks.kinds?.length ? ` (${s.tasks.kinds.map(esc).join(', ')})` : ''}</span>`);
   if (s.tasks?.queued) chips.push(`<span class="card-tag">${esc(s.tasks.queued)} queued</span>`);
+  // The checklist's COLLAPSED form: a disclosure chip in this row, styled and
+  // toggled exactly like the sub-agents pill below (icon + count + a +/- state
+  // icon, per-session and persisted). Collapsed therefore costs the terminal no
+  // height at all — the panel itself is simply not rendered. Shown even for an
+  // empty checklist (hence checklistPillLabel's "0/0"): while collapsed this
+  // chip is the only thing telling a human the feature exists on this session.
+  if (checklistEnabled) {
+    const open = checklistOpen(sessionId);
+    const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
+    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
+  }
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;
   if (saList.length) {
@@ -3200,6 +4043,10 @@ function renderPanel(sessionId) {
         <div class="sess-row1">
           <span class="sess-name" id="session-name" title="Double-click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
+            <span class="chat-seg" role="group" aria-label="Session view">
+              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
+              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+            </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
             <span class="sess-acts-divider"></span>
             <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
@@ -3245,6 +4092,8 @@ function renderPanel(sessionId) {
   if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
+  const ckToggle = panel.querySelector('#panel-checklist-toggle');
+  if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
   panel.querySelectorAll('.subagent-row').forEach((row) => {
     row.addEventListener('click', () => openSubagentModal(row.dataset.ownerSid, row.dataset.subagentId));
   });
@@ -3256,6 +4105,21 @@ function renderPanel(sessionId) {
     e.stopPropagation();
     const r = actionsBtn.getBoundingClientRect();
     openActionsMenu(sessionId, r.left, r.bottom + 4);
+  });
+  panel.querySelectorAll('.chat-seg-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.view;
+      // Disarmed BEFORE the no-op early return below, not after: pressing
+      // `Terminal` while already in the handoff's terminal is exactly how
+      // someone says "I want to stay here", and that press changes no view at
+      // all. Clearing after the return would ignore the one gesture that most
+      // needs to be honoured.
+      disarmChatHandoff();
+      if (next === viewForSession(sessionId)) return;
+      setSessionView(sessionId, next);
+      applySessionView(sessionId);
+      renderPanel(sessionId);
+    });
   });
 }
 
@@ -3286,6 +4150,35 @@ function setTermFontSize(size) {
 function fontSizeRowHtml() {
   const cur = termFontSize();
   return TERM_FONT_SIZES.map((size) =>
+    `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
+}
+
+// --- chat font size ---
+// A separate preference from the terminal's, with its own key, presets and
+// default (see chat-font.js): the two surfaces are read completely differently —
+// one is a fixed-width grid of program output, the other is prose — so one
+// number cannot serve both.
+//
+// Applied as a CSS custom property rather than by restyling elements, because
+// every size inside the chat view is an `em` fraction of #chat-wrap's own
+// font-size (see styles.css): setting the one variable scales the prose, the
+// chips, the tool rows and the composer together. Set on <html> so it survives
+// the chat pane being absent from the DOM tree's render path while hidden.
+const CHAT_FONT_KEY = 'cm-chat-fontsize';
+function chatFontSize() {
+  try { return normalizeChatFontSize(localStorage.getItem(CHAT_FONT_KEY)); } catch { return DEFAULT_CHAT_FONT_SIZE; }
+}
+function applyChatFontSize(n) {
+  document.documentElement.style.setProperty('--chat-font-size', `${n}px`);
+}
+function setChatFontSize(size) {
+  const n = normalizeChatFontSize(size);
+  try { localStorage.setItem(CHAT_FONT_KEY, String(n)); } catch {}
+  applyChatFontSize(n);
+}
+function chatFontSizeRowHtml() {
+  const cur = chatFontSize();
+  return CHAT_FONT_SIZES.map((size) =>
     `<button class="fontsize-opt${size === cur ? ' active' : ''}" data-size="${size}">${size} px</button>`).join('');
 }
 function closeTerminal() {
@@ -4191,6 +5084,14 @@ function cancelModal() {
 }
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
+// One-time delegated wiring for the Checklist panel's rows (they are patched, so
+// per-row listeners would be lost/duplicated on every tick).
+initChecklist();
+// Seed --chat-font-size from the stored preference at startup. The terminal's
+// size needs no equivalent: it is read per-terminal at construction, whereas
+// this one is a CSS variable that has to exist before the chat view first
+// renders (nothing else would ever set it on a page that never opens Settings).
+applyChatFontSize(chatFontSize());
 // Global settings live in their own module (registry + centered #settings-modal),
 // opened from the bottom-rail gear (#settings-btn). initSettings wires both.
 // The server bridge backs scope:'server' entries: reads come off the flag the
@@ -4207,6 +5108,8 @@ initSettings({
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
+      if (id === 'chatViewDefault') return chatViewDefault;
+      if (id === 'checklistEnabled') return checklistEnabled;
       return undefined;
     },
     set: (id, value) => {
@@ -4228,14 +5131,30 @@ initSettings({
       } else if (id === 'archiveReviewEnabled') {
         archiveReviewEnabled = Boolean(value);
         send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
+      } else if (id === 'chatViewDefault') {
+        chatViewDefault = Boolean(value);
+        send({ type: 'set-chat-view-default', enabled: chatViewDefault });
+      } else if (id === 'checklistEnabled') {
+        checklistEnabled = Boolean(value);
+        send({ type: 'set-checklist-enabled', enabled: checklistEnabled });
+        // Show/hide at once rather than waiting for the rebuild echo — the panel
+        // is right beside the modal that just toggled it.
+        renderChecklist(selectedSessionId);
       }
     },
+  },
+  // Settings whose effect is LAYOUT rather than behaviour: nothing re-reads them
+  // on its own, so they have to be applied on the flip itself.
+  onChange: (id, value) => {
+    if (id === 'terminalSide') applyTerminalSide(value);
   },
   appearance: {
     themeRowsHtml: renderThemeRows,
     fontSizeRowHtml,
+    chatFontSizeRowHtml,
     onThemeSelect: selectStyle,
     onFontSize: setTermFontSize,
+    onChatFontSize: setChatFontSize,
   },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
@@ -4383,6 +5302,10 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // Success is silent on purpose: the model chip changes on the next turn, off
+    // the transcript, which is real confirmation rather than this reply's
+    // optimism. Only a refusal needs saying, because nothing else would show it.
+    else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
@@ -4476,6 +5399,9 @@ function connect() {
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
     else if (msg.type === 'styles') setCustomStyles(msg.styles);
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
+    else if (msg.type === 'chat') chatView.onChatReply(msg);
+    else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
+    else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
@@ -4532,6 +5458,9 @@ function focusSuppresses(scope, ownerId) {
 function notify(session) {
   if (focusSuppresses('session', session.sessionId)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
+  // Same opt-in as the finish chime (one setting, two tones) — this path is
+  // already focus-suppressed above, so it needs no gate of its own.
+  if (getSetting('soundOnFinish')) playSound('needs-you');
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification('Claude needs you', { body });
     n.onclick = () => { window.focus(); selectSession(session.sessionId); };
@@ -4623,6 +5552,30 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
 initStyles();
+
+// Constructed once: renderSidebar/applySessionView mount/unmount it per session,
+// and the WS dispatch below feeds it every 'chat' poll reply.
+const chatView = initChatView({
+  send,
+  onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
+  onOpenDiff: (sid) => openDiffPanel(sid),
+  // Arms the round trip before switching: applyGraph brings the view back once
+  // the session leaves needs-you, i.e. once the prompt has been answered.
+  onPickModel: (sid, rect) => openModelMenu(sid, rect.left, rect.bottom + 6),
+  onGoTerminal: (sid) => {
+    chatHandoffFor = sid;
+    setSessionView(sid, 'terminal');
+    applySessionView(sid);
+    renderPanel(sid);
+  },
+  // The same destination the terminal's .md link provider uses, so a path opens
+  // the same preview whichever view it was clicked in.
+  onOpenFile: (path) => openFilePreview(path),
+  // Looked up per click/render rather than pushed in on mount: the chat view only
+  // ever needs the cwd of the session it is showing, and latestSessions is already
+  // the live answer.
+  cwdFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.cwd || null,
+});
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
 // Restore the deep link on load. #view=search (or a legacy #view=history

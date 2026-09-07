@@ -642,3 +642,18 @@ test('tileSpan: ordinary secondary content (todos) is still capped, unaffected b
   assert.ok(span <= MAX_SPAN);
 });
 
+// Collapsing a task's todo zone (app.js collapsedTodoZones) must shrink the
+// tile the same way collapsing a workflow spine does — todoVisibleCount 0
+// drops the per-row stride while todoCount alone still charges the divider.
+// Enough sessions/todos that the secondary-weight cap pushes the expanded
+// case into a second row while the collapsed case (divider-only overhead)
+// stays within the first — a small todoCount would round to the same ceil()'d
+// span either way and mask the difference tileWeightWithTodos already proves.
+test('tileSpan: a collapsed todo zone (todoVisibleCount 0) shrinks the tile vs. all rows shown', () => {
+  const perRow = 10;
+  const sessions = Array.from({ length: 9 }, (_, i) => sess(`s${i}`));
+  const expanded = tileSpan(sessions, perRow, 60, phaseOf, 0, 0, 0, 0, 0, 0, 60);
+  const collapsed = tileSpan(sessions, perRow, 60, phaseOf, 0, 0, 0, 0, 0, 0, 0);
+  assert.ok(collapsed < expanded);
+});
+

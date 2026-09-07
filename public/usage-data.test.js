@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellValue, dimensionMap, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd } from './usage-data.js';
+import { cellValue, dimensionMap, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
 
 const CATS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const OTHER = 'cO';
@@ -99,6 +99,32 @@ test('niceTicks always reaches at least the max', () => {
     assert.ok(ticks.length <= 6, 'stays to a readable handful of ticks');
   }
   assert.deepEqual(niceTicks(0), [0]);
+});
+
+test('replyMatchesWindow accepts a reply matching the current granularity + range', () => {
+  const want = { granularity: 'day', start: '2026-07-01', end: '2026-07-31' };
+  const msg = { granularity: 'day', reqStart: '2026-07-01', reqEnd: '2026-07-31' };
+  assert.equal(replyMatchesWindow(msg, want), true);
+});
+
+test('replyMatchesWindow rejects a reply for a moved range (abandoned selection)', () => {
+  const want = { granularity: 'day', start: '2026-07-01', end: '2026-07-31' };
+  // A late reply for a wide "All time" selection the user has since narrowed away from.
+  const stale = { granularity: 'day', reqStart: null, reqEnd: null };
+  assert.equal(replyMatchesWindow(stale, want), false);
+});
+
+test('replyMatchesWindow rejects a reply for a moved granularity', () => {
+  const want = { granularity: 'day', start: '2026-07-01', end: '2026-07-31' };
+  const stale = { granularity: 'month', reqStart: '2026-07-01', reqEnd: '2026-07-31' };
+  assert.equal(replyMatchesWindow(stale, want), false);
+});
+
+test('replyMatchesWindow accepts a reply that omits the self-describing fields (older server)', () => {
+  const want = { granularity: 'day', start: '2026-07-01', end: '2026-07-31' };
+  assert.equal(replyMatchesWindow({}, want), true);
+  assert.equal(replyMatchesWindow(null, want), true);
+  assert.equal(replyMatchesWindow({ granularity: 'day' }, want), true, 'no reqStart/reqEnd carried at all');
 });
 
 test('token/usd formatters', () => {

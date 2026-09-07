@@ -24,7 +24,17 @@ jobs:
 
       - run: npm ci
 
+      # The acceptance test drives real headless Chrome over CDP. ubuntu-latest ships
+      # google-chrome-stable; AW_REQUIRE_BROWSER makes the test FAIL rather than skip if
+      # a future runner image drops it, so it can't quietly stop covering anything.
+      - name: Locate Chrome
+        run: |
+          which google-chrome-stable google-chrome chromium-browser chromium || true
+          google-chrome-stable --version || chromium-browser --version || true
+
       - run: npm test
+        env:
+          AW_REQUIRE_BROWSER: '1'
 
       - name: Verify systemd unit
         run: |

@@ -229,10 +229,86 @@ don't re-derive it.
   — a card can legitimately be human-bookmarked *and* hold unread mail at once,
   and mixing the two concepts into one signal was the exact bug this naming
   rule prevents.
+- **Three lists exist and none of them is the other: the task **TODO**
+  (task-scoped, human-only, `task-store.js`), the per-session **checklist**
+  (`checklist-store.js`, human AND agent), and the agent's own **native plan**
+  (`TaskCreate`/`TaskUpdate`, or Codex `update_plan`) which the wrangler never
+  reads, mirrors or reconciles.** "todo" and "task" were both already taken (the
+  latter by Claude's own tool *and* the board's `t_...` ids), which is why this
+  one is "checklist" everywhere — and never the bare field name `checks`, which
+  `pr-status.js`/`notifier.js` already own for PR check-run status. Surfacing the
+  native plan instead was investigated and rejected: it's undocumented internal
+  shape that already renamed once (`TodoWrite`→`TaskCreate`, which broke a stale
+  reference in `archive-review-runner.js`), and the two lists serve different
+  audiences on purpose.
+- **The per-session checklist is keyed on the card id and its four MCP tools take
+  NO `session` parameter — that omission is the access control.** Store is
+  `checklist-store.js` (`checklists.json`), the same synchronous-mutator mould as
+  `mailbox-store.js` and for the same reason: the human (control WS
+  `checklist-add`/`-update`/`-remove`/`-reorder`, `control/handlers/checklist.js`)
+  and the agent (MCP) both write from this one process, and an `await` between a
+  read and its write is where one clobbers the other. `add_checklist_item`/
+  `update_checklist_item`/`remove_checklist_item`/`list_checklist` resolve their
+  target from `extractCaller` alone, so a session can only ever touch its own
+  list — **adding a `session` argument would let a launched agent write into a
+  sibling's checklist** off an id it hallucinated or read from `list_sessions`.
+  They're granular per-item on purpose (no `set_checklist(items[])`): the human
+  edits the same list live, and a whole-list replace would let a stale agent read
+  silently wipe an edit made seconds earlier. Registered in BOTH places per the
+  two-place rule, and the whole feature is flag-gated (`checklistEnabled`,
+  default **true**) through **four** channels that must stay in step —
+  `activeTools()` (registration), `allowedToolsArg({checklist})` (the launch
+  grant, whose `CHECKLIST_TOOLS` name list lives in the `client-config.js` leaf so
+  the registry imports from it and never the reverse), `agent-skills.js`'s
+  `DISABLEABLE` map (the nudge + Codex catalog, same shape as `task-memory`), and
+  `graph.checklistEnabled` (the panel). Lifecycle mirrors the mailbox exactly:
+  resume keeps it, **archive keeps it** (set-aside, not end-of-life), a **fork
+  starts EMPTY** (fresh card id, no copy — deliberate, don't add one), and only a
+  purge (`control/handlers/remove.js`) calls `forget`. Item text is
+  **agent-written**, so `public/checklist-dom.js` renders it via `textContent`
+  only and the panel is patched in place rather than re-`innerHTML`'d — the ~4s
+  graph poll would otherwise reset the list's scroll every tick, and
+  `checklistDragActive`/`checklistEditing` (`app.js`) freeze the patch so a tick
+  can't reorder rows mid-drag or eat a half-typed item. **Collapsed is the panel
+  not rendered at all, and the collapsed form is a disclosure chip in `#panel`'s
+  own meta row** — deliberately the sub-agents-zone idiom (`.checklist-pill`
+  shares `.subagent-pill`'s two rules rather than forking a third pill style), so
+  a collapsed checklist costs the terminal ZERO height. Per-session and persisted
+  per browser in `wrangler.checklistOpen`, mirroring
+  `panelSubagentShownOverrides` — but with **no server-side default to fall back
+  to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
+  `parseChecklistOpen` fails towards collapsed for the same reason, since that's
+  the direction that costs no height. The chip renders even for an EMPTY
+  checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
+  while collapsed it's the only thing telling a human the feature exists on this
+  session. Caps (`MAX_ITEMS` 100,
+  `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
+  the first store an agent can grow with no human in the loop.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
   keyed on the card id.
+- **The diff view has TWO layouts, and in side-by-side a `.diff-line` is no longer a
+  direct child of its file section.** `cm-diff-layout` picks inline (one unified
+  column) or split, where `pairHunkLines` (`diff.js`) zips a hunk's deletion run
+  POSITIONALLY against the addition run that follows it and `pairRowEl`
+  (`diff-dom.js`) wraps each pair in a `.diff-row` two-column grid. The wrapper is
+  what keeps the columns aligned — both cells sit in one grid row, so a long line
+  wrapping on one side stretches BOTH; a flat grid of `grid-column`-placed cells
+  can't, because anything inserted between the two cells pushes the second onto its
+  own row. The cells keep the same `file`/`side`/`line` `data-*` a unified row
+  carries, which is what lets `findLineRow`/`highlightRange`/`paintDragRange`/
+  `dragRange` and the drag handler stay layout-agnostic — **but anything that mounts
+  DOM relative to a line row must go through `mountRowFor` (`diff-view.js`)**, or a
+  comment box lands as a grid item beside the code instead of full width beneath the
+  pair. A pair can carry TWO drafts (an old-side note and a new-side one) where an
+  inline row only ever carries one, so a "my draft is the next sibling" check has to
+  walk the whole run. A missing side renders `.diff-cell-empty`, deliberately **not**
+  a `.diff-line`, so the drag delegation's `.closest('.diff-line')` can never resolve
+  onto filler. A context line is one logical line drawn in both cells (`lineSide`
+  addresses it on `new` from either), so its single draft is de-duplicated by key.
+  **No width-threshold fallback to inline** — the toggle is honoured at any panel
+  width, so nothing here may depend on a minimum column width.
 - **`tileSpan` (`public/layout.js`) takes THREE child counts and they must stay
   distinct** — `absorbedChildCount` (every folded-in session, structural) is what's
   subtracted to get the top-level active count; `childRowCount` (only rows currently
@@ -255,10 +331,13 @@ don't re-derive it.
   childRowCounts`' `subagentRowCount`/`subagentZoneCount` loop must charge it too,
   not just non-absorbed sessions, or the tile comes out short and silently
   scrolls. Defaulting `absorbedChildCount` to `childRowCount` previously made
-  collapsing a workflow box grow the tile instead of shrinking it. **TODO data is
-  the one exception to "carried via `buildGraph`"** — it's task-scoped, not
-  session-scoped, so it rides
-  `taskStore.snapshot()` directly; don't go looking for it in `buildGraph`.
+  collapsing a workflow box grow the tile instead of shrinking it. **TODO and
+  checklist data are the two exceptions to "carried via `buildGraph`"** — both
+  ride their store's `snapshot()` on the graph directly (`taskStore.snapshot()`,
+  `checklistStore.snapshot()`), so don't go looking for either in `buildGraph`.
+  TODO because it's task-scoped rather than session-scoped; the checklist
+  *is* session-scoped but its only consumer is the ONE selected session's
+  sidebar panel, so there's nothing to enrich per card.
 - **A wrapped card's drag unit is the OUTERMOST element — the nested card/box must
   be non-draggable, and four places must agree.** `.workflow-box`/`.child-group`
   (`public/cards.js`) carry `data-sid` + `draggable="true"` and stand in for
@@ -274,6 +353,20 @@ don't re-derive it.
   live bug (a parent-with-children could never be dragged, and any drag in its
   task permanently dropped it from `sessionOrder`), not a "sessions with children
   sink last" feature.
+- **Every paste into a pane goes out BRACKETED (`paste-buffer -p`) — dropping the
+  `-p` silently splits one multi-line message into several turns.** `pasteBlock`
+  (`tmux-scraper.js`) is the single chokepoint for the composer, peer mail, PR nudges
+  and the snooze prefill. The paste *buffer* alone is not the fix: without `-p`, tmux
+  puts a literal CR on the pty for every newline, so the TUI submits at the first one
+  and queues each later line as its own prompt — measured against a real Claude pane, a
+  three-line prompt landed in the transcript as TWO user messages, and with `-p` the
+  same text landed as one with its newlines intact. Safe unconditionally because tmux
+  only emits the `ESC[200~`/`ESC[201~` wrapper when the pane's app has enabled bracketed
+  paste, so `-p` is byte-identical to the old behaviour against anything that hasn't
+  (verified against a plain `cat`) — no per-agent branch needed. `sendText`'s trailing
+  Enter stays a submit rather than a swallowed newline because the end marker precedes
+  it on the same byte stream. The TUI's `[Pasted text #N +k lines]` collapse is
+  DISPLAY-ONLY — a 31-line paste reached the transcript in full.
 - **tmux needs a UTF-8 locale** or it renders Unicode (`⏺`, box-drawing) as `_`.
   launchd doesn't inherit the login locale, so `scripts/wrangler-start.sh` pins
   `LANG`/`LC_CTYPE`. If terminals show `_`, check the server env (`ps eww`).
@@ -344,6 +437,422 @@ don't re-derive it.
   class of incident `CODEX_HOME`'s redirect exists for, with a bill attached. Runs
   before any `data-dir.js` import (via `node --test --import`), so the module's
   `DATA_DIR` const picks it up for the whole test run.
+- **The chat view's read path must not apply the fork bound and must not price anything.**
+  A fork replaying parent history is correct for *reading*; `usageSince` bounds spend only.
+  Three cost scanners already have to agree on `iterations[]`/advisor/fork rules — the chat
+  path deliberately shows model only so it never becomes a fourth (no tokens are produced or
+  rendered anywhere on this path). `subagent.usd`
+  is forwarded from `transcript-reader.js`, not recomputed (`server/chat-events.js`).
+- **A Claude transcript is a TREE, not a log, and the abandoned branches are
+  unmarked — so the chat view has to prune, and the pruning rule is NOT "the
+  newest line and its ancestors".** Rewind ("backtrack", Esc-Esc) does not
+  truncate the file: the new turn is appended with its `parentUuid` pointing back
+  at the rewind target and the old turns stay put, line-for-line indistinguishable
+  from live ones. Measured over 274 real transcripts, **160 (58%) carry at least
+  one abandoned line**, and one recurring session showed 325 of 345 message lines
+  dead — a flat scan rendered all of them, which is what "the chat view shows old
+  versions of the conversation" was. **The obvious spine walk is wrong**: ordinary
+  **parallel tool use branches the tree too** — a second `tool_use` line and the
+  first call's `tool_result` are both written as children of the first `tool_use`
+  — so ancestors-of-the-newest-line silently drops live tool results, in 153 of
+  those 274 files. What actually marks a rewind is a branch point with **more than
+  one child whose subtree contains a human prompt** (two alternative histories); a
+  fan-out never has that, since one side is a bare tool result. At such a point
+  every prompt-bearing child but the **last** dies with its whole subtree
+  (`selectLive`, `server/chat-events.js`) — 1.7% of message lines across the
+  corpus, never a line the spine would have kept. Three details are load-bearing:
+  chain tracking must see **every** line, not just the ones `mightCarryChat` lets
+  through (an `attachment` between a user turn and its reply is part of the parent
+  chain, and a hole there orphans both sides), which is why the uuid pair is
+  pulled off the raw line by `indexOf` and never `JSON.parse` — the lines it runs
+  on include multi-megabyte tool results; `parentUuid: null` lines are grouped
+  under one synthetic `ROOT` and compete like any siblings, because rewinding to
+  before the very first prompt starts a whole **second root** (one scheduled
+  session had eight); and a **`compact_boundary` root is exempt** — `/compact`
+  also opens a new root but *continues* the conversation, and letting it compete
+  hid **2104 pre-compact messages** of a real session. Past
+  `MAX_TRACKED_LINES` the scanner stops tracking and prunes nothing: showing a
+  dead branch is cosmetic, hiding a live turn is not.
+- **A rewind is delivered to the client as a moved `epoch`, because the stream is
+  append-only and cannot retract what it drew.** `selectLive` only works on a read
+  that covers its range from the start, so the initial read prunes and a follow-up
+  poll cannot — it holds only the newly appended lines. Instead the scanner reports
+  `takeRewound()` (a new line's prompt hanging off an ancestor that already had a
+  prompt-bearing child) and `chat.js` bumps a per-conversation `epoch`; the client
+  mirrors it and, when it moves, **clears the stream, resets `offset` and re-reads
+  the window** (`rebuildStream`, `public/chat-view.js`). Three things are subtle:
+  `takeRewound()` is **read-and-clear and consumed on every read** — an initial
+  read walks the historic branch points too, so a flag left set would rebuild a
+  correctly-built stream every 2s forever; the rebuild **must bump `generation`**,
+  since `offset` is back to `null` and the token gate is then the only thing
+  stopping an already-in-flight reply from re-appending the branch that just died;
+  and in-flight round trips are stamped with a **separate `requestEra`**, bumped only
+  on mount/unmount, so a rebuild does not silently orphan an upload the reader just
+  started. That counter is shared by every client→server round trip (an image upload
+  and the interrupt's restore today) and is named for the round trip rather than for
+  pastes for exactly that reason: anything added later must stamp itself with it and
+  not with `generation`. The epoch counter lives **outside** the scanner cache because the
+  rebuild's fresh read replaces the scanner. Codex is exempt throughout: a rollout
+  is a flat list with no parent links and no rewind representation.
+- **A conversation's file is resolved by AGENT, through `server/conversation-file.js`,
+  and getting that wrong degrades to an EMPTY VIEW rather than an error.** Claude
+  transcripts sit in per-cwd project buckets under `~/.claude/projects`
+  (`findTranscript`); Codex rollouts sit under
+  `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<uuid>.jsonl` (`findRollout`,
+  `agents/codex-rollout.js`). `chat.js` resolving every session with
+  `findTranscript` is the whole reason the chat view had to be disabled for Codex
+  (PR #94) — nothing threw, Codex cards just rendered blank. Both read paths
+  (`chat.js`, `interrupt.js`) go through the one resolver, and a third must too.
+  **`findRollout` caches like `findTranscript` and for the same two reasons**: the
+  view polls every 2s, so the first open pays one name-only walk of the sessions
+  tree (measured 2ms over 169 rollouts) and every poll after it pays one
+  `existsSync`. Positive results ONLY — Codex discovers a live id post-launch, so
+  a rollout can appear moments after the first lookup and a cached miss would
+  leave that card permanently blank with nothing to invalidate it; there is
+  deliberately no negative TTL, which would buy one walk in exchange for an empty
+  view that cannot self-heal. A cached hit is re-checked and evicted the moment it
+  stops resolving — the Codex half of #96. The walk is split into a name-only
+  `rolloutPaths` (the uuid is in the filename, so resolving one id needs no
+  `stat`) with **order unchanged**, because `findRollout` and `buildRolloutIndex`
+  both resolve a duplicate uuid to the first one walked and have to keep agreeing.
+- **Codex tool calls pair on `call_id`, never `id` — and there are TWO call shapes,
+  only one of which the original parser knew about.** Both ids exist (`fc_…`/`ctc_…`
+  and `call_id: call_…`); the output carries only `call_id`. Pairing on `id` does
+  not throw — it silently renders a timeline with no tool outputs. The shapes:
+  `function_call` carries its args in `arguments` (a JSON **string**) and its
+  result in `output` (a **string**); `custom_tool_call` carries them in `input` (a
+  raw string, typically a whole script) and its result in `output` as an **array of
+  `{type:'input_text', text}` content blocks**. Treating the latter's output as a
+  string dumps raw JSON into the tool row. `custom_tool_call` is not an edge case:
+  measured over all 170 rollouts on one machine it was **866 of 2689 tool calls
+  (32%)**, and every one was dropped by `mightCarryChat`'s gate before any parser
+  saw it — see the gate bullet below. **The key the raw `input` lands under is
+  load-bearing**: `codexCustomInput` stores it as `input` because `editCounts`
+  reads an apply_patch body from `input.patch`/`input.input`, and **apply_patch
+  really does arrive as a `custom_tool_call`** (58 of them in that corpus) — key it
+  as anything else and every patch silently reports +0/-0 while looking healthy.
+  It is kept RAW rather than one-lined because a patch body and an `exec` script
+  are both multi-line and the expanded row is the only place they exist;
+  `toolTarget` one-lines a copy for the collapsed summary. Codex `reasoning` is
+  `encrypted_content` with `summary: []`, so Codex thinking is a presence marker
+  and can never have text.
+- **Codex injects instructions as ordinary `role:'user'` messages, so the chat view
+  needs its OWN synthetic-prefix list and it is load-bearing twice over.**
+  `CODEX_SYNTHETIC_PREFIXES` (`chat-events.js`) is separate from the Claude
+  `SYNTHETIC_PREFIXES` list because the vocabulary is different: `# AGENTS.md
+  instructions`, `<recommended_plugins>`, `<in-app-browser-context`,
+  `<user_shell_command>`. Measured over 170 real rollouts these removed 108 fake
+  user turns, and the AGENTS.md block was the single most common one on disk. Unfiltered it renders a multi-KB
+  instructions blob in a human bubble — but worse, `restore-prompt.js` reads "the
+  newest user turn" through this same scanner, so it is also what Esc would paste
+  into the composer. **`[Agent Wrangler] 📬 New mail …` is deliberately NOT in the
+  list**: that one really was delivered into the session and belongs on screen.
+- **`mightCarryChat` is a substring allow-list, so a line shape it does not name
+  is silently invisible — this bites BOTH agents and has now bitten both.** The
+  gate is a cheap substring test run before `JSON.parse`. For Codex it is a list
+  of payload-type markers, and `custom_tool_call` shares no substring with the
+  older `"function_call` marker, so a third of all tool calls in a real corpus were
+  dropped here — the parser handling them was necessary but not sufficient, and
+  adding either half alone still emits nothing. For Claude it looks for
+  `"role":"user"` / `"role":"assistant"`. Claude Code's end-of-turn recap is a `type:'system'`,
+  `subtype:'away_summary'` line with a bare `content` string and **no `message`
+  object at all**, so it matches neither — `"away_summary"` had to go in the gate
+  *and* be handled before `pushClaude`'s `entry.message` guard, which would
+  otherwise drop it. Both halves are needed; adding either alone silently emits
+  nothing. Same shape applies to the other system subtypes on disk
+  (`turn_duration`, `stop_hook_summary`) if they are ever surfaced. The recap's
+  stored `content` has no `※ recap:` prefix (the TUI adds that) but does carry a
+  trailing `(disable recaps in /config)` — stripped by `recapOf`, because it tells
+  the reader to type a slash command and slash commands stay in the pane by design.
+  `recapOf` splits the "Next:" / "Next action:" sentence on the **last** marker:
+  the summary half is free prose that can contain the word itself.
+- **`server/chat-events.js` is a leaf and must stay one.** It deliberately duplicates
+  `search/extract.js`'s *shape* while keeping the tool calls that module drops — opposite
+  goals, do not merge them.
+- **The chat view's whole type scale is `em`-relative to `#chat-wrap`'s own
+  `font-size`, which is `var(--chat-font-size)`.** That one variable (set on
+  `<html>` by `applyChatFontSize`, `public/app.js`, from the `cm-chat-fontsize`
+  localStorage key via the `chat-font.js` leaf) is what the "Chat font size"
+  setting moves, and it only works because *every* size in the pane — prose,
+  chips, tool rows, the composer, the buttons — is a fraction of it. **A new
+  chat rule that sets `font-size` in px silently opts that element out of the
+  setting**, which is how the pane previously ended up with big prose beside
+  unchanged 11px machinery. Two deliberate exceptions: `.chat-seg-btn` (the
+  Chat/Terminal toggle lives in the panel header, outside the pane) and the
+  `14px` fallback on `#chat-wrap` itself (the variable is JS-set, so the pane
+  must still render if that never runs). Separate from the terminal's size on
+  purpose — `term-font.js` and `chat-font.js` are sibling leaves with different
+  presets and defaults, and `chat-font.test.js` asserts they have not converged.
+- **The chat composer's auto-grow must never persist a measurement taken while
+  the textarea is unrendered.** `scrollHeight` is 0 under any `display:none`
+  ancestor, and the `input` listener (`chat-view.js`) runs in exactly those states
+  via `loadDraft`/`loadComposer` — `unmount` hides the pane before it clears the
+  box, and `main.diff-fullscreen` hides the whole `#sidebar` while the view stays
+  mounted. Writing that 0 back as `height: 0px` outlived the hide: nothing
+  re-measures when the pane returns unless a `mount` happens to, so the reader
+  found an empty, unfocusable strip where the box should be (reproduced live:
+  chat open → diff fullscreen → select another session → diff closes). A zero
+  measurement leaves the height at `auto`, where `rows="1"` draws a real row.
+- **Every `ctx.reply` in `server/control/handlers/chat.js` MUST echo `token`.** The chat view
+  correlates each poll reply to the mount that requested it by an opaque token it sends and
+  the handler echoes back (`token: msg.token ?? null`); the client drops any reply whose
+  token does not match its current generation. There are five reply paths (missing transcript,
+  failed stat, failed open, no-complete-line, success) and **a new reply path that omits the
+  token makes the chat view silently stop updating for that session, forever** — the client
+  cannot distinguish "token absent" from "stale era", and there is no retry. Nothing catches
+  this automatically: no lint rule, and the replies are separate object literals rather than
+  going through a shared builder. `chat.test.js` pins two of the five paths; a new path needs
+  its own assertion. The token exists because `server/index.js`'s control-socket handler invokes
+  `routeControlMessage` **without awaiting**, so concurrent requests interleave and the
+  handler's async reads can complete out of order. An earlier attempt correlated replies with
+  a FIFO queue and was provably inverted by that (it dropped the valid reply and applied the
+  stale one) — so do not "simplify" the token back to positional correlation.
+  The same all-paths rule now applies to **`lastTs`** (the newest transcript
+  timestamp the scanner has consumed, `createChatScanner().lastTs()`): it is the
+  chat view's elapsed clock for its live "working" row, so a reply path that
+  omits it freezes that clock. It is deliberately server-sourced rather than
+  measured from when the view mounted — mount-relative timing reports "3s" for a
+  session that has already been grinding for five minutes. It reads `prevTs`,
+  which `pushClaude` advances for **every** user and assistant entry, including
+  an assistant message that is nothing but a `tool_use` and therefore emits no
+  event at all: exactly the case the indicator exists to cover.
+  It applies to **`suggestion`/`modelNow`** for the same reason, and to
+  **`epoch`** (above) most sharply of all: an omitted `epoch` reads to the client
+  as `0`, and against a conversation whose counter has already moved that
+  rebuilds the whole stream on **every single poll**.
+- **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
+  signalled.** `Terminal →` on the chat view's needs-you bar arms
+  `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
+  `applyGraph` switches back once `shouldReturnToChat` (`public/chat-handoff.js`,
+  four guards, unit-tested) says the session has left `needs-you` — nothing on
+  the wire says "the prompt was answered", and leaving `needs-you` is what that
+  looks like from outside the pane. Three things are load-bearing:
+  **the disarm in the `.chat-seg-btn` handler must come BEFORE its no-op early
+  return** (pressing `Terminal` while already in the handoff's terminal is
+  exactly how someone says "I want to stay here", and that press changes no
+  view, so a disarm placed after the return would ignore the one gesture that
+  most needs honouring); **the check must run BEFORE `renderPanel`** in
+  `applyGraph`, or the toggle renders a tick behind the pane it labels *and*
+  the `openTerminal` branch below it still sees `terminal` and re-attaches into
+  the hidden pane (the 80-column bug that branch's comment describes); and the
+  armed id is **deliberately in-memory, never persisted** beside the view choice
+  — it describes a trip in progress, so surviving a reload would drop someone
+  into an automatic switch they cannot connect to anything they did.
+- **The suggested next prompt is the ONE deliberate exception to "the chat view
+  is transcript-sourced" — and it is scraped, because it exists nowhere else.**
+  Verified against a live session while the suggestion was on screen: absent from
+  the session jsonl (it lands only after acceptance, as an ordinary user message
+  indistinguishable from typing), `atis-latch`'s `atis` field empty in all 181
+  occurrences across 150 transcripts, no file written under `~/.claude` when it
+  appears, and `history.jsonl` holds only submitted prompts. The rendered pane is
+  its only external representation. So `parseGhostSuggestion`
+  (`server/ghost-suggestion.js`, a leaf) reads it off `capturePaneStyled` —
+  **`capture-pane -e`, which is why that is a SEPARATE helper from
+  `capturePane`**: every existing caller feeds plain text to `stripAnsi`/
+  `classify`, and the escapes are the entire basis of this parser, since the
+  faint attribute (SGR 2) is the only thing distinguishing ghost text from what
+  the human is typing. Governing rule is **hide on any doubt** — a missed
+  suggestion is just the old behaviour, a wrong one echoes someone's own
+  half-written draft back as the agent's idea — so it bails on typed text before
+  the run, an unterminated run (a wrapped suggestion, where reporting line one
+  would load a TRUNCATED prompt), trailing text, over-long text, and escape-
+  stripped input. Read in the chat handler rather than `buildGraph`: one tmux
+  exec for the one session being viewed instead of every card, at the 2s poll
+  rather than the ~4s graph, and a dormant card has no pane anyway. **Claude
+  only** — Codex's composer is a different TUI and guessing at it is exactly the
+  failure this is built to avoid. Carried on every reply under the same all-paths
+  rule as `token`/`lastTs`.
+- **`/model <name>` is the ONE slash command the chat view is allowed to send,
+  and `entry.model` must NOT be updated when it does.** The "slash commands stay
+  in the pane" rule exists because a slash command's output is a TUI dialog this
+  view cannot render (`/clear`, `/compact`, `/config`, …). `/model <name>` is the
+  exception that proves it: it takes its argument inline and applies silently,
+  with no dialog to miss. Its accepted alias list is
+  `["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]","fable[1m]",
+  "opusplan"]`, a superset of every value the Claude adapter offers, so
+  `set-session-model.js` validates against the adapter's own list and no second
+  model vocabulary exists. **`entry.model` stays the LAUNCH model** — it is what
+  a resume re-launches with, so writing it would change what a later resume does
+  on the strength of a runtime toggle.
+  **`/model` is NOT session-scoped, despite a string in the binary saying it is
+  — it writes `"model"` into `~/.claude/settings.json`.** Measured, not read:
+  the file gained `"model": "sonnet"` the moment the handler sent
+  `/model sonnet`. So a switch here changes the default for **every new Claude
+  session on the machine**, wrangler-launched or not. That is `/model`'s own
+  behaviour and matches what the feature was asked for, but it is surprising
+  enough that the menu says so in a header rather than leaving it to be
+  discovered. Don't restore the old value afterwards — that fights the tool and
+  races the user's own settings edits.
+  **A `/model` switch is invisible to the transcript**, so `modelPill` (built
+  from the last assistant `message.model`) keeps naming the OLD model until the
+  next turn runs — it is right for a dormant card and wrong for exactly the
+  moment after a switch. The live source is the pane's status bar via
+  `paneModelLabel` (`tmux-scraper.js`), carried on the chat reply as `modelNow`
+  and preferred over the pill by the chip. Its label is SHORT ("Sonnet 5") and
+  does not distinguish the 200K/1M variants, which is why `currentModelValue`
+  (`public/model-menu.js`) decides the menu's tick over the whole set and ticks
+  nothing when two rows are indistinguishable — a wrong tick is worse than none.
+  **Slash-command plumbing must stay out of the stream:** the invocation
+  (`<command-name>…`) and its output (`<local-command-stdout>`) arrive as
+  ordinary user messages with no `isMeta`, so they are filtered by name in
+  `chat-events.js`'s `SYNTHETIC_PREFIXES` — without that they render as raw tag
+  soup in a user bubble. Three refusals are load-bearing and mirrored client-side by
+  `canSwitchModel` (`public/app.js`) so the menu is only offered where it would
+  be honoured: **Claude only** (Codex's model is a launch choice and its TUI is a
+  different program), **idle only** (composer input during a turn is queued as
+  the next PROMPT, so the session would answer "/model sonnet" as a question),
+  and **pane composer confirmed empty** via `paneComposerIsEmpty`
+  (`ghost-suggestion.js`) — the paste lands at the cursor, so a draft already
+  there fuses with the command into one mangled prompt that the Enter submits.
+  That guard is fail-safe: it returns false whenever emptiness cannot be
+  confirmed.
+- **An image pasted into the chat composer reaches the agent as a FILE PATH, and
+  that path must arrive as its own isolated paste — measured, and the rule is
+  narrow.** Claude Code's own Cmd+V reads the HOST clipboard, which a browser
+  cannot reach, so a file is the only bridge. The TUI rewrites a pasted image path
+  into a real inline `[Image #N]` attachment (a genuine base64 `image` block in the
+  transcript, no Read tool call, no permission prompt) **only when the pasted text
+  is a SINGLE LINE ending with the path.** Verified against a live pane: `<path>`,
+  `<path> `, `<path>\n` and `prose: <path>` all attach; `prose\n<path>` (multi-line,
+  path last), `<path> more words` and `a\nb\n<path>` all stay literal text the model
+  never sees. So `deliverMessage` pastes each path ALONE via `prefillPane` (no Enter)
+  and only then `sendText`s the prose — the split IS the mechanism, and concatenating
+  a path into `text` silently breaks every multi-line prompt.
+  **Destination is `<memoryDir>/pastes/`, and that is what makes this need no launch
+  change**: every Claude launch already passes `--add-dir addDirFor(sessionId)`, so a
+  file underneath it is readable by an ALREADY-RUNNING session (unlike
+  `entry.mailCapable`, which had to wait for a relaunch). `paste-store.js` owns the
+  two path forms and they are not interchangeable — write and stat against the
+  RESOLVED real dir (so nothing depends on the by-session link existing yet), but hand
+  the agent the by-session **symlink** form for Claude, because that is literally the
+  string `--add-dir` was given and the form verified live; Codex gets the real path
+  since it rejects a symlinked writable root. Safe to create a subdir there because
+  `watchIgnored` refuses anything that is not `tasks/<id>/memory.md` — widening that
+  filter to see pastes would reintroduce the chokidar fd leak.
+  **The composer sends back the server-minted NAME, never a path** (`isPasteFileName`
+  + an existence check inside that session's own pastes dir), so a frame can never
+  point the agent at an arbitrary file; a name that fails either check is dropped
+  rather than failing the send. And the chat view's chip label is taken from the
+  `[Image #N]` marker in the prose, **not** counted up from one: the TUI numbers
+  attachments cumulatively per session, so a message's second-ever image is
+  `[Image #10]` and a "Image #2" chip would contradict the text beside it. Deliberately
+  no thumbnail — `GET /file` is markdown-only by design and widening it to serve
+  arbitrary image paths would open a read surface for one decoration.
+- **The chat composer is ONE textarea shared by every session, so mount/unmount must
+  swap its VALUE — resetting the state variables around it is not enough.** This was a
+  live cross-session leak, not a theoretical one: a prompt entered against one session
+  was still in the box, with Send enabled, after opening a sibling session, so it could
+  be delivered to the wrong agent. It also produced a confusing Esc symptom, because
+  `interruptAndRestore` deliberately declines to overwrite a non-empty box — the
+  carried-over draft masked the prompt the reader was trying to recover, which looked
+  like "Esc restored the wrong session's prompt". Fixed with a per-card-id `drafts` Map
+  (`public/chat-view.js`): `saveDraft(leaving)` then `loadDraft(id)`, **in that order**,
+  or the incoming draft gets filed under the outgoing id. Per-session rather than simply
+  cleared so switching away does not discard work in progress, and **in memory only, not
+  localStorage** — an unsent prompt is a thing of the moment, and surviving a reload
+  would put words in the composer the reader has forgotten writing (this is the opposite
+  choice from the diff view's review drafts, which DO persist, because those are notes
+  about a fixed artefact rather than a half-sent instruction). Attachments are stored
+  and restored WITH the text: a pasted image's filename only means anything inside the
+  session whose `pastes/` folder holds it, so it must follow its own prose and never
+  cross to another card. Anything else added to the composer (a second field, a mode
+  toggle) has to join the same save/load pair or it leaks the same way.
+- **The Esc-restore is resolved SERVER-SIDE, from the pane when it can be read and
+  a fresh transcript read otherwise — and the pane's own restore is unreliable, which
+  is the fact the whole design turns on.** Interrupting a turn *sometimes* makes
+  Claude Code restore the interrupted prompt into its own composer. Measured against a
+  live pane (2.1.247), composer wiped between runs: a 64-character prompt never
+  restored, a 212-character single-line one restored on one run and NOT on two later
+  runs of the identical prompt, and NO multi-line prompt ever restored (5 and 13 lines
+  tested). So absence is the common case and must never be read as "nothing was
+  pending". Two consequences, both load-bearing:
+  **`paneComposerDraft` (`ghost-suggestion.js`) hides on any doubt.** It locates the
+  composer between the last two `─` rules (continuation lines carry no `❯`, so the
+  mark alone cannot delimit them), takes the rule's own length as the wrap width — no
+  extra tmux call — strips faint runs, and rejoins wrapped lines with ONE space, which
+  is byte-exact when the wrap fell on a space (verified against a 212-character
+  prompt). It returns null on a line that reaches the full pane width, because a token
+  wider than the pane is hard-broken mid-word (verified: a 130-character path split as
+  `…segment-s` / `gment-…`) and rejoining that silently corrupts it; also null on a
+  `[Pasted text #N]` placeholder, on escape-stripped input, and over a length cap.
+  **The transcript fallback WIDENS its read by result, never a flat byte tail.**
+  `scanChatText` applies `selectLive`, so the read has to cover its range from a line
+  boundary, and transcript bytes are mostly tool output rather than turns — a fixed
+  window is no guarantee of holding a single prompt, and too small a window can prune
+  away every prompt it does hold. Measured over 31 real transcripts larger than the
+  first 256KB attempt, a flat 512KB tail returned NULL on one where widening found the
+  prompt correctly; after the fix, zero of the 31 differ from a whole-file read. An
+  empty or prompt-less window is therefore a reason to widen, NOT to give up — only
+  reaching byte 0 or the 8MB ceiling ends the search — and a window that does not start
+  at byte 0 must drop its partial first line, because `lineUuids` reads the parent/child
+  pair straight off the raw line and a truncated one feeds a bogus link to `selectLive`.
+  **The transcript is the fallback and is read FRESH in the handler** — the old client
+  held `lastUserText`, updated only when a 2s poll happened to deliver a `user` event,
+  which is why Esc handed back the PREVIOUS prompt when it beat the poll. `lastUserText`
+  is now gone from `chat-view.js`; the client sends an era-stamped token on `interrupt`
+  and loads whatever `interrupt-restore` echoes back, deciding "was a draft already
+  there?" at KEY-PRESS time rather than when the reply lands.
+  **`[Request interrupted by user]` is written by Claude Code as an ordinary `user`
+  message with no `isMeta`, so it is the newest user entry at exactly the moment the
+  restore is resolved.** Caught end-to-end, not reasoned about: the first version
+  returned that 29-character marker instead of the real 212-character prompt.
+  `restore-prompt.js` filters it and `[Request interrupted by user for tool use]`,
+  anchored so a prompt quoting one still restores; across 150 real transcripts those
+  are the only two forms. **Codex now gets a transcript restore too**, via
+  `findConversationFile` — it previously got none at all, because this handler
+  resolved with `findTranscript` over `~/.claude/projects` and a rollout is never
+  there. What makes that safe rather than merely present is
+  `CODEX_SYNTHETIC_PREFIXES`: without it the newest `role:'user'` message on a
+  rollout is routinely the injected AGENTS.md block, and Esc would paste multiple
+  KB of it into the composer. Codex still gets no PANE read — that parser is
+  Claude's TUI — so it degrades to no restore, never to a wrong one.
+- **The chat view cannot stream a partial turn, and no indicator should imply it
+  does.** Claude Code writes whole messages to the transcript — there is no
+  partial or delta line to tail — so between the start of a turn and the message
+  landing there is genuinely nothing to render. The live row (`.chat-live`, last
+  child of the stream, `chat-view.js`) is the honest substitute: presence gated
+  on the session's real status, decorated with the pending tool name when there
+  is one, plus the elapsed clock above. Don't replace it with something that
+  looks like text arriving.
+- **What counts as a `.md` path has exactly ONE definition, and the chat view
+  linkifies it through TWO code paths that must keep agreeing.**
+  `markdownPathRegex`/`resolveTerminalPath` (`public/term-links.js`) is the
+  matcher the terminal's xterm link provider has always used; `public/text-links.js`
+  wraps it for the chat view and is the only new vocabulary — don't fork a second
+  regex, or the same string linkifies in one view and not the other (the exact
+  complaint the feature was raised for). The two paths are unavoidable because the
+  two halves of the stream are different kinds of content: the **user bubble is
+  plain text** (`chat-dom.js` `fillLinked` turns segments into text nodes and
+  controls — still never innerHTML, so the module's rule stands), while
+  **assistant prose is markdown** and goes through markdown-it renderer rules
+  (`markdown-preview.js`). A change to what linkifies must land in both.
+- **A markdown-file link is a href-LESS `<a role="button" tabindex="0"
+  data-md-path>` — not a `<button>`, and never an `href`.** Nothing about "open
+  the preview modal" is a URL, and the app hash-routes (`#session=`, `#view=`),
+  so an `href="#"` that ever escaped its `preventDefault` would navigate the
+  board. A real `<button>` was tried and **measured wrong**: Chrome coerces
+  `display: inline` on one straight back to `inline-block` (verified live —
+  `!important`, inline style and a `<span>` control all confirmed it is coercion,
+  not a cascade miss), so a long path wrapping INSIDE the control pushes the text
+  after it onto a fresh line. `role`/`tabindex` are what a bare href-less anchor
+  lacks, and `chat-view.js` must wire **keydown as well as click** — with no href
+  nothing activates it from the keyboard otherwise. Both go on ONE delegated
+  `[data-md-path]` listener pair on `#chat-stream`, because the controls inside
+  assistant prose are built by a renderer rule and never pass through
+  `appendItems`, so per-node wiring cannot reach them.
+- **`createRenderer`'s markdown-path rules are opt-in via `mdPathBase`, and three
+  of their exclusions are deliberate.** No `mdPathBase` (the memory preview pane)
+  installs no `text`/`code_inline` overrides at all, so that pane renders exactly
+  as before. With it: **fenced blocks are NOT linkified** (content to copy
+  verbatim, and an inline control fights a drag-select) though **inline code IS**
+  (backticks are how an agent normally writes a path, and the terminal linkifies
+  them); **URLs are not re-matched in prose** (`urls:false`) because markdown-it's
+  own `linkify:true` already made them anchors and a second pass nests a link in a
+  link; and `insideLink` stops a path in a link's own LABEL becoming a `<button>`
+  inside an `<a>`. In the user bubble, URLs ARE matched — the bubble is not
+  markdown, so nothing else would do it. Scheme-less hosts
+  (`example.com/x`) are deliberately not linkified: in a human's prompt that is at
+  least as likely to be prose, and a wrong link is worse than a missing one.
 
 ## How subsystems hang together (pointers, not mechanics)
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { taskMemoryEnabled } from './config-store.js';
+import { taskMemoryEnabled, checklistEnabled } from './config-store.js';
 
 // The wrangler-meta skills ship in-repo under agent-skills/. Resolved from this
 // module's own path (server/ → repo root → agent-skills), so the running install
@@ -61,16 +61,21 @@ export function skillEntries(skillsRoot = SKILLS_ROOT) {
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// task-memory is the one user-disableable skill (settings modal →
-// config.json `taskMemoryEnabled: false`): a disabled install must never
-// instruct an agent to read AW_TASK_MEMORY, so it drops out of BOTH always-on
-// channels — the mandatory nudge and the Codex catalog. Only those; the
-// env/symlink plumbing stays wired and Claude's --plugin-dir still lists the
-// skill as discoverable, which is inert without the nudge. The flag is an
-// option (defaulting to live config) so tests never touch the shared config.json.
-function activeSkillEntries(skillsRoot, taskMemory) {
-  const entries = skillEntries(skillsRoot);
-  return taskMemory ? entries : entries.filter((e) => e.name !== 'task-memory');
+// Two skills are user-disableable (settings modal → config.json): task-memory
+// (`taskMemoryEnabled: false`) and checklist (`checklistEnabled: false`). A
+// disabled install must never instruct an agent to read AW_TASK_MEMORY, or to
+// keep a checklist whose MCP tools aren't registered and whose panel isn't
+// rendered — so each drops out of BOTH always-on channels, the mandatory nudge
+// and the Codex catalog. Only those: the env/symlink plumbing and the stored
+// checklists stay intact, and Claude's --plugin-dir still lists the skill as
+// discoverable, which is inert without the nudge. The flags are options
+// (defaulting to live config) so tests never touch the shared config.json.
+const DISABLEABLE = { 'task-memory': 'taskMemory', checklist: 'checklist' };
+function activeSkillEntries(skillsRoot, flags) {
+  return skillEntries(skillsRoot).filter((e) => {
+    const flag = DISABLEABLE[e.name];
+    return flag ? flags[flag] : true;
+  });
 }
 
 // Discovery (the catalog/plugin listing) isn't reliable for a skill that must be
@@ -81,8 +86,8 @@ function activeSkillEntries(skillsRoot, taskMemory) {
 // always-on prompt (Claude's --append-system-prompt, Codex's
 // developer_instructions) alongside the on-demand catalog — most skills (links,
 // spawn-session) are genuinely optional and carry no nudge.
-export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled() } = {}) {
-  const nudges = activeSkillEntries(skillsRoot, taskMemory).map((e) => e.nudge).filter(Boolean);
+export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled() } = {}) {
+  const nudges = activeSkillEntries(skillsRoot, { taskMemory, checklist }).map((e) => e.nudge).filter(Boolean);
   return nudges.join('\n\n');
 }
 
@@ -90,8 +95,8 @@ export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = ta
 // reads a SKILL.md on demand (its workspace-write sandbox allows reads outside
 // cwd), mirroring Claude's progressive disclosure: the catalog is cheap and
 // always-visible; bodies load only when a task matches a description.
-export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled() } = {}) {
-  const lines = activeSkillEntries(skillsRoot, taskMemory).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
+export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled() } = {}) {
+  const lines = activeSkillEntries(skillsRoot, { taskMemory, checklist }).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
   return 'You have wrangler-meta skills available. When a task matches one of the '
     + 'descriptions below, read the corresponding SKILL.md file at the given absolute '
     + 'path for the full instructions before acting. The files are read-only.\n\n'

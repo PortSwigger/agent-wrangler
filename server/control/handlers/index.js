@@ -19,6 +19,9 @@ import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
+import { chatViewDefaultHandler } from './chat-view-default.js';
+import { checklistEnabledHandler } from './checklist-enabled.js';
+import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
   taskRenameHandler,
@@ -29,10 +32,17 @@ import {
   taskReorderSessionsHandler,
 } from './tasks.js';
 import {
+  checklistAddHandler,
+  checklistUpdateHandler,
+  checklistRemoveHandler,
+  checklistReorderHandler,
+} from './checklist.js';
+import {
   todoAddHandler,
   todoEditHandler,
   todoDeleteHandler,
   todoMoveHandler,
+  todoReorderHandler,
 } from './todos.js';
 import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
@@ -47,6 +57,9 @@ import { openTerminalForSessionHandler } from './open-terminal-for-session.js';
 import { viewDiffHandler } from './view-diff.js';
 import { diffCommentsHandler } from './diff-comments.js';
 import { subagentDetailHandler } from './subagent-detail.js';
+import { chatHandler } from './chat.js';
+import { interruptHandler } from './interrupt.js';
+import { pasteImageHandler } from './paste-image.js';
 import { usageHandler } from './usage.js';
 import { searchHandler, searchStatusHandler, searchReindexHandler } from './search.js';
 import { adoptConversationHandler } from './adopt.js';
@@ -81,6 +94,9 @@ export const CONTROL_HANDLERS = [
   archiveReviewEnabledHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
+  chatViewDefaultHandler,
+  checklistEnabledHandler,
+  setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
@@ -92,6 +108,11 @@ export const CONTROL_HANDLERS = [
   todoEditHandler,
   todoDeleteHandler,
   todoMoveHandler,
+  todoReorderHandler,
+  checklistAddHandler,
+  checklistUpdateHandler,
+  checklistRemoveHandler,
+  checklistReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,
@@ -104,6 +125,9 @@ export const CONTROL_HANDLERS = [
   viewDiffHandler,
   diffCommentsHandler,
   subagentDetailHandler,
+  chatHandler,
+  interruptHandler,
+  pasteImageHandler,
   usageHandler,
   searchHandler,
   searchStatusHandler,

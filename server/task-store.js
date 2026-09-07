@@ -318,6 +318,30 @@ export class TaskStore {
     return true;
   }
 
+  // Reorder a bucket's todos to the client-supplied `order` (drag-and-drop within a
+  // task). Unlike reorderSession, a todo not mentioned in `order` is appended rather
+  // than dropped — `todos[bucket]` is the data itself, not display metadata layered
+  // over a session partition. null taskId maps to ADHOC. Returns false on no-op /
+  // unknown bucket.
+  reorderTodos(taskId, order) {
+    const bucket = taskId || ADHOC;
+    const list = this.todos[bucket];
+    if (!list || !Array.isArray(order)) return false;
+    const byId = new Map(list.map((td) => [td.id, td]));
+    const seen = new Set();
+    const next = [];
+    for (const id of order) {
+      if (typeof id !== 'string' || seen.has(id) || !byId.has(id)) continue;
+      seen.add(id);
+      next.push(byId.get(id));
+    }
+    for (const td of list) if (!seen.has(td.id)) next.push(td);
+    if (next.length === list.length && next.every((td, i) => td === list[i])) return false;
+    this.todos[bucket] = next;
+    this._save();
+    return true;
+  }
+
   // Archive a task in place: stamp archivedAt so the live board (currentOrder in
   // app.js) filters it out. Everything else (assignments,
   // sessionOrder, todos, links, its slot in `order`) stays untouched, so

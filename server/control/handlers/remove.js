@@ -14,6 +14,9 @@ export const removeHandler = {
     // purged from mappings.json" moment the spec ties mail deletion to — never
     // on archive, only here.
     ctx.mailStore.forget(msg.sessionId);
+    // Same rule for the checklist: retained through archive (a resume restores
+    // it), dropped only here.
+    ctx.checklistStore.forget(msg.sessionId);
     setTimeout(() => ctx.rebuild().catch(() => {}), 200);
   },
 };

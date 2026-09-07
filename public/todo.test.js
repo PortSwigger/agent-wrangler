@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   TODO_STRIDE_PX, TODO_DIVIDER_PX, CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, ADHOC_ID,
   SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
-  todoKeyToTaskId, tileWeightWithTodos,
+  todoKeyToTaskId, tileWeightWithTodos, reorderedTodoIds,
   tooltipPosition, TOOLTIP_MARGIN_PX, TOOLTIP_GAP_PX,
 } from './todo.js';
 import { tileWeight, SNOOZE_DIVIDER_PX, SNOOZE_STRIDE_PX } from './snooze.js';
@@ -38,6 +38,20 @@ test('tileWeightWithTodos: N todos add DIVIDER + N*STRIDE px over the snooze com
   const snoozePx = (2 * stride + SNOOZE_DIVIDER_PX + 3 * SNOOZE_STRIDE_PX);
   const expected = (snoozePx + TODO_DIVIDER_PX + 4 * TODO_STRIDE_PX) / stride;
   assert.equal(tileWeightWithTodos({ ...base, todoCount: 4 }), expected);
+});
+
+test('tileWeightWithTodos: a collapsed zone (todoVisibleCount 0) still charges the divider, drops the rows', () => {
+  const stride = 80;
+  const base = { activeCount: 2, snoozedCount: 3, cardStride: stride };
+  const snoozePx = (2 * stride + SNOOZE_DIVIDER_PX + 3 * SNOOZE_STRIDE_PX);
+  const expected = (snoozePx + TODO_DIVIDER_PX) / stride;
+  assert.equal(tileWeightWithTodos({ ...base, todoCount: 4, todoVisibleCount: 0 }), expected);
+});
+
+test('tileWeightWithTodos: todoVisibleCount defaults to todoCount (pre-collapse callers unchanged)', () => {
+  const stride = 80;
+  const base = { activeCount: 2, snoozedCount: 3, cardStride: stride, todoCount: 4 };
+  assert.equal(tileWeightWithTodos(base), tileWeightWithTodos({ ...base, todoVisibleCount: 4 }));
 });
 
 test('tileWeightWithTodos: todos render a tile even with no sessions', () => {
@@ -99,6 +113,23 @@ test('tileWeightWithTodos: N full-view children add N*cardStride px, not N*CHILD
 test('tileWeightWithTodos: zero full-view children add nothing over the child-row composition', () => {
   const base = { activeCount: 1, snoozedCount: 0, cardStride: 96, todoCount: 0, childRowCount: 2 };
   assert.equal(tileWeightWithTodos({ ...base, childFullViewCount: 0 }), tileWeightWithTodos(base));
+});
+
+test('reorderedTodoIds: moves the dragged id to before the target id', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', 'c'), ['b', 'a', 'c']);
+});
+
+test('reorderedTodoIds: a null beforeId appends the dragged id at the end', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', null), ['b', 'c', 'a']);
+});
+
+test('reorderedTodoIds: dropping back onto its own slot is a no-op', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'b', 'c'), ['a', 'b', 'c']);
+});
+
+test('reorderedTodoIds: an unknown beforeId falls back to appending at the end', () => {
+  assert.deepEqual(reorderedTodoIds(['a', 'b', 'c'], 'a', 'nope'), ['b', 'c', 'a']);
 });
 
 test('tooltipPosition: anchors under the row with the gap when it fits', () => {

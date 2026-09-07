@@ -20,12 +20,38 @@ otherwise it behaves exactly as a Claude-only board.
   boxes — organize it however makes sense to you.
 - **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
   needs-you flag the moment a session is blocked on you.
+- **A checklist you and the agent share** — each session gets a short checklist beside its terminal.
+  You add, edit, tick, reorder and delete items from the board; the session writes to the same list
+  through its own tools, so a glance tells you what it is working through without reading the pane.
+  It starts collapsed to a small progress chip in the session's header — `2/5` — costing the
+  terminal no height until you open it, and each session remembers whether you left it open. It is
+  deliberately separate from the agent's own private planning tool — that stays internal scratch
+  work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
   run an issue → PR autopilot with no gates, in its own git worktree.
 - **Scheduling** — one-off or recurring sessions and nudges — agents can even schedule their own
   wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
+- **Chat and Terminal views** — chat reads dormant and exited sessions via transcript, while
+  terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
+  events — enough that a typical session is visible whole — but history older than that window
+  is not reachable from the UI. It surfaces Claude Code's end-of-turn recap, and offers the
+  recap's proposed next step as a one-click prompt (loaded into the composer, never sent for
+  you). Permission prompts only exist in the pane, so chat offers a one-click hop to the
+  terminal to answer one and brings you back by itself once it is answered — switching view by
+  hand while you are there cancels the return. Esc (or Stop) interrupts a running turn and hands
+  the prompt back for editing, as it does in the pane; a draft you have already started is never
+  overwritten. The session's current model shows beside the composer, read from the
+  pane so it is right the moment it changes, and on an idle Claude session you can click it to
+  switch mid-conversation. That runs `/model`, which also saves the choice as your default for
+  new Claude sessions — the menu says so. Its font size is its own setting, separate from the terminal's.
+  Claude Code's suggested next prompt is offered above the composer too — that one is read off
+  the pane, since it exists nowhere else, so it shows only for live Claude sessions and stays
+  hidden whenever it can't be told apart from something you were typing.
+  Because the transcript records whole messages rather than a token stream, chat cannot show a
+  reply arriving word by word the way the terminal does; while a turn is running it shows a
+  live row naming the tool in flight and how long the session has been busy.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)

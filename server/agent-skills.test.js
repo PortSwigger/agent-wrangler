@@ -63,19 +63,23 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
   assert.match(SKILLS_ROOT, /agent-skills\/skills$/);
 });
 
-test('the real agent-skills dir ships task-memory, links, mail, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
+test('the real agent-skills dir ships task-memory, links, mail, checklist, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
-test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
+test('task-memory, mail and checklist are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
   const byName = Object.fromEntries(skillEntries().map((e) => [e.name, e]));
   assert.ok(byName['task-memory'].nudge.length > 0);
   // mail: discovery alone isn't reliable for the standing read-your-mail
   // instruction (CLAUDE.md), so it carries an always-on nudge too, on top of
   // the per-message footer (a separate, per-message control — see mail-format.js).
   assert.ok(byName.mail.nudge.length > 0);
+  // checklist: the panel is only useful if agents actually write to it, and a
+  // discoverable skill alone doesn't self-invoke — so a MINIMAL pointer rides
+  // the always-on prompt and the real guidance stays in the SKILL.md.
+  assert.ok(byName.checklist.nudge.length > 0);
   assert.equal(byName.links.nudge, '');
   assert.equal(byName['spawn-session'].nudge, '');
   assert.equal(byName['session-activity'].nudge, '');
@@ -90,6 +94,33 @@ test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, 
   // built-in SendMessage (which can't resolve a card id — live incident).
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /send_message/);
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /built-in `SendMessage`/);
+  // The nudge is a POINTER, not the guidance: it must name the tool and the
+  // skill, and must say the checklist is separate from the agent's own planner
+  // (the one thing an agent would otherwise get wrong without reading further).
+  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { checklist: true });
+  assert.match(nudge, /add_checklist_item/);
+  assert.match(nudge, /`checklist` skill/);
+  assert.match(nudge, /never synced/);
+});
+
+test('checklist:false drops the checklist skill from the mandatory nudge and the Codex catalog — nothing else', () => {
+  const root = fixture();
+  const dir = path.join(root, 'checklist');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: checklist\ndescription: Keep a visible checklist\n---\n\nBody.\n');
+  fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Use add_checklist_item for visible progress.\n');
+
+  const off = { taskMemory: true, checklist: false };
+  assert.doesNotMatch(mandatorySkillPrompt(root, off), /add_checklist_item/);
+  assert.match(mandatorySkillPrompt(root, off), /alpha thing/); // other nudges survive
+  assert.doesNotMatch(codexSkillCatalog(root, off), /checklist/);
+  assert.match(codexSkillCatalog(root, off), /alpha/);
+  // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
+  assert.ok(skillEntries(root).some((e) => e.name === 'checklist'));
+
+  const on = { taskMemory: true, checklist: true };
+  assert.match(mandatorySkillPrompt(root, on), /add_checklist_item/);
+  assert.match(codexSkillCatalog(root, on), /checklist/);
 });
 
 test('taskMemory:false drops task-memory from the mandatory nudge and the Codex catalog — nothing else', () => {

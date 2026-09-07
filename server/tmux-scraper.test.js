@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -237,7 +237,10 @@ test('prefillPane delivers multi-line text as one paste-buffer block and sends N
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer']);
   assert.equal(pastedContent, note, 'the entire multi-line note is pasted as one block');
   const paste = cmds.find((c) => c.args[0] === 'paste-buffer');
-  assert.deepEqual(paste.args, ['paste-buffer', '-b', paste.args[2], '-t', 'cc_x']);
+  // -p is asserted explicitly, not incidentally: without bracketed paste every newline
+  // in this note reaches the TUI as a CR and submits it line by line, which is the exact
+  // bug this flag exists to prevent (measured against a real Claude pane).
+  assert.deepEqual(paste.args, ['paste-buffer', '-p', '-b', paste.args[3], '-t', 'cc_x']);
   assert.equal(paste.socket, 'sockA');
   // …and NOTHING presses a key: no send-keys, and in particular no Enter/submit.
   assert.ok(!verbs.includes('send-keys'), 'prefill must not press any key');
@@ -266,8 +269,16 @@ test('sendText shares the paste block but DOES submit with a trailing Enter', as
   await sendText('cc_y', 'hello\nworld', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); });
   const verbs = cmds.map((a) => a[0]);
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer', 'send-keys']);
-  // The final send-keys is the submit.
+  // Bracketed, so the embedded newline stays a newline in ONE message rather than
+  // submitting the first line and queueing the second as its own prompt. This is the
+  // path the chat composer's Shift+Enter multi-line prompt takes, so the flag matters
+  // here as much as it does for the no-Enter prefill above.
+  const paste = cmds.find((a) => a[0] === 'paste-buffer');
+  assert.deepEqual(paste, ['paste-buffer', '-p', '-b', paste[3], '-t', 'cc_y']);
+  // The final send-keys is the submit — and it is the ONLY Enter, so a two-line message
+  // is one turn, not two.
   assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
+  assert.equal(cmds.filter((a) => a.includes('Enter')).length, 1);
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {
@@ -284,4 +295,42 @@ test('parsePaneLine rejoins a pane_title containing pipes', () => {
   const p = parsePaneLine('cc_1|100|/p|%0|0|✳ fix a | b | c');
   assert.equal(p.paneId, '%0');
   assert.equal(p.paneTitle, '✳ fix a | b | c');
+});
+
+// --- paneModelLabel: the live model, which the transcript never records ---
+
+test('paneModelLabel reads the model out of the status bar', () => {
+  const E = '\x1b';
+  // Shape taken from a real capture of a live session.
+  const pane = [
+    `${E}[39m❯ `,
+    `${E}[39m  ${E}[38;5;153m◆ Sonnet 5${E}[38;5;246m ${E}[38;5;248m|${E}[38;5;246m ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`,
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(paneModelLabel(pane), 'Sonnet 5');
+});
+
+// The leading glyph varies between models (✦, ◆), so it is stripped structurally
+// rather than matched against a list a new glyph would break.
+test('paneModelLabel copes with a different leading glyph', () => {
+  assert.equal(paneModelLabel('  ✦ Opus 5 | ██░ 22% | 📅 $14'), 'Opus 5');
+  assert.equal(paneModelLabel('  ◆ Fable 5 | █░ 13% | 📅 $8'), 'Fable 5');
+});
+
+// Identified by the context meter, not by position, so prose cannot masquerade.
+test('paneModelLabel ignores lines that are not the status bar', () => {
+  assert.equal(paneModelLabel('we discussed a | b and 50 percent of it'), null);
+  assert.equal(paneModelLabel('just some output'), null);
+  assert.equal(paneModelLabel(''), null);
+  assert.equal(paneModelLabel(null), null);
+});
+
+test('paneModelLabel takes the last status bar, which is the live one', () => {
+  const pane = ['  ✦ Opus 5 | █ 5% | x', 'chatter', '  ◆ Sonnet 5 | █ 7% | x'].join('\n');
+  assert.equal(paneModelLabel(pane), 'Sonnet 5');
+});
+
+// A wrong label misreports live state, so an unrecognisable one is dropped.
+test('paneModelLabel rejects an implausibly long first segment', () => {
+  assert.equal(paneModelLabel(`  ◆ ${'x'.repeat(60)} | █ 7% | y`), null);
 });
