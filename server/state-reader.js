@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
-import { adapterFor, modelPillFor } from './agents/index.js';
+import { adapterFor, modelPillFor, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
@@ -556,7 +556,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       || adapter.readLive({ pid: d.claudePid, cwd: d.cwd })
       || (adapter.presetsSessionId
         ? null
-        : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0 }), status: 'unknown', name: null, waitingFor: null });
+        : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) }), status: 'unknown', name: null, waitingFor: null });
     // The running conversation is the truth, and it can be one the entry has never
     // heard of: `/clear` swaps the live id under us. Persist it — this read is the
     // only place that sees the swap, and left unrecorded the entry keeps pointing at
