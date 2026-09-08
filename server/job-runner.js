@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { runnable } from './job-store.js';
+import { summariseComments, commentsBlockMerge } from './job-comments.js';
 const shortError = (e) => String(e?.message || e).split('\n')[0].slice(0, 240);
 const activeFor = (j, s) => j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null));
 export const dependenciesDeployed = (job, sub) => sub.dependsOn.every((id) => job.subJobs.find((s) => s.id === id)?.deployed);
@@ -7,10 +8,13 @@ export const dependenciesDeployed = (job, sub) => sub.dependsOn.every((id) => jo
 // One process owns the store (the existing DATA_DIR instance lock). Claims are
 // durable before launch; an uncertain launch is blocked on restart, never replayed.
 export class JobRunner {
-  constructor({ store, runtime, github, onChange = async () => {}, now = Date.now }) {
-    Object.assign(this, { store, runtime, github, onChange, now });
+  constructor({ store, runtime, github, onChange = async () => {}, now = Date.now, summarise = summariseComments }) {
+    Object.assign(this, { store, runtime, github, onChange, now, summarise });
     this.busy = false;
+    this.triaging = new Map(); this.pending = new Set();
   }
+  // Every in-flight comment triage has settled (tests; the poll never waits).
+  async idle() { while (this.pending.size) await Promise.all([...this.pending]); }
   async tick() {
     if (this.busy) return;
     this.busy = true;
@@ -52,6 +56,32 @@ export class JobRunner {
         this.store.update(id, (j) => { j.error = shortError(e); });
       }
     }
+  }
+  // Classify the current comment set once per fingerprint, off the poll: a
+  // Haiku call takes seconds and the tick must not stall other jobs on it. The
+  // verdict lands only if the comments it read are still the current ones;
+  // otherwise the next poll re-triages against the newer set.
+  triage(id, subId) {
+    const sub = this.store.get(id)?.subJobs.find((s) => s.id === subId);
+    const comments = sub?.prComments;
+    if (!comments?.items.length) {
+      if (sub?.commentSummary) this.patchSub(id, subId, (s) => { s.commentSummary = null; });
+      return;
+    }
+    const key = `${id}/${subId}`;
+    if (sub.commentSummary?.fingerprint === comments.fingerprint || this.triaging.get(key)?.fingerprint === comments.fingerprint) return;
+    const done = this.summarise(comments, sub.pr)
+      .catch((e) => ({ tone: 'amber', text: `Summary unavailable (${shortError(e)}). Read the comments yourself before merging.`, error: true }))
+      .then(async ({ tone, text, error, liveSessionId }) => {
+        if (this.triaging.get(key)?.fingerprint === comments.fingerprint) this.triaging.delete(key);
+        const current = this.store.get(id)?.subJobs.find((s) => s.id === subId);
+        if (!current) return;
+        if (liveSessionId) this.runtime.attributeSpend(current, liveSessionId);
+        if (current.prComments?.fingerprint !== comments.fingerprint) return;
+        this.patchSub(id, subId, (s) => { s.commentSummary = { fingerprint: comments.fingerprint, tone, text, error: !!error, at: this.now() }; });
+        await this.onChange();
+      }).catch((e) => console.error('[jobs] comment triage', e)).finally(() => this.pending.delete(done));
+    this.triaging.set(key, { fingerprint: comments.fingerprint }); this.pending.add(done);
   }
   async launch(job, sub, phase) {
     const run = this.store.claim(job.id, sub?.id || null, phase);
@@ -119,7 +149,9 @@ export class JobRunner {
         } else if (sub.stage === 'pr') {
           if (sub.nextPollAt > this.now()) continue;
           const pr = await this.github.pr(sub);
-          this.patchSub(id, sub.id, (s) => { s.pr = pr; s.observationError = null; s.nextPollAt = this.now() + 30000; });
+          const comments = await this.github.comments(sub);
+          this.patchSub(id, sub.id, (s) => { s.pr = pr; s.prComments = comments; s.observationError = null; s.nextPollAt = this.now() + 30000; });
+          this.triage(id, sub.id);
           if (!this.allowed(id)) continue;
           job = this.store.get(id); sub = job.subJobs.find((s) => s.id === sub.id);
           if (pr.state === 'MERGED') {
@@ -131,7 +163,7 @@ export class JobRunner {
             const limit = this.store.snapshot().settings.maxRepairs + (sub.repairAllowance || 0);
             if (attempts >= limit) this.patchSub(id, sub.id, (s) => { s.error = 'Automatic repair limit reached. Review changes, then retry if needed.'; });
             else await this.launch(job, sub, 'repair');
-          } else if (pr.checkStatus === 'passing' && dependenciesDeployed(job, sub) && (!job.reviewMerge || sub.mergeApprovedHead === pr.head)) {
+          } else if (pr.checkStatus === 'passing' && dependenciesDeployed(job, sub) && (sub.mergeApprovedHead === pr.head || (!job.reviewMerge && !commentsBlockMerge(sub)))) {
             // Match-head on GitHub closes the push-vs-merge race; re-poll after
             // success instead of pretending an accepted merge-queue entry merged.
             if (sub.mergeRequestedHead !== pr.head) {
