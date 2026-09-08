@@ -489,6 +489,20 @@ export class SessionManager {
     return Boolean(this.map.get(sessionId)?.archivedAt);
   }
 
+  // Bill a headless conversation (a `claude -p` the wrangler ran on this card's
+  // behalf) to the card: `priorLiveSessionIds` is what the cost scanners walk,
+  // and is deliberately excluded from `cardForLive`, so nothing will ever try
+  // to resume it. Same bookkeeping the archive review's onStamp does inline.
+  recordPriorLiveSessionId(sessionId, liveSessionId) {
+    const entry = this.map.get(sessionId);
+    if (!entry || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
+    const prior = new Set(entry.priorLiveSessionIds || []);
+    prior.add(liveSessionId);
+    entry.priorLiveSessionIds = [...prior];
+    this._save();
+    return true;
+  }
+
   // Give a session a custom display name. Adopts an externally-discovered
   // session into the registry (like archive) so the name persists. An empty
   // name clears the custom name, reverting to the derived label.

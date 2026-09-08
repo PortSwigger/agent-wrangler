@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
 import { jobInputSchema, settingsSchema, planSchema, reportSchema } from './jobs-schema.js';
+import { COMMENT_SETTLE_MS } from './job-comments.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
@@ -51,7 +52,7 @@ export class JobStore {
       j.repos = [...new Set(plan.subJobs.map((s) => s.repo))];
       j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: 'implementation', state: 'queued',
         jiraKey: s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key,
-        repairs: [], sessions: [], local: null, pr: null, deploymentResult: null }));
+        repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null }));
       j.stage = 'active'; j.approvedAt = Date.now(); j.error = null;
     });
   }
@@ -157,8 +158,10 @@ export class JobStore {
         j.repos = [...new Set(report.plan.subJobs.map((s) => s.repo))];
       }
       if (report.kind === 'local') { if (!report.commitMessage.startsWith(`${s.jiraKey}:`)) throw new Error('Commit message must start with the sub-job Jira key and colon'); s.dependenciesVerified = s.dependsOn.every((id) => j.subJobs.find((d) => d.id === id)?.deployed); s.local = { ...report, receiptId: r.id, at: Date.now() }; s.state = 'verified'; s.codeApprovedAt = null; }
-      if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; }
-      if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; }
+      // A fresh head (new PR or repair push) is first observed after the comment
+      // settle, so reviewers posting seconds after it lands are in that first read.
+      if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
+      if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
       if (report.kind === 'deployed') { s.deployed = { checks: report.checks, at: Date.now(), commit: s.pr.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; }
       if (report.kind === 'blocked') { (s || j).error = report.summary; }
     });

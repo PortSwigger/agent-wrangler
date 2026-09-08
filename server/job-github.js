@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { COMMENTS_QUERY, normaliseComments } from './job-comments.js';
 const exec = promisify(execFile);
 export async function runFile(bin, args, cwd) {
   const { stdout } = await exec(bin, args, { cwd: cwd?.startsWith('~/') ? path.join(os.homedir(), cwd.slice(2)) : cwd, timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
@@ -44,6 +45,10 @@ export class JobGithub {
       }
     }
     return summary;
+  }
+  async comments(sub) {
+    const raw = JSON.parse(await this.run('gh', ['api', 'graphql', '-f', `query=${COMMENTS_QUERY}`, '-f', `url=${sub.pr.url}`], sub.repo));
+    return normaliseComments(raw?.data?.resource);
   }
   async missingRequiredChecks(sub, pr, slug) {
     const branch = encodeURIComponent(pr.base);

@@ -305,8 +305,10 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 ## Automated jobs
 
-The **Automated jobs** button on the navigation rail opens a Kanban for work that
-spans multiple repositories and PRs:
+The **Automated jobs** button on the navigation rail opens one Kanban board per
+job for work that spans multiple repositories and PRs. Each board carries the
+job's title, status, pause control and its own six columns, so sub-jobs from
+different jobs are never mixed in a column:
 
 **Backlog → PR planning & Jira tickets → Local implementation & verification → PR
 → Deployment verification → Cleanup**
@@ -358,6 +360,17 @@ are retained for review. The default is at most **two automatic repairs per
 sub-job**, then an explicit retry. Manual merge review is on by default; turn it
 off when creating a job to merge automatically once GitHub reports readiness.
 Merge approval is tied to the displayed head commit and invalidated by a push.
+
+The sub-job also shows the PR's comments: conversation comments, submitted
+reviews and inline review threads (with resolved state), read on every poll.
+A new or repaired PR is first observed ten seconds after its receipt, so
+reviewers and bots posting immediately are in that first read. Whenever the
+comment set changes, a headless Haiku call summarises it and shades the verdict
+**green** (all good), **amber** (needs attention) or **red** (blocks merging);
+its spend is billed to the sub-job's session. A red verdict holds an
+*automatic* merge until you approve the displayed head (the sub-job appears
+under **Needs me**); manual merge review is unaffected. If the summariser
+fails, the verdict is amber with the reason and never blocks a merge.
 When GitHub requires a review, Wrangler can merge with `--admin` once all checks
 pass and GitHub confirms there are no merge conflicts. It checks required status
 checks from branch protection and active rulesets, including checks which have
@@ -381,7 +394,8 @@ only local branch refs that still match the verified commit. Dirty worktrees,
 extra commits or branches checked out elsewhere stop cleanup for review. An
 optional setting fast-forwards your main checkout only when it is clean and on
 the PR's base branch. Remote branch deletion follows your repository's GitHub
-settings. The **Show delivered** filter retains completed work and receipts.
+settings. The **Show delivered** filter brings back delivered jobs' boards and
+their completed work and receipts.
 
 **Cancel sub-job** (in a sub-job's detail view, before cleanup) skips straight to
 cleanup: the running step is stopped and its receipt ignored, sessions are
@@ -396,7 +410,8 @@ dependency waits, human reviews and cleanup consume no agent slots. Existing
 manually dispatched sessions and schedules remain independent. Automation settings
 also control repair attempts and a per-step time limit (120 minutes by default).
 Pause prevents new steps; current sessions finish and submit their receipts. The
-**Needs me** filter collects plan, code and merge decisions plus blocked work.
+**Needs me** filter keeps only the boards with plan, code or merge decisions or
+blocked work, and the job dropdown shows a single board.
 
 Requirements: authenticated `gh` with access to the repositories and Actions,
 working Wrangler agent dispatch, and Jira access available to the planning agent.

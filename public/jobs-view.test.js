@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { initJobsView } from './jobs-view.js';
-import { jobCards, jobStatus, jobNeedsReview, dependencyLevels, jobCardHtml } from './jobs.js';
+import { jobCards, jobStatus, jobNeedsReview, dependencyLevels, jobCardHtml, jobBoardHeaderHtml, mergeHeldByComments } from './jobs.js';
 
 const sub = (id, dependsOn = []) => ({ id, title: `Deliver ${id}`, repo: '/repo', storyId: 'story', jiraKey: 'AUTH-1', dependsOn, instructions: 'Implement and verify', deployment: { workflows: ['deploy.yml'], verify: 'Check version and behaviour' }, sessions: [], repairs: [] });
 const plan = { stories: [{ id: 'story', key: 'AUTH-1', title: 'Customers can sign in', value: 'Access their account reliably' }], subJobs: [sub('api'), sub('web', ['api'])] };
@@ -22,12 +22,38 @@ function fixture(t) {
   return { window, view, data, sent, q, event, sessions, diffs, onBoard };
 }
 
-test('Kanban renders six requested columns and only attention items survive Needs me', (t) => {
+test('every job gets its own six-column board and only boards with attention items survive Needs me', (t) => {
   const f = fixture(t);
   f.data.jobs.push({ ...f.data.jobs[0], id: 'backlog', stage: 'backlog', plan: null }); f.view.update(f.data);
-  assert.equal(document.querySelectorAll('.job-column').length, 6); assert.equal(document.querySelectorAll('.job-card').length, 2);
+  assert.equal(document.querySelectorAll('.job-board').length, 2); assert.equal(document.querySelectorAll('.job-column').length, 12);
+  assert.deepEqual([...document.querySelectorAll('.job-board')].map((b) => b.dataset.board), ['job1', 'backlog']);
+  assert.equal(document.querySelectorAll('.job-card').length, 2);
   f.q('#jobs-needs').checked = true; f.q('#jobs-needs').dispatchEvent(f.event('change'));
+  assert.equal(document.querySelectorAll('.job-board').length, 1); assert.equal(document.querySelectorAll('.job-column').length, 6);
   assert.equal(document.querySelectorAll('.job-card').length, 1); assert.equal(f.q('.job-card').dataset.job, 'job1');
+});
+
+test('sub-jobs of different jobs never share a column, and a delivered job only returns with Show delivered', (t) => {
+  const f = fixture(t); const [a] = f.data.jobs; a.stage = 'active';
+  a.subJobs = [{ ...sub('api'), stage: 'pr' }];
+  const b = { ...structuredClone(a), id: 'job2', title: 'Checkout', subJobs: [{ ...sub('cart'), stage: 'pr', jiraKey: 'SHOP-7' }] };
+  const done = { ...structuredClone(a), id: 'job3', title: 'Old work', stage: 'done', subJobs: [{ ...sub('legacy'), stage: 'done' }] };
+  f.data.jobs.push(b, done); f.view.update(f.data);
+  const boards = [...document.querySelectorAll('.job-board')];
+  assert.deepEqual(boards.map((x) => x.dataset.board), ['job1', 'job2'], 'the delivered job is hidden by default');
+  assert.deepEqual(boards.map((x) => [...x.querySelectorAll('.job-card')].map((c) => c.dataset.sub)), [['api'], ['cart']]);
+  assert.deepEqual(boards.map((x) => x.querySelector('.job-column[aria-label="PR"] .job-column-count').textContent), ['1', '1']);
+  assert.match(boards[1].querySelector('.job-board-header').textContent, /Checkout/);
+  assert.equal(f.q('[data-sub="cart"] .job-card-eyebrow').textContent, 'SHOP-7', 'the header names the job, so the card need not');
+  f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
+  assert.deepEqual([...document.querySelectorAll('.job-board')].map((x) => x.dataset.board), ['job1', 'job2', 'job3']);
+  f.q('#jobs-filter').value = 'job2'; f.q('#jobs-filter').dispatchEvent(f.event('change'));
+  assert.deepEqual([...document.querySelectorAll('.job-board')].map((x) => x.dataset.board), ['job2']);
+  f.q('.job-board-open').click(); assert.match(f.q('#job-dialog').textContent, /Checkout/); assert.equal(f.q('#job-dialog h2').textContent, 'Checkout');
+  f.q('#job-dialog').close();
+  f.q('[data-pause="job2"]').click(); assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job2', action: 'pause' });
+  b.paused = true; f.view.update(f.data);
+  assert.equal(f.q('[data-pause="job2"]').textContent, 'Resume job'); f.q('[data-pause="job2"]').click(); assert.equal(f.sent.at(-1).action, 'resume');
 });
 
 test('planning edits survive live snapshots and submit the displayed revision', (t) => {
@@ -82,6 +108,49 @@ test('PR review shows green checks, CI changes, and approves only the displayed 
   f.q('[data-action="approve-merge"]').click(); assert.equal(f.sent.at(-1).head, 'head1');
 });
 
+const prComments = (tone, fingerprint = 'f1') => ({
+  prComments: { fetchedAt: 1, prAuthor: 'agent', truncated: 0, unresolved: 1, fingerprint, items: [
+    { id: 'c1', kind: 'thread', author: 'bob', bot: false, body: 'Drops the <auth> check', at: '2026-09-08T10:00:00Z', url: 'https://github.com/org/repo/pull/1#c1', path: 'src/auth.js', line: 12, resolved: false, outdated: false },
+    { id: 'r1', kind: 'review', state: 'APPROVED', author: 'ci-bot', bot: true, body: 'LGTM', at: '2026-09-08T10:01:00Z', url: 'https://github.com/org/repo/pull/1#r1' },
+  ] },
+  commentSummary: tone ? { tone, text: `${tone} summary text`, fingerprint: 'f1', at: 2, error: false } : null,
+});
+
+test('PR comments render escaped with their shaded verdict, and a red verdict holds automatic merge until approved', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active'; job.reviewMerge = false;
+  const pr = { url: 'https://github.com/org/repo/pull/1', head: 'head1', checkStatus: 'passing', checks: [] };
+  job.subJobs = [{ ...sub('api'), stage: 'pr', pr, ...prComments('red') }];
+  f.view.update(f.data);
+  assert.match(f.q('[data-sub="api"]').textContent, /2 PR comments · Blocks merging/); assert.ok(f.q('.job-card-comments.red'));
+  assert.equal(mergeHeldByComments(job, job.subJobs[0]), true); assert.equal(jobNeedsReview(job, job.subJobs[0]), true);
+  assert.equal(jobStatus(job, job.subJobs[0]).text, 'Comments block merging');
+  f.q('[data-sub="api"]').click();
+  const dialog = f.q('#job-dialog');
+  assert.ok(dialog.querySelector('.job-comment-summary.red')); assert.match(dialog.textContent, /Blocks merging.*red summary text/);
+  assert.match(dialog.textContent, /1 unresolved thread/); assert.match(dialog.textContent, /src\/auth\.js:12/); assert.match(dialog.textContent, /ci-bot \(bot\) · review · approved/);
+  assert.equal(dialog.querySelector('.job-comments p').textContent, 'Drops the <auth> check'); assert.equal(dialog.querySelector('.job-comments auth'), null);
+  assert.match(dialog.textContent, /automatic merge is on hold/);
+  f.q('[data-action="approve-merge"]').click(); assert.equal(f.sent.at(-1).action, 'approve-merge'); assert.equal(f.sent.at(-1).head, 'head1');
+  job.subJobs[0].mergeApprovedHead = 'head1'; f.view.update(f.data);
+  assert.equal(mergeHeldByComments(job, job.subJobs[0]), false); assert.equal(f.q('[data-action="approve-merge"]'), null);
+});
+
+test('green and amber verdicts, a pending summary and no comments each read distinctly without asking for review', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active'; job.reviewMerge = false;
+  const pr = { url: 'https://github.com/org/repo/pull/1', head: 'head1', checkStatus: 'passing', checks: [] };
+  for (const [state, expectCard, expectDetail] of [
+    [prComments('green'), /All good/, /green summary text/], [prComments('amber'), /Needs attention/, /amber summary text/],
+    [prComments(null), /summarising…/, /Summarising comments/], [prComments('green', 'f2'), /summarising…/, /Summarising comments/],
+    [{ prComments: { items: [], fingerprint: 'e', unresolved: 0, truncated: 0 }, commentSummary: null }, /^(?!.*PR comment)/s, /No comments yet/],
+  ]) {
+    job.subJobs = [{ ...sub('api'), stage: 'pr', pr, ...state }]; f.view.update(f.data);
+    assert.match(f.q('[data-sub="api"]').textContent, expectCard); assert.equal(jobNeedsReview(job, job.subJobs[0]), false);
+    f.q('[data-sub="api"]').click(); assert.match(f.q('#job-dialog').textContent, expectDetail);
+    assert.equal(f.q('[data-action="approve-merge"]'), null, 'automatic merge needs no approval');
+    f.q('#job-dialog').close();
+  }
+});
+
 test('new-job form sends chosen model, repositories and review settings without starting work', (t) => {
   const f = fixture(t); f.q('#job-new').click(); const form = f.q('#job-create-form');
   form.elements.title.value = 'New value'; form.elements.intent.value = 'Deliver something useful';
@@ -128,7 +197,7 @@ test('dependency waves, deployed waits and escaped titles remain compact', () =>
   assert.deepEqual([...dependencyLevels(plan)], [['api', 0], ['web', 1]]);
   const job = { title: '<script>bad()</script>', stage: 'active', subJobs: [{ ...sub('api') }, { ...sub('web', ['api']), stage: 'implementation', local: { checks: ['Tests pass'] } }], runs: [] };
   assert.match(jobStatus(job, job.subJobs[1]).text, /Waiting for 1 deployment/);
-  const html = jobCardHtml({ job, sub: job.subJobs[1] }); assert.ok(!html.includes('<script>')); assert.ok(html.includes('&lt;script&gt;'));
+  const html = jobCardHtml({ job, sub: job.subJobs[1] }) + jobBoardHeaderHtml({ ...job, runs: [], repos: [] }); assert.ok(!html.includes('<script>')); assert.ok(html.includes('&lt;script&gt;'));
   assert.equal(jobNeedsReview(job, job.subJobs[1]), false);
 });
 
