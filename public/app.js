@@ -4269,6 +4269,9 @@ function openShellTerminal({ terminalId, command, sessionId }) {
     fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     theme: readTerminalTheme(), cursorBlink: true,
     allowTransparency: true,
+    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
+    // reported to the pane instead of selecting — Option-drag is the only local select.
+    macOptionClickForcesSelection: true,
     // Unicode11Addon's activate() calls the proposed term.unicode API.
     allowProposedApi: true,
   });
@@ -4372,6 +4375,16 @@ function openTerminal(s) {
     linkHandler: { activate: (_ev, uri) => window.open(uri, '_blank', 'noopener') },
     // Unicode11Addon's activate() calls the proposed term.unicode API.
     allowProposedApi: true,
+    // Both panes' tmux runs `mouse on` (session-manager `_newSession`), which puts the
+    // pane in mouse-reporting mode: xterm hands a click-drag to the pty rather than
+    // selecting, and an app that grabs the mouse (Claude's TUI) just drops it. xterm
+    // only selects anyway when SelectionService.shouldForceSelection() is true, and on
+    // macOS that reads `altKey && macOptionClickForcesSelection` — it never consults
+    // shiftKey, so Shift-drag CANNOT be made to work there and this option is the
+    // entire escape hatch. Left at its `false` default, highlight-and-copy is dead in
+    // every pane on macOS. Copy itself needs nothing: xterm's own `copy` listener
+    // writes the selection out, so Cmd+C works the moment a selection exists.
+    macOptionClickForcesSelection: true,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
