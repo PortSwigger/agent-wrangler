@@ -93,3 +93,29 @@ test('archive: re-archiving an already-archived session is a no-op for the mailb
   sm.archive('CARD1'); // the prune deliberately is NOT gated on wasArchived
   assert.deepEqual(mailStore.list('CARD1'), after);
 });
+
+// The order that actually happens in production, and the reverse of what the
+// store-level test constructs: mail arrives at a LIVE card, the card is archived
+// mid-settle-window (so the prune sees it still 'unread' and keeps it), and only
+// then does the settle sweep discover the card is archived and mark it
+// undeliverable. It is the NEXT archive that drops it.
+test('archive: mail marked undeliverable AFTER an archive survives that archive and is dropped by the next one', () => {
+  const mailStore = new MailboxStore(tmpFile());
+  const sm = managerWith(mailStore);
+  mailStore.append('CARD1', { from: 'peer', body: 'arrived mid-window' }, 1);
+
+  sm.archive('CARD1');
+  // Still unread at this point, so the prune must not have taken it.
+  assert.deepEqual(mailStore.list('CARD1').map((m) => m.state), ['unread']);
+
+  // The settle sweep fires, finds the recipient archived (mail-runner.js).
+  mailStore.takeDueSettles(60_000);
+  mailStore.markUndeliverable('CARD1');
+
+  delete sm.entryFor('CARD1').archivedAt; // resumed
+  sm.archive('CARD1'); // archived again
+  // Dropped — approved scope, and not a broken promise: `drain()` already
+  // excludes undeliverable mail permanently, so it was never going to be
+  // delivered, and it was always evictable under the retention caps.
+  assert.deepEqual(mailStore.list('CARD1'), []);
+});

@@ -82,6 +82,10 @@ export class MailboxStore {
   // already-compliant store isn't rewritten on every boot.
   _sweepAtLoad() {
     const before = this.boxes.size + [...this.boxes.values()].reduce((n, b) => n + b.messages.length, 0);
+    // _enforceRetentionCaps prunes empty boxes globally, so this loop deletes
+    // from the Map it iterates — safe: a Map skips an entry deleted before it's
+    // reached, and the only entries it can delete are empty ones, which have
+    // nothing left to enforce anyway.
     for (const box of this.boxes.values()) this._enforceRetentionCaps(box);
     this._pruneEmptyBoxes();
     const after = this.boxes.size + [...this.boxes.values()].reduce((n, b) => n + b.messages.length, 0);
@@ -349,7 +353,12 @@ export class MailboxStore {
   // re-reads it more than seconds after delivery (see READ_RETENTION_MESSAGES),
   // and 57 of 66 boxes on a real store were archived cards holding 1.05MB of
   // it. Idempotent, so the archive→resume→archive cycle prunes each span's own
-  // read mail rather than accumulating them.
+  // read mail rather than accumulating them. Undeliverable mail goes too, which
+  // IS a real loss of signal — a later `list_mail` no longer shows that a peer
+  // tried to reach the card while it was away. Deliberate: undeliverable is
+  // already a terminal state `drain()` excludes, so that mail was never going
+  // to be delivered anyway, and it has always been evictable under the
+  // retention caps rather than protected the way unread mail is.
   pruneOnArchive(to) {
     const box = this.boxes.get(to);
     if (!box) return 0;
