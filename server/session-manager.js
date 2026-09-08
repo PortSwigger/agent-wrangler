@@ -1135,8 +1135,10 @@ export class SessionManager {
     // Trade-off: in a pane whose app doesn't grab the mouse (Codex renders inline;
     // Claude grabs it), tmux owns click-drag → copy-mode. That copy still reaches
     // the browser clipboard via OSC 52 (see set-clipboard below + xterm.js's
-    // ClipboardAddon, public/app.js `attachClipboard`); Option/Shift-drag also
-    // does a native xterm.js selection.
+    // ClipboardAddon, public/app.js `attachClipboard`); OPTION-drag — not Shift —
+    // does a native xterm.js selection, and only because app.js sets
+    // macOptionClickForcesSelection (xterm's shouldForceSelection ignores shiftKey
+    // entirely on macOS).
     await this._tmux(socket, ['set-option', '-t', tmux, 'mouse', 'on']).catch(() => {});
     // Force set-clipboard on for THIS session so copy-mode emits the OSC 52 the
     // browser addon needs — the default is usually `external` (which also works),
