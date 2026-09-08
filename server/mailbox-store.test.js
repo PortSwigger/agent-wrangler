@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   MailboxStore, SETTLE_MS, AMBER_MS, UNREAD_CAP_MESSAGES, UNREAD_CAP_BYTES,
-  READ_RETENTION_MESSAGES,
+  READ_RETENTION_MESSAGES, READ_RETENTION_BYTES, TOTAL_STORE_CAP_BYTES,
 } from './mailbox-store.js';
 
 function tmpFile() {
@@ -161,7 +161,7 @@ test('retention: undeliverable mail is evictable too — it must count toward th
   assert.ok(!list.some((m) => m.body === 'msg0')); // the oldest evictable message was evicted first
 });
 
-test('whole-store eviction can reclaim undeliverable mail across boxes when no read mail exists anywhere — this is exactly what was unreclaimable before the fix (the eviction loop broke on the first iteration and the 32MB cap was unenforceable)', () => {
+test('whole-store eviction can reclaim undeliverable mail across boxes when no read mail exists anywhere — this is exactly what was unreclaimable before the fix (the eviction loop broke on the first iteration and the whole-store cap was unenforceable)', () => {
   const store = new MailboxStore(tmpFile());
   store.append('rcpt1', { from: 'a', body: 'older' }, 1);
   store.markUndeliverable('rcpt1');
@@ -286,4 +286,198 @@ test('forget: drops the whole box (card purge)', () => {
   store.append('rcpt', { from: 'a', body: 'x' }, 0);
   store.forget('rcpt');
   assert.deepEqual(store.list('rcpt'), []);
+});
+
+test('read retention is pinned to the unread caps — a single drain can hand back UNREAD_CAP_MESSAGES messages, so retention must outlive the whole of one', () => {
+  assert.equal(READ_RETENTION_MESSAGES, UNREAD_CAP_MESSAGES);
+  assert.equal(READ_RETENTION_BYTES, UNREAD_CAP_BYTES);
+});
+
+test('read retention outlives a full drain: every message of a max-size batch is still fetchable by id afterwards', () => {
+  const store = new MailboxStore(tmpFile());
+  for (let i = 0; i < UNREAD_CAP_MESSAGES; i++) store.append('rcpt', { from: 'a', body: `msg${i}` }, i);
+  const drained = store.drain('rcpt', 999);
+  assert.equal(drained.length, UNREAD_CAP_MESSAGES);
+  // The excerpt follow-up read_mail({id}) this retention exists for — including
+  // for the EARLIEST message of the batch, which a smaller cap would have
+  // evicted during the very drain that delivered it.
+  for (const m of drained) assert.equal(store.getOne('rcpt', m.id).body, m.body);
+});
+
+test('empty boxes are pruned: no messages and no open settle window holds nothing', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  const { id } = store.append('rcpt', { from: 'a', body: 'x' }, 0);
+  store.takeDueSettles(SETTLE_MS); // clears the deadline, as mail-runner.js does
+  store.getOne('rcpt', id); // read
+  store.pruneOnArchive('rcpt'); // drops the read message, emptying the box
+  assert.equal(store.boxes.has('rcpt'), false);
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))).length, 0);
+  // Lazily recreated on demand — nothing downstream can tell.
+  assert.deepEqual(store.list('rcpt'), []);
+});
+
+test('empty boxes with an OPEN settle window are kept — the deadline is live state a restart must recover', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'x' }, 0); // opens a deadline at SETTLE_MS
+  store.markUndeliverable('rcpt');
+  store.pruneOnArchive('rcpt'); // drops the undeliverable message
+  assert.equal(store.boxes.get('rcpt').settleDeadline, SETTLE_MS);
+});
+
+test('load sweep: a box written over the CURRENT caps is trimmed at load, not left dormant and oversized forever', () => {
+  const file = tmpFile();
+  // Retention is otherwise enforced lazily (only on a mutation of that box), so
+  // a store written by a version with looser caps would keep an oversized box
+  // forever if it never receives mail again. Written straight to disk to model
+  // exactly that.
+  const messages = [];
+  for (let i = 0; i < READ_RETENTION_MESSAGES + 30; i++) {
+    messages.push({ id: `mail_old${i}`, from: 'a', fromLabel: null, at: i, body: `msg${i}`, size: 5, state: 'read', readAt: i });
+  }
+  messages.push({ id: 'mail_unread', from: 'a', fromLabel: null, at: 99999, body: 'still unread', size: 12, state: 'unread', readAt: null });
+  fs.writeFileSync(file, JSON.stringify({ rcpt: { messages, settleDeadline: null, lastNotifiedAt: null } }));
+
+  const store = new MailboxStore(file);
+  assert.equal(store._evictableCount(store.boxes.get('rcpt')), READ_RETENTION_MESSAGES);
+  assert.ok(store.list('rcpt').some((m) => m.id === 'mail_unread')); // unread never swept
+  assert.ok(!store.list('rcpt').some((m) => m.body === 'msg0')); // oldest read went first
+  // Persisted, not just trimmed in memory.
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(onDisk.rcpt.messages.length, READ_RETENTION_MESSAGES + 1);
+});
+
+test('load sweep: an already-compliant store is not rewritten', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  store.append('rcpt', { from: 'a', body: 'x' }, 0);
+  const mtime = fs.statSync(file).mtimeMs;
+  const before = fs.readFileSync(file, 'utf8');
+  const reloaded = new MailboxStore(file);
+  assert.equal(reloaded.list('rcpt').length, 1);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(fs.statSync(file).mtimeMs, mtime); // no save at all
+});
+
+test('load sweep: a message written without `size` gets one re-derived, so byte trimming is not silently NaN-disabled', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({
+    rcpt: { messages: [{ id: 'mail_x', from: 'a', at: 1, body: 'hello', state: 'read', readAt: 1 }], settleDeadline: null, lastNotifiedAt: null },
+  }));
+  const store = new MailboxStore(file);
+  assert.equal(store.list('rcpt')[0].size, 5);
+  assert.equal(store._totalBytes(), 5); // not NaN, which `> cap` would silently pass
+});
+
+test('load sweep: drops empty boxes left behind by an older version', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({
+    empty: { messages: [], settleDeadline: null, lastNotifiedAt: 5 },
+    live: { messages: [{ id: 'mail_a', from: 'a', at: 1, body: 'x', size: 1, state: 'unread', readAt: null }], settleDeadline: null, lastNotifiedAt: null },
+  }));
+  const store = new MailboxStore(file);
+  assert.deepEqual([...store.boxes.keys()], ['live']);
+});
+
+test('load sweep: the whole-store cap is enforced at load and never evicts unread mail', () => {
+  const file = tmpFile();
+  // 17 x 256KB of read mail = ~4.25MB, over the 4MB whole-store cap, with no
+  // single box breaching the per-box cap — only _evictOldestEvictableAnywhere
+  // can reclaim this, and nothing in practice has ever exercised it. Built on
+  // disk rather than through appends: one stringify in, one save out.
+  const raw = {};
+  const per = READ_RETENTION_BYTES; // exactly one box's full allowance
+  const boxCount = Math.ceil(TOTAL_STORE_CAP_BYTES / per) + 1;
+  for (let b = 0; b < boxCount; b++) {
+    raw[`rcpt${b}`] = {
+      messages: [{ id: `mail_${b}`, from: 'a', fromLabel: null, at: b, body: 'x', size: per, state: 'read', readAt: b }],
+      settleDeadline: null,
+      lastNotifiedAt: null,
+    };
+  }
+  // One box also holds unread mail, which must survive whatever the sweep evicts.
+  raw.rcpt0.messages.push({ id: 'mail_unread', from: 'a', fromLabel: null, at: 1, body: 'keep me', size: 7, state: 'unread', readAt: null });
+
+  fs.writeFileSync(file, JSON.stringify(raw));
+  assert.ok(boxCount * per > TOTAL_STORE_CAP_BYTES); // the store as written really is over the cap
+
+  const swept = new MailboxStore(file);
+  assert.ok(swept._totalBytes() <= TOTAL_STORE_CAP_BYTES, `total ${swept._totalBytes()} over cap`);
+  // Read via list() rather than getOne(), which would itself mark it read.
+  assert.deepEqual(swept.list('rcpt0').filter((m) => m.state === 'unread').map((m) => m.id), ['mail_unread']);
+  // Evicted oldest-first across boxes, so the newest box's read mail is intact.
+  assert.equal(swept.list(`rcpt${boxCount - 1}`).length, 1);
+});
+
+test('whole-store cap: a store over the cap with nothing evictable terminates and keeps every unread message', () => {
+  const file = tmpFile();
+  const raw = {};
+  const per = READ_RETENTION_BYTES;
+  const boxCount = Math.ceil(TOTAL_STORE_CAP_BYTES / per) + 1;
+  for (let b = 0; b < boxCount; b++) {
+    raw[`rcpt${b}`] = {
+      messages: [{ id: `mail_${b}`, from: 'a', fromLabel: null, at: b, body: 'x', size: per, state: 'unread', readAt: null }],
+      settleDeadline: null,
+      lastNotifiedAt: null,
+    };
+  }
+  fs.writeFileSync(file, JSON.stringify(raw));
+  const store = new MailboxStore(file); // must not hang: the eviction loop breaks when nothing is evictable
+  assert.ok(store._totalBytes() > TOTAL_STORE_CAP_BYTES); // deliberately still over — unread is never dropped
+  assert.equal(store.boxes.size, boxCount);
+});
+
+test('pruneOnArchive: drops read and undeliverable mail, keeps the box and its unread mail', () => {
+  const store = new MailboxStore(tmpFile());
+  const { id: readId } = store.append('rcpt', { from: 'a', body: 'read one' }, 1);
+  store.getOne('rcpt', readId);
+  store.append('rcpt', { from: 'b', body: 'undeliverable one' }, 2);
+  store.markUndeliverable('rcpt');
+  const { id: unreadId } = store.append('rcpt', { from: 'c', body: 'unread one' }, 3);
+
+  assert.equal(store.pruneOnArchive('rcpt'), 2);
+  const list = store.list('rcpt');
+  assert.deepEqual(list.map((m) => m.id), [unreadId]);
+  // The box itself survives: a sender was told queued:true, and archive is
+  // "set aside" — resume clears archivedAt and the mail is still deliverable.
+  assert.equal(store.unreadInfo('rcpt', 4).unread, 1);
+});
+
+test('pruneOnArchive: idempotent — a re-archive of an already-archived session drops nothing more', () => {
+  const store = new MailboxStore(tmpFile());
+  const { id } = store.append('rcpt', { from: 'a', body: 'x' }, 1);
+  store.getOne('rcpt', id);
+  store.append('rcpt', { from: 'b', body: 'unread' }, 2);
+  assert.equal(store.pruneOnArchive('rcpt'), 1);
+  assert.equal(store.pruneOnArchive('rcpt'), 0);
+  assert.equal(store.list('rcpt').length, 1);
+});
+
+test('pruneOnArchive: an archive→resume→archive cycle prunes each live span\'s own read mail', () => {
+  const store = new MailboxStore(tmpFile());
+  const { id: first } = store.append('rcpt', { from: 'a', body: 'span one' }, 1);
+  store.getOne('rcpt', first);
+  store.pruneOnArchive('rcpt');
+  // Resumed (archivedAt cleared by session-manager) — new mail arrives and is read.
+  const { id: second } = store.append('rcpt', { from: 'b', body: 'span two' }, 100);
+  store.getOne('rcpt', second);
+  assert.equal(store.list('rcpt').length, 1);
+  assert.equal(store.pruneOnArchive('rcpt'), 1); // the second span's read mail goes too
+  assert.deepEqual(store.list('rcpt'), []);
+});
+
+test('pruneOnArchive: unknown recipient is a no-op (never creates a box)', () => {
+  const store = new MailboxStore(tmpFile());
+  assert.equal(store.pruneOnArchive('nobody'), 0);
+  assert.equal(store.boxes.has('nobody'), false);
+});
+
+test('pruneOnArchive: persists — the dropped mail does not come back on reload', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  const { id } = store.append('rcpt', { from: 'a', body: 'x' }, 1);
+  store.getOne('rcpt', id);
+  store.append('rcpt', { from: 'b', body: 'unread' }, 2);
+  store.pruneOnArchive('rcpt');
+  assert.equal(new MailboxStore(file).list('rcpt').length, 1);
 });

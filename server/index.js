@@ -76,6 +76,9 @@ sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
   runArchiveReview(sessionId, entry, task, { memoryStore, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
+// Bind the archive-mail-prune seam (default no-op in the class) — archive drops
+// a session's read/undeliverable mail but keeps the box and its unread mail.
+sessionManager._pruneMailOnArchive = (sessionId) => mailStore.pruneOnArchive(sessionId);
 const checklistStore = new ChecklistStore();
 const terminalRegistry = new TerminalRegistry();
 
