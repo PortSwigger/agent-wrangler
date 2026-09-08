@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { attachEnv } from './session-manager.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { logError } from './log.js';
+import { sendGuarded } from './ws-backpressure.js';
 
 const exec = promisify(execFile);
 
@@ -142,9 +143,12 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
     }
     return;
   }
-  term.onData((d) => {
-    if (ws.readyState === 1) ws.send(d);
-  });
+  // Same unbounded-queue hazard as the control broadcast (ws-backpressure.js): a
+  // browser that stops reading stays OPEN, and a chatty pane can outrun it by
+  // megabytes a second with no backstop but our own heap. Drop such a viewer —
+  // closing a /pty socket detaches that one client and never touches the tmux
+  // session, so reattaching costs nothing and loses nothing.
+  term.onData((d) => { sendGuarded(ws, d); });
   term.onExit(() => ws.readyState === 1 && ws.close());
   ws.on('message', (raw) => {
     const s = raw.toString();

@@ -221,6 +221,37 @@ don't re-derive it.
   startup, so a low ceiling is really a whole-tree hard cap and **kills innocent child
   MCP servers** that need a brief fd burst (`chrome-devtools-mcp` opens ~270 at start).
   The `ulimit -n ${AW_MAX_FILES:-16384}` is just a blast-radius backstop.
+- **Every repeated write to a browser-reachable WebSocket MUST go through
+  `sendGuarded` (`server/ws-backpressure.js`) — `readyState === 1` is NOT a
+  liveness check.** A peer that stops reading stays OPEN indefinitely: it never
+  errors, never closes, and the only thing that moves is `bufferedAmount`, so
+  every message is queued in *our* heap. This OOM-killed the service repeatedly
+  (16 launchd restarts in a day). Measured on the crashing process: one socket
+  OPEN with **411 MB** queued across 74 messages, `bytesRead` 525 in nine minutes
+  against 477 MB written, `arrayBuffers` climbing ~1.4 MB/s while
+  `HeapProfiler.collectGarbage` freed none of it and a forced-GC heap snapshot was
+  only 28 MB — the JS object graph was never the problem, the send queue was.
+  `broadcast` alone pushes a **2.2 MB** full-graph snapshot every ~2 s, so one
+  stalled tab reaches V8's ~4 GB limit in **~62 min**. The guard **terminates**,
+  and both halves of that matter: `close()` waits on a handshake a non-reading
+  peer never completes (the queue, and the memory, survive the call meant to
+  release it), while merely *skipping* is only safe for full-snapshot messages —
+  `broadcast` also carries one-shot events (`auto-archived`, `memory-changed`,
+  `fd-warning`, `styles`) that nothing re-sends, so a skip would trade the OOM for
+  silent event loss. A terminated client reconnects and the connect path already
+  re-sends config/styles/agents plus a whole graph. Three call sites today
+  (`broadcast` + `ctx.reply` in `index.js`, `term.onData` in `pty-channel.js`);
+  a fourth must join them. **Not the amplifier's fix**: `graph.history` is 85% of
+  that 2.2 MB (1005 archived rows, re-serialised every tick) and `analyzeCodex`
+  re-reads whole rollouts with no offset cache — both measured, both still open.
+- **The heap canary is `server/heap-watchdog.js`, the fd one's sibling** — same
+  edge-triggered once-per-level shape, silent in the normal case, because the
+  rebuild (~4 s) and mail sweep (2 s) cadences would bury any per-poll logging.
+  Its alert is broadcast for parity but **deliberately unrendered**:
+  `system-banner.js` keys "dismiss for today" on the bare level number, and fd's
+  levels (200/250/300) share that space with heap's percentages (50/75/90), so
+  dismissing an fd banner would suppress a 90%-heap one. Namespace that key before
+  wiring a banner.
 - **CSRF/origin gate — the request-acceptance control (distinct from MCP's *advisory*
   identity).** Every browser-reachable surface routes through `server/origin-check.js`:
   the WS upgrade + `POST /mcp` must pass `isAllowedOrigin`, and the sensitive GET

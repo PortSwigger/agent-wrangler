@@ -44,6 +44,8 @@ import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
+import { startHeapWatchdog } from './heap-watchdog.js';
+import { sendGuarded } from './ws-backpressure.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
@@ -497,9 +499,11 @@ function broadcastStylesIfChanged() {
 
 function broadcast(obj) {
   const msg = JSON.stringify(obj);
-  for (const client of controlWss.clients) {
-    if (client.readyState === 1) client.send(msg);
-  }
+  // readyState alone is not enough: a client that stops reading stays OPEN
+  // forever, so every snapshot we send it is queued in our own heap until the
+  // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
+  // for why terminate (not skip, not close) is the only safe option here.
+  for (const client of controlWss.clients) sendGuarded(client, msg);
 }
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
@@ -579,7 +583,9 @@ controlWss.on('connection', (ws) => {
     sessionFromGraph,
     tmuxFor,
     socketFor,
-    reply: (obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); },
+    // Guarded like broadcast: this is the same socket, and a client swamped by
+    // snapshots must not go on accruing per-request replies either.
+    reply: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
     broadcast,
     terminalRegistry,
     createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
@@ -664,6 +670,22 @@ async function main() {
       fdWarning = null;
       broadcast({ type: 'fd-warning', active: false });
     },
+  });
+
+  // The heap's equivalent of the fd canary above. The OOM this was added for gave
+  // no warning at all — the logs went straight from normal to a V8 crash dump — so
+  // this is the only thing that will say the heap is climbing before it dies. Same
+  // edge-triggered, once-per-level shape, and silent in the normal case.
+  //
+  // The alert is broadcast for parity with fd-warning, but NOTHING RENDERS IT YET
+  // and that is deliberate: system-banner.js keys its "dismiss for today" on the
+  // bare level number, and the fd levels (200/250/300) share that space with these
+  // percentages (50/75/90) — so dismissing an fd banner would silently suppress a
+  // 90%-heap one. Wiring the banner means namespacing that key first; until then
+  // the console line is the alert and the client ignores this message type.
+  startHeapWatchdog({
+    onAlert: ({ level, pct, used, limit }) => broadcast({ type: 'heap-warning', active: true, level, pct, used, limit }),
+    onClear: () => broadcast({ type: 'heap-warning', active: false }),
   });
 
   validateDefaultModel();
