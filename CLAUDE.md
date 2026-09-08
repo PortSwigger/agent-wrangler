@@ -344,6 +344,32 @@ don't re-derive it.
   message simply isn't a candidate, so the store can sit briefly over the cap,
   which is already what happens whenever nothing is evictable. Undeliverable
   mail has no `readAt` and is never protected — nothing is waiting on it.
+  **Unread mail on an ARCHIVED card expires after
+  `UNREAD_TTL_MS` (30 days) — the one class of mail the caps can't touch, and
+  the only thing that ever bounds it.** The number is the conversation's own:
+  Claude Code deletes a transcript after ~30 days (`cleanupPeriodDays`) and
+  `resolveResumeDir` then REFUSES to resume the card, so mail outliving the
+  conversation can never be read by the agent it was addressed to. Deliberately
+  a clock, not the sharper "is this card still resumable?" probe — measured, a
+  card was already unresumable 2 days after archiving, so 30 days is generous,
+  but a probe fails in the direction where one transient lookup miss destroys
+  mail a sender was promised. **`expireStaleUnread` takes the cutoff as a
+  PARAMETER and is only ever called for an archived card** (`index.js`'s
+  the archive seam, plus a warm-then-daily sweep over `archivedEntries()` — the
+  seam alone reaches only cards archived from now on, and a card can cross the
+  TTL while the server is up). **That sweep must filter on `isResuming`**:
+  `archivedAt` is not cleared until the END of `_doResume`, so a resume in
+  flight still reads as archived and its mail would be expired seconds before
+  the card could read it. It goes through `reconcileArchived` (ONE empty-box
+  pass, at most ONE write for the whole run) rather than looping the per-card
+  methods, which each prune and save — against a real 57-archived-card backlog
+  that was up to ~114 whole-file rewrites at boot: a LIVE card's unread
+  mail must never expire however old, because it can still be read at any
+  moment, and this store deliberately has no session state of its own to
+  enforce that with. **A restore does NOT re-notify** — `settleDeadline` is
+  null and only a new `append()` opens a window, so a resumed card shows the
+  human an amber pill and tells the agent nothing; it stays readable via
+  `read_mail`, just unannounced.
   `_sweepAtLoad` persists TRIMS, not the `size` normalisation beside it: a
   legacy file whose only defect is a missing `size` is re-derived in memory on
   every load and written back only by its next ordinary mutation.

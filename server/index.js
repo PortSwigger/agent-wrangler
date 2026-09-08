@@ -11,7 +11,7 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
-import { MailboxStore } from './mailbox-store.js';
+import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
 import { createMailSettleSweeper } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
@@ -77,8 +77,15 @@ sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops
-// a session's read/undeliverable mail but keeps the box and its unread mail.
-sessionManager._pruneMailOnArchive = (sessionId) => mailStore.pruneOnArchive(sessionId);
+// a session's read/undeliverable mail but keeps the box and its unread mail,
+// then expires any unread mail already older than the conversation itself would
+// be. Both live here rather than in SessionManager so the class stays free of
+// the mailbox, and the TTL's "archived only" precondition is satisfied by
+// construction: this seam fires from archive() and nowhere else.
+sessionManager._pruneMailOnArchive = (sessionId, now = Date.now()) => {
+  mailStore.pruneOnArchive(sessionId);
+  mailStore.expireStaleUnread(sessionId, now - UNREAD_TTL_MS);
+};
 const checklistStore = new ChecklistStore();
 const terminalRegistry = new TerminalRegistry();
 
@@ -746,6 +753,31 @@ async function main() {
   usageWarm.unref();
   const usagePoll = setInterval(usageSweep, 24 * 60 * 60 * 1000);
   usagePoll.unref();
+
+  // Reconcile every already-archived card's mailbox. The prune/expiry above is
+  // an archive-TIME hook, so on its own it reaches only cards archived from now
+  // on — a card archived last month never gets another archive() call, and its
+  // mail would sit there forever. Same warm-then-daily shape (and same reason)
+  // as the usage sweep: a card can also cross the TTL while the server is up.
+  // Cheap — a few dozen entries against an in-memory map, no I/O unless
+  // something actually changed.
+  const mailRetentionSweep = () => {
+    const now = Date.now();
+    // `archivedEntries()` is an archived-only snapshot, but archivedAt is not
+    // cleared until the END of _doResume — a resume in flight (kill, discovery,
+    // transcript checks, relaunch) still reads as archived here, and expiring
+    // its unread mail would strand a card that is seconds from being able to
+    // read it. isResuming is the same synchronous in-flight check deliverPrNudge
+    // and mailbox-delivery.js use for the same reason.
+    const ids = sessionManager.archivedEntries()
+      .map((e) => e.sessionId)
+      .filter((id) => !sessionManager.isResuming(id));
+    mailStore.reconcileArchived(ids, { staleBefore: now - UNREAD_TTL_MS });
+  };
+  const mailRetentionWarm = setTimeout(mailRetentionSweep, 60 * 1000);
+  mailRetentionWarm.unref();
+  const mailRetentionPoll = setInterval(mailRetentionSweep, 24 * 60 * 60 * 1000);
+  mailRetentionPoll.unref();
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle
