@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import { runnable } from './job-store.js';
+import { runnable, dependenciesSatisfied, sessionDependenciesDone } from './job-store.js';
 import { summariseComments, commentsBlockMerge } from './job-comments.js';
 const shortError = (e) => String(e?.message || e).split('\n')[0].slice(0, 240);
 const activeFor = (j, s) => j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null));
-export const dependenciesDeployed = (job, sub) => sub.dependsOn.every((id) => job.subJobs.find((s) => s.id === id)?.deployed);
 
 // One process owns the store (the existing DATA_DIR instance lock). Claims are
 // durable before launch; an uncertain launch is blocked on restart, never replayed.
@@ -140,9 +139,11 @@ export class JobRunner {
       }
       if (sub.error) continue;
       try {
-        if (sub.stage === 'implementation') {
-          if (!sub.local) await this.launch(job, sub, 'implementation');
-          else if (dependenciesDeployed(job, sub)) {
+        if (sub.stage === 'session') {
+          if (dependenciesSatisfied(job, sub)) await this.launch(job, sub, 'session');
+        } else if (sub.stage === 'implementation') {
+          if (!sub.local) { if (sessionDependenciesDone(job, sub)) await this.launch(job, sub, 'implementation'); }
+          else if (dependenciesSatisfied(job, sub)) {
             if (!sub.dependenciesVerified) await this.launch(job, sub, 'implementation');
             else if (!job.reviewCode || sub.codeApprovedAt) await this.launch(job, sub, 'publish');
           }
@@ -163,7 +164,7 @@ export class JobRunner {
             const limit = this.store.snapshot().settings.maxRepairs + (sub.repairAllowance || 0);
             if (attempts >= limit) this.patchSub(id, sub.id, (s) => { s.error = 'Automatic repair limit reached. Review changes, then retry if needed.'; });
             else await this.launch(job, sub, 'repair');
-          } else if (pr.checkStatus === 'passing' && dependenciesDeployed(job, sub) && (sub.mergeApprovedHead === pr.head || (!job.reviewMerge && !commentsBlockMerge(sub)))) {
+          } else if (pr.checkStatus === 'passing' && dependenciesSatisfied(job, sub) && (sub.mergeApprovedHead === pr.head || (!job.reviewMerge && !commentsBlockMerge(sub)))) {
             // Match-head on GitHub closes the push-vs-merge race; re-poll after
             // success instead of pretending an accepted merge-queue entry merged.
             if (sub.mergeRequestedHead !== pr.head) {

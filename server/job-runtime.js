@@ -11,9 +11,10 @@ export class JobRuntime {
     Object.assign(this, { sessionManager, memoryStore, taskStore, run });
   }
   async launch(job, sub, run, prepared) {
-    // Planning discovers its repositories. Blank cwd asks SessionManager for a
-    // fresh scratch workspace, without fetching or branching an arbitrary repo.
-    const planning = run.phase === 'planning';
+    // Planning discovers its repositories and a session sub-job has none. Blank
+    // cwd asks SessionManager for a fresh scratch workspace, without fetching or
+    // branching an arbitrary repo.
+    const planning = run.phase === 'planning' || run.phase === 'session';
     const repo = planning ? '' : expandRepo(sub.repo);
     const existing = sub?.worktree;
     let base = '', cleanupHead = '';
@@ -83,7 +84,7 @@ export class JobRuntime {
     // A cancelled sub-job merged nothing. Its bytes are retained only if the
     // branch was pushed (the PR head) or never left the base it was cut from.
     if (sub.worktree) await this.cleanupWorktree(sub.worktree, sub.cancelledAt ? sub.pr?.head || sub.worktree.cleanupHead : sub.pr.head);
-    if (job.updateMain && !sub.cancelledAt) {
+    if (job.updateMain && !sub.cancelledAt && sub.pr) {
       const root = await gitRepoRoot(expandRepo(sub.repo));
       if (!root) throw new Error('Cannot resolve main checkout');
       const dirty = await this.run('git', ['status', '--porcelain'], root);
