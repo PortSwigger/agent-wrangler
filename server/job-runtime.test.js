@@ -260,3 +260,28 @@ test('cleanup of a cancelled sub-job keeps unpushed commits and never fast-forwa
   const committed = new JobRuntime({}, async (_bin, args) => args[0] === 'for-each-ref' ? 'unpushed' : '');
   await assert.rejects(committed.cleanup({}, { ...sub, cancelledAt: 1, sessions: [], worktree: wt, pr: null }), /additional commits/);
 });
+
+test('a session step launches in a scratch workspace like planning and its cleanup never touches git', async () => {
+  let launched, prepared;
+  const runtime = new JobRuntime({ sessionManager: { async dispatch(opts) { launched = opts; opts.onAutomationPrepared('sid'); return { sessionId: 'sid' }; } }, memoryStore: { bindSession() {} }, taskStore: {} },
+    async () => assert.fail('a session sub-job has no repository to fetch'));
+  const session = { id: 'spike', kind: 'session', jiraKey: 'AUTH-1', instructions: 'Investigate', dependsOn: [] };
+  await runtime.launch(job, session, { ...run, phase: 'session' }, (...v) => { prepared = v; });
+  assert.equal(launched.cwd, ''); assert.equal(launched.worktree, false);
+  assert.deepEqual(launched.addDirs, [path.join(os.homedir(), 'IdeaProjects')]);
+  assert.deepEqual(prepared, ['sid', undefined]);
+  const archived = [];
+  const cleaner = new JobRuntime({ sessionManager: { async suspend() {}, entryFor: () => ({}), isArchived: () => false, archive(sid) { archived.push(sid); } }, taskStore: { taskFor() { return null; } } },
+    async () => assert.fail('nothing to fast-forward or remove'));
+  await cleaner.cleanup({ updateMain: true }, { ...session, sessions: ['sid'], pr: null, worktree: undefined });
+  assert.deepEqual(archived, ['sid']);
+});
+
+test('the session prompt forbids repository changes and the planner learns the session kind', () => {
+  const text = jobPrompt({ ...job, plan: { stories: [] }, subJobs: [{ id: 'spike', kind: 'session', title: 'Spike', instructions: 'x', result: { checks: ['Found it'] } }] },
+    { id: 'backfill', kind: 'session', dependsOn: ['spike'], feedback: 'Also check staging' }, { ...run, phase: 'session' });
+  assert.match(text, /not a PR: do not create branches, commit, push or open pull requests/);
+  assert.match(text, /kind=completed/); assert.match(text, /Found it/); assert.match(text, /Also check staging/);
+  const planning = jobPrompt(job, null, { ...run, phase: 'planning' });
+  assert.match(planning, /kind:"session"/); assert.match(planning, /waits for it to finish before starting implementation/);
+});
