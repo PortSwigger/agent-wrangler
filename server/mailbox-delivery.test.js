@@ -223,6 +223,22 @@ test('coalescing JOIN: a resume already in flight ⇒ notification delivered via
   assert.deepEqual(d.sent, [{ name: 'cc_joined', text: 'you have mail', socket: '/s/z' }]);
 });
 
+test('coalescing JOIN: the readiness gate is SKIPPED — the relaunch is not ours, so waiting on it would stall the whole sweep', async () => {
+  // A joined resume was launched by someone else, possibly seconds before we
+  // asked: its process may well have connected its MCP client BEFORE our own
+  // `since`, and "connected since `since`" would then never come true. The gate
+  // would burn its full timeout inside a sweep that serializes every other
+  // dormant recipient behind it. Joining already meant an immediate paste before
+  // this gate existed, so skipping it here is exactly the old behaviour.
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'claude', socket: '/s/z' };
+  const d = deps({ entries: { CARD1: entry }, resuming: true, resumeTmux: 'cc_joined', mcpSeenStale: true });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'dormant' });
+  assert.equal(d.mcpPolls.length, 0, 'never polled the gate for a relaunch we do not own');
+  assert.deepEqual(d.sent, [{ name: 'cc_joined', text: 'you have mail', socket: '/s/z' }]);
+});
+
 test('coalescing JOIN with no resulting pane: reported as error, not silently dropped, and carries the real reason', async () => {
   const dir = realDir();
   const entry = { cwd: dir };

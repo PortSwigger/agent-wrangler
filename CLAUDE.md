@@ -251,7 +251,11 @@ don't re-derive it.
   lost one, and an entry whose client never reports must still get its mail. And
   `resumeCarriesIntent` itself is untouched and still true (a scheduled resume's
   prompt rides it fine) — the wrong thing was this notification-driven *use* of
-  it, so the fix is at the call site. **`deliverMessage` and `deliverPrNudge`
+  it, so the fix is at the call site. The gate applies **only to a resume we
+  OWN** (`isResuming` read synchronously, as `deliverPrNudge` does): a JOINED
+  relaunch may have connected before our `since`, so the gate could never open
+  and would burn its whole timeout inside a sweep that serializes every other
+  dormant recipient behind it — and joining already meant an immediate paste. **`deliverMessage` and `deliverPrNudge`
   deliberately keep the argv route**: a human pressing send shouldn't wait seconds
   for a gate, and a PR nudge's work is `gh` via Bash, not MCP.
 - **Call it `mail`, never `unread` — the name is already taken.** `public/app.js`

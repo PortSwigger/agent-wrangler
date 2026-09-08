@@ -83,6 +83,17 @@ export async function deliverMailNotification(to, text, deps) {
   // is still a true statement about buildResume (a scheduled resume's prompt rides
   // it fine) — it's this notification-driven use of it that was wrong, so the
   // change is here and not on the adapter.
+  //
+  // `owned` is read SYNCHRONOUSLY right before resume() (the same trick
+  // deliverPrNudge uses, and race-free for the same reason: resume() registers
+  // its coalescing slot before its own first await). It decides whether the
+  // MCP-readiness gate below applies at all: a JOINED resume was launched by
+  // someone else, possibly seconds earlier, so its process may already have
+  // connected BEFORE our `since` — the gate could then never open and would burn
+  // its whole timeout inside a sweep that serializes every other dormant
+  // recipient behind it. Joining already meant an immediate paste before the gate
+  // existed, so skipping it there leaves that path exactly as it was.
+  const owned = !sessionManager.isResuming(to);
   const since = Date.now();
   try {
     const res = await sessionManager.resume(to, dir);
@@ -95,7 +106,7 @@ export async function deliverMailNotification(to, text, deps) {
     // signal is classify()'s "working" marker, i.e. the turn has ALREADY
     // started, so it only moves turn start from process boot to TUI raw-mode
     // init — still pre-MCP.
-    await waitForMcpReady(to, since, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
+    if (owned) await waitForMcpReady(to, since, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
     // A freshly-resumed pane's TUI can take several seconds to actually become
     // interactive (loading MCP servers/skills/memory) — resume() only guarantees
     // the pty was spawned, not that its input loop is reading yet. Confirmed live

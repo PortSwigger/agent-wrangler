@@ -12,6 +12,12 @@
 // the question is always "has it connected SINCE the relaunch I just started",
 // and any card that was live an hour ago would answer a boolean yes.
 //
+// The card id is the ADVISORY caller identity (extractCaller — same posture as
+// the rest of /mcp: the origin gate accepts the request, the id only attributes
+// it), so a localhost process could stamp someone else's card. The blast radius
+// is one early paste into that card's own pane, which is the pre-gate behaviour
+// — never mail delivered anywhere it wasn't addressed.
+//
 // Process-local and NOT persisted — it describes the currently-running agent
 // process, so a value that outlived this server would be a lie. One number per
 // card id seen since startup, so it needs no eviction.
