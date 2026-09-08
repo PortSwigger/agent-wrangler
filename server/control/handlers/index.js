@@ -1,3 +1,4 @@
+import { jobCreateHandler, jobActionHandler, jobSettingsHandler } from './jobs.js';
 import { dispatchHandler } from './dispatch.js';
 import { validateWorktreeHandler } from './validate-worktree.js';
 import { browseFoldersHandler } from './browse-folders.js';
@@ -71,6 +72,7 @@ import { adoptConversationHandler } from './adopt.js';
 // + the graph-target resolvers (sessionFromGraph/tmuxFor/socketFor) and
 // runSchedule (the shared schedule-firing routine).
 export const CONTROL_HANDLERS = [
+  jobCreateHandler, jobActionHandler, jobSettingsHandler,
   dispatchHandler,
   validateWorktreeHandler,
   browseFoldersHandler,
