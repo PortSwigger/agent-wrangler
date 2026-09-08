@@ -46,6 +46,7 @@ import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
+import { createHistoryGate } from './history-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
@@ -516,6 +517,10 @@ function broadcast(obj) {
   for (const client of controlWss.clients) sendGuarded(client, msg);
 }
 
+// Module-scope so its "have I already sent this?" memory spans every rebuild, not
+// one call — the whole saving is across ticks.
+const wireGraph = createHistoryGate();
+
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
 async function rebuildOnce() {
@@ -559,7 +564,10 @@ async function rebuildOnce() {
   for (const s of diffNeedsYou(graph.sessions)) {
     broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: s.label, waitingFor: s.waitingFor } });
   }
-  broadcast({ type: 'graph', graph });
+  // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
+  // almost every tick. See history-gate.js — and note the connect path above sends
+  // `lastGraph` itself, so a fresh socket is always served the full list.
+  broadcast({ type: 'graph', graph: wireGraph(graph) });
   broadcastStylesIfChanged();
   return graph;
 }

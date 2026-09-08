@@ -241,9 +241,34 @@ don't re-derive it.
   silent event loss. A terminated client reconnects and the connect path already
   re-sends config/styles/agents plus a whole graph. Three call sites today
   (`broadcast` + `ctx.reply` in `index.js`, `term.onData` in `pty-channel.js`);
-  a fourth must join them. **Not the amplifier's fix**: `graph.history` is 85% of
-  that 2.2 MB (1005 archived rows, re-serialised every tick) and `analyzeCodex`
-  re-reads whole rollouts with no offset cache — both measured, both still open.
+  a fourth must join them. **Not the amplifier's fix**: the snapshot itself is now
+  ~0.33 MB (was 2.2 MB — `graph.history` was 85% of it; see the bullet below), but
+  `analyzeCodex` re-reads whole rollouts with no offset cache — measured, still open.
+- **`graph.history` is the one graph key the server may OMIT, and absence means
+  "unchanged", not "empty".** It is one record per archive ever taken — 1015 on the
+  board this was measured on, only ever rising — so it was 1.94 MB of a 2.27 MB
+  snapshot pushed to every client every ~2 s, against ~15 archive events a DAY. Two
+  independent fixes, both needed. The record is **narrowed to the six fields
+  `public/app.js` actually reads** (`sessionId`/`label`/`cwd`/`archivedAt`/`model`/
+  `viaTaskArchive`): it used to mirror the board node so Search could fold archived
+  runs off it, but Search builds its own rows server-side (`search/board-rows.js`) and
+  **never reads `graph.history`** — `intent` alone was 1.30 MB of the 1.94 MB, wholly
+  unread. Adding a field back needs a named consumer in `app.js`; it is paid for over
+  the entire archive on every send. And `history-gate.js` then keeps it **off the wire
+  entirely while its serialisation is unchanged**, which is ~every tick (measured
+  end-to-end: present on graph #1, absent on #2–#5, present again on the tick an
+  archive lands, absent after). Net 2.27 MB → 0.33 MB steady state per client.
+  Three things are load-bearing. The gate compares the **serialised list**, not a
+  counter or an mtime — anything narrower has to be kept in step with state-reader's
+  record by hand, and the JSON is needed to send it anyway. It **copies rather than
+  deletes** (`const { history, ...wire }`), because `lastGraph` is assigned before the
+  broadcast and is what the connect path and every handler's `ctx.graph()` serve — the
+  connect path sends `lastGraph` itself, so a socket joining mid-stream is always
+  served the full list, and there is no "missed the one broadcast that carried it"
+  case (`sendGuarded` TERMINATES a non-reading peer rather than skipping a message, so
+  a still-connected client has every history it was ever sent). And the client gates on
+  `'history' in graph`, **never truthiness** — purging the last archive sends a real
+  empty array, which `|| []` would read as "unchanged" and never clear.
 - **The heap canary is `server/heap-watchdog.js`, the fd one's sibling** — same
   edge-triggered once-per-level shape, silent in the normal case, because the
   rebuild (~4 s) and mail sweep (2 s) cadences would bury any per-poll logging.

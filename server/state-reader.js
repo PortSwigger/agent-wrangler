@@ -775,36 +775,35 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     }
   }
 
-  // Archived sessions (graph.history, rendered by Search's archived rows): a
-  // frozen snapshot from the mapping, recoverable via Resume. Kept lightweight
-  // (no transcript reads).
-  const history = (sessionManager?.archivedEntries?.() || []).map((e) => {
-    const parentFields = deriveParentSession(e);
-    return {
-      sessionId: e.sessionId,
-      agent: e.agent || 'claude',
-      name: e.name || null,
-      intent: e.intent || '',
-      // Same label chain as live sessions, minus summary — history is transcript-free
-      // by design — so a resumed archive reads its intent, not the "(resumed)" placeholder.
-      label: sessionLabel({ names: [e.name, e.lastLabel], intent: e.intent, cwd: e.cwd, fallback: e.sessionId.slice(0, 8) }),
-      cwd: e.cwd || null,
-      archivedAt: e.archivedAt,
-      createdAt: e.createdAt || null,
-      model: e.model || null,
-      task: e.task || null,
-      viaTaskArchive: e.viaTaskArchive || null,
-      worktree: e.worktree ? { path: e.worktree.path, branch: e.worktree.branch } : null,
-      // The autopilot run linkage, mirroring how board nodes carry `workflow` +
-      // `parentSession` (same legacy `workflow.parent` fallback as the board — see
-      // deriveParentSession). An orchestrator record carries issue/phase; a child
-      // (workflow worker or otherwise) carries `parentSession` pointing at its
-      // parent's card id. Search's archived rows fold runs off this, same as the board.
-      workflow: parentFields.workflow ? { issue: parentFields.workflow.issue ?? null, phase: parentFields.workflow.phase ?? null } : null,
-      parentSession: parentFields.parentSession,
-      spawnedBy: parentFields.spawnedBy,
-    };
-  });
+  // Archived sessions (graph.history): a frozen snapshot from the mapping,
+  // recoverable via Resume. Transcript-free by design.
+  //
+  // **These six fields are the whole of what the client reads, and the record must
+  // stay narrowed to them** — it is one entry per archive ever taken (1015 and only
+  // ever rising on the board this was measured on), so every field here is paid for
+  // over the entire archive on every send. It USED to mirror the board node
+  // (agent/name/intent/createdAt/task/worktree/workflow/parentSession/spawnedBy) to
+  // feed the Search view's archived rows; Search now builds its own rows server-side
+  // from the index ∪ mappings (search/board-rows.js) and never reads this, so those
+  // fields were dead weight — `intent` alone was 1.30MB of a 1.94MB payload. Adding a
+  // field back needs a consumer in public/app.js to point at, and history-gate.js's
+  // per-send cost is that consumer's price.
+  const history = (sessionManager?.archivedEntries?.() || []).map((e) => ({
+    // Resolves an assignment (cwdForTask) and names a cascaded session (task Restore).
+    sessionId: e.sessionId,
+    // Same label chain as live sessions, minus summary (no transcript read) — so a
+    // resumed archive reads its intent, not the "(resumed)" placeholder.
+    label: sessionLabel({ names: [e.name, e.lastLabel], intent: e.intent, cwd: e.cwd, fallback: e.sessionId.slice(0, 8) }),
+    // The dispatch dialog's recent-folder list and per-task default repo, so a folder
+    // survives every session in it ending.
+    cwd: e.cwd || null,
+    // Recency ordering for that folder list.
+    archivedAt: e.archivedAt,
+    // Ranks the two quick-launch buttons by how often each model was actually chosen.
+    model: e.model || null,
+    // Names the sessions a task's Restore would bring back with it.
+    viaTaskArchive: e.viaTaskArchive || null,
+  }));
 
   return { nodes, edges, sessions: sessionList, history, generatedAt: Date.now() };
 }
