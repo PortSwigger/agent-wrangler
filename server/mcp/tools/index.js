@@ -1,3 +1,4 @@
+import { jobReportTool, getJobContextTool } from './job-report.js';
 import { listSessionsTool } from './list-sessions.js';
 import { getSessionInfoTool } from './get-session-info.js';
 import { listTasksTool } from './list-tasks.js';
@@ -31,7 +32,7 @@ import { checklistEnabled } from '../../config-store.js';
 // registering here without allow-listing there ships a tool that passes tests
 // and dies silently in a real launch (CLAUDE.md; asserted by
 // client-config.test.js for read_mail/list_mail and the four checklist tools).
-export const TOOLS = [listSessionsTool, getSessionInfoTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
+export const TOOLS = [jobReportTool, getJobContextTool, listSessionsTool, getSessionInfoTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
 
 // The tools a request actually gets, after the one feature flag that can remove
 // some: `checklistEnabled: false` must leave the four checklist tools

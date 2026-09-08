@@ -49,7 +49,7 @@ async function connect(deps, caller, opts) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: true }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['add_checklist_item', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_info', 'list_checklist', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'remove_checklist_item', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_checklist_item', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['add_checklist_item', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_job_context', 'get_links', 'get_session_activity', 'get_session_info', 'job_report', 'list_checklist', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'remove_checklist_item', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_checklist_item', 'workflow_phase']);
   await server.close();
 });
 
@@ -144,4 +144,14 @@ test('POST /mcp records a Codex caller from its bearer token too', async () => {
     await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 4, { Authorization: 'Bearer CARD-CX' });
     assert.ok(mcpSeenAt('CARD-CX') > 0);
   });
+});
+
+test('automated workers cannot bypass shared concurrency by spawning or scheduling through MCP', async () => {
+  const deps = { ...fakeDeps(), sessionManager: { entryFor: () => ({ automationRun: { runId: 'run1' } }) } };
+  const { client, server } = await connect(deps, 'CARD1');
+  try {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    assert.ok(names.includes('job_report'));
+    for (const name of ['spawn_session', 'spawn_workflow', 'schedule_session']) assert.ok(!names.includes(name));
+  } finally { await server.close(); }
 });

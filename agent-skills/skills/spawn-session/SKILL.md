@@ -42,12 +42,13 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `haiku` — Haiku 4.5 · 200K context
 
 **Codex** (`agent: "codex"`):
-- `gpt-5.5` — GPT-5.5 · frontier
+- `gpt-5.5` — GPT-5.5 · capable
 - `gpt-5.4` — GPT-5.4 · everyday coding
 - `gpt-5.4-mini` — GPT-5.4 mini · fast & cheap
-- `gpt-5.6-sol` — GPT-5.6 Sol · frontier (default)
+- `gpt-5.6-sol` — GPT-5.6 Sol · capable (default)
 - `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
 - `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
+- `gpt-6-astra` — GPT-6 Astra · most capable
 
 <!-- END GENERATED MODELS -->
 
