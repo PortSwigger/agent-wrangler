@@ -20,6 +20,7 @@ import { ensureCodexTrust } from './codex-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
+import { log, logWarn, humanDuration } from './log.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -72,6 +73,31 @@ export function archivableExits(deadEntries) {
     (d) => typeof d.tmux === 'string' && isOwnedTmux(d.tmux)
       && d.sessionId && !d.archived && d.status === 0,
   );
+}
+
+// Pure decision: which dead tmuxes haven't been logged yet, for the
+// one-line-per-death log. Keyed on what has already been REPORTED rather than on
+// an observed alive→dead edge, which was the first attempt and is subtly wrong:
+// refreshAlive abandons a whole socket when its tmux server blips (the catch that
+// continues), which empties that socket's names out of `alive` — so a pane dying
+// during a blind poll has no edge left to detect and would be missed not once but
+// FOREVER, silently, which is precisely the case this line exists to catch. A
+// reported-set has no such hole: the death is logged on the first scan that sees
+// the corpse, whenever that is. Repeats are prevented by the set, not by the edge
+// (see refreshAlive for the seeding and pruning that make that hold).
+export function unreportedDeaths(dead, reported) {
+  return [...dead].filter((name) => !reported.has(name));
+}
+
+// Pure: how a resume found the session it's about to relaunch. 'dead' is a corpse
+// remain-on-exit kept (it crashed or /exit'd), 'alive' is a running pane a human
+// forced a relaunch of, 'absent' is no tmux at all (suspended, reboot, never
+// launched). Unmapped names read as absent, which is what they are.
+export function paneStateOf(tmux, alive, dead) {
+  if (!tmux) return 'absent';
+  if (dead.has(tmux)) return 'dead';
+  if (alive.has(tmux)) return 'alive';
+  return 'absent';
 }
 
 // A long snooze (>= 1h) also reclaims a session's RAM by suspending it. A shorter
@@ -293,6 +319,8 @@ export class SessionManager {
     // in production, overridable for isolated migration testing.
     this.legacySocket = process.env.AW_LEGACY_TMUX_SOCKET || '';
     this.socketByName = new Map(); // tmux name -> socket it was last discovered on
+    this._deathsReported = new Set(); // dead tmux names already logged (see refreshAlive)
+    this._deathsSeeded = false; // the first scan seeds without logging: those panes predate us
     this._resuming = new Map(); // card id -> in-flight resume promise (coalesces concurrent resumes)
     // Seam (like _newSession/_save) so a test can observe/stub the one call in
     // dispatch/resume/fork that touches a real machine-global dotfile
@@ -342,7 +370,16 @@ export class SessionManager {
   // while the original lingers), so killing only the record leaks the original —
   // this scans by session id instead. Verifies each is gone and warns rather
   // than swallowing failures. Returns the names it targeted.
-  async killForSession(sessionId) {
+  //
+  // `reason` opts into the "killed" log line, and only the CONFIRMED kills reach
+  // it. The returned array can't stand in for that: `recorded` is added to the
+  // targets unconditionally, so archiving a dormant card whose tmux died in a
+  // reboot returns a name nothing killed — logging off that would assert a
+  // teardown that never happened, right beside the "left … alive" warning when a
+  // kill genuinely failed. Internal callers (suspend, resume, the clean-exit
+  // sweep) pass no reason: they log their own line, and a second one here would
+  // double-report one moment.
+  async killForSession(sessionId, { reason = null } = {}) {
     const entry = this.map.get(sessionId);
     const recorded = entry?.tmux;
     let discovered = [];
@@ -359,14 +396,21 @@ export class SessionManager {
     const socketOf = new Map(discovered.map((d) => [d.tmuxName, d.socket]));
     const targets = new Set(tmuxesForSession(discovered, sessionId, { claimedByOthers }));
     if (recorded) targets.add(recorded);
+    const confirmed = [];
     for (const name of targets) {
       // Kill on the socket the tmux actually lives on: discovered socket, else the
       // owning entry's recorded socket (legacy → default).
       const socket = socketOf.has(name) ? socketOf.get(name) : this.socketOf(name);
-      await this._tmux(socket, ['kill-session', '-t', name]).catch(() => {});
+      // kill-session fails when the session isn't there, which is exactly the
+      // "nothing to kill" signal — so pairing its result with the has-session
+      // check below separates a real teardown from a stale name at no extra cost
+      // in tmux calls.
+      const killOk = await this._tmux(socket, ['kill-session', '-t', name]).then(() => true).catch(() => false);
       const survived = await this._tmux(socket, ['has-session', '-t', name]).then(() => true).catch(() => false);
-      if (survived) console.warn(`[wrangler] kill-session left ${name} alive (session ${sessionId})`);
+      if (survived) logWarn(`[wrangler] kill-session left ${name} alive (session ${sessionId})`);
+      else if (killOk) confirmed.push(name);
     }
+    if (reason && confirmed.length) log(`[session] killed ${sessionId} (tmux ${confirmed.join(', ')}) — reason=${reason}`);
     await this.refreshAlive();
     return [...targets];
   }
@@ -722,10 +766,16 @@ export class SessionManager {
   // deferred-suspend flag. Reuses killForSession, so it's orphan-proof in the
   // resume-fork case. resume() rebuilds the entry fresh, so it naturally drops
   // suspendedAt/suspendPending on wake.
-  async suspend(sessionId, { label } = {}) {
+  async suspend(sessionId, { label, idleMs } = {}) {
     const entry = this.map.get(sessionId);
     if (!entry) return false;
+    const tmux = entry.tmux;
     await this.killForSession(sessionId);
+    // How long it had been idle is the whole justification for the teardown, so it
+    // belongs on the line — reading "suspended" with no idle span leaves you unable
+    // to tell an 8h timer from a deliberate one. Taken as a parameter rather than
+    // recomputed here: lastActivity lives on the graph, which the manager doesn't own.
+    log(`[session] suspended ${sessionId} (tmux ${tmux || 'none'}) — idle ${idleMs == null ? 'unknown' : humanDuration(idleMs)}`);
     entry.suspendedAt = Date.now();
     delete entry.suspendPending;
     // Snapshot the board label so the dormant card keeps the name the user saw
@@ -813,7 +863,7 @@ export class SessionManager {
 
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
-  async _doResume(sessionId, cwd, { intent = '' } = {}) {
+  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified' } = {}) {
     // Tear down every tmux currently hosting this session before forking a fresh
     // one — not just the recorded name. A prior resume may have left the original
     // (or an earlier fork) running under a drifted record; killing only prev.tmux
@@ -822,6 +872,11 @@ export class SessionManager {
     const agent = prev?.agent || 'claude';
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
+    // Read what we're waking BEFORE the kill destroys the evidence: a resume off a
+    // dead pane means something crashed, off an absent one means it was suspended
+    // or the machine rebooted, and off a live one means a human forced it. The
+    // three are indistinguishable afterwards.
+    const pane = paneStateOf(prev?.tmux, this.alive, this.dead);
     await this.killForSession(sessionId);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
@@ -901,6 +956,10 @@ export class SessionManager {
     }));
     this._save();
     await this.refreshAlive();
+    // Logged here rather than in resume(): that wrapper hands a second concurrent
+    // caller the in-flight promise, so a line there would report one relaunch twice
+    // under two different reasons. _doResume runs once per actual relaunch.
+    log(`[session] resumed ${sessionId} (tmux ${tmux}) — reason=${reason}, pane was ${pane}`);
     return { tmux };
   }
 
@@ -1159,11 +1218,13 @@ export class SessionManager {
     // Scan this install's socket plus the default socket while legacy sessions
     // remain there. Each socket is a separate tmux server, so we query each and
     // remember which socket every session was found on (for attach/kill/capture).
+    let scanFailed = false;
     for (const socket of this.scanSockets()) {
       let stdout = '';
       try {
         ({ stdout } = await this._tmux(socket, ['list-panes', '-a', '-F', '#{session_name}\x1f#{pane_dead}\x1f#{pane_dead_status}']));
       } catch {
+        scanFailed = true;
         continue; // that socket's server isn't running → nothing there
       }
       const seen = new Set();
@@ -1178,6 +1239,26 @@ export class SessionManager {
       }
       for (const name of seen) if (!this.alive.has(name)) this.dead.add(name);
     }
+    // An agent exiting on its own is the event nothing recorded before this: a
+    // claude that launched and died 19s later left no trace of either end. A
+    // deliberate kill removes the tmux outright rather than leaving a dead pane,
+    // so suspend/archive/resume never reach here and log their own line instead.
+    // The FIRST scan only seeds: those panes died before this process started, so
+    // it has nothing truthful to say about when or why.
+    const deaths = unreportedDeaths(this.dead, this._deathsReported);
+    if (this._deathsSeeded) {
+      for (const name of deaths) {
+        const status = this.deadStatus.has(name) ? this.deadStatus.get(name) : null;
+        logWarn(`[session] pane died ${this.tmuxOwner(name) || '<unmapped>'} (tmux ${name}) — exit ${status ?? 'unknown'}`);
+      }
+    }
+    this._deathsSeeded = true;
+    for (const name of this.dead) this._deathsReported.add(name);
+    // Forget reaped corpses so the set stays bounded and a REUSED tmux name can
+    // report its own death later — but only after a scan that reached every
+    // socket. A socket we couldn't read says nothing about whether its corpses are
+    // gone, and dropping one there would re-log it the moment the socket came back.
+    if (!scanFailed) for (const name of [...this._deathsReported]) if (!this.dead.has(name)) this._deathsReported.delete(name);
     return this.alive;
   }
 
@@ -1240,8 +1321,14 @@ export class SessionManager {
       lastActivity: s.lastActivity,
       label: s.label,
     }));
-    const toSuspend = suspendableSessions(candidates, { idleMs, now: Date.now() });
-    for (const c of toSuspend) await this.suspend(c.sessionId, { label: c.label });
+    const now = Date.now();
+    const toSuspend = suspendableSessions(candidates, { idleMs, now });
+    for (const c of toSuspend) {
+      await this.suspend(c.sessionId, {
+        label: c.label,
+        idleMs: typeof c.lastActivity === 'number' ? now - c.lastActivity : undefined,
+      });
+    }
     return toSuspend.map((c) => c.sessionId);
   }
 

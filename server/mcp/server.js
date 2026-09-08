@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { MCP_SERVER_NAME } from './client-config.js';
 import { activeTools } from './tools/index.js';
 import { noteMcpCaller } from '../mcp-activity.js';
+import { logError } from '../log.js';
 
 // Resolve the calling session's CARD ID from an MCP request. Claude sends it as
 // a custom header (X-AW-Session); Codex can't send arbitrary headers, so it
@@ -64,7 +65,7 @@ export function createMcpRequestHandler(deps) {
       await server.connect(transport);
       await transport.handleRequest(req, res, parsed);
     } catch (err) {
-      console.error('[mcp]', err);
+      logError('[mcp]', err);
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'internal error' }, id: null }));

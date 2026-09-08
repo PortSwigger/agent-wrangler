@@ -111,7 +111,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // leaving it live. For a live, messaged Claude the transcript exists on disk so a
   // refuse is near-unreachable here; not guarded, since reordering _doResume is a
   // flow change to a leaf other paths depend on. See the restart-session design.
-  const { tmux } = await ctx.sessionManager.resume(sessionId, dir);
+  const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: 'manual' });
   await ctx.rebuild();
   // Deliver the (pre-resume) snooze note into the freshly-launched pane once the
   // agent is ready. After rebuild, so the readiness wait never delays the board

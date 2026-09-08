@@ -53,7 +53,7 @@ test('session, dormant target + message: resumes, binds memory pre-launch, passe
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].id, 'CARD_T');
   assert.equal(d.resumed[0].dir, dir);
-  assert.deepEqual(d.resumed[0].opts, { intent: 'check CI' });
+  assert.deepEqual(d.resumed[0].opts, { intent: 'check CI', reason: 'schedule' });
   assert.equal(d.sent.length, 0); // dormant ⇒ resume, never sendText
 });
 
@@ -62,7 +62,7 @@ test('session, dormant target + no message: plain resume (empty intent)', async 
   const d = deps({ entries: { CARD1: { cwd: dir } } });
   await runSessionAction({ kind: 'session', sessionId: 'CARD1' }, d);
   assert.equal(d.resumed.length, 1);
-  assert.deepEqual(d.resumed[0].opts, { intent: '' });
+  assert.deepEqual(d.resumed[0].opts, { intent: '', reason: 'schedule' });
 });
 
 test('session, gone target (no entry, not live): throws a clear error, nothing acted on', async () => {

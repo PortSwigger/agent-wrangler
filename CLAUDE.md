@@ -159,6 +159,63 @@ don't re-derive it.
   chokidar 4 opens one fd per watched file; widening the watch leaked fds unboundedly
   until **`posix_spawnp failed` on every terminal attach** (only a restart clears it).
   Don't widen the watch without widening the filter.
+- **Log through `server/log.js` (a leaf), never bare `console.*` — and the log is
+  deliberately EVENT-ONLY, never per-poll.** Every line is timestamped at the sink
+  because launchd's log file carries no dates of its own: it once held 273
+  byte-identical `agent-wrangler running at …` lines, so not one of 16 recorded
+  service runs could be placed in time. The stamp is prefixed INTO the first
+  argument when that's a string, so `logError('[tag]', err)` keeps the Error as its
+  own argument (console renders the stack) and a test capturing `(msg) =>
+  errors.push(msg)` still sees the message rather than a bare timestamp. What may
+  be logged is a state CHANGE a human would ask about afterwards — server
+  start/stop, session suspended/resumed/killed/pane-died. **Never anything inside
+  `rebuild()`, `buildGraph`, `sweepDueSettles` or a status poll**: the graph rebuild
+  is a 4s interval and the mail sweep a 2s one, so a line in either is tens of
+  thousands a day and buries everything that matters. `unreportedDeaths`
+  (`session-manager.js`) is what keeps pane death to one line: repeats are
+  prevented by a set of corpses already reported, seeded silently on the first scan
+  (those panes predate the process) and pruned ONLY after a scan that reached every
+  socket. **An alive→dead edge is the obvious rule here and it is wrong** — it was
+  the first draft, and a reviewing peer caught that `refreshAlive` abandons a whole
+  socket when its tmux server blips, emptying that socket's names out of `alive`:
+  a pane dying during the blind poll then has no edge left to detect and would be
+  missed not once but permanently, silently, which is the exact event the line
+  exists to catch. Pruning is gated on a clean scan for the mirror-image reason — a
+  socket that couldn't be read says nothing about whether its corpses are gone, and
+  forgetting one there re-logs it when the socket returns. A resume is logged in
+  `_doResume`, NOT `resume()` — the wrapper hands a concurrent caller the in-flight
+  promise, so a line there reports one relaunch twice under two reasons — and the
+  `reason` opt threaded from each call site (mail, message, pr-nudge, schedule,
+  snooze-wake, manual, diff-comment) is the point of that line, not decoration.
+  The "killed" line reports only CONFIRMED kills (`killForSession`'s `reason`
+  opt): its returned target list can't stand in for
+  that, because the recorded tmux name is added unconditionally, so a dormant card
+  whose tmux died in a reboot would otherwise log a teardown that never happened —
+  and a genuinely failed kill would claim success one line under its own "left …
+  alive" warning.
+- **`installShutdownLog` (`shutdown-log.js`) OWNS the SIGTERM/SIGINT handlers, and
+  they must stay installed at module load.** Anything else that needs to run on the
+  way down (releasing the instance lock) registers via `onShutdown` rather than
+  adding its own listener. Two failure modes force this, both found in review.
+  Installing a listener at all suppresses Node's default termination, so a handler
+  that merely recorded the signal would leave SIGTERM doing nothing and hang a
+  `kickstart -k` until launchd escalated to SIGKILL. And registering them later —
+  the first draft put them after `acquireInstanceLock`, which can wait seconds —
+  left a real window where a stop during startup terminated by default disposition:
+  **`process.on('exit')` does NOT fire for that**, so the stop went unrecorded and
+  read exactly like the hard kill the absence of a line is supposed to mean. A
+  self-inflicted exit that knows why (the dev instance reaping itself) calls
+  `noteReason` instead of logging its own line, or the reason and the canonical
+  pid/uptime line come out as two separate lines for one shutdown.
+- **Trimming the launchd log means truncating IN PLACE — `mv` silently stops all
+  logging.** launchd opens `StandardOutPath`/`StandardErrorPath` once and dups them
+  onto the process's fds, so renaming the file leaves every later write going to an
+  orphaned inode with no error anywhere. `trim_log` (`scripts/wrangler-start.sh`,
+  startup only, `AW_LOG_DIR`/`AW_LOG_MAX_BYTES`) therefore `cat`s a `tail -c` back
+  over the same inode — verified against a held `O_APPEND` fd. **`AW_LOG_DIR` must
+  match the plist's paths**, or the trim silently no-ops against files nothing
+  writes. systemd logs to the journal instead, which rotates itself, so the
+  function finds no files there and does nothing.
 - **The fd-leak canary is `server/fd-watchdog.js`, not a low `ulimit`.** Don't re-add
   a low `ulimit` as a canary: Node self-raises its soft limit to the hard limit at
   startup, so a low ceiling is really a whole-tree hard cap and **kills innocent child

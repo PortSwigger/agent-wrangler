@@ -2,6 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './data-dir.js';
+import { logWarn } from './log.js';
 
 // Exactly one wrangler may write a given DATA_DIR. Two instances sharing
 // ~/.agent-wrangler each hold an independent in-memory TaskStore/SessionManager
@@ -105,7 +106,7 @@ export async function acquireInstanceLock({ port, sock = LOCK_SOCK, maxWaitMs = 
       break; // bound the socket — lock held
     } catch (err) {
       if (err.code !== 'EADDRINUSE') {
-        console.warn(`[agent-wrangler] instance lock unavailable (${err.code || err.message}); starting without it.`);
+        logWarn(`[agent-wrangler] instance lock unavailable (${err.code || err.message}); starting without it.`);
         return { release: () => {}, sock };
       }
       const holder = await probeHolder(sock);

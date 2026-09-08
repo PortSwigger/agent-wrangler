@@ -49,6 +49,10 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- launchd appends to these forever and never rotates them. wrangler-start.sh
+         trims them at startup, but it can't ask launchd where they are: if you
+         change the paths below, set AW_LOG_DIR above to the same directory or the
+         trim silently no-ops and the files grow without bound. -->
     <key>StandardOutPath</key>
     <string>/Users/YOUR_USERNAME/Library/Logs/wrangler/wrangler.log</string>
     <key>StandardErrorPath</key>

@@ -96,7 +96,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // absorbed into — the images would simply be dropped, silently.
   const intentCarriesMessage = owned && !imagePaths.length && !wantClear && adapterFor(fresh.agent).resumeCarriesIntent;
   try {
-    const res = await sessionManager.resume(id, dir, { intent: text });
+    const res = await sessionManager.resume(id, dir, { intent: text, reason: 'message' });
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';

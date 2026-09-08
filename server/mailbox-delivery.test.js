@@ -105,6 +105,7 @@ test('dormant Claude recipient (we OWN the resume): the notification NEVER rides
   assert.deepEqual(mode, { mode: 'dormant' });
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].opts?.intent, undefined, 'no intent: the relaunch must boot idle');
+  assert.deepEqual(d.resumed[0].opts, { reason: 'mail' });
   assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
   assert.deepEqual(d.sent, [{ name: 'cc_woken', text: 'you have mail', socket: '/s/cc' }]);
 });

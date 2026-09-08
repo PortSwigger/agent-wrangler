@@ -83,7 +83,7 @@ export async function wakeCommentedSnooze(sessionId, deps) {
   memoryStore.bindSession(sessionId, taskStore.taskFor(sessionId)?.id || null);
   // Already CLAIMED above (clearSnooze before either branch) — deliver via the resume
   // intent so it auto-runs unattended.
-  await sessionManager.resume(sessionId, dir, { intent: comment });
+  await sessionManager.resume(sessionId, dir, { intent: comment, reason: 'snooze-wake' });
   return { sessionId, mode: 'dormant' };
 }
 

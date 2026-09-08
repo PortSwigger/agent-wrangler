@@ -98,7 +98,7 @@ export async function deliverPrNudge(ev, entry, deps) {
   const owned = !sessionManager.isResuming(id);
   const intentCarriesNudge = owned && adapterFor(fresh.agent).resumeCarriesIntent;
   try {
-    const res = await sessionManager.resume(id, dir, { intent: message });
+    const res = await sessionManager.resume(id, dir, { intent: message, reason: 'pr-nudge' });
     if (!intentCarriesNudge) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';

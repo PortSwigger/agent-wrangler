@@ -100,7 +100,7 @@ test('resume (C2): reads the snooze note before resume, resumes WITHOUT an inten
   await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
   // Resumed with no intent — the note must not be auto-run via `-- <prompt>`.
   assert.equal(c.calls.resume.length, 1);
-  assert.equal(c.calls.resume[0].opts, undefined);
+  assert.deepEqual(c.calls.resume[0].opts, { reason: 'manual' });
   // Readiness gate ran, then the note was prefilled into the fresh pane — with the
   // value captured before resume dropped entry.snooze.
   assert.deepEqual(c.calls.ready, [{ name: 'cc_new', socket: 'sockR' }]);
