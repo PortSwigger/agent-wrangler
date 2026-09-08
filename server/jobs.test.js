@@ -6,6 +6,7 @@ import path from 'node:path';
 import { JobStore } from './job-store.js';
 import { JobRunner } from './job-runner.js';
 import { JobGithub, prSummary } from './job-github.js';
+import { normaliseComments, commentsBlockMerge } from './job-comments.js';
 import { jobReportTool, getJobContextTool } from './mcp/tools/job-report.js';
 import { allowedToolsArg } from './mcp/client-config.js';
 import { routeControlMessage } from './control/router.js';
@@ -28,11 +29,15 @@ function fixture(t, jobInput = input) {
     async stop(r) { stopped.push(r.id); alive.delete(r.sessionId); },
     async isAlive(r) { return alive.has(r.sessionId); },
     async cleanup(j, s) { cleaned.push(s.id); }, async cleanupPlanning() {},
+    attributeSpend(s, live) { attributed.push(live); },
   };
   let pr = { state: 'OPEN', checkStatus: 'pending', head: 'head1', mergeCommit: null, checks: [], base: 'main' };
   let deployment = { status: 'pending', runs: [], commit: 'merge1' };
-  const github = { async pr(s) { return { ...pr, url: s.pr.url }; }, async merge(s) { merged.push(s.pr.head); }, async deployment() { return deployment; } };
-  const runner = new JobRunner({ store, runtime, github, now: () => clock });
+  let comments = normaliseComments(resource(), 0);
+  const attributed = [], triaged = [];
+  let verdict = async () => ({ tone: 'green', text: 'Reviewer approved.', liveSessionId: 'live-triage', error: false });
+  const github = { async pr(s) { return { ...pr, url: s.pr.url }; }, async comments() { return comments; }, async merge(s) { merged.push(s.pr.head); }, async deployment() { return deployment; } };
+  const runner = new JobRunner({ store, runtime, github, now: () => clock, summarise: async (c, p) => { triaged.push(c.fingerprint); return verdict(c, p); } });
   const job = store.create(jobInput);
   const tick = async () => { clock += 61000; await runner.tick(); };
   const last = () => launched.at(-1);
@@ -41,8 +46,16 @@ function fixture(t, jobInput = input) {
     store.action(job.id, 'start'); await tick(); report({ kind: 'plan', plan: p }); await tick();
     const current = store.get(job.id); store.approvePlan(job.id, current.revision); await tick();
   }
-  return { store, job, runner, runtime, github, alive, launched, stopped, merged, cleaned, tick, last, report, approve,
-    setPr: (value) => { pr = { ...pr, ...value }; }, setDeployment: (value) => { deployment = value; } };
+  return { store, job, runner, runtime, github, alive, launched, stopped, merged, cleaned, tick, last, report, approve, attributed, triaged,
+    setPr: (value) => { pr = { ...pr, ...value }; }, setDeployment: (value) => { deployment = value; },
+    setComments: (value) => { comments = normaliseComments(value, 0); }, setVerdict: (fn) => { verdict = fn; } };
+}
+const author = (login, bot = false) => ({ login, __typename: bot ? 'Bot' : 'User' });
+const node = (id, login, body, at, extra = {}) => ({ id, author: author(login, extra.bot), body, createdAt: at, updatedAt: at, url: `https://github.com/org/repo/pull/1#${id}`, ...extra });
+// A GraphQL `resource` payload in the shape COMMENTS_QUERY returns.
+function resource({ comments = [], reviews = [], threads = [] } = {}) {
+  return { author: { login: 'agent' }, comments: { nodes: comments }, reviews: { nodes: reviews },
+    reviewThreads: { nodes: threads.map((t) => ({ id: t.id, isResolved: !!t.resolved, isOutdated: false, path: t.path || 'src/app.js', line: 4, comments: { nodes: t.comments } })) } };
 }
 
 test('store persists settings, plans and live claims across restart', async (t) => {
@@ -333,6 +346,85 @@ function reviewGithub(raw = reviewRequiredPr, { classic = { contexts: ['tests'] 
   const sub = { repo: '/repo', worktree: { branch: rawPr.headRefName }, pr: { url: rawPr.url, head: rawPr.headRefOid, mergeWithAdmin: true } };
   return { gh, calls, sub };
 }
+test('publication and repair receipts give reviewers ten seconds before the first PR observation', async (t) => {
+  const f = fixture(t); await atPr(f);
+  let sub = f.store.get(f.job.id).subJobs[0];
+  assert.ok(sub.nextPollAt > Date.now() + 9000 && sub.nextPollAt <= Date.now() + 10000, 'a fresh PR settles for 10s');
+  f.setPr({ checkStatus: 'failing' }); await f.tick(); assert.equal(f.last().run.phase, 'repair');
+  f.report({ kind: 'repaired', changes: ['Fixed test'], checks: ['Tests pass'] });
+  sub = f.store.get(f.job.id).subJobs[0];
+  assert.ok(sub.nextPollAt > Date.now() + 9000, 'a repair push settles again');
+});
+
+test('PR comments are read with every poll, triaged once per comment set and shaded on the sub-job', async (t) => {
+  const f = fixture(t); await atPr(f);
+  await f.tick(); await f.runner.idle();
+  let sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.prComments.items.length, 0); assert.equal(sub.commentSummary, null); assert.deepEqual(f.triaged, []);
+  f.setComments(resource({ reviews: [{ ...node('r1', 'alice', 'Looks good', '2026-09-08T10:00:00Z'), state: 'APPROVED', submittedAt: '2026-09-08T10:00:00Z' }],
+    comments: [node('c1', 'coverage-bot', 'Coverage 91%', '2026-09-08T10:00:05Z', { bot: true })] }));
+  await f.tick(); await f.runner.idle();
+  sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.prComments.items.length, 2); assert.equal(sub.prComments.items[1].bot, true);
+  assert.equal(sub.commentSummary.tone, 'green'); assert.equal(sub.commentSummary.fingerprint, sub.prComments.fingerprint);
+  assert.deepEqual(f.attributed, ['live-triage'], 'the triage spend is billed to the sub-job session');
+  await f.tick(); await f.runner.idle();
+  assert.equal(f.triaged.length, 1, 'an unchanged comment set is not re-triaged');
+  assert.deepEqual(new JobStore(f.store.file).get(f.job.id).subJobs[0].commentSummary, sub.commentSummary);
+});
+
+test('a red verdict holds automatic merging until the head is approved; amber and green merge', async (t) => {
+  const thread = (resolved) => resource({ threads: [{ id: 't1', resolved, comments: [node('tc1', 'bob', 'This drops the auth check; do not merge', '2026-09-08T10:00:00Z')] }] });
+  for (const tone of ['red', 'amber', 'green']) {
+    const f = fixture(t); await atPr(f);
+    f.setVerdict(async () => ({ tone, text: `${tone} verdict`, liveSessionId: `live-${tone}` }));
+    f.setComments(thread(false)); f.setPr({ checkStatus: 'passing' });
+    await f.tick(); assert.equal(f.merged.length, 0, `${tone}: the verdict is still being written on the first poll`);
+    await f.runner.idle(); await f.tick();
+    const sub = f.store.get(f.job.id).subJobs[0];
+    assert.equal(commentsBlockMerge(sub), tone === 'red');
+    assert.equal(f.merged.length, tone === 'red' ? 0 : 1, tone);
+    if (tone !== 'red') continue;
+    assert.equal(sub.commentSummary.tone, 'red');
+    f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head1' });
+    await f.tick(); assert.deepEqual(f.merged, ['head1'], 'an explicit approval overrides the hold');
+    // Resolving the thread changes the fingerprint and re-triages it.
+    f.setVerdict(async () => ({ tone: 'green', text: 'Resolved', liveSessionId: 'live-2' }));
+    f.setComments(thread(true)); await f.tick(); await f.runner.idle();
+    assert.equal(f.store.get(f.job.id).subJobs[0].commentSummary.tone, 'green'); assert.equal(f.triaged.length, 2);
+  }
+});
+
+test('a failed triage is an amber unavailable verdict that never blocks merging, and a stale verdict is dropped', async (t) => {
+  const f = fixture(t); await atPr(f);
+  f.setVerdict(async () => { throw new Error('claude exited 1'); });
+  f.setComments(resource({ comments: [node('c1', 'alice', 'Question?', '2026-09-08T10:00:00Z')] })); f.setPr({ checkStatus: 'passing' });
+  await f.tick(); await f.runner.idle();
+  let sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.commentSummary.tone, 'amber'); assert.equal(sub.commentSummary.error, true); assert.match(sub.commentSummary.text, /unavailable/);
+  await f.tick(); assert.deepEqual(f.merged, ['head1']);
+  // A verdict that finishes after the comments moved on never lands on the newer set.
+  let release; f.setVerdict(() => new Promise((r) => { release = r; }));
+  f.setComments(resource({ comments: [node('c1', 'alice', 'Question?', '2026-09-08T10:00:00Z'), node('c2', 'bob', 'Bug here', '2026-09-08T10:01:00Z')] }));
+  await f.tick();
+  f.setComments(resource({ comments: [node('c1', 'alice', 'Question?', '2026-09-08T10:00:00Z'), node('c2', 'bob', 'Bug here', '2026-09-08T10:01:00Z'), node('c3', 'bob', 'Never mind, fixed', '2026-09-08T10:02:00Z')] }));
+  const second = new Promise((r) => f.setVerdict(async () => { r(); return { tone: 'green', text: 'Fine', liveSessionId: 'live-3' }; }));
+  await f.tick(); await second;
+  release({ tone: 'red', text: 'Stale', liveSessionId: 'live-stale' }); await f.runner.idle();
+  sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.commentSummary.tone, 'green'); assert.equal(sub.commentSummary.fingerprint, sub.prComments.fingerprint);
+  assert.ok(f.attributed.includes('live-stale'), 'even a discarded triage spent tokens and is billed');
+});
+
+test('a comments read failure is an observation error that keeps the previous PR evidence', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ checkStatus: 'passing' });
+  f.store.update(f.job.id, (j) => { j.reviewMerge = true; });
+  await f.tick(); assert.equal(f.store.get(f.job.id).subJobs[0].pr.head, 'head1');
+  f.github.comments = async () => { throw new Error('GraphQL rate limited'); };
+  await f.tick(); const sub = f.store.get(f.job.id).subJobs[0];
+  assert.match(sub.observationError, /rate limited/); assert.equal(sub.pr.head, 'head1'); assert.equal(f.merged.length, 0);
+});
+
 test('GitHub readiness never treats running, failed, draft or blocked checks as green', () => {
   assert.equal(prSummary(rawPr).checkStatus, 'passing');
   for (const patch of [{ statusCheckRollup: [{ conclusion: '', status: 'IN_PROGRESS' }] }, { statusCheckRollup: [{ conclusion: 'FAILURE' }] }, { isDraft: true }, { mergeStateStatus: 'BLOCKED' }]) assert.notEqual(prSummary({ ...rawPr, ...patch }).checkStatus, 'passing');
@@ -450,6 +542,12 @@ test('GitHub PR observer verifies repository and worktree branch, merge pins hea
   assert.deepEqual(calls.at(-1).slice(-2), ['--match-head-commit', 'head1']);
   assert.ok(!calls.at(-1).includes('--admin'));
   await assert.rejects(gh.pr({ ...sub, worktree: { branch: 'other' } }), /does not belong/);
+  gh.run = async (bin, args) => { calls.push(args); return JSON.stringify({ data: { resource: resource({ comments: [node('c1', 'alice', 'Nice', '2026-09-08T10:00:00Z')] }) } }); };
+  const comments = await gh.comments(sub);
+  assert.deepEqual(calls.at(-1).slice(0, 2), ['api', 'graphql']); assert.ok(calls.at(-1).includes(`url=${rawPr.url}`));
+  assert.equal(comments.items[0].author, 'alice'); assert.equal(comments.prAuthor, 'agent');
+  gh.run = async () => JSON.stringify({ data: { resource: null } });
+  await assert.rejects(gh.comments(sub), /not found/);
 });
 
 test('deployment observer requires every named workflow for the exact merge commit and branch', async () => {

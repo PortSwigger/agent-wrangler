@@ -66,6 +66,12 @@ export class JobRuntime {
   async isAlive(run) {
     return this.sessionManager.isSessionAlive(run.sessionId);
   }
+  // A headless comment triage has no card of its own; bill it to the sub-job's
+  // latest session so the cost scanners see it (they walk priorLiveSessionIds).
+  attributeSpend(sub, liveSessionId) {
+    const sid = sub.sessions?.at(-1);
+    if (sid && liveSessionId) this.sessionManager.recordPriorLiveSessionId(sid, liveSessionId);
+  }
   async cleanup(job, sub) {
     // Normally every run is already archived by stop(). This sweep is the backstop
     // for a session bound to a run that never settled cleanly (an interrupted
