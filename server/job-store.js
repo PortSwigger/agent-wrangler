@@ -2,12 +2,20 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
-import { jobInputSchema, settingsSchema, planSchema, reportSchema } from './jobs-schema.js';
+import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
 export const runnable = (run) => run && !run.stopped;
+// A PR dependency is satisfied once deployed; a session dependency once its
+// receipt was accepted through to done (a cancelled one never satisfies).
+export const dependencySatisfied = (dep) => isSessionSub(dep) ? dep.stage === 'done' && !dep.cancelledAt : !!dep?.deployed;
+export const dependenciesSatisfied = (job, sub) => sub.dependsOn.every((id) => dependencySatisfied(job.subJobs.find((s) => s.id === id)));
+// Session prerequisites gate the START of a dependent; PR prerequisites only gate publishing.
+export const sessionDependenciesDone = (job, sub) => sub.dependsOn.every((id) => { const d = job.subJobs.find((s) => s.id === id); return !isSessionSub(d) || dependencySatisfied(d); });
+const reviewSessions = (job) => job.reviewSessions ?? true;
+const planRepos = (plan) => [...new Set(plan.subJobs.filter((s) => !isSessionSub(s)).map((s) => s.repo))];
 
 // Only this store writes jobs. Mutations validate a copy and persist it BEFORE
 // replacing memory, so failed validation/disk writes cannot half-approve a job.
@@ -49,14 +57,14 @@ export class JobStore {
       if (j.stage !== 'planning' || !j.plan || j.runs.some(runnable)) throw new Error('The plan is not ready for review');
       const plan = planSchema.parse(editedPlan || j.plan);
       j.plan = plan;
-      j.repos = [...new Set(plan.subJobs.map((s) => s.repo))];
-      j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: 'implementation', state: 'queued',
+      j.repos = planRepos(plan);
+      j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued',
         jiraKey: s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key,
-        repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null }));
+        repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null }));
       j.stage = 'active'; j.approvedAt = Date.now(); j.error = null;
     });
   }
-  action(id, action, { subJobId, revision, feedback, plan, head, localReceiptId } = {}) {
+  action(id, action, { subJobId, revision, feedback, plan, head, localReceiptId, sessionReceiptId } = {}) {
     if (action === 'approve-plan') return this.approvePlan(id, revision, plan);
     return this.update(id, (j) => {
       const s = subJobId ? j.subJobs.find((s) => s.id === subJobId) : null;
@@ -99,6 +107,17 @@ export class JobStore {
       if (action === 'approve-code') {
         if (!s?.local || s.local.receiptId !== localReceiptId || !s.dependenciesVerified || s.stage !== 'implementation' || s.error) throw new Error('Local verification is not ready');
         s.codeApprovedAt = Date.now(); return;
+      }
+      if (action === 'revise-session') {
+        if (!isSessionSub(s) || s.stage !== 'review' || activeForSub(j, s)) throw new Error('The session result is not ready for review');
+        s.feedback = String(feedback || '').trim().slice(0, 8000);
+        if (!s.feedback) throw new Error('Explain the requested change');
+        s.result = null; s.error = null; s.stage = 'session'; s.state = 'queued';
+        return;
+      }
+      if (action === 'approve-session') {
+        if (!isSessionSub(s) || s.stage !== 'review' || !s.result || s.result.receiptId !== sessionReceiptId || s.error) throw new Error('The session result is not ready for review');
+        s.sessionApprovedAt = Date.now(); s.stage = 'cleanup'; s.state = 'queued'; return;
       }
       if (action === 'approve-merge') {
         if (s?.stage !== 'pr' || s.pr?.checkStatus !== 'passing' || !head || head !== s.pr?.head || s.error) throw new Error('PR must have green checks first');
@@ -146,7 +165,7 @@ export class JobStore {
         throw new Error('This run already submitted a different report');
       }
       if (r.stopped) throw new Error('This run has stopped');
-      const expected = { planning: 'plan', implementation: 'local', publish: 'published', repair: 'repaired', verify: 'deployed' }[r.phase];
+      const expected = { planning: 'plan', implementation: 'local', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
       if (report.kind !== expected && report.kind !== 'blocked') throw new Error(`This run must submit ${expected}`);
       const s = j.subJobs.find((s) => s.id === r.subJobId);
       r.report = report; r.reportedAt = Date.now();
@@ -155,13 +174,16 @@ export class JobStore {
       if (s?.cancelledAt) return;
       if (report.kind === 'plan') {
         j.plan = report.plan;
-        j.repos = [...new Set(report.plan.subJobs.map((s) => s.repo))];
+        j.repos = planRepos(report.plan);
       }
-      if (report.kind === 'local') { if (!report.commitMessage.startsWith(`${s.jiraKey}:`)) throw new Error('Commit message must start with the sub-job Jira key and colon'); s.dependenciesVerified = s.dependsOn.every((id) => j.subJobs.find((d) => d.id === id)?.deployed); s.local = { ...report, receiptId: r.id, at: Date.now() }; s.state = 'verified'; s.codeApprovedAt = null; }
+      if (report.kind === 'local') { if (!report.commitMessage.startsWith(`${s.jiraKey}:`)) throw new Error('Commit message must start with the sub-job Jira key and colon'); s.dependenciesVerified = dependenciesSatisfied(j, s); s.local = { ...report, receiptId: r.id, at: Date.now() }; s.state = 'verified'; s.codeApprovedAt = null; }
       // A fresh head (new PR or repair push) is first observed after the comment
       // settle, so reviewers posting seconds after it lands are in that first read.
       if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
       if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
+      // A session's receipt is the whole deliverable; with review on it waits for a
+      // human, otherwise cleanup (archive its session) takes it straight to done.
+      if (report.kind === 'completed') { s.result = { ...report, receiptId: r.id, at: Date.now() }; s.feedback = null; s.stage = reviewSessions(j) ? 'review' : 'cleanup'; s.state = reviewSessions(j) ? 'verified' : 'queued'; }
       if (report.kind === 'deployed') { s.deployed = { checks: report.checks, at: Date.now(), commit: s.pr.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; }
       if (report.kind === 'blocked') { (s || j).error = report.summary; }
     });

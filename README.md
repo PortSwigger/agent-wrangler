@@ -313,6 +313,28 @@ different jobs are never mixed in a column:
 **Backlog → PR planning & Jira tickets → Local implementation & verification → PR
 → Deployment verification → Cleanup**
 
+Not every piece of work is a PR. Engineering work is either a PR to a repository
+or an agent session on your machine, so a plan may also contain **session
+sub-jobs**: a one-off script or migration run, a manual console change, an
+investigation whose findings later PRs need. A job whose plan has any gets a
+second lane of columns under its PR lane, **Agent sessions**:
+
+**Queued → Running → Review → Done**
+
+A session sub-job has no repository or deployment. It runs as a bounded agent
+step in a fresh scratch workspace (checkouts under `~/IdeaProjects` readable,
+never changed), submits a short `completed` receipt and stops; if the work turns
+out to need a repository change it reports blocked instead. It sits in the same
+dependency graph as the PRs, with one difference in meaning: a PR prerequisite
+means *deploy after*, so dependents build in parallel and wait to publish, but a
+session prerequisite is hard: anything depending on a session sub-job waits for
+it to finish before it even starts implementation, since its output is an input.
+A session that depends on a PR starts once that PR has deployed and verified.
+**Review agent-session results** (on by default when creating a job) holds each
+receipt under **Review** and **Needs me** until you approve it or request changes,
+which reruns the session with your feedback; off, a receipt completes it.
+Cancelling a session sub-job archives its session and removes nothing on disk.
+
 Create a job with the outcome, agent/model, and review preferences. Repository
 paths are optional hints under planning guidance. **Start planning** launches a
 session in a fresh planning workspace to discover the repositories needed and
@@ -434,7 +456,7 @@ Agent integration uses these MCP tools, automatically available to assigned sess
 
 - `get_job_context()` returns the caller's job and assigned run.
 - `job_report({runId, report})` submits a plan, local verification, PR URL, repair
-  summary, deployed verification, or a short blocker. Successful submission ends
+  summary, deployed verification, a session's completed receipt, or a short blocker. Successful submission ends
   the step; identical retries are idempotent. Each receipt allows 1–8 single-line
   checks, at most 180 characters each. Other sessions cannot submit it.
 

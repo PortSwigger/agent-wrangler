@@ -244,3 +244,41 @@ test('cancel is offered on unfinished sub-jobs, confirmed before sending, and fl
   assert.equal(jobStatus(job, job.subJobs[0]).text, 'Cancelled');
   assert.match(f.q('#jobs-active-count').textContent, /0 delivered/);
 });
+
+const sessionSub = (id, dependsOn = []) => ({ id, kind: 'session', title: `Run ${id}`, storyId: 'story', jiraKey: 'AUTH-1', dependsOn, instructions: 'Do it here', sessions: ['s1'], repairs: [] });
+
+test('a job with agent sessions gets a second four-column lane, and a reported session waits under Review pinned to its receipt', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sessionSub('spike'), stage: 'review', result: { checks: ['Schema documented'], receiptId: 'receipt9' } }, { ...sub('api', ['spike']), stage: 'implementation' }, { ...sessionSub('backfill', ['api']), stage: 'session' }];
+  job.runs = [{ id: 'r1', subJobId: 'backfill', phase: 'session', stopped: false }];
+  f.view.update(f.data);
+  assert.equal(document.querySelectorAll('.job-board-columns').length, 2);
+  assert.deepEqual([...document.querySelectorAll('.job-board-lane')].map((e) => e.textContent), ['Pull requests', 'Agent sessions']);
+  assert.equal(document.querySelectorAll('.job-board-sessions .job-column').length, 4);
+  assert.equal(f.q('.job-board-sessions .job-column[aria-label="Review"] .job-card').dataset.sub, 'spike');
+  assert.equal(f.q('.job-board-sessions .job-column[aria-label="Running"] .job-card').dataset.sub, 'backfill', 'a live run puts the card in Running');
+  assert.equal(f.q('.job-board-columns:not(.job-board-sessions) [data-sub="api"] .job-card-deps').textContent, '↳ Start after Run spike');
+  assert.equal(jobStatus(job, job.subJobs[1]).text, 'Waiting for 1 session'); assert.equal(jobStatus(job, job.subJobs[0]).text, 'Ready to review');
+  assert.equal(jobNeedsReview(job, job.subJobs[0]), true); assert.equal(f.q('#jobs-review-count').textContent, '1');
+  assert.match(f.q('.job-board-meta').textContent, /Session review on/);
+  f.q('[data-sub="spike"]').click();
+  assert.match(f.q('#job-dialog').textContent, /Schema documented/);
+  f.q('[data-action="approve-session"]').click();
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', subJobId: 'spike', action: 'approve-session', head: undefined, localReceiptId: undefined, sessionReceiptId: 'receipt9' });
+  f.q('#job-revise-session').click();
+  const form = f.q('#job-dialog form'); form.elements.feedback.value = 'Check staging too'; form.dispatchEvent(f.event('submit'));
+  assert.equal(f.sent.at(-1).action, 'revise-session'); assert.equal(f.sent.at(-1).feedback, 'Check staging too');
+});
+
+test('plans show session rows without a repository and new jobs default to reviewing session results', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0];
+  job.plan = { ...plan, subJobs: [sessionSub('spike'), sub('api', ['spike'])] }; f.view.update(f.data);
+  f.q('[data-job="job1"]').click();
+  assert.match(f.q('.job-plan-kind').textContent, /Agent session/); assert.equal(document.querySelectorAll('.job-plan-repo').length, 1);
+  assert.match(f.q('.job-plan-table th:last-child').textContent, /Depends on/);
+  assert.match(f.q('.job-authority').textContent, /approve each agent session/);
+  f.q('#job-dialog').close();
+  f.q('#job-new').click(); const form = f.q('#job-create-form');
+  form.elements.title.value = 'Value'; form.elements.intent.value = 'Deliver it'; form.dispatchEvent(f.event('submit'));
+  assert.equal(f.sent.at(-1).job.reviewSessions, true);
+});

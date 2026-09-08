@@ -2963,6 +2963,10 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-board-side { display:flex; align-items:center; gap:12px; flex-shrink:0; font-size:11px; }
 .job-board-needs { background:var(--pill-needs-bg); color:var(--red-fg); border-radius:5px; padding:2px 7px; font-size:10px; font-weight:600; }
 .job-board-columns { display:grid; grid-template-columns:repeat(6,minmax(200px,1fr)); gap:12px; overflow-x:auto; }
+.job-board-lane { font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--fg-subtle); margin:0 0 8px; }
+.job-board-columns+.job-board-lane { margin-top:16px; }
+.job-board-sessions { grid-template-columns:repeat(4,minmax(200px,1fr)); }
+.job-plan-kind { display:block; line-height:1.5; color:var(--fg-muted); }
 .job-column { background:var(--surface); border:1px solid var(--border-muted); border-radius:12px; padding:12px; min-width:0; }
 .job-column>header { display:flex; align-items:flex-start; gap:7px; min-height:35px; }
 .job-column h2 { font-size:12px; font-weight:650; line-height:1.45; margin:0; }

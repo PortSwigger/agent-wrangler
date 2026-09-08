@@ -13,18 +13,28 @@ export const deploymentSchema = z.object({
   workflows: z.array(z.string().trim().min(1).max(150)).min(1).max(12),
   verify: z.string().trim().min(1).max(4000),
 });
+// A sub-job is either a PR to a repository or an agent session on this machine.
+// The session kind has no repo and no deployment: it runs in a scratch workspace
+// and is finished when its receipt is accepted, so a dependency on it gates the
+// dependent's START (its output is an input), unlike a PR's deploy-after.
+export const subJobSchema = z.object({
+  id, title: line, kind: z.enum(['pr', 'session']).default('pr'), repo: repoPath.optional(),
+  storyId: id, jiraKey: jira.optional(), dependsOn: z.array(id).max(30).default([]),
+  instructions: z.string().trim().min(1).max(8000), deployment: deploymentSchema.optional(),
+});
+export const isSessionSub = (sub) => sub?.kind === 'session';
 export const planSchema = z.object({
   stories: z.array(z.object({ id, key: jira, title: line, value: line })).min(1).max(30),
-  subJobs: z.array(z.object({
-    id, title: line, repo: repoPath,
-    storyId: id, jiraKey: jira.optional(), dependsOn: z.array(id).max(30).default([]),
-    instructions: z.string().trim().min(1).max(8000), deployment: deploymentSchema,
-  })).min(1).max(50),
+  subJobs: z.array(subJobSchema).min(1).max(50),
 }).superRefine((plan, ctx) => {
   const stories = new Set(plan.stories.map((s) => s.id));
   const nodes = new Map(plan.subJobs.map((s) => [s.id, s]));
   const issue = (message) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
   if (stories.size !== plan.stories.length || nodes.size !== plan.subJobs.length) issue('IDs must be unique');
+  for (const s of plan.subJobs) {
+    if (isSessionSub(s) && (s.repo || s.deployment)) issue(`${s.id}: a session sub-job has no repo or deployment`);
+    if (!isSessionSub(s) && (!s.repo || !s.deployment)) issue(`${s.id}: a PR sub-job needs repo and deployment`);
+  }
   const visiting = new Set(), visited = new Set();
   function visit(s) {
     if (visiting.has(s.id)) { issue('Dependency chains must not contain cycles'); return; }
@@ -46,7 +56,7 @@ export const jobInputSchema = z.object({
   repos: z.array(repoPath).max(30).default([]),
   agent: z.enum(['claude', 'codex']).default('claude'), model: z.string().max(150).default(''),
   planningPrompt: z.string().max(8000).default(''),
-  reviewCode: z.boolean().default(false), reviewMerge: z.boolean().default(true),
+  reviewCode: z.boolean().default(false), reviewMerge: z.boolean().default(true), reviewSessions: z.boolean().default(true),
   updateMain: z.boolean().default(false), taskId: z.string().nullable().default(null),
 });
 export const settingsSchema = z.object({
@@ -62,5 +72,6 @@ export const reportSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('published'), url: z.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/) }),
   z.object({ kind: z.literal('repaired'), changes: checksSchema, checks: checksSchema }),
   z.object({ kind: z.literal('deployed'), checks: checksSchema }),
+  z.object({ kind: z.literal('completed'), checks: checksSchema }),
   z.object({ kind: z.literal('blocked'), summary: line }),
 ]);

@@ -587,3 +587,63 @@ test('cancel stops the live step, ignores its late receipt and moves the sub-job
   assert.throws(() => f.store.action(f.job.id, 'cancel'), /Choose a sub-job/);
   assert.equal(f.store.get(f.job.id).stage, 'active', 'the dependent sub-job still needs a decision');
 });
+
+const sessionSpec = (id, dependsOn = []) => ({ id, kind: 'session', title: `Run ${id}`, storyId: 'story', dependsOn, instructions: `Do ${id} on this machine` });
+
+test('a session sub-job runs as a scratch step, needs review, and is a hard prerequisite for dependent builds', async (t) => {
+  const f = fixture(t);
+  await f.approve(plan([sessionSpec('spike'), spec('api', ['spike']), sessionSpec('backfill', ['api'])]));
+  assert.deepEqual(f.launched.slice(1).map((w) => [w.sub.id, w.run.phase]), [['spike', 'session']], 'a build behind a session waits to start');
+  assert.deepEqual(f.store.get(f.job.id).repos, ['/repo'], 'sessions contribute no repository');
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'AUTH-123: x', checks: ['Tests pass'] }), /must submit completed/);
+  f.report({ kind: 'completed', checks: ['Schema documented in task memory'] });
+  await f.tick();
+  let spike = f.store.get(f.job.id).subJobs[0];
+  assert.equal(spike.stage, 'review'); assert.equal(spike.result.receiptId, f.last().run.id);
+  assert.equal(f.launched.length, 2, 'nothing starts while the session result awaits review');
+  assert.throws(() => f.store.action(f.job.id, 'approve-session', { subJobId: 'spike', sessionReceiptId: 'other' }), /not ready/);
+  f.store.action(f.job.id, 'approve-session', { subJobId: 'spike', sessionReceiptId: spike.result.receiptId });
+  assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'cleanup');
+  await f.tick();
+  spike = f.store.get(f.job.id).subJobs[0];
+  assert.equal(spike.stage, 'done'); assert.deepEqual(f.cleaned, ['spike']);
+  assert.deepEqual(f.last().sub.id, 'api'); assert.equal(f.last().run.phase, 'implementation');
+  assert.equal(f.launched.filter((w) => w.sub?.id === 'backfill').length, 0, 'a session behind a PR waits for its deployment');
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: api', checks: ['Tests pass'] }); await f.tick();
+  const api = f.store.get(f.job.id).subJobs[1];
+  assert.equal(api.dependenciesVerified, true, 'the finished session satisfies the dependency');
+  f.store.update(f.job.id, (j) => { j.subJobs[1].deployed = { checks: ['Live'] }; j.subJobs[1].stage = 'done'; });
+  await f.tick();
+  assert.deepEqual([f.last().sub.id, f.last().run.phase], ['backfill', 'session']);
+});
+
+test('with session review off a completed session goes straight to done; request changes reruns it with feedback', async (t) => {
+  const f = fixture(t, { ...input, reviewSessions: false });
+  await f.approve(plan([sessionSpec('spike')]));
+  f.report({ kind: 'completed', checks: ['Done'] }); await f.tick();
+  assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'done'); assert.equal(f.store.get(f.job.id).stage, 'done');
+
+  const g = fixture(t);
+  await g.approve(plan([sessionSpec('spike')]));
+  g.report({ kind: 'completed', checks: ['Done'] }); await g.tick();
+  assert.throws(() => g.store.action(g.job.id, 'revise-session', { subJobId: 'spike' }), /Explain/);
+  g.store.action(g.job.id, 'revise-session', { subJobId: 'spike', feedback: 'Also check staging' });
+  let spike = g.store.get(g.job.id).subJobs[0];
+  assert.equal(spike.stage, 'session'); assert.equal(spike.result, null);
+  await g.tick();
+  assert.equal(g.last().run.phase, 'session'); assert.equal(g.last().sub.feedback, 'Also check staging');
+  g.report({ kind: 'completed', checks: ['Staging checked'] }); await g.tick();
+  spike = g.store.get(g.job.id).subJobs[0];
+  assert.equal(spike.stage, 'review'); assert.equal(spike.feedback, null);
+  g.store.action(g.job.id, 'cancel', { subJobId: 'spike' }); await g.tick();
+  assert.deepEqual([spike = g.store.get(g.job.id).subJobs[0]].map((s) => [s.stage, s.state]), [['done', 'cancelled']]);
+});
+
+test('plans keep PR and session sub-jobs distinct: a session has no repo, a PR needs one', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...sessionSpec('a'), repo: '/repo' }]) }), /session sub-job has no repo/);
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), deployment: undefined }]) }), /PR sub-job needs repo and deployment/);
+  f.report({ kind: 'plan', plan: plan([sessionSpec('a'), spec('b', ['a'])]) });
+  assert.deepEqual(f.store.get(f.job.id).repos, ['/repo']);
+  assert.equal(f.store.get(f.job.id).plan.subJobs[1].kind, 'pr');
+});
