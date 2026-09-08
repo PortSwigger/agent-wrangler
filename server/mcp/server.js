@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MCP_SERVER_NAME } from './client-config.js';
 import { activeTools } from './tools/index.js';
+import { noteMcpCaller } from '../mcp-activity.js';
 
 // Resolve the calling session's CARD ID from an MCP request. Claude sends it as
 // a custom header (X-AW-Session); Codex can't send arbitrary headers, so it
@@ -46,6 +47,11 @@ export function createMcpRequestHandler(deps) {
   return async function handleMcp(req, res) {
     try {
       const caller = extractCaller(req);
+      // Stamp the caller on EVERY request, boot handshake included: an agent's
+      // client connects as part of its own startup and makes no tool call
+      // unprompted, so the handshake is the signal the dormant mail wake waits
+      // for before starting the turn that reads the mail (mcp-activity.js).
+      noteMcpCaller(caller);
       let body = '';
       for await (const chunk of req) body += chunk;
       const parsed = body ? JSON.parse(body) : undefined;

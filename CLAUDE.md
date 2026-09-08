@@ -221,6 +221,43 @@ don't re-derive it.
   mutators, not load-mutate-save via `atomic-json` — four independent writers
   touch one box (send, drain, the settle sweeper, eviction) and an `await`
   between a read and its write is where two of them would clobber each other.
+- **A wake whose whole PURPOSE is to make the agent call a tool must not deliver
+  via the resume argv — the turn starts before the new process's MCP client
+  connects.** `claude --resume … -- <text>` (Claude's `resumeCarriesIntent`)
+  auto-submits a turn at process BOOT; Claude Code fixes a turn's tool list at
+  turn start and hands a *resumed* process a `deferred_tools_delta` whose
+  `removedNames` is EVERY MCP tool, **without** the "servers are still connecting
+  … will appear shortly" system-reminder a fresh start gets — so the agent is told
+  its tools are gone and reasonably reports the server as down. Reproduced A/B on
+  a dev instance against the same real session: argv route ⇒ turn 1 carried
+  `removed=338` including `read_mail` and the agent replied "the Agent Wrangler
+  MCP server … just disconnected"; the identical wake via the paste route ⇒
+  `removed=0` and `read_mail` succeeded on that same first turn. Live, this cost
+  a woken orchestrator two turns and filed two false "all MCP servers dropped"
+  alarms while the servers were healthy within ~3s. So `deliverMailNotification`
+  (`mailbox-delivery.js`) resumes with **no intent for either agent** and gates
+  its paste on `mcpSeenAt(cardId) > since` — `since` captured synchronously before
+  `resume()`, stamped by `noteMcpCaller` on every `POST /mcp`
+  (`mcp-activity.js`). Measured: both agents' clients POST `initialize` at boot
+  carrying identity (Claude's `X-AW-Session` header, Codex's bearer token), ~1s
+  after launch, so a real wake waits ~0.5s. Four things are load-bearing.
+  **`pasteAndVerify` is NOT a substitute for the gate** — its signal is
+  `classify()`'s "working" marker, i.e. the turn has ALREADY started, so it is a
+  post-hoc delivery confirmation that merely moves turn start from process boot to
+  TUI raw-mode init, still pre-MCP. The gate is a **timestamp compared against
+  this relaunch**, never "has this card ever connected" — a bare boolean answers
+  yes for any card that was live an hour ago and reinstates the bug. A timeout
+  **falls through to the paste** rather than failing: a late notification beats a
+  lost one, and an entry whose client never reports must still get its mail. And
+  `resumeCarriesIntent` itself is untouched and still true (a scheduled resume's
+  prompt rides it fine) — the wrong thing was this notification-driven *use* of
+  it, so the fix is at the call site. The gate applies **only to a resume we
+  OWN** (`isResuming` read synchronously, as `deliverPrNudge` does): a JOINED
+  relaunch may have connected before our `since`, so the gate could never open
+  and would burn its whole timeout inside a sweep that serializes every other
+  dormant recipient behind it — and joining already meant an immediate paste. **`deliverMessage` and `deliverPrNudge`
+  deliberately keep the argv route**: a human pressing send shouldn't wait seconds
+  for a gate, and a PR nudge's work is `gh` via Bash, not MCP.
 - **Call it `mail`, never `unread` — the name is already taken.** `public/app.js`
   has an unrelated per-browser `unread` bookmark feature (`wrangler.unread`,
   "Mark unread") that owns `barWord()` and rewrites `cardState()` to the cyan

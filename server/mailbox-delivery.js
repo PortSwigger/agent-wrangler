@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, capturePane as defaultCapturePane, classify as defaultClassify } from './tmux-scraper.js';
-import { adapterFor } from './agents/index.js';
+import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 
 // Settle-close delivery leg for the mailbox — paste a server-authored
 // notification into the recipient's pane, waking it first if dormant.
@@ -38,6 +38,9 @@ export async function deliverMailNotification(to, text, deps) {
   const classify = deps.classify ?? defaultClassify;
   const verifyDelayMs = deps.pasteVerifyDelayMs ?? PASTE_VERIFY_DELAY_MS;
   const verifyPollMs = deps.pasteVerifyPollMs ?? PASTE_VERIFY_POLL_MS;
+  const mcpSeenAt = deps.mcpSeenAt ?? defaultMcpSeenAt;
+  const mcpReadyTimeoutMs = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
+  const mcpReadyPollMs = deps.mcpReadyPollMs ?? MCP_READY_POLL_MS;
 
   const target = tmuxFor(to);
   if (target) {
@@ -66,23 +69,52 @@ export async function deliverMailNotification(to, text, deps) {
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };
 
+  // The relaunch boots IDLE — deliberately no `intent`, for either agent. Claude's
+  // resumeCarriesIntent would put the notice in the launch argv (`claude --resume …
+  // -- <notice>`), which is faster and lands unconditionally, and that is exactly
+  // the bug: it auto-submits a turn at process BOOT, before the new process's MCP
+  // client has connected. Claude Code fixes a turn's tool list at turn start and
+  // hands a resumed process a deferred_tools_delta REMOVING every MCP tool, without
+  // the "servers are still connecting, they'll appear shortly" system-reminder a
+  // fresh start gets — so the session we woke SPECIFICALLY to read its mail cannot
+  // call read_mail, and reasonably reports every MCP server as dropped. Measured on
+  // a real transcript: two wakes, two wasted turns, two false "all MCP servers
+  // dropped" alarms, servers healthy within ~3s both times. `resumeCarriesIntent`
+  // is still a true statement about buildResume (a scheduled resume's prompt rides
+  // it fine) — it's this notification-driven use of it that was wrong, so the
+  // change is here and not on the adapter.
+  //
+  // `owned` is read SYNCHRONOUSLY right before resume() (the same trick
+  // deliverPrNudge uses, and race-free for the same reason: resume() registers
+  // its coalescing slot before its own first await). It decides whether the
+  // MCP-readiness gate below applies at all: a JOINED resume was launched by
+  // someone else, possibly seconds earlier, so its process may already have
+  // connected BEFORE our `since` — the gate could then never open and would burn
+  // its whole timeout inside a sweep that serializes every other dormant
+  // recipient behind it. Joining already meant an immediate paste before the gate
+  // existed, so skipping it there leaves that path exactly as it was.
   const owned = !sessionManager.isResuming(to);
-  const intentCarriesNotification = owned && adapterFor(fresh.agent).resumeCarriesIntent;
+  const since = Date.now();
   try {
-    const res = await sessionManager.resume(to, dir, { intent: text });
-    if (!intentCarriesNotification) {
-      const tmux = res?.tmux ?? tmuxFor(to);
-      const socket = sessionManager.entryFor(to)?.socket ?? '';
-      if (!tmux) return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };
-      // A freshly-resumed pane's TUI can take several seconds to actually become
-      // interactive (loading MCP servers/skills/memory) — resume() only guarantees
-      // the pty was spawned, not that its input loop is reading yet. Confirmed live
-      // against Codex: a paste sent right after resume() is silently discarded (the
-      // TUI flushes buffered stdin on its own raw-mode init), not merely delayed, so
-      // waiting longer before ONE paste doesn't help — repaste-and-verify does.
-      const landed = await pasteAndVerify(tmux, text, socket, sendText, capturePane, classify, verifyDelayMs, verifyPollMs);
-      if (!landed) return { mode: 'error', error: 'notification paste did not land in the freshly-resumed pane (agent may still be starting up)' };
-    }
+    const res = await sessionManager.resume(to, dir);
+    const tmux = res?.tmux ?? tmuxFor(to);
+    const socket = sessionManager.entryFor(to)?.socket ?? '';
+    if (!tmux) return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };
+    // Then hold the paste until the woken process has connected its MCP client
+    // back to us, so the turn the paste starts genuinely has read_mail in its
+    // tool list. pasteAndVerify below is NOT a substitute for this gate: its
+    // signal is classify()'s "working" marker, i.e. the turn has ALREADY
+    // started, so it only moves turn start from process boot to TUI raw-mode
+    // init — still pre-MCP.
+    if (owned) await waitForMcpReady(to, since, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
+    // A freshly-resumed pane's TUI can take several seconds to actually become
+    // interactive (loading MCP servers/skills/memory) — resume() only guarantees
+    // the pty was spawned, not that its input loop is reading yet. Confirmed live
+    // against Codex: a paste sent right after resume() is silently discarded (the
+    // TUI flushes buffered stdin on its own raw-mode init), not merely delayed, so
+    // waiting longer before ONE paste doesn't help — repaste-and-verify does.
+    const landed = await pasteAndVerify(tmux, text, socket, sendText, capturePane, classify, verifyDelayMs, verifyPollMs);
+    if (!landed) return { mode: 'error', error: 'notification paste did not land in the freshly-resumed pane (agent may still be starting up)' };
   } catch (err) {
     return { mode: 'error', error: err?.message || String(err) };
   }
@@ -94,6 +126,26 @@ export async function deliverMailNotification(to, text, deps) {
 // Phase 1 — see the spec's "Claude Code cross-session messaging" section).
 function liveTransport(tmux, text, socket, sendText) {
   return sendText(tmux, text, socket);
+}
+
+const MCP_READY_TIMEOUT_MS = 15000;
+const MCP_READY_POLL_MS = 250;
+
+// Wait until this card's MCP client has spoken to /mcp AFTER `since` — i.e. the
+// process we just launched has connected, not the dead one it replaced (a bare
+// "has this card ever connected" would answer yes for any card that was live an
+// hour ago). Bounded, and a timeout FALLS THROUGH to the paste: a session whose
+// client never reports (an entry launched before this server learned to record
+// it, a broken /mcp) must still get its mail — a late notification beats a lost
+// one. The dormant path has no live pane and therefore no live process, so
+// there's nothing still running that could stamp a false positive here.
+async function waitForMcpReady(cardId, since, mcpSeenAt, timeoutMs, pollMs) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (mcpSeenAt(cardId) > since) return true;
+    await new Promise((r) => setTimeout(r, pollMs));
+  } while (Date.now() < deadline);
+  return false;
 }
 
 const PASTE_VERIFY_ATTEMPTS = 5;

@@ -9,16 +9,26 @@ function realDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aw-maild-'));
 }
 
+// A timestamp far enough in the past that it can never read as "connected since
+// the relaunch we just started" — models the woken card's PREVIOUS process
+// having talked to /mcp before it died.
+const STALE_MCP_SEEN = 1;
+
 function deps({
-  live = {}, entries = {}, resumeThrows = false, resuming = false, resumeTmux = 'cc_joined',
+  live = {}, entries = {}, resumeThrows = false, resumeTmux = 'cc_joined',
+  resuming = false,
   resumeReturnsPane = true, pasteLandsOnAttempt = 1,
+  mcpConnectsAfterPolls = 0, mcpSeenStale = false,
 } = {}) {
   const sent = [];
   const resumed = [];
   const bound = [];
   const captures = [];
+  // Each entry records how many pastes had already gone out when the gate
+  // polled, so a test can prove the paste waited rather than merely happened.
+  const mcpPolls = [];
   return {
-    sent, resumed, bound, captures,
+    sent, resumed, bound, captures, mcpPolls,
     sessionManager: {
       entryFor: (id) => entries[id] || null,
       isResuming: () => resuming,
@@ -47,6 +57,17 @@ function deps({
     },
     pasteVerifyDelayMs: 0, // real callers wait ~1.5s between attempts; tests don't need to.
     pasteVerifyPollMs: 0,
+    // Models the woken agent's MCP client connecting back to this server:
+    // `mcpConnectsAfterPolls` polls report nothing, then a fresh timestamp.
+    // `mcpSeenStale` reports only the dead process's old connection, which must
+    // never satisfy the gate.
+    mcpSeenAt: () => {
+      mcpPolls.push(sent.length);
+      if (mcpSeenStale) return STALE_MCP_SEEN;
+      return mcpPolls.length > mcpConnectsAfterPolls ? Date.now() : 0;
+    },
+    mcpReadyTimeoutMs: 30,
+    mcpReadyPollMs: 1,
   };
 }
 
@@ -72,16 +93,52 @@ test('live recipient archived during its settle window: skip, never paste — la
   assert.equal(d.sent.length, 0);
 });
 
-test('dormant Claude recipient (we OWN the resume): resume carries the notification as the intent, memory bound, no fallback paste', async () => {
+test('dormant Claude recipient (we OWN the resume): the notification NEVER rides the resume argv — it is pasted after the wake', async () => {
+  // The argv route (`claude --resume … -- <notice>`) auto-submits a turn at
+  // process boot, BEFORE the relaunched process's MCP client has connected, so
+  // the one turn we woke the session to run has no read_mail in its tool list
+  // and the agent reports the whole server as disconnected. Measured live.
   const dir = realDir();
-  const entry = { cwd: dir, agent: 'claude' };
-  const d = deps({ entries: { CARD1: entry } });
+  const entry = { cwd: dir, agent: 'claude', socket: '/s/cc' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cc_woken' });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.deepEqual(mode, { mode: 'dormant' });
   assert.equal(d.resumed.length, 1);
-  assert.deepEqual(d.resumed[0].opts, { intent: 'you have mail' });
+  assert.equal(d.resumed[0].opts?.intent, undefined, 'no intent: the relaunch must boot idle');
   assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
-  assert.equal(d.sent.length, 0);
+  assert.deepEqual(d.sent, [{ name: 'cc_woken', text: 'you have mail', socket: '/s/cc' }]);
+});
+
+test('the paste waits for the woken process to connect its MCP client, so the turn it starts can actually call read_mail', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'claude', socket: '/s/cc' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cc_woken', mcpConnectsAfterPolls: 3 });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'dormant' });
+  assert.ok(d.mcpPolls.length >= 4, 'gate polled until the client connected');
+  // Nothing had been pasted at any poll before the one that saw the connection.
+  assert.deepEqual(d.mcpPolls.slice(0, 4), [0, 0, 0, 0]);
+  assert.equal(d.sent.length, 1);
+});
+
+test('only a connection made SINCE the relaunch opens the gate — the dead process\'s old one does not', async () => {
+  // A bare "has this card ever reached /mcp" would answer yes for any card that
+  // was live an hour ago, reinstating the bug it exists to prevent.
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'claude', socket: '/s/cc' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cc_woken', mcpSeenStale: true });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'dormant' });
+  assert.ok(d.mcpPolls.length > 1, 'kept waiting rather than accepting the stale timestamp');
+  // Bounded: a client that never connects still gets the mail rather than
+  // stranding it — a late paste beats a lost notification.
+  assert.equal(d.sent.length, 1);
+});
+
+test('live recipient: the readiness gate is not consulted at all — its process booted long ago', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } } });
+  await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(d.mcpPolls.length, 0);
 });
 
 test('dormant Codex recipient: resume ignores the intent, so the notification is pasted into the resumed pane', async () => {
@@ -163,6 +220,22 @@ test('coalescing JOIN: a resume already in flight ⇒ notification delivered via
   const d = deps({ entries: { CARD1: entry }, resuming: true, resumeTmux: 'cc_joined' });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.deepEqual(mode, { mode: 'dormant' });
+  assert.deepEqual(d.sent, [{ name: 'cc_joined', text: 'you have mail', socket: '/s/z' }]);
+});
+
+test('coalescing JOIN: the readiness gate is SKIPPED — the relaunch is not ours, so waiting on it would stall the whole sweep', async () => {
+  // A joined resume was launched by someone else, possibly seconds before we
+  // asked: its process may well have connected its MCP client BEFORE our own
+  // `since`, and "connected since `since`" would then never come true. The gate
+  // would burn its full timeout inside a sweep that serializes every other
+  // dormant recipient behind it. Joining already meant an immediate paste before
+  // this gate existed, so skipping it here is exactly the old behaviour.
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'claude', socket: '/s/z' };
+  const d = deps({ entries: { CARD1: entry }, resuming: true, resumeTmux: 'cc_joined', mcpSeenStale: true });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'dormant' });
+  assert.equal(d.mcpPolls.length, 0, 'never polled the gate for a relaunch we do not own');
   assert.deepEqual(d.sent, [{ name: 'cc_joined', text: 'you have mail', socket: '/s/z' }]);
 });
 
