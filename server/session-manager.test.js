@@ -293,6 +293,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     intent: 'fix', name: 'My run', model: 'sonnet', createdAt: 100,
     forkedFrom: 'P', spawnedBy: 'SPAWNER1',
     worktree: { path: '/w', branch: 'b', repoRoot: '/r' },
+    addDirs: ['/r/.git'],
     workflow: { issue: 'ENT-1', phase: { label: 'verifying', kind: 'warning', at: 9 }, startedAt: 2 },
     parentSession: 'ORCH1',
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1', number: 1 }],
@@ -308,6 +309,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.deepEqual(e.priorLiveSessionIds, ['CLEARED1']);
   assert.deepEqual(e.workflow, prev.workflow); // the autopilot chip survives resume (8h-suspend recovery)
   assert.deepEqual(e.worktree, prev.worktree);
+  assert.deepEqual(e.addDirs, prev.addDirs);
   assert.equal(e.forkedFrom, 'P');
   assert.equal(e.spawnedBy, 'SPAWNER1');
   assert.equal(e.parentSession, 'ORCH1'); // the nesting link is a stable card id — survives resume too
@@ -898,6 +900,18 @@ test('resume() re-threads the persisted entry.effort into buildResume (effort is
   assert.match(captured, /'model_reasoning_effort=medium'/);
 });
 
+test('resume restores explicit Git metadata access in the Codex command and mapping', async () => {
+  const sm = resumableCodex('card-git-access');
+  sm.map.get('card-git-access').addDirs = ['/projects/main/.git'];
+  let captured = '';
+  sm.killForSession = async () => [];
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-git-access', os.tmpdir());
+  assert.ok(captured.includes("'--add-dir' '/projects/main/.git'"));
+  assert.deepEqual(sm.map.get('card-git-access').addDirs, ['/projects/main/.git']);
+  assert.match(captured, /'--sandbox' 'workspace-write'/);
+});
+
 // Trust is no longer part of the launch command (verified against the real
 // Codex binary that a `-c projects.<path>.trust_level` override is silently
 // ignored by its interactive trust dialog) — resume() instead calls
@@ -1291,6 +1305,23 @@ test('dispatch passes Codex the real task memory root, never the by-session syml
   assert.match(captured, new RegExp(`AW_TASK_MEMORY='${memoryPath}'`));
   assert.ok(captured.includes(`'--add-dir' '${memoryDir}'`));
   assert.doesNotMatch(captured, /by-session/);
+});
+
+test('dispatch saves explicit writable directories before the automated worker starts', async () => {
+  const sm = smForDispatch();
+  sm._resolveLiveId = async () => 'codex-live';
+  const addDirs = ['/projects/main/.git'];
+  let prepared;
+  sm._newSession = async (_t, _d, inner) => {
+    assert.deepEqual(sm.map.get(prepared).addDirs, addDirs);
+    assert.ok(inner.includes("'--add-dir' '/projects/main/.git'"));
+  };
+  const { sessionId } = await sm.dispatch({
+    cwd: os.tmpdir(), agent: 'codex', addDirs,
+    automationRun: { jobId: 'job1', runId: 'run1' },
+    onAutomationPrepared: sid => { prepared = sid; },
+  });
+  assert.deepEqual(sm.map.get(sessionId).addDirs, addDirs);
 });
 
 // Trust is no longer part of the launch command (verified against the real

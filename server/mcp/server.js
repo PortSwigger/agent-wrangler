@@ -30,7 +30,10 @@ export function extractCaller(req) {
 // injectable so a test can pin the set without writing config.json.
 export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
+  const automated = Boolean(deps.sessionManager?.entryFor?.(caller)?.automationRun);
+  const spawning = new Set(['spawn_session', 'spawn_workflow', 'schedule_session']);
   for (const tool of tools) {
+    if (automated && spawning.has(tool.name)) continue;
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.inputSchema },

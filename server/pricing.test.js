@@ -14,6 +14,11 @@ test('codexCostUsd prices gpt-5.6-sol/terra/luna tokens', () => {
   }
 });
 
+test('codexCostUsd prices gpt-6-astra at its published rates (1M in + 1M out = $60)', () => {
+  const usd = codexCostUsd({ 'gpt-6-astra': { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000 } });
+  assert.equal(usd, 61);
+});
+
 test('codexCostUsd unknown model still returns a number (default rate)', () => {
   const usd = codexCostUsd({ 'mystery-model': { input: 1_000_000, output: 0, cacheRead: 0 } });
   assert.equal(typeof usd, 'number');

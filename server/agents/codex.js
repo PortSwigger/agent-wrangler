@@ -82,12 +82,13 @@ export const codex = {
   // pasted into the now-live pane after resume() resolves (see pr-nudge-runner).
   resumeCarriesIntent: false,
   models: [
-    { value: 'gpt-5.5', label: 'GPT-5.5 · frontier', pillLabel: 'gpt-5.5' },
+    { value: 'gpt-5.5', label: 'GPT-5.5 · capable', pillLabel: 'gpt-5.5' },
     { value: 'gpt-5.4', label: 'GPT-5.4 · everyday coding', pillLabel: 'gpt-5.4' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap', pillLabel: 'gpt-5.4 mini' },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', pillLabel: 'gpt-5.6 sol', default: true },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · capable', pillLabel: 'gpt-5.6 sol', default: true },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
+    { value: 'gpt-6-astra', label: 'GPT-6 Astra · most capable', pillLabel: 'gpt-6 astra' },
   ],
   efforts: [
     { value: 'minimal', label: 'Minimal' },

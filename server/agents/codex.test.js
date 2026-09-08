@@ -120,6 +120,11 @@ test('matchContainerized: a devcontainer/docker exec wrapping codex matches; a p
   assert.equal(adapterForContainerProcess('docker exec CID /bin/sh'), null); // wrapper but no agent
 });
 
+test('codex offers gpt-6-astra without displacing the confirmed default', () => {
+  assert.ok(codex.models.some((m) => m.value === 'gpt-6-astra'));
+  assert.equal(codex.models.find((m) => m.default)?.value, 'gpt-5.6-sol');
+});
+
 test('codex exposes an efforts list with expected levels and no default', () => {
   const values = codex.efforts.map((e) => e.value);
   assert.deepEqual(values, ['minimal', 'low', 'medium', 'high']);

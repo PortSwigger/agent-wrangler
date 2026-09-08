@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, gitRepoRoot, gitMetadataDirs, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -79,11 +79,13 @@ function tempRepo() {
 test('gitRepoRoot: returns the main repo root for a path inside it', async () => {
   const { repo } = tempRepo();
   assert.equal(await gitRepoRoot(path.join(repo, 'src')), repo);
+  assert.deepEqual(await gitMetadataDirs(path.join(repo, 'src')), [path.join(repo, '.git')]);
 });
 
 test('gitRepoRoot: returns null for a non-git directory', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-nogit-')));
   assert.equal(await gitRepoRoot(dir), null);
+  await assert.rejects(gitMetadataDirs(dir));
 });
 
 test('worktreeDirName: <repo>-worktree-<branch>', () => {
@@ -95,6 +97,18 @@ test('gitRepoRoot: returns the MAIN repo root when cwd is a linked worktree', as
   const wt = path.join(root, 'myproj-worktree-feature');
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', wt, '-b', 'feature'], { stdio: 'pipe' });
   assert.equal(await gitRepoRoot(wt), repo);
+  assert.deepEqual(await gitMetadataDirs(wt), [path.join(repo, '.git')], 'shared metadata covers the worktree index and FETCH_HEAD');
+});
+
+test('Git metadata grants follow separate Git directories and canonicalize symlinks', async (t) => {
+  const { root, repo } = tempRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const metadata = path.join(fs.realpathSync(root), 'shared metadata');
+  fs.renameSync(path.join(repo, '.git'), metadata);
+  fs.writeFileSync(path.join(repo, '.git'), `gitdir: ${metadata}\n`);
+  const alias = path.join(root, 'repo-alias');
+  fs.symlinkSync(repo, alias, 'dir');
+  assert.deepEqual(await gitMetadataDirs(alias), [metadata]);
 });
 
 test('isLinkedWorktree: true inside a linked worktree, false in the main checkout', async () => {
@@ -466,4 +480,20 @@ test('worktreeStatus: reports dir + branch existence; null for non-worktree', as
   const removed = await worktreeStatus({ path: wt.path, branch: 'status', repoRoot: repo });
   assert.deepEqual(removed, { path: wt.path, branch: 'status', dirExists: false, branchExists: true });
   assert.equal(await worktreeStatus(null), null);
+});
+
+test('createWorktree: an explicit fetched base is used instead of the main checkout HEAD', async () => {
+  const { root, repo } = tempRepo();
+  try {
+    const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    const base = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', base);
+    fs.writeFileSync(path.join(repo, 'local-only.txt'), 'Local main work must not leak into a job');
+    git('add', 'local-only.txt');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'local only');
+    const wt = await createWorktree({ cwd: repo, branch: 'automated-job', auto: true, baseRef: 'refs/remotes/origin/main' });
+    assert.equal(execFileSync('git', ['-C', wt.path, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), base);
+    assert.equal(fs.existsSync(path.join(wt.path, 'local-only.txt')), false);
+    assert.throws(() => git('config', '--get', 'branch.automated-job.merge'), 'the job branch must not track origin/main');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

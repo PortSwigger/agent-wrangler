@@ -63,6 +63,11 @@ const OPENAI_TABLE = [
   { match: 'gpt-5.5', input: 5, output: 30, cacheRead: 0.5 },
   { match: 'gpt-5.4-mini', input: 0.75, output: 4.5, cacheRead: 0.075 },
   { match: 'gpt-5.4', input: 2.5, output: 15, cacheRead: 0.25 },
+  // gpt-6-astra (verified 2026-09-04). Two parts of its published pricing can't be
+  // modelled from a rollout's cumulative totals: cache WRITES (1.25x input, $12.50 —
+  // codex never reports them) and the >272K-input tier (2x input/cache, 1.5x output
+  // for the whole request), so a long-context turn under-reports.
+  { match: 'gpt-6-astra', input: 10, output: 50, cacheRead: 1 },
 ];
 const OPENAI_DEFAULT = OPENAI_TABLE[0];
 

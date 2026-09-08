@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import os from 'node:os';
+import { JobStore } from './job-store.js';
+import { JobRunner } from './job-runner.js';
+import { JobRuntime } from './job-runtime.js';
+import { JobGithub } from './job-github.js';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import openModule from 'open';
@@ -76,6 +80,11 @@ const memoryStore = new MemoryStore();
 sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
   runArchiveReview(sessionId, entry, task, { memoryStore, ...extraDeps });
 const scheduleStore = new ScheduleStore();
+const jobStore = new JobStore();
+const jobRunner = new JobRunner({ store: jobStore,
+  runtime: new JobRuntime({ sessionManager, memoryStore, taskStore }),
+  github: new JobGithub(), onChange: () => rebuild(),
+});
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops
 // a session's read/undeliverable mail but keeps the box and its unread mail,
@@ -125,7 +134,8 @@ async function runPrStatusSweep(only) {
   const links = [
     ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
     ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
-  ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
+  ].filter((l) => !(l.scope === 'session' && sessionManager.entryFor(l.ownerId)?.automationRun))
+    .filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   let changed = false;
   // The install-wide fallback for a session with no explicit autoFixPrChecks —
   // read once per sweep and shared by every pane-nudge decision below (the
@@ -452,6 +462,7 @@ const mcpRequestHandler = createMcpRequestHandler({
   // schedule_session creates a schedule (dispatch / resume / message) through the
   // same store the /ws schedule handlers use; the tick owner fires it.
   scheduleStore,
+  jobStore,
   // Graph-based target resolvers (built above) so send_message can reach a live
   // peer's terminal and archive_session can snapshot a target before stopping it.
   tmuxFor,
@@ -535,6 +546,7 @@ async function rebuildOnce() {
   }));
   const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore });
   graph.tasks = taskStore.snapshot();
+  graph.jobs = jobStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   // Annotate each task with whether it has memory so tiles can render the dot
   // without fetching content.
@@ -593,10 +605,12 @@ controlWss.on('connection', (ws) => {
     taskStore,
     memoryStore,
     scheduleStore,
+    jobStore,
     mailStore,
     checklistStore,
     rebuild,
     runSchedule: runScheduleNow,
+    runJobs: () => jobRunner.tick(),
     graph: () => lastGraph,
     sessionFromGraph,
     tmuxFor,
@@ -715,6 +729,10 @@ async function main() {
     log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
     if (shouldOpenBrowser()) open(url).catch(() => {});
   });
+
+  // The job runner owns its re-entry guard and only rebuilds after state changes.
+  const jobsPoll = setInterval(() => { jobRunner.tick().catch((e) => console.error('[jobs]', e)); }, 4000);
+  jobsPoll.unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless
   // of whether the prior async tick has settled, so a slow sweep CAN overlap the next

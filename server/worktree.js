@@ -88,6 +88,21 @@ export async function gitRepoRoot(cwd) {
   }
 }
 
+// Linked worktrees keep their index/FETCH_HEAD under the main checkout's Git
+// metadata. Grant those directories explicitly to sandboxed job workers, without
+// making the main checkout's source files writable. Resolve through Git so
+// separate Git directories and symlinked parents work too.
+export async function gitMetadataDirs(cwd) {
+  const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']);
+  const dirs = stdout.trim().split('\n');
+  if (dirs.length !== 2 || dirs.some(dir => !path.isAbsolute(dir))) {
+    throw new Error('Cannot resolve Git metadata directories for the job workspace');
+  }
+  const roots = [...new Set(dirs.map(dir => fs.realpathSync(dir)))];
+  if (roots.some(dir => !fs.statSync(dir).isDirectory())) throw new Error('Job Git metadata is not a directory');
+  return roots.filter(dir => !roots.some(parent => parent !== dir && dir.startsWith(parent + path.sep)));
+}
+
 // True when `cwd` is itself a *linked* worktree (not the main checkout): its own
 // git-dir (…/.git/worktrees/<name>) differs from the common git-dir (…/.git).
 // Used to warn that a new worktree created from here branches off the main
@@ -200,7 +215,7 @@ export async function classifyWorktreeTarget({ repoRoot, folder, branch }) {
 // existing worktree on the branch is adopted as-is (dirty tree tolerated), and a
 // genuinely impossible target (branch busy elsewhere, folder occupied) throws
 // WorktreeError. Always returns { path, branch, repoRoot }.
-export async function createWorktree({ cwd, branch, folderName = '', auto = false }) {
+export async function createWorktree({ cwd, branch, folderName = '', auto = false, baseRef = '' }) {
   const repoRoot = await gitRepoRoot(cwd);
   if (!repoRoot) throw new WorktreeError('Not a git repository');
   const parent = path.dirname(repoRoot);
@@ -235,7 +250,8 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
   // `existing-branch` checks the branch out (no -b); everything else makes a new branch.
   const addArgs = status === 'existing-branch'
     ? ['-C', repoRoot, 'worktree', 'add', f, b]
-    : ['-C', repoRoot, 'worktree', 'add', '-b', b, f];
+    : ['-C', repoRoot, 'worktree', 'add', ...(baseRef ? ['--no-track'] : []), '-b', b, f];
+  if (status === 'new' && baseRef) addArgs.push(baseRef);
   try {
     await exec('git', addArgs);
   } catch (e) {

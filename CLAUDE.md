@@ -1268,3 +1268,33 @@ don't re-derive it.
   name a shell var `TMUX`** (it breaks `tmux ls`).
 - No unnecessary code comments; match the existing dense "explain *why*" style.
   `npm test` runs `node --test`.
+
+## Automated jobs
+
+- `JobStore` (`server/job-store.js`) owns `jobs.json`; `JobRunner` claims before
+  dispatch and only releases a concurrency slot after the reporting session has
+  stopped. `SessionManager.dispatch` persists `automationRun` and invokes
+  `onAutomationPrepared` **before** `_newSession`, so a fast MCP report has an
+  owner and a restart cannot replay an uncertain launch. Preserve this marker on
+  resume. An interrupted claim blocks for review rather than guessing.
+- Job sessions are excluded from the legacy PR poll/nudge/auto-merge loop; their
+  coordinator owns those actions. Their MCP registry omits spawning/scheduling
+  tools, and archive skips the optional paid memory review. This prevents hidden
+  work outside the job concurrency and repair limits.
+- Review approvals refer to an immutable local receipt id or GitHub head SHA;
+  plan approval uses its displayed revision. Dependencies gate **deployment**,
+  and work verified before a dependency deploys gets reverified before review or
+  publication. `job_report` is an attestation, not inferred terminal prose.
+- Automated jobs may bypass `REVIEW_REQUIRED` with `--admin` after green checks
+  and confirmed mergeability. Re-observe before the override and retain the
+  approved head match; `--admin` also bypasses GitHub's check enforcement.
+- Planning starts in a fresh scratch workspace without a repository or worktree.
+  Input `repos` are optional hints; a reported/approved plan replaces them with
+  the distinct sub-job repositories. Do not treat hints as an allowlist.
+- Implementation creates worktrees from a fetched remote default ref (`worktreeBase`),
+  never the main checkout's possibly local HEAD. Cleanup compare-deletes only the
+  verified ref value; squash-merged branches cannot be tested with `branch -d`.
+- GitHub Actions deployments must match every explicitly selected workflow on
+  the exact merge commit/base branch. A missing/skipped run stays unverified.
+  The recovery job and backlink are one store mutation, preventing duplicate
+  recovery proposals on restart.

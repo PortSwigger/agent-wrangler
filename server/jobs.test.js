@@ -1,0 +1,491 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { JobStore } from './job-store.js';
+import { JobRunner } from './job-runner.js';
+import { JobGithub, prSummary } from './job-github.js';
+import { jobReportTool, getJobContextTool } from './mcp/tools/job-report.js';
+import { allowedToolsArg } from './mcp/client-config.js';
+import { routeControlMessage } from './control/router.js';
+
+const input = { title: 'Reliable sign-in', intent: 'Customers can sign in reliably', repos: ['/repo'], reviewCode: true, reviewMerge: true };
+const spec = (id, dependsOn = []) => ({ id, title: `Deliver ${id}`, repo: '/repo', storyId: 'story', dependsOn,
+  instructions: `Implement ${id}`, deployment: { workflows: ['deploy.yml'], verify: 'Check running version and sign-in' } });
+const plan = (subs = [spec('api')]) => ({ stories: [{ id: 'story', key: 'AUTH-123', title: 'Reliable sign-in', value: 'Customers can access their account' }], subJobs: subs });
+function fixture(t, jobInput = input) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-jobs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new JobStore(path.join(dir, 'jobs.json'));
+  const launched = [], stopped = [], merged = [], cleaned = [], alive = new Set();
+  let clock = Date.now();
+  const runtime = {
+    async launch(j, s, r, prepared) {
+      const sid = `session-${r.id}`; alive.add(sid); launched.push({ job: j, sub: s, run: r, sid });
+      prepared(sid, s?.worktree ? undefined : { path: `/worktree/${s?.id || r.id}`, repoRoot: '/repo', branch: `branch-${s?.id || r.id}` });
+    },
+    async stop(r) { stopped.push(r.id); alive.delete(r.sessionId); },
+    async isAlive(r) { return alive.has(r.sessionId); },
+    async cleanup(j, s) { cleaned.push(s.id); }, async cleanupPlanning() {},
+  };
+  let pr = { state: 'OPEN', checkStatus: 'pending', head: 'head1', mergeCommit: null, checks: [], base: 'main' };
+  let deployment = { status: 'pending', runs: [], commit: 'merge1' };
+  const github = { async pr(s) { return { ...pr, url: s.pr.url }; }, async merge(s) { merged.push(s.pr.head); }, async deployment() { return deployment; } };
+  const runner = new JobRunner({ store, runtime, github, now: () => clock });
+  const job = store.create(jobInput);
+  const tick = async () => { clock += 61000; await runner.tick(); };
+  const last = () => launched.at(-1);
+  const report = (payload, worker = last()) => store.report(worker.sid, worker.run.id, payload);
+  async function approve(p = plan()) {
+    store.action(job.id, 'start'); await tick(); report({ kind: 'plan', plan: p }); await tick();
+    const current = store.get(job.id); store.approvePlan(job.id, current.revision); await tick();
+  }
+  return { store, job, runner, runtime, github, alive, launched, stopped, merged, cleaned, tick, last, report, approve,
+    setPr: (value) => { pr = { ...pr, ...value }; }, setDeployment: (value) => { deployment = value; } };
+}
+
+test('store persists settings, plans and live claims across restart', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.store.settings({ concurrency: 4 });
+  assert.deepEqual(new JobStore(f.store.file).snapshot(), f.store.snapshot());
+  assert.equal(f.store.get(f.job.id).runs.filter((r) => !r.stopped).length, 1);
+});
+
+test('invalid cycles, missing Jira value and ambiguous repository paths cannot reach approval', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  const before = f.store.snapshot();
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([spec('a', ['b']), spec('b', ['a'])]) }), /cycles/);
+  assert.throws(() => f.report({ kind: 'plan', plan: { ...plan(), stories: [{ id: 'story', key: 'AUTH-123', title: 'x', value: '' }] } }));
+  for (const repo of ['service', 'https://github.com/org/repo', '/repo\n/other']) {
+    assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), repo }]) }), /local repository path/);
+  }
+  assert.deepEqual(f.store.snapshot(), before);
+});
+
+test('jobs without repository hints discover and persist repositories before human approval', async (t) => {
+  const { repos, ...withoutRepos } = input;
+  const f = fixture(t, withoutRepos);
+  assert.deepEqual(f.job.repos, []);
+  assert.deepEqual(f.store.create({ ...input, repos: [] }).repos, []);
+  f.store.action(f.job.id, 'start'); await f.tick();
+  const proposed = plan([spec('api'), { ...spec('web'), repo: '/web' }, spec('api-followup', ['api'])]);
+  f.report({ kind: 'plan', plan: proposed }); await f.tick();
+  const current = new JobStore(f.store.file).get(f.job.id);
+  assert.deepEqual(current.repos, ['/repo', '/web']);
+  assert.equal(current.stage, 'planning'); assert.deepEqual(current.subJobs, []);
+  assert.equal(f.launched.length, 1, 'discovery must wait for plan approval');
+  f.store.approvePlan(f.job.id, current.revision); await f.tick();
+  assert.deepEqual(f.launched.slice(1).map((w) => w.sub.repo), ['/repo', '/web']);
+});
+
+test('repository hints allow discovery beyond them and refinements replace the proposed repositories', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  f.report({ kind: 'plan', plan: plan([{ ...spec('api'), repo: '/discovered' }]) }); await f.tick();
+  const first = f.store.get(f.job.id);
+  assert.deepEqual(first.repos, ['/discovered']);
+  f.store.action(f.job.id, 'replan', { feedback: 'Move this change to the shared service' }); await f.tick();
+  assert.deepEqual(f.last().job.previousPlan, first.plan);
+  f.report({ kind: 'plan', plan: plan([{ ...spec('api'), repo: '/shared' }]) }); await f.tick();
+  assert.deepEqual(f.store.get(f.job.id).repos, ['/shared']);
+  assert.throws(() => f.store.approvePlan(f.job.id, first.revision), /changed/);
+  const latest = f.store.get(f.job.id);
+  const edited = plan([{ ...spec('api'), repo: '/reviewed' }]);
+  f.store.approvePlan(f.job.id, latest.revision, edited);
+  assert.deepEqual(f.store.get(f.job.id).repos, ['/reviewed']);
+  assert.equal(f.store.get(f.job.id).subJobs[0].repo, '/reviewed');
+});
+
+test('reports require the assigned caller, expected phase and short factual checks', async (t) => {
+  const f = fixture(t); await f.approve();
+  const w = f.last();
+  assert.throws(() => f.store.report('someone-else', w.run.id, { kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: ['Tests pass'] }), /assigned/);
+  assert.throws(() => f.report({ kind: 'deployed', checks: ['Works'] }), /must submit local/);
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'Wrong ticket', checks: ['Tests pass'] }), /Jira/);
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: ['a'.repeat(181)] }));
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: [] }));
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: ['Tests pass'] });
+  await f.tick();
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: ['Tests pass'] }, w);
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'AUTH-123: changed', checks: ['Tests pass'] }, w), /different report/);
+});
+
+test('PR-only checks persist separately from local evidence and publication still waits on review and CI', async (t) => {
+  const f = fixture(t); await f.approve();
+  const pendingChecks = ['Dev/prod Terraform plans preserve client IDs and credentials'];
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: Rename display names', checks: ['Terraform tests pass'], pendingChecks });
+  await f.tick();
+  const sub = new JobStore(f.store.file).get(f.job.id).subJobs[0];
+  assert.deepEqual(sub.local.checks, ['Terraform tests pass']);
+  assert.deepEqual(sub.local.pendingChecks, pendingChecks);
+  assert.equal(f.last().run.phase, 'implementation', 'keep the code review gate');
+  f.store.action(f.job.id, 'approve-code', { subJobId: sub.id, localReceiptId: sub.local.receiptId });
+  await f.tick();
+  assert.equal(f.last().run.phase, 'publish');
+  assert.deepEqual(f.last().sub.local.pendingChecks, pendingChecks);
+  f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/1' });
+  await f.tick();
+  assert.equal(f.merged.length, 0);
+  assert.throws(() => f.store.action(f.job.id, 'approve-merge', { subJobId: sub.id, head: 'head1' }), /green/);
+});
+
+test('retrying a blocked publisher preserves code approval, receipt and worktree', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: sign-in', checks: ['Tests pass'] });
+  await f.tick();
+  const local = f.store.get(f.job.id).subJobs[0].local;
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', localReceiptId: local.receiptId });
+  await f.tick();
+  const approved = f.store.get(f.job.id).subJobs[0];
+  assert.equal(f.last().run.phase, 'publish');
+  f.report({ kind: 'blocked', summary: 'Git metadata needs write access' });
+  await f.tick();
+  f.store.action(f.job.id, 'retry', { subJobId: 'api' });
+  await f.tick();
+  const retried = f.store.get(f.job.id).subJobs[0];
+  assert.equal(f.last().run.phase, 'publish');
+  assert.deepEqual(retried.local, local);
+  assert.equal(retried.codeApprovedAt, approved.codeApprovedAt);
+  assert.deepEqual(retried.worktree, approved.worktree);
+  assert.equal(f.launched.filter(w => w.run.phase === 'implementation').length, 1);
+});
+
+test('plan approval is explicit and rejects a stale or running review', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  f.report({ kind: 'plan', plan: plan() });
+  assert.throws(() => f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision), /not ready/);
+  await f.tick();
+  assert.equal(f.launched.length, 1);
+  const rev = f.store.get(f.job.id).revision;
+  f.store.action(f.job.id, 'pause');
+  assert.throws(() => f.store.approvePlan(f.job.id, rev), /changed/);
+});
+
+test('complete lifecycle: short receipts, optional local review, head-bound merge and verified cleanup', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: reliable sign-in', checks: ['Tests pass', 'Running API curl passes'] });
+  await f.tick(); assert.equal(f.last().run.phase, 'implementation');
+  let sub = f.store.get(f.job.id).subJobs[0];
+  f.store.action(f.job.id, 'approve-code', { subJobId: sub.id, localReceiptId: sub.local.receiptId });
+  await f.tick(); assert.equal(f.last().run.phase, 'publish');
+  f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/1' });
+  f.setPr({ checkStatus: 'passing' }); await f.tick(); assert.equal(f.merged.length, 0);
+  assert.throws(() => f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'older' }), /green/);
+  f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head1' });
+  f.setPr({ head: 'head2' }); await f.tick(); assert.equal(f.merged.length, 0);
+  f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head2' });
+  await f.tick(); await f.tick(); assert.deepEqual(f.merged, ['head2']);
+  f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'deployment');
+  await f.tick(); assert.equal(f.last().run.phase, 'publish');
+  f.setDeployment({ status: 'passing', runs: [{ workflow: 'deploy.yml', status: 'passing' }], commit: 'merge1' });
+  await f.tick(); assert.equal(f.last().run.phase, 'verify');
+  f.report({ kind: 'deployed', checks: ['Running version is merge1', 'Sign-in works against deployed API'] });
+  await f.tick(); assert.equal(f.store.get(f.job.id).stage, 'done'); assert.deepEqual(f.cleaned, ['api']);
+});
+
+test('concurrency applies to all jobs and paused work never starts a session', async (t) => {
+  const f = fixture(t); f.store.settings({ concurrency: 1 });
+  const second = f.store.create(input); f.store.action(f.job.id, 'start'); f.store.action(second.id, 'start');
+  await f.tick(); await f.tick(); assert.equal(f.launched.length, 1);
+  f.store.settings({ paused: true }); f.report({ kind: 'plan', plan: plan() }); await f.tick();
+  assert.equal(f.launched.length, 1); assert.equal(f.alive.size, 0);
+  f.store.settings({ paused: false }); await f.tick(); assert.equal(f.launched.length, 2);
+});
+
+test('dependent sub-jobs build in parallel, then reverify once dependencies have deployed', async (t) => {
+  const f = fixture(t); await f.approve(plan([spec('api'), spec('web', ['api'])]));
+  const builds = f.launched.filter((w) => w.run.phase === 'implementation'); assert.equal(builds.length, 2);
+  builds.forEach((w) => f.report({ kind: 'local', commitMessage: 'AUTH-123: change', checks: ['Tests pass'] }, w));
+  await f.tick();
+  let web = f.store.get(f.job.id).subJobs[1]; assert.equal(web.dependenciesVerified, false);
+  assert.throws(() => f.store.action(f.job.id, 'approve-code', { subJobId: 'web', localReceiptId: web.local.receiptId }), /not ready/);
+  f.store.update(f.job.id, (j) => { j.subJobs[0].deployed = { checks: ['Live'] }; j.subJobs[0].stage = 'done'; });
+  await f.tick(); assert.equal(f.last().sub.id, 'web'); assert.equal(f.last().run.phase, 'implementation');
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: change', checks: ['Tests pass against deployed API'] }); await f.tick();
+  web = f.store.get(f.job.id).subJobs[1]; assert.equal(web.dependenciesVerified, true); assert.equal(web.codeApprovedAt, null);
+});
+
+async function atPr(f) {
+  f.store.update(f.job.id, (j) => { j.reviewCode = false; j.reviewMerge = false; });
+  await f.approve(); f.report({ kind: 'local', commitMessage: 'AUTH-123: change', checks: ['Tests pass'] }); await f.tick();
+  f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/1' });
+}
+
+test('failed CI wakes only bounded repair sessions and retains their short changes', async (t) => {
+  const f = fixture(t); f.store.settings({ maxRepairs: 1 }); await atPr(f);
+  f.setPr({ checkStatus: 'failing' }); await f.tick(); assert.equal(f.last().run.phase, 'repair');
+  await f.tick(); assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 1);
+  f.report({ kind: 'repaired', changes: ['Fixed flaky clock assertion'], checks: ['Clock test passes'] }); await f.tick();
+  const sub = f.store.get(f.job.id).subJobs[0]; assert.equal(sub.repairs.length, 1); assert.match(sub.error, /limit reached/);
+  f.store.action(f.job.id, 'retry', { subJobId: sub.id }); await f.tick(); assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 2);
+});
+
+test('deployment failure creates exactly one manual recovery job, preserved on restart', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'failing', runs: [{ workflow: 'deploy.yml', status: 'failing' }], commit: 'merge1' });
+  await f.tick(); await f.tick();
+  const jobs = f.store.snapshot().jobs; assert.equal(jobs.length, 2); assert.equal(jobs[1].stage, 'backlog');
+  assert.equal(jobs[1].runs.length, 0); assert.equal(jobs[0].subJobs[0].deployed, undefined);
+  assert.equal(new JobStore(f.store.file).snapshot().jobs.length, 2);
+  f.store.update(jobs[1].id, (j) => { j.stage = 'done'; });
+  await f.tick(); await f.tick(); assert.equal(f.store.get(f.job.id).stage, 'done');
+});
+
+test('a failed live behaviour check also proposes recovery instead of cleaning up', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'passing', runs: [], commit: 'merge1' }); await f.tick();
+  f.report({ kind: 'blocked', summary: 'Deployed endpoint returns 500' }); await f.tick();
+  assert.equal(f.store.snapshot().jobs.length, 2); assert.equal(f.cleaned.length, 0);
+});
+
+test('crashed and uncertain launches are blocked, not silently duplicated on restart', async (t) => {
+  const f = fixture(t); await f.approve(); f.alive.clear(); await f.tick(); await f.tick();
+  assert.match(f.store.get(f.job.id).subJobs[0].error, /without a verification receipt/);
+  assert.equal(f.launched.length, 2);
+  const other = f.store.create(input); f.store.action(other.id, 'start'); f.store.claim(other.id, null, 'planning');
+  await f.tick(); assert.match(f.store.get(other.id).error, /Launch was interrupted/);
+});
+
+test('session teardown failure keeps its slot reserved', async (t) => {
+  const f = fixture(t); await f.approve(); f.report({ kind: 'local', commitMessage: 'AUTH-123: change', checks: ['Tests pass'] });
+  f.runtime.stop = async () => { throw new Error('Still alive'); }; await f.tick();
+  assert.equal(f.store.get(f.job.id).runs.filter((r) => !r.stopped).length, 1);
+  assert.match(f.store.get(f.job.id).error, /Still alive/);
+});
+
+test('a failed liveness query does not stop the worker or release its slot', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  f.runtime.isAlive = async () => { throw new Error('tmux temporarily unavailable'); };
+  await f.tick();
+  assert.equal(f.stopped.length, 0);
+  assert.equal(f.store.get(f.job.id).runs[0].stopped, false);
+  assert.equal(f.launched.length, 1);
+});
+
+test('a receipt arriving during an exit probe is honoured without a false missing-receipt error', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  f.runtime.isAlive = async () => { f.report({ kind: 'plan', plan: plan() }); return false; };
+  await f.tick();
+  const job = f.store.get(f.job.id);
+  assert.equal(job.error, undefined);
+  assert.ok(job.plan);
+  assert.equal(job.runs[0].stopped, true);
+  f.store.approvePlan(job.id, job.revision);
+});
+
+test('tick overlap does not duplicate side effects and paused-in-flight polling cannot merge', async (t) => {
+  const f = fixture(t); await atPr(f);
+  let release; f.github.pr = async () => { await new Promise((r) => { release = r; }); return { state: 'OPEN', checkStatus: 'passing', head: 'head1' }; };
+  const pending = f.tick();
+  while (!release) await new Promise((r) => setImmediate(r));
+  await f.runner.tick(); f.store.action(f.job.id, 'pause'); release(); await pending;
+  assert.equal(f.merged.length, 0);
+});
+
+test('pipeline API failure never turns old green evidence into a merge', async (t) => {
+  const f = fixture(t); await atPr(f); f.github.pr = async () => { throw new Error('GitHub unavailable'); };
+  await f.tick(); assert.equal(f.merged.length, 0); assert.match(f.store.get(f.job.id).subJobs[0].observationError, /unavailable/);
+});
+
+test('cleanup refusal remains visible and retryable', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.alive.clear(); await f.tick();
+  f.store.update(f.job.id, (j) => { const s = j.subJobs[0]; s.error = null; s.stage = 'cleanup'; s.deployed = { checks: ['Works'] }; });
+  f.runtime.cleanup = async () => { throw new Error('Worktree contains local changes'); };
+  await f.tick(); assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'cleanup');
+  assert.match(f.store.get(f.job.id).subJobs[0].error, /local changes/);
+});
+
+test('MCP receipts and context are caller-bound and launch-allowlisted', async (t) => {
+  const f = fixture(t); await f.approve(); const w = f.last();
+  const deps = { jobStore: f.store };
+  assert.equal((await getJobContextTool.handler({ deps, caller: 'other' })).structuredContent.job, null);
+  assert.equal((await getJobContextTool.handler({ deps, caller: w.sid })).structuredContent.run.id, w.run.id);
+  const report = { kind: 'local', commitMessage: 'AUTH-123: change', checks: ['Tests pass'] };
+  assert.equal((await jobReportTool.handler({ deps, caller: 'other' }, { runId: w.run.id, report })).isError, true);
+  assert.equal((await jobReportTool.handler({ deps, caller: w.sid }, { runId: w.run.id, report })).structuredContent.accepted, true);
+  assert.match(allowedToolsArg({ checklist: false }), /job_report/); assert.match(allowedToolsArg(), /get_job_context/);
+});
+
+test('job control routes validate input and return a concrete creation acknowledgement', async (t) => {
+  const f = fixture(t), sent = [];
+  const ctx = { jobStore: f.store, rebuild: async () => {}, reply: (x) => sent.push(x) };
+  await routeControlMessage(JSON.stringify({ type: 'job-create', job: input }), ctx);
+  assert.equal(sent[0].type, 'job-created');
+  await routeControlMessage(JSON.stringify({ type: 'job-settings', patch: { concurrency: 0 } }), ctx);
+  assert.equal(sent[1].type, 'error'); assert.equal(f.store.snapshot().settings.concurrency, 2);
+});
+
+const rawPr = { url: 'https://github.com/org/repo/pull/1', state: 'OPEN', headRefName: 'branch-api', headRefOid: 'head1', baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ name: 'tests', conclusion: 'SUCCESS' }] };
+const reviewRequiredPr = { ...rawPr, mergeStateStatus: 'BLOCKED', reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE' };
+function reviewGithub(raw = reviewRequiredPr, { classic = { contexts: ['tests'] }, rules = [], runs = [] } = {}) {
+  const calls = [];
+  const gh = new JobGithub(async (_bin, args) => {
+    calls.push(args);
+    if (args[0] === 'repo') return JSON.stringify({ nameWithOwner: 'org/repo' });
+    if (args[0] === 'pr') return JSON.stringify(raw);
+    if (args[1].includes('/rules/branches/')) return JSON.stringify([rules]);
+    if (args[1].includes('/check-runs?')) return JSON.stringify([{ check_runs: runs }]);
+    if (args[1].includes('/branches/')) return JSON.stringify({ protection: { required_status_checks: classic } });
+    throw new Error(`Unexpected command: ${args.join(' ')}`);
+  });
+  const sub = { repo: '/repo', worktree: { branch: rawPr.headRefName }, pr: { url: rawPr.url, head: rawPr.headRefOid, mergeWithAdmin: true } };
+  return { gh, calls, sub };
+}
+test('GitHub readiness never treats running, failed, draft or blocked checks as green', () => {
+  assert.equal(prSummary(rawPr).checkStatus, 'passing');
+  for (const patch of [{ statusCheckRollup: [{ conclusion: '', status: 'IN_PROGRESS' }] }, { statusCheckRollup: [{ conclusion: 'FAILURE' }] }, { isDraft: true }, { mergeStateStatus: 'BLOCKED' }]) assert.notEqual(prSummary({ ...rawPr, ...patch }).checkStatus, 'passing');
+});
+
+test('required review can be overridden only with green checks and confirmed mergeability', () => {
+  assert.equal(prSummary(reviewRequiredPr).checkStatus, 'passing');
+  assert.equal(prSummary(reviewRequiredPr).mergeWithAdmin, true);
+  for (const patch of [
+    { statusCheckRollup: [] }, { statusCheckRollup: null },
+    ...['IN_PROGRESS', 'QUEUED', 'WAITING', 'UNKNOWN'].map(status => ({ statusCheckRollup: [{ status, conclusion: 'SUCCESS' }] })),
+    ...['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'UNKNOWN'].map(conclusion => ({ statusCheckRollup: [{ conclusion }] })),
+    { statusCheckRollup: [{ context: 'legacy CI', state: 'PENDING' }] },
+    { isDraft: true }, { state: 'CLOSED' }, { state: 'MERGED' },
+    ...['DIRTY', 'BEHIND', 'UNKNOWN', 'UNSTABLE'].map(mergeStateStatus => ({ mergeStateStatus })),
+    ...['UNKNOWN', 'CONFLICTING', undefined].map(mergeable => ({ mergeable })),
+    { reviewDecision: 'CHANGES_REQUESTED' }, { reviewDecision: 'APPROVED' }, { reviewDecision: undefined },
+  ]) {
+    const summary = prSummary({ ...reviewRequiredPr, ...patch });
+    assert.equal(summary.mergeWithAdmin, false, JSON.stringify(patch));
+    assert.notEqual(summary.checkStatus, 'passing', JSON.stringify(patch));
+  }
+  assert.equal(prSummary({ ...reviewRequiredPr, statusCheckRollup: [{ context: 'legacy CI', state: 'SUCCESS' }] }).checkStatus, 'passing');
+});
+
+test('review override verifies missing checks from branch protection and rulesets', async () => {
+  for (const policy of [
+    { classic: { contexts: ['tests', 'plan'] } },
+    { classic: { checks: [{ context: 'plan', app_id: null }] } },
+    { rules: [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'plan', integration_id: null }] } }] },
+  ]) {
+    const { gh, sub, calls } = reviewGithub(reviewRequiredPr, policy);
+    const pr = await gh.pr(sub);
+    assert.equal(pr.checkStatus, 'pending'); assert.equal(pr.mergeWithAdmin, false);
+    assert.deepEqual(pr.checks.at(-1), { name: 'plan', state: 'PENDING' });
+    await assert.rejects(gh.merge(sub), /no longer green/);
+    assert.ok(!calls.some(args => args[0] === 'pr' && args[1] === 'merge'));
+  }
+});
+
+test('required check app identity and commit must match before overriding review', async () => {
+  const policy = { classic: { checks: [{ context: 'tests', app_id: 123 }] } };
+  const run = { name: 'tests', app: { id: 123 }, head_sha: 'head1', status: 'completed', conclusion: 'success' };
+  for (const runs of [[], [{ ...run, app: { id: 456 } }], [{ ...run, head_sha: 'old' }], [{ ...run, status: 'in_progress' }], [{ ...run, conclusion: 'failure' }]]) {
+    const { gh, sub } = reviewGithub(reviewRequiredPr, { ...policy, runs });
+    assert.equal((await gh.pr(sub)).mergeWithAdmin, false);
+  }
+  const { gh, sub } = reviewGithub(reviewRequiredPr, { ...policy, runs: [run] });
+  assert.equal((await gh.pr(sub)).mergeWithAdmin, true);
+});
+
+test('admin merge re-observes readiness, pins the head, and drops admin when review is approved', async () => {
+  for (const [raw, admin] of [[reviewRequiredPr, true], [{ ...rawPr, reviewDecision: 'APPROVED' }, false]]) {
+    const { gh, sub, calls } = reviewGithub(raw);
+    await gh.merge(sub);
+    assert.equal(calls[0][1], 'view');
+    assert.deepEqual(calls.at(-1), ['pr', 'merge', rawPr.url, '--squash', ...(admin ? ['--admin'] : []), '--match-head-commit', 'head1']);
+  }
+  for (const patch of [{ headRefOid: 'head2' }, { statusCheckRollup: [{ name: 'tests', conclusion: 'FAILURE' }] }, { reviewDecision: 'CHANGES_REQUESTED' }]) {
+    const { gh, sub, calls } = reviewGithub({ ...reviewRequiredPr, ...patch });
+    await assert.rejects(gh.merge(sub), /PR changed or checks are no longer green/);
+    assert.ok(!calls.some(args => args[1] === 'merge'));
+  }
+});
+
+test('failure to observe required checks never permits an admin merge', async () => {
+  const { gh, sub, calls } = reviewGithub();
+  const run = gh.run;
+  gh.run = async (bin, args, cwd) => {
+    if (args[0] === 'api') throw new Error('GitHub unavailable');
+    return run(bin, args, cwd);
+  };
+  await assert.rejects(gh.pr(sub), /unavailable/);
+  await assert.rejects(gh.merge(sub), /unavailable/);
+  assert.ok(!calls.some(args => args[1] === 'merge'));
+});
+
+test('review override preserves manual merge approval and automatic merge behaviour', async (t) => {
+  for (const reviewMerge of [true, false]) {
+    const f = fixture(t, { ...input, reviewMerge }); await atPr(f);
+    f.store.update(f.job.id, j => { j.reviewMerge = reviewMerge; });
+    f.setPr(prSummary(reviewRequiredPr)); await f.tick();
+    assert.equal(f.merged.length, reviewMerge ? 0 : 1);
+    if (reviewMerge) {
+      f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head1' });
+      f.setPr({ head: 'head2' }); await f.tick(); assert.equal(f.merged.length, 0);
+      f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head2' });
+      await f.tick(); assert.deepEqual(f.merged, ['head2']);
+    }
+  }
+});
+
+test('pausing during the admin recheck prevents merging and leaves the merge retryable', async (t) => {
+  const f = fixture(t); await atPr(f);
+  const { gh, calls } = reviewGithub();
+  const observe = gh.pr.bind(gh);
+  gh.pr = async sub => {
+    const pr = await observe(sub);
+    f.store.action(f.job.id, 'pause');
+    return pr;
+  };
+  f.github.merge = gh.merge.bind(gh);
+  f.setPr(prSummary(reviewRequiredPr)); await f.tick();
+  assert.ok(!calls.some(args => args[0] === 'pr' && args[1] === 'merge'));
+  assert.equal(f.store.get(f.job.id).subJobs[0].mergeRequestedHead, undefined);
+  gh.pr = observe; f.store.action(f.job.id, 'resume'); await f.tick();
+  assert.equal(calls.filter(args => args[0] === 'pr' && args[1] === 'merge').length, 1);
+});
+
+test('GitHub PR observer verifies repository and worktree branch, merge pins head', async () => {
+  const calls = [];
+  const gh = new JobGithub(async (bin, args) => { calls.push(args); return JSON.stringify(args[0] === 'repo' ? { nameWithOwner: 'org/repo' } : rawPr); });
+  const sub = { repo: '/repo', worktree: { branch: 'branch-api' }, pr: { url: rawPr.url, head: 'head1' } };
+  await gh.pr(sub); await gh.merge(sub);
+  assert.deepEqual(calls.at(-1).slice(-2), ['--match-head-commit', 'head1']);
+  assert.ok(!calls.at(-1).includes('--admin'));
+  await assert.rejects(gh.pr({ ...sub, worktree: { branch: 'other' } }), /does not belong/);
+});
+
+test('deployment observer requires every named workflow for the exact merge commit and branch', async () => {
+  const sub = { repo: '/repo', pr: { mergeCommit: 'merged', base: 'main' }, deployment: { workflows: ['api.yml', 'web.yml'] } };
+  const good = { databaseId: 1, headSha: 'merged', headBranch: 'main', event: 'push', status: 'completed', conclusion: 'success', attempt: 1 };
+  const calls = [];
+  const gh = new JobGithub(async (_bin, args) => { calls.push(args); return JSON.stringify(args.includes('api.yml') ? [good] : [{ ...good, headSha: 'unrelated' }]); });
+  assert.equal((await gh.deployment(sub)).status, 'pending');
+  assert.equal(calls.length, 2); assert.ok(calls.every((a) => a.includes('--commit') && a.includes('merged')));
+  gh.run = async () => JSON.stringify([{ ...good, conclusion: 'skipped' }]); assert.equal((await gh.deployment(sub)).status, 'failing');
+  gh.run = async () => JSON.stringify([good, { ...good, databaseId: 2, status: 'in_progress', conclusion: '' }]); assert.equal((await gh.deployment(sub)).status, 'pending');
+  gh.run = async () => JSON.stringify([good]); assert.equal((await gh.deployment(sub)).status, 'passing');
+});
+
+test('idle ticks and exhausted claims do not rewrite state or trigger extra graph rebuilds', async (t) => {
+  const f = fixture(t); let rebuilt = 0; f.runner.onChange = async () => { rebuilt++; };
+  const before = f.store.data; await f.tick(); assert.equal(rebuilt, 0); assert.equal(f.store.data, before);
+  f.store.action(f.job.id, 'start'); await f.tick(); assert.equal(rebuilt, 1);
+  const running = f.store.data; assert.equal(f.store.claim(f.job.id, null, 'planning'), null); assert.equal(f.store.data, running);
+  await f.tick(); assert.equal(rebuilt, 1);
+});
+
+test('cancel stops the live step, ignores its late receipt and moves the sub-job straight to cleanup', async (t) => {
+  const f = fixture(t); await f.approve(plan([spec('api'), spec('web', ['api'])]));
+  const worker = f.launched.find((w) => w.sub?.id === 'api');
+  f.store.action(f.job.id, 'cancel', { subJobId: 'api' });
+  let api = f.store.get(f.job.id).subJobs[0];
+  assert.equal(api.stage, 'cleanup'); assert.ok(api.cancelledAt);
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: api', checks: ['Tests pass'] }, worker);
+  api = f.store.get(f.job.id).subJobs[0];
+  assert.equal(api.stage, 'cleanup', 'a racing receipt must not move a cancelled sub-job'); assert.equal(api.local, null); assert.equal(api.state, 'cancelled');
+  await f.tick();
+  assert.ok(f.stopped.includes(worker.run.id)); assert.deepEqual(f.cleaned, ['api']);
+  api = f.store.get(f.job.id).subJobs[0];
+  assert.equal(api.stage, 'done'); assert.equal(api.state, 'cancelled'); assert.equal(api.error, null);
+  assert.throws(() => f.store.action(f.job.id, 'cancel', { subJobId: 'api' }), /already finished/);
+  assert.throws(() => f.store.action(f.job.id, 'cancel'), /Choose a sub-job/);
+  assert.equal(f.store.get(f.job.id).stage, 'active', 'the dependent sub-job still needs a decision');
+});

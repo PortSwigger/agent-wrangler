@@ -1,3 +1,4 @@
+import { initJobsView } from './jobs-view.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
@@ -320,6 +321,7 @@ function applyGraph(graph) {
   if ('history' in graph) latestHistory = graph.history || [];
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
   latestSchedules = graph.schedules || { schedules: [] };
+  jobsView.update(graph.jobs);
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
@@ -396,6 +398,8 @@ function setView(view) {
   // the focused tile win the tie and render alongside Search. renderGrid()
   // re-adds it whenever focus mode is actually active.
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
+  document.getElementById('jobs').classList.toggle('hidden', view !== 'jobs');
+  if (view === 'jobs' && selectedSessionId) deselectSession();
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
   const mid = document.querySelector('.rail-mid');
@@ -3102,7 +3106,7 @@ function hashSessionId() {
 // a #session link — that view carries no selection. Legacy #view=history
 // bookmarks resolve to Search (the view that replaced History); new hashes only
 // ever write search (syncHash writes from HASH_VIEWS).
-const HASH_VIEWS = ['search'];
+const HASH_VIEWS = ['search', 'jobs'];
 function hashView() {
   const m = (location.hash || '').match(/^#view=(.+)$/);
   if (m && m[1] === 'history') return 'search';
@@ -3322,7 +3326,7 @@ window.addEventListener('keydown', (e) => {
   const action = dirs[e.key];
   if (!action) return;
   if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden), dialog[open]')) return;
   e.preventDefault();
   if (action === 'taskPrev') moveTaskFocus(-1);
   else if (action === 'taskNext') moveTaskFocus(1);
@@ -3338,7 +3342,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   if (selectedNewSlot == null) return;
   if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden), dialog[open]')) return;
   e.preventDefault();
   openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot);
 });
@@ -3415,7 +3419,7 @@ window.addEventListener('keydown', (e) => {
   // same chords (they fall through the gate untouched).
   if (key === 'g') e.preventDefault();
   if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden), dialog[open]')) return;
   // Past the gate the chord is definitely ours — suppress the browser/OS default for
   // the whole family (this is the original, pre-diff-feature behaviour for the rest;
   // 'g' was already prevented above and re-preventing is a no-op).
@@ -3454,7 +3458,7 @@ window.addEventListener('keydown', (e) => {
   const el = document.activeElement;
   if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
   if (cardMenuEl) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden), dialog[open]')) return;
   e.preventDefault();
   if (currentView !== 'search') setView('search');
   else onEnterSearchView();
@@ -3679,7 +3683,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() !== 'a') return;
   if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
   if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden), dialog[open]')) return;
   e.preventDefault();
   e.stopImmediatePropagation();
   activateHints();
@@ -5319,6 +5323,8 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
+    else if (msg.type === 'job-action-complete') { jobsView.created(); }
+    else if (msg.type === 'job-created') { jobsView.created(); toast('Job added to backlog'); }
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
@@ -5599,6 +5605,21 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // Restore the deep link on load. #view=search (or a legacy #view=history
 // bookmark, resolved to Search) switches straight to the Search view; otherwise
 // a #session link is fulfilled once the first graph contains it.
+const jobsView = initJobsView({ send, getAgents: () => availableAgents,
+  onBoard: (sid) => latestSessions.some((x) => x.sessionId === sid),
+  // A job step's card is archived the moment the step stops (job-runtime's
+  // retire), so most of these sessions are off the board by the time anyone looks
+  // at them. Getting back to one is a Restore — the same archived → back on the
+  // board action, by the same name, that Search's archived rows offer.
+  onSession: (sid) => {
+    setView('grid');
+    if (latestSessions.some((x) => x.sessionId === sid)) { selectSession(sid); return; }
+    setPendingSelect(sid);
+    send({ type: 'resume', sessionId: sid });
+    toast('Restoring…');
+  },
+  onDiff: (sid) => { setView('grid'); openDiffPanel(sid); },
+});
 initSearchView();
 if (hashView()) setView(hashView());
 else pendingSelect = hashSessionId();

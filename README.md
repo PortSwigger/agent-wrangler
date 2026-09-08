@@ -302,3 +302,129 @@ built-in and custom styles re-theme the whole app live.
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
+
+## Automated jobs
+
+The **Automated jobs** button on the navigation rail opens a Kanban for work that
+spans multiple repositories and PRs:
+
+**Backlog → PR planning & Jira tickets → Local implementation & verification → PR
+→ Deployment verification → Cleanup**
+
+Create a job with the outcome, agent/model, and review preferences. Repository
+paths are optional hints under planning guidance. **Start planning** launches a
+session in a fresh planning workspace to discover the repositories needed and
+create or reuse Jira stories. It can find additional repositories beyond any
+hints you provide. Missing repositories are cloned into `~/IdeaProjects/<repo>`;
+existing matching checkouts are reused without resetting them. Planning sessions
+can write to `~/IdeaProjects` for these clones, and implementation still gets a
+dedicated worktree for each sub-job. The plan presents business-value stories,
+proposed PR titles, repository mappings and deployment dependencies in a small
+editable table. Landing waves show what can ship independently. Additional
+planning guidance is configurable when creating the job, and **Request changes**
+sends a refinement without requiring a manual session prompt.
+
+**Approve sub-jobs** starts implementation. Each sub-job gets its own worktree
+from the fetched remote default branch. Independent builds run together; dependent
+builds can also start together, but must wait for prerequisites to **deploy and
+verify** before publishing. They then run verification again against the deployed
+dependencies. Optional local code review happens after that verification, in
+Wrangler's diff viewer or using the displayed worktree path in your own editor.
+Codex job sessions also receive write access to that repository's Git metadata
+for fetches and commits. The main checkout's source files stay outside this grant,
+and the metadata access survives publishing retries and session resumes.
+
+Review surfaces show brief results, normally 1–3 bullets of a few words:
+
+```text
+Commit message proposition: AUTH-123: validate recovery links
+Verified:
+✓ Build passed
+✓ Tests passed
+✓ Expired links rejected
+```
+
+Routine housekeeping is omitted unless it matters to the review. Commands, logs
+and explanations stay in the session transcript.
+
+Checks that require a PR, such as state-backed Terraform plans, appear separately
+under **Still required in PR checks**. They remain required before merge; they do
+not block opening the PR or appear as passed local checks.
+
+After local approval (when enabled), a session commits, pushes and opens the PR.
+Wrangler polls GitHub without an agent. Failed checks, requested changes and
+merge conflicts dispatch a repair session; its short **changes** and **verification**
+are retained for review. The default is at most **two automatic repairs per
+sub-job**, then an explicit retry. Manual merge review is on by default; turn it
+off when creating a job to merge automatically once GitHub reports readiness.
+Merge approval is tied to the displayed head commit and invalidated by a push.
+When GitHub requires a review, Wrangler can merge with `--admin` once all checks
+pass and GitHub confirms there are no merge conflicts. It checks required status
+checks from branch protection and active rulesets, including checks which have
+not reported yet, and rechecks the PR before using the override. Requested
+changes, missing, failed or pending checks, and any configured Wrangler merge
+approval still block merging. Ordinary merges use GitHub's
+normal protections and merge queue; the admin override merges directly.
+
+Deployment monitoring uses **GitHub Actions only**. The planner must name each
+sub-job's deployment workflow (name or filename) and the checks to perform
+against the running service. Wrangler watches every named workflow on the
+**exact merge commit and base branch**. Missing or skipped runs do not count as a
+successful deployment. Once all succeed, a session verifies the running version
+and behaviour and submits another short receipt. A failed deployment or behaviour
+check creates one linked recovery job in Backlog: you approve its planning and
+plan before it can publish a fix. Dependencies remain blocked until recovery is
+delivered.
+
+Cleanup stops and archives the step sessions, removes clean worktrees and deletes
+only local branch refs that still match the verified commit. Dirty worktrees,
+extra commits or branches checked out elsewhere stop cleanup for review. An
+optional setting fast-forwards your main checkout only when it is clean and on
+the PR's base branch. Remote branch deletion follows your repository's GitHub
+settings. The **Show delivered** filter retains completed work and receipts.
+
+**Cancel sub-job** (in a sub-job's detail view, before cleanup) skips straight to
+cleanup: the running step is stopped and its receipt ignored, sessions are
+archived, and the worktree is removed only when its commits are already pushed
+or the branch is unchanged. Nothing is merged and an open PR is left for you to
+close. Sub-jobs that deploy after a cancelled one are flagged under **Needs me**
+since they can no longer publish.
+
+**Agents at once** is shared across all automated jobs and covers planning,
+building, publication, repair and deployed verification. Pipeline watching,
+dependency waits, human reviews and cleanup consume no agent slots. Existing
+manually dispatched sessions and schedules remain independent. Automation settings
+also control repair attempts and a per-step time limit (120 minutes by default).
+Pause prevents new steps; current sessions finish and submit their receipts. The
+**Needs me** filter collects plan, code and merge decisions plus blocked work.
+
+Requirements: authenticated `gh` with access to the repositories and Actions,
+working Wrangler agent dispatch, and Jira access available to the planning agent.
+The planner queries Jira using its own existing tools and authenticated setup,
+including tool discovery, Jira skills, CLIs or API helpers. Wrangler does not
+check server-side Jira credentials or require a separate Jira integration.
+The planner must attempt a query before reporting an access blocker and preserve
+its discovery work for a retry.
+Missing Jira or deployment access produces a visible block instead of fabricated
+tickets or verification. Receipts are agent attestations; Wrangler validates their
+shape, ownership and lifecycle, while GitHub supplies PR/pipeline evidence.
+
+The coordinator persists to `AW_DATA_DIR/jobs.json`. Claims are saved before
+launch and survive service restarts; interrupted launches or sessions that stop
+without a receipt require review and retry instead of silently launching duplicates.
+The feature is available after restarting Wrangler with this code; existing jobs
+and sessions are not migrated into the new flow automatically.
+
+Agent integration uses these MCP tools, automatically available to assigned sessions:
+
+- `get_job_context()` returns the caller's job and assigned run.
+- `job_report({runId, report})` submits a plan, local verification, PR URL, repair
+  summary, deployed verification, or a short blocker. Successful submission ends
+  the step; identical retries are idempotent. Each receipt allows 1–8 single-line
+  checks, at most 180 characters each. Other sessions cannot submit it.
+
+The prompts live in `server/job-prompts.js`; schemas, persistence, coordination,
+GitHub observation and runtime side effects are separate modules under `server/job*`.
+`npm test` covers the lifecycle, restart/error paths, real HTTP MCP/control
+integration, and DOM interactions. DOM tests use Happy DOM as a development-only
+dependency; production adds no new dependency.

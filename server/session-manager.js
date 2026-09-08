@@ -258,7 +258,9 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
     worktree: prev?.worktree,
+    addDirs: prev?.addDirs,
     workflow: prev?.workflow,
+    automationRun: prev?.automationRun,
     parentSession: prev?.parentSession,
     runtime: prev?.runtime,
     links: prev?.links,
@@ -278,7 +280,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
 // Resolve worktree creation for a dispatch: derive the branch (default = intent
 // slug), create the worktree, and return the cwd to launch in plus the entry
 // field to persist. Throws WorktreeError on refusal (caller aborts dispatch).
-export async function resolveWorktree({ cwd, intent = '', branch = '', folderName = '', auto = false, short = '' }) {
+export async function resolveWorktree({ cwd, intent = '', branch = '', folderName = '', auto = false, short = '', baseRef = '' }) {
   // A scratch/blank cwd is a throwaway dir under SESSIONS_DIR (freshened per
   // dispatch) — not a real repo to branch from. Refuse rather than silently
   // skip, so the toggle never appears to do nothing.
@@ -289,7 +291,7 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   // sanitizes too). Fall back to the intent slug if a typed branch sanitizes away.
   const b = ((branch.trim() || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short });
   const folder = folderName.trim();
-  const res = await createWorktree({ cwd, branch: b, folderName: folder ? expandTilde(folder) : '', auto });
+  const res = await createWorktree({ cwd, branch: b, folderName: folder ? expandTilde(folder) : '', auto, ...(baseRef ? { baseRef } : {}) });
   // Record repoRoot so cleanup-on-archive can find the branch even after the
   // worktree dir is gone (repoRootForWorktree falls back to suffix-stripping for
   // legacy entries that predate this).
@@ -469,7 +471,7 @@ export class SessionManager {
     // Fire-and-forget: archive never waits on this. Skipped for a re-archive of
     // an already-archived session (see wasArchived above) — otherwise archive→
     // resume→archive would review the same growing transcript every time.
-    if (!wasArchived) {
+    if (!wasArchived && !entry.automationRun) {
       this._archiveReview(sessionId, entry, snapshot.task, {
         onStamp: ({ reviewLiveSessionId, advanceReviewedAt }) => {
           const prior = new Set(entry.priorLiveSessionIds || []);
@@ -939,7 +941,7 @@ export class SessionManager {
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
-    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, []);
+    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
       addDirs,
@@ -1221,10 +1223,11 @@ export class SessionManager {
   // trap a session on a corpse and never re-offer Resume. So we classify per pane:
   // a session is alive if any of its panes is not dead, otherwise it's dead.
   async refreshAlive() {
-    this.alive = new Set();
-    this.dead = new Set();
-    this.deadStatus = new Map();
-    this.socketByName = new Map();
+    // Readers keep the last complete snapshot while tmux is being queried.
+    // Publishing empty/partial sets here made the job poll kill live workers
+    // whenever it overlapped a board refresh.
+    const alive = new Set(), dead = new Set();
+    const deadStatusByName = new Map(), socketByName = new Map();
     // Scan this install's socket plus the default socket while legacy sessions
     // remain there. Each socket is a separate tmux server, so we query each and
     // remember which socket every session was found on (for attach/kill/capture).
@@ -1243,12 +1246,16 @@ export class SessionManager {
         const [name, dead, deadStatus] = line.split('\x1f');
         if (!name) continue;
         seen.add(name);
-        this.socketByName.set(name, socket);
-        if ((dead || '').trim() !== '1') this.alive.add(name);
-        else if (deadStatus !== undefined && deadStatus.trim() !== '') this.deadStatus.set(name, Number(deadStatus));
+        socketByName.set(name, socket);
+        if ((dead || '').trim() !== '1') alive.add(name);
+        else if (deadStatus !== undefined && deadStatus.trim() !== '') deadStatusByName.set(name, Number(deadStatus));
       }
-      for (const name of seen) if (!this.alive.has(name)) this.dead.add(name);
+      for (const name of seen) if (!alive.has(name)) dead.add(name);
     }
+    this.alive = alive;
+    this.dead = dead;
+    this.deadStatus = deadStatusByName;
+    this.socketByName = socketByName;
     // An agent exiting on its own is the event nothing recorded before this: a
     // claude that launched and died 19s later left no trace of either end. A
     // deliberate kill removes the tmux outright rather than leaving a dead pane,
@@ -1270,6 +1277,30 @@ export class SessionManager {
     // gone, and dropping one there would re-log it the moment the socket came back.
     if (!scanFailed) for (const name of [...this._deathsReported]) if (!this.dead.has(name)) this._deathsReported.delete(name);
     return this.alive;
+  }
+
+  // Destructive lifecycle decisions need a fresh, session-specific observation,
+  // not the board's best-effort discovery cache. A failed probe is unknown, not
+  // evidence that the worker exited; callers must keep its slot reserved.
+  async isSessionAlive(sessionId) {
+    const entry = this.entryFor(sessionId);
+    if (!entry?.tmux) return false;
+    let stdout;
+    try {
+      ({ stdout } = await this._tmux(socketForEntry(entry, this.legacySocket),
+        ['list-panes', '-s', '-t', `=${entry.tmux}`, '-F', '#{pane_dead}'], { timeout: 5000 }));
+    } catch (error) {
+      const message = String(error.stderr || '').trim();
+      // list-panes resolves its target as a window even with -s, so a removed
+      // session can report "can't find window" (including after our own stop).
+      if (error.code === 1 && /^(?:can't find (?:session|window): [^\n]+|no server running on [^\n]+|error connecting to [^\n]+ \((?:No such file or directory|Connection refused)\))$/.test(message)) return false;
+      throw error;
+    }
+    const panes = String(stdout).trim().split('\n').map(line => line.trim());
+    if (!panes.length || panes.some(dead => dead !== '0' && dead !== '1')) {
+      throw new Error('Cannot determine whether the job session is still running');
+    }
+    return panes.includes('0');
   }
 
   // The socket a tmux name lives on: the last socket discovery saw it on, else the
@@ -1382,7 +1413,7 @@ export class SessionManager {
 
   async dispatch({ cwd, intent = '', model, effort, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, automationRun, onAutomationPrepared, worktreeBase = '' } = {}) {
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
@@ -1418,7 +1449,7 @@ export class SessionManager {
     let worktreeEntry;
     if (worktree) {
       const wt = await resolveWorktree({
-        cwd, intent, branch: worktreeBranch, folderName: worktreeFolderName, auto: worktreeAuto, short,
+        cwd, intent, branch: worktreeBranch, folderName: worktreeFolderName, auto: worktreeAuto, short, baseRef: worktreeBase,
       });
       cwd = wt.cwd;
       worktreeEntry = wt.worktree;
@@ -1439,6 +1470,11 @@ export class SessionManager {
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
+    if (automationRun) {
+      this.map.set(sessionId, { short, tmux, cwd, agent, intent, model, socket: this.socket, createdAt: Date.now(), liveSessionId: presetLiveId, worktree: worktreeEntry, addDirs, automationRun, autoFixPrChecks: false, autoMergeOnPass: false });
+      this._save();
+      onAutomationPrepared?.(sessionId, worktreeEntry);
+    }
     const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
@@ -1459,7 +1495,7 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: automationRun ? false : (autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined)), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();
