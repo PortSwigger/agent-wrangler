@@ -309,6 +309,44 @@ don't re-derive it.
   mutators, not load-mutate-save via `atomic-json` — four independent writers
   touch one box (send, drain, the settle sweeper, eviction) and an `await`
   between a read and its write is where two of them would clobber each other.
+  **Mailbox lifecycle: resume keeps the box; ARCHIVE DROPS its read and
+  undeliverable mail but keeps the box and every unread message; a fork starts
+  EMPTY; only a purge (`control/handlers/remove.js`) calls `forget`.** Archive is
+  still "set aside" — a sender was told `queued: true`, so unread mail must
+  survive to be read when the card comes back — but the read history is the one
+  thing nothing re-reads: retention exists solely so `read_mail({id})` can fetch
+  the full body of an excerpt it was handed seconds earlier (measured over 480
+  real `read_mail` calls: 43 targeted reads, median 4s after their drain), which
+  is also why `READ_RETENTION_MESSAGES`/`_BYTES` are **defined as** the unread
+  caps rather than as their own literals — a single `drain()` can hand back
+  `UNREAD_CAP_MESSAGES` messages, so retention below that would evict the
+  earliest of a batch during the very drain that delivered it. Archived boxes
+  were 1.05MB of a 1.32MB store, so this is where the size goes. The prune hangs
+  off `SessionManager.archive()`'s `_pruneMailOnArchive` seam (bound in
+  `index.js`, the `_archiveReview` mould) and is deliberately **not** gated on
+  `wasArchived` the way the review beside it is: it's idempotent, and an
+  archive→resume→archive cycle must prune each live span's own read mail.
+  **Retention is otherwise enforced LAZILY** — `_enforceRetentionCaps` runs only
+  after a mutation of the box being mutated — so lowering a cap trims nothing on
+  a box that never receives mail again; `_sweepAtLoad` exists to make a cap
+  change take effect everywhere at once, and any future cap change relies on it.
+  Empty boxes (no messages, no open settle window) are pruned everywhere: `_box`
+  recreates one lazily and `lastNotifiedAt` is only read while unread mail
+  exists, so they hold nothing. **The per-box floor does NOT cover the
+  whole-store cap — that's a second, independent budget, and it broke the very
+  invariant the floor exists for.** A store pinned over the cap by unread mail
+  (never evictable) has nothing it may evict until a `drain()` makes the message
+  it just handed out the only candidate, so the excerpt the caller is holding is
+  deleted before it can follow up — reproduced with 17 recipients each holding
+  one 256KB unread message, where `read_mail({id})` returned null seconds after
+  the drain that delivered it. So `_evictOldestEvictableAnywhere` skips anything
+  inside `READ_GRACE_MS` (5 minutes, the measured follow-up window); a protected
+  message simply isn't a candidate, so the store can sit briefly over the cap,
+  which is already what happens whenever nothing is evictable. Undeliverable
+  mail has no `readAt` and is never protected — nothing is waiting on it.
+  `_sweepAtLoad` persists TRIMS, not the `size` normalisation beside it: a
+  legacy file whose only defect is a missing `size` is re-derived in memory on
+  every load and written back only by its next ordinary mutation.
 - **A wake whose whole PURPOSE is to make the agent call a tool must not deliver
   via the resume argv — the turn starts before the new process's MCP client
   connects.** `claude --resume … -- <text>` (Claude's `resumeCarriesIntent`)
@@ -386,10 +424,14 @@ don't re-derive it.
   grant, whose `CHECKLIST_TOOLS` name list lives in the `client-config.js` leaf so
   the registry imports from it and never the reverse), `agent-skills.js`'s
   `DISABLEABLE` map (the nudge + Codex catalog, same shape as `task-memory`), and
-  `graph.checklistEnabled` (the panel). Lifecycle mirrors the mailbox exactly:
-  resume keeps it, **archive keeps it** (set-aside, not end-of-life), a **fork
-  starts EMPTY** (fresh card id, no copy — deliberate, don't add one), and only a
-  purge (`control/handlers/remove.js`) calls `forget`. Item text is
+  `graph.checklistEnabled` (the panel). Lifecycle follows the mailbox's shape
+  but is NO LONGER an exact mirror: resume keeps it, a **fork starts EMPTY**
+  (fresh card id, no copy — deliberate, don't add one), and only a purge
+  (`control/handlers/remove.js`) calls `forget` — but **archive keeps the whole
+  checklist**, where archive now prunes a mailbox's read/undeliverable mail (see
+  the mailbox bullet). The divergence is deliberate: mail retention only has to
+  outlive an excerpt follow-up seconds later, while a checklist is the work the
+  card comes back to. Item text is
   **agent-written**, so `public/checklist-dom.js` renders it via `textContent`
   only and the panel is patched in place rather than re-`innerHTML`'d — the ~4s
   graph poll would otherwise reset the list's scroll every tick, and

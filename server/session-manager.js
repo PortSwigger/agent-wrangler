@@ -332,6 +332,10 @@ export class SessionManager {
     // runArchiveReview (server/archive-review-runner.js) with memoryStore
     // injected, keeping this class free of that dependency.
     this._archiveReview = async () => 'skipped';
+    // Seam (same mould as _archiveReview) for archive()'s mailbox pruning —
+    // a no-op by default so this class never learns about the mailbox store;
+    // server/index.js binds mailStore.pruneOnArchive.
+    this._pruneMailOnArchive = () => {};
     this._load();
   }
 
@@ -456,6 +460,12 @@ export class SessionManager {
     // a resumed session re-derives its label from the running agent.
     if (snapshot.label) entry.lastLabel = snapshot.label;
     this._save();
+    // Drop this session's read/undeliverable peer mail, keeping the box and any
+    // unread mail (mailbox-store.js pruneOnArchive). Deliberately NOT gated on
+    // wasArchived, unlike the review below: the review re-bills the same span if
+    // it runs twice, while the prune is idempotent and must run on every archive
+    // of an archive→resume→archive cycle so each live span's read mail goes too.
+    this._pruneMailOnArchive(sessionId);
     // Fire-and-forget: archive never waits on this. Skipped for a re-archive of
     // an already-archived session (see wasArchived above) — otherwise archive→
     // resume→archive would review the same growing transcript every time.

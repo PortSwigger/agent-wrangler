@@ -14,9 +14,29 @@ export const AMBER_MS = 30 * 60 * 1000;
 
 export const UNREAD_CAP_MESSAGES = 20;
 export const UNREAD_CAP_BYTES = 256 * 1024;
-export const READ_RETENTION_MESSAGES = 100;
-export const READ_RETENTION_BYTES = 1024 * 1024;
-export const TOTAL_STORE_CAP_BYTES = 32 * 1024 * 1024;
+// Read retention exists for ONE thing: read_mail() returns an oversized message
+// as an excerpt and read_mail({id}) fetches the full body seconds later (measured
+// over 480 real read_mail calls: 43 targeted reads, median 4s after the drain
+// that delivered them, 91% within a minute). So it only has to outlive a single
+// drain — but it must outlive the WHOLE of one, and a drain can hand back
+// UNREAD_CAP_MESSAGES messages at once. Pinned to the unread caps rather than
+// restated as literals so the two can never drift apart and evict the earliest
+// message of the very batch that just delivered it.
+export const READ_RETENTION_MESSAGES = UNREAD_CAP_MESSAGES;
+export const READ_RETENTION_BYTES = UNREAD_CAP_BYTES;
+export const TOTAL_STORE_CAP_BYTES = 4 * 1024 * 1024;
+// How long a just-read message is protected from WHOLE-STORE eviction. The
+// per-box floor above is enough for the per-box cap, but the global cap is a
+// second, independent budget with no such floor — and it bites hardest exactly
+// when it must not: a store pinned over the cap by unread mail (which is never
+// evictable) has NOTHING it may evict until a drain makes the message it just
+// handed out the only candidate, so the excerpt the caller is holding is
+// deleted before it can follow up. Reproduced: 17 recipients each holding one
+// 256KB unread message, one drain, and `read_mail({id})` returned null. Covers
+// the measured follow-up window (95% of targeted reads land within 5 minutes).
+// A protected message simply isn't a candidate, so the store can sit briefly
+// over the cap — already an accepted state whenever nothing is evictable.
+export const READ_GRACE_MS = 5 * 60 * 1000;
 // Send-time hard reject — 4.4x the largest message ever observed (see the
 // spec's size-threshold table). Lives here alongside the other caps even
 // though send-message.js is the only caller: it's the same size-policy
@@ -51,11 +71,37 @@ export class MailboxStore {
     for (const [to, box] of Object.entries(raw)) {
       if (!box || !Array.isArray(box.messages)) continue;
       this.boxes.set(to, {
-        messages: box.messages.map((m) => ({ ...m })),
+        // `size` re-derived when absent: a store written by a version that
+        // didn't record it would make _totalBytes() NaN, and `NaN > cap` is
+        // false — byte trimming would silently become a no-op rather than
+        // failing loudly.
+        messages: box.messages.map((m) => ({
+          ...m,
+          size: typeof m.size === 'number' ? m.size : byteSize(m.body ?? ''),
+        })),
         settleDeadline: box.settleDeadline ?? null,
         lastNotifiedAt: box.lastNotifiedAt ?? null,
       });
     }
+    this._sweepAtLoad();
+  }
+
+  // Retention is otherwise enforced lazily — _enforceRetentionCaps runs only on
+  // a mutation of the box being mutated — so lowering a cap trims nothing on a
+  // box that never receives mail again, and a dormant oversized box would stay
+  // oversized forever. One sweep at load makes a cap change take effect
+  // everywhere immediately. Writes only if it actually changed something, so an
+  // already-compliant store isn't rewritten on every boot.
+  _sweepAtLoad() {
+    const before = this.boxes.size + [...this.boxes.values()].reduce((n, b) => n + b.messages.length, 0);
+    // _enforceRetentionCaps prunes empty boxes globally, so this loop deletes
+    // from the Map it iterates — safe: a Map skips an entry deleted before it's
+    // reached, and the only entries it can delete are empty ones, which have
+    // nothing left to enforce anyway.
+    for (const box of this.boxes.values()) this._enforceRetentionCaps(box);
+    this._pruneEmptyBoxes();
+    const after = this.boxes.size + [...this.boxes.values()].reduce((n, b) => n + b.messages.length, 0);
+    if (after !== before) this._save();
   }
 
   _save() {
@@ -73,8 +119,10 @@ export class MailboxStore {
     return box;
   }
 
-  // Total bytes retained across every box (unread + undeliverable + read) — the
-  // 32MB whole-store cap.
+  // Total bytes retained across every box (unread + undeliverable + read) — what
+  // TOTAL_STORE_CAP_BYTES binds. Not really a disk cap: the whole store is held
+  // in memory and re-serialised on every message, so this governs footprint and
+  // write cost.
   _totalBytes() {
     let total = 0;
     for (const box of this.boxes.values()) for (const m of box.messages) total += m.size;
@@ -97,13 +145,21 @@ export class MailboxStore {
     return true;
   }
 
+  // Whether `m` is inside its post-read grace window and so must not be taken by
+  // whole-store eviction (see READ_GRACE_MS). Undeliverable mail has no readAt
+  // and is never protected — nothing is waiting to follow up on it.
+  _inReadGrace(m, now) {
+    return m.readAt != null && now - m.readAt < READ_GRACE_MS;
+  }
+
   // Evict the oldest evictable message across ALL boxes (the whole-store cap
-  // has no single owning box). Returns true if something was evicted.
-  _evictOldestEvictableAnywhere() {
+  // has no single owning box), skipping anything still inside its read grace.
+  // Returns true if something was evicted.
+  _evictOldestEvictableAnywhere(now = Date.now()) {
     let oldest = null;
     for (const box of this.boxes.values()) {
       for (const m of box.messages) {
-        if (this._isEvictable(m) && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
+        if (this._isEvictable(m) && !this._inReadGrace(m, now) && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
       }
     }
     if (!oldest) return false;
@@ -135,7 +191,7 @@ export class MailboxStore {
     };
     box.messages.push(message);
     if (box.settleDeadline == null) box.settleDeadline = now + SETTLE_MS;
-    this._enforceRetentionCaps(box);
+    this._enforceRetentionCaps(box, now);
     this._save();
     return { id: message.id };
   }
@@ -146,13 +202,32 @@ export class MailboxStore {
   // the evictable set (append — a fresh undeliverable mark, drain, getOne) —
   // the breach happens the moment a message stops being 'unread', not only on
   // append.
-  _enforceRetentionCaps(box) {
+  _enforceRetentionCaps(box, now = Date.now()) {
     while (this._evictableCount(box) > READ_RETENTION_MESSAGES || this._evictableBytes(box) > READ_RETENTION_BYTES) {
       if (!this._evictOldestEvictable(box)) break;
     }
     while (this._totalBytes() > TOTAL_STORE_CAP_BYTES) {
-      if (!this._evictOldestEvictableAnywhere()) break;
+      if (!this._evictOldestEvictableAnywhere(now)) break;
     }
+    this._pruneEmptyBoxes();
+  }
+
+  // A box with no messages and no open settle window holds nothing: `_box()`
+  // recreates one lazily on demand, and `lastNotifiedAt` is only ever read
+  // while unread mail exists (a later append opens a fresh window, so
+  // unreadInfo reports notifiedAt: null regardless). Dropping them is a pure
+  // size win — the long tail of one-message boxes, not the busy ones, is most
+  // of the store. Global rather than per-box because whole-store eviction can
+  // empty a box other than the one being mutated.
+  _pruneEmptyBoxes() {
+    let dropped = 0;
+    for (const [to, box] of this.boxes) {
+      if (!box.messages.length && box.settleDeadline == null) {
+        this.boxes.delete(to);
+        dropped++;
+      }
+    }
+    return dropped;
   }
 
   _evictableCount(box) { return box.messages.filter((m) => this._isEvictable(m)).length; }
@@ -232,7 +307,7 @@ export class MailboxStore {
       out.push({ ...m });
     }
     if (out.length) {
-      this._enforceRetentionCaps(box);
+      this._enforceRetentionCaps(box, now);
       this._save();
     }
     return out.sort((a, b) => a.at - b.at);
@@ -248,7 +323,7 @@ export class MailboxStore {
     if (!m) return null;
     if (m.state === 'unread') {
       m.state = 'read'; m.readAt = now;
-      this._enforceRetentionCaps(box);
+      this._enforceRetentionCaps(box, now);
       this._save();
     }
     return { ...m };
@@ -291,9 +366,33 @@ export class MailboxStore {
     };
   }
 
+  // Drop a box's read/undeliverable mail on archive, keeping the box and any
+  // unread mail — archive is "set aside", not end-of-life (resume clears
+  // archivedAt), and a sender told queued:true must still get its mail read
+  // whenever the card comes back. The read history is what goes: nothing
+  // re-reads it more than seconds after delivery (see READ_RETENTION_MESSAGES),
+  // and 57 of 66 boxes on a real store were archived cards holding 1.05MB of
+  // it. Idempotent, so the archive→resume→archive cycle prunes each span's own
+  // read mail rather than accumulating them. Undeliverable mail goes too, which
+  // IS a real loss of signal — a later `list_mail` no longer shows that a peer
+  // tried to reach the card while it was away. Deliberate: undeliverable is
+  // already a terminal state `drain()` excludes, so that mail was never going
+  // to be delivered anyway, and it has always been evictable under the
+  // retention caps rather than protected the way unread mail is.
+  pruneOnArchive(to) {
+    const box = this.boxes.get(to);
+    if (!box) return 0;
+    const before = box.messages.length;
+    box.messages = box.messages.filter((m) => !this._isEvictable(m));
+    const dropped = before - box.messages.length;
+    const emptied = this._pruneEmptyBoxes();
+    if (dropped || emptied) this._save();
+    return dropped;
+  }
+
   // Permanently drop a recipient's whole box — only ever called when the card
-  // itself is purged from mappings.json (never on archive; the box is retained
-  // in full until then).
+  // itself is purged from mappings.json. Archive takes the softer
+  // pruneOnArchive path above, which keeps unread mail.
   forget(to) {
     if (this.boxes.delete(to)) this._save();
   }
