@@ -625,9 +625,14 @@ don't re-derive it.
   The view is transcript-sourced, so your own message is invisible until a poll
   reads it back — and the poll was a fixed 2s tick that sending never kicked.
   Measured: the TUI's write is ~330ms for both agents (Claude 316-424ms, Codex
-  231-829ms, and the same mid-turn, since a queued prompt is persisted
-  immediately), but end-to-end ran to **~2.3s, not 2s**, because a tick landing
-  inside that write window finds nothing and costs a FULL further period.
+  231-829ms) for an IDLE session, but end-to-end ran to **~2.3s, not 2s**,
+  because a tick landing inside that write window finds nothing and costs a FULL
+  further period. **A send while the session is WORKING is a different path
+  entirely and the burst does not help it** — the prompt is queued, not written
+  as a turn (see the queued-prompt bullet below); an earlier version of this note
+  claimed a queued prompt is "persisted immediately" on the strength of a probe
+  that grepped raw appended bytes and was actually matching the
+  `queue-operation` bookkeeping line, not a `user` turn.
   Bringing the next polls forward took Claude 415-2288ms → 440-472ms and Codex
   472-2272ms → ~441ms. Three things are load-bearing. The first step sits
   **below** the median write on purpose — a poll that finds nothing costs one
@@ -646,6 +651,35 @@ don't re-derive it.
   **Not optimistic echo, deliberately**: a locally drawn bubble has no uuid and
   no place in the append-only, epoch-rebuilt stream, and would be a lie for a
   send `deliverMessage` refuses (an archived session).
+- **A prompt sent while the session is WORKING is queued, and Claude Code records
+  it as an `attachment` with NO `message` object — so 60% of them used to be
+  invisible in the chat view forever.** `mightCarryChat`'s Claude gate looks for
+  `"role":"user"`/`"role":"assistant"`, which a `queued_command` attachment
+  matches neither of, so `"queued_command"` had to go in the gate *and* be handled
+  before `pushClaude`'s `entry.message` guard — the same both-halves rule as
+  `away_summary`; either alone silently emits nothing. Measured over 257 real
+  transcripts: **197 of 329 human-typed queued prompts NEVER become a `user`
+  turn** (the running turn absorbs them as context, and nothing writes them
+  afterwards), which is why waiting for the turn to land is not an option. **The
+  `queue-operation` lines are deliberately NOT consulted**:
+  `remove/absorbed_mid_turn` looks like the discriminator for "will never be a
+  turn", but 67 absorbed prompts DID later appear as turns, so the reason cannot
+  be trusted. Instead the prompt is emitted **on sight** and a later IDENTICAL
+  user turn is suppressed (`state.queuedSeen`) — correct for both fates, and it
+  works with an append-only stream precisely because the attachment always
+  precedes the turn (a prompt is enqueued before it can run); the reverse
+  ordering could not be fixed without retracting a drawn bubble. That guard
+  **counts rather than remembers** — the same text really is queued twice in one
+  conversation (101 extra copies in the corpus) and a `Set` would swallow the
+  second turn forever — and is bounded (`MAX_QUEUED_SEEN`) because a match, if it
+  comes at all, is the very next turn. **`commandMode` is the filter, not
+  `origin`**: `task-notification` (129 of 457) is plumbing — a sub-agent
+  finishing, a schedule firing — and must not render in a human bubble, while
+  `prompt` covers both what a human typed and peer mail, which belongs on screen
+  per the mailbox bullet. `prompt` is a string in 453 of 454 cases and an object
+  in one, so it goes through `userTextAndImages` and a non-text shape is dropped
+  rather than thrown on. Verified before/after across 259 transcripts: **212 user
+  turns added, 0 removed.**
 - **The needs-you handoff is a ROUND TRIP, and the return is inferred, not
   signalled.** `Terminal →` on the chat view's needs-you bar arms
   `chatHandoffFor` (a card id, `public/app.js`) and switches to the pane;
