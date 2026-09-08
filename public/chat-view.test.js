@@ -60,6 +60,17 @@ function stubDom() {
       focus() {},
       remove() { this._parent?.removeChild(this); },
       setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
+      // Enough for the jump-to-last-message pill: a settable rect (tests move it
+      // on/off "screen" by writing to it directly) and a scrollIntoView spy.
+      _rect: { top: 0, bottom: 0, left: 0, right: 0 },
+      getBoundingClientRect() { return this._rect; },
+      scrollIntoView(opts) { this._scrolledIntoViewWith = opts; },
+      classList: {
+        _set: new Set(),
+        add(c) { this._set.add(c); },
+        remove(c) { this._set.delete(c); },
+        contains(c) { return this._set.has(c); },
+      },
       // Class selectors only — that is all chat-view.js uses on an element
       // (.chat-live-label, .chat-live-elapsed, .chat-activity-chip, …), and the
       // live row it queries is built by chat-dom through this same stub.
@@ -89,12 +100,15 @@ function stubDom() {
   for (const id of [
     'chat-wrap', 'chat-stream', 'chat-input', 'chat-send', 'chat-stop',
     'chat-hint', 'chat-suggestion', 'chat-current-model', 'chat-attachments',
-    'chat-notice-bar',
+    'chat-notice-bar', 'chat-jump-last',
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
   const document = {
     getElementById: (id) => byId.get(id) || null,
     createElement: (tag) => make(tag),
+    // fillLinked's plain-text-segment path (chat-dom.js) — the jump-pill tests
+    // are the first in this suite to append a real 'user' event.
+    createTextNode: (text) => ({ textContent: text }),
     // Only .chat-box is looked up this way (setStatus dims it while blocked).
     querySelector: () => make('div'),
   };
@@ -506,4 +520,98 @@ test('closing the view calls the burst off', async () => {
   const before = sent.filter((m) => m.type === 'chat').length;
   runTimers();
   assert.equal(sent.filter((m) => m.type === 'chat').length, before);
+});
+
+// --- jump-to-last-message pill ------------------------------------------------
+
+test('the jump pill stays hidden with no user message to jump to', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  assert.equal(byId.get('chat-jump-last').hidden, true);
+});
+
+test('the jump pill shows only once the last user message scrolls out of view', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  const streamEl = byId.get('chat-stream');
+  streamEl._rect = { top: 0, bottom: 400 };
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'hi' }] });
+  const userNode = streamEl.children.find((c) => c.className === 'chat-user');
+  assert.ok(userNode, 'the user bubble was appended');
+  userNode._rect = { top: 50, bottom: 80 }; // inside the stream's visible box
+  streamEl.dispatchEvent({ type: 'scroll' });
+  assert.equal(byId.get('chat-jump-last').hidden, true, 'still on screen');
+  userNode._rect = { top: -100, bottom: -20 }; // scrolled above the stream's own box
+  streamEl.dispatchEvent({ type: 'scroll' });
+  assert.equal(byId.get('chat-jump-last').hidden, false);
+});
+
+test('clicking the jump pill scrolls to and briefly highlights the last user message', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'hi' }] });
+  const streamEl = byId.get('chat-stream');
+  const userNode = streamEl.children.find((c) => c.className === 'chat-user');
+  byId.get('chat-jump-last').dispatchEvent({ type: 'click' });
+  assert.ok(userNode._scrolledIntoViewWith, 'scrollIntoView was called on the bubble');
+  assert.equal(userNode.classList.contains('chat-jump-target'), true);
+});
+
+test('the jump highlight only ever clears the bubble it was actually pulsing', async () => {
+  const { view, byId, runTimers } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'first' }] });
+  const streamEl = byId.get('chat-stream');
+  const firstNode = streamEl.children.find((c) => c.className === 'chat-user');
+  byId.get('chat-jump-last').dispatchEvent({ type: 'click' });
+  // A second user message arrives — and gets its own click — before the first
+  // click's highlight timeout fires. The captured `target` in the click handler
+  // is what stops the first timeout from wiping the second bubble's flash.
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [{ kind: 'user', text: 'second' }] });
+  const secondNode = streamEl.children.filter((c) => c.className === 'chat-user')[1];
+  byId.get('chat-jump-last').dispatchEvent({ type: 'click' });
+  runTimers();
+  assert.equal(firstNode.classList.contains('chat-jump-target'), false);
+  assert.equal(secondNode.classList.contains('chat-jump-target'), false, 'its own timeout also ran');
+});
+
+test('isHumanTypedUserItem rejects Agent-Wrangler-authored notices, accepts everything else', async () => {
+  const { isHumanTypedUserItem, AGENT_WRANGLER_NOTICE_PREFIX } = await import('./chat-view.js');
+  assert.equal(isHumanTypedUserItem({ event: { text: 'a real question' } }), true);
+  assert.equal(isHumanTypedUserItem({ event: { text: `${AGENT_WRANGLER_NOTICE_PREFIX} 📬 New mail — 1 message, read when convenient.` } }), false);
+  assert.equal(isHumanTypedUserItem({ event: { text: `${AGENT_WRANGLER_NOTICE_PREFIX} PR #42: checks passing` } }), false);
+  assert.equal(isHumanTypedUserItem({ event: {} }), true, 'an image-only paste has no text and is still human');
+});
+
+test('a mail/PR-nudge bubble is never the jump target, even as the newest one', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  const streamEl = byId.get('chat-stream');
+  streamEl._rect = { top: 0, bottom: 400 };
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'a real question' }] });
+  const humanNode = streamEl.children.find((c) => c.className === 'chat-user');
+  // Delivered AFTER the human's own message, and renders in the same bubble
+  // style (CLAUDE.md's mailbox bullet: it belongs on screen) — but it must not
+  // displace the real message as the jump target.
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [{ kind: 'user', text: '[Agent Wrangler] 📬 New mail — 1 message, read when convenient.' }] });
+  const mailNode = streamEl.children.filter((c) => c.className === 'chat-user')[1];
+  humanNode._rect = { top: -100, bottom: -20 };
+  mailNode._rect = { top: 50, bottom: 80 };
+  streamEl.dispatchEvent({ type: 'scroll' });
+  assert.equal(byId.get('chat-jump-last').hidden, false, 'the human message is still off screen');
+  byId.get('chat-jump-last').dispatchEvent({ type: 'click' });
+  assert.ok(humanNode._scrolledIntoViewWith, 'jumped to the real message');
+  assert.equal(mailNode._scrolledIntoViewWith, undefined, 'never jumped to the mail bubble');
+});
+
+test('mounting a different session resets the jump pill', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'hi' }] });
+  const streamEl = byId.get('chat-stream');
+  streamEl.children.find((c) => c.className === 'chat-user')._rect = { top: -100, bottom: -20 };
+  streamEl.dispatchEvent({ type: 'scroll' });
+  assert.equal(byId.get('chat-jump-last').hidden, false);
+  view.mount('s2');
+  assert.equal(byId.get('chat-jump-last').hidden, true, 'a fresh session has nothing yet to jump to');
 });

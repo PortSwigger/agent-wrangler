@@ -848,6 +848,21 @@ test('claude: a background task notification is not rendered as something the hu
   assert.deepEqual(scanChatText(line, 'claude').events, []);
 });
 
+test('claude: a task notification that later surfaces as its OWN turn is still not drawn', () => {
+  // The commandMode check above only guards the queued_command ATTACHMENT. If
+  // that same notification is absorbed and then still lands as a genuine
+  // role:'user' turn — the same "absorbed but still appears later" fate a
+  // real queued prompt can have — the plain-turn path has no commandMode to
+  // check at all, so this must be caught by content (isSynthetic) instead, or
+  // the chat view draws a fake human bubble for the wrangler's own plumbing.
+  const notification = '<task-notification>\n<task-id>a528dac57874e3fa4</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n</task-notification>';
+  const text = claudeLines(
+    queued(notification, { commandMode: 'task-notification', origin: undefined }),
+    { type: 'user', timestamp: '2026-09-08T10:00:05.000Z', message: { role: 'user', content: notification } },
+  );
+  assert.deepEqual(scanChatText(text, 'claude').events, []);
+});
+
 test('claude: an isMeta queued command is skipped, like any other meta entry', () => {
   const line = claudeLines(queued('internal', { isMeta: true }));
   assert.deepEqual(scanChatText(line, 'claude').events, []);
