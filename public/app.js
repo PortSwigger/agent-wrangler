@@ -312,7 +312,12 @@ function barWord(s) {
 
 function applyGraph(graph) {
   latestSessions = graph.sessions || [];
-  latestHistory = graph.history || [];
+  // history is the one key the server may leave OUT: it's the archive of every
+  // session ever set aside and it changes a handful of times a day against a ~2s
+  // broadcast, so it rides only the ticks that change it (server/history-gate.js).
+  // Keyed on PRESENCE, never truthiness — purging the last archive sends a real
+  // empty array, and `|| []` would read that as "unchanged" and never clear.
+  if ('history' in graph) latestHistory = graph.history || [];
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
   latestSchedules = graph.schedules || { schedules: [] };
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;

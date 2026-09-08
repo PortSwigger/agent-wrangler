@@ -331,9 +331,12 @@ test('buildGraph carries the mapping links onto the board node', async () => {
   assert.deepEqual(bare.links, [], 'an entry with no links defaults to an empty array');
 });
 
-// graph.history records mirror the board node's workflow subset + parentSession
-// so Search's archived rows can fold a run's worker cards under their orchestrator
-// (worker's parentSession → orchestrator sessionId), exactly like the board.
+// graph.history is deliberately NARROW: one record per archive ever taken, sent to
+// every client, so it carries only the six fields public/app.js actually reads.
+// Search builds its own archived rows server-side (search/board-rows.js) and never
+// reads this — the board-mirroring fields it used to carry (agent/name/intent/
+// createdAt/task/worktree/workflow/parentSession/spawnedBy) were dead weight, with
+// `intent` alone 1.30MB of a 1.94MB payload on a real 1015-entry board.
 function makeArchiveManager(entries) {
   return {
     activeEntries: () => [],
@@ -347,24 +350,22 @@ function makeArchiveManager(entries) {
   };
 }
 
-test('buildGraph history record narrows workflow to orchestrator-only and carries parentSession, incl. the legacy fallback', async () => {
+test('buildGraph history record carries exactly the six fields the client reads', async () => {
   const mgr = makeArchiveManager([
-    { sessionId: 'orch', agent: 'claude', cwd: '/x', archivedAt: 3,
-      workflow: { issue: 'ENT-1', phase: { label: 'opened PR', kind: 'success', at: 1 }, startedAt: 1 } },
-    { sessionId: 'wkr', agent: 'claude', cwd: '/x', archivedAt: 2, parentSession: 'orch' },
-    { sessionId: 'legacy-wkr', agent: 'claude', cwd: '/x', archivedAt: 1, workflow: { parent: 'orch' } },
-    { sessionId: 'plain', agent: 'claude', cwd: '/x', archivedAt: 0 },
+    { sessionId: 'arch-sid', agent: 'claude', name: 'Named', intent: 'a very long dispatch intent',
+      cwd: '/x', archivedAt: 9, createdAt: 1, model: 'opus', task: { id: 'T1', name: 'Task' },
+      worktree: { path: '/x-worktree-f', branch: 'f' }, parentSession: 'p',
+      workflow: { issue: 'ENT-1', phase: { label: 'opened PR' } } },
   ]);
   const graph = await buildGraph(mgr, async () => ({}));
-  const byId = Object.fromEntries(graph.history.map((h) => [h.sessionId, h]));
-  assert.deepEqual(byId.orch.workflow, { issue: 'ENT-1', phase: { label: 'opened PR', kind: 'success', at: 1 } });
-  assert.equal(byId.orch.parentSession, null);
-  assert.equal(byId.wkr.workflow, null);
-  assert.equal(byId.wkr.parentSession, 'orch');
-  assert.equal(byId['legacy-wkr'].workflow, null, 'a legacy worker marker must not read as its own orchestrator run');
-  assert.equal(byId['legacy-wkr'].parentSession, 'orch');
-  assert.equal(byId.plain.workflow, null, 'an archived entry with no workflow marker reports null');
-  assert.equal(byId.plain.parentSession, null);
+  assert.deepEqual(
+    Object.keys(graph.history[0]).sort(),
+    ['archivedAt', 'cwd', 'label', 'model', 'sessionId', 'viaTaskArchive'],
+    'a field added here is paid for over the whole archive on every send — it needs a consumer in app.js',
+  );
+  assert.deepEqual(graph.history[0], {
+    sessionId: 'arch-sid', label: 'Named', cwd: '/x', archivedAt: 9, model: 'opus', viaTaskArchive: null,
+  });
 });
 
 test('buildGraph history record carries viaTaskArchive, null when absent', async () => {
