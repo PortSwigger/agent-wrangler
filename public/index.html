@@ -154,7 +154,28 @@
         <div id="term"></div>
       </div>
       <div id="chat-wrap" hidden>
-        <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+        <!-- Wraps the stream so the jump pill can anchor to the STREAM's own
+             box (position: relative here, position: absolute on #chat-stream)
+             rather than #chat-wrap's — an absolute child of #chat-wrap
+             positioned by `bottom` would land over the composer instead,
+             since the composer sits below the stream in the flex column. -->
+        <div id="chat-stream-wrap" class="chat-stream-wrap">
+          <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+          <!-- Shown only while the last message you sent has scrolled out of
+               view (chat-view.js). Icon-only and circular rather than a
+               labelled pill, and translucent+blurred rather than opaque — a
+               floating control over scrollable prose will sometimes land over
+               real text, so it is kept as small as an affordance can be and
+               legible-through rather than a hard occlusion. -->
+          <!-- Lucide "user" rather than a directional arrow: the target can be
+               either above OR below the current scroll position (e.g. you've
+               scrolled up to reread early history, so your last message is
+               below the fold, not above it) — an arrow would claim a
+               direction that is only sometimes true. -->
+          <button type="button" id="chat-jump-last" class="chat-jump-last" hidden title="Jump to your last message" aria-label="Jump to your last message">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </button>
+        </div>
         <div id="chat-notice-bar" class="chat-notice-bar" hidden></div>
         <div id="chat-composer" class="chat-composer">
           <button type="button" id="chat-suggestion" class="chat-suggestion" hidden></button>

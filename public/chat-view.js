@@ -29,6 +29,18 @@ export const POLL_MS = 2000;
 export const SEND_BURST_MS = [220, 440, 700, 1050, 1450];
 const BOTTOM_SLACK_PX = 40;
 
+// Mail delivery and PR/merge nudges are pasted into the pane as an ordinary
+// prompt (mail-notification.js, notifier.js) and deliberately render on
+// screen as a normal user bubble — CLAUDE.md's mailbox bullet is explicit
+// that `[Agent Wrangler] …` content really was delivered into the session and
+// belongs there. But none of it is something the human actually typed, so the
+// jump pill must skip it rather than treating a mail ping as "your last
+// message". Exported for the unit test.
+export const AGENT_WRANGLER_NOTICE_PREFIX = '[Agent Wrangler]';
+export function isHumanTypedUserItem(item) {
+  return !String(item.event?.text || '').startsWith(AGENT_WRANGLER_NOTICE_PREFIX);
+}
+
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
@@ -109,6 +121,43 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const suggestionBtn = document.getElementById('chat-suggestion');
   const modelEl = document.getElementById('chat-current-model');
   const attachEl = document.getElementById('chat-attachments');
+  const jumpBtn = document.getElementById('chat-jump-last');
+
+  // The node for the most recently appended `chat-user` item, so the jump
+  // pill has something to scroll to. Reset wherever the stream itself is
+  // cleared (mount, unmount, rebuildStream) — otherwise it would dangle at a
+  // node no longer in the document.
+  let lastUserEl = null;
+
+  // getBoundingClientRect rather than offsetTop/scrollTop math: the stream is
+  // now position:absolute inside .chat-stream-wrap (see styles.css) so this
+  // stays correct regardless of that positioning, and it degrades safely
+  // (guarded below) against the test suite's DOM stub, which has neither.
+  function jumpTargetOffscreen() {
+    if (!lastUserEl) return false;
+    if (typeof lastUserEl.getBoundingClientRect !== 'function' || typeof stream.getBoundingClientRect !== 'function') return false;
+    const r = lastUserEl.getBoundingClientRect();
+    const sr = stream.getBoundingClientRect();
+    return r.bottom <= sr.top || r.top >= sr.bottom;
+  }
+
+  function updateJumpVisibility() {
+    jumpBtn.hidden = !jumpTargetOffscreen();
+  }
+  stream.addEventListener('scroll', updateJumpVisibility);
+  jumpBtn.addEventListener('click', () => {
+    // Captured rather than read again after the scroll/timeout below: a new
+    // user message could arrive and reassign lastUserEl before either fires,
+    // and this click must only ever act on the bubble it was pressed for.
+    const target = lastUserEl;
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    target.classList?.remove('chat-jump-target');
+    void target.offsetWidth; // restart the animation if the pill is clicked again mid-pulse
+    target.classList?.add('chat-jump-target');
+    setTimeout(() => target.classList?.remove('chat-jump-target'), 950);
+    updateJumpVisibility();
+  });
 
   wrap.addEventListener('click', (e) => {
     if (input.contains(e.target)) return;
@@ -543,6 +592,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const stick = atBottom();
     for (const item of items) {
       const node = dom.itemNode(item);
+      // A mail/PR-nudge item still leaves the PREVIOUS tracked node in place —
+      // it must not overwrite a genuine human message with one that only
+      // looks like one, even though it renders in the same bubble style.
+      if (item.type === 'user' && isHumanTypedUserItem(item)) lastUserEl = node;
       if (item.type === 'subagent') {
         node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
       }
@@ -570,6 +623,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // Keep the live row last: these nodes were just appended after it.
     if (live) stream.appendChild(live);
     if (stick) stream.scrollTop = stream.scrollHeight;
+    updateJumpVisibility();
   }
 
   function poll() {
@@ -612,6 +666,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     offset = null;
     clearBurst();
     stream.textContent = '';
+    // Same dangling-reference reasoning as `live` below: the node this pointed
+    // at was just cleared out of the document.
+    lastUserEl = null;
+    jumpBtn.hidden = true;
     // The row was a child of the stream just cleared, so the handle is dangling —
     // dropped here so the next render appends a fresh one instead of a detached
     // node with a live timer against it.
@@ -668,6 +726,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       generation += 1;
       requestEra += 1;
       stream.textContent = '';
+      lastUserEl = null;
+      jumpBtn.hidden = true;
       // A new era starts with no known pending call or status — otherwise the
       // previous session's working line would flash on screen until this
       // session's own setStatus/onChatReply arrives.
@@ -724,6 +784,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       requestEra += 1;
       wrap.hidden = true;
       stream.textContent = '';
+      lastUserEl = null;
+      jumpBtn.hidden = true;
       lastPending = null;
       lastStatus = null;
       lastTs = null;

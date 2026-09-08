@@ -25,6 +25,14 @@ const SYNTHETIC_PREFIXES = [
   '<environment_context>', '<user_instructions>', '<environment_details>',
   '<command-name>', '<command-message>', '<command-args>',
   '<local-command-stdout>', '<local-command-stderr>', '<local-command-caveat>',
+  // Belt-and-suspenders with the queued_command commandMode check below: THAT
+  // check only guards the attachment on its way in, but a notification that
+  // gets absorbed mid-turn and then still surfaces as its own genuine
+  // role:'user' turn reaches this content-based gate instead, with no
+  // commandMode left to consult. Without this line that turn draws as a real
+  // human bubble — exactly the "does not belong in a human bubble" plumbing
+  // this whole prefix list exists to keep off screen.
+  '<task-notification>',
 ];
 function isSynthetic(text) {
   const head = text.slice(0, 40).trimStart();
