@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   MailboxStore, SETTLE_MS, AMBER_MS, UNREAD_CAP_MESSAGES, UNREAD_CAP_BYTES,
-  READ_RETENTION_MESSAGES, READ_RETENTION_BYTES, TOTAL_STORE_CAP_BYTES,
+  READ_RETENTION_MESSAGES, READ_RETENTION_BYTES, TOTAL_STORE_CAP_BYTES, READ_GRACE_MS,
 } from './mailbox-store.js';
 
 function tmpFile() {
@@ -480,4 +480,49 @@ test('pruneOnArchive: persists — the dropped mail does not come back on reload
   store.append('rcpt', { from: 'b', body: 'unread' }, 2);
   store.pruneOnArchive('rcpt');
   assert.equal(new MailboxStore(file).list('rcpt').length, 1);
+});
+
+// Regression: the per-box floor guarantees a drained batch survives its own
+// box's cap, but the WHOLE-STORE cap is a second, independent budget. A store
+// pinned over the cap by unread mail has nothing it may evict until a drain
+// makes the message it just handed out the only candidate — so the excerpt the
+// caller is holding was deleted before it could follow up. Reproduced against
+// the pre-fix code: drain returned the message, getOne(id) then returned null.
+test('whole-store cap: a message drained seconds ago is NOT evicted out from under its own excerpt follow-up', () => {
+  const store = new MailboxStore(tmpFile());
+  const boxCount = Math.ceil(TOTAL_STORE_CAP_BYTES / UNREAD_CAP_BYTES) + 1;
+  const now = Date.now();
+  for (let i = 0; i < boxCount; i++) {
+    store.append(`rcpt${i}`, { from: 'a', body: 'x'.repeat(UNREAD_CAP_BYTES - 100) }, now);
+  }
+  assert.ok(store._totalBytes() > TOTAL_STORE_CAP_BYTES); // pinned over the cap by unread mail
+
+  const drained = store.drain('rcpt0', now);
+  assert.equal(drained.length, 1);
+  // The read_mail({id}) follow-up the whole retention policy exists for.
+  assert.equal(store.getOne('rcpt0', drained[0].id, now)?.body, drained[0].body);
+});
+
+test('whole-store cap: once the read grace has passed, that same message IS evictable again', () => {
+  const store = new MailboxStore(tmpFile());
+  const boxCount = Math.ceil(TOTAL_STORE_CAP_BYTES / UNREAD_CAP_BYTES) + 1;
+  const now = Date.now();
+  for (let i = 0; i < boxCount; i++) {
+    store.append(`rcpt${i}`, { from: 'a', body: 'x'.repeat(UNREAD_CAP_BYTES - 100) }, now);
+  }
+  store.drain('rcpt0', now);
+  // A later mutation, past the grace window: the store is still over the cap,
+  // so the now-unprotected read message is what gives.
+  store.drain('rcpt1', now + READ_GRACE_MS);
+  assert.equal(store.list('rcpt0').length, 0);
+});
+
+test('read grace protects only READ mail — undeliverable has no readAt and nothing is waiting to follow up on it', () => {
+  const store = new MailboxStore(tmpFile());
+  const now = Date.now();
+  store.append('rcpt', { from: 'a', body: 'x' }, now);
+  store.markUndeliverable('rcpt');
+  const m = store.list('rcpt')[0];
+  assert.equal(m.readAt, null);
+  assert.equal(store._inReadGrace(m, now), false);
 });

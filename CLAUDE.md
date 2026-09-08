@@ -332,7 +332,21 @@ don't re-derive it.
   change take effect everywhere at once, and any future cap change relies on it.
   Empty boxes (no messages, no open settle window) are pruned everywhere: `_box`
   recreates one lazily and `lastNotifiedAt` is only read while unread mail
-  exists, so they hold nothing.
+  exists, so they hold nothing. **The per-box floor does NOT cover the
+  whole-store cap — that's a second, independent budget, and it broke the very
+  invariant the floor exists for.** A store pinned over the cap by unread mail
+  (never evictable) has nothing it may evict until a `drain()` makes the message
+  it just handed out the only candidate, so the excerpt the caller is holding is
+  deleted before it can follow up — reproduced with 17 recipients each holding
+  one 256KB unread message, where `read_mail({id})` returned null seconds after
+  the drain that delivered it. So `_evictOldestEvictableAnywhere` skips anything
+  inside `READ_GRACE_MS` (5 minutes, the measured follow-up window); a protected
+  message simply isn't a candidate, so the store can sit briefly over the cap,
+  which is already what happens whenever nothing is evictable. Undeliverable
+  mail has no `readAt` and is never protected — nothing is waiting on it.
+  `_sweepAtLoad` persists TRIMS, not the `size` normalisation beside it: a
+  legacy file whose only defect is a missing `size` is re-derived in memory on
+  every load and written back only by its next ordinary mutation.
 - **A wake whose whole PURPOSE is to make the agent call a tool must not deliver
   via the resume argv — the turn starts before the new process's MCP client
   connects.** `claude --resume … -- <text>` (Claude's `resumeCarriesIntent`)

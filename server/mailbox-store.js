@@ -25,6 +25,18 @@ export const UNREAD_CAP_BYTES = 256 * 1024;
 export const READ_RETENTION_MESSAGES = UNREAD_CAP_MESSAGES;
 export const READ_RETENTION_BYTES = UNREAD_CAP_BYTES;
 export const TOTAL_STORE_CAP_BYTES = 4 * 1024 * 1024;
+// How long a just-read message is protected from WHOLE-STORE eviction. The
+// per-box floor above is enough for the per-box cap, but the global cap is a
+// second, independent budget with no such floor — and it bites hardest exactly
+// when it must not: a store pinned over the cap by unread mail (which is never
+// evictable) has NOTHING it may evict until a drain makes the message it just
+// handed out the only candidate, so the excerpt the caller is holding is
+// deleted before it can follow up. Reproduced: 17 recipients each holding one
+// 256KB unread message, one drain, and `read_mail({id})` returned null. Covers
+// the measured follow-up window (95% of targeted reads land within 5 minutes).
+// A protected message simply isn't a candidate, so the store can sit briefly
+// over the cap — already an accepted state whenever nothing is evictable.
+export const READ_GRACE_MS = 5 * 60 * 1000;
 // Send-time hard reject — 4.4x the largest message ever observed (see the
 // spec's size-threshold table). Lives here alongside the other caps even
 // though send-message.js is the only caller: it's the same size-policy
@@ -133,13 +145,21 @@ export class MailboxStore {
     return true;
   }
 
+  // Whether `m` is inside its post-read grace window and so must not be taken by
+  // whole-store eviction (see READ_GRACE_MS). Undeliverable mail has no readAt
+  // and is never protected — nothing is waiting to follow up on it.
+  _inReadGrace(m, now) {
+    return m.readAt != null && now - m.readAt < READ_GRACE_MS;
+  }
+
   // Evict the oldest evictable message across ALL boxes (the whole-store cap
-  // has no single owning box). Returns true if something was evicted.
-  _evictOldestEvictableAnywhere() {
+  // has no single owning box), skipping anything still inside its read grace.
+  // Returns true if something was evicted.
+  _evictOldestEvictableAnywhere(now = Date.now()) {
     let oldest = null;
     for (const box of this.boxes.values()) {
       for (const m of box.messages) {
-        if (this._isEvictable(m) && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
+        if (this._isEvictable(m) && !this._inReadGrace(m, now) && (!oldest || m.at < oldest.m.at)) oldest = { box, m };
       }
     }
     if (!oldest) return false;
@@ -171,7 +191,7 @@ export class MailboxStore {
     };
     box.messages.push(message);
     if (box.settleDeadline == null) box.settleDeadline = now + SETTLE_MS;
-    this._enforceRetentionCaps(box);
+    this._enforceRetentionCaps(box, now);
     this._save();
     return { id: message.id };
   }
@@ -182,12 +202,12 @@ export class MailboxStore {
   // the evictable set (append — a fresh undeliverable mark, drain, getOne) —
   // the breach happens the moment a message stops being 'unread', not only on
   // append.
-  _enforceRetentionCaps(box) {
+  _enforceRetentionCaps(box, now = Date.now()) {
     while (this._evictableCount(box) > READ_RETENTION_MESSAGES || this._evictableBytes(box) > READ_RETENTION_BYTES) {
       if (!this._evictOldestEvictable(box)) break;
     }
     while (this._totalBytes() > TOTAL_STORE_CAP_BYTES) {
-      if (!this._evictOldestEvictableAnywhere()) break;
+      if (!this._evictOldestEvictableAnywhere(now)) break;
     }
     this._pruneEmptyBoxes();
   }
@@ -287,7 +307,7 @@ export class MailboxStore {
       out.push({ ...m });
     }
     if (out.length) {
-      this._enforceRetentionCaps(box);
+      this._enforceRetentionCaps(box, now);
       this._save();
     }
     return out.sort((a, b) => a.at - b.at);
@@ -303,7 +323,7 @@ export class MailboxStore {
     if (!m) return null;
     if (m.state === 'unread') {
       m.state = 'read'; m.readAt = now;
-      this._enforceRetentionCaps(box);
+      this._enforceRetentionCaps(box, now);
       this._save();
     }
     return { ...m };
