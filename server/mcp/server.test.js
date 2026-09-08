@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { extractCaller, buildMcpServer, createMcpRequestHandler } from './server.js';
 import { activeTools } from './tools/index.js';
+import { mcpSeenAt } from '../mcp-activity.js';
 
 test('extractCaller reads X-AW-Session header', () => {
   assert.equal(extractCaller({ headers: { 'x-aw-session': 'CARD1' } }), 'CARD1');
@@ -120,5 +121,27 @@ test('POST /mcp tools/call attributes the caller from a bearer token', async () 
   await withServer(fakeDeps(), async (port) => {
     const res = await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 2, { Authorization: 'Bearer CARD1' });
     assert.equal(res.result.structuredContent.caller.sessionId, 'CARD1');
+  });
+});
+
+// The dormant mail wake gates its paste on "this card's MCP client has connected
+// since the relaunch" (mcp-activity.js), so what matters is that the BOOT
+// handshake — not just a later tools/call — is what stamps the card. A launched
+// agent makes no tool call of its own accord, so recording only tools/call would
+// leave the gate waiting for its full timeout on every wake.
+test('POST /mcp records the caller at its initialize handshake, before any tool call', async () => {
+  await withServer(fakeDeps(), async (port) => {
+    const before = mcpSeenAt('CARD-BOOT');
+    await rpc(port, 'initialize', {
+      protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' },
+    }, 3, { 'X-AW-Session': 'CARD-BOOT' });
+    assert.ok(mcpSeenAt('CARD-BOOT') > before, 'initialize must stamp the caller');
+  });
+});
+
+test('POST /mcp records a Codex caller from its bearer token too', async () => {
+  await withServer(fakeDeps(), async (port) => {
+    await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 4, { Authorization: 'Bearer CARD-CX' });
+    assert.ok(mcpSeenAt('CARD-CX') > 0);
   });
 });
