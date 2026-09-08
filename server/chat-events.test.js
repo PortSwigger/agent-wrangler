@@ -795,3 +795,71 @@ test('codex: an apply_patch arriving as a custom_tool_call still reports its +/-
   assert.equal(events[0].adds, 2);
   assert.equal(events[0].dels, 1);
 });
+
+// --- queued prompts ----------------------------------------------------------
+// A prompt typed while the session is mid-turn is recorded as an `attachment`
+// with no `message` object, and measured over 257 real transcripts 197 of 329
+// human-typed queued prompts never go on to become a `user` turn — the running
+// turn absorbs them as context. Before this, the chat view simply never showed
+// them, with nothing later to fix it.
+
+const queued = (prompt, extra = {}) => ({
+  type: 'attachment', timestamp: '2026-09-08T10:00:00.000Z',
+  attachment: { type: 'queued_command', prompt, commandMode: 'prompt', origin: { kind: 'human' }, ...extra },
+});
+
+test('claude: a prompt queued mid-turn is rendered rather than lost', () => {
+  const { events } = scanChatText(claudeLines(queued('Difficult to tell')), 'claude');
+  assert.deepEqual(events, [
+    { kind: 'user', text: 'Difficult to tell', ts: Date.parse('2026-09-08T10:00:00.000Z') },
+  ]);
+});
+
+test('mightCarryChat lets a queued_command line through — it carries no role', () => {
+  // Both halves are needed: the parser above is useless if the gate drops the
+  // line before it, which is the footgun CLAUDE.md documents for away_summary.
+  assert.equal(mightCarryChat(JSON.stringify(queued('hi')), 'claude'), true);
+});
+
+test('claude: a queued prompt that later runs as its own turn is not drawn twice', () => {
+  const text = claudeLines(
+    queued('Merge PR'),
+    { type: 'user', timestamp: '2026-09-08T10:00:05.000Z', message: { role: 'user', content: 'Merge PR' } },
+  );
+  const { events } = scanChatText(text, 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['Merge PR']);
+});
+
+test('claude: the same text queued twice is drawn twice — the guard counts, it does not just remember', () => {
+  const text = claudeLines(
+    queued('Testing'),
+    { type: 'user', timestamp: '2026-09-08T10:00:05.000Z', message: { role: 'user', content: 'Testing' } },
+    queued('Testing'),
+    { type: 'user', timestamp: '2026-09-08T10:00:09.000Z', message: { role: 'user', content: 'Testing' } },
+  );
+  const { events } = scanChatText(text, 'claude');
+  assert.deepEqual(events.map((e) => e.text), ['Testing', 'Testing']);
+});
+
+test('claude: a background task notification is not rendered as something the human said', () => {
+  // commandMode is the filter, not origin: task-notification is plumbing (a
+  // sub-agent finishing, a schedule firing) and does not belong in a human bubble.
+  const line = claudeLines(queued('<task-notification>…</task-notification>', { commandMode: 'task-notification', origin: undefined }));
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+});
+
+test('claude: an isMeta queued command is skipped, like any other meta entry', () => {
+  const line = claudeLines(queued('internal', { isMeta: true }));
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+});
+
+test('claude: a queued prompt that is not text is dropped rather than throwing', () => {
+  // 1 of 457 real queued attachments carried an object here, not a string.
+  const line = claudeLines(queued({ weird: 'shape' }));
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+});
+
+test('claude: a queued slash command stays in the pane, like a typed one', () => {
+  const line = claudeLines(queued('<command-name>/compact</command-name>'));
+  assert.deepEqual(scanChatText(line, 'claude').events, []);
+});

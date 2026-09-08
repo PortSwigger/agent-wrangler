@@ -119,6 +119,10 @@ export function recapOf(content) {
 }
 
 const MAX_PENDING = 32;
+// Bounds queuedSeen. A queued prompt's matching turn, if it ever comes, is the
+// very next turn — so anything older than a handful is already spent, and an
+// unbounded map would hold every prompt text of a long session for nothing.
+const MAX_QUEUED_SEEN = 32;
 
 function setPending(pending, id, entry) {
   pending.set(id, entry);
@@ -259,8 +263,10 @@ export function mightCarryChat(line, agent) {
   }
   // away_summary carries no `message` at all, so the role checks can't see it —
   // its own marker has to be in the gate or the recap never reaches the parser.
+  // queued_command carries no `message` either — a prompt typed while the session
+  // is mid-turn is recorded as an `attachment`, so neither role check can see it.
   return line.includes('"role":"user"') || line.includes('"role":"assistant"')
-    || line.includes('"away_summary"');
+    || line.includes('"away_summary"') || line.includes('"queued_command"');
 }
 
 function pushClaude(entry, state) {
@@ -271,6 +277,35 @@ function pushClaude(entry, state) {
   if (entry.type === 'system' && entry.subtype === 'away_summary') {
     const recap = recapOf(entry.content);
     if (recap) out.push({ ...recap, ts: tsOf(entry.timestamp) });
+    return out;
+  }
+  // Also before the `message` guard, and for the same reason: a prompt typed while
+  // the session is mid-turn is QUEUED, and Claude Code records it as an
+  // `attachment` with no `message` object at all. Measured over 257 real
+  // transcripts, 197 of 329 human-typed queued prompts (60%) NEVER go on to
+  // become a `user` turn — the running turn absorbs them as context — so without
+  // this the chat view simply never shows a message the human definitely sent,
+  // with nothing later to fix it. The queue-operation lines are deliberately NOT
+  // consulted: `remove/absorbed_mid_turn` looks like the discriminator but 67
+  // absorbed prompts DID later appear as turns, so the reason cannot be trusted.
+  // Emitting on sight and suppressing a later identical turn (below) is correct
+  // for both fates and needs no correlation.
+  //
+  // `commandMode` is the filter, not `origin`: `task-notification` (129 of them)
+  // is background plumbing — a sub-agent finishing, a schedule firing — and does
+  // not belong in a human bubble, while `prompt` covers what a human typed AND
+  // peer mail, which CLAUDE.md says belongs on screen.
+  if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') {
+    const q = entry.attachment;
+    if (q.isMeta || q.commandMode !== 'prompt') return out;
+    const { text, images } = userTextAndImages(q.prompt);
+    if ((text || images.length) && !isSynthetic(text)) {
+      state.queuedSeen.set(text, (state.queuedSeen.get(text) || 0) + 1);
+      if (state.queuedSeen.size > MAX_QUEUED_SEEN) {
+        state.queuedSeen.delete(state.queuedSeen.keys().next().value); // oldest-out, same idiom as setPending
+      }
+      out.push({ kind: 'user', text, ts: tsOf(entry.timestamp), ...(images.length ? { images } : {}) });
+    }
     return out;
   }
   const msg = entry.message;
@@ -306,7 +341,12 @@ function pushClaude(entry, state) {
     // image-only paste can leave no prose at all, and gating on text alone would
     // drop that turn from the stream entirely.
     if ((text || images.length) && !isSynthetic(text)) {
-      out.push({ kind: 'user', text, ts, ...(images.length ? { images } : {}) });
+      // Already drawn when it was queued. Consumed rather than merely checked, so
+      // the same text queued twice still shows twice — and the emit above always
+      // precedes this line, since a prompt is enqueued before it can run.
+      const queued = state.queuedSeen.get(text) || 0;
+      if (queued > 0) state.queuedSeen.set(text, queued - 1);
+      else out.push({ kind: 'user', text, ts, ...(images.length ? { images } : {}) });
     }
     state.prevTs = ts;
     return out;
@@ -591,6 +631,10 @@ export function createChatScanner(agent = 'claude') {
     // links and no rewind representation, so there is nothing to prune.
     parents: new Map(), walls: new Set(), promptChild: new Map(),
     overflow: false, rewound: false,
+    // Queued prompts already emitted, counted rather than a Set: the same text
+    // really is queued twice in one conversation (101 extra copies across 257
+    // real transcripts), and a Set would swallow the second turn forever.
+    queuedSeen: new Map(),
   };
 
   function pushTagged(line) {
