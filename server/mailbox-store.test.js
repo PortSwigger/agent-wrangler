@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   MailboxStore, SETTLE_MS, AMBER_MS, UNREAD_CAP_MESSAGES, UNREAD_CAP_BYTES,
-  READ_RETENTION_MESSAGES, READ_RETENTION_BYTES, TOTAL_STORE_CAP_BYTES, READ_GRACE_MS,
+  READ_RETENTION_MESSAGES, READ_RETENTION_BYTES, TOTAL_STORE_CAP_BYTES, UNREAD_TTL_MS, READ_GRACE_MS,
 } from './mailbox-store.js';
 
 function tmpFile() {
@@ -482,6 +482,51 @@ test('pruneOnArchive: persists — the dropped mail does not come back on reload
   assert.equal(new MailboxStore(file).list('rcpt').length, 1);
 });
 
+test('expireStaleUnread: drops unread mail older than the cutoff, keeps everything newer', () => {
+  const store = new MailboxStore(tmpFile());
+  const now = 1_000_000_000_000;
+  store.append('rcpt', { from: 'a', body: 'ancient' }, now - UNREAD_TTL_MS - 1);
+  const { id: fresh } = store.append('rcpt', { from: 'b', body: 'recent' }, now - 1000);
+  assert.equal(store.expireStaleUnread('rcpt', now - UNREAD_TTL_MS), 1);
+  assert.deepEqual(store.list('rcpt').map((m) => m.id), [fresh]);
+});
+
+test('expireStaleUnread: exactly at the cutoff survives (strictly older expires)', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'on the boundary' }, 500);
+  assert.equal(store.expireStaleUnread('rcpt', 500), 0);
+  assert.equal(store.list('rcpt').length, 1);
+});
+
+test('expireStaleUnread: touches ONLY unread mail — read/undeliverable is pruneOnArchive\'s job, not the TTL\'s', () => {
+  const store = new MailboxStore(tmpFile());
+  const { id: readId } = store.append('rcpt', { from: 'a', body: 'read long ago' }, 1);
+  store.getOne('rcpt', readId, 2);
+  store.append('rcpt', { from: 'b', body: 'undeliverable long ago' }, 3);
+  store.markUndeliverable('rcpt');
+  assert.equal(store.expireStaleUnread('rcpt', 1_000_000), 0);
+  assert.equal(store.list('rcpt').length, 2);
+});
+
+test('expireStaleUnread: an emptied box goes away, and an unknown recipient never creates one', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'x' }, 1);
+  store.takeDueSettles(60_000); // window closed, as mail-runner.js does
+  store.expireStaleUnread('rcpt', 1_000_000);
+  assert.equal(store.boxes.has('rcpt'), false);
+  assert.equal(store.expireStaleUnread('nobody', 1_000_000), 0);
+  assert.equal(store.boxes.has('nobody'), false);
+});
+
+test('expireStaleUnread: persists', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  store.append('rcpt', { from: 'a', body: 'old' }, 1);
+  store.append('rcpt', { from: 'b', body: 'new' }, 1_000_000);
+  store.expireStaleUnread('rcpt', 500_000);
+  assert.deepEqual(new MailboxStore(file).list('rcpt').map((m) => m.body), ['new']);
+});
+
 // Regression: the per-box floor guarantees a drained batch survives its own
 // box's cap, but the WHOLE-STORE cap is a second, independent budget. A store
 // pinned over the cap by unread mail has nothing it may evict until a drain
@@ -525,4 +570,41 @@ test('read grace protects only READ mail — undeliverable has no readAt and not
   const m = store.list('rcpt')[0];
   assert.equal(m.readAt, null);
   assert.equal(store._inReadGrace(m, now), false);
+});
+
+test('reconcileArchived: batches many recipients into ONE write, dropping evictable and stale unread mail', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  const now = Date.now();
+  const { id: readId } = store.append('a', { from: 'p', body: 'read' }, now - 1000);
+  store.getOne('a', readId, now);
+  store.append('b', { from: 'p', body: 'stale unread' }, now - UNREAD_TTL_MS - 1);
+  store.append('c', { from: 'p', body: 'current unread' }, now);
+  store.takeDueSettles(now + SETTLE_MS); // the sweeper has closed every window
+
+  let writes = 0;
+  const realSave = store._save.bind(store);
+  store._save = () => { writes += 1; realSave(); };
+  const dropped = store.reconcileArchived(['a', 'b', 'c'], { staleBefore: now - UNREAD_TTL_MS });
+
+  assert.equal(dropped, 2);
+  assert.equal(writes, 1, 'one write for the whole run, not one (or two) per card');
+  assert.deepEqual([...store.boxes.keys()], ['c']); // a and b emptied and pruned
+  assert.deepEqual(new MailboxStore(file).list('c').map((m) => m.body), ['current unread']);
+});
+
+test('reconcileArchived: no staleBefore leaves unread mail alone entirely', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('a', { from: 'p', body: 'ancient unread' }, 1);
+  assert.equal(store.reconcileArchived(['a']), 0);
+  assert.equal(store.list('a').length, 1);
+});
+
+test('reconcileArchived: an unknown or already-clean id is a no-op and writes nothing', () => {
+  const store = new MailboxStore(tmpFile());
+  let writes = 0;
+  store._save = () => { writes += 1; };
+  assert.equal(store.reconcileArchived(['nobody', 'nor-me']), 0);
+  assert.equal(writes, 0);
+  assert.equal(store.boxes.size, 0);
 });

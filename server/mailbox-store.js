@@ -25,6 +25,20 @@ export const UNREAD_CAP_BYTES = 256 * 1024;
 export const READ_RETENTION_MESSAGES = UNREAD_CAP_MESSAGES;
 export const READ_RETENTION_BYTES = UNREAD_CAP_BYTES;
 export const TOTAL_STORE_CAP_BYTES = 4 * 1024 * 1024;
+// How long unread mail on an ARCHIVED card is worth keeping. Unread mail is the
+// one class the caps deliberately can't touch (a sender was told `queued: true`,
+// so `_isEvictable` excludes it) — which left it immortal until purge. The bound
+// is the conversation's own: Claude Code deletes a transcript after ~30 days
+// (`cleanupPeriodDays`), and `resolveResumeDir` REFUSES to resume a card whose
+// transcript is gone rather than start a blank one, so mail that outlives the
+// conversation can never be read by the agent it was addressed to.
+//
+// Deliberately a clock rather than the sharper "is this card still resumable?"
+// test: measured on a real store, a card was already unresumable 2 days after
+// archiving, so 30 days is generous — but a resumability probe fails in the
+// dangerous direction, where one transient lookup miss silently destroys mail a
+// sender was promised. Too generous is the correct way to be wrong here.
+export const UNREAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // How long a just-read message is protected from WHOLE-STORE eviction. The
 // per-box floor above is enough for the per-box cap, but the global cap is a
 // second, independent budget with no such floor — and it bites hardest exactly
@@ -380,11 +394,53 @@ export class MailboxStore {
   // to be delivered anyway, and it has always been evictable under the
   // retention caps rather than protected the way unread mail is.
   pruneOnArchive(to) {
+    const dropped = this._dropFromBox(to, { evictable: true });
+    const emptied = this._pruneEmptyBoxes();
+    if (dropped || emptied) this._save();
+    return dropped;
+  }
+
+  // Drop unread mail that arrived before `before` — the UNREAD_TTL_MS expiry.
+  // ONLY safe on an archived card, which is why the cutoff is a parameter and
+  // the caller (server/index.js, walking `archivedEntries()`) is what supplies
+  // the session state this store deliberately doesn't have: a live card's unread
+  // mail must never expire, however old, because it can still be read at any
+  // moment. Keyed on the message's own arrival time, not the archive time — the
+  // question is whether the mail is still worth delivering, which is about its
+  // age, not the card's.
+  expireStaleUnread(to, before) {
+    const dropped = this._dropFromBox(to, { staleBefore: before });
+    const emptied = this._pruneEmptyBoxes();
+    if (dropped || emptied) this._save();
+    return dropped;
+  }
+
+  // The shared filter behind pruneOnArchive/expireStaleUnread/reconcileArchived,
+  // so the one-card and batch paths can never drift on what they drop. Does NOT
+  // prune empty boxes and does NOT save — its callers own both, which is what
+  // lets the batch path do each once for the whole run instead of once per card.
+  _dropFromBox(to, { evictable = false, staleBefore = null } = {}) {
     const box = this.boxes.get(to);
     if (!box) return 0;
-    const before = box.messages.length;
-    box.messages = box.messages.filter((m) => !this._isEvictable(m));
-    const dropped = before - box.messages.length;
+    const n = box.messages.length;
+    box.messages = box.messages.filter((m) => !(
+      (evictable && this._isEvictable(m))
+      || (staleBefore != null && m.state === 'unread' && m.at < staleBefore)
+    ));
+    return n - box.messages.length;
+  }
+
+  // Batch form of pruneOnArchive + expireStaleUnread over many recipients, for
+  // the startup/daily reconciliation of cards archived before the archive-time
+  // hook existed (server/index.js). ONE empty-box pass and at most ONE write for
+  // the whole run — the per-card methods each do both, so looping them rewrites
+  // the entire store up to twice per card (~114 whole-file writes against a real
+  // 57-archived-card backlog) and rescans every box each time. Callers must pass
+  // ARCHIVED ids only: `staleBefore` expires unread mail, which is never safe on
+  // a live card (see expireStaleUnread).
+  reconcileArchived(ids, { staleBefore = null } = {}) {
+    let dropped = 0;
+    for (const to of ids) dropped += this._dropFromBox(to, { evictable: true, staleBefore });
     const emptied = this._pruneEmptyBoxes();
     if (dropped || emptied) this._save();
     return dropped;
