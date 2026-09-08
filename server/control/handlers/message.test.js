@@ -41,7 +41,7 @@ test('message: dormant target is woken and the message rides the resume intent; 
   const c = ctx({ entries: { CARD1: { cwd: dir, agent: 'claude' } } });
   await messageHandler.handler({ sessionId: 'CARD1', text: 'wake up' }, c);
   assert.equal(c.calls.resumed.length, 1);
-  assert.deepEqual(c.calls.resumed[0].opts, { intent: 'wake up' });
+  assert.deepEqual(c.calls.resumed[0].opts, { intent: 'wake up', reason: 'message' });
   assert.equal(c.calls.rebuild, 1);
   assert.equal(c.calls.reply.length, 0);
 });

@@ -61,7 +61,7 @@ test('dormant Claude owner (we OWN the resume): resume with the nudge as the int
   assert.equal(mode, 'dormant');
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].id, 'CARD1');
-  assert.deepEqual(d.resumed[0].opts, { intent: 'PR #7 failing' }); // the SAME nudge drives the resume
+  assert.deepEqual(d.resumed[0].opts, { intent: 'PR #7 failing', reason: 'pr-nudge' }); // the SAME nudge drives the resume
   assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
   assert.equal(d.sent.length, 0); // Claude + owned ⇒ intent carried the nudge ⇒ NO fallback sendText
 });
@@ -75,7 +75,7 @@ test('dormant Codex owner (we OWN the resume): `codex resume` ignores the intent
   const mode = await deliverPrNudge(EV, entry, d);
   assert.equal(mode, 'dormant');
   assert.equal(d.resumed.length, 1); // resume WAS called (intent still passed, harmlessly ignored by codex)
-  assert.deepEqual(d.resumed[0].opts, { intent: 'PR #7 failing' });
+  assert.deepEqual(d.resumed[0].opts, { intent: 'PR #7 failing', reason: 'pr-nudge' });
   assert.deepEqual(d.sent, [{ name: 'cx_woken', text: 'PR #7 failing', socket: '/s/cx' }]); // delivered by pane paste, NOT intent
   assert.equal(d.errors.length, 0);
 });

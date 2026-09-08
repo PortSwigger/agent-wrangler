@@ -83,7 +83,7 @@ test('wake (dormant): resumes with intent=comment, binds memory BEFORE resume, t
   assert.equal(res.mode, 'dormant');
   // The comment IS the resume intent here (automated path auto-runs it).
   assert.equal(d.calls.resume.length, 1);
-  assert.deepEqual(d.calls.resume[0].opts, { intent: 'the note' });
+  assert.deepEqual(d.calls.resume[0].opts, { intent: 'the note', reason: 'snooze-wake' });
   assert.deepEqual(order, ['bind', 'resume']); // memory bound before relaunch
   assert.deepEqual(d.calls.bind, [{ sid: 'S1', tid: 'T9' }]);
   assert.deepEqual(d.calls.clear, ['S1']); // defensive clear after resume
@@ -146,7 +146,7 @@ test('wake (dormant, sweep wins): clearSnooze→true ⇒ delivers exactly once v
   assert.equal(res.mode, 'dormant');
   assert.deepEqual(d.calls.clear, ['S1']);
   assert.equal(d.calls.resume.length, 1);
-  assert.deepEqual(d.calls.resume[0].opts, { intent: 'the note' });
+  assert.deepEqual(d.calls.resume[0].opts, { intent: 'the note', reason: 'snooze-wake' });
 });
 
 test('fireDueSnoozeWakes: wakes a live commented snooze and reports one woken; ignores comment-less/not-due', async () => {

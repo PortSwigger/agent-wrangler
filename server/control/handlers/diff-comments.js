@@ -100,7 +100,7 @@ export const diffCommentsHandler = {
         // Bind memory BEFORE relaunch so the resumed agent's AW_TASK_MEMORY resolves
         // at boot, keyed on the stable card id (matches resume.js).
         ctx.memoryStore?.bindSession(sessionId, ctx.taskStore?.taskFor(sessionId)?.id || null);
-        await ctx.sessionManager.resume(sessionId, dir);
+        await ctx.sessionManager.resume(sessionId, dir, { reason: 'diff-comment' });
         await ctx.rebuild?.();
         target = ctx.tmuxFor(sessionId);
         if (!target) throw new Error('Session did not come live after resume.');

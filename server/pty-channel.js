@@ -6,6 +6,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { attachEnv } from './session-manager.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
+import { logError } from './log.js';
 
 const exec = promisify(execFile);
 
@@ -54,7 +55,7 @@ export function ensurePtyHelperExecutable() {
       if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
     }
   } catch (err) {
-    console.error('[pty helper]', err.message);
+    logError('[pty helper]', err.message);
   }
 }
 

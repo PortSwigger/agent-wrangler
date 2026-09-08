@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import {
   archivableExits, forkEntry, buildInnerCommand, SESSIONS_DIR, resolveWorktree, SessionManager, resumePlan,
   resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions,
-  shouldReloadWorkflowSkill,
+  shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf,
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
 import { readBranch } from './state-reader.js';
@@ -81,6 +81,28 @@ test('skips a session that is already archived', () => {
 
 test('skips a dead tmux with no owning session (unmapped corpse)', () => {
   assert.deepEqual(archivableExits([{ ...clean, sessionId: null }]), []);
+});
+
+test('unreportedDeaths returns the corpses not yet logged, and nothing once they are', () => {
+  assert.deepEqual(unreportedDeaths(new Set(['cc_a', 'cc_b']), new Set(['cc_a'])), ['cc_b']);
+  assert.deepEqual(unreportedDeaths(new Set(['cc_a']), new Set(['cc_a'])), []);
+  assert.deepEqual(unreportedDeaths(new Set(), new Set(['cc_a'])), []);
+});
+
+// Keyed on what was already reported rather than an alive→dead edge: a socket
+// blip empties `alive`, so an edge rule would lose the death permanently. Here a
+// corpse first SEEN after the blip is still reported.
+test('unreportedDeaths reports a corpse whichever scan first sees it', () => {
+  assert.deepEqual(unreportedDeaths(new Set(['cc_a']), new Set()), ['cc_a']);
+});
+
+test('paneStateOf distinguishes the three ways a resume can find a session', () => {
+  const alive = new Set(['cc_live']);
+  const dead = new Set(['cc_corpse']);
+  assert.equal(paneStateOf('cc_corpse', alive, dead), 'dead');
+  assert.equal(paneStateOf('cc_live', alive, dead), 'alive');
+  assert.equal(paneStateOf('cc_gone', alive, dead), 'absent');
+  assert.equal(paneStateOf(null, alive, dead), 'absent');
 });
 
 test('ignores a foreign (non-cc_) tmux even on a clean exit', () => {
@@ -1353,6 +1375,131 @@ test('dispatch creates a nonexistent user-typed cwd (mkdir -p) so tmux does not 
   assert.equal(launchedDir, target); // and the session launches in it, not $HOME
   assert.equal(sm.map.get(sessionId).cwd, target);
   fs.rmSync(base, { recursive: true, force: true });
+});
+
+// The pane-death log's two real hazards, end to end through refreshAlive: it must
+// not repeat on the 4s rebuild, and a socket that fails to scan must not erase the
+// death (the first draft's alive→dead edge lost it permanently, silently).
+function smForPanes(panes) {
+  const sm = new SessionManager();
+  sm.scanSockets = () => [''];
+  sm._tmux = async () => {
+    const next = panes.shift();
+    if (next === 'FAIL') throw new Error('no server running on that socket');
+    return { stdout: next };
+  };
+  return sm;
+}
+
+function captureWarn(fn) {
+  const lines = [];
+  const orig = console.warn;
+  console.warn = (msg) => lines.push(msg);
+  return fn().then((r) => { console.warn = orig; return { lines, result: r }; },
+    (e) => { console.warn = orig; throw e; });
+}
+
+test('a pane death is logged once, not on every rebuild', async () => {
+  const sm = smForPanes(['cc_a\x1f0\x1f', 'cc_a\x1f1\x1f1', 'cc_a\x1f1\x1f1', 'cc_a\x1f1\x1f1']);
+  await sm.refreshAlive();                                    // alive
+  const { lines } = await captureWarn(() => sm.refreshAlive()); // dies
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /pane died .* \(tmux cc_a\) — exit 1/);
+  const { lines: again } = await captureWarn(async () => { await sm.refreshAlive(); await sm.refreshAlive(); });
+  assert.deepEqual(again, []);
+});
+
+test('a corpse already dead at startup is seeded silently — it predates this process', async () => {
+  const sm = smForPanes(['cc_old\x1f1\x1f0', 'cc_old\x1f1\x1f0']);
+  const { lines } = await captureWarn(async () => { await sm.refreshAlive(); await sm.refreshAlive(); });
+  assert.deepEqual(lines, []);
+});
+
+test('a death during a socket blip is still reported on the next successful scan', async () => {
+  // The blind poll sees nothing at all; the pane is already a corpse by the time
+  // the socket answers again, so there is no alive→dead edge left to detect.
+  const sm = smForPanes(['cc_a\x1f0\x1f', 'FAIL', 'cc_a\x1f1\x1f1']);
+  await sm.refreshAlive();
+  const { lines: duringBlip } = await captureWarn(() => sm.refreshAlive());
+  assert.deepEqual(duringBlip, []);
+  const { lines } = await captureWarn(() => sm.refreshAlive());
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /pane died .* \(tmux cc_a\)/);
+});
+
+test('a blip does not forget a corpse already reported, so it is not re-logged', async () => {
+  const sm = smForPanes(['cc_a\x1f0\x1f', 'cc_a\x1f1\x1f1', 'FAIL', 'cc_a\x1f1\x1f1']);
+  await sm.refreshAlive();
+  await captureWarn(() => sm.refreshAlive());          // reported here
+  const { lines } = await captureWarn(async () => { await sm.refreshAlive(); await sm.refreshAlive(); });
+  assert.deepEqual(lines, []);
+});
+
+// The log must never assert a teardown that did not happen: killForSession adds
+// the RECORDED tmux name to its targets unconditionally, so a dormant card whose
+// tmux died in a reboot has a target nothing can kill.
+test('killForSession logs only confirmed kills, never a stale recorded name', async () => {
+  const sm = new SessionManager();
+  sm.map.set('CARD', { tmux: 'cc_gone', socket: '' });
+  sm.scanSockets = () => [''];
+  sm.refreshAlive = async () => {};
+  sm._tmux = async (_socket, a) => {
+    if (a[0] === 'kill-session') throw new Error("can't find session: cc_gone");
+    if (a[0] === 'has-session') throw new Error("can't find session: cc_gone");
+    return { stdout: '' };
+  };
+  const logs = [];
+  const orig = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await sm.killForSession('CARD', { reason: 'archive' });
+  } finally {
+    console.log = orig;
+  }
+  assert.deepEqual(logs, []);
+});
+
+test('killForSession logs the kill it did make', async () => {
+  const sm = new SessionManager();
+  sm.map.set('CARD', { tmux: 'cc_live', socket: '' });
+  sm.scanSockets = () => [''];
+  sm.refreshAlive = async () => {};
+  sm._tmux = async (_socket, a) => {
+    if (a[0] === 'has-session') throw new Error('gone now');
+    return { stdout: '' };
+  };
+  const logs = [];
+  const orig = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await sm.killForSession('CARD', { reason: 'archive' });
+  } finally {
+    console.log = orig;
+  }
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /killed CARD \(tmux cc_live\) — reason=archive/);
+});
+
+// A kill that failed already warns "left … alive"; claiming it was killed in the
+// next breath would make the record contradict itself.
+test('killForSession says nothing about a target that survived the kill', async () => {
+  const sm = new SessionManager();
+  sm.map.set('CARD', { tmux: 'cc_stuck', socket: '' });
+  sm.scanSockets = () => [''];
+  sm.refreshAlive = async () => {};
+  sm._tmux = async () => ({ stdout: '' }); // kill "succeeds", has-session still finds it
+  const logs = [];
+  const orig = console.log;
+  console.log = (msg) => logs.push(msg);
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    await sm.killForSession('CARD', { reason: 'archive' });
+  } finally {
+    console.log = orig;
+    console.warn = origWarn;
+  }
+  assert.deepEqual(logs, []);
 });
 
 test('_newSession cd\'s into the dir inside the pane command, not just via tmux -c', async () => {

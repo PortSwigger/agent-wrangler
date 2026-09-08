@@ -18,6 +18,36 @@ export LC_CTYPE="${LC_CTYPE:-$LANG}"
 # AW_MAX_FILES if you need something different.
 ulimit -n "${AW_MAX_FILES:-16384}" 2>/dev/null || true
 
+# launchd never rotates StandardOutPath/StandardErrorPath — it opens them once and
+# appends forever — so the log grows without bound, and it now carries a line per
+# server start/stop and per session lifecycle event rather than almost nothing.
+# Trimmed here, at startup, because there is nowhere else to do it safely: launchd
+# holds an fd on the INODE, so renaming the file sends every later write to an
+# orphan and logging silently stops. Truncate in place (`cat` back over it, never
+# `mv`); the held fd is O_APPEND, so writes simply resume after the kept tail.
+# The systemd path logs to the journal, which rotates itself — these files won't
+# exist there, and the function no-ops.
+trim_log() {
+  local f="$1" max="$2" size tmp
+  [ -f "$f" ] || return 0
+  size=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
+  [ -n "$size" ] && [ "$size" -gt "$max" ] || return 0
+  tmp="$f.trim.$$"
+  # Drop the partial first line the byte-offset cut leaves behind, and say in the
+  # log itself that history was dropped — otherwise it just appears to begin
+  # mid-sentence at an arbitrary date.
+  if tail -c "$max" "$f" 2>/dev/null | tail -n +2 > "$tmp" 2>/dev/null; then
+    cat "$tmp" > "$f" \
+      && printf '%s [agent-wrangler] log trimmed at startup to the last %s bytes (older lines dropped)\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max" >> "$f"
+  fi
+  rm -f "$tmp"
+}
+AW_LOG_DIR="${AW_LOG_DIR:-$HOME/Library/Logs/wrangler}"
+AW_LOG_MAX_BYTES="${AW_LOG_MAX_BYTES:-2097152}"
+trim_log "$AW_LOG_DIR/wrangler.log" "$AW_LOG_MAX_BYTES"
+trim_log "$AW_LOG_DIR/wrangler.err" "$AW_LOG_MAX_BYTES"
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 nvm use --silent default >/dev/null 2>&1 || true

@@ -53,6 +53,6 @@ export async function runSessionAction(action, deps) {
   // Bind memory BEFORE the relaunch so the resumed agent's AW_TASK_MEMORY /
   // --add-dir resolve at boot, keyed on the stable card id (matches resume.js).
   memoryStore.bindSession(id, taskStore.taskFor(id)?.id || null);
-  await sessionManager.resume(id, dir, { intent: message });
+  await sessionManager.resume(id, dir, { intent: message, reason: 'schedule' });
   return { sessionId: id };
 }

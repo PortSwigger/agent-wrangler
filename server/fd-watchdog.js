@@ -11,6 +11,7 @@
 // opposed to a momentary legitimate burst.
 
 import fs from 'node:fs';
+import { logWarn } from './log.js';
 
 const DEFAULT_THRESHOLD = 200;
 const DEFAULT_STEP = 50;
@@ -61,7 +62,7 @@ export function startFdWatchdog({
     const level = fdWatchdogDecision({ count, threshold, step, lastWarnedAt });
     if (level == null) return;
     lastWarnedAt = level;
-    console.warn(`[fd-watchdog] open fd count ${count} has crossed ${level} — possible leak (see CLAUDE.md for past offenders: chokidar watch scope, node-pty attach teardown)`);
+    logWarn(`[fd-watchdog] open fd count ${count} has crossed ${level} — possible leak (see CLAUDE.md for past offenders: chokidar watch scope, node-pty attach teardown)`);
     onAlert({ count, level });
   }, intervalMs);
   timer.unref();

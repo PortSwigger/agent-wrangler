@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { logError } from './log.js';
 
 // Shared crash-safe JSON persistence for the three state stores (mappings,
 // tasks, config). A bare truncate-in-place writeFileSync can leave a torn or
@@ -41,7 +42,7 @@ export function readJsonOrLoud(file, label = file) {
     return JSON.parse(raw);
   } catch (err) {
     const backup = backupCorrupt(file);
-    console.error(
+    logError(
       `[agent-wrangler] ${label} is corrupt and could not be parsed (${err.message}). ` +
         `Backed it up to ${backup} and starting from empty state — recover from the backup if needed.`
     );

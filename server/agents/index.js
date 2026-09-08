@@ -1,5 +1,6 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
+import { logWarn } from '../log.js';
 
 const ALL = [claude, codex];
 
@@ -74,6 +75,6 @@ export function validateDefaultModel(env = process.env) {
   const override = env.AW_DEFAULT_MODEL;
   if (!override) return;
   if (!ALL.some((a) => a.models.some((m) => m.value === override))) {
-    console.warn(`[agent-wrangler] AW_DEFAULT_MODEL="${override}" matches no known model; using built-in default`);
+    logWarn(`[agent-wrangler] AW_DEFAULT_MODEL="${override}" matches no known model; using built-in default`);
   }
 }

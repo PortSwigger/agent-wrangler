@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { logError } from './log.js';
 
 // Custom styles live in a top-level `styles/<id>/` (outside the statically-served
 // public/ tree, committable). Each is a theme.json manifest + image assets. The
@@ -53,7 +54,7 @@ function readManifest(dir, id) {
     return null;
   }
   if (!m || typeof m.name !== 'string' || (m.base !== 'dark' && m.base !== 'light') || typeof m.icon !== 'string') {
-    console.error(`[styles] skipping ${id}: invalid manifest (need name, icon, base dark|light)`);
+    logError(`[styles] skipping ${id}: invalid manifest (need name, icon, base dark|light)`);
     return null;
   }
   return m;

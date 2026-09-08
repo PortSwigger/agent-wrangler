@@ -104,7 +104,7 @@ export async function archiveCascade(ids, ctx, { viaTaskArchive } = {}) {
       // the recorded name, so archiving never leaves a live orphan. Fall back to a
       // direct pid kill when no owned tmux was found but the graph still reports
       // one (parity with the board's solo archive path below).
-      const killed = await ctx.sessionManager.killForSession(id);
+      const killed = await ctx.sessionManager.killForSession(id, { reason: 'archive-cascade' });
       if (!killed?.length && node?.pid) process.kill(node.pid, 'SIGTERM');
     } catch {
       /* process may already be gone — archive anyway */
@@ -209,7 +209,7 @@ export const archiveHandler = {
     try {
       // Kill every owned tmux hosting this session (original + any forks), not just
       // the recorded name, so archiving never leaves a live orphan.
-      const killed = await ctx.sessionManager.killForSession(msg.sessionId);
+      const killed = await ctx.sessionManager.killForSession(msg.sessionId, { reason: 'archive' });
       if (!killed.length && s?.pid) process.kill(s.pid, 'SIGTERM');
     } catch {
       /* process may already be gone — archive anyway */

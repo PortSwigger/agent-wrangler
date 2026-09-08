@@ -58,7 +58,7 @@ test('dormant Claude target (we OWN the resume): resumes with the message as the
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].id, 'CARD1');
   assert.equal(d.resumed[0].dir, dir);
-  assert.deepEqual(d.resumed[0].opts, { intent: 'wake up please' });
+  assert.deepEqual(d.resumed[0].opts, { intent: 'wake up please', reason: 'message' });
   assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
   assert.equal(d.sent.length, 0); // Claude + owned ⇒ intent carried the message
 });
@@ -100,7 +100,7 @@ test('dormant+snoozed target: woken and messaged like any other dormant session 
   const result = await deliverMessage('CARD1', 'ping', d);
   assert.deepEqual(result, { mode: 'dormant' });
   assert.equal(d.resumed.length, 1);
-  assert.deepEqual(d.resumed[0].opts, { intent: 'ping' });
+  assert.deepEqual(d.resumed[0].opts, { intent: 'ping', reason: 'message' });
 });
 
 test('archived target: refused, never resumed', async () => {

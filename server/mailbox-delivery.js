@@ -96,7 +96,7 @@ export async function deliverMailNotification(to, text, deps) {
   const owned = !sessionManager.isResuming(to);
   const since = Date.now();
   try {
-    const res = await sessionManager.resume(to, dir);
+    const res = await sessionManager.resume(to, dir, { reason: 'mail' });
     const tmux = res?.tmux ?? tmuxFor(to);
     const socket = sessionManager.entryFor(to)?.socket ?? '';
     if (!tmux) return { mode: 'error', error: 'resume produced no live pane to deliver the mail notification into' };

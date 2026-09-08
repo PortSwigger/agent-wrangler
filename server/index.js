@@ -45,6 +45,8 @@ import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { runArchiveReview } from './archive-review-runner.js';
+import { log, logError } from './log.js';
+import { installShutdownLog } from './shutdown-log.js';
 
 const open = openModule.default || openModule;
 
@@ -53,8 +55,11 @@ const HOST = bindHost();
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
-process.on('uncaughtException', (err) => console.error('[uncaughtException]', err));
-process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
+process.on('uncaughtException', (err) => logError('[uncaughtException]', err));
+process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err));
+
+// Registered before anything can exit, so even a failed boot says why it went.
+const shutdownLog = installShutdownLog();
 
 ensurePtyHelperExecutable();
 
@@ -353,7 +358,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
   mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore,
-  onError: (to, err) => console.error(`[mail] delivery failed for ${to}:`, err?.message || err),
+  onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 }, { onWoken: () => rebuild() });
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
@@ -379,7 +384,7 @@ async function prAttachHandler(req, res) {
     pollPrStatuses({ scope: 'session', ownerId: caller }).catch(() => {}); // immediate status
     rebuild().catch(() => {}); // surface the chip even before status lands
   } catch (err) {
-    console.error('[pr-attach]', err);
+    logError('[pr-attach]', err);
     if (!res.headersSent) res.writeHead(500).end('error');
   }
 }
@@ -411,7 +416,7 @@ async function fileHandler(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ path: r.path, content }));
   } catch (err) {
-    console.error('[file]', err);
+    logError('[file]', err);
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: 'read error' }));
@@ -595,7 +600,7 @@ async function main() {
     await resolveTmuxBin();
   } catch (err) {
     if (err instanceof TmuxNotFoundError) {
-      console.error(`[agent-wrangler] ${err.message}`);
+      logError(`[agent-wrangler] ${err.message}`);
       process.exit(1);
     }
     throw err;
@@ -609,17 +614,18 @@ async function main() {
     instanceLock = await acquireInstanceLock({ port: PORT });
   } catch (err) {
     if (err instanceof InstanceLockError) {
-      console.error(`[agent-wrangler] ${err.message}`);
+      logError(`[agent-wrangler] ${err.message}`);
       process.exit(1);
     }
     throw err;
   }
   // Free the lock promptly on a graceful stop (the `process.on('exit')` handler
   // inside acquire doesn't run on a bare signal) so a `kickstart -k` successor
-  // doesn't have to wait out the restart-handoff grace before acquiring.
-  for (const sig of ['SIGTERM', 'SIGINT']) {
-    process.once(sig, () => { instanceLock.release(); process.exit(0); });
-  }
+  // doesn't have to wait out the restart-handoff grace before acquiring. Hung off
+  // the shutdown log's own signal handlers rather than a second pair: those are
+  // installed at module load, so a stop arriving during this slow startup is still
+  // recorded — and one handler means one path down.
+  shutdownLog.onShutdown(() => instanceLock.release());
   await sessionManager.init();
   setTmuxBin(sessionManager.tmuxBin);
   // Repoint every active session's memory symlink before the first build, repairing
@@ -666,7 +672,7 @@ async function main() {
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
-    console.log(`agent-wrangler running at ${url}`);
+    log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
     if (shouldOpenBrowser()) open(url).catch(() => {});
   });
 
@@ -733,7 +739,7 @@ async function main() {
         dataDirExists: fs.existsSync(DATA_DIR),
       });
       if (reason) {
-        console.log(`[agent-wrangler] dev instance shutting down (${reason})`);
+        shutdownLog.noteReason(`dev instance reaped: ${reason}`);
         process.exit(0);
       }
     }, 60000);
@@ -746,9 +752,9 @@ main().catch((err) => {
   // resolveTmuxBin() call (after the lock is held) throws it too, on the slim
   // chance tmux vanishes between main()'s upfront check and init() running.
   if (err instanceof TmuxNotFoundError) {
-    console.error(`[agent-wrangler] ${err.message}`);
+    logError(`[agent-wrangler] ${err.message}`);
   } else {
-    console.error(err);
+    logError(err);
   }
   process.exit(1);
 });

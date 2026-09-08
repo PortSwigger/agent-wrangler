@@ -3,7 +3,7 @@ export const removeHandler = {
   async handler(msg, ctx) {
     // Permanently forget an archived session — irrecoverable.
     try {
-      await ctx.sessionManager.killForSession(msg.sessionId);
+      await ctx.sessionManager.killForSession(msg.sessionId, { reason: 'purge' });
     } catch {
       /* already gone */
     }
