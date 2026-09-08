@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createHistoryGate } from './history-gate.js';
 
 const graphWith = (history) => ({ sessions: [], history, generatedAt: 1 });
@@ -52,4 +53,19 @@ test('the caller\'s graph is never mutated', () => {
   const second = graphWith([{ sessionId: 'a' }]);
   gate(second);
   assert.deepEqual(second.history, [{ sessionId: 'a' }], 'the snapshot keeps its history for the connect path');
+});
+
+// The gate's contract has two halves and only one of them lives in this file. app.js
+// can't be imported under node:test (it touches WebSocket/xterm/the DOM at import —
+// see public/module-syntax.test.js, which exists for the same reason), so its half is
+// pinned statically. `graph.history || []` is the shape this replaced and the one a
+// later edit would naturally reach for: it silently reads an omitted key as an empty
+// archive, wiping the list on the first unchanged tick.
+test('the client reads history by PRESENCE, so an omitted key never clears the list', () => {
+  const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /'history' in graph/, 'applyGraph must test for the key, not read it');
+  assert.equal(
+    /^\s*latestHistory = graph\.history/m.test(app), false,
+    'an unguarded assignment reads "unchanged" as "now empty"',
+  );
 });

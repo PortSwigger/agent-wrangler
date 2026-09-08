@@ -779,29 +779,25 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
   // recoverable via Resume. Transcript-free by design.
   //
   // **These six fields are the whole of what the client reads, and the record must
-  // stay narrowed to them** — it is one entry per archive ever taken (1015 and only
-  // ever rising on the board this was measured on), so every field here is paid for
-  // over the entire archive on every send. It USED to mirror the board node
-  // (agent/name/intent/createdAt/task/worktree/workflow/parentSession/spawnedBy) to
-  // feed the Search view's archived rows; Search now builds its own rows server-side
-  // from the index ∪ mappings (search/board-rows.js) and never reads this, so those
-  // fields were dead weight — `intent` alone was 1.30MB of a 1.94MB payload. Adding a
-  // field back needs a consumer in public/app.js to point at, and history-gate.js's
-  // per-send cost is that consumer's price.
+  // stay narrowed to them** — this is one entry per archive ever taken (1015 and only
+  // ever rising on the board it was measured on), so every field is paid for over the
+  // entire archive on every send. Each has exactly one consumer in public/app.js:
+  // cwd + archivedAt the dispatch dialog's recent-folder list, cwd + sessionId its
+  // per-task default repo, model the quick-launch button ranking, label +
+  // viaTaskArchive the sessions a task's Restore names. It USED to mirror the board
+  // node (agent/name/intent/createdAt/task/worktree/workflow/parentSession/spawnedBy)
+  // to feed the Search view's archived rows; Search now builds its own rows
+  // server-side from the index ∪ mappings (search/board-rows.js) and never reads this,
+  // so those were dead weight — `intent` alone was 1.30MB of a 1.94MB payload. Adding
+  // a field back needs a consumer to point at, paid on every send that changes.
   const history = (sessionManager?.archivedEntries?.() || []).map((e) => ({
-    // Resolves an assignment (cwdForTask) and names a cascaded session (task Restore).
     sessionId: e.sessionId,
     // Same label chain as live sessions, minus summary (no transcript read) — so a
     // resumed archive reads its intent, not the "(resumed)" placeholder.
     label: sessionLabel({ names: [e.name, e.lastLabel], intent: e.intent, cwd: e.cwd, fallback: e.sessionId.slice(0, 8) }),
-    // The dispatch dialog's recent-folder list and per-task default repo, so a folder
-    // survives every session in it ending.
     cwd: e.cwd || null,
-    // Recency ordering for that folder list.
     archivedAt: e.archivedAt,
-    // Ranks the two quick-launch buttons by how often each model was actually chosen.
     model: e.model || null,
-    // Names the sessions a task's Restore would bring back with it.
     viaTaskArchive: e.viaTaskArchive || null,
   }));
 
