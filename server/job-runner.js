@@ -98,16 +98,10 @@ export class JobRunner {
     }
   }
   async recover(job, sub, reason) {
-    if (sub.recoveryJobId) {
-      const recovery = this.store.get(sub.recoveryJobId);
-      if (recovery?.stage === 'done') this.patchSub(job.id, sub.id, (s) => {
-        s.deployed = { at: this.now(), checks: [`Verified by recovery job: ${recovery.title}`], recoveryJobId: recovery.id };
-        s.error = null; s.stage = 'cleanup'; s.state = 'queued';
-      });
-      return;
-    }
     // Store the recovery job and backlink atomically: no duplicate tickets/jobs
-    // if the service stops between observing the failure and the next poll.
+    // if the service stops between observing the failure and the next poll. The
+    // merged sub-job has nothing left to hold: the recovery job carries the PR
+    // and merge commit, so it goes straight to cleanup rather than waiting.
     this.store.change((d) => {
       const j = d.jobs.find((j) => j.id === job.id), s = j.subJobs.find((s) => s.id === sub.id);
       if (s.recoveryJobId) return;
@@ -118,7 +112,7 @@ export class JobRunner {
         error: null, paused: false, revision: 0, createdAt: this.now(), updatedAt: this.now(),
         recoveryOf: { jobId: job.id, subJobId: sub.id }, feedback: null,
       });
-      s.recoveryJobId = id; s.error = reason; s.state = 'recovery'; j.revision++;
+      s.recoveryJobId = id; s.recoveryReason = reason; s.error = null; s.stage = 'cleanup'; s.state = 'queued'; j.revision++;
     });
   }
   async advance(id) {
@@ -132,7 +126,12 @@ export class JobRunner {
       if (!this.allowed(id) || job.error) return;
       let sub = job.subJobs.find((s) => s.id === initial.id);
       if (activeFor(job, sub)) continue;
-      if (sub.recoveryJobId && sub.stage === 'deployment') { await this.recover(job, sub, sub.error); continue; }
+      // Before recovery released the sub-job, it parked at deployment in state
+      // 'recovery' until the recovery job finished. Release any still on disk.
+      if (sub.recoveryJobId && sub.stage === 'deployment') {
+        this.patchSub(id, sub.id, (s) => { s.recoveryReason = s.recoveryReason || s.error; s.error = null; s.stage = 'cleanup'; s.state = 'queued'; });
+        continue;
+      }
       // A deployed-behaviour failure is a recovery proposal too, not an agent
       // silently pushing fixes straight back into production.
       if (sub.error && sub.stage === 'deployment' && job.runs.some((r) => r.subJobId === sub.id && r.phase === 'verify' && r.report?.kind === 'blocked')) {

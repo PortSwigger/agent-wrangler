@@ -2,7 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
-import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub, storiesKeyed } from './jobs-schema.js';
+import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub, storiesKeyed, resolveBranch } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
@@ -18,9 +18,12 @@ const reviewSessions = (job) => job.reviewSessions ?? true;
 const planRepos = (plan) => [...new Set(plan.subJobs.filter((s) => !isSessionSub(s)).map((s) => s.repo))];
 function activate(j) {
   const { plan } = j;
-  j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued',
-    jiraKey: s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key,
-    repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null }));
+  j.subJobs = plan.subJobs.map((s) => {
+    const jiraKey = s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key;
+    return { ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued', jiraKey,
+      ...(s.branch ? { branch: resolveBranch(s.branch, jiraKey) } : {}),
+      repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null };
+  });
   j.stage = 'active';
 }
 

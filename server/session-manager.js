@@ -10,7 +10,7 @@ import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, linkedWorktreeCommonGitDir } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, isValidBranchName, WorktreeError, linkedWorktreeCommonGitDir } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -287,9 +287,14 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   if (!cwd || isInsideSessions(cwd)) {
     throw new WorktreeError('Worktree mode needs a real git repository — choose a project folder, not a blank or scratch directory.');
   }
-  // Branch must be git-ref-safe: restrict to [A-Za-z0-9-] (defensive — the client
-  // sanitizes too). Fall back to the intent slug if a typed branch sanitizes away.
-  const b = ((branch.trim() || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short });
+  // A branch git would accept passes through untouched — a job's plan-reviewed
+  // name (`fix/AUTH-12-foo`) must reach GitHub exactly as approved. Anything else
+  // is clamped to [A-Za-z0-9-] (the board's client already sanitises to that, so
+  // this only ever fires for a name a human could not have typed), falling back
+  // to the intent slug if nothing survives.
+  const typed = branch.trim();
+  const b = isValidBranchName(typed) ? typed
+    : (((typed || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short }));
   const folder = folderName.trim();
   const res = await createWorktree({ cwd, branch: b, folderName: folder ? expandTilde(folder) : '', auto, ...(baseRef ? { baseRef } : {}) });
   // Record repoRoot so cleanup-on-archive can find the branch even after the

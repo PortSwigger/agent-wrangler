@@ -44,7 +44,7 @@ test('sub-jobs of different jobs never share a column, and a delivered job only 
   assert.deepEqual(boards.map((x) => [...x.querySelectorAll('.job-card')].map((c) => c.dataset.sub)), [['api'], ['cart']]);
   assert.deepEqual(boards.map((x) => x.querySelector('.job-column[aria-label="PR"] .job-column-count').textContent), ['1', '1']);
   assert.match(boards[1].querySelector('.job-board-header').textContent, /Checkout/);
-  assert.equal(f.q('[data-sub="cart"] .job-card-eyebrow').textContent, 'SHOP-7', 'the header names the job, so the card need not');
+  assert.equal(f.q('[data-sub="cart"] .job-card-eyebrow').textContent, 'PRSHOP-7', 'the kind chip and the ticket; the header names the job, so the card need not');
   f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
   assert.deepEqual([...document.querySelectorAll('.job-board')].map((x) => x.dataset.board), ['job1', 'job2', 'job3']);
   f.q('#jobs-filter').value = 'job2'; f.q('#jobs-filter').dispatchEvent(f.event('change'));
@@ -65,6 +65,25 @@ test('planning edits survive live snapshots and submit the displayed revision', 
   assert.equal(f.sent[0].revision, 2); assert.equal(f.sent[0].plan.subJobs[0].title, 'Deliver secure API');
   assert.equal(f.q('#job-dialog').open, true, 'remain open until server acknowledges');
   f.view.created(); assert.equal(f.q('#job-dialog').open, false);
+});
+
+test('the plan review shows and edits each PR branch; a blanked one is dropped, and the live graph shows the resolved name', (t) => {
+  const f = fixture(t); f.data.jobs[0].plan.subJobs[0].branch = 'feat/{key}-api'; f.view.update(f.data); f.q('[data-job="job1"]').click();
+  assert.equal(f.q('[data-node="api"] [data-branch]').value, 'feat/{key}-api');
+  assert.equal(f.q('[data-node="web"] [data-branch]').value, '', 'a sub-job without a proposal still gets the field');
+  const web = f.q('[data-node="web"] [data-branch]'); web.value = ' {key}-web '; web.dispatchEvent(f.event('input'));
+  const api = f.q('[data-node="api"] [data-branch]'); api.value = ''; api.dispatchEvent(f.event('input'));
+  f.q('[data-action="approve-plan"]').click();
+  assert.deepEqual(f.sent[0].plan.subJobs.map((s) => s.branch), [undefined, '{key}-web']);
+  assert.equal('branch' in f.sent[0].plan.subJobs[0], false, 'absent, not an empty string the schema would reject');
+  f.q('#job-dialog').close();
+  const [job] = f.data.jobs; job.stage = 'active'; job.subJobs = [{ ...sub('api'), stage: 'implementation', branch: 'feat/AUTH-1-api' }, { ...sub('web', ['api']), stage: 'implementation' }]; f.view.update(f.data);
+  f.q('[data-job="job1"]').click();
+  assert.equal(f.q('[data-node="api"] .job-plan-branch').textContent, 'feat/AUTH-1-api');
+  assert.equal(f.q('[data-node="web"] .job-plan-branch'), null);
+  assert.equal(f.q('[data-node="api"] [data-branch]'), null, 'read-only once approved');
+  f.q('[data-open-sub="api"]').click();
+  assert.match(f.q('.job-detail-meta').textContent, /feat\/AUTH-1-api/);
 });
 
 test('local review displays short receipts and pins approval to the visible receipt', (t) => {
@@ -303,7 +322,8 @@ test('plans show session rows without a repository and new jobs default to revie
   job.plan = { ...plan, subJobs: [sessionSub('spike'), sub('api', ['spike'])] }; f.view.update(f.data);
   f.q('[data-job="job1"]').click();
   assert.match(f.q('.job-plan-kind').textContent, /Agent session/); assert.equal(document.querySelectorAll('.job-plan-repo').length, 1);
-  assert.match(f.q('.job-plan-table th:last-child').textContent, /Depends on/);
+  assert.deepEqual([...document.querySelectorAll('.job-node')].map((n) => [n.dataset.node, n.querySelector('.job-kind').textContent]), [['spike', 'Session'], ['api', 'PR']]);
+  assert.match(f.q('.job-graph-legend').textContent, /runs as an agent session here, no PR/);
   assert.match(f.q('.job-authority').textContent, /approve each agent session/);
   f.q('#job-dialog').close();
   f.q('#job-new').click(); const form = f.q('#job-create-form');
@@ -374,4 +394,40 @@ test('the detail dialog shows a sub-job price against the job total, and a job t
   f.q('#job-dialog').close();
   f.q('.job-board-open').click();
   assert.deepEqual([...document.querySelectorAll('#job-dialog .job-detail-cost')].map((e) => e.textContent), ['$12.50 job total']);
+});
+
+test('the plan is a dependency graph: a box per sub-job in its wave, an arrow per prerequisite, and a dependency edit moves the box', (t) => {
+  const f = fixture(t); f.q('[data-job="job1"]').click();
+  const waves = () => [...document.querySelectorAll('.job-graph-col')].map((c) => [...c.querySelectorAll('.job-node')].map((n) => n.dataset.node));
+  const arrows = () => [...document.querySelectorAll('.job-graph-edges path[data-from]')].map((p) => `${p.dataset.from}→${p.dataset.to}`);
+  assert.deepEqual(waves(), [['api'], ['web']]); assert.deepEqual(arrows(), ['api→web']);
+  assert.equal(f.q('.job-plan-table'), null, 'the landing-order table is gone');
+  assert.deepEqual([...document.querySelectorAll('.job-node-head .job-kind')].map((k) => k.textContent), ['PR', 'PR']);
+  assert.equal(f.q('.job-graph-legend .job-kind'), null, 'a PR-only plan needs no kind legend');
+  assert.match(f.q('[data-node="web"] .job-node-deps summary').textContent, /Deploy after Deliver api/);
+  const details = f.q('[data-node="web"] .job-node-deps'); details.open = true; details.dispatchEvent(f.event('toggle'));
+  const box = f.q('[data-node="web"] [data-dep]'); box.checked = false; box.dispatchEvent(f.event('change'));
+  assert.deepEqual(waves(), [['api', 'web']]); assert.deepEqual(arrows(), [], 'independent work shares wave one with nothing pointing at it');
+  assert.equal(f.q('[data-node="web"] .job-node-deps').open, true, 'the open editor survives the redraw');
+  f.q('[data-node="api"] [data-dep]').checked = true; f.q('[data-node="api"] [data-dep]').dispatchEvent(f.event('change'));
+  assert.deepEqual(waves(), [['web'], ['api']]); assert.deepEqual(arrows(), ['web→api']);
+  const title = f.q('[data-node="api"] [data-title]'); title.value = 'Deliver the API last'; title.dispatchEvent(f.event('input'));
+  f.q('[data-action="approve-plan"]').click();
+  assert.deepEqual(f.sent[0].plan.subJobs.map((s) => [s.title, s.dependsOn]), [['Deliver the API last', ['web']], ['Deliver web', []]]);
+});
+
+test('a live job shows the same graph with each box carrying its kind and status, opening its sub-job on click', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sessionSub('spike'), stage: 'review' }, { ...sub('api', ['spike']), stage: 'implementation' }]; f.view.update(f.data);
+  assert.match(f.q('.job-board-meta').textContent, /^1 PR · 1 session/, 'the board header counts the kinds rather than "sub-jobs"');
+  assert.equal(f.q('[data-sub="spike"] .job-kind').textContent, 'Session'); assert.equal(f.q('[data-sub="api"] .job-kind').textContent, 'PR');
+  f.q('.job-board-open').click();
+  assert.match(f.q('#job-dialog h3').textContent, /Sub-jobs/); assert.match(f.q('#job-dialog h3 small').textContent, /1 PR · 1 session/);
+  const nodes = [...document.querySelectorAll('button.job-node')];
+  assert.deepEqual(nodes.map((n) => [n.dataset.openSub, n.classList.contains('session'), n.querySelector('.job-status').textContent]), [['spike', true, 'Ready to review'], ['api', false, 'Waiting for 1 session']]);
+  assert.deepEqual([...document.querySelectorAll('.job-graph-edges path[data-from]')].map((p) => `${p.dataset.from}→${p.dataset.to}`), ['spike→api']);
+  assert.equal(f.q('[data-node="api"] .job-node-line').textContent, 'Start after Run spike');
+  f.q('[data-open-sub="api"]').click();
+  assert.equal(f.q('#job-dialog h2').textContent, 'Deliver api'); assert.equal(f.q('.job-detail-meta .job-kind').textContent, 'PR');
+  assert.equal(f.q('.job-graph'), null, 'a sub-job detail is about one sub-job, not the graph');
 });

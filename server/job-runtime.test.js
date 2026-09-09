@@ -163,6 +163,15 @@ test('runtime fetches and selects the remote default branch before worktree laun
   assert.deepEqual(launched.automationRun, { jobId: job.id, subJobId: sub.id, runId: run.id });
 });
 
+test('runtime branches on the plan-reviewed name when the sub-job has one, else the placeholder', async () => {
+  const branches = [];
+  const runtime = new JobRuntime({ sessionManager: { async dispatch(opts) { branches.push(opts.worktreeBranch); opts.onAutomationPrepared('sid', { path: '/wt', branch: opts.worktreeBranch, repoRoot: '/repo' }); return { sessionId: 'sid' }; } }, memoryStore: { bindSession() {} }, taskStore: {} },
+    async (bin) => bin === 'gh' ? JSON.stringify({ defaultBranchRef: { name: 'main' } }) : 'sha');
+  await runtime.launch(job, { ...sub, branch: 'fix/AUTH-1-deliver-api' }, run, () => {});
+  await runtime.launch(job, sub, run, () => {});
+  assert.deepEqual(branches, ['fix/AUTH-1-deliver-api', 'job-12345678-api']);
+});
+
 test('runtime refuses a missing worktree instead of recreating it on the base checkout', async () => {
   const runtime = new JobRuntime({ sessionManager: { dispatch() { assert.fail('must not dispatch'); } } });
   await assert.rejects(runtime.launch(job, { ...sub, worktree: { path: path.join(DATA_DIR, 'missing') } }, run, () => {}), /missing/);

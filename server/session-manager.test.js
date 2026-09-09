@@ -979,6 +979,23 @@ test('resolveWorktree creates a worktree and returns its path + branch', async (
   assert.equal(res.worktree.path, res.cwd);
 });
 
+test('resolveWorktree passes a git-valid branch through verbatim, folding its slash into the dir name only', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-verb-'));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+
+  const res = await resolveWorktree({ cwd: repo, intent: 'x', branch: 'fix/AUTH-12-login', auto: true, short: 'abcd1234' });
+  assert.equal(res.branch, 'fix/AUTH-12-login');
+  assert.equal(path.basename(res.cwd), 'proj-worktree-fix-AUTH-12-login');
+  assert.equal(execFileSync('git', ['-C', res.cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'fix/AUTH-12-login');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('resolveWorktree sanitizes a branch to [A-Za-z0-9-]', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-san-'));
   const repo = path.join(root, 'proj');
