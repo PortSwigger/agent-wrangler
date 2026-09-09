@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, trustDialogState } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -333,4 +333,33 @@ test('paneModelLabel takes the last status bar, which is the live one', () => {
 // A wrong label misreports live state, so an unrecognisable one is dropped.
 test('paneModelLabel rejects an implausibly long first segment', () => {
   assert.equal(paneModelLabel(`  ◆ ${'x'.repeat(60)} | █ 7% | y`), null);
+});
+
+// Verbatim capture of Claude Code 2.1.266's first-launch dialog in a linked worktree
+// (identical on 2.1.263). The cursor rests on "No, exit" by default.
+const TRUST_DIALOG = `
+────────────────────────────────────────────────────
+ Accessing workspace:
+ /Users/me/IdeaProjects/repo-worktree-job-b007f1e5-bulk-import
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from
+ your team). If not, take a moment to review what's in this folder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel
+`;
+
+test('classify: the trust dialog reads as needs-you with a reason (never idle → never reaped, visible on the board)', () => {
+  assert.deepEqual(classify(TRUST_DIALOG), { status: 'needs-you', waitingFor: 'trust dialog' });
+  assert.deepEqual(classify(TRUST_DIALOG.replace(' ❯ No, exit\n   Yes', '   No, exit\n ❯ Yes')), { status: 'needs-you', waitingFor: 'trust dialog' });
+});
+
+test('trustDialogState: reports which option the cursor is on, and nothing for a quoted "Yes" line', () => {
+  assert.deepEqual(trustDialogState(TRUST_DIALOG), { yesSelected: false });
+  assert.deepEqual(trustDialogState(TRUST_DIALOG.replace(' ❯ No, exit\n   Yes', '   No, exit\n ❯ Yes')), { yesSelected: true });
+  assert.deepEqual(trustDialogState(TRUST_DIALOG.replace(/\x27/g, '\x1b[2m\x27\x1b[22m')), { yesSelected: false }, 'ANSI is stripped first');
+  assert.equal(trustDialogState('⏺ I pressed "Yes, I trust this folder" in the other pane and it started fine.\n❯ '), null);
+  assert.equal(trustDialogState('❯ Try "fix typecheck errors"'), null);
+  assert.equal(trustDialogState(''), null);
 });

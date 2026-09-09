@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { runnable, dependenciesSatisfied, sessionDependenciesDone } from './job-store.js';
 import { summariseComments, commentsBlockMerge } from './job-comments.js';
+import { logWarn } from './log.js';
 const shortError = (e) => String(e?.message || e).split('\n')[0].slice(0, 240);
 const activeFor = (j, s) => j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null));
 
@@ -38,7 +39,7 @@ export class JobRunner {
         if (!run.sessionId) error = 'Launch was interrupted. Check for an existing session/worktree before retrying.';
         else if (this.now() - run.startedAt > timeout) error = 'Session exceeded its time limit. Review its work and retry.';
         else if (!(await this.runtime.isAlive(run))) error = 'Session stopped without a verification receipt. Review its work and retry.';
-        else continue;
+        else { await this.answerDialogs(run); continue; }
       }
       // A receipt can arrive while the process probe is awaiting tmux. Honour
       // that durable report even if the worker has already exited afterwards.
@@ -55,6 +56,12 @@ export class JobRunner {
         this.store.update(id, (j) => { j.error = shortError(e); });
       }
     }
+  }
+  // A live, unreported worker may be parked on Claude's trust dialog rather than
+  // working (job-runtime.js acceptTrustDialog). Best-effort: a tmux hiccup here
+  // must not fail a run that is otherwise fine, so the error is logged, not raised.
+  async answerDialogs(run) {
+    try { await this.runtime.acceptTrustDialog?.(run); } catch (e) { logWarn('[jobs] trust dialog', run.sessionId, shortError(e)); }
   }
   // Classify the current comment set once per fingerprint, off the poll: a
   // Haiku call takes seconds and the tick must not stall other jobs on it. The
