@@ -35,7 +35,9 @@ export class JobRuntime {
       intent: jobPrompt(job, sub, run),
       addDirs,
       worktree: !planning && !existing, worktreeAuto: true, worktreeBase: base,
-      worktreeBranch: `job-${job.id.slice(-8)}-${sub?.id || 'plan'}`,
+      // The plan-reviewed, convention-shaped name when the planner gave one (see
+      // jobs-schema.js `branch`); the machine-id placeholder is the fallback only.
+      worktreeBranch: sub?.branch || `job-${job.id.slice(-8)}-${sub?.id || 'plan'}`,
       automationRun: { jobId: job.id, subJobId: sub?.id || null, runId: run.id },
       onAutomationPrepared: (sid, wt) => prepared(sid, wt ? { ...wt, cleanupHead } : undefined),
       bindMemory: (sid) => this.memoryStore.bindSession(sid, job.taskId),

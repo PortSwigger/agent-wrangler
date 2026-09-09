@@ -1,5 +1,6 @@
 import { esc, tildify } from './util.js';
-import { JOB_COLUMNS, SESSION_COLUMNS, jobCostLabel, JOB_COST_TITLE, SUB_COST_TITLE, storyLabel, isSessionSub, hasSessionSubs, dependencySatisfied, sessionReviewLabel, jobCards, jobCardHtml, jobBoardHeaderHtml, jobNeedsReview, jobStatus, receiptHtml, dependencyLevels, cancelledDependencies, commentVerdict, redComments, mergeHeldByComments, COMMENT_TONE_LABEL } from './jobs.js';
+import { JOB_COLUMNS, SESSION_COLUMNS, jobCostLabel, JOB_COST_TITLE, SUB_COST_TITLE, storyLabel, isSessionSub, hasSessionSubs, kindChipHtml, kindCountLabel, dependencySatisfied, sessionReviewLabel, jobCards, jobCardHtml, jobBoardHeaderHtml, jobNeedsReview, jobStatus, receiptHtml, cancelledDependencies, commentVerdict, redComments, mergeHeldByComments, COMMENT_TONE_LABEL } from './jobs.js';
+import { planGraphHtml, layoutGraphEdges } from './job-graph.js';
 const checkTone = (state) => ['SUCCESS', 'NEUTRAL', 'SKIPPED', 'passing'].includes(state) ? 'passed' : ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'failing'].includes(state) ? 'failed' : '';
 const checkMark = (state) => checkTone(state) === 'passed' ? '✓' : checkTone(state) === 'failed' ? '×' : '○';
 const link = (url, title) => /^https:\/\/github\.com\//.test(url || '') ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(title)} ↗</a>` : esc(title);
@@ -30,6 +31,10 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
   let data = { jobs: [], settings: { concurrency: 2, maxRepairs: 2, maxRunMinutes: 120 } };
   let filter = '', needsOnly = false, showDone = false, selected = null, planDraft = null, revision = null;
   const commentsShown = new Set();
+  // Which boxes in the plan graph have their dependency editor open: a dependency
+  // change redraws the whole graph (the box moves wave), so the open state has to
+  // outlive the markup or the editor snaps shut under the pointer.
+  const openDeps = new Set();
   root.innerHTML = `<header class="jobs-header"><div><span class="jobs-kicker">AUTOMATED WORK</span><h1>Jobs</h1><p>From intent to deployed. Your decisions, at a glance.</p></div><button class="primary" id="job-new">＋ New job</button></header>
     <div class="jobs-toolbar"><label>Agents at once <input id="jobs-concurrency" type="number" min="1" max="16" value="2"></label><button id="jobs-pause">Pause new work</button><button id="jobs-settings">Automation settings</button><span class="jobs-cost-note">Pipeline watching uses no agents</span></div>
     <div class="jobs-filters"><select id="jobs-filter" aria-label="Show one job"><option value="">Every job</option></select><label><input id="jobs-needs" type="checkbox"> Needs me <span id="jobs-review-count">0</span></label><label><input id="jobs-done" type="checkbox"> Show delivered</label><span id="jobs-active-count" aria-live="polite"></span></div>
@@ -79,10 +84,33 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     send({ type: 'job-action', id: selected.jobId, subJobId: selected.subId || undefined, action: name, ...extra });
   }
   function openDetail(jobId, subId) {
-    selected = { jobId, subId }; planDraft = null; revision = null; commentsShown.clear();
+    selected = { jobId, subId }; planDraft = null; revision = null; commentsShown.clear(); openDeps.clear();
     const job = data.jobs.find((j) => j.id === jobId);
     if (!subId && job?.stage === 'planning' && job.plan) { planDraft = structuredClone(job.plan); revision = job.revision; }
     renderDetail();
+  }
+  // Arrows follow the boxes' rendered rectangles, so anything that can move a box
+  // (a dependency editor opening, the dialog resizing) re-traces them.
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => layoutGraphEdges(dialog.querySelector('.job-graph'))) : null;
+  function wireGraph() {
+    const graph = dialog.querySelector('.job-graph');
+    observer?.disconnect();
+    if (!graph) return;
+    graph.querySelectorAll('[data-title]').forEach((e) => e.oninput = () => { planDraft.subJobs[+e.dataset.title].title = e.value; });
+    // A blanked branch is absent, not '': the schema's optional field rejects an
+    // empty string, and absent means "use the dispatch-time placeholder".
+    graph.querySelectorAll('[data-branch]').forEach((e) => e.oninput = () => { const s = planDraft.subJobs[+e.dataset.branch]; if (e.value.trim()) s.branch = e.value.trim(); else delete s.branch; });
+    graph.querySelectorAll('details[data-deps]').forEach((d) => d.ontoggle = () => { if (d.open) openDeps.add(d.dataset.deps); else openDeps.delete(d.dataset.deps); layoutGraphEdges(graph); });
+    // A dependency change can move the box to another wave, so the graph is redrawn
+    // from the draft rather than patched; the changed checkbox keeps focus.
+    graph.querySelectorAll('[data-dep]').forEach((e) => e.onchange = () => {
+      const s = planDraft.subJobs[+e.dataset.dep]; s.dependsOn = e.checked ? [...s.dependsOn, e.value] : s.dependsOn.filter((d) => d !== e.value);
+      graph.outerHTML = planGraphHtml(planDraft, { editable: true, openDeps });
+      wireGraph();
+      [...dialog.querySelectorAll(`[data-dep="${e.dataset.dep}"]`)].find((c) => c.value === e.value)?.focus();
+    });
+    observer?.observe(graph.querySelector('.job-graph-canvas'));
+    layoutGraphEdges(graph);
   }
   function renderDetail() {
     const job = data.jobs.find((j) => j.id === selected?.jobId);
@@ -92,18 +120,16 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     if (!sub && !planDraft && job.stage === 'planning' && job.plan) { planDraft = structuredClone(job.plan); revision = job.revision; }
     let body = '';
     if (planDraft) {
-      const levels = dependencyLevels(planDraft);
       const sessions = planDraft.subJobs.some(isSessionSub);
-      const where = (s) => isSessionSub(s) ? '<span class="job-plan-kind">Agent session on this machine</span>' : `<span class="job-plan-repo" title="${esc(s.repo)}">${esc(tildify(s.repo))}</span>`;
       const newStories = planDraft.stories.filter((s) => !s.key).length;
       body = `<h3>Business value <small>${newStories ? `${newStories} new Jira stor${newStories === 1 ? 'y' : 'ies'} · created only after you approve` : 'Existing Jira stories'}</small></h3><div class="job-stories">${planDraft.stories.map((s, i) => `<div><label><span class="job-story-key ${s.key ? '' : 'job-story-new'}">${esc(storyLabel(s))}</span><input aria-label="Story title ${i + 1}" data-story="${i}" maxlength="180" value="${esc(s.title)}"></label><p>${esc(s.value)}</p></div>`).join('')}</div>
-        <h3>Landing order <small>${sessions ? 'Same wave can land independently · a PR deploys after its dependencies, a session starts after them' : 'Same wave can land independently'}</small></h3><div class="job-plan-table"><table><thead><tr><th>Wave</th><th>${sessions ? 'Proposed PR / session title' : 'Proposed PR title'}</th><th>Repository / Jira story</th><th>${sessions ? 'Depends on' : 'Deploy after'}</th></tr></thead><tbody>${planDraft.subJobs.map((s, i) => `<tr><td>${levels.get(s.id) + 1}</td><td><input aria-label="${isSessionSub(s) ? 'Session' : 'PR'} title ${i + 1}" data-title="${i}" maxlength="180" value="${esc(s.title)}"></td><td>${where(s)}<span class="job-plan-story">${esc(storyLabel(planDraft.stories.find((t) => t.id === s.storyId)))}${s.jiraKey ? ` / ${esc(s.jiraKey)}` : ''}</span></td><td><details><summary>${s.dependsOn.length ? s.dependsOn.map((id) => esc(planDraft.subJobs.find((d) => d.id === id)?.title || id)).join(', ') : 'Independent'}</summary>${planDraft.subJobs.filter((d) => d.id !== s.id).map((d) => `<label><input type="checkbox" data-dep="${i}" value="${esc(d.id)}" ${s.dependsOn.includes(d.id) ? 'checked' : ''}>${esc(d.title)}</label>`).join('') || 'No dependencies'}</details></td></tr>`).join('')}</tbody></table></div>
+        <h3>Landing order <small>${sessions ? 'Same wave can land independently · a PR deploys after its dependencies, a session starts after them' : 'Same wave can land independently'}</small></h3>${planGraphHtml(planDraft, { editable: true, openDeps })}
         <details class="job-more"><summary>Deployment checks & implementation detail</summary>${planDraft.subJobs.map((s) => `<h4>${esc(s.title)}</h4><p>${esc(s.instructions)}</p>${isSessionSub(s) ? '<p>Runs as an agent session in a scratch workspace; no PR.</p>' : `<p>Deployment: ${esc(s.deployment.workflows.join(', '))}</p><p>${esc(s.deployment.verify)}</p>`}`).join('')}</details>
         <p class="job-authority">${newStories ? `Approve creates the ${newStories === 1 ? 'new Jira story' : `${newStories} new Jira stories`} with these titles, then starts` : 'Approve starts'} local work in dedicated worktrees. ${job.reviewCode ? 'Code review is on.' : 'Verified work will publish automatically.'} ${job.reviewMerge ? 'You approve each merge.' : 'Green PRs merge automatically.'}${sessions ? ((job.reviewSessions ?? true) ? ' You approve each agent session’s result.' : ' Agent sessions count as done once they report.') : ''}</p>
         <div class="job-actions"><button class="primary" data-action="approve-plan" ${job.runs.some((r) => !r.stopped) ? 'disabled' : ''}>Approve ${planDraft.subJobs.length} sub-job${planDraft.subJobs.length === 1 ? '' : 's'}</button><button id="job-refine">Request changes</button></div>`;
     } else if (sub && isSessionSub(sub)) {
       const deps = sub.dependsOn.map((id) => job.subJobs.find((s) => s.id === id));
-      body = `<p class="job-detail-meta">${esc(sub.jiraKey)} · Agent session on this machine</p>${deps.length ? `<div class="job-dependency-list">${deps.map((d) => `<span>${dependencySatisfied(d) ? '✓' : d?.cancelledAt ? '×' : '↳'} After ${esc(d?.title)}${d?.cancelledAt ? ' (cancelled)' : ''}</span>`).join('')}</div>` : ''}
+      body = `<p class="job-detail-meta">${kindChipHtml(sub)} ${esc(sub.jiraKey)} · Agent session on this machine</p>${deps.length ? `<div class="job-dependency-list">${deps.map((d) => `<span>${dependencySatisfied(d) ? '✓' : d?.cancelledAt ? '×' : '↳'} After ${esc(d?.title)}${d?.cancelledAt ? ' (cancelled)' : ''}</span>`).join('')}</div>` : ''}
         ${sub.cancelledAt ? '<p class="job-authority">Cancelled. Its session is archived; nothing on disk is removed.</p>' : ''}
         ${!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length ? '<p class="job-authority">A dependency was cancelled, so this session can never start. Cancel it too, or start a new job for the remaining work.</p>' : ''}
         ${sub.feedback && !sub.result ? `<h3>Requested changes</h3><p>${esc(sub.feedback)}</p>` : ''}
@@ -113,7 +139,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         <details class="job-more"><summary>Instructions</summary><p>${esc(sub.instructions)}</p></details>`;
     } else if (sub) {
       const deps = sub.dependsOn.map((id) => job.subJobs.find((s) => s.id === id));
-      body = `<p class="job-detail-meta">${esc(sub.jiraKey)} · ${esc(tildify(sub.repo))}</p>${deps.length ? `<div class="job-dependency-list">${deps.map((d) => `<span>${dependencySatisfied(d) ? '✓' : d?.cancelledAt ? '×' : '↳'} ${isSessionSub(d) ? 'Start after' : 'Deploy after'} ${esc(d?.title)}${d?.cancelledAt ? ' (cancelled)' : ''}</span>`).join('')}</div>` : ''}
+      body = `<p class="job-detail-meta">${kindChipHtml(sub)} ${esc(sub.jiraKey)} · ${esc(tildify(sub.repo))}${sub.branch ? ` · <span class="job-plan-branch" title="Branch">${esc(sub.branch)}</span>` : ''}</p>${deps.length ? `<div class="job-dependency-list">${deps.map((d) => `<span>${dependencySatisfied(d) ? '✓' : d?.cancelledAt ? '×' : '↳'} ${isSessionSub(d) ? 'Start after' : 'Deploy after'} ${esc(d?.title)}${d?.cancelledAt ? ' (cancelled)' : ''}</span>`).join('')}</div>` : ''}
         ${sub.cancelledAt ? '<p class="job-authority">Cancelled. Nothing was merged. Cleanup archives its sessions and removes the worktree only if every commit is already on GitHub or the branch is unchanged.</p>' : ''}
         ${!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length ? '<p class="job-authority">A dependency was cancelled, so this sub-job can never publish. Cancel it too, or start a new job for the remaining work.</p>' : ''}
         ${sub.local ? `<h3>Commit message proposition</h3><p class="job-commit">${esc(sub.local.commitMessage)}</p><h3>Verified</h3>${receiptHtml(sub.local.checks)}` : ''}
@@ -125,10 +151,11 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.repairs.length ? `<h3>Changes after failed checks</h3>${sub.repairs.map((r, i) => `<div class="job-repair"><b>Repair ${i + 1}</b>${receiptHtml(r.changes)}<details><summary>Re-verified</summary>${receiptHtml(r.checks)}</details></div>`).join('')}` : ''}
         ${sub.deploymentResult ? `<h3>Deployment pipelines</h3><ul class="job-checks">${sub.deploymentResult.runs.map((r) => `<li class="${checkTone(r.status)}">${checkMark(r.status)} ${link(r.url, r.workflow)} <small>${esc(r.status)}</small></li>`).join('')}</ul>` : ''}
         ${sub.deployed ? `<h3>Verified live</h3>${receiptHtml(sub.deployed.checks)}` : ''}
+        ${sub.recoveryJobId ? `<h3>Deployment failed</h3><p>${esc(sub.recoveryReason || '')}</p><p class="job-authority">The merged change stays deployed. A separate recovery job proposes the fix and waits for your approval.</p><button id="job-recovery">Review recovery job</button>` : ''}
         ${sub.observationError ? `<p class="job-error">${esc(sub.observationError)} · Retrying automatically</p>` : ''}
         <div class="job-actions">${sub.stage === 'implementation' && sub.local && job.reviewCode && !sub.codeApprovedAt && sub.dependenciesVerified ? '<button class="primary" data-action="approve-code">Approve code</button>' : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.stage === 'implementation' && sub.local ? '<button id="job-revise">Request code changes</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}</div>
         <details class="job-more"><summary>Worktree & instructions</summary><code>${esc(sub.worktree?.path || 'Worktree created on dispatch')}</code><p>${esc(sub.instructions)}</p><p>${esc(sub.deployment.verify)}</p></details>`;
-    } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or implementation begins.</p><button class="primary" data-action="start">${job.recoveryOf ? 'Approve recovery planning' : 'Start planning'}</button>` : job.stage === 'jira' ? `<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b><p>${esc(s.value)}</p></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Implementation starts once every story has a key.</p>` : job.stage === 'active' ? '<p>All sub-jobs are delivered. Cleanup needs your attention.</p>' : '<p>Wrangler will bring the plan here for review.</p>'}`;
+    } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or implementation begins.</p><button class="primary" data-action="start">${job.recoveryOf ? 'Approve recovery planning' : 'Start planning'}</button>` : job.stage === 'jira' ? `<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b><p>${esc(s.value)}</p></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Implementation starts once every story has a key.</p><h3>Approved work</h3>${planGraphHtml(job.plan)}` : job.stage === 'active' || job.stage === 'done' ? `<h3>Sub-jobs <small>${esc(kindCountLabel(job.subJobs))}</small></h3>${planGraphHtml({ subJobs: job.subJobs, stories: job.plan?.stories }, { statusOf: (s) => jobStatus(job, s) })}` : '<p>Wrangler will bring the plan here for review.</p>'}`;
     // The board's number, restated where the decision is actually taken — and on a
     // sub-job the job total beside it, so a step's price always reads against the whole.
     const subCost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
@@ -136,7 +163,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     const costs = [subCost ? `<span class="job-detail-cost" title="${esc(SUB_COST_TITLE)}">${esc(subCost)} this sub-job</span>` : '',
       jobCost ? `<span class="job-detail-cost" title="${esc(JOB_COST_TITLE)}">${esc(jobCost)} job total</span>` : ''].filter(Boolean).join('');
     show(`<span class="jobs-kicker">${esc(sub ? job.title : 'JOB')}</span><h2>${esc(sub?.title || job.title)}</h2><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${costs}
-      ${(sub?.error || job.error) ? `<p class="job-error">${esc(sub?.error || job.error)}</p>${sub?.recoveryJobId ? '<button id="job-recovery">Review recovery job</button>' : '<button data-action="retry">Retry</button>'}` : ''}${body}
+      ${(sub?.error || job.error) ? `<p class="job-error">${esc(sub?.error || job.error)}</p><button data-action="retry">Retry</button>` : ''}${body}
       <footer class="job-detail-footer"><span class="job-footer-actions"><button data-action="${job.paused ? 'resume' : 'pause'}">${job.paused ? 'Resume job' : 'Pause new work for this job'}</button>${sub && sub.stage !== 'cleanup' && sub.stage !== 'done' ? '<button class="danger" id="job-cancel">Cancel sub-job</button>' : ''}</span><span>${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}</span></footer>`);
     dialog.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => {
       const name = b.dataset.action;
@@ -149,14 +176,9 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       if (!commentsShown.delete(key)) commentsShown.add(key);
       renderDetail();
     });
-    dialog.querySelectorAll('[data-title]').forEach((e) => e.oninput = () => { planDraft.subJobs[+e.dataset.title].title = e.value; });
     dialog.querySelectorAll('[data-story]').forEach((e) => e.oninput = () => { planDraft.stories[+e.dataset.story].title = e.value; });
-    dialog.querySelectorAll('[data-dep]').forEach((e) => e.onchange = () => {
-      const s = planDraft.subJobs[+e.dataset.dep]; s.dependsOn = e.checked ? [...s.dependsOn, e.value] : s.dependsOn.filter((d) => d !== e.value);
-      const levels = dependencyLevels(planDraft);
-      dialog.querySelectorAll('tbody tr').forEach((row, i) => { row.cells[0].textContent = levels.get(planDraft.subJobs[i].id) + 1; });
-      e.closest('details').querySelector('summary').textContent = s.dependsOn.length ? s.dependsOn.map((id) => planDraft.subJobs.find((d) => d.id === id).title).join(', ') : 'Independent';
-    });
+    dialog.querySelectorAll('[data-open-sub]').forEach((b) => b.onclick = () => openDetail(job.id, b.dataset.openSub));
+    wireGraph();
     const bind = (id, fn) => { const e = dialog.querySelector(id); if (e) e.onclick = fn; };
     bind('#job-refine', () => {
       show('<h2>Refine the plan</h2><form id="job-feedback"><label>What should change?<textarea name="feedback" required maxlength="8000" rows="5"></textarea></label><button class="primary">Send to planning</button></form>');
@@ -211,7 +233,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     show(`<h2>Automation settings</h2><form id="job-settings-form"><label>Automatic CI repair attempts per sub-job<input type="number" name="maxRepairs" min="0" max="5" required value="${data.settings.maxRepairs}"></label><label>Maximum minutes per agent step<input type="number" name="maxRunMinutes" min="5" max="480" required value="${data.settings.maxRunMinutes}"></label><p>These limits apply across all automated jobs. Waiting for pipelines, dependencies and reviews uses no agent slots. Pause prevents new steps; sessions already working finish their current step.</p><button class="primary">Save settings</button></form>`);
     dialog.querySelector('form').onsubmit = (e) => { e.preventDefault(); const f = new FormData(e.target); send({ type: 'job-settings', patch: { maxRepairs: +f.get('maxRepairs'), maxRunMinutes: +f.get('maxRunMinutes') } }); dialog.close(); };
   };
-  dialog.addEventListener('close', () => { selected = null; planDraft = null; commentsShown.clear(); });
+  dialog.addEventListener('close', () => { selected = null; planDraft = null; commentsShown.clear(); openDeps.clear(); });
   render();
   // openDetail is exposed for the return leg of the diff round trip only — it opens
   // the same dialog a board card's click does, from a job/sub id pair app.js kept.

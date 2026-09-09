@@ -118,7 +118,28 @@ export async function isLinkedWorktree(cwd) {
 }
 
 export function worktreeDirName(repoRoot, branch) {
-  return `${path.basename(repoRoot)}-worktree-${branch}`;
+  return `${path.basename(repoRoot)}-worktree-${flatBranch(branch)}`;
+}
+
+// A branch may carry `/` (fix/…, feat/…); the worktree is one directory, never
+// a nested path, so the slash is folded into the dir name only. The branch
+// itself is untouched — the whole point of a convention-shaped name is that it
+// reaches GitHub verbatim.
+const flatBranch = (branch) => String(branch).replaceAll('/', '-');
+
+// Whether `name` is a branch name git itself would accept (the rules of
+// `git check-ref-format --branch`, without a subprocess): no control/space/
+// `~^:?*[\` bytes, no `..` or `@{`, no component starting `.` or ending
+// `.lock`, no leading `-` or `/`, no trailing `.` or `/`, no `//`, not `@`.
+// Deliberately NOT a sanitiser: a name that fails is refused, never reshaped,
+// because a plan-reviewed branch name that silently comes out different from
+// what the human approved is worse than an error.
+export function isValidBranchName(name) {
+  if (typeof name !== 'string' || !name || name.length > 200 || name === '@') return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x20\x7f~^:?*[\\]/.test(name) || name.includes('..') || name.includes('@{') || name.includes('//')) return false;
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/') || name.endsWith('.')) return false;
+  return name.split('/').every((c) => c && !c.startsWith('.') && !c.endsWith('.lock'));
 }
 
 // The absolute COMMON git-dir (the main checkout's own `.git`) for a cwd that
@@ -279,7 +300,7 @@ export async function repoRootForWorktree({ path: wtPath, branch, repoRoot } = {
     if (r) return r;
   }
   if (wtPath && branch) {
-    const suffix = `-worktree-${branch}`;
+    const suffix = `-worktree-${flatBranch(branch)}`;
     const base = path.basename(wtPath);
     if (base.endsWith(suffix)) return path.join(path.dirname(wtPath), base.slice(0, -suffix.length));
   }
