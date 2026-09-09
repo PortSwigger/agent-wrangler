@@ -78,12 +78,22 @@ export function dependencyLine(job, sub) {
   const sessions = deps.filter(isSessionSub), prs = deps.filter((d) => !isSessionSub(d));
   return [sessions.length ? `Start after ${names(sessions)}` : '', prs.length ? `Deploy after ${names(prs)}` : ''].filter(Boolean).join(' · ');
 }
+// What a job (or one sub-job) cost: planning, every step, CI repairs and the
+// headless comment triage, summed server-side (server/job-spend.js) from every
+// transcript its cards have owned. `~` for a Codex estimate, exactly as a session
+// card reads it (cards.js). Empty for null/0 — a backlog job that has spent nothing
+// shows no price rather than an authoritative-looking $0.00.
+export const jobCostLabel = (usd, estimated) => typeof usd === 'number' && usd > 0 ? `${estimated ? '~' : ''}$${usd.toFixed(2)}` : '';
+export const JOB_COST_TITLE = 'Total price of this job: planning, every implementation step, CI repairs and PR comment triage';
+export const SUB_COST_TITLE = 'Price of this sub-job: every step it ran, its CI repairs and its comment triage';
+
 // A story is an existing ticket (key) or a proposal awaiting the ticketing step.
 export const storyLabel = (story) => story?.key || (story?.project ? `New in ${story.project}` : 'New story');
 export const receiptHtml = (checks = []) => `<ul class="job-receipt">${checks.map((c) => `<li><span aria-hidden="true">✓</span> ${esc(c)}</li>`).join('')}</ul>`;
 export function jobCardHtml({ job, sub }) {
   const status = jobStatus(job, sub);
   const deps = sub ? dependencyLine(job, sub) : '';
+  const cost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
   return `<button class="job-card ${jobNeedsReview(job, sub) ? 'job-card-review' : ''} ${sub?.stage === 'done' ? 'job-card-done' : ''}" data-job="${esc(job.id)}" data-sub="${esc(sub?.id || '')}">
     <span class="job-card-eyebrow">${esc(sub ? sub.jiraKey || (isSessionSub(sub) ? 'SESSION' : 'SUB-JOB') : job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span>
     <strong>${esc(sub?.title || job.title)}</strong>
@@ -93,6 +103,7 @@ export function jobCardHtml({ job, sub }) {
     ${sub?.result ? `<span class="job-card-receipt">✓ ${sub.result.checks.length} check${sub.result.checks.length === 1 ? '' : 's'} reported</span>` : ''}
     ${sub?.deployed ? `<span class="job-card-receipt">✓ ${sub.deployed.checks.length} deployment checks</span>` : ''}
     ${commentsLineHtml(sub)}
+    ${cost ? `<span class="job-card-cost" title="${esc(SUB_COST_TITLE)}">${esc(cost)}</span>` : ''}
     <span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>
   </button>`;
 }
@@ -102,6 +113,7 @@ export const sessionReviewLabel = (job) => (job.reviewSessions ?? true) ? 'Sessi
 export function jobBoardHeaderHtml(job) {
   // jobStatus's job-level 'Queued' describes a card waiting in a column; a live board reads as in progress.
   const status = job.stage === 'active' && jobStatus(job, null).text === 'Queued' ? { tone: 'working', text: 'In progress' } : jobStatus(job, null);
+  const cost = jobCostLabel(job.usd, job.usdEstimated);
   const working = job.runs.filter((r) => !r.stopped).length;
   const needs = jobCards([job]).filter((c) => jobNeedsReview(c.job, c.sub)).length;
   const delivered = job.subJobs.filter((s) => s.stage === 'done' && !s.cancelledAt).length;
@@ -111,7 +123,7 @@ export function jobBoardHeaderHtml(job) {
     `${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`,
   ].filter(Boolean);
   return `<header class="job-board-header"><div class="job-board-title"><span class="jobs-kicker">${esc(job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span><button class="job-board-open" data-job="${esc(job.id)}" data-sub=""><h2>${esc(job.title)}</h2></button><span class="job-board-meta">${meta.map(esc).join(' · ')}</span></div>
-    <div class="job-board-side"><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${needs ? `<span class="job-board-needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}<button data-pause="${esc(job.id)}" ${job.paused ? 'data-paused="1"' : ''}>${job.paused ? 'Resume job' : 'Pause job'}</button></div></header>`;
+    <div class="job-board-side">${cost ? `<span class="job-board-cost" title="${esc(JOB_COST_TITLE)}${job.usdEstimated ? ' · includes an estimate for Codex sessions' : ''}">${esc(cost)}</span>` : ''}<span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${needs ? `<span class="job-board-needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}<button data-pause="${esc(job.id)}" ${job.paused ? 'data-paused="1"' : ''}>${job.paused ? 'Resume job' : 'Pause job'}</button></div></header>`;
 }
 export function commentsLineHtml(sub) {
   const n = sub?.prComments?.items?.length;

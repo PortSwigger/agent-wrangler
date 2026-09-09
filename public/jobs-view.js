@@ -1,11 +1,15 @@
 import { esc, tildify } from './util.js';
-import { JOB_COLUMNS, SESSION_COLUMNS, storyLabel, isSessionSub, hasSessionSubs, dependencySatisfied, sessionReviewLabel, jobCards, jobCardHtml, jobBoardHeaderHtml, jobNeedsReview, jobStatus, receiptHtml, dependencyLevels, cancelledDependencies, commentVerdict, redComments, mergeHeldByComments, COMMENT_TONE_LABEL } from './jobs.js';
+import { JOB_COLUMNS, SESSION_COLUMNS, jobCostLabel, JOB_COST_TITLE, SUB_COST_TITLE, storyLabel, isSessionSub, hasSessionSubs, dependencySatisfied, sessionReviewLabel, jobCards, jobCardHtml, jobBoardHeaderHtml, jobNeedsReview, jobStatus, receiptHtml, dependencyLevels, cancelledDependencies, commentVerdict, redComments, mergeHeldByComments, COMMENT_TONE_LABEL } from './jobs.js';
 const checkTone = (state) => ['SUCCESS', 'NEUTRAL', 'SKIPPED', 'passing'].includes(state) ? 'passed' : ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'failing'].includes(state) ? 'failed' : '';
 const checkMark = (state) => checkTone(state) === 'passed' ? '✓' : checkTone(state) === 'failed' ? '×' : '○';
 const link = (url, title) => /^https:\/\/github\.com\//.test(url || '') ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(title)} ↗</a>` : esc(title);
 const commentWhere = (c) => c.kind === 'review' ? `review · ${c.state.toLowerCase().replace('_', ' ')}` : c.kind === 'thread' ? `${c.path || 'thread'}${c.line != null ? `:${c.line}` : ''}${c.outdated ? ' · outdated' : ''}${c.resolved ? ' · resolved' : ''}` : 'comment';
 // Comment text is written by reviewers and bots: escaped, never trusted HTML.
-function commentsHtml(sub) {
+// A body is only rendered once asked for — a long review thread otherwise buries
+// the verdict and the actions under it — and the expanded keys are passed in from
+// the view's own state rather than read back off this markup, which is rebuilt
+// from scratch on every graph tick and would snap a just-opened comment shut.
+function commentsHtml(sub, shown) {
   const c = sub.prComments;
   if (!c) return '';
   const verdict = commentVerdict(sub);
@@ -13,7 +17,11 @@ function commentsHtml(sub) {
     : verdict === null ? '<div class="job-comment-summary pending">Summarising comments…</div>'
       : `<div class="job-comment-summary ${esc(verdict.tone)}"><b>${esc(COMMENT_TONE_LABEL[verdict.tone])}</b> ${esc(verdict.text)}</div>`;
   return `<h3>PR comments <small>${c.items.length}${c.unresolved ? ` · ${c.unresolved} unresolved thread${c.unresolved === 1 ? '' : 's'}` : ''}${c.truncated ? ` · ${c.truncated} older not shown` : ''}</small></h3>${summary}
-    ${c.items.length ? `<ul class="job-comments">${c.items.map((i) => `<li class="${i.resolved ? 'resolved' : ''}"><span class="job-comment-meta">${esc(i.author)}${i.bot ? ' (bot)' : ''} · ${esc(commentWhere(i))} ${link(i.url, 'view')}</span><p>${esc(i.body)}</p></li>`).join('')}</ul>` : ''}`;
+    ${c.items.length ? `<ul class="job-comments">${c.items.map((i) => {
+    const key = i.id || i.url;
+    const open = shown.has(key);
+    return `<li class="${i.resolved ? 'resolved' : ''}"><span class="job-comment-meta">${esc(i.author)}${i.bot ? ' (bot)' : ''} · ${esc(commentWhere(i))} ${link(i.url, 'view')}</span><button class="job-comment-toggle" data-comment-toggle="${esc(key)}" aria-expanded="${open}">${open ? 'Hide' : 'Show comment'}</button>${open ? `<p>${esc(i.body)}</p>` : ''}</li>`;
+  }).join('')}</ul>` : ''}`;
 }
 
 export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
@@ -21,6 +29,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
   const dialog = document.getElementById('job-dialog');
   let data = { jobs: [], settings: { concurrency: 2, maxRepairs: 2, maxRunMinutes: 120 } };
   let filter = '', needsOnly = false, showDone = false, selected = null, planDraft = null, revision = null;
+  const commentsShown = new Set();
   root.innerHTML = `<header class="jobs-header"><div><span class="jobs-kicker">AUTOMATED WORK</span><h1>Jobs</h1><p>From intent to deployed. Your decisions, at a glance.</p></div><button class="primary" id="job-new">＋ New job</button></header>
     <div class="jobs-toolbar"><label>Agents at once <input id="jobs-concurrency" type="number" min="1" max="16" value="2"></label><button id="jobs-pause">Pause new work</button><button id="jobs-settings">Automation settings</button><span class="jobs-cost-note">Pipeline watching uses no agents</span></div>
     <div class="jobs-filters"><select id="jobs-filter" aria-label="Show one job"><option value="">Every job</option></select><label><input id="jobs-needs" type="checkbox"> Needs me <span id="jobs-review-count">0</span></label><label><input id="jobs-done" type="checkbox"> Show delivered</label><span id="jobs-active-count" aria-live="polite"></span></div>
@@ -70,7 +79,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     send({ type: 'job-action', id: selected.jobId, subJobId: selected.subId || undefined, action: name, ...extra });
   }
   function openDetail(jobId, subId) {
-    selected = { jobId, subId }; planDraft = null; revision = null;
+    selected = { jobId, subId }; planDraft = null; revision = null; commentsShown.clear();
     const job = data.jobs.find((j) => j.id === jobId);
     if (!subId && job?.stage === 'planning' && job.plan) { planDraft = structuredClone(job.plan); revision = job.revision; }
     renderDetail();
@@ -110,7 +119,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.local ? `<h3>Commit message proposition</h3><p class="job-commit">${esc(sub.local.commitMessage)}</p><h3>Verified</h3>${receiptHtml(sub.local.checks)}` : ''}
         ${sub.stage === 'implementation' && sub.local?.pendingChecks?.length ? `<h3>Still required in PR checks</h3><ul class="job-checks">${sub.local.pendingChecks.map((c) => `<li>○ ${esc(c)}</li>`).join('')}</ul>` : ''}
         ${sub.pr ? `<h3>${link(sub.pr.url, 'Pull request')}</h3><div class="job-pipeline-status ${checkTone(sub.pr.checkStatus)}">${esc(sub.pr.checkStatus)}${sub.pr.head ? ` · ${esc(sub.pr.head.slice(0, 8))}` : ''}</div>${sub.pr.checks?.length ? `<ul class="job-checks">${sub.pr.checks.map((c) => `<li class="${checkTone(c.state)}">${checkMark(c.state)} ${esc(c.name)} <small>${esc(c.state.toLowerCase())}</small></li>`).join('')}</ul>` : ''}` : ''}
-        ${sub.pr ? commentsHtml(sub) : ''}
+        ${sub.pr ? commentsHtml(sub, commentsShown) : ''}
         ${mergeHeldByComments(job, sub) ? '<p class="job-authority">Comments read as blocking, so the automatic merge is on hold. Approve merge to override for this head.</p>' : ''}
         ${sub.stage === 'pr' && sub.pr?.mergeWithAdmin ? '<p class="job-authority">Checks have passed. Merging will override GitHub’s required review.</p>' : ''}
         ${sub.repairs.length ? `<h3>Changes after failed checks</h3>${sub.repairs.map((r, i) => `<div class="job-repair"><b>Repair ${i + 1}</b>${receiptHtml(r.changes)}<details><summary>Re-verified</summary>${receiptHtml(r.checks)}</details></div>`).join('')}` : ''}
@@ -120,7 +129,13 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         <div class="job-actions">${sub.stage === 'implementation' && sub.local && job.reviewCode && !sub.codeApprovedAt && sub.dependenciesVerified ? '<button class="primary" data-action="approve-code">Approve code</button>' : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.stage === 'implementation' && sub.local ? '<button id="job-revise">Request code changes</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}</div>
         <details class="job-more"><summary>Worktree & instructions</summary><code>${esc(sub.worktree?.path || 'Worktree created on dispatch')}</code><p>${esc(sub.instructions)}</p><p>${esc(sub.deployment.verify)}</p></details>`;
     } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or implementation begins.</p><button class="primary" data-action="start">${job.recoveryOf ? 'Approve recovery planning' : 'Start planning'}</button>` : job.stage === 'jira' ? `<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b><p>${esc(s.value)}</p></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Implementation starts once every story has a key.</p>` : job.stage === 'active' ? '<p>All sub-jobs are delivered. Cleanup needs your attention.</p>' : '<p>Wrangler will bring the plan here for review.</p>'}`;
-    show(`<span class="jobs-kicker">${esc(sub ? job.title : 'JOB')}</span><h2>${esc(sub?.title || job.title)}</h2><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>
+    // The board's number, restated where the decision is actually taken — and on a
+    // sub-job the job total beside it, so a step's price always reads against the whole.
+    const subCost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
+    const jobCost = jobCostLabel(job.usd, job.usdEstimated);
+    const costs = [subCost ? `<span class="job-detail-cost" title="${esc(SUB_COST_TITLE)}">${esc(subCost)} this sub-job</span>` : '',
+      jobCost ? `<span class="job-detail-cost" title="${esc(JOB_COST_TITLE)}">${esc(jobCost)} job total</span>` : ''].filter(Boolean).join('');
+    show(`<span class="jobs-kicker">${esc(sub ? job.title : 'JOB')}</span><h2>${esc(sub?.title || job.title)}</h2><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${costs}
       ${(sub?.error || job.error) ? `<p class="job-error">${esc(sub?.error || job.error)}</p>${sub?.recoveryJobId ? '<button id="job-recovery">Review recovery job</button>' : '<button data-action="retry">Retry</button>'}` : ''}${body}
       <footer class="job-detail-footer"><span class="job-footer-actions"><button data-action="${job.paused ? 'resume' : 'pause'}">${job.paused ? 'Resume job' : 'Pause new work for this job'}</button>${sub && sub.stage !== 'cleanup' && sub.stage !== 'done' ? '<button class="danger" id="job-cancel">Cancel sub-job</button>' : ''}</span><span>${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}</span></footer>`);
     dialog.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => {
@@ -128,6 +143,11 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       action(name, name === 'approve-plan' ? { plan: planDraft, revision }
         : name === 'retry' ? { subJobId: sub?.error ? sub.id : undefined }
           : { head: sub?.pr?.head, localReceiptId: sub?.local?.receiptId, sessionReceiptId: sub?.result?.receiptId });
+    });
+    dialog.querySelectorAll('[data-comment-toggle]').forEach((b) => b.onclick = () => {
+      const key = b.dataset.commentToggle;
+      if (!commentsShown.delete(key)) commentsShown.add(key);
+      renderDetail();
     });
     dialog.querySelectorAll('[data-title]').forEach((e) => e.oninput = () => { planDraft.subJobs[+e.dataset.title].title = e.value; });
     dialog.querySelectorAll('[data-story]').forEach((e) => e.oninput = () => { planDraft.stories[+e.dataset.story].title = e.value; });
@@ -157,7 +177,10 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       dialog.querySelector('#job-cancel-back').onclick = () => renderDetail();
     });
     bind('#job-session', () => { dialog.close(); onSession(sub.sessions.at(-1)); });
-    bind('#job-diff', () => { dialog.close(); onDiff(sub.sessions[0]); });
+    // Reviewing the code is a round trip out to the board's diff panel, so hand over
+    // where the reader came FROM as well as what to show — app.js re-opens this same
+    // detail via openDetail once the panel closes.
+    bind('#job-diff', () => { dialog.close(); onDiff(sub.sessions[0], { jobId: job.id, subId: sub.id }); });
     bind('#job-recovery', () => openDetail(sub.recoveryJobId, ''));
   }
   function createJob() {
@@ -188,7 +211,9 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     show(`<h2>Automation settings</h2><form id="job-settings-form"><label>Automatic CI repair attempts per sub-job<input type="number" name="maxRepairs" min="0" max="5" required value="${data.settings.maxRepairs}"></label><label>Maximum minutes per agent step<input type="number" name="maxRunMinutes" min="5" max="480" required value="${data.settings.maxRunMinutes}"></label><p>These limits apply across all automated jobs. Waiting for pipelines, dependencies and reviews uses no agent slots. Pause prevents new steps; sessions already working finish their current step.</p><button class="primary">Save settings</button></form>`);
     dialog.querySelector('form').onsubmit = (e) => { e.preventDefault(); const f = new FormData(e.target); send({ type: 'job-settings', patch: { maxRepairs: +f.get('maxRepairs'), maxRunMinutes: +f.get('maxRunMinutes') } }); dialog.close(); };
   };
-  dialog.addEventListener('close', () => { selected = null; planDraft = null; });
+  dialog.addEventListener('close', () => { selected = null; planDraft = null; commentsShown.clear(); });
   render();
-  return { update, created: () => dialog.close() };
+  // openDetail is exposed for the return leg of the diff round trip only — it opens
+  // the same dialog a board card's click does, from a job/sub id pair app.js kept.
+  return { update, created: () => dialog.close(), openDetail };
 }
