@@ -148,8 +148,17 @@ export function toggleDiffPanel(sessionId) {
   openDiffPanel(sessionId);
 }
 
+// Notified with the card id whose diff just closed, after the panel is torn down.
+// Every close path funnels through closeDiffPanel — the close button, Escape, the
+// Ctrl+Cmd+D toggle, and app.js's view/selection changes — so one hook covers all
+// of them, which is the point: a round trip that ends here (the Jobs view's
+// "Review code in Wrangler") must end on ANY of them, not just the button.
+let closedListener = null;
+export function onDiffPanelClosed(fn) { closedListener = fn; }
+
 export function closeDiffPanel() {
   if (openSid === null) return;
+  const closedSid = openSid;
   openSid = null;
   stopPolling();
   cancelDrag();
@@ -176,6 +185,10 @@ export function closeDiffPanel() {
     // collapsed to one column until the next ~4s poll.
     renderGridIfVisible();
   }, reducedMotion() ? 0 : 220);
+  // Last, and outside the slide-out timer: `openSid` is already null, so a listener
+  // that switches view (and so closes the panel again) is a no-op rather than a loop,
+  // and it doesn't have to wait 220ms to act on a close the user already made.
+  if (closedListener) closedListener(closedSid);
 }
 
 // The diff panel's own fullscreen: hides #sidebar so the diff fills the whole
