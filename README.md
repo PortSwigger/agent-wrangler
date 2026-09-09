@@ -407,15 +407,76 @@ changes, missing, failed or pending checks, and any configured Wrangler merge
 approval still block merging. Ordinary merges use GitHub's
 normal protections and merge queue; the admin override merges directly.
 
-Deployment monitoring uses **GitHub Actions only**. The planner must name each
-sub-job's deployment workflow (name or filename) and the checks to perform
-against the running service. Wrangler watches every named workflow on the
-**exact merge commit and base branch**. Missing or skipped runs do not count as a
-successful deployment. Once all succeed, a session verifies the running version
+Deployment monitoring uses **GitHub Actions only**, and it **discovers** the
+pipelines rather than being told them: the planner decides only whether merging
+a repository's PR deploys anything, and supplies the checks to perform against
+the running service. Wrangler then watches every Actions run GitHub actually
+started for the **exact merge commit** — pinned to the commit rather than the
+base branch, so a sibling sub-job merging into the same repository minutes later
+can never be mistaken for this one's deployment. PR-triggered runs are excluded
+(they were already judged before the merge), and a skipped run neither blocks nor
+satisfies the watch, since GitHub is saying the workflow did not apply to this
+commit. Once the discovered runs succeed, a session verifies the running version
 and behaviour and submits another short receipt. A failed deployment or behaviour
 check creates one linked recovery job in Backlog: you approve its planning and
 plan before it can publish a fix. Dependencies remain blocked until recovery is
 delivered.
+
+Nothing running is never read as success — it cannot be told apart from a run
+that has not been queued yet — so silence goes to you instead. A PR that deploys
+nothing (documentation, CI or agent-instruction files, a client library) simply
+has **no deployment**: it counts as deployed the moment GitHub reports the merge,
+releasing anything that depends on it, and any post-merge check belongs in a
+dependent session sub-job. Should a sub-job the plan says *does* deploy see no
+run at all (or only skipped ones) after the stale window (30 minutes by default,
+under Automation settings), the card turns amber with **No deployment run** and
+joins **Needs me**; polling continues in case a run appears, but nothing
+automatic will move it. If the repository genuinely deploys nothing, **Change
+plan** drops its deployment and the merge completes the sub-job.
+
+An approved plan is not frozen. Only the ledger (receipts, heads, merge commits,
+deployed markers) is append-only; the plan itself can be **amended** through
+typed, reviewable proposals when an agent or you discover mid-flight that it is
+wrong: a named deployment workflow that cannot run for this change, a pending
+check no stage can perform, a missing prerequisite, a deployment that needs new
+work. An amendment is one line of reason plus a list of ops: add a sub-job (to an
+existing story), add or remove a dependency, set or drop a sub-job's deployment
+(dropping it means the merge is the delivery, and a merged sub-job still
+watching for a workflow that will never run is delivered on the spot), rewrite
+its pending PR checks or its instructions (which restarts implementation). A
+sub-job's repository, kind, story and branch are fixed: if one is wrong, cancel
+it and add another. Every op is validated against the plan as it stands, under
+the same rules the plan was approved under, and gated by stage — dependencies
+move until the sub-job merges, instructions and pending checks change only
+before it publishes, the deployment any time before it has deployed.
+
+Agents attach `amendment: {reason, ops}` to any receipt; a **blocked** receipt
+with an amendment is the one-click fix for what blocked it, since accepting it
+also retries the sub-job. Proposals appear on the job as **Proposed changes** —
+plain-language diff lines with who proposed it and why — and on each sub-job
+they touch (there the button reads **Accept and retry** when the receipt was
+blocked); they count under **Needs me**. Accepting re-checks the proposal against
+the job as it is now, so one the job has moved past is marked *no longer
+applies* with the reason rather than forced through, and nothing is applied
+while a step is still running on a sub-job it touches. Each amendment is graded:
+**tightening** only adds a constraint (a wait, a deployment, a pending check),
+**weakening** removes one, and everything else — new sub-jobs, rewritten
+instructions or verification text — is **neutral**. The job's **Plan changes
+proposed by agents** setting (New job, beside the review points, shown with the
+other review flags on the board header) decides what applies without you:
+*Wait for my review* (the default) applies nothing, *Apply automatically when
+they only tighten the plan* applies tightening amendments on the spot, *Apply
+automatically* applies everything. **Change plan** on any unfinished sub-job
+opens the same edits for you — dependencies, whether it deploys on merge and how
+to verify it (or no deployment), pending checks, instructions — and applies at
+once. The job's collapsed **Plan changes** history lists every accepted,
+rejected, automatically applied and expired proposal with its reason and timing.
+
+A failed live verification can also propose its fix inside the same job instead
+of a separate recovery job: the verifying step's blocked receipt adds the fix
+sub-job and marks the failed one as recovered by it, so accepting parks the
+failed sub-job as **Awaiting fix** and delivers it the moment the fix deploys;
+rejecting falls back to the linked recovery job in Backlog.
 
 Cleanup stops and archives the step sessions, removes clean worktrees and deletes
 only local branch refs that still match the verified commit. Dirty worktrees,
@@ -438,8 +499,8 @@ dependency waits, human reviews and cleanup consume no agent slots. Existing
 manually dispatched sessions and schedules remain independent. Automation settings
 also control repair attempts and a per-step time limit (120 minutes by default).
 Pause prevents new steps; current sessions finish and submit their receipts. The
-**Needs me** filter keeps only the boards with plan, code or merge decisions or
-blocked work, and the job dropdown shows a single board.
+**Needs me** filter keeps only the boards with plan, code, merge or plan-change
+decisions or blocked work, and the job dropdown shows a single board.
 
 Requirements: authenticated `gh` with access to the repositories and Actions,
 working Wrangler agent dispatch, and Jira access available to the planning and

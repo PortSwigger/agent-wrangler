@@ -49,13 +49,31 @@ export const COMMENT_TONE_LABEL = { green: 'All good', amber: 'Needs attention',
 export const redComments = (sub) => commentVerdict(sub)?.tone === 'red';
 // Automatic merge stays on hold while comments read as blocking; approving the
 // displayed head is the human override.
+// A merged sub-job whose named workflow has shown no run at all for longer than
+// the stale window (server job-runner.js): nothing automatic will ever move it,
+// so it is the human's to act on, unlike an ordinary slow deploy.
+export const deploymentStalled = (sub) => sub?.stage === 'deployment' && !!sub.deploymentStale;
 export const mergeHeldByComments = (job, sub) => sub?.stage === 'pr' && !job.reviewMerge && sub.pr?.checkStatus === 'passing' && redComments(sub) && sub.mergeApprovedHead !== sub.pr.head;
+// A pending plan change (server job-amendments.js) is the human's to decide, so
+// it counts under Needs me for the job and for every sub-job it touches — the
+// sub-job it was proposed from included, since that is where "Accept and retry"
+// lives when it arrived on a blocked receipt.
+export const amendmentTargets = (a) => [...new Set([...a.ops.map((o) => o.subJobId), a.subJobId].filter(Boolean))];
+export const pendingAmendments = (job, sub) => (job.amendments || []).filter((a) => a.status === 'proposed' && (!sub || amendmentTargets(a).includes(sub.id)));
+export const decidedAmendments = (job) => (job.amendments || []).filter((a) => a.status !== 'proposed');
+export const AMENDMENT_CLASS_LABEL = { tightening: 'Tightens', weakening: 'Weakens', neutral: 'Neutral' };
+export const AMENDMENT_STATUS_LABEL = { proposed: 'Proposed', accepted: 'Accepted', 'auto-accepted': 'Applied automatically', rejected: 'Rejected', invalid: 'No longer applies' };
+export const AMENDMENT_AUTHORITY_LABEL = { review: 'Plan changes reviewed', 'auto-tighten': 'Tightening auto-applies', auto: 'Plan changes auto-apply' };
+export const amendmentAuthorityLabel = (job) => AMENDMENT_AUTHORITY_LABEL[job.amendmentAuthority] || AMENDMENT_AUTHORITY_LABEL.review;
+export const reviewFlagsLabel = (job) => `${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''} · ${amendmentAuthorityLabel(job)}`;
 export function jobNeedsReview(job, sub) {
   if (job.error || sub?.error) return true;
+  if (pendingAmendments(job, sub).length) return true;
   if (sub && mergeHeldByComments(job, sub)) return true;
   if (!sub) return job.stage === 'planning' && job.plan && !job.runs.some((r) => !r.stopped);
   if (!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return true;
   if (isSessionSub(sub)) return sub.stage === 'review';
+  if (deploymentStalled(sub)) return true;
   return (sub.stage === 'implementation' && sub.local && sub.dependenciesVerified && job.reviewCode && !sub.codeApprovedAt)
     || (sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && job.reviewMerge && sub.mergeApprovedHead !== sub.pr.head);
 }
@@ -66,6 +84,8 @@ export function jobStatus(job, sub) {
   if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a cancelled sub-job' };
   const run = liveRun(job, sub);
   if (run) return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: 'Implementing', publish: 'Opening PR', repair: 'Repairing CI', verify: 'Verifying live', session: 'Working' }[run.phase] || 'Working') };
+  if (pendingAmendments(job, sub).length) return { tone: 'needs', text: 'Plan change proposed' };
+  if (deploymentStalled(sub)) return { tone: 'needs', text: 'No deployment run' };
   if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Ready for code review' : 'Plan ready to review' };
   if (!sub) return { tone: 'muted', text: job.stage === 'backlog' ? 'Ready when you are' : job.stage === 'done' ? 'Delivered' : job.stage === 'jira' ? 'Tickets queued' : 'Queued' };
   // A session prerequisite blocks a build from starting; a PR prerequisite only blocks publishing.
@@ -74,7 +94,7 @@ export function jobStatus(job, sub) {
   if (blocked.length) return { tone: 'muted', text: `Waiting for ${blocked.length} ${blocked.every(isSessionSub) ? 'session' : blocked.some(isSessionSub) ? 'prerequisite' : 'deployment'}${blocked.length === 1 ? '' : 's'}` };
   if (sub.observationError) return { tone: 'needs', text: 'Pipeline polling will retry' };
   if (sub.stage === 'pr') return { tone: sub.pr?.checkStatus === 'passing' ? 'working' : 'muted', text: sub.mergeRequestedHead ? 'Merge requested' : sub.pr?.checkStatus === 'awaiting-review' ? 'GitHub review required' : 'Watching checks' };
-  if (sub.stage === 'deployment') return { tone: 'muted', text: 'Watching deployment' };
+  if (sub.stage === 'deployment') return sub.recoveredBy ? { tone: 'muted', text: 'Awaiting fix' } : { tone: 'muted', text: 'Watching deployment' };
   if (sub.stage === 'done') return sub.recoveryJobId ? { tone: 'muted', text: 'Recovery proposed' } : { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
   return { tone: 'muted', text: 'Queued' };
 }
@@ -114,7 +134,7 @@ export function jobCardHtml({ job, sub }) {
     ${deps ? `<span class="job-card-deps">↳ ${esc(deps)}</span>` : ''}
     ${sub?.local ? `<span class="job-card-receipt">✓ ${sub.local.checks.length} local checks${sub.repairs.length ? ` · ${sub.repairs.length} CI repair${sub.repairs.length === 1 ? '' : 's'}` : ''}</span>` : ''}
     ${sub?.result ? `<span class="job-card-receipt">✓ ${sub.result.checks.length} check${sub.result.checks.length === 1 ? '' : 's'} reported</span>` : ''}
-    ${sub?.deployed ? `<span class="job-card-receipt">✓ ${sub.deployed.checks.length} deployment checks</span>` : ''}
+    ${sub?.deployed ? `<span class="job-card-receipt">✓ ${sub.deployment ? `${sub.deployed.checks.length} deployment checks` : 'Merged · nothing to deploy'}</span>` : ''}
     ${commentsLineHtml(sub)}
     ${cost ? `<span class="job-card-cost" title="${esc(SUB_COST_TITLE)}">${esc(cost)}</span>` : ''}
     <span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>
@@ -133,7 +153,7 @@ export function jobBoardHeaderHtml(job) {
   const meta = [
     job.subJobs.length ? `${kindCountLabel(job.subJobs)}${delivered ? ` · ${delivered} delivered` : ''}` : job.repos.length ? `${job.repos.length} repositor${job.repos.length === 1 ? 'y' : 'ies'}` : 'Repositories to discover',
     working ? `${working} agent${working === 1 ? '' : 's'} working` : '',
-    `${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`,
+    reviewFlagsLabel(job),
   ].filter(Boolean);
   return `<header class="job-board-header"><div class="job-board-title"><span class="jobs-kicker">${esc(job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span><button class="job-board-open" data-job="${esc(job.id)}" data-sub=""><h2>${esc(job.title)}</h2></button><span class="job-board-meta">${meta.map(esc).join(' · ')}</span></div>
     <div class="job-board-side">${cost ? `<span class="job-board-cost" title="${esc(JOB_COST_TITLE)}${job.usdEstimated ? ' · includes an estimate for Codex sessions' : ''}">${esc(cost)}</span>` : ''}<span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${needs ? `<span class="job-board-needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}<button data-pause="${esc(job.id)}" ${job.paused ? 'data-paused="1"' : ''}>${job.paused ? 'Resume job' : 'Pause job'}</button></div></header>`;

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runFile } from './job-github.js';
 import { removeWorktree, gitRepoRoot, gitMetadataDirs } from './worktree.js';
-import { jobPrompt } from './job-prompts.js';
+import { jobPrompt, placeholderBranch } from './job-prompts.js';
 import { capturePane, sendKeys, trustDialogState } from './tmux-scraper.js';
 import { log } from './log.js';
 
@@ -40,11 +40,20 @@ export class JobRuntime {
       intent: jobPrompt(job, sub, run),
       addDirs,
       worktree: !planning && !existing, worktreeAuto: true, worktreeBase: base,
-      // The plan-reviewed, convention-shaped name when the planner gave one (see
-      // jobs-schema.js `branch`); the machine-id placeholder is the fallback only.
-      worktreeBranch: sub?.branch || `job-${job.id.slice(-8)}-${sub?.id || 'plan'}`,
+      // Only the first run per sub-job CREATES the worktree; every later phase
+      // launches into it and adopts its record, so `entry.worktree` is stamped on
+      // each of them. Without that, name_branch refuses the very run the prompt
+      // tells to rename — publish, the one that pushes.
+      worktreeAdopt: existing || null,
+      // A placeholder: the implementer renames it in the repository's own
+      // convention via name_branch (job-prompts.js), and `noteBranchRename`
+      // keeps `sub.worktree.branch` in step.
+      worktreeBranch: placeholderBranch(job, sub),
       automationRun: { jobId: job.id, subJobId: sub?.id || null, runId: run.id },
-      onAutomationPrepared: (sid, wt) => prepared(sid, wt ? { ...wt, cleanupHead } : undefined),
+      // Only the creating run reports the worktree to the store: an adopting run's
+      // record IS the store's own copy, and re-reporting it would overwrite that
+      // copy (its cleanupHead, and any name_branch rename) with a launch snapshot.
+      onAutomationPrepared: (sid, wt) => prepared(sid, wt && !existing ? { ...wt, cleanupHead } : undefined),
       bindMemory: (sid) => this.memoryStore.bindSession(sid, job.taskId),
     });
     if (job.taskId) this.taskStore.assign(result.sessionId, job.taskId);
