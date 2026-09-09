@@ -3056,8 +3056,6 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-node input:not([type=checkbox]) { width:100%; font-size:12px; font-weight:600; }
 .job-node .job-plan-kind,.job-node .job-plan-repo,.job-node-line { font-size:11px; line-height:1.5; color:var(--fg-muted); }
 .job-plan-branch { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5; color:var(--fg-muted); overflow-wrap:anywhere; }
-.job-node span.job-plan-branch { display:block; }
-.job-node input.job-plan-branch { font-weight:400; }
 .job-node-deps { font-size:11px; color:var(--fg-muted); }
 .job-node-deps summary { line-height:1.5; }
 .job-node-deps label { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; margin:8px 0 0; color:var(--fg); }
@@ -3100,6 +3098,7 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-comment-summary.red { --verdict:var(--red-fg); }
 .job-comment-summary.pending { color:var(--fg-muted); }
 .job-comments-none { margin:8px 0; }
+/* Workflow-trigger findings and a stalled deployment reuse the amber verdict box: same "needs a human, not blocking" register. */
 .job-comments { list-style:none; padding:0; margin:10px 0 0; max-height:320px; overflow:auto; border:1px solid var(--border-muted); border-radius:7px; }
 .job-comments li { padding:10px 12px; border-top:1px solid var(--border-muted); font-size:12px; }
 .job-comments li:first-child { border-top:0; }
@@ -3114,3 +3113,23 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-card-comments.green { color:var(--green-fg); }
 .job-card-comments.amber { color:var(--snooze-fg); }
 .job-card-comments.red { color:var(--red-fg); }
+/* Plan changes (amendments) reuse the verdict box: amber while a human's decision
+   is pending, green once applied, red when the job moved past it. The class badge
+   says what kind of change it is before the diff lines are read. */
+.job-amendments { display:grid; gap:8px; margin:8px 0; }
+.job-amendment-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+.job-amendment-class { font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding:1px 6px; border-radius:4px; color:var(--fg-muted); border:1px solid color-mix(in srgb, currentColor 45%, transparent); }
+.job-amendment-class.tightening { color:var(--green-fg); }
+.job-amendment-class.weakening { color:var(--red-fg); }
+.job-amendment-by { font-size:10px; color:var(--fg-muted); }
+.job-amendment .job-amendment-reason { margin:8px 0 0; color:var(--fg); }
+.job-amendment-diff { margin:6px 0 0; padding-left:18px; font-size:12px; line-height:1.6; }
+.job-amendment-diff li { overflow-wrap:anywhere; }
+.job-amendment .job-amendment-note { margin:6px 0 0; }
+.job-amendment .job-actions { margin:12px 0 0; }
+.job-amendment-history summary { font-size:12px; }
+.job-amendment-history .job-amendments { margin-top:12px; }
+.job-amend-deps label>span:last-child { color:var(--fg); }
+/* The fieldset's flex row suits a checkbox beside its words; a textarea wants its label above it. */
+#job-amend-form fieldset label:has(textarea) { flex-direction:column; align-items:stretch; gap:7px; }
+.job-dialog .job-error[hidden] { display:none; }

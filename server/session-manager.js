@@ -303,6 +303,25 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   return { cwd: res.path, branch: res.branch, worktree: { path: res.path, branch: res.branch, repoRoot: res.repoRoot } };
 }
 
+// Adopt an ALREADY-created worktree for a dispatch that isn't making one: a later
+// run of the same automated sub-job launches into the worktree its first run
+// created, and `entry.worktree` is the only thing telling the wrangler that
+// session sits in a worktree at all — `renameWorktreeBranch` (the name_branch
+// tool), archive-time cleanup and Codex's git-metadata grant all read it, so
+// without this a publish/repair run is a plain-cwd session and its placeholder
+// branch can never be renamed. Refuses a record whose directory is gone, because
+// dispatch skips `_ensureCwd` for an adoption (nothing may mkdir a phantom
+// worktree) and the alternative is tmux silently falling back to $HOME.
+function resolveAdoptedWorktree(record) {
+  if (!record) return null;
+  const dir = record.path && expandTilde(String(record.path).trim());
+  if (!dir) throw new WorktreeError('Adopting a worktree needs its path.');
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    throw new WorktreeError(`The worktree ${dir} is missing — restore it before launching a session in it.`);
+  }
+  return { path: dir, branch: record.branch || '', repoRoot: record.repoRoot || '' };
+}
+
 // Codex-only: fold a linked worktree's common git-dir into addDirs so its
 // sandbox can write index.lock/objects/refs there (see
 // linkedWorktreeCommonGitDir's comment — that dir lives in the main checkout,
@@ -311,7 +330,9 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
 async function withCodexWorktreeAddDir(agent, worktree, addDirs) {
   if (agent !== 'codex' || !worktree?.path) return addDirs;
   const gitDir = await linkedWorktreeCommonGitDir(worktree.path);
-  return gitDir ? [...addDirs, gitDir] : addDirs;
+  // A job phase adopting an existing worktree already grants this dir explicitly
+  // (gitMetadataDirs), so don't hand the same path to --add-dir twice.
+  return gitDir && !addDirs.includes(gitDir) ? [...addDirs, gitDir] : addDirs;
 }
 
 export class SessionManager {
@@ -706,7 +727,7 @@ export class SessionManager {
   // right ref; the card's branch badge already follows HEAD on its own. Throws on
   // a session with no wrangler-created worktree (the only place a rename is safe).
   // Keyed on the card id.
-  async renameWorktreeBranch(sessionId, desired) {
+  async renameWorktreeBranch(sessionId, desired, { verbatim = false } = {}) {
     const entry = this.map.get(sessionId);
     if (!entry) throw new Error('Unknown session.');
     if (!entry.worktree?.path) {
@@ -717,6 +738,7 @@ export class SessionManager {
       repoRoot: entry.worktree.repoRoot,
       desired,
       currentBranch: entry.worktree.branch,
+      verbatim,
     });
     entry.worktree = { ...entry.worktree, branch, repoRoot };
     this._save();
@@ -1431,9 +1453,14 @@ export class SessionManager {
   }
 
   async dispatch({ cwd, intent = '', model, effort, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
-                   worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
+                   worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeAdopt = null,
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, automationRun, onAutomationPrepared, worktreeBase = '' } = {}) {
-    const trimmed = cwd && expandTilde(String(cwd).trim());
+    // Creating a worktree and adopting one are exclusive, and an adoption's own
+    // path IS the launch cwd — never a `cwd` free to drift from the record being
+    // stamped onto the entry.
+    if (worktree && worktreeAdopt) throw new WorktreeError('A dispatch either creates a worktree or adopts one, not both.');
+    const adopted = resolveAdoptedWorktree(worktreeAdopt);
+    const trimmed = adopted ? adopted.path : (cwd && expandTilde(String(cwd).trim()));
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
     // scratch dir plus an opaque dead pane. e.g. the devcontainer runtime refuses a
@@ -1448,7 +1475,8 @@ export class SessionManager {
     // mode, where the path must already be a git repo (resolveWorktree rejects a
     // non-repo below), so a nonexistent path stays a clean failure rather than
     // leaving a stray empty dir behind.
-    const dir = !trimmed ? this._freshScratchDir()
+    const dir = adopted ? trimmed
+      : !trimmed ? this._freshScratchDir()
       : isInsideSessions(trimmed) ? this._freshScratchDir(trimmed)
       : worktree ? trimmed
       : this._ensureCwd(trimmed);
@@ -1465,7 +1493,7 @@ export class SessionManager {
     // it. resolveWorktree refuses a blank/scratch cwd (throws WorktreeError), so a
     // bad target aborts the whole dispatch (no tmux, no entry) with a clear error
     // rather than silently launching without a worktree.
-    let worktreeEntry;
+    let worktreeEntry = adopted || undefined;
     if (worktree) {
       const wt = await resolveWorktree({
         cwd, intent, branch: worktreeBranch, folderName: worktreeFolderName, auto: worktreeAuto, short, baseRef: worktreeBase,

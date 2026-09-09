@@ -196,6 +196,22 @@ test('renameBranch: same name is a no-op (no rename, marked unchanged)', async (
   assert.equal(res.unchanged, true);
 });
 
+test('renameBranch verbatim: keeps case and slashes, refuses an invalid ref, still suffixes a taken name', async () => {
+  const { repo } = tempRepo();
+  makeBranch(repo, 'fix/AUTH-9-taken');
+  const wt = await createWorktree({ cwd: repo, branch: 'job-12345678-api', auto: false });
+  await assert.rejects(
+    () => renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: 'fix/AUTH-9 bad', currentBranch: 'job-12345678-api', verbatim: true }),
+    (e) => e instanceof WorktreeError && /not a valid git branch name/.test(e.message),
+  );
+  const res = await renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: ' fix/AUTH-9-Reliable_SignIn ', currentBranch: 'job-12345678-api', verbatim: true });
+  assert.equal(res.branch, 'fix/AUTH-9-Reliable_SignIn', 'sanitizeBranch would have made this fix-auth-9-reliable-signin');
+  assert.equal(await branchExists(repo, 'fix/AUTH-9-Reliable_SignIn'), true);
+  assert.equal(await branchExists(repo, 'job-12345678-api'), false);
+  const taken = await renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: 'fix/AUTH-9-taken', currentBranch: 'fix/AUTH-9-Reliable_SignIn', verbatim: true });
+  assert.equal(taken.branch, 'fix/AUTH-9-taken-2');
+});
+
 test('renameBranch: rejects a name with no alphanumerics', async () => {
   const { repo } = tempRepo();
   const wt = await createWorktree({ cwd: repo, branch: 'real-branch', auto: false });

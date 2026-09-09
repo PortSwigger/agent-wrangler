@@ -163,18 +163,46 @@ test('runtime fetches and selects the remote default branch before worktree laun
   assert.deepEqual(launched.automationRun, { jobId: job.id, subJobId: sub.id, runId: run.id });
 });
 
-test('runtime branches on the plan-reviewed name when the sub-job has one, else the placeholder', async () => {
+test('runtime always branches on the placeholder; a plan-time branch name is ignored, the implementer renames', async () => {
   const branches = [];
   const runtime = new JobRuntime({ sessionManager: { async dispatch(opts) { branches.push(opts.worktreeBranch); opts.onAutomationPrepared('sid', { path: '/wt', branch: opts.worktreeBranch, repoRoot: '/repo' }); return { sessionId: 'sid' }; } }, memoryStore: { bindSession() {} }, taskStore: {} },
     async (bin) => bin === 'gh' ? JSON.stringify({ defaultBranchRef: { name: 'main' } }) : 'sha');
   await runtime.launch(job, { ...sub, branch: 'fix/AUTH-1-deliver-api' }, run, () => {});
   await runtime.launch(job, sub, run, () => {});
-  assert.deepEqual(branches, ['fix/AUTH-1-deliver-api', 'job-12345678-api']);
+  assert.deepEqual(branches, ['job-12345678-api', 'job-12345678-api']);
+});
+
+test('the implementer is told to name its placeholder branch in the repo\'s convention via name_branch, and to keep a name it already gave', () => {
+  const fresh = jobPrompt(job, { ...sub, worktree: { branch: 'job-12345678-api' } }, run);
+  assert.match(fresh, /job-12345678-api\) is a placeholder/); assert.match(fresh, /branch-naming convention/); assert.match(fresh, /Jira key is AUTH-1/);
+  assert.match(fresh, /name_branch MCP tool \(never git branch -m\)/);
+  assert.match(jobPrompt(job, sub, run), /is a placeholder/, 'a sub-job whose worktree is not yet recorded is still told to rename');
+  const named = jobPrompt(job, { ...sub, worktree: { branch: 'fix/AUTH-1-deliver-api' } }, { ...run, phase: 'publish' });
+  assert.match(named, /branch is fix\/AUTH-1-deliver-api; keep it/); assert.doesNotMatch(named, /is a placeholder/);
+  assert.match(jobPrompt(job, { ...sub, worktree: { branch: 'job-12345678-api' } }, { ...run, phase: 'publish' }), /is a placeholder/, 'publish repeats it: that is where the name reaches origin');
+  assert.doesNotMatch(jobPrompt(job, null, { ...run, phase: 'planning' }), /For every PR sub-job propose branch|{key}/);
+  assert.match(jobPrompt(job, null, { ...run, phase: 'planning' }), /Do not propose branch names/);
 });
 
 test('runtime refuses a missing worktree instead of recreating it on the base checkout', async () => {
   const runtime = new JobRuntime({ sessionManager: { dispatch() { assert.fail('must not dispatch'); } } });
   await assert.rejects(runtime.launch(job, { ...sub, worktree: { path: path.join(DATA_DIR, 'missing') } }, run, () => {}), /missing/);
+});
+
+test('every run after the first adopts the sub-job worktree, and leaves the store\'s copy of it alone', async () => {
+  const dir = path.join(DATA_DIR, 'adopted-workspace');
+  fs.mkdirSync(dir, { recursive: true });
+  const wt = { path: dir, branch: 'job-12345678-api', repoRoot: '/repo', cleanupHead: 'base-sha' };
+  let launched, prepared;
+  const runtime = new JobRuntime({ sessionManager: { async dispatch(opts) { launched = opts; opts.onAutomationPrepared('sid', opts.worktreeAdopt); return { sessionId: 'sid' }; } }, memoryStore: { bindSession() {} }, taskStore: { assign() {} } },
+    async () => assert.fail('reuse the existing worktree without fetching or creating another'));
+  for (const phase of ['implementation', 'publish', 'repair', 'verify']) {
+    prepared = 'unset';
+    await runtime.launch(job, { ...sub, worktree: wt }, { ...run, phase }, (...v) => { prepared = v; });
+    assert.equal(launched.worktree, false);
+    assert.deepEqual(launched.worktreeAdopt, wt, 'the entry is stamped with it, so name_branch works on this run too');
+    assert.deepEqual(prepared, ['sid', undefined], "only the creating run reports it: cleanupHead and any rename stay the store's");
+  }
 });
 
 test('every Codex job phase grants the existing workspace shared Git metadata, without granting its main checkout', async () => {

@@ -1265,6 +1265,40 @@ test('dispatch: an orchestrator run loads the issue-to-pr skill; a plain/child d
   assert.equal(sm.map.get(worker.sessionId).workflow, undefined); // workers never carry `workflow` now
 });
 
+// The run that PUSHES is never the run that created the worktree (a job's publish
+// phase launches into implementation's), and entry.worktree is the only thing
+// telling the wrangler a session sits in one — so without adoption name_branch
+// refuses the very session its prompt tells to rename.
+test('dispatch adopts an existing worktree record, so a later run in it can still rename its branch', async () => {
+  const sm = smForDispatch();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-adopt-'));
+  execFileSync('git', ['init', '-q', '-b', 'job-12345678-api', dir], { stdio: 'pipe' });
+  const { sessionId, cwd } = await sm.dispatch({
+    cwd: '/never-launch-here', intent: 'publish',
+    worktreeAdopt: { path: dir, branch: 'job-12345678-api', repoRoot: dir, cleanupHead: 'base-sha' },
+  });
+  assert.equal(cwd, dir, "the adopted worktree IS the launch dir, whatever `cwd` said");
+  assert.ok(!fs.existsSync('/never-launch-here'), 'and that cwd is never created');
+  assert.deepEqual(sm.entryFor(sessionId).worktree, { path: dir, branch: 'job-12345678-api', repoRoot: dir },
+    "job bookkeeping (cleanupHead) stays in the job store, out of the entry");
+  assert.equal(await sm.renameWorktreeBranch(sessionId, 'fix/AUTH-1-deliver-api', { verbatim: true }), 'fix/AUTH-1-deliver-api');
+  assert.equal(sm.entryFor(sessionId).worktree.branch, 'fix/AUTH-1-deliver-api');
+  assert.equal(execFileSync('git', ['-C', dir, 'symbolic-ref', '--short', 'HEAD']).toString().trim(), 'fix/AUTH-1-deliver-api');
+});
+
+test('dispatch refuses an adoption whose worktree is gone, and refuses to both create and adopt', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  sm._newSession = async () => { launched = true; };
+  const gone = path.join(os.tmpdir(), 'aw-adopt-gone-never');
+  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), worktreeAdopt: { path: gone } }), /missing/);
+  assert.ok(!fs.existsSync(gone), 'a phantom worktree is never mkdir-ed in its place');
+  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), worktreeAdopt: {} }), /needs its path/);
+  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), worktree: true, worktreeAdopt: { path: os.tmpdir() } }), /not both/);
+  assert.equal(launched, false);
+  assert.equal(sm.map.size, 0);
+});
+
 test('dispatch stores parentSession when passed', async () => {
   const sm = smForDispatch();
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', parentSession: 'ORCH1' });

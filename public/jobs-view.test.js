@@ -4,7 +4,7 @@ import { Window } from 'happy-dom';
 import { initJobsView } from './jobs-view.js';
 import { jobCards, jobStatus, jobNeedsReview, dependencyLevels, jobCardHtml, jobBoardHeaderHtml, mergeHeldByComments } from './jobs.js';
 
-const sub = (id, dependsOn = []) => ({ id, title: `Deliver ${id}`, repo: '/repo', storyId: 'story', jiraKey: 'AUTH-1', dependsOn, instructions: 'Implement and verify', deployment: { workflows: ['deploy.yml'], verify: 'Check version and behaviour' }, sessions: [], repairs: [] });
+const sub = (id, dependsOn = []) => ({ id, title: `Deliver ${id}`, repo: '/repo', storyId: 'story', jiraKey: 'AUTH-1', dependsOn, instructions: 'Implement and verify', deployment: { verify: 'Check version and behaviour' }, sessions: [], repairs: [] });
 const plan = { stories: [{ id: 'story', key: 'AUTH-1', title: 'Customers can sign in', value: 'Access their account reliably' }], subJobs: [sub('api'), sub('web', ['api'])] };
 function fixture(t) {
   const window = new Window({ url: 'http://localhost:7878' });
@@ -67,23 +67,18 @@ test('planning edits survive live snapshots and submit the displayed revision', 
   f.view.created(); assert.equal(f.q('#job-dialog').open, false);
 });
 
-test('the plan review shows and edits each PR branch; a blanked one is dropped, and the live graph shows the resolved name', (t) => {
-  const f = fixture(t); f.data.jobs[0].plan.subJobs[0].branch = 'feat/{key}-api'; f.view.update(f.data); f.q('[data-job="job1"]').click();
-  assert.equal(f.q('[data-node="api"] [data-branch]').value, 'feat/{key}-api');
-  assert.equal(f.q('[data-node="web"] [data-branch]').value, '', 'a sub-job without a proposal still gets the field');
-  const web = f.q('[data-node="web"] [data-branch]'); web.value = ' {key}-web '; web.dispatchEvent(f.event('input'));
-  const api = f.q('[data-node="api"] [data-branch]'); api.value = ''; api.dispatchEvent(f.event('input'));
-  f.q('[data-action="approve-plan"]').click();
-  assert.deepEqual(f.sent[0].plan.subJobs.map((s) => s.branch), [undefined, '{key}-web']);
-  assert.equal('branch' in f.sent[0].plan.subJobs[0], false, 'absent, not an empty string the schema would reject');
+test('the plan review has no branch field; a sub-job\'s detail shows the branch its worktree is actually on', (t) => {
+  const f = fixture(t); f.q('[data-job="job1"]').click();
+  assert.equal(f.q('[data-branch]'), null); assert.equal(f.q('.job-plan-branch'), null);
   f.q('#job-dialog').close();
-  const [job] = f.data.jobs; job.stage = 'active'; job.subJobs = [{ ...sub('api'), stage: 'implementation', branch: 'feat/AUTH-1-api' }, { ...sub('web', ['api']), stage: 'implementation' }]; f.view.update(f.data);
+  const [job] = f.data.jobs; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'implementation', worktree: { path: '/wt/api', branch: 'fix/AUTH-1-api', repoRoot: '/repo' } }, { ...sub('web', ['api']), stage: 'implementation' }]; f.view.update(f.data);
   f.q('[data-job="job1"]').click();
-  assert.equal(f.q('[data-node="api"] .job-plan-branch').textContent, 'feat/AUTH-1-api');
-  assert.equal(f.q('[data-node="web"] .job-plan-branch'), null);
-  assert.equal(f.q('[data-node="api"] [data-branch]'), null, 'read-only once approved');
+  assert.equal(f.q('.job-plan-branch'), null, 'the graph stays uncluttered');
   f.q('[data-open-sub="api"]').click();
-  assert.match(f.q('.job-detail-meta').textContent, /feat\/AUTH-1-api/);
+  assert.equal(f.q('.job-detail-meta .job-plan-branch').textContent, 'fix/AUTH-1-api');
+  f.q('#job-dialog').close(); f.q('[data-job="job1"]').click(); f.q('[data-open-sub="web"]').click();
+  assert.equal(f.q('.job-detail-meta .job-plan-branch'), null, 'no worktree yet, nothing to show');
 });
 
 test('local review displays short receipts and pins approval to the visible receipt', (t) => {
@@ -430,4 +425,153 @@ test('a live job shows the same graph with each box carrying its kind and status
   f.q('[data-open-sub="api"]').click();
   assert.equal(f.q('#job-dialog h2').textContent, 'Deliver api'); assert.equal(f.q('.job-detail-meta .job-kind').textContent, 'PR');
   assert.equal(f.q('.job-graph'), null, 'a sub-job detail is about one sub-job, not the graph');
+});
+
+test('a PR with no deployment reads as merge-completes-it on the plan, on its card once merged, and in its detail', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0];
+  const { deployment, ...docs } = sub('docs');
+  job.plan = { ...plan, subJobs: [docs] }; f.view.update(f.data); f.q('[data-job="job1"]').click();
+  assert.match(f.q('#job-dialog').textContent, /No deployment: merging the PR completes it/);
+  f.q('#job-dialog').close();
+  job.stage = 'active'; job.subJobs = [{ ...docs, stage: 'done', deployed: { checks: ['Merged; nothing deploys from this repository'] } }];
+  f.view.update(f.data); f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
+  assert.match(f.q('[data-sub="docs"]').textContent, /Merged · nothing to deploy/);
+  f.q('[data-sub="docs"]').click(); assert.match(f.q('#job-dialog').textContent, /No deployment: merging the PR completes it/);
+});
+
+test('a merged sub-job with no deployment run turns amber, joins Needs me and explains itself; a slow deploy does not', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  const watching = { ...sub('api'), stage: 'deployment', mergedAt: Date.now() - 40 * 60000, pr: { url: 'https://github.com/org/repo/pull/1', mergeCommit: 'abcdef1234567890', base: 'main', checkStatus: 'passing', checks: [] },
+    deploymentResult: { status: 'pending', runs: [{ workflow: 'Deploy', runId: 3, status: 'pending' }], commit: 'abcdef1234567890' } };
+  job.subJobs = [watching]; f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, watching), { tone: 'muted', text: 'Watching deployment' }); assert.equal(jobNeedsReview(job, watching), false);
+  watching.deploymentStale = { since: watching.mergedAt }; f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, watching), { tone: 'needs', text: 'No deployment run' }); assert.equal(jobNeedsReview(job, watching), true);
+  assert.match(f.q('[data-sub="api"] .job-status').textContent, /No deployment run/);
+  f.q('[data-sub="api"]').click();
+  const text = f.q('#job-dialog').textContent;
+  assert.match(text, /No GitHub Actions run has started for merge commit abcdef12 in 40 min/);
+  assert.match(text, /amend the sub-job to drop its deployment/, 'it says what the human can do about it');
+  assert.equal(jobStatus(job, { ...watching, stage: 'cleanup', deploymentStale: watching.deploymentStale }).text, 'Queued', 'stale is only meaningful while watching');
+});
+
+test('the stale window is an explicit automation setting', (t) => {
+  const f = fixture(t); f.data.settings.deploymentStaleMinutes = 45; f.view.update(f.data);
+  f.q('#jobs-settings').click(); const form = f.q('#job-settings-form');
+  assert.equal(form.elements.deploymentStaleMinutes.value, '45');
+  form.elements.deploymentStaleMinutes.value = '90'; form.dispatchEvent(f.event('submit'));
+  assert.equal(f.sent.at(-1).patch.deploymentStaleMinutes, 90);
+});
+
+const amendment = (extra = {}) => ({ id: 'amd_1', reason: 'deploy.yml ignores <b>markdown</b>', subJobId: 'api', classification: 'weakening', status: 'proposed', proposedAt: 1757400000000,
+  proposedBy: { runId: 'r1', sessionId: 's1', phase: 'publish', subJobId: 'api', receipt: 'blocked' }, ops: [{ op: 'set-deployment', subJobId: 'api', deployment: null }],
+  summary: ['Drop deployment for Deliver api: merging <i>completes</i> it'], ...extra });
+
+test('a pending plan change is a Needs me item on the job and the sub-jobs it touches, drawn as escaped diff lines with Accept and Reject', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active'; job.amendmentAuthority = 'auto-tighten';
+  job.subJobs = [{ ...sub('api'), stage: 'pr', error: 'deploy.yml never runs for this change', pr: { url: 'https://github.com/org/repo/pull/1', checkStatus: 'failing', checks: [] } }, { ...sub('web', ['api']), stage: 'implementation' }];
+  job.amendments = [amendment()]; f.view.update(f.data);
+  assert.equal(jobNeedsReview(job, job.subJobs[0]), true); assert.equal(jobNeedsReview(job, null), true);
+  assert.equal(jobNeedsReview(job, job.subJobs[1]), false, 'web is not touched');
+  assert.equal(jobStatus({ ...job, subJobs: [{ ...job.subJobs[0], error: null }] }, { ...job.subJobs[0], error: null }).text, 'Plan change proposed');
+  assert.match(f.q('.job-board-meta').textContent, /Tightening auto-applies/, 'the authority shows with the other review flags');
+  assert.equal(f.q('#jobs-review-count').textContent, '1');
+  f.q('.job-board-open').click();
+  const dialog = f.q('#job-dialog');
+  assert.match(dialog.textContent, /Proposed changes/);
+  const box = dialog.querySelector('.job-amendment');
+  assert.ok(box.classList.contains('amber')); assert.equal(box.querySelector('.job-amendment-class').textContent, 'Weakens');
+  assert.match(box.querySelector('.job-amendment-by').textContent, /Proposed by the publish step on Deliver api/);
+  assert.equal(box.querySelector('.job-amendment-reason').textContent, 'deploy.yml ignores <b>markdown</b>');
+  assert.equal(box.querySelector('.job-amendment-diff li').textContent, 'Drop deployment for Deliver api: merging <i>completes</i> it');
+  assert.equal(box.querySelector('b i'), null); assert.ok(!dialog.innerHTML.includes('<i>completes</i>'), 'agent text is escaped');
+  assert.equal(dialog.querySelector('.job-amendment-history'), null, 'nothing decided yet');
+  assert.match(dialog.querySelector('.job-detail-footer').textContent, /Tightening auto-applies/);
+  box.querySelector('[data-accept-amendment]').click();
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', subJobId: undefined, action: 'accept-amendment', amendmentId: 'amd_1' });
+  box.querySelector('[data-reject-amendment]').click();
+  assert.match(dialog.textContent, /Reject this plan change/);
+  const form = dialog.querySelector('form'); form.elements.feedback.value = 'Keep the pipeline'; form.dispatchEvent(f.event('submit'));
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', subJobId: undefined, action: 'reject-amendment', amendmentId: 'amd_1', feedback: 'Keep the pipeline' });
+});
+
+test('on the blocked sub-job the proposal sits above the actions and its primary button is the retry; a form in progress survives a graph tick', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'pr', error: 'deploy.yml never runs for this change', pr: { url: 'https://github.com/org/repo/pull/1', checkStatus: 'failing', checks: [] } }];
+  job.amendments = [amendment()]; f.view.update(f.data); f.q('[data-sub="api"]').click();
+  const dialog = f.q('#job-dialog');
+  assert.match(dialog.textContent, /Proposed plan change/);
+  assert.equal(dialog.querySelector('[data-accept-amendment]').textContent, 'Accept and retry');
+  assert.ok(dialog.querySelector('.job-amendment').compareDocumentPosition(dialog.querySelector('#job-session, #job-change-plan').closest('.job-actions')) & 4, 'the proposal precedes the actions');
+  job.subJobs[0].error = null; f.view.update(f.data);
+  assert.equal(dialog.querySelector('[data-accept-amendment]').textContent, 'Accept', 'nothing to retry once the block is cleared');
+  dialog.querySelector('[data-reject-amendment]').click();
+  dialog.querySelector('form').elements.feedback.value = 'half-typed';
+  f.view.update(f.data);
+  assert.equal(dialog.querySelector('form').elements.feedback.value, 'half-typed', 'a live tick does not replace an open form');
+  dialog.querySelector('#job-amend-back').click(); assert.equal(dialog.querySelector('form'), null);
+});
+
+test('Change plan offers only what the stage still allows and sends exactly the changed fields as ops', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'implementation', local: { commitMessage: 'AUTH-1: x', checks: ['Tests pass'], pendingChecks: ['CI green', 'Plan clean'], receiptId: 'r' } }, { ...sub('web'), stage: 'implementation' }, { ...sub('old'), stage: 'done' }, { ...sub('watch'), stage: 'deployment', pr: { url: 'https://github.com/org/repo/pull/2', mergeCommit: 'abc', checkStatus: 'passing', checks: [] } }];
+  f.view.update(f.data); f.q('[data-sub="api"]').click();
+  const dialog = f.q('#job-dialog');
+  dialog.querySelector('#job-change-plan').click();
+  const form = dialog.querySelector('#job-amend-form');
+  assert.deepEqual([...form.querySelectorAll('[data-dep]')].map((c) => c.value), ['web', 'watch'], 'other unfinished sub-jobs, from the shared dependency editor');
+  assert.ok(form.elements.verify); assert.ok(form.elements.pendingChecks); assert.ok(form.elements.instructions);
+  form.elements.reason.value = 'Docs only';
+  form.dispatchEvent(f.event('submit'));
+  assert.equal(f.sent.length, 0); assert.match(dialog.querySelector('#job-amend-error').textContent, /Nothing changed/);
+  form.querySelector('[data-dep][value="web"]').checked = true;
+  form.querySelector('[name="deploymentMode"][value="none"]').checked = true;
+  form.elements.pendingChecks.value = 'CI green\n\n';
+  form.dispatchEvent(f.event('submit'));
+  const msg = f.sent.at(-1);
+  assert.equal(msg.action, 'propose-amendment'); assert.equal(msg.subJobId, 'api'); assert.equal(msg.reason, 'Docs only');
+  assert.deepEqual(msg.ops, [{ op: 'add-dependency', subJobId: 'api', dependsOn: 'web' }, { op: 'set-deployment', subJobId: 'api', deployment: null }, { op: 'set-pending-checks', subJobId: 'api', pendingChecks: ['CI green'] }]);
+  dialog.close();
+  f.q('[data-sub="watch"]').click(); dialog.querySelector('#job-change-plan').click();
+  const watching = dialog.querySelector('#job-amend-form');
+  assert.equal(watching.querySelector('[data-dep]'), null, 'merged: dependencies are fixed'); assert.equal(watching.elements.instructions, undefined); assert.equal(watching.elements.pendingChecks, undefined);
+  watching.elements.reason.value = 'Verify the docs site'; watching.elements.verify.value = 'Docs site shows it';
+  watching.dispatchEvent(f.event('submit'));
+  assert.deepEqual(f.sent.at(-1).ops, [{ op: 'set-deployment', subJobId: 'watch', deployment: { verify: 'Docs site shows it' } }]);
+  watching.elements.verify.value = ''; watching.dispatchEvent(f.event('submit'));
+  assert.match(dialog.querySelector('#job-amend-error').textContent, /how the deployed service will be verified/);
+  dialog.close(); f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
+  f.q('[data-sub="old"]').click(); assert.equal(dialog.querySelector('#job-change-plan'), null, 'a finished sub-job has no plan left to change');
+});
+
+test('decided plan changes fold into a collapsed history that stays open across ticks, and a recovered sub-job says what it waits for', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'deployment', recoveredBy: 'fix', recoveryReason: 'Endpoint returned 500', pr: { url: 'https://github.com/org/repo/pull/1', mergeCommit: 'abc', checkStatus: 'passing', checks: [] } }, { ...sub('fix'), title: 'Guard empty payloads', stage: 'implementation' }];
+  job.amendments = [amendment({ id: 'amd_a', status: 'accepted', decidedAt: 1757400060000, classification: 'neutral' }), amendment({ id: 'amd_b', status: 'rejected', feedback: 'No', proposedBy: 'human' }), amendment({ id: 'amd_c', status: 'invalid', error: 'already deployed' }), amendment({ id: 'amd_d', status: 'auto-accepted', classification: 'tightening' })];
+  f.view.update(f.data);
+  assert.equal(jobStatus(job, job.subJobs[0]).text, 'Awaiting fix'); assert.equal(jobNeedsReview(job, job.subJobs[0]), false);
+  f.q('.job-board-open').click();
+  const dialog = f.q('#job-dialog');
+  assert.equal(dialog.querySelectorAll('.job-amendments').length, 1, 'nothing pending: the only list is the history');
+  const history = dialog.querySelector('.job-amendment-history');
+  assert.equal(history.open, false); assert.match(history.querySelector('summary').textContent, /Plan changes\s*4/);
+  assert.deepEqual([...history.querySelectorAll('.job-amendment b')].map((b) => b.textContent), ['Applied automatically', 'No longer applies', 'Rejected', 'Accepted'], 'newest first');
+  assert.deepEqual([...history.querySelectorAll('.job-amendment')].map((b) => b.className.split(' ').at(-1)), ['green', 'red', '', 'green']);
+  assert.match(history.textContent, /Feedback: No/); assert.match(history.textContent, /already deployed/); assert.match(history.textContent, /Proposed by you/); assert.match(history.textContent, /Tightens/);
+  assert.equal(history.querySelector('[data-accept-amendment]'), null);
+  history.open = true; history.dispatchEvent(f.event('toggle'));
+  f.view.update(f.data);
+  assert.equal(dialog.querySelector('.job-amendment-history').open, true, 'the disclosure survives the tick');
+  dialog.querySelector('[data-open-sub="api"]').click();
+  assert.match(dialog.textContent, /Deployment failed/); assert.match(dialog.textContent, /Guard empty payloads/); assert.match(dialog.textContent, /counts as deployed once it does/);
+  assert.equal(dialog.querySelector('#job-recovery'), null, 'no separate recovery job to review');
+  dialog.querySelector('[data-open-sub="fix"]').click(); assert.equal(dialog.querySelector('h2').textContent, 'Guard empty payloads');
+});
+
+test('the new-job form carries the plan-change authority, defaulting to review', (t) => {
+  const f = fixture(t); f.q('#job-new').click(); const form = f.q('#job-create-form');
+  form.elements.title.value = 'Value'; form.elements.intent.value = 'Deliver it';
+  assert.deepEqual([...form.elements.amendmentAuthority.options].map((o) => o.value), ['review', 'auto-tighten', 'auto']);
+  form.dispatchEvent(f.event('submit')); assert.equal(f.sent.at(-1).job.amendmentAuthority, 'review');
+  form.elements.amendmentAuthority.value = 'auto'; form.dispatchEvent(f.event('submit')); assert.equal(f.sent.at(-1).job.amendmentAuthority, 'auto');
 });

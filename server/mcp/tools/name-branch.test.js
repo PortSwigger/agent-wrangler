@@ -3,25 +3,39 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { nameBranchTool } from './name-branch.js';
 
-function deps(captured, impl) {
+function deps(captured, impl, { automated = false, jobStore = true } = {}) {
   return {
     sessionManager: {
-      renameWorktreeBranch: async (sid, name) => {
-        captured.call = { sid, name };
+      entryFor: () => (automated ? { automationRun: { jobId: 'job1' } } : {}),
+      renameWorktreeBranch: async (sid, name, opts) => {
+        captured.call = { sid, name, ...opts };
         if (impl) return impl(sid, name);
         return name;
       },
     },
+    ...(jobStore ? { jobStore: { noteBranchRename: (sid, branch) => { captured.noted = { sid, branch }; return true; } } } : {}),
     rebuild: async () => { captured.rebuilt = (captured.rebuilt || 0) + 1; },
   };
 }
 
-test('name_branch renames under the caller card id and rebuilds', async () => {
+test('name_branch renames under the caller card id and rebuilds; an autopilot run is slugged and the job store is not told', async () => {
   const captured = {};
   const out = await nameBranchTool.handler({ deps: deps(captured), caller: 'CARD1' }, { name: 'improve-branch-names' });
-  assert.deepEqual(captured.call, { sid: 'CARD1', name: 'improve-branch-names' });
+  assert.deepEqual(captured.call, { sid: 'CARD1', name: 'improve-branch-names', verbatim: false });
   assert.equal(captured.rebuilt, 1);
+  assert.equal(captured.noted, undefined);
   assert.deepEqual(out.structuredContent, { branch: 'improve-branch-names' });
+});
+
+test('name_branch for a job session keeps the convention-shaped name verbatim and moves the sub-job\'s worktree record with it', async () => {
+  const captured = {};
+  const out = await nameBranchTool.handler({ deps: deps(captured, () => 'fix/AUTH-123-reliable-sign-in-2', { automated: true }), caller: 'CARD1' }, { name: 'fix/AUTH-123-reliable-sign-in' });
+  assert.deepEqual(captured.call, { sid: 'CARD1', name: 'fix/AUTH-123-reliable-sign-in', verbatim: true });
+  assert.deepEqual(captured.noted, { sid: 'CARD1', branch: 'fix/AUTH-123-reliable-sign-in-2' }, 'the store learns the FINAL name, suffix included');
+  assert.deepEqual(out.structuredContent, { branch: 'fix/AUTH-123-reliable-sign-in-2' });
+  const bare = {};
+  await nameBranchTool.handler({ deps: deps(bare, null, { automated: true, jobStore: false }), caller: 'CARD1' }, { name: 'AUTH-1-x' });
+  assert.equal(bare.call.verbatim, true, 'a deps set without a job store still renames');
 });
 
 test('name_branch echoes the final (possibly suffixed) branch the manager returns', async () => {

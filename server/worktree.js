@@ -372,11 +372,15 @@ export async function deleteBranch({ repoRoot, branch, force = false }) {
 // dir). The board's branch badge reads HEAD live, so the rename shows at once;
 // the caller syncs `entry.worktree.branch` for cleanup/status. Returns the final
 // branch name; throws WorktreeError on a detached HEAD or git failure.
-export async function renameBranch({ worktreePath, repoRoot = '', desired, currentBranch = '' }) {
+// `verbatim` keeps the name as given (only checked as a git ref) — for a job
+// session naming its branch in the repository's own convention, where
+// `sanitizeBranch` would flatten `fix/AUTH-123-x` into `fix-auth-123-x`.
+export async function renameBranch({ worktreePath, repoRoot = '', desired, currentBranch = '', verbatim = false }) {
   if (!worktreePath) throw new WorktreeError('No worktree path');
   const root = repoRoot || (await gitRepoRoot(worktreePath));
   if (!root) throw new WorktreeError('Could not resolve the repository for this worktree');
-  const base = sanitizeBranch(desired);
+  const base = verbatim ? String(desired || '').trim() : sanitizeBranch(desired);
+  if (verbatim && !isValidBranchName(base)) throw new WorktreeError(`"${base}" is not a valid git branch name.`);
   if (!base) throw new WorktreeError('A branch name must contain at least one letter or digit.');
   if (base === currentBranch) return { branch: currentBranch, repoRoot: root, unchanged: true };
   let name = base;

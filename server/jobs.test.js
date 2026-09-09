@@ -13,7 +13,7 @@ import { routeControlMessage } from './control/router.js';
 
 const input = { title: 'Reliable sign-in', intent: 'Customers can sign in reliably', repos: ['/repo'], reviewCode: true, reviewMerge: true };
 const spec = (id, dependsOn = []) => ({ id, title: `Deliver ${id}`, repo: '/repo', storyId: 'story', dependsOn,
-  instructions: `Implement ${id}`, deployment: { workflows: ['deploy.yml'], verify: 'Check running version and sign-in' } });
+  instructions: `Implement ${id}`, deployment: { verify: 'Check running version and sign-in' } });
 const plan = (subs = [spec('api')]) => ({ stories: [{ id: 'story', key: 'AUTH-123', title: 'Reliable sign-in', value: 'Customers can access their account' }], subJobs: subs });
 function fixture(t, jobInput = input) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-jobs-'));
@@ -38,7 +38,8 @@ function fixture(t, jobInput = input) {
   let verdict = async () => ({ tone: 'green', text: 'Reviewer approved.', liveSessionId: 'live-triage', error: false });
   const github = { async pr(s) { return { ...pr, url: s.pr.url }; }, async comments() { return comments; }, async merge(s) { merged.push(s.pr.head); }, async deployment() { return deployment; } };
   const runner = new JobRunner({ store, runtime, github, now: () => clock, summarise: async (c, p) => { triaged.push(c.fingerprint); return verdict(c, p); } });
-  const job = store.create(jobInput);
+  const createInput = jobInput;
+  const job = store.create(createInput);
   const tick = async () => { clock += 61000; await runner.tick(); };
   const last = () => launched.at(-1);
   const report = (payload, worker = last()) => store.report(worker.sid, worker.run.id, payload);
@@ -565,16 +566,47 @@ test('GitHub PR observer verifies repository and worktree branch, merge pins hea
   await assert.rejects(gh.comments(sub), /not found/);
 });
 
-test('deployment observer requires every named workflow for the exact merge commit and branch', async () => {
-  const sub = { repo: '/repo', pr: { mergeCommit: 'merged', base: 'main' }, deployment: { workflows: ['api.yml', 'web.yml'] } };
-  const good = { databaseId: 1, headSha: 'merged', headBranch: 'main', event: 'push', status: 'completed', conclusion: 'success', attempt: 1 };
+test('deployment observer discovers the runs GitHub started for the exact merge commit', async () => {
+  const sub = { repo: '/repo', pr: { mergeCommit: 'merged', base: 'main' }, deployment: { verify: 'hit /health' } };
+  const good = { databaseId: 1, headSha: 'merged', headBranch: 'main', event: 'push', status: 'completed', conclusion: 'success', attempt: 1, workflowName: 'Deploy' };
   const calls = [];
-  const gh = new JobGithub(async (_bin, args) => { calls.push(args); return JSON.stringify(args.includes('api.yml') ? [good] : [{ ...good, headSha: 'unrelated' }]); });
-  assert.equal((await gh.deployment(sub)).status, 'pending');
-  assert.equal(calls.length, 2); assert.ok(calls.every((a) => a.includes('--commit') && a.includes('merged')));
-  gh.run = async () => JSON.stringify([{ ...good, conclusion: 'skipped' }]); assert.equal((await gh.deployment(sub)).status, 'failing');
-  gh.run = async () => JSON.stringify([good, { ...good, databaseId: 2, status: 'in_progress', conclusion: '' }]); assert.equal((await gh.deployment(sub)).status, 'pending');
-  gh.run = async () => JSON.stringify([good]); assert.equal((await gh.deployment(sub)).status, 'passing');
+  const gh = new JobGithub(async (_bin, args) => { calls.push(args); return JSON.stringify([good]); });
+  assert.equal((await gh.deployment(sub)).status, 'passing');
+  // One query, pinned to the merge commit rather than the branch: a sibling
+  // sub-job merging into the same repo must not become this one's evidence.
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes('--commit') && calls[0].includes('merged'));
+  assert.ok(!calls[0].includes('--workflow') && !calls[0].includes('--branch'));
+
+  // No run at all is never success: it cannot be told apart from a run that has
+  // not been queued yet, so the runner flags a lasting silence for the human.
+  gh.run = async () => JSON.stringify([]);
+  const silent = await gh.deployment(sub);
+  assert.equal(silent.status, 'pending'); assert.deepEqual(silent.runs, []);
+
+  gh.run = async () => JSON.stringify([{ ...good, headSha: 'unrelated' }]);
+  assert.equal((await gh.deployment(sub)).status, 'pending', 'a run on another commit is not evidence');
+  gh.run = async () => JSON.stringify([{ ...good, event: 'pull_request' }]);
+  assert.equal((await gh.deployment(sub)).status, 'pending', 'the PR gate was already judged before the merge');
+
+  gh.run = async () => JSON.stringify([good, { ...good, databaseId: 2, workflowName: 'Scan', status: 'in_progress', conclusion: '' }]);
+  assert.equal((await gh.deployment(sub)).status, 'pending', 'one discovered run still in flight holds the verdict');
+  gh.run = async () => JSON.stringify([good, { ...good, databaseId: 2, workflowName: 'Scan', conclusion: 'failure' }]);
+  assert.equal((await gh.deployment(sub)).status, 'failing');
+
+  // A skipped run is GitHub saying the workflow did not apply: it neither blocks
+  // nor satisfies, so all-skipped reads as silence rather than a deployment.
+  gh.run = async () => JSON.stringify([{ ...good, conclusion: 'skipped' }]);
+  const skipped = await gh.deployment(sub);
+  assert.equal(skipped.status, 'pending'); assert.equal(skipped.runs[0].status, 'skipped');
+  gh.run = async () => JSON.stringify([good, { ...good, databaseId: 2, workflowName: 'Scan', conclusion: 'skipped' }]);
+  assert.equal((await gh.deployment(sub)).status, 'passing', 'a skipped sibling does not hold back a real deploy');
+
+  // One workflow can run twice on a commit (a re-run, or a scan that starts
+  // twice); the latest attempt is the live one.
+  gh.run = async () => JSON.stringify([{ ...good, databaseId: 9, conclusion: 'failure' }, { ...good, databaseId: 9, attempt: 2 }]);
+  const rerun = await gh.deployment(sub);
+  assert.equal(rerun.status, 'passing'); assert.equal(rerun.runs.length, 1);
 });
 
 test('idle ticks and exhausted claims do not rewrite state or trigger extra graph rebuilds', async (t) => {
@@ -657,27 +689,29 @@ test('with session review off a completed session goes straight to done; request
 test('plans keep PR and session sub-jobs distinct: a session has no repo, a PR needs one', async (t) => {
   const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
   assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...sessionSpec('a'), repo: '/repo' }]) }), /session sub-job has no repo/);
-  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), deployment: undefined }]) }), /PR sub-job needs repo and deployment/);
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), repo: undefined }]) }), /PR sub-job needs repo/);
+  const g = fixture(t); g.store.action(g.job.id, 'start'); await g.tick();
+  assert.doesNotThrow(() => g.report({ kind: 'plan', plan: plan([{ ...spec('a'), deployment: undefined }]) }), 'a PR that deploys nothing is a PR without deployment');
   f.report({ kind: 'plan', plan: plan([sessionSpec('a'), spec('b', ['a'])]) });
   assert.deepEqual(f.store.get(f.job.id).repos, ['/repo']);
   assert.equal(f.store.get(f.job.id).plan.subJobs[1].kind, 'pr');
 });
 
-test('a plan names each PR branch in the repo\'s convention; {key} resolves to the Jira key once known, and the name is never reshaped', async (t) => {
+test('a plan carries no branch names: the implementer names its branch, and only its own rename moves the sub-job\'s worktree record', async (t) => {
   const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
-  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: 'fix/bad name' }]) }), /valid git branch/);
-  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: '{key}..x' }]) }), /valid git branch/);
-  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...sessionSpec('a'), branch: 'fix/x' }]) }), /session sub-job has no repo, branch/);
-  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: 'fix/x' }, { ...spec('b'), branch: 'fix/x' }]) }), /already used by another sub-job/);
-  const proposed = { stories: [{ id: 'story', key: 'AUTH-123', title: 'Reliable sign-in', value: 'Customers can access their account' }, { id: 'audit', project: 'SEC', title: 'Sign-ins are audited', value: 'Security can trace access' }],
-    subJobs: [{ ...spec('api'), branch: 'feat/{key}-reliable-sign-in' }, { ...spec('web'), storyId: 'audit', branch: '{key}-audit-sign-ins' }, { ...spec('docs', ['api']), repo: '/other' }] };
-  f.report({ kind: 'plan', plan: proposed }); await f.tick();
+  f.report({ kind: 'plan', plan: plan([{ ...spec('api'), branch: 'feat/{key}-api' }, spec('web')]) }); await f.tick();
+  assert.equal('branch' in f.store.get(f.job.id).plan.subJobs[0], false, 'a proposed branch is dropped, not stored');
   f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision); await f.tick();
-  f.report({ kind: 'jira', stories: [{ id: 'audit', key: 'SEC-42' }] }); await f.tick();
+  const [api, web] = f.launched.slice(1);
+  assert.equal(f.store.get(f.job.id).subJobs[0].worktree.branch, 'branch-api', 'launched on the placeholder');
+  assert.equal(f.store.noteBranchRename('session-nobody', 'fix/AUTH-123-x'), false, 'a session that is not a job run touches nothing');
+  assert.equal(f.store.noteBranchRename(api.sid, 'fix/AUTH-123-reliable-sign-in'), true);
   const job = f.store.get(f.job.id);
-  assert.deepEqual(job.subJobs.map((s) => s.branch), ['feat/AUTH-123-reliable-sign-in', 'SEC-42-audit-sign-ins', undefined]);
-  assert.deepEqual(job.plan.subJobs.map((s) => s.branch), ['feat/{key}-reliable-sign-in', '{key}-audit-sign-ins', undefined], 'the approved plan keeps the placeholder form');
-  assert.deepEqual(f.launched.slice(2).map((w) => w.sub.branch), ['feat/AUTH-123-reliable-sign-in', 'SEC-42-audit-sign-ins'], 'implementation launches carry the resolved name (the third sub-job waits on a concurrency slot)');
+  assert.deepEqual(job.subJobs.map((s) => s.worktree.branch), ['fix/AUTH-123-reliable-sign-in', 'branch-web'], 'only the renaming session\'s own sub-job follows');
+  assert.equal(job.subJobs[0].worktree.path, '/worktree/api', 'the rest of the worktree record is kept');
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: api', checks: ['Tests passed'] }, api); await f.tick();
+  assert.equal(f.store.noteBranchRename(web.sid, 'fix/AUTH-123-web'), true);
+  assert.equal(f.store.get(f.job.id).subJobs[1].worktree.branch, 'fix/AUTH-123-web');
 });
 
 test('approving a plan with proposed stories runs a Jira step whose keys, and only those, unlock implementation', async (t) => {
@@ -721,4 +755,256 @@ test('a blocked Jira step is retryable from the same column and a fully keyed pl
   assert.equal(f.store.get(f.job.id).subJobs[0].jiraKey, 'AUTH-7');
   const g = fixture(t); await g.approve();
   assert.deepEqual(g.launched.map((w) => w.run.phase), ['planning', 'implementation'], 'existing keys mean nothing to write in Jira');
+});
+
+test('a PR sub-job with no deployment is deployed by its merge: dependants are released and no verify session runs', async (t) => {
+  const f = fixture(t); f.store.update(f.job.id, (j) => { j.reviewCode = false; j.reviewMerge = false; });
+  const { deployment, ...docs } = spec('docs');
+  await f.approve(plan([docs, spec('api', ['docs'])]));
+  assert.equal(f.store.get(f.job.id).subJobs[0].deployment, undefined);
+  const docsRun = f.launched.find((l) => l.sub?.id === 'docs');
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: docs', checks: ['Lint passed'] }, docsRun); await f.tick();
+  f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/1' }, f.launched.find((l) => l.sub?.id === 'docs' && l.run.phase === 'publish')); await f.tick();
+  f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  const docsSub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(docsSub.stage, 'cleanup'); assert.equal(docsSub.deployed.commit, 'merge1'); assert.ok(docsSub.mergedAt);
+  assert.match(docsSub.deployed.checks[0], /nothing deploys/);
+  assert.equal(f.launched.some((l) => l.run.phase === 'verify'), false);
+  await f.tick(); assert.deepEqual(f.cleaned, ['docs']);
+  assert.equal(f.store.get(f.job.id).subJobs[1].dependenciesVerified, undefined);
+  // The dependant now re-verifies against its "deployed" prerequisite exactly as it would after a real deploy.
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: api', checks: ['Tests pass'] }, f.launched.find((l) => l.sub?.id === 'api')); await f.tick();
+  assert.equal(f.store.get(f.job.id).subJobs[1].dependenciesVerified, true);
+});
+
+test('a merged sub-job with nothing deployed past the stale window is flagged; a slow run in progress is not', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  const sub = () => f.store.get(f.job.id).subJobs[0];
+  assert.ok(sub().mergedAt);
+  f.setDeployment({ status: 'pending', runs: [], commit: 'merge1' });
+  await f.tick(); assert.equal(sub().deploymentStale, null, 'inside the window it is just waiting');
+  for (let i = 0; i < 30; i++) await f.tick();
+  assert.equal(sub().deploymentStale.since, sub().mergedAt);
+  assert.ok(!sub().error, 'advisory: polling continues and nothing is blocked');
+  // Everything GitHub started was skipped: it did not apply to this commit, so
+  // this is silence too and must never read as a deployment.
+  f.setDeployment({ status: 'pending', runs: [{ workflow: 'deploy.yml', runId: 7, status: 'skipped' }], commit: 'merge1' });
+  await f.tick(); assert.ok(sub().deploymentStale, 'an all-skipped merge deployed nothing');
+  f.setDeployment({ status: 'pending', runs: [{ workflow: 'deploy.yml', runId: 7, status: 'pending' }], commit: 'merge1' });
+  await f.tick(); assert.equal(sub().deploymentStale, null, 'a run in progress is a slow deploy, never stale');
+  f.setDeployment({ status: 'passing', runs: [{ workflow: 'deploy.yml', runId: 7, status: 'passing' }], commit: 'merge1' });
+  await f.tick(); assert.equal(sub().deploymentStale, null); assert.equal(f.last().run.phase, 'verify');
+  // A sub-job merged before this existed has no mergedAt; the window counts from its first observation.
+  f.store.settings({ deploymentStaleMinutes: 5 });
+  assert.throws(() => f.store.settings({ deploymentStaleMinutes: 1 }));
+});
+
+// --- Plan amendments (server/job-amendments.js) ---
+const pendingOf = (f) => f.store.get(f.job.id).amendments.filter((a) => a.status === 'proposed');
+const dropDeploy = (id) => ({ op: 'set-deployment', subJobId: id, deployment: null });
+
+test('a human plan change is validated, applied at once and recorded; the plan and sub-jobs stay in step', async (t) => {
+  const f = fixture(t);
+  await f.approve(plan([spec('api'), spec('web', ['api'])]));
+  const before = f.store.snapshot();
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'x', ops: [{ op: 'set-repo', subJobId: 'api', repo: '/other' }] }), /Invalid/, 'frozen fields have no op');
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'x', ops: [{ op: 'set-instructions', subJobId: 'api', instructions: 'Rewritten' }] }), /Wait for the session to stop/, 'a live run on the target refuses the change');
+  assert.deepEqual(f.store.snapshot(), before, 'a refused change persists nothing');
+  // web's implementation is live too; stop both so the plan can move.
+  f.alive.clear(); await f.tick();
+  for (const id of ['api', 'web']) f.store.action(f.job.id, 'retry', { subJobId: id });
+  f.store.action(f.job.id, 'propose-amendment', { subJobId: 'web', reason: 'The web deploy pipeline ignores markdown', ops: [dropDeploy('web'), { op: 'remove-dependency', subJobId: 'web', dependsOn: 'api' }] });
+  const job = f.store.get(f.job.id);
+  const [a] = job.amendments;
+  assert.equal(a.status, 'accepted'); assert.equal(a.proposedBy, 'human'); assert.equal(a.subJobId, 'web'); assert.equal(a.classification, 'weakening');
+  assert.match(a.id, /^amd_/); assert.ok(a.decidedAt);
+  assert.deepEqual(a.summary, ['Drop deployment for Deliver web: merging completes it', 'Deliver web no longer waits for Deliver api']);
+  const web = job.subJobs[1];
+  assert.equal(web.deployment, undefined); assert.deepEqual(web.dependsOn, []);
+  assert.equal(job.plan.subJobs[1].deployment, undefined); assert.deepEqual(job.plan.subJobs[1].dependsOn, [], 'the approved plan follows the sub-job');
+  assert.deepEqual(new JobStore(f.store.file).get(f.job.id).amendments, job.amendments);
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { subJobId: 'web', reason: 'again', ops: [dropDeploy('web')] }), /Change 1 \(set-deployment on Deliver web\): no change/);
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'loop', ops: [{ op: 'add-dependency', subJobId: 'api', dependsOn: 'web' }, { op: 'add-dependency', subJobId: 'web', dependsOn: 'api' }] }), /cycles/);
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { reason: '', ops: [dropDeploy('api')] }));
+});
+
+test('each op has its side effect: added sub-jobs match activation, instructions restart implementation, pending checks and dependencies are rewritten', async (t) => {
+  const f = fixture(t); f.store.update(f.job.id, (j) => { j.reviewCode = false; });
+  await f.approve(plan([spec('api'), spec('web')]));
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: api', checks: ['Tests pass'], pendingChecks: ['CI green', 'Plan clean'] }, f.launched.find((w) => w.sub?.id === 'api'));
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: web', checks: ['Tests pass'] }, f.launched.find((w) => w.sub?.id === 'web'));
+  f.store.action(f.job.id, 'pause'); await f.tick();
+  f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'Lint is a PR check too', ops: [{ op: 'set-pending-checks', subJobId: 'api', pendingChecks: ['CI green', 'Lint'] }] });
+  let job = f.store.get(f.job.id);
+  assert.deepEqual(job.subJobs[0].local.pendingChecks, ['CI green', 'Lint']); assert.equal(job.subJobs[0].local.checks[0], 'Tests pass', 'the receipt itself is untouched');
+  f.store.action(f.job.id, 'propose-amendment', { subJobId: 'web', reason: 'Use the shared client', ops: [{ op: 'set-instructions', subJobId: 'web', instructions: 'Implement web with the shared client' }, { op: 'add-dependency', subJobId: 'web', dependsOn: 'api' }] });
+  job = f.store.get(f.job.id);
+  const web = job.subJobs[1];
+  assert.equal(web.local, null); assert.equal(web.codeApprovedAt, null); assert.equal(web.dependenciesVerified, false); assert.equal(web.feedback, 'Use the shared client');
+  assert.equal(web.instructions, 'Implement web with the shared client'); assert.deepEqual(web.dependsOn, ['api']); assert.deepEqual(job.plan.subJobs[1].dependsOn, ['api']);
+  f.store.action(f.job.id, 'propose-amendment', { reason: 'Docs need a follow-up PR', ops: [{ op: 'add-sub-job', spec: { ...spec('docs', ['api']), repo: '/docs', deployment: undefined } }] });
+  job = f.store.get(f.job.id);
+  const docs = job.subJobs[2];
+  assert.equal(docs.stage, 'implementation'); assert.equal(docs.state, 'queued'); assert.equal(docs.jiraKey, 'AUTH-123', 'the key comes from the story, as at activation');
+  assert.deepEqual([docs.repairs, docs.sessions, docs.local, docs.pr, docs.prComments, docs.commentSummary, docs.deploymentResult, docs.result], [[], [], null, null, null, null, null, null]);
+  assert.deepEqual(job.plan.subJobs.map((s) => s.id), ['api', 'web', 'docs']); assert.deepEqual(job.repos, ['/repo', '/docs']);
+  f.store.settings({ concurrency: 4 }); f.store.action(f.job.id, 'resume'); await f.tick();
+  assert.deepEqual(f.launched.slice(3).map((w) => [w.sub.id, w.run.phase, w.sub.feedback]), [['api', 'publish', undefined], ['web', 'implementation', 'Use the shared client'], ['docs', 'implementation', undefined]], 'the added sub-job runs like any other; the rewritten one restarts with the reason as feedback');
+});
+
+test('dropping the deployment of a merged sub-job that is still watching marks it deployed, exactly as a no-deployment merge does', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'pending', runs: [], commit: 'merge1' });
+  for (let i = 0; i < 31; i++) await f.tick();
+  let sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.stage, 'deployment'); assert.ok(sub.deploymentStale);
+  f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'Verify the docs site, not the API', ops: [{ op: 'set-deployment', subJobId: 'api', deployment: { verify: 'Docs site shows the change' } }] });
+  sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.deploymentResult, null); assert.equal(sub.deploymentStale, null); assert.equal(sub.nextPollAt, 0);
+  assert.equal(sub.deployment.verify, 'Docs site shows the change', 'a changed watch starts again');
+  f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'Nothing deploys at all', ops: [dropDeploy('api')] });
+  sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.stage, 'cleanup'); assert.equal(sub.deployed.commit, 'merge1'); assert.match(sub.deployed.checks[0], /nothing deploys/);
+  assert.equal(f.launched.some((l) => l.run.phase === 'verify'), false);
+  await f.tick(); assert.deepEqual(f.cleaned, ['api']); assert.equal(f.store.get(f.job.id).stage, 'done');
+  assert.throws(() => f.store.action(f.job.id, 'propose-amendment', { subJobId: 'api', reason: 'late', ops: [dropDeploy('api')] }), /only be amended while the job is active/);
+});
+
+test('an agent proposes on its receipt: an invalid amendment fails the report, a valid one waits for the human and accepting IS the retry', async (t) => {
+  const f = fixture(t); await atPr(f);
+  f.setPr({ checkStatus: 'failing' }); await f.tick(); assert.equal(f.last().run.phase, 'repair');
+  const before = f.store.snapshot();
+  assert.throws(() => f.report({ kind: 'blocked', summary: 'Pipeline ignores markdown', amendment: { reason: 'r', ops: [dropDeploy('nope')] } }), /Change 1 \(set-deployment on nope\): no such sub-job/);
+  assert.deepEqual(f.store.snapshot(), before, 'the receipt is not recorded either');
+  f.report({ kind: 'blocked', summary: 'deployment-pipeline.yaml path-ignores **.md so no run will appear', amendment: { reason: 'Docs-only change never triggers the pipeline', ops: [dropDeploy('api')] } });
+  await f.tick();
+  let job = f.store.get(f.job.id); let sub = job.subJobs[0];
+  assert.match(sub.error, /path-ignores/); assert.equal(sub.stage, 'pr');
+  const [a] = job.amendments;
+  assert.equal(a.status, 'proposed'); assert.equal(a.classification, 'weakening');
+  assert.deepEqual(a.proposedBy, { runId: f.last().run.id, sessionId: f.last().sid, phase: 'repair', subJobId: 'api', receipt: 'blocked' });
+  assert.equal(job.runs.find((r) => r.id === a.proposedBy.runId).report.amendment.reason, a.reason, 'the receipt keeps its amendment on the ledger');
+  assert.throws(() => f.store.action(f.job.id, 'accept-amendment', { amendmentId: 'amd_missing' }), /No pending plan change/);
+  f.store.action(f.job.id, 'accept-amendment', { amendmentId: a.id });
+  job = f.store.get(f.job.id); sub = job.subJobs[0];
+  assert.equal(job.amendments[0].status, 'accepted'); assert.ok(job.amendments[0].decidedAt);
+  assert.equal(sub.error, null); assert.equal(sub.deployment, undefined); assert.equal(sub.state, 'watching'); assert.equal(sub.repairAllowance, 1, 'accept carries the retry semantics');
+  f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'cleanup', 'merged with no deployment: delivered');
+  assert.throws(() => f.store.action(f.job.id, 'accept-amendment', { amendmentId: a.id }), /No pending plan change/, 'decided once');
+});
+
+test('rejecting keeps the block and the feedback; a proposal the job has moved past becomes invalid with the reason', async (t) => {
+  const f = fixture(t); await f.approve(plan([spec('api'), spec('web')]));
+  const api = f.launched.find((w) => w.sub?.id === 'api'), web = f.launched.find((w) => w.sub?.id === 'web');
+  f.report({ kind: 'blocked', summary: 'web must land first', amendment: { reason: 'api reads the schema web ships', ops: [{ op: 'add-dependency', subJobId: 'api', dependsOn: 'web' }] } }, api);
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: web', checks: ['Tests pass'], amendment: { reason: 'web needs no deployment', ops: [dropDeploy('web')] } }, web);
+  await f.tick();
+  let [first, second] = pendingOf(f);
+  assert.equal(first.proposedBy.receipt, 'blocked'); assert.equal(second.proposedBy.receipt, 'local');
+  f.store.action(f.job.id, 'reject-amendment', { amendmentId: first.id, feedback: 'Ship them independently' });
+  let job = f.store.get(f.job.id);
+  assert.equal(job.amendments[0].status, 'rejected'); assert.equal(job.amendments[0].feedback, 'Ship them independently');
+  assert.match(job.subJobs[0].error, /web must land first/, 'rejecting a blocked receipt\'s fix leaves the block for Retry');
+  assert.deepEqual(job.subJobs[0].dependsOn, []);
+  // web publishes and deploys before anyone looks at its proposal: it no longer applies.
+  f.store.update(f.job.id, (j) => { j.subJobs[1].deployed = { checks: ['Live'] }; j.subJobs[1].stage = 'cleanup'; });
+  f.store.action(f.job.id, 'accept-amendment', { amendmentId: second.id });
+  job = f.store.get(f.job.id);
+  assert.equal(job.amendments[1].status, 'invalid'); assert.match(job.amendments[1].error, /already deployed/);
+  assert.equal(job.subJobs[1].deployment.verify, 'Check running version and sign-in', 'nothing applied');
+  assert.equal(pendingOf(f).length, 0);
+});
+
+test('accepting refuses while a run is live on a targeted sub-job, and a receipt proposal targeting a busy sibling stays pending under auto', async (t) => {
+  const f = fixture(t, { ...input, amendmentAuthority: 'auto' }); await f.approve(plan([spec('api'), spec('web')]));
+  const api = f.launched.find((w) => w.sub?.id === 'api');
+  f.report({ kind: 'blocked', summary: 'x', amendment: { reason: 'web should wait', ops: [{ op: 'add-dependency', subJobId: 'web', dependsOn: 'api' }] } }, api);
+  let job = f.store.get(f.job.id);
+  assert.equal(job.amendments[0].status, 'proposed', 'web\'s implementation is live, so even auto leaves it for the human');
+  assert.throws(() => f.store.action(f.job.id, 'accept-amendment', { amendmentId: job.amendments[0].id }), /Wait for the session to stop/);
+  assert.equal(f.store.get(f.job.id).amendments[0].status, 'proposed', 'a refusal decides nothing');
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: web', checks: ['ok'] }, f.launched.find((w) => w.sub?.id === 'web')); await f.tick();
+  f.store.action(f.job.id, 'accept-amendment', { amendmentId: job.amendments[0].id });
+  job = f.store.get(f.job.id);
+  assert.equal(job.amendments[0].status, 'accepted'); assert.deepEqual(job.subJobs[1].dependsOn, ['api']); assert.equal(job.subJobs[0].error, null);
+});
+
+test('the authority setting decides what applies on the spot: review nothing, auto-tighten only tightening, auto everything including the retry', async (t) => {
+  const tighten = { reason: 'web needs api', ops: [{ op: 'add-dependency', subJobId: 'web', dependsOn: 'api' }] };
+  const loosen = { reason: 'nothing deploys', ops: [dropDeploy('api')] };
+  const run = async (authority, amendment) => {
+    const f = fixture(t, { ...input, amendmentAuthority: authority });
+    await f.approve(plan([spec('api'), spec('web')]));
+    f.report({ kind: 'local', commitMessage: 'AUTH-123: web', checks: ['ok'] }, f.launched.find((w) => w.sub?.id === 'web'));
+    await f.tick();
+    f.report({ kind: 'blocked', summary: 'stuck', amendment }, f.launched.find((w) => w.sub?.id === 'api'));
+    await f.tick();
+    const job = f.store.get(f.job.id);
+    return { status: job.amendments[0].status, error: job.subJobs[0].error, job, f };
+  };
+  const reviewed = await run('review', tighten); assert.equal(reviewed.status, 'proposed'); assert.equal(reviewed.error, 'stuck');
+  const tightened = await run('auto-tighten', tighten); assert.equal(tightened.status, 'auto-accepted'); assert.deepEqual(tightened.job.subJobs[1].dependsOn, ['api']);
+  const held = await run('auto-tighten', loosen); assert.equal(held.status, 'proposed'); assert.equal(held.error, 'stuck', 'weakening waits for a human');
+  const auto = await run('auto', loosen);
+  assert.equal(auto.status, 'auto-accepted'); assert.equal(auto.error, null, 'the blocked sub-job is re-queued'); assert.equal(auto.job.subJobs[0].deployment, undefined);
+  assert.equal(auto.job.subJobs[0].repairAllowance, 1);
+  await auto.f.tick();
+  assert.deepEqual(auto.f.last().sub.id, 'api'); assert.equal(auto.f.last().run.phase, 'implementation', 'and runs again without a human Retry');
+  assert.equal(new JobStore(auto.f.store.file).get(auto.job.id).amendmentAuthority, 'auto');
+  assert.equal(fixture(t).job.amendmentAuthority, 'review', 'the default reviews everything');
+});
+
+test('MCP round trip: a receipt with an amendment is accepted through job_report, and get_job_context shows pending proposals and the authority', async (t) => {
+  const f = fixture(t); await f.approve(); const w = f.last();
+  const deps = { jobStore: f.store };
+  const bad = await jobReportTool.handler({ deps, caller: w.sid }, { runId: w.run.id, report: { kind: 'blocked', summary: 's', amendment: { reason: 'r', ops: [{ op: 'set-instructions', subJobId: 'api', instructions: 'Implement api' }] } } });
+  assert.equal(bad.isError, true); assert.match(bad.content[0].text, /no change/);
+  const ok = await jobReportTool.handler({ deps, caller: w.sid }, { runId: w.run.id, report: { kind: 'blocked', summary: 'Needs a docs PR first', amendment: { reason: 'The docs must land first', ops: [{ op: 'add-sub-job', spec: { ...spec('docs'), deployment: undefined } }, { op: 'add-dependency', subJobId: 'api', dependsOn: 'docs' }] } } });
+  assert.equal(ok.structuredContent.accepted, true);
+  const ctx = (await getJobContextTool.handler({ deps, caller: w.sid })).structuredContent;
+  assert.equal(ctx.amendmentAuthority, 'review'); assert.equal(ctx.pendingAmendments.length, 1); assert.equal(ctx.pendingAmendments[0].classification, 'neutral');
+  assert.deepEqual(ctx.pendingAmendments[0].summary, ['Add PR sub-job “Deliver docs” in /repo', 'Deliver api now deploys after Deliver docs']);
+  assert.equal(ctx.job.subJobs.length, 1, 'nothing applied until accepted');
+  const repeat = await jobReportTool.handler({ deps, caller: w.sid }, { runId: w.run.id, report: { kind: 'blocked', summary: 'Needs a docs PR first', amendment: { reason: 'The docs must land first', ops: [{ op: 'add-sub-job', spec: { ...spec('docs'), deployment: undefined } }, { op: 'add-dependency', subJobId: 'api', dependsOn: 'docs' }] } } });
+  assert.equal(repeat.structuredContent.accepted, true); assert.equal(f.store.get(f.job.id).amendments.length, 1, 'an identical retry proposes nothing twice');
+});
+
+test('a failed live check can propose its fix inside the job: no recovery job while pending or once accepted, and the failed sub-job delivers when the fix deploys', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'passing', runs: [], commit: 'merge1' }); await f.tick(); assert.equal(f.last().run.phase, 'verify');
+  f.report({ kind: 'blocked', summary: 'Deployed endpoint returns 500 on empty payloads', amendment: { reason: 'The handler needs a null guard', ops: [
+    { op: 'add-sub-job', spec: { ...spec('fix'), title: 'Guard empty payloads' } }, { op: 'set-recovered-by', subJobId: 'api', fixSubJobId: 'fix' }] } });
+  await f.tick(); await f.tick();
+  let job = f.store.get(f.job.id);
+  assert.equal(f.store.snapshot().jobs.length, 1, 'no recovery job while the in-job fix is proposed');
+  assert.match(job.subJobs[0].error, /500/); assert.equal(job.subJobs[0].stage, 'deployment'); assert.equal(job.amendments[0].status, 'proposed');
+  f.store.action(f.job.id, 'accept-amendment', { amendmentId: job.amendments[0].id });
+  job = f.store.get(f.job.id);
+  const [api, fix] = job.subJobs;
+  assert.equal(api.recoveredBy, 'fix'); assert.equal(api.error, null); assert.equal(api.state, 'awaiting-fix'); assert.match(api.recoveryReason, /500/);
+  assert.equal(fix.stage, 'implementation'); assert.equal(fix.title, 'Guard empty payloads');
+  await f.tick(); await f.tick();
+  assert.equal(f.store.snapshot().jobs.length, 1, 'accepted: still no recovery job');
+  assert.equal(f.launched.filter((l) => l.run.phase === 'verify').length, 1, 'the failed sub-job is not re-verified while parked');
+  assert.deepEqual([f.last().sub.id, f.last().run.phase], ['fix', 'implementation']);
+  f.report({ kind: 'local', commitMessage: 'AUTH-123: guard', checks: ['Tests pass'] }); await f.tick();
+  f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/2' }); f.setPr({ state: 'MERGED', mergeCommit: 'merge2', checkStatus: 'passing' }); await f.tick();
+  f.setDeployment({ status: 'passing', runs: [{ workflow: 'deploy.yml', status: 'passing' }], commit: 'merge2' }); await f.tick();
+  assert.equal(f.last().run.phase, 'verify'); assert.equal(f.last().sub.id, 'fix');
+  f.report({ kind: 'deployed', checks: ['Empty payloads return 400'] }); await f.tick();
+  job = f.store.get(f.job.id);
+  assert.ok(['cleanup', 'done'].includes(job.subJobs[1].stage)); assert.equal(job.subJobs[0].stage, 'cleanup'); assert.match(job.subJobs[0].deployed.checks[0], /Recovered by Guard empty payloads/);
+  assert.equal(job.subJobs[0].deployed.commit, 'merge1');
+  await f.tick(); assert.deepEqual(f.cleaned.sort(), ['api', 'fix']); assert.equal(f.store.get(f.job.id).stage, 'done');
+});
+
+test('rejecting an in-job fix falls back to the separate recovery job on the next tick', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'passing', runs: [], commit: 'merge1' }); await f.tick();
+  f.report({ kind: 'blocked', summary: 'Endpoint 500', amendment: { reason: 'Null guard', ops: [{ op: 'add-sub-job', spec: spec('fix') }, { op: 'set-recovered-by', subJobId: 'api', fixSubJobId: 'fix' }] } });
+  await f.tick(); assert.equal(f.store.snapshot().jobs.length, 1);
+  f.store.action(f.job.id, 'reject-amendment', { amendmentId: f.store.get(f.job.id).amendments[0].id });
+  await f.tick();
+  assert.equal(f.store.snapshot().jobs.length, 2); assert.equal(f.store.get(f.job.id).subJobs[0].stage, 'cleanup'); assert.equal(f.store.get(f.job.id).subJobs.length, 1);
 });
