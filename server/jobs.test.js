@@ -647,3 +647,46 @@ test('plans keep PR and session sub-jobs distinct: a session has no repo, a PR n
   assert.deepEqual(f.store.get(f.job.id).repos, ['/repo']);
   assert.equal(f.store.get(f.job.id).plan.subJobs[1].kind, 'pr');
 });
+
+test('approving a plan with proposed stories runs a Jira step whose keys, and only those, unlock implementation', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  const proposed = { stories: [{ id: 'story', key: 'AUTH-123', title: 'Reliable sign-in', value: 'Customers can access their account' }, { id: 'audit', project: 'SEC', title: 'Sign-ins are audited', value: 'Security can trace access' }],
+    subJobs: [spec('api'), { ...spec('web'), storyId: 'audit' }] };
+  f.report({ kind: 'plan', plan: proposed }); await f.tick();
+  assert.throws(() => f.report({ kind: 'plan', plan: { ...proposed, stories: [{ id: 'x', key: 'bad key', title: 'a', value: 'b' }] } }), undefined, 'a keyed story still needs a real key');
+  f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision); await f.tick();
+  let job = f.store.get(f.job.id);
+  assert.equal(job.stage, 'jira'); assert.deepEqual(job.subJobs, [], 'no worktree or implementation before the tickets exist');
+  assert.equal(f.last().run.phase, 'jira'); assert.equal(f.last().sub, null);
+  assert.match(f.last().run.id, /^run_/);
+  assert.throws(() => f.report({ kind: 'local', commitMessage: 'x: y', checks: ['a'] }), /must submit jira/);
+  assert.throws(() => f.report({ kind: 'jira', stories: [{ id: 'nope', key: 'SEC-1' }] }), /Unknown story/);
+  assert.throws(() => f.report({ kind: 'jira', stories: [{ id: 'story', key: 'AUTH-999' }] }), /approved as AUTH-123/);
+  assert.throws(() => f.report({ kind: 'jira', stories: [{ id: 'story', key: 'AUTH-123' }] }), /still missing: audit/);
+  assert.equal(f.store.get(f.job.id).stage, 'jira', 'a rejected receipt changes nothing');
+  f.report({ kind: 'jira', stories: [{ id: 'audit', key: 'SEC-42' }] });
+  job = f.store.get(f.job.id);
+  assert.equal(job.stage, 'active');
+  assert.deepEqual(job.plan.stories.map((s) => s.key), ['AUTH-123', 'SEC-42']);
+  assert.deepEqual(job.subJobs.map((s) => s.jiraKey), ['AUTH-123', 'SEC-42']);
+  await f.tick();
+  assert.deepEqual(f.launched.slice(2).map((w) => [w.run.phase, w.sub.id]), [['implementation', 'api'], ['implementation', 'web']]);
+  assert.ok(f.stopped.includes(f.launched[1].run.id), 'the ticketing session is released like planning');
+  assert.deepEqual(new JobStore(f.store.file).get(f.job.id).subJobs.map((s) => s.jiraKey), ['AUTH-123', 'SEC-42']);
+});
+
+test('a blocked Jira step is retryable from the same column and a fully keyed plan skips it', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  f.report({ kind: 'plan', plan: { ...plan(), stories: [{ id: 'story', title: 'Reliable sign-in', value: 'Customers can access their account' }] } }); await f.tick();
+  f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision); await f.tick();
+  f.report({ kind: 'blocked', summary: 'Jira search failed: 401 from the Atlassian MCP' }); await f.tick();
+  let job = f.store.get(f.job.id);
+  assert.equal(job.stage, 'jira'); assert.match(job.error, /401/); assert.equal(f.launched.length, 2);
+  f.store.action(f.job.id, 'retry'); await f.tick();
+  assert.equal(f.launched.length, 3); assert.equal(f.last().run.phase, 'jira');
+  f.report({ kind: 'jira', stories: [{ id: 'story', key: 'AUTH-7' }] }); await f.tick();
+  assert.equal(f.store.get(f.job.id).stage, 'active'); assert.equal(f.last().run.phase, 'implementation');
+  assert.equal(f.store.get(f.job.id).subJobs[0].jiraKey, 'AUTH-7');
+  const g = fixture(t); await g.approve();
+  assert.deepEqual(g.launched.map((w) => w.run.phase), ['planning', 'implementation'], 'existing keys mean nothing to write in Jira');
+});

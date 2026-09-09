@@ -1,7 +1,8 @@
 import { esc, tildify } from './util.js';
 export const JOB_COLUMNS = [
   ['backlog', 'Backlog', 'Ideas ready to shape'],
-  ['planning', 'PR planning & Jira tickets', 'Value, scope and landing order'],
+  ['planning', 'PR planning', 'Titles, value and landing order'],
+  ['jira', 'Jira tickets', 'Approved titles become tickets'],
   ['implementation', 'Local implementation & verification', 'Build together. Verify briefly.'],
   ['pr', 'PR', 'Checks, repairs and merge'],
   ['deployment', 'Deployment verification', 'The right version, working live'],
@@ -51,9 +52,9 @@ export function jobStatus(job, sub) {
   if (job.paused) return { tone: 'muted', text: 'Paused' };
   if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a cancelled sub-job' };
   const run = liveRun(job, sub);
-  if (run) return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', implementation: 'Implementing', publish: 'Opening PR', repair: 'Repairing CI', verify: 'Verifying live', session: 'Working' }[run.phase] || 'Working') };
+  if (run) return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: 'Implementing', publish: 'Opening PR', repair: 'Repairing CI', verify: 'Verifying live', session: 'Working' }[run.phase] || 'Working') };
   if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Ready for code review' : 'Plan ready to review' };
-  if (!sub) return { tone: 'muted', text: job.stage === 'backlog' ? 'Ready when you are' : job.stage === 'done' ? 'Delivered' : 'Queued' };
+  if (!sub) return { tone: 'muted', text: job.stage === 'backlog' ? 'Ready when you are' : job.stage === 'done' ? 'Delivered' : job.stage === 'jira' ? 'Tickets queued' : 'Queued' };
   // A session prerequisite blocks a build from starting; a PR prerequisite only blocks publishing.
   const waiting = pendingDependencies(job, sub);
   const blocked = sub.stage === 'session' ? waiting : sub.stage === 'implementation' ? (sub.local ? waiting : waiting.filter(isSessionSub)) : [];
@@ -77,6 +78,8 @@ export function dependencyLine(job, sub) {
   const sessions = deps.filter(isSessionSub), prs = deps.filter((d) => !isSessionSub(d));
   return [sessions.length ? `Start after ${names(sessions)}` : '', prs.length ? `Deploy after ${names(prs)}` : ''].filter(Boolean).join(' · ');
 }
+// A story is an existing ticket (key) or a proposal awaiting the ticketing step.
+export const storyLabel = (story) => story?.key || (story?.project ? `New in ${story.project}` : 'New story');
 export const receiptHtml = (checks = []) => `<ul class="job-receipt">${checks.map((c) => `<li><span aria-hidden="true">✓</span> ${esc(c)}</li>`).join('')}</ul>`;
 export function jobCardHtml({ job, sub }) {
   const status = jobStatus(job, sub);
