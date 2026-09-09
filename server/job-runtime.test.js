@@ -294,3 +294,66 @@ test('the session prompt forbids repository changes and the planner learns the s
   const planning = jobPrompt(job, null, { ...run, phase: 'planning' });
   assert.match(planning, /kind:"session"/); assert.match(planning, /waits for it to finish before starting implementation/);
 });
+
+const dialog = (cursorOnYes) => `
+ Quick safety check: Is this a project you created or one you trust?
+ ${cursorOnYes ? '  ' : '❯ '}No, exit
+ ${cursorOnYes ? '❯ ' : '  '}Yes, I trust this folder
+ Enter to confirm · Esc to cancel
+`;
+const paneHarness = (screens) => {
+  const manager = new SessionManager(); manager.map.clear();
+  manager.map.set('sid', { tmux: 'cc_worker', socket: 'preview', cwd: '/repo-worktree-x' });
+  const runtime = new JobRuntime({ sessionManager: manager });
+  const sent = [];
+  runtime._pane = {
+    capture: async (name, _lines, socket) => { assert.equal(name, 'cc_worker'); assert.equal(socket, 'preview'); return screens.shift() ?? ''; },
+    sendKeys: async (name, keys, socket) => { assert.equal(name, 'cc_worker'); assert.equal(socket, 'preview'); sent.push(keys.join(' ')); },
+  };
+  return { runtime, sent };
+};
+
+test('acceptTrustDialog moves the cursor off the "No, exit" default and confirms it landed before pressing Enter', async () => {
+  const { runtime, sent } = paneHarness([dialog(false), dialog(true)]);
+  assert.equal(await runtime.acceptTrustDialog({ sessionId: 'sid' }), true);
+  assert.deepEqual(sent, ['Down', 'Enter']);
+});
+
+test('acceptTrustDialog presses only Enter when a human already moved the cursor to Yes', async () => {
+  const { runtime, sent } = paneHarness([dialog(true)]);
+  assert.equal(await runtime.acceptTrustDialog({ sessionId: 'sid' }), true);
+  assert.deepEqual(sent, ['Enter']);
+});
+
+test('acceptTrustDialog never sends Enter blind: no dialog, a vanished dialog, or a cursor that did not move', async () => {
+  let h = paneHarness(['❯ Try "fix typecheck errors"']);
+  assert.equal(await h.runtime.acceptTrustDialog({ sessionId: 'sid' }), false);
+  assert.deepEqual(h.sent, []);
+  h = paneHarness([dialog(false), '❯ Try "fix typecheck errors"']);
+  assert.equal(await h.runtime.acceptTrustDialog({ sessionId: 'sid' }), false);
+  assert.deepEqual(h.sent, ['Down'], 'the dialog was answered elsewhere between reads — Enter would land in the composer');
+  h = paneHarness([dialog(false), dialog(false)]);
+  assert.equal(await h.runtime.acceptTrustDialog({ sessionId: 'sid' }), false);
+  assert.deepEqual(h.sent, ['Down'], 'Enter on an unmoved cursor would select "No, exit"');
+  h = paneHarness([]);
+  assert.equal(await h.runtime.acceptTrustDialog({ sessionId: 'missing' }), false, 'no mapping, no pane to read');
+});
+
+test('the runner answers the dialog for a live, unreported run and keeps the run open', async () => {
+  const { runtime, sent } = paneHarness([dialog(false), dialog(true)]);
+  runtime.isAlive = async () => true;
+  const store = new JobStore(path.join(DATA_DIR, 'trust-dialog-jobs.json'));
+  const job = store.create({ title: 'Bulk import', intent: 'Import users', agent: 'claude' });
+  store.action(job.id, 'start');
+  const run = store.claim(job.id, null, 'planning');
+  store.bindRun(job.id, run.id, 'sid');
+  const runner = new JobRunner({ store, runtime });
+  await runner.tick();
+  assert.deepEqual(sent, ['Down', 'Enter']);
+  assert.equal(store.get(job.id).runs[0].stopped, false);
+  assert.equal(store.get(job.id).error, undefined);
+  runtime.acceptTrustDialog = async () => { throw new Error('tmux blipped'); };
+  await runner.tick();
+  assert.equal(store.get(job.id).runs[0].stopped, false, 'a failed dialog probe never fails the run');
+  assert.equal(store.get(job.id).error, undefined);
+});
