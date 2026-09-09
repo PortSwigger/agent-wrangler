@@ -4,11 +4,16 @@ import path from 'node:path';
 import { runFile } from './job-github.js';
 import { removeWorktree, gitRepoRoot, gitMetadataDirs } from './worktree.js';
 import { jobPrompt } from './job-prompts.js';
+import { capturePane, sendKeys, trustDialogState } from './tmux-scraper.js';
+import { log } from './log.js';
 
 export const expandRepo = (repo) => path.resolve(repo.startsWith('~/') ? path.join(os.homedir(), repo.slice(2)) : repo);
 export class JobRuntime {
   constructor({ sessionManager, memoryStore, taskStore }, run = runFile) {
     Object.assign(this, { sessionManager, memoryStore, taskStore, run });
+    // Seam (like SessionManager._ensureCodexTrust) so a test can drive
+    // acceptTrustDialog against scripted pane text without a tmux server.
+    this._pane = { capture: capturePane, sendKeys };
   }
   async launch(job, sub, run, prepared) {
     // Planning discovers its repositories, ticketing only talks to Jira and a
@@ -68,6 +73,31 @@ export class JobRuntime {
   }
   async isAlive(run) {
     return this.sessionManager.isSessionAlive(run.sessionId);
+  }
+  // A job sends Claude into repos nobody has opened Claude in, so the worker parks
+  // on the first-launch "do you trust this folder" dialog and never starts its
+  // turn; nothing else on this machine will answer it. Claude keys trust on the
+  // MAIN checkout and a linked worktree inherits it (verified live), which is why
+  // this recurs per repo, not per worktree. The dialog defaults to "No, exit", so
+  // this moves the cursor with Down and re-reads the pane to confirm it landed on
+  // "Yes" before sending Enter — a stale read that sent Enter blind would exit the
+  // session instead. False when the pane is not showing the dialog; a failed
+  // capture reads as no dialog and the next tick simply tries again.
+  async acceptTrustDialog(run) {
+    const entry = this.sessionManager.entryFor(run.sessionId);
+    if (!entry?.tmux) return false;
+    const socket = this.sessionManager.socketOf(entry.tmux);
+    const read = async () => trustDialogState(await this._pane.capture(entry.tmux, 40, socket));
+    let state = await read();
+    if (!state) return false;
+    if (!state.yesSelected) {
+      await this._pane.sendKeys(entry.tmux, ['Down'], socket);
+      state = await read();
+      if (!state?.yesSelected) return false;
+    }
+    await this._pane.sendKeys(entry.tmux, ['Enter'], socket);
+    log('[jobs] accepted Claude trust dialog for', run.sessionId, entry.cwd || '');
+    return true;
   }
   // A headless comment triage has no card of its own; bill it to the sub-job's
   // latest session so the cost scanners see it (they walk priorLiveSessionIds).
