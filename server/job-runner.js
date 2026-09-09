@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
-import { runnable, dependenciesSatisfied, sessionDependenciesDone } from './job-store.js';
+import { runnable, dependencySatisfied, dependenciesSatisfied, sessionDependenciesDone, MERGE_IS_DELIVERY } from './job-store.js';
 import { summariseComments, commentsBlockMerge } from './job-comments.js';
 import { logWarn } from './log.js';
 const shortError = (e) => String(e?.message || e).split('\n')[0].slice(0, 240);
 const activeFor = (j, s) => j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null));
+const recoveryProposed = (j, s) => (j.amendments || []).some((a) => a.status === 'proposed' && a.ops.some((o) => o.op === 'set-recovered-by' && o.subJobId === s.id));
 
 // One process owns the store (the existing DATA_DIR instance lock). Claims are
 // durable before launch; an uncertain launch is blocked on restart, never replayed.
@@ -140,9 +141,14 @@ export class JobRunner {
         continue;
       }
       // A deployed-behaviour failure is a recovery proposal too, not an agent
-      // silently pushing fixes straight back into production.
+      // silently pushing fixes straight back into production. The verifier may
+      // instead have proposed the fix as an in-job amendment (set-recovered-by,
+      // job-amendments.js): while that proposal is pending the sub-job waits for
+      // the human's decision rather than ALSO getting a recovery job, and once
+      // accepted `recoveredBy` replaces the recovery job for good.
       if (sub.error && sub.stage === 'deployment' && job.runs.some((r) => r.subJobId === sub.id && r.phase === 'verify' && r.report?.kind === 'blocked')) {
-        await this.recover(job, sub, sub.error); continue;
+        if (!sub.recoveredBy && !recoveryProposed(job, sub)) await this.recover(job, sub, sub.error);
+        continue;
       }
       if (sub.error) continue;
       try {
@@ -163,7 +169,13 @@ export class JobRunner {
           if (!this.allowed(id)) continue;
           job = this.store.get(id); sub = job.subJobs.find((s) => s.id === sub.id);
           if (pr.state === 'MERGED') {
-            this.patchSub(id, sub.id, (s) => { s.stage = 'deployment'; s.state = 'watching'; s.nextPollAt = 0; });
+            // No `deployment` means the merge is the delivery: mark it deployed so
+            // dependants are released, without a verify session or a workflow wait.
+            this.patchSub(id, sub.id, (s) => {
+              s.mergedAt = this.now();
+              if (!s.deployment) { s.deployed = { at: this.now(), checks: [MERGE_IS_DELIVERY], commit: pr.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; }
+              else { s.stage = 'deployment'; s.state = 'watching'; s.nextPollAt = 0; }
+            });
           } else if (pr.state === 'CLOSED') {
             this.patchSub(id, sub.id, (s) => { s.error = 'PR was closed without merging'; });
           } else if (pr.checkStatus === 'failing') {
@@ -179,10 +191,30 @@ export class JobRunner {
               this.patchSub(id, sub.id, (s) => { s.mergeRequestedHead = pr.head; });
             }
           }
+        } else if (sub.stage === 'deployment' && sub.recoveredBy) {
+          // Parked on an in-job fix: it counts as deployed the moment the fix does,
+          // and goes to cleanup exactly as a verified deployment would.
+          const fix = job.subJobs.find((s) => s.id === sub.recoveredBy);
+          if (fix?.cancelledAt) this.patchSub(id, sub.id, (s) => { s.error = `The fix sub-job (${fix.title}) was cancelled`; });
+          else if (dependencySatisfied(fix)) this.patchSub(id, sub.id, (s) => { s.deployed = { at: this.now(), checks: [`Recovered by ${fix.title}`], commit: s.pr?.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; });
         } else if (sub.stage === 'deployment') {
           if (sub.nextPollAt > this.now()) continue;
           const result = await this.github.deployment(sub);
-          this.patchSub(id, sub.id, (s) => { s.deploymentResult = result; s.observationError = null; s.nextPollAt = this.now() + 30000; });
+          const staleMs = this.store.snapshot().settings.deploymentStaleMinutes * 60000;
+          this.patchSub(id, sub.id, (s) => {
+            s.deploymentResult = result; s.observationError = null; s.nextPollAt = this.now() + 30000;
+            // NOTHING deploying this long after the merge means the plan said this
+            // repo deploys on merge and GitHub disagrees — nothing triggered, or
+            // everything that did was skipped. Silence can never be read as
+            // success (it is indistinguishable from a run not yet queued), so it
+            // goes to the human rather than completing the sub-job: they know
+            // whether this repo really deploys. A run in progress is just a slow
+            // deploy and is never stale. Pre-existing sub-jobs have no mergedAt;
+            // count from their first observation.
+            s.mergedAt ??= this.now();
+            const silent = result.status === 'pending' && !result.runs.some((r) => r.status !== 'skipped');
+            s.deploymentStale = silent && this.now() - s.mergedAt > staleMs ? { since: s.mergedAt } : null;
+          });
           if (!this.allowed(id)) continue;
           sub = this.store.get(id).subJobs.find((s) => s.id === sub.id);
           if (result.status === 'passing') await this.launch(this.store.get(id), sub, 'verify');

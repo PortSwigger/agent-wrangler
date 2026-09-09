@@ -15,6 +15,10 @@ import { isSessionSub, kindChipHtml, kindLabel, kindClass, dependencyLevels, dep
 // height follows their content (a wrapped title, an opened dependency editor),
 // and the SVG just traces whatever the browser laid out. Callers re-run it
 // after anything that can move a box.
+// The per-box dependency editor: one checkbox per other sub-job, `data-dep` naming
+// the edited sub-job (its index in the plan under review, its id on a live job's
+// Change plan form — the caller reads it back either way).
+export const dependencyEditorHtml = (s, others, depKey) => others.map((d) => `<label><input type="checkbox" data-dep="${esc(depKey)}" value="${esc(d.id)}" ${s.dependsOn.includes(d.id) ? 'checked' : ''}>${kindChipHtml(d)}<span>${esc(d.title)}</span></label>`).join('') || '<span>No other sub-jobs</span>';
 export function planGraphHtml(plan, { editable = false, statusOf = null, openDeps = new Set() } = {}) {
   const subs = plan.subJobs;
   if (!subs.length) return '';
@@ -22,23 +26,18 @@ export function planGraphHtml(plan, { editable = false, statusOf = null, openDep
   const waves = Math.max(...levels.values()) + 1;
   const story = (s) => `<span class="job-plan-story">${esc(s.jiraKey || storyLabel(plan.stories?.find((t) => t.id === s.storyId)))}</span>`;
   const where = (s) => isSessionSub(s) ? '<span class="job-plan-kind">Agent session on this machine · no PR</span>' : `<span class="job-plan-repo" title="${esc(s.repo)}">${esc(tildify(s.repo))}</span>`;
-  // The branch the PR will come from, in the repo's own convention. Under review
-  // it is an input (the planner's proposal is a proposal); once approved it is
-  // shown as text. `{key}` is the Jira key placeholder `job-store.js` fills in.
-  const branch = (s) => s.branch && !isSessionSub(s) ? `<span class="job-plan-branch" title="Branch">${esc(s.branch)}</span>` : '';
   const node = (s, i) => {
     const deps = dependencyLine(plan, s);
     const head = `<span class="job-node-head">${kindChipHtml(s)}${story(s)}</span>`;
     if (editable) {
       const others = subs.filter((d) => d.id !== s.id);
-      const branchInput = isSessionSub(s) ? '' : `<input class="job-plan-branch" aria-label="${kindLabel(s)} branch ${i + 1}" data-branch="${i}" maxlength="120" placeholder="Branch (repo convention)" value="${esc(s.branch || '')}">`;
-      return `<div class="job-node ${kindClass(s)}" data-node="${esc(s.id)}">${head}<input aria-label="${kindLabel(s)} title ${i + 1}" data-title="${i}" maxlength="180" value="${esc(s.title)}">${where(s)}${branchInput}
-        <details class="job-node-deps" data-deps="${esc(s.id)}" ${openDeps.has(s.id) ? 'open' : ''}><summary>${esc(deps || 'Independent')}</summary>${others.map((d) => `<label><input type="checkbox" data-dep="${i}" value="${esc(d.id)}" ${s.dependsOn.includes(d.id) ? 'checked' : ''}>${kindChipHtml(d)}<span>${esc(d.title)}</span></label>`).join('') || '<span>No other sub-jobs</span>'}</details></div>`;
+      return `<div class="job-node ${kindClass(s)}" data-node="${esc(s.id)}">${head}<input aria-label="${kindLabel(s)} title ${i + 1}" data-title="${i}" maxlength="180" value="${esc(s.title)}">${where(s)}
+        <details class="job-node-deps" data-deps="${esc(s.id)}" ${openDeps.has(s.id) ? 'open' : ''}><summary>${esc(deps || 'Independent')}</summary>${dependencyEditorHtml(s, others, String(i))}</details></div>`;
     }
     const line = deps ? `<span class="job-node-line">${esc(deps)}</span>` : '';
-    if (!statusOf) return `<div class="job-node ${kindClass(s)}" data-node="${esc(s.id)}">${head}<strong>${esc(s.title)}</strong>${where(s)}${branch(s)}${line}</div>`;
+    if (!statusOf) return `<div class="job-node ${kindClass(s)}" data-node="${esc(s.id)}">${head}<strong>${esc(s.title)}</strong>${where(s)}${line}</div>`;
     const status = statusOf(s);
-    return `<button type="button" class="job-node ${kindClass(s)} ${s.stage === 'done' ? 'done' : ''}" data-node="${esc(s.id)}" data-open-sub="${esc(s.id)}">${head}<strong>${esc(s.title)}</strong>${where(s)}${branch(s)}${line}<span class="job-status ${esc(status.tone)}"><i></i>${esc(status.text)}</span></button>`;
+    return `<button type="button" class="job-node ${kindClass(s)} ${s.stage === 'done' ? 'done' : ''}" data-node="${esc(s.id)}" data-open-sub="${esc(s.id)}">${head}<strong>${esc(s.title)}</strong>${where(s)}${line}<span class="job-status ${esc(status.tone)}"><i></i>${esc(status.text)}</span></button>`;
   };
   const columns = Array.from({ length: waves }, (_, w) => `<div class="job-graph-col"><h4>Wave ${w + 1}</h4>${subs.map((s, i) => levels.get(s.id) === w ? node(s, i) : '').join('')}</div>`).join('');
   const edges = subs.flatMap((s) => s.dependsOn.filter((id) => levels.has(id)).map((id) => `<path data-from="${esc(id)}" data-to="${esc(s.id)}" marker-end="url(#job-graph-arrow)"/>`)).join('');

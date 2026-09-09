@@ -34,7 +34,7 @@ test('real control + MCP lifecycle discovers repositories and requires human app
   assert.deepEqual(store.get(id).repos, []);
   await control({ type: 'job-action', id, action: 'start' }); await runner.tick();
   const run = store.get(id).runs[0]; assert.ok(run.sessionId);
-  const plan = { stories: [{ id: 's', key: 'AUTH-1', title: 'Reliable sign-in', value: 'Customers can access accounts' }], subJobs: [{ id: 'api', title: 'Fix sign-in', repo: '/repo', storyId: 's', dependsOn: [], instructions: 'Implement and verify', deployment: { workflows: ['deploy.yml'], verify: 'Check deployed version' } }] };
+  const plan = { stories: [{ id: 's', key: 'AUTH-1', title: 'Reliable sign-in', value: 'Customers can access accounts' }], subJobs: [{ id: 'api', title: 'Fix sign-in', repo: '/repo', storyId: 's', dependsOn: [], instructions: 'Implement and verify', deployment: { verify: 'Check deployed version' } }] };
   const reportBody = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'job_report', arguments: { runId: run.id, report: { kind: 'plan', plan } } } };
   const call = async (caller, origin) => {
     const response = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'X-AW-Session': caller, ...(origin ? { Origin: origin } : {}) }, body: JSON.stringify(reportBody) });

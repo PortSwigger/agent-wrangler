@@ -90,22 +90,39 @@ export class JobGithub {
     if (!canMerge()) throw new Error('Job paused before merge');
     await this.run('gh', ['pr', 'merge', sub.pr.url, '--squash', ...(admin ? ['--admin'] : []), '--match-head-commit', sub.pr.head], sub.repo);
   }
+  // Watch whatever GitHub actually started for this merge, rather than a list of
+  // workflow names chosen before the merge existed: the plan cannot reliably
+  // predict which workflows trigger on a push to the base branch, and a name that
+  // never runs leaves a merged sub-job watching forever.
+  //
+  // Pinned to the merge COMMIT, not `--branch <base>` + "created after we merged":
+  // a job's PR sub-jobs may merge into the same repository minutes apart, so a
+  // sibling's deploy run would otherwise become this sub-job's evidence.
+  // `pull_request` runs are the PR gate, already judged before the merge.
+  //
+  // No runs is PENDING, never passing — silence is indistinguishable from a run
+  // that has not been queued yet (measured: 4-10s from merge to the first run),
+  // so the runner flags a lasting silence for the human instead of inferring a
+  // deployment nothing observed. A sub-job whose merge IS its delivery carries no
+  // `deployment` at all and never reaches this poll.
   async deployment(sub) {
     if (!sub.pr.mergeCommit) throw new Error('Waiting for GitHub to report the merge commit');
-    const results = [];
-    for (const workflow of sub.deployment.workflows) {
-      const runs = JSON.parse(await this.run('gh', ['run', 'list', '--workflow', workflow,
-        '--commit', sub.pr.mergeCommit, '--branch', sub.pr.base, '--limit', '30',
-        '--json', 'databaseId,headSha,headBranch,event,status,conclusion,url,workflowName,createdAt,attempt'], sub.repo));
-      // Latest execution/re-run of each explicitly selected deploy workflow.
-      // Missing, skipped or unrelated runs are never evidence of deployment.
-      const run = runs.filter((r) => r.headSha === sub.pr.mergeCommit && r.headBranch === sub.pr.base && !['pull_request', 'pull_request_target'].includes(r.event))
-        .sort((a, b) => b.databaseId - a.databaseId || b.attempt - a.attempt)[0];
-      results.push({ workflow, runId: run?.databaseId, url: run?.url,
-        status: !run || run.status !== 'completed' ? 'pending' : run.conclusion === 'success' ? 'passing' : 'failing',
-        conclusion: run?.conclusion || null });
-    }
+    const runs = JSON.parse(await this.run('gh', ['run', 'list', '--commit', sub.pr.mergeCommit,
+      '--limit', '100', '--json', 'databaseId,headSha,headBranch,event,status,conclusion,url,workflowName,attempt'], sub.repo))
+      .filter((r) => r.headSha === sub.pr.mergeCommit && !['pull_request', 'pull_request_target'].includes(r.event));
+    // One workflow can have several runs on one commit (a re-run, or a scan that
+    // starts twice); the latest attempt is the live one, as for the named path.
+    const latest = new Map();
+    for (const r of runs.sort((a, b) => a.databaseId - b.databaseId || a.attempt - b.attempt)) latest.set(r.workflowName, r);
+    // A skipped run is GitHub saying the workflow did not apply to this commit —
+    // not a failure worth a recovery job, but not deployment evidence either, so
+    // it neither blocks nor satisfies. All-skipped therefore reads as silence.
+    const results = [...latest.values()].map((run) => ({ workflow: run.workflowName, runId: run.databaseId, url: run.url,
+      status: run.status !== 'completed' ? 'pending' : run.conclusion === 'success' ? 'passing'
+        : run.conclusion === 'skipped' ? 'skipped' : 'failing',
+      conclusion: run.conclusion || null }));
     return { status: results.some((r) => r.status === 'failing') ? 'failing'
-      : results.every((r) => r.status === 'passing') ? 'passing' : 'pending', runs: results, commit: sub.pr.mergeCommit };
+      : results.some((r) => r.status === 'passing') && !results.some((r) => r.status === 'pending') ? 'passing' : 'pending',
+      runs: results, commit: sub.pr.mergeCommit };
   }
 }
