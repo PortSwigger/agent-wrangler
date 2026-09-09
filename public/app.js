@@ -47,7 +47,8 @@ import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } fro
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, onDiffPanelClosed } from './diff-view.js';
+import { diffReturnTarget } from './diff-return.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
 import { initSettings, getSetting } from './settings.js';
@@ -140,6 +141,10 @@ let checklistEnabled = true; // server config flag, carried on every graph push
 // session-scoped, but the only consumer is the ONE selected session's panel, so
 // it rides the graph as a snapshot rather than being enriched onto every card.
 let latestChecklists = {};
+// The jobs snapshot's job array off the graph. jobs-view.js owns rendering it; this
+// copy exists only so the diff round trip can check a job/sub still exists before
+// re-opening its dialog.
+let latestJobs = [];
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -322,6 +327,7 @@ function applyGraph(graph) {
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
   latestSchedules = graph.schedules || { schedules: [] };
   jobsView.update(graph.jobs);
+  latestJobs = graph.jobs?.jobs || [];
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
@@ -387,6 +393,12 @@ function applyGraph(graph) {
 }
 
 function setView(view) {
+  // Going to another view — a rail button, a shortcut, a hash link — is the reader
+  // saying they've moved on, so it ends a Jobs diff round trip. This must come
+  // BEFORE the close below, which would otherwise fire the return and bounce them
+  // back to Jobs off the very act of leaving. 'grid' is exempt: that's where a
+  // review happens, and it's the switch onDiff itself makes to get there.
+  if (view !== 'grid') disarmDiffReturn();
   currentView = view;
   // The diff panel overlays the board, so leaving grid must dismiss it.
   if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
@@ -1631,7 +1643,7 @@ function openCardMenu(sessionId, x, y) {
     { label: 'Rename', icon: PENCIL_ICON, run: () => { selectSession(sessionId); beginRename(sessionId); } },
     ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, run: () => openFork(sessionId) }] : []),
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, run: () => peerReviewSession(sessionId) }] : []),
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanelFresh(sessionId) },
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(sessionId) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -1675,7 +1687,7 @@ function openActionsMenu(sessionId, x, y) {
   const items = [
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanelFresh(sessionId) },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -3014,6 +3026,11 @@ function toggleMaximize() {
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
 function selectSession(sessionId) {
+  // Picking a card other than the one under review ends the Jobs round trip, and
+  // like the view buttons this has to precede the closeDiffPanel below — that close
+  // would otherwise fire the return and throw the reader back to Jobs off the click
+  // that chose a session instead.
+  if (diffReturnTo && diffReturnTo.sid !== sessionId) disarmDiffReturn();
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
@@ -3957,6 +3974,23 @@ let chatHandoffFor = null;
 function disarmChatHandoff() {
   chatHandoffFor = null;
 }
+
+// The other round trip: `{sid, jobId, subId}` while a Jobs sub-job's code is being
+// reviewed in the diff panel, so closing that panel lands back on its detail dialog
+// instead of a board the reader never chose. In-memory and NOT persisted for the
+// same reason as chatHandoffFor above — it describes a trip in progress, and one
+// surviving a reload would spring a view switch nobody could connect to anything
+// they did. See diff-return.js for the return condition.
+let diffReturnTo = null;
+function disarmDiffReturn() {
+  diffReturnTo = null;
+}
+// Every way of opening a diff EXCEPT the Jobs view's Review code button: a review
+// started from a card menu or the chat view is a different review, and replaces any
+// Jobs trip still armed. The Ctrl+Cmd+D toggle is deliberately NOT routed through
+// here — closing that way must still return you to the job — and it can only ever
+// reach the selected card, which selectSession has already disarmed for.
+function openDiffPanelFresh(sessionId) { disarmDiffReturn(); openDiffPanel(sessionId); }
 
 const PANEL_SA_SHOWN_KEY = 'wrangler.panelSubagentShown';
 const panelSubagentShownOverrides = (() => {
@@ -5582,7 +5616,7 @@ initStyles();
 const chatView = initChatView({
   send,
   onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
-  onOpenDiff: (sid) => openDiffPanel(sid),
+  onOpenDiff: (sid) => openDiffPanelFresh(sid),
   // Arms the round trip before switching: applyGraph brings the view back once
   // the session leaves needs-you, i.e. once the prompt has been answered.
   onPickModel: (sid, rect) => openModelMenu(sid, rect.left, rect.bottom + 6),
@@ -5618,7 +5652,25 @@ const jobsView = initJobsView({ send, getAgents: () => availableAgents,
     send({ type: 'resume', sessionId: sid });
     toast('Restoring…');
   },
-  onDiff: (sid) => { setView('grid'); openDiffPanel(sid); },
+  // Reviewing a sub-job's code is a round trip out of Jobs: the diff panel only
+  // overlays the board, so the reader is sent to the grid and wants this dialog
+  // back when they close it. Armed last, after the two calls that get them there,
+  // so it can never be cleared by the very switch that starts the trip.
+  onDiff: (sid, ctx) => {
+    setView('grid');
+    openDiffPanel(sid);
+    diffReturnTo = { sid, jobId: ctx?.jobId || null, subId: ctx?.subId || '' };
+  },
+});
+// The return leg. Registered once: closeDiffPanel invokes it however the panel was
+// dismissed (close button, Escape, toggle, a view or selection change), so the trip
+// ends the same way whichever one the reader used.
+onDiffPanelClosed((sid) => {
+  const target = diffReturnTarget({ armed: diffReturnTo, closedSid: sid, jobs: latestJobs });
+  if (!target) return;
+  disarmDiffReturn();
+  setView('jobs');
+  if (target.jobId) jobsView.openDetail(target.jobId, target.subId);
 });
 initSearchView();
 if (hashView()) setView(hashView());

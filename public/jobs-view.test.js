@@ -11,15 +11,15 @@ function fixture(t) {
   const prevDoc = globalThis.document, prevFormData = globalThis.FormData;
   globalThis.document = window.document; globalThis.FormData = window.FormData;
   document.body.innerHTML = '<section id="jobs"></section><dialog id="job-dialog"></dialog>';
-  const sent = [], sessions = [], diffs = [], onBoard = new Set();
-  const view = initJobsView({ send: (m) => sent.push(structuredClone(m)), getAgents: () => [{ id: 'claude', label: 'Claude', models: [{ value: 'sonnet', label: 'Sonnet', default: true }] }], onSession: (s) => sessions.push(s), onDiff: (s) => diffs.push(s), onBoard: (s) => onBoard.has(s) });
+  const sent = [], sessions = [], diffs = [], diffContexts = [], onBoard = new Set();
+  const view = initJobsView({ send: (m) => sent.push(structuredClone(m)), getAgents: () => [{ id: 'claude', label: 'Claude', models: [{ value: 'sonnet', label: 'Sonnet', default: true }] }], onSession: (s) => sessions.push(s), onDiff: (s, ctx) => { diffs.push(s); diffContexts.push(ctx); }, onBoard: (s) => onBoard.has(s) });
   t.after(async () => { globalThis.document = prevDoc; globalThis.FormData = prevFormData; await window.happyDOM.close(); });
   const job = { id: 'job1', title: 'Sign-in', intent: 'Reliable sign-in', repos: ['/repo'], stage: 'planning', plan, subJobs: [], runs: [], revision: 2, reviewCode: true, reviewMerge: true };
   const data = { jobs: [structuredClone(job)], settings: { concurrency: 2, maxRepairs: 2, maxRunMinutes: 120 } };
   const q = (s) => document.querySelector(s);
   const event = (name) => new window.Event(name, { bubbles: true, cancelable: true });
   view.update(data);
-  return { window, view, data, sent, q, event, sessions, diffs, onBoard };
+  return { window, view, data, sent, q, event, sessions, diffs, diffContexts, onBoard };
 }
 
 test('every job gets its own seven-column board and only boards with attention items survive Needs me', (t) => {
@@ -75,6 +75,13 @@ test('local review displays short receipts and pins approval to the visible rece
   assert.equal(document.querySelectorAll('.job-receipt li').length, 2);
   f.q('[data-action="approve-code"]').click(); assert.equal(f.sent.at(-1).localReceiptId, 'receipt1');
   f.q('#job-diff').click(); assert.deepEqual(f.diffs, ['s1']);
+  // The reviewer has to be able to get back here, so the handover names where it came from.
+  assert.deepEqual(f.diffContexts, [{ jobId: 'job1', subId: 'api' }]);
+  assert.equal(f.q('#job-dialog').open, false);
+  f.view.openDetail('job1', 'api');
+  assert.equal(f.q('#job-dialog').open, true, 'the same detail re-opens on the return leg');
+  assert.match(f.q('#job-dialog').textContent, /Commit message proposition/);
+  assert.equal(f.q('#job-dialog h2').textContent, 'Deliver api');
 });
 
 test('a job session archived when its step stopped is offered as a restore, not a dead open', (t) => {
@@ -128,11 +135,32 @@ test('PR comments render escaped with their shaded verdict, and a red verdict ho
   const dialog = f.q('#job-dialog');
   assert.ok(dialog.querySelector('.job-comment-summary.red')); assert.match(dialog.textContent, /Blocks merging.*red summary text/);
   assert.match(dialog.textContent, /1 unresolved thread/); assert.match(dialog.textContent, /src\/auth\.js:12/); assert.match(dialog.textContent, /ci-bot \(bot\) · review · approved/);
+  dialog.querySelector('[data-comment-toggle="c1"]').click();
   assert.equal(dialog.querySelector('.job-comments p').textContent, 'Drops the <auth> check'); assert.equal(dialog.querySelector('.job-comments auth'), null);
   assert.match(dialog.textContent, /automatic merge is on hold/);
   f.q('[data-action="approve-merge"]').click(); assert.equal(f.sent.at(-1).action, 'approve-merge'); assert.equal(f.sent.at(-1).head, 'head1');
   job.subJobs[0].mergeApprovedHead = 'head1'; f.view.update(f.data);
   assert.equal(mergeHeldByComments(job, job.subJobs[0]), false); assert.equal(f.q('[data-action="approve-merge"]'), null);
+});
+
+test('a comment body stays hidden until shown, survives a live re-render, and hides again', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  const pr = { url: 'https://github.com/org/repo/pull/1', head: 'head1', checkStatus: 'passing', checks: [] };
+  job.subJobs = [{ ...sub('api'), stage: 'pr', pr, ...prComments('amber') }];
+  f.view.update(f.data); f.q('[data-sub="api"]').click();
+  const dialog = f.q('#job-dialog');
+  const bodies = () => [...dialog.querySelectorAll('.job-comments p')].map((p) => p.textContent);
+  assert.deepEqual(bodies(), [], 'bodies are not rendered by default');
+  assert.equal(dialog.querySelectorAll('[data-comment-toggle]').length, 2);
+  assert.match(dialog.textContent, /bob · src\/auth\.js:12/, 'the meta line is still there');
+  dialog.querySelector('[data-comment-toggle="c1"]').click();
+  assert.deepEqual(bodies(), ['Drops the <auth> check']);
+  assert.equal(dialog.querySelector('[data-comment-toggle="c1"]').textContent, 'Hide');
+  f.view.update(f.data);
+  assert.deepEqual(bodies(), ['Drops the <auth> check'], 'a graph tick must not snap it shut');
+  dialog.querySelector('[data-comment-toggle="c1"]').click();
+  assert.deepEqual(bodies(), []);
+  assert.equal(dialog.querySelector('[data-comment-toggle="c1"]').textContent, 'Show comment');
 });
 
 test('green and amber verdicts, a pending summary and no comments each read distinctly without asking for review', (t) => {
@@ -312,4 +340,38 @@ test('a plan whose stories all exist reads as existing and approval starts work 
   assert.match(f.q('h3').textContent, /Existing Jira stories/);
   assert.match(f.q('.job-authority').textContent, /^Approve starts local work/);
   assert.equal(f.q('.job-story-key').textContent, 'AUTH-1');
+});
+
+test('a job board leads with its total price, and each sub-job card carries its own', (t) => {
+  const f = fixture(t); const [job] = f.data.jobs; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'pr', usd: 3.5, usdEstimated: false }, { ...sub('web'), stage: 'implementation' }];
+  job.usd = 12.345; job.usdEstimated = false; f.view.update(f.data);
+  assert.equal(f.q('.job-board-cost').textContent, '$12.35');
+  assert.equal(f.q('.job-board-side').firstElementChild.className, 'job-board-cost', 'the price leads the header side, not buried after the status');
+  assert.match(f.q('.job-board-cost').title, /Total price of this job.*planning.*repairs.*comment triage/);
+  assert.equal(f.q('[data-sub="api"] .job-card-cost').textContent, '$3.50');
+  assert.equal(f.q('[data-sub="web"] .job-card-cost'), null, 'a sub-job with nothing attributed shows no price');
+  // Codex is an estimate everywhere it is shown, exactly as a session card reads it.
+  job.usd = 8; job.usdEstimated = true; job.subJobs[0].usdEstimated = true; f.view.update(f.data);
+  assert.equal(f.q('.job-board-cost').textContent, '~$8.00');
+  assert.equal(f.q('[data-sub="api"] .job-card-cost').textContent, '~$3.50');
+  assert.match(f.q('.job-board-cost').title, /includes an estimate for Codex sessions/);
+});
+
+test('a job with no attributable spend shows no price rather than $0.00', (t) => {
+  const f = fixture(t); const [job] = f.data.jobs;
+  job.usd = null; f.view.update(f.data);
+  assert.equal(f.q('.job-board-cost'), null);
+  job.usd = 0; f.view.update(f.data);
+  assert.equal(f.q('.job-board-cost'), null, 'zero is "nothing attributed yet", not a price');
+});
+
+test('the detail dialog shows a sub-job price against the job total, and a job total alone', (t) => {
+  const f = fixture(t); const [job] = f.data.jobs; job.stage = 'active';
+  job.usd = 12.5; job.subJobs = [{ ...sub('api'), stage: 'pr', usd: 3.5 }]; f.view.update(f.data);
+  f.q('[data-sub="api"]').click();
+  assert.deepEqual([...document.querySelectorAll('#job-dialog .job-detail-cost')].map((e) => e.textContent), ['$3.50 this sub-job', '$12.50 job total']);
+  f.q('#job-dialog').close();
+  f.q('.job-board-open').click();
+  assert.deepEqual([...document.querySelectorAll('#job-dialog .job-detail-cost')].map((e) => e.textContent), ['$12.50 job total']);
 });

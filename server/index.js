@@ -47,6 +47,8 @@ import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
+import { cachedScan } from './usage-scan-memo.js';
+import { usdByCard, withJobSpend } from './job-spend.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
@@ -532,6 +534,31 @@ function broadcast(obj) {
 // one call — the whole saving is across ticks.
 const wireGraph = createHistoryGate();
 
+// Per-job price, refreshed on its OWN slow cadence and never on the rebuild path:
+// the only source that sees a whole job's bill is scanAllDaily (job steps are
+// archived the moment they stop, and comment triage is billed onto
+// priorLiveSessionIds — see job-spend.js), and that walks every transcript on disk.
+// So the ~4s graph serves whatever map the last refresh produced; the first graph
+// after startup carries no cost, which is the right trade for never stalling a
+// rebuild. Reads through the shared usage memo, so a Usage panel scan seconds
+// earlier is reused rather than repeated.
+const JOB_SPEND_REFRESH_MS = 60_000;
+let jobSpendByCard = new Map();
+let jobSpendAt = 0;
+let jobSpendInFlight = false;
+
+function refreshJobSpendIfStale(jobs) {
+  if (jobSpendInFlight || Date.now() - jobSpendAt < JOB_SPEND_REFRESH_MS) return;
+  // No run has bound a card yet, so a scan could attribute nothing to any job —
+  // don't pay for one until there is something to price.
+  if (!jobs.some((j) => (j.runs || []).some((r) => r.sessionId))) return;
+  jobSpendInFlight = true;
+  cachedScan(scanAllDaily)
+    .then((scan) => { jobSpendByCard = usdByCard(scan); })
+    .catch(() => {}) // a failed scan keeps the previous map; the timestamp below backs it off
+    .finally(() => { jobSpendAt = Date.now(); jobSpendInFlight = false; });
+}
+
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
 async function rebuildOnce() {
@@ -546,7 +573,8 @@ async function rebuildOnce() {
   }));
   const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore });
   graph.tasks = taskStore.snapshot();
-  graph.jobs = jobStore.snapshot();
+  graph.jobs = withJobSpend(jobStore.snapshot(), jobSpendByCard);
+  refreshJobSpendIfStale(graph.jobs.jobs);
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   // Annotate each task with whether it has memory so tiles can render the dot
   // without fetching content.

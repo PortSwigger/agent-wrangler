@@ -2962,6 +2962,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-board-meta { font-size:11px; color:var(--fg-muted); }
 .job-board-side { display:flex; align-items:center; gap:12px; flex-shrink:0; font-size:11px; }
 .job-board-needs { background:var(--pill-needs-bg); color:var(--red-fg); border-radius:5px; padding:2px 7px; font-size:10px; font-weight:600; }
+/* The total price of a job, the one number a human scans a board for: sized up to
+   read as a headline figure rather than another muted pill, tabular so digits don't
+   jitter as it ticks up on the ~4s graph. */
+.job-board-cost { font-size:15px; font-weight:650; color:var(--fg); letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.job-detail-cost { font-size:11px; color:var(--fg-muted); font-variant-numeric:tabular-nums; margin-left:12px; }
 .job-board-columns { display:grid; grid-template-columns:repeat(7,minmax(200px,1fr)); gap:12px; overflow-x:auto; }
 .job-board-lane { font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--fg-subtle); margin:0 0 8px; }
 .job-board-columns+.job-board-lane { margin-top:16px; }
@@ -2981,7 +2986,8 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-card-done { opacity:.7; }
 .job-card>strong { font-size:13px; line-height:1.5; overflow-wrap:anywhere; font-weight:600; }
 .job-card-eyebrow { font-size:9px; color:var(--fg-subtle); letter-spacing:.06em; text-transform:uppercase; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
-.job-card-meta,.job-card-deps,.job-card-receipt { font-size:10px; line-height:1.5; color:var(--fg-muted); }
+.job-card-meta,.job-card-deps,.job-card-receipt,.job-card-cost { font-size:10px; line-height:1.5; color:var(--fg-muted); }
+.job-card-cost { font-variant-numeric:tabular-nums; }
 .job-card-deps { border-top:1px solid var(--border-muted); padding-top:9px; }
 .job-card-receipt { color:var(--green-fg); }
 .job-status { display:inline-flex; align-items:center; gap:6px; font-size:10px; line-height:1.4; color:var(--fg-muted); }
@@ -3065,7 +3071,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-comments li:first-child { border-top:0; }
 .job-comments li.resolved { opacity:.6; }
 .job-comment-meta { display:block; font-size:10px; color:var(--fg-muted); margin-bottom:4px; overflow-wrap:anywhere; }
-.job-comments p { margin:0; white-space:pre-wrap; color:var(--fg); }
+/* Each row is meta plus a disclosure; the body only exists while expanded, so
+   the list stays scannable however long a review comment is. */
+.job-comment-toggle { padding:2px 7px; font-size:10px; background:transparent; color:var(--fg-muted); }
+.job-comment-toggle:hover { background:var(--border-muted); color:var(--fg); }
+.job-comments p { margin:8px 0 0; white-space:pre-wrap; color:var(--fg); }
 .job-card-comments { font-size:10px; line-height:1.5; color:var(--fg-muted); }
 .job-card-comments.green { color:var(--green-fg); }
 .job-card-comments.amber { color:var(--snooze-fg); }
