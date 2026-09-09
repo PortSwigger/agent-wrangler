@@ -1,4 +1,5 @@
 import { esc, tildify } from './util.js';
+import { PULL_REQUEST_ICON, ROBOT_ICON } from './icons.js';
 export const JOB_COLUMNS = [
   ['backlog', 'Backlog', 'Ideas ready to shape'],
   ['planning', 'PR planning', 'Titles, value and landing order'],
@@ -19,6 +20,18 @@ export const SESSION_COLUMNS = [
 ];
 export const isSessionSub = (sub) => sub?.kind === 'session';
 export const hasSessionSubs = (job) => job.subJobs.some(isSessionSub);
+// A sub-job is one of exactly two kinds, and the same chip names it everywhere one
+// appears (board card, plan graph, detail heading) so the kinds are never told
+// apart by wording alone: a PR (blue, pull-request glyph) or an agent session on
+// this machine (purple, robot glyph, no PR).
+export const kindLabel = (sub) => isSessionSub(sub) ? 'Session' : 'PR';
+export const kindClass = (sub) => isSessionSub(sub) ? 'session' : 'pr';
+export const kindChipHtml = (sub) => `<span class="job-kind ${kindClass(sub)}" title="${isSessionSub(sub) ? 'An agent session on this machine — no pull request' : 'A pull request in a repository'}">${isSessionSub(sub) ? ROBOT_ICON : PULL_REQUEST_ICON}${kindLabel(sub)}</span>`;
+// "2 PRs · 1 session" rather than "3 sub-jobs": the count is where a reader first learns the mix.
+export function kindCountLabel(subJobs) {
+  const prs = subJobs.filter((s) => !isSessionSub(s)).length, sessions = subJobs.length - prs;
+  return [prs ? `${prs} PR${prs === 1 ? '' : 's'}` : '', sessions ? `${sessions} session${sessions === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+}
 export const cancelledDependencies = (job, sub) => sub.dependsOn.filter((id) => job.subJobs.find((s) => s.id === id)?.cancelledAt);
 // Mirrors server/job-store.js dependencySatisfied: a PR counts once deployed, a session once done.
 export const dependencySatisfied = (dep) => isSessionSub(dep) ? dep.stage === 'done' && !dep.cancelledAt : !!dep?.deployed;
@@ -47,7 +60,7 @@ export function jobNeedsReview(job, sub) {
     || (sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && job.reviewMerge && sub.mergeApprovedHead !== sub.pr.head);
 }
 export function jobStatus(job, sub) {
-  if (job.error || sub?.error) return { tone: 'needs', text: sub?.recoveryJobId ? 'Recovery needs approval' : 'Needs attention' };
+  if (job.error || sub?.error) return { tone: 'needs', text: 'Needs attention' };
   if (sub?.cancelledAt) return { tone: sub.stage === 'done' ? 'done' : 'muted', text: sub.stage === 'done' ? 'Cancelled' : 'Cancelled · cleaning up' };
   if (job.paused) return { tone: 'muted', text: 'Paused' };
   if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a cancelled sub-job' };
@@ -62,7 +75,7 @@ export function jobStatus(job, sub) {
   if (sub.observationError) return { tone: 'needs', text: 'Pipeline polling will retry' };
   if (sub.stage === 'pr') return { tone: sub.pr?.checkStatus === 'passing' ? 'working' : 'muted', text: sub.mergeRequestedHead ? 'Merge requested' : sub.pr?.checkStatus === 'awaiting-review' ? 'GitHub review required' : 'Watching checks' };
   if (sub.stage === 'deployment') return { tone: 'muted', text: 'Watching deployment' };
-  if (sub.stage === 'done') return { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
+  if (sub.stage === 'done') return sub.recoveryJobId ? { tone: 'muted', text: 'Recovery proposed' } : { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
   return { tone: 'muted', text: 'Queued' };
 }
 export function jobCards(jobs) {
@@ -95,7 +108,7 @@ export function jobCardHtml({ job, sub }) {
   const deps = sub ? dependencyLine(job, sub) : '';
   const cost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
   return `<button class="job-card ${jobNeedsReview(job, sub) ? 'job-card-review' : ''} ${sub?.stage === 'done' ? 'job-card-done' : ''}" data-job="${esc(job.id)}" data-sub="${esc(sub?.id || '')}">
-    <span class="job-card-eyebrow">${esc(sub ? sub.jiraKey || (isSessionSub(sub) ? 'SESSION' : 'SUB-JOB') : job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span>
+    <span class="job-card-eyebrow">${sub ? `${kindChipHtml(sub)}${sub.jiraKey ? `<span>${esc(sub.jiraKey)}</span>` : ''}` : esc(job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span>
     <strong>${esc(sub?.title || job.title)}</strong>
     ${sub ? `<span class="job-card-meta">${isSessionSub(sub) ? 'Agent session on this machine' : esc(tildify(sub.repo).split('/').pop())}</span>` : `<span class="job-card-meta">${job.repos.length ? `${job.repos.length} repositor${job.repos.length === 1 ? 'y' : 'ies'}` : 'Repositories to discover'}</span>`}
     ${deps ? `<span class="job-card-deps">↳ ${esc(deps)}</span>` : ''}
@@ -118,7 +131,7 @@ export function jobBoardHeaderHtml(job) {
   const needs = jobCards([job]).filter((c) => jobNeedsReview(c.job, c.sub)).length;
   const delivered = job.subJobs.filter((s) => s.stage === 'done' && !s.cancelledAt).length;
   const meta = [
-    job.subJobs.length ? `${job.subJobs.length} sub-job${job.subJobs.length === 1 ? '' : 's'}${delivered ? ` · ${delivered} delivered` : ''}` : job.repos.length ? `${job.repos.length} repositor${job.repos.length === 1 ? 'y' : 'ies'}` : 'Repositories to discover',
+    job.subJobs.length ? `${kindCountLabel(job.subJobs)}${delivered ? ` · ${delivered} delivered` : ''}` : job.repos.length ? `${job.repos.length} repositor${job.repos.length === 1 ? 'y' : 'ies'}` : 'Repositories to discover',
     working ? `${working} agent${working === 1 ? '' : 's'} working` : '',
     `${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`,
   ].filter(Boolean);

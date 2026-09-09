@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, gitRepoRoot, gitMetadataDirs, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, gitMetadataDirs, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -88,8 +88,14 @@ test('gitRepoRoot: returns null for a non-git directory', async () => {
   await assert.rejects(gitMetadataDirs(dir));
 });
 
-test('worktreeDirName: <repo>-worktree-<branch>', () => {
+test('worktreeDirName: <repo>-worktree-<branch>, a slashed branch folded into one dir name', () => {
   assert.equal(worktreeDirName('/a/b/myproj', 'fix-auth'), 'myproj-worktree-fix-auth');
+  assert.equal(worktreeDirName('/a/b/myproj', 'fix/AUTH-12-auth'), 'myproj-worktree-fix-AUTH-12-auth');
+});
+
+test('isValidBranchName: accepts what git check-ref-format --branch accepts, refuses the rest, never reshapes', () => {
+  for (const ok of ['fix/AUTH-12-foo', 'AUTH-583-correct-vet-gate-comments', 'feat/x.y', 'a-b_c', 'release/1.2']) assert.equal(isValidBranchName(ok), true, ok);
+  for (const bad of ['', '-x', '/x', 'x/', 'x..y', 'x//y', 'x.lock', 'a/.b', 'x.', '@', 'a b', 'a~b', 'a@{b', 'a\\b', 'a:b', 'a?b', 'a*b', 'a[b', 'a^b', 'x'.repeat(201), null, 42]) assert.equal(isValidBranchName(bad), false, String(bad));
 });
 
 test('gitRepoRoot: returns the MAIN repo root when cwd is a linked worktree', async () => {

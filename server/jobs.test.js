@@ -234,22 +234,37 @@ test('failed CI wakes only bounded repair sessions and retains their short chang
   f.store.action(f.job.id, 'retry', { subJobId: sub.id }); await f.tick(); assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 2);
 });
 
-test('deployment failure creates exactly one manual recovery job, preserved on restart', async (t) => {
+test('deployment failure creates exactly one manual recovery job and cleans up the merged sub-job', async (t) => {
   const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
   f.setDeployment({ status: 'failing', runs: [{ workflow: 'deploy.yml', status: 'failing' }], commit: 'merge1' });
-  await f.tick(); await f.tick();
+  await f.tick();
   const jobs = f.store.snapshot().jobs; assert.equal(jobs.length, 2); assert.equal(jobs[1].stage, 'backlog');
-  assert.equal(jobs[1].runs.length, 0); assert.equal(jobs[0].subJobs[0].deployed, undefined);
+  assert.equal(jobs[1].runs.length, 0); assert.equal(jobs[1].recoveryOf.subJobId, 'api');
+  const sub = jobs[0].subJobs[0];
+  assert.equal(sub.stage, 'cleanup'); assert.equal(sub.error, null); assert.equal(sub.recoveryJobId, jobs[1].id);
+  assert.match(sub.recoveryReason, /Deployment workflow failed/); assert.equal(sub.deployed, undefined);
   assert.equal(new JobStore(f.store.file).snapshot().jobs.length, 2);
-  f.store.update(jobs[1].id, (j) => { j.stage = 'done'; });
-  await f.tick(); await f.tick(); assert.equal(f.store.get(f.job.id).stage, 'done');
+  // The original job finishes without waiting on the recovery job, which stays in the backlog.
+  await f.tick(); assert.deepEqual(f.cleaned, ['api']); assert.equal(f.store.get(f.job.id).stage, 'done');
+  assert.equal(f.store.snapshot().jobs.length, 2); assert.equal(f.store.get(jobs[1].id).stage, 'backlog');
 });
 
-test('a failed live behaviour check also proposes recovery instead of cleaning up', async (t) => {
+test('a sub-job parked in the old recovery state is released to cleanup on the next tick', async (t) => {
+  const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.store.update(f.job.id, (j) => { const s = j.subJobs[0]; s.recoveryJobId = 'job_old'; s.state = 'recovery'; s.error = 'Deployment workflow failed.'; });
+  await f.tick();
+  const sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.stage, 'cleanup'); assert.equal(sub.error, null); assert.equal(sub.recoveryReason, 'Deployment workflow failed.');
+  await f.tick(); assert.deepEqual(f.cleaned, ['api']); assert.equal(f.store.get(f.job.id).stage, 'done');
+});
+
+test('a failed live behaviour check also proposes recovery and cleans up the merged sub-job', async (t) => {
   const f = fixture(t); await atPr(f); f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
   f.setDeployment({ status: 'passing', runs: [], commit: 'merge1' }); await f.tick();
   f.report({ kind: 'blocked', summary: 'Deployed endpoint returns 500' }); await f.tick();
-  assert.equal(f.store.snapshot().jobs.length, 2); assert.equal(f.cleaned.length, 0);
+  assert.equal(f.store.snapshot().jobs.length, 2); assert.equal(f.launched.filter((l) => l.run.phase === 'verify').length, 1);
+  const sub = f.store.get(f.job.id).subJobs[0];
+  assert.equal(sub.stage, 'cleanup'); assert.equal(sub.recoveryReason, 'Deployed endpoint returns 500'); assert.equal(sub.deployed, undefined);
 });
 
 test('crashed and uncertain launches are blocked, not silently duplicated on restart', async (t) => {
@@ -646,6 +661,23 @@ test('plans keep PR and session sub-jobs distinct: a session has no repo, a PR n
   f.report({ kind: 'plan', plan: plan([sessionSpec('a'), spec('b', ['a'])]) });
   assert.deepEqual(f.store.get(f.job.id).repos, ['/repo']);
   assert.equal(f.store.get(f.job.id).plan.subJobs[1].kind, 'pr');
+});
+
+test('a plan names each PR branch in the repo\'s convention; {key} resolves to the Jira key once known, and the name is never reshaped', async (t) => {
+  const f = fixture(t); f.store.action(f.job.id, 'start'); await f.tick();
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: 'fix/bad name' }]) }), /valid git branch/);
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: '{key}..x' }]) }), /valid git branch/);
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...sessionSpec('a'), branch: 'fix/x' }]) }), /session sub-job has no repo, branch/);
+  assert.throws(() => f.report({ kind: 'plan', plan: plan([{ ...spec('a'), branch: 'fix/x' }, { ...spec('b'), branch: 'fix/x' }]) }), /already used by another sub-job/);
+  const proposed = { stories: [{ id: 'story', key: 'AUTH-123', title: 'Reliable sign-in', value: 'Customers can access their account' }, { id: 'audit', project: 'SEC', title: 'Sign-ins are audited', value: 'Security can trace access' }],
+    subJobs: [{ ...spec('api'), branch: 'feat/{key}-reliable-sign-in' }, { ...spec('web'), storyId: 'audit', branch: '{key}-audit-sign-ins' }, { ...spec('docs', ['api']), repo: '/other' }] };
+  f.report({ kind: 'plan', plan: proposed }); await f.tick();
+  f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision); await f.tick();
+  f.report({ kind: 'jira', stories: [{ id: 'audit', key: 'SEC-42' }] }); await f.tick();
+  const job = f.store.get(f.job.id);
+  assert.deepEqual(job.subJobs.map((s) => s.branch), ['feat/AUTH-123-reliable-sign-in', 'SEC-42-audit-sign-ins', undefined]);
+  assert.deepEqual(job.plan.subJobs.map((s) => s.branch), ['feat/{key}-reliable-sign-in', '{key}-audit-sign-ins', undefined], 'the approved plan keeps the placeholder form');
+  assert.deepEqual(f.launched.slice(2).map((w) => w.sub.branch), ['feat/AUTH-123-reliable-sign-in', 'SEC-42-audit-sign-ins'], 'implementation launches carry the resolved name (the third sub-job waits on a concurrency slot)');
 });
 
 test('approving a plan with proposed stories runs a Jira step whose keys, and only those, unlock implementation', async (t) => {

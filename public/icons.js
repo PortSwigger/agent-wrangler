@@ -155,3 +155,7 @@ export function agentIcon(agent) {
   if (!agent) return CLAUDE_ICON;
   return AGENT_ICONS[agent] || AGENT_FALLBACK_ICON;
 }
+// Lucide "git-pull-request" — marks a job sub-job that lands as a PR, paired with
+// ROBOT_ICON for one that runs as an agent session on this machine (jobs.js kindChipHtml).
+export const PULL_REQUEST_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></svg>';
