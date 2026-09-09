@@ -2,7 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
-import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub } from './jobs-schema.js';
+import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub, storiesKeyed } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
@@ -16,6 +16,13 @@ export const dependenciesSatisfied = (job, sub) => sub.dependsOn.every((id) => d
 export const sessionDependenciesDone = (job, sub) => sub.dependsOn.every((id) => { const d = job.subJobs.find((s) => s.id === id); return !isSessionSub(d) || dependencySatisfied(d); });
 const reviewSessions = (job) => job.reviewSessions ?? true;
 const planRepos = (plan) => [...new Set(plan.subJobs.filter((s) => !isSessionSub(s)).map((s) => s.repo))];
+function activate(j) {
+  const { plan } = j;
+  j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued',
+    jiraKey: s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key,
+    repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null }));
+  j.stage = 'active';
+}
 
 // Only this store writes jobs. Mutations validate a copy and persist it BEFORE
 // replacing memory, so failed validation/disk writes cannot half-approve a job.
@@ -51,6 +58,10 @@ export class JobStore {
       createdAt: Date.now(), updatedAt: Date.now(), paused: false, plan: null, subJobs: [], runs: [], ...extra };
     return this.change((d) => { d.jobs.push(job); return job; });
   }
+  // Approval authorises two things in order: the Jira changes (only if a story
+  // still needs a ticket; a fully-keyed plan has nothing to write) and then the
+  // implementation. Sub-jobs are only built once every story has its key, since a
+  // sub-job's commit-message prefix and card eyebrow are that key.
   approvePlan(id, revision, editedPlan) {
     return this.update(id, (j) => {
       if (j.revision !== revision) throw new Error('The plan changed. Review the latest version before approving.');
@@ -58,10 +69,8 @@ export class JobStore {
       const plan = planSchema.parse(editedPlan || j.plan);
       j.plan = plan;
       j.repos = planRepos(plan);
-      j.subJobs = plan.subJobs.map((s) => ({ ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued',
-        jiraKey: s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key,
-        repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null }));
-      j.stage = 'active'; j.approvedAt = Date.now(); j.error = null;
+      j.approvedAt = Date.now(); j.error = null;
+      if (storiesKeyed(plan)) activate(j); else j.stage = 'jira';
     });
   }
   action(id, action, { subJobId, revision, feedback, plan, head, localReceiptId, sessionReceiptId } = {}) {
@@ -165,7 +174,7 @@ export class JobStore {
         throw new Error('This run already submitted a different report');
       }
       if (r.stopped) throw new Error('This run has stopped');
-      const expected = { planning: 'plan', implementation: 'local', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
+      const expected = { planning: 'plan', jira: 'jira', implementation: 'local', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
       if (report.kind !== expected && report.kind !== 'blocked') throw new Error(`This run must submit ${expected}`);
       const s = j.subJobs.find((s) => s.id === r.subJobId);
       r.report = report; r.reportedAt = Date.now();
@@ -175,6 +184,19 @@ export class JobStore {
       if (report.kind === 'plan') {
         j.plan = report.plan;
         j.repos = planRepos(report.plan);
+      }
+      // The ticketing step fills in exactly the keys the approved plan lacked. An
+      // approved key is part of what the human agreed to, so it cannot be swapped.
+      if (report.kind === 'jira') {
+        for (const { id, key } of report.stories) {
+          const story = j.plan.stories.find((t) => t.id === id);
+          if (!story) throw new Error(`Unknown story: ${id}`);
+          if (story.key && story.key !== key) throw new Error(`${id} was approved as ${story.key}; keep that key`);
+          story.key = key;
+        }
+        const missing = j.plan.stories.filter((t) => !t.key).map((t) => t.id);
+        if (missing.length) throw new Error(`Every story needs a Jira key; still missing: ${missing.join(', ')}`);
+        activate(j);
       }
       if (report.kind === 'local') { if (!report.commitMessage.startsWith(`${s.jiraKey}:`)) throw new Error('Commit message must start with the sub-job Jira key and colon'); s.dependenciesVerified = dependenciesSatisfied(j, s); s.local = { ...report, receiptId: r.id, at: Date.now() }; s.state = 'verified'; s.codeApprovedAt = null; }
       // A fresh head (new PR or repair push) is first observed after the comment

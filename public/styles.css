@@ -2962,7 +2962,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-board-meta { font-size:11px; color:var(--fg-muted); }
 .job-board-side { display:flex; align-items:center; gap:12px; flex-shrink:0; font-size:11px; }
 .job-board-needs { background:var(--pill-needs-bg); color:var(--red-fg); border-radius:5px; padding:2px 7px; font-size:10px; font-weight:600; }
-.job-board-columns { display:grid; grid-template-columns:repeat(6,minmax(200px,1fr)); gap:12px; overflow-x:auto; }
+.job-board-columns { display:grid; grid-template-columns:repeat(7,minmax(200px,1fr)); gap:12px; overflow-x:auto; }
 .job-board-lane { font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--fg-subtle); margin:0 0 8px; }
 .job-board-columns+.job-board-lane { margin-top:16px; }
 .job-board-sessions { grid-template-columns:repeat(4,minmax(200px,1fr)); }
@@ -3010,6 +3010,10 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-stories { display:grid; gap:8px; }
 .job-stories>div { background:var(--surface-2); border-radius:7px; padding:12px; font-size:12px; }
 .job-stories p { margin:5px 0 0; }
+.job-stories label { display:flex; align-items:center; gap:10px; }
+.job-stories label input { flex:1; min-width:0; font-size:12px; font-weight:650; }
+.job-story-key { flex:none; color:var(--blue-fg); font-size:11px; font-variant-numeric:tabular-nums; }
+.job-story-key.job-story-new { color:var(--fg-muted); border:1px dashed var(--border-muted); border-radius:5px; padding:1px 6px; }
 .job-plan-table { overflow:auto; }
 .job-plan-table table { width:100%; min-width:650px; border-collapse:collapse; font-size:12px; }
 .job-plan-table th { text-align:left; color:var(--fg-muted); font-size:10px; font-weight:500; padding:10px 8px; }

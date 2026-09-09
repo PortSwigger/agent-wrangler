@@ -4,6 +4,7 @@ import path from 'node:path';
 const line = z.string().trim().min(1).max(180).refine((s) => !/[\r\n]/.test(s), 'Use one short line');
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const jira = z.string().regex(/^[A-Z][A-Z0-9]*-\d+$/);
+const jiraProject = z.string().regex(/^[A-Z][A-Z0-9]*$/);
 const repoPath = z.string().trim().min(1).max(1000).refine(
   (s) => !/[\r\n\0]/.test(s) && (path.isAbsolute(s) || s.startsWith('~/')),
   'Use an absolute local repository path or ~/path',
@@ -23,8 +24,13 @@ export const subJobSchema = z.object({
   instructions: z.string().trim().min(1).max(8000), deployment: deploymentSchema.optional(),
 });
 export const isSessionSub = (sub) => sub?.kind === 'session';
+// A story either already exists in Jira (key) or is a proposal (no key, optional
+// project hint). Planning never writes to Jira: the human approves the titles and
+// their mapping to sub-jobs first, then the ticketing step creates the keyless ones.
+export const storySchema = z.object({ id, key: jira.optional(), project: jiraProject.optional(), title: line, value: line });
+export const storiesKeyed = (plan) => plan.stories.every((s) => s.key);
 export const planSchema = z.object({
-  stories: z.array(z.object({ id, key: jira, title: line, value: line })).min(1).max(30),
+  stories: z.array(storySchema).min(1).max(30),
   subJobs: z.array(subJobSchema).min(1).max(50),
 }).superRefine((plan, ctx) => {
   const stories = new Set(plan.stories.map((s) => s.id));
@@ -67,6 +73,7 @@ export const settingsSchema = z.object({
 });
 export const reportSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: planSchema }),
+  z.object({ kind: z.literal('jira'), stories: z.array(z.object({ id, key: jira })).min(1).max(30) }),
   z.object({ kind: z.literal('local'), commitMessage: line, checks: checksSchema,
     pendingChecks: z.array(line).max(8).optional() }),
   z.object({ kind: z.literal('published'), url: z.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/) }),

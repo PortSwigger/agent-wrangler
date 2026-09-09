@@ -3,7 +3,7 @@ import { reportSchema } from '../../jobs-schema.js';
 const result = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
 export const jobReportTool = {
   name: 'job_report',
-  description: 'Submit the required planning or verification receipt for your assigned automated job run, then stop. Verification is normally 1–3 bullets of a few words, e.g. "Build passed"; omit routine housekeeping and keep pending checks explicit. Only the assigned session can report; identical retries are safe. A terminal recap does not advance the Kanban.',
+  description: 'Submit the required planning, Jira ticketing or verification receipt for your assigned automated job run, then stop. Verification is normally 1–3 bullets of a few words, e.g. "Build passed"; omit routine housekeeping and keep pending checks explicit. Only the assigned session can report; identical retries are safe. A terminal recap does not advance the Kanban.',
   inputSchema: { runId: z.string(), report: reportSchema },
   async handler({ deps, caller }, { runId, report }) {
     try {

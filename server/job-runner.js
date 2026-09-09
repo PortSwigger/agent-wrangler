@@ -125,6 +125,7 @@ export class JobRunner {
     let job = this.store.get(id);
     if (!this.allowed(id) || job.error) return;
     if (job.stage === 'planning' && !job.plan && !activeFor(job)) { await this.launch(job, null, 'planning'); return; }
+    if (job.stage === 'jira' && !activeFor(job)) { await this.launch(job, null, 'jira'); return; }
     if (job.stage !== 'active') return;
     for (const initial of job.subJobs) {
       job = this.store.get(id);
