@@ -307,11 +307,11 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 The **Automated jobs** button on the navigation rail opens one Kanban board per
 job for work that spans multiple repositories and PRs. Each board carries the
-job's title, status, pause control and its own six columns, so sub-jobs from
+job's title, status, pause control and its own seven columns, so sub-jobs from
 different jobs are never mixed in a column:
 
-**Backlog → PR planning & Jira tickets → Local implementation & verification → PR
-→ Deployment verification → Cleanup**
+**Backlog → PR planning → Jira tickets → Local implementation & verification →
+PR → Deployment verification → Cleanup**
 
 Not every piece of work is a PR. Engineering work is either a PR to a repository
 or an agent session on your machine, so a plan may also contain **session
@@ -338,7 +338,9 @@ Cancelling a session sub-job archives its session and removes nothing on disk.
 Create a job with the outcome, agent/model, and review preferences. Repository
 paths are optional hints under planning guidance. **Start planning** launches a
 session in a fresh planning workspace to discover the repositories needed and
-create or reuse Jira stories. It can find additional repositories beyond any
+propose Jira stories. Planning is read-only against Jira: it references existing
+stories by key and suggests titles for new ones, but writes nothing until you
+have agreed the titles and how they map to sub-jobs. It can find additional repositories beyond any
 hints you provide. Missing repositories are cloned into `~/IdeaProjects/<repo>`;
 existing matching checkouts are reused without resetting them. Planning sessions
 can write to `~/IdeaProjects` for these clones, and implementation still gets a
@@ -348,7 +350,11 @@ editable table. Landing waves show what can ship independently. Additional
 planning guidance is configurable when creating the job, and **Request changes**
 sends a refinement without requiring a manual session prompt.
 
-**Approve sub-jobs** starts implementation. Each sub-job gets its own worktree
+**Approve sub-jobs** authorises the Jira changes and then the implementation. If
+any approved story is still a proposal, the job moves to **Jira tickets**, where a
+short ticketing session creates exactly those stories with the approved titles
+and reports their keys; a plan whose stories all exist already skips the column.
+Implementation then starts. Each sub-job gets its own worktree
 from the fetched remote default branch. Independent builds run together; dependent
 builds can also start together, but must wait for prerequisites to **deploy and
 verify** before publishing. They then run verification again against the deployed
@@ -436,8 +442,8 @@ Pause prevents new steps; current sessions finish and submit their receipts. The
 blocked work, and the job dropdown shows a single board.
 
 Requirements: authenticated `gh` with access to the repositories and Actions,
-working Wrangler agent dispatch, and Jira access available to the planning agent.
-The planner queries Jira using its own existing tools and authenticated setup,
+working Wrangler agent dispatch, and Jira access available to the planning and
+ticketing agents. They use Jira through their own existing tools and authenticated setup,
 including tool discovery, Jira skills, CLIs or API helpers. Wrangler does not
 check server-side Jira credentials or require a separate Jira integration.
 The planner must attempt a query before reporting an access blocker and preserve

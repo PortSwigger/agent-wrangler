@@ -11,10 +11,10 @@ export class JobRuntime {
     Object.assign(this, { sessionManager, memoryStore, taskStore, run });
   }
   async launch(job, sub, run, prepared) {
-    // Planning discovers its repositories and a session sub-job has none. Blank
-    // cwd asks SessionManager for a fresh scratch workspace, without fetching or
-    // branching an arbitrary repo.
-    const planning = run.phase === 'planning' || run.phase === 'session';
+    // Planning discovers its repositories, ticketing only talks to Jira and a
+    // session sub-job has none. Blank cwd asks SessionManager for a fresh scratch
+    // workspace, without fetching or branching an arbitrary repo.
+    const planning = ['planning', 'jira', 'session'].includes(run.phase);
     const repo = planning ? '' : expandRepo(sub.repo);
     const existing = sub?.worktree;
     let base = '', cleanupHead = '';
@@ -114,7 +114,7 @@ export class JobRuntime {
     await this.run('git', ['update-ref', '-d', ref, expectedHead], wt.repoRoot);
   }
   async cleanupPlanning(job) {
-    for (const run of job.runs.filter((r) => r.phase === 'planning' && r.sessionId)) {
+    for (const run of job.runs.filter((r) => (r.phase === 'planning' || r.phase === 'jira') && r.sessionId)) {
       await this.stop(run);
     }
     for (const wt of job.planningWorktrees || []) {

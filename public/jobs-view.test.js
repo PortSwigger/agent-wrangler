@@ -22,14 +22,14 @@ function fixture(t) {
   return { window, view, data, sent, q, event, sessions, diffs, onBoard };
 }
 
-test('every job gets its own six-column board and only boards with attention items survive Needs me', (t) => {
+test('every job gets its own seven-column board and only boards with attention items survive Needs me', (t) => {
   const f = fixture(t);
   f.data.jobs.push({ ...f.data.jobs[0], id: 'backlog', stage: 'backlog', plan: null }); f.view.update(f.data);
-  assert.equal(document.querySelectorAll('.job-board').length, 2); assert.equal(document.querySelectorAll('.job-column').length, 12);
+  assert.equal(document.querySelectorAll('.job-board').length, 2); assert.equal(document.querySelectorAll('.job-column').length, 14);
   assert.deepEqual([...document.querySelectorAll('.job-board')].map((b) => b.dataset.board), ['job1', 'backlog']);
   assert.equal(document.querySelectorAll('.job-card').length, 2);
   f.q('#jobs-needs').checked = true; f.q('#jobs-needs').dispatchEvent(f.event('change'));
-  assert.equal(document.querySelectorAll('.job-board').length, 1); assert.equal(document.querySelectorAll('.job-column').length, 6);
+  assert.equal(document.querySelectorAll('.job-board').length, 1); assert.equal(document.querySelectorAll('.job-column').length, 7);
   assert.equal(document.querySelectorAll('.job-card').length, 1); assert.equal(f.q('.job-card').dataset.job, 'job1');
 });
 
@@ -281,4 +281,35 @@ test('plans show session rows without a repository and new jobs default to revie
   f.q('#job-new').click(); const form = f.q('#job-create-form');
   form.elements.title.value = 'Value'; form.elements.intent.value = 'Deliver it'; form.dispatchEvent(f.event('submit'));
   assert.equal(f.sent.at(-1).job.reviewSessions, true);
+});
+
+test('a plan proposes story titles the human can edit, and approval of keyless stories says tickets follow', (t) => {
+  const f = fixture(t); const [job] = f.data.jobs;
+  job.plan = structuredClone(plan); job.plan.stories = [{ id: 'story', title: 'Customers can sign in', value: 'Access their account reliably' }, { id: 'audit', project: 'SEC', key: undefined, title: 'Sign-ins are audited', value: 'Security can trace access' }, { id: 'old', key: 'AUTH-9', title: 'Existing work', value: 'Already ticketed' }];
+  job.plan.subJobs[1].storyId = 'audit'; job.plan.subJobs.forEach((s) => delete s.jiraKey); f.view.update(f.data);
+  f.q('[data-job="job1"]').click();
+  assert.deepEqual([...document.querySelectorAll('.job-story-key')].map((e) => e.textContent), ['New story', 'New in SEC', 'AUTH-9']);
+  assert.equal(document.querySelectorAll('.job-story-key.job-story-new').length, 2);
+  assert.deepEqual([...document.querySelectorAll('.job-plan-story')].map((e) => e.textContent), ['New story', 'New in SEC']);
+  assert.match(f.q('.job-authority').textContent, /creates the 2 new Jira stories with these titles, then starts local work/);
+  const title = f.q('[data-story="0"]'); title.value = 'Customers sign in without lockouts'; title.dispatchEvent(f.event('input'));
+  f.q('[data-action="approve-plan"]').click();
+  assert.equal(f.sent[0].plan.stories[0].title, 'Customers sign in without lockouts');
+  assert.equal(f.sent[0].plan.stories[0].key, undefined, 'the browser never mints a key');
+  f.q('#job-dialog').close();
+  // Approved: the job card waits in the Jira column while a ticketing session runs, and never asks for review.
+  job.stage = 'jira'; job.plan = f.sent[0].plan; job.runs = [{ id: 'r2', subJobId: null, phase: 'jira', stopped: false }]; f.view.update(f.data);
+  assert.equal(f.q('.job-column[aria-label="Jira tickets"] .job-column-count').textContent, '1');
+  assert.equal(f.q('.job-column[aria-label="Jira tickets"] .job-status').textContent, 'Creating Jira tickets');
+  assert.equal(jobNeedsReview(job, null), false);
+  f.q('[data-job="job1"]').click();
+  assert.match(f.q('#job-dialog').textContent, /Creating the approved Jira stories/);
+  assert.equal(f.q('[data-action="approve-plan"]'), null);
+});
+
+test('a plan whose stories all exist reads as existing and approval starts work directly', (t) => {
+  const f = fixture(t); f.q('[data-job="job1"]').click();
+  assert.match(f.q('h3').textContent, /Existing Jira stories/);
+  assert.match(f.q('.job-authority').textContent, /^Approve starts local work/);
+  assert.equal(f.q('.job-story-key').textContent, 'AUTH-1');
 });
