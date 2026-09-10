@@ -820,6 +820,51 @@ test('codex resume with no createdAt still refuses nothing it can already resolv
   assert.match(launched, new RegExp(only));
 });
 
+// dispatch/fork's initial discovery had no equivalent of the resume guard above:
+// a nested child spawned into the SAME cwd as its still-live parent matches the
+// parent's rollout on cwd too, and the parent's rollout — actively being written
+// to as the parent keeps chatting — wins the newest-mtime race even though it
+// was minted long before this dispatch. That handed the child's card the
+// parent's conversation id, which is what made the chat view show one session's
+// transcript under the other's card (terminal read stayed correct because it's
+// keyed by tmux name, not liveSessionId).
+test('dispatch does not bind a fresh codex card to a concurrently-active sibling rollout in the same cwd', async () => {
+  const { root, proj } = codexSessionsFixture();
+  const sibling = '11111111-1111-4111-8111-111111111111';
+  const mine = '22222222-2222-4222-8222-222222222222';
+  const pad = (n) => String(n).padStart(2, '0');
+  const writeAt = (uuid, mintedDate, mtimeMs) => {
+    const day = `${mintedDate.getFullYear()}/${pad(mintedDate.getMonth() + 1)}/${pad(mintedDate.getDate())}`;
+    const dir = path.join(root, day);
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `rollout-${mintedDate.getFullYear()}-${pad(mintedDate.getMonth() + 1)}-${pad(mintedDate.getDate())}T${pad(mintedDate.getHours())}-${pad(mintedDate.getMinutes())}-${pad(mintedDate.getSeconds())}-${uuid}.jsonl`;
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd: fs.realpathSync(proj) } }) + '\n');
+    fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000);
+  };
+
+  const now = Date.now();
+  // The sibling was minted an hour before this dispatch — an already-running
+  // peer sharing the same cwd — but its file keeps getting touched because it's
+  // still actively chatting, so its mtime is the newest thing in the directory.
+  writeAt(sibling, new Date(now - 3_600_000), now + 10);
+  // This dispatch's own rollout: minted just now, touched once, older mtime.
+  writeAt(mine, new Date(now + 1), now + 5);
+
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  let sessionId;
+  try {
+    ({ sessionId } = await sm.dispatch({ cwd: proj, intent: 'x', agent: 'codex' }));
+  } finally {
+    codex.discoverLiveId = original;
+  }
+  assert.equal(sm.map.get(sessionId).liveSessionId, mine, "must not adopt the actively-writing sibling's rollout");
+});
+
 function resumableCodex(cardId = 'card-race') {
   const sm = new SessionManager();
   sm.map.clear();

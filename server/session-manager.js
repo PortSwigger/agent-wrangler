@@ -1158,10 +1158,20 @@ export class SessionManager {
   // the rollout file's creation and usually finds nothing — poll briefly until it
   // appears. Returns null only if no rollout shows up (e.g. the agent died before
   // writing one), in which case the entry stores no live id rather than a wrong one.
+  //
+  // `mintedAfter` guards the same footgun `discoveryFloor` guards for resume: two
+  // Codex sessions sharing a cwd (a nested child spawned alongside its still-live
+  // parent) both match on cwd, and the parent's rollout — actively being written
+  // to — keeps winning the newest-mtime race, handing the CHILD's card the
+  // PARENT's conversation id. A rollout minted before this launch cannot be this
+  // launch's rollout, no matter how recently it was touched. The 2s slop mirrors
+  // discoverCodexLiveId's own mtime floor, absorbing the filename's whole-second
+  // truncation against a rollout minted in the same second as `launchedAt`.
   async _resolveLiveId(adapter, { sessionId, cwd, launchedAt }) {
     if (adapter.presetsSessionId) return sessionId;
+    const mintedAfter = Math.max(0, launchedAt - 2000);
     for (let i = 0; i < 20; i++) {
-      const id = await adapter.discoverLiveId({ cwd, launchedAt });
+      const id = await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter });
       if (id) return id;
       await new Promise((r) => setTimeout(r, 150));
     }
