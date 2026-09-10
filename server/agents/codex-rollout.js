@@ -194,25 +194,40 @@ export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, in
 // (unlike Claude transcripts, no line-by-line presence check needed). Mirrors
 // transcript-reader.js's activityInRange for Claude.
 //
-// Two shapes are counted, for the reason scanLine's header documents at
-// length: legacy event_msg `user_message`/`agent_message` lines (rollouts from
-// before the Codex CLI dropped that shape, ~2026-08-19), and — the only shape
-// current rollouts carry — `response_item` entries with `payload.type ===
-// 'message'`. A `role: 'developer'` message (injected instructions) is never
-// conversation and is excluded outright. A `role: 'user'` message CAN still be
-// Codex's own injected context rather than something the human typed — the
-// original comment here warned that a synthetic <environment_context> block
-// arrives under this exact shape with no corresponding event_msg turn, which
-// would double-count/miscount a turn nobody typed — so it only counts once
+// Two shapes exist across the corpus, for the reason scanLine's header
+// documents at length: legacy event_msg `user_message`/`agent_message` lines
+// (rollouts from before the Codex CLI dropped that shape, ~2026-08-19), and —
+// the only shape current rollouts carry — `response_item` entries with
+// `payload.type === 'message'`. They are NOT alternatives to OR together: on a
+// pre-8/19 rollout BOTH shapes are present for the same turn (chat-events.js's
+// own comment: "event_msg/agent_message and user_message repeat
+// response_item/message verbatim"), so counting whichever line matched would
+// double the true turn count on every legacy rollout. Two independent tallies
+// are kept instead and the response_item one wins whenever it saw anything —
+// it's what every rollout since 8/19 has, and is never partial on an older
+// one, since a legacy rollout carries both shapes in full. The legacy tally is
+// the fallback for exactly the files where response_item genuinely has
+// nothing (very old Codex CLI builds, if any still exist on disk).
+//
+// A `role: 'developer'` message (injected instructions) is never conversation
+// and is excluded outright. A `role: 'user'` message CAN still be Codex's own
+// injected context rather than something the human typed — the original
+// comment here warned that a synthetic <environment_context> block arrives
+// under this exact shape with no corresponding event_msg turn, which would
+// double-count/miscount a turn nobody typed — so it only counts once
 // `isSyntheticCodexMessage` says it looks like real prose, the same rule the
 // chat view uses to decide what a human actually sees. A `role: 'assistant'`
 // message always counts, matching the old unconditional `agent_message` count.
 export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDir = CODEX_SESSIONS) {
   const file = await findRollout(sessionId, sessionsDir);
   if (!file) return null;
-  let messageCount = 0;
-  let firstActivity = null;
-  let lastActivity = null;
+  const legacy = { messageCount: 0, firstActivity: null, lastActivity: null };
+  const current = { messageCount: 0, firstActivity: null, lastActivity: null };
+  const bump = (tally, t) => {
+    tally.messageCount += 1;
+    if (tally.firstActivity == null || t < tally.firstActivity) tally.firstActivity = t;
+    if (tally.lastActivity == null || t > tally.lastActivity) tally.lastActivity = t;
+  };
   try {
     const text = await fsp.readFile(file, 'utf8');
     for (const line of text.split('\n')) {
@@ -222,26 +237,22 @@ export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDi
       if (typeof entry.timestamp !== 'string') continue;
       const p = entry.payload || entry;
       const kind = p.type || entry.type;
-      let counts;
+      let tally = null;
       if (kind === 'user_message' || kind === 'agent_message') {
-        counts = true;
+        tally = legacy;
       } else if (entry.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
         const msgText = codexMessageText(p.content);
-        counts = p.role === 'assistant' || (Boolean(msgText) && !isSyntheticCodexMessage(msgText));
-      } else {
-        counts = false;
+        if (p.role === 'assistant' || (Boolean(msgText) && !isSyntheticCodexMessage(msgText))) tally = current;
       }
-      if (!counts) continue;
+      if (!tally) continue;
       const t = Date.parse(entry.timestamp);
       if (!t || t < startMs || t >= endMs) continue;
-      messageCount += 1;
-      if (firstActivity == null || t < firstActivity) firstActivity = t;
-      if (lastActivity == null || t > lastActivity) lastActivity = t;
+      bump(tally, t);
     }
   } catch {
     /* rollout unreadable */
   }
-  return { messageCount, firstActivity, lastActivity };
+  return current.messageCount > 0 ? current : legacy;
 }
 
 function headMetaCodex(file) {

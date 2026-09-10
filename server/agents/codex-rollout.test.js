@@ -173,6 +173,23 @@ test('activityInRangeCodex excludes a developer-role response_item and a synthet
   assert.equal(r.messageCount, 1);
 });
 
+// Pre-8/19 rollouts carry BOTH shapes for the same turn (event_msg mirrors
+// response_item verbatim — see chat-events.js's own comment on this). ORing
+// the two shapes together would double the true turn count on every legacy
+// rollout; response_item must win outright when it has anything at all.
+test('activityInRangeCodex does not double-count a legacy rollout that carries both event_msg and response_item for the same turn', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: 'hi' } },
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'hello' } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
+});
+
 test('activityInRangeCodex returns null when no rollout exists for the id', async () => {
   const { root } = fixtureTimestamped([]);
   const r = await activityInRangeCodex('00000000-0000-0000-0000-000000000000', 0, 1, root);
