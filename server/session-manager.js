@@ -1166,12 +1166,23 @@ export class SessionManager {
   // PARENT's conversation id. A rollout minted before this launch cannot be this
   // launch's rollout, no matter how recently it was touched. The 2s slop mirrors
   // discoverCodexLiveId's own mtime floor, absorbing the filename's whole-second
-  // truncation against a rollout minted in the same second as `launchedAt`.
+  // truncation against a rollout minted in the same second as `launchedAt` — never
+  // clamped to 0, which is discoverCodexLiveId's own "guard off" sentinel for this
+  // param (`launchedAt` is always a real Date.now(), so the raw subtraction never
+  // needs it).
+  //
+  // `excludeIds` is `mintedAfter`'s complement: a time floor alone still lets two
+  // dispatches into the same cwd within the discovery window collide if neither
+  // rollout is older than the other's floor. Recomputed every poll (not once up
+  // front) so a sibling dispatch that registers its own liveSessionId mid-loop is
+  // excluded from the very next attempt — same ownership check noteLiveSessionId
+  // already enforces on repoint via cardForLive, applied here at first discovery.
   async _resolveLiveId(adapter, { sessionId, cwd, launchedAt }) {
     if (adapter.presetsSessionId) return sessionId;
-    const mintedAfter = Math.max(0, launchedAt - 2000);
+    const mintedAfter = launchedAt - 2000;
     for (let i = 0; i < 20; i++) {
-      const id = await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter });
+      const excludeIds = new Set([...this.map.values()].map((e) => e.liveSessionId).filter(Boolean));
+      const id = await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter, excludeIds });
       if (id) return id;
       await new Promise((r) => setTimeout(r, 150));
     }
