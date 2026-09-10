@@ -45,9 +45,19 @@ caller's model" default only applies when the new session runs the *same* agent 
 since this skill always spawns the opposite one, that inheritance never fires, and
 leaving it unset lands you on whatever that agent's ambient default happens to be right
 now — not necessarily its strongest option, and for Claude not even a fixed value (its
-default can be changed machine-wide by an unrelated `/model` call). Check `spawn_session`'s
-own `model` parameter description for the current valid values per agent — passing one
-that doesn't match the chosen `agent` is refused with the valid list rather than launched.
+default can be changed machine-wide by an unrelated `/model` call). Passing a `model`
+that doesn't match your chosen `agent` is now rejected before launch, naming the valid
+options and, for a cross-agent guess, the likely fix (e.g. `model: "opus"` with
+`agent: "codex"` → "opus is a claude model — did you mean agent: claude?") — but an
+*unset* `model` isn't caught by that, since it's not wrong, just ambiguous.
+
+`spawn_session`'s own `model` parameter description enumerates the current valid values
+per agent (generated from the real model list, not hand-copied — see the `spawn-session`
+skill's table for the same thing with more context on each). **If you're a Codex
+session, don't assume that description is already in front of you the way it would be
+for Claude** — Codex's initial tool catalog doesn't carry full MCP input-schema
+descriptions; you may need to actively look up `spawn_session`'s declared schema to see
+it.
 
 ## 4. Brief the reviewer
 
