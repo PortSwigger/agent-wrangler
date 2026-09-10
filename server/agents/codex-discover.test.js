@@ -54,3 +54,35 @@ test('matches a symlinked cwd against the rollout\'s already-resolved cwd (macOS
   const id = await discoverCodexLiveId({ cwd: link, launchedAt: 900, sessionsDir: root });
   assert.equal(id, '66666666-6666-6666-6666-666666666666');
 });
+
+// The failure mode a floor with no slop produces: Codex's rollout filename is
+// truncated to the whole SECOND it was minted in (local time), so a session
+// that actually launches partway through a second gets a filename timestamp
+// that reads as earlier than its own launchedAt. Measured against real
+// rollouts, that skew is consistently a few hundred ms, never zero. Without
+// slop this excludes the session's own rollout outright — the real failure is
+// not "picks the wrong session", it's no live id at all: a blank chat view and
+// `_doResume` later refusing with "Could not locate a codex session to resume".
+test('a 2s mintedAfter slop tolerates the filename\'s whole-second truncation against the real launch instant', async () => {
+  const { root, day } = tmpSessions();
+  const uuid = '77777777-7777-7777-7777-777777777777';
+  const mintedInstant = new Date(2026, 5, 10, 9, 0, 0).getTime(); // matches writeRollout's fixed 09-00-00 filename
+  const launchedAt = mintedInstant + 900; // codex actually launched 900ms into that second
+  writeRollout(day, uuid, '/work/proj', launchedAt + 50);
+
+  const withoutSlop = await discoverCodexLiveId({ cwd: '/work/proj', launchedAt, mintedAfter: launchedAt, sessionsDir: root });
+  assert.equal(withoutSlop, null, 'no slop wrongly excludes the session\'s own just-minted rollout');
+
+  const withSlop = await discoverCodexLiveId({ cwd: '/work/proj', launchedAt, mintedAfter: launchedAt - 2000, sessionsDir: root });
+  assert.equal(withSlop, uuid);
+});
+
+test('excludeIds skips a rollout another card already owns, even when it is the best cwd/time match', async () => {
+  const { root, day } = tmpSessions();
+  const owned = '88888888-8888-8888-8888-888888888888';
+  const mine = '99999999-9999-9999-9999-999999999999';
+  writeRollout(day, owned, '/work/proj', 6000); // newer mtime — would win without the exclusion
+  writeRollout(day, mine, '/work/proj', 5000);
+  const id = await discoverCodexLiveId({ cwd: '/work/proj', launchedAt: 900, excludeIds: new Set([owned]), sessionsDir: root });
+  assert.equal(id, mine);
+});

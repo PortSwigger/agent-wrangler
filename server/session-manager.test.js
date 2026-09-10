@@ -754,7 +754,22 @@ function codexSessionsFixture() {
     fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd: fs.realpathSync(proj) } }) + '\n');
     fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000);
   };
-  return { root, proj, write };
+  // Like `write`, but minted at an arbitrary real Date rather than a fixed
+  // 09:00:00 on a fixed day — needed whenever a test's minted timestamp has to
+  // sit relative to `Date.now()` (the mintedAfter floor is always launchedAt-
+  // relative), rather than to a hardcoded past day that ages out of that floor
+  // as real time passes.
+  const writeAt = (uuid, mintedDate, mtimeMs) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const day = `${mintedDate.getFullYear()}/${pad(mintedDate.getMonth() + 1)}/${pad(mintedDate.getDate())}`;
+    const dir = path.join(root, day);
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `rollout-${mintedDate.getFullYear()}-${pad(mintedDate.getMonth() + 1)}-${pad(mintedDate.getDate())}T${pad(mintedDate.getHours())}-${pad(mintedDate.getMinutes())}-${pad(mintedDate.getSeconds())}-${uuid}.jsonl`;
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd: fs.realpathSync(proj) } }) + '\n');
+    fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000);
+  };
+  return { root, proj, write, writeAt };
 }
 
 test('codex resume never binds a card to a rollout older than the card itself', async () => {
@@ -818,6 +833,106 @@ test('codex resume with no createdAt still refuses nothing it can already resolv
     codex.discoverLiveId = original;
   }
   assert.match(launched, new RegExp(only));
+});
+
+// dispatch/fork's initial discovery had no equivalent of the resume guard above:
+// a nested child spawned into the SAME cwd as its still-live parent matches the
+// parent's rollout on cwd too, and the parent's rollout — actively being written
+// to as the parent keeps chatting — wins the newest-mtime race even though it
+// was minted long before this dispatch. That handed the child's card the
+// parent's conversation id, which is what made the chat view show one session's
+// transcript under the other's card (terminal read stayed correct because it's
+// keyed by tmux name, not liveSessionId).
+test('dispatch does not bind a fresh codex card to a concurrently-active sibling rollout in the same cwd', async () => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  const sibling = '11111111-1111-4111-8111-111111111111';
+  const mine = '22222222-2222-4222-8222-222222222222';
+
+  const now = Date.now();
+  // The sibling was minted an hour before this dispatch — an already-running
+  // peer sharing the same cwd — but its file keeps getting touched because it's
+  // still actively chatting, so its mtime is the newest thing in the directory.
+  writeAt(sibling, new Date(now - 3_600_000), now + 10);
+  // This dispatch's own rollout: minted just now, touched once, older mtime.
+  writeAt(mine, new Date(now + 1), now + 5);
+
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  let sessionId;
+  try {
+    ({ sessionId } = await sm.dispatch({ cwd: proj, intent: 'x', agent: 'codex' }));
+  } finally {
+    codex.discoverLiveId = original;
+  }
+  assert.equal(sm.map.get(sessionId).liveSessionId, mine, "must not adopt the actively-writing sibling's rollout");
+});
+
+// mintedAfter alone narrows the race but doesn't close it: two dispatches into
+// the same cwd within the discovery window can both have rollouts that are
+// "new enough". The actual invariant is ownership — noteLiveSessionId already
+// refuses to repoint a card onto a conversation another card owns (cardForLive,
+// above) — and _resolveLiveId's first discovery needs the same check, not just
+// a time floor. This pins that directly: the owned rollout is the newer file,
+// so a time-only guard would still pick it.
+test('dispatch never adopts a rollout another card already owns, even when it is the newer match', async () => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  const owned = '11111111-1111-4111-8111-111111111111';
+  const mine = '22222222-2222-4222-8222-222222222222';
+  const now = Date.now();
+  const mintedAt = new Date(now); // both minted "now" — only ownership tells them apart
+  writeAt(owned, mintedAt, now + 10); // newer mtime — would win without the ownership check
+  writeAt(mine, mintedAt, now + 5);
+
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  sm.map.set('other-card', { agent: 'codex', cwd: proj, liveSessionId: owned });
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  let sessionId;
+  try {
+    ({ sessionId } = await sm.dispatch({ cwd: proj, intent: 'x', agent: 'codex' }));
+  } finally {
+    codex.discoverLiveId = original;
+  }
+  assert.equal(sm.map.get(sessionId).liveSessionId, mine, "must not double-bind another card's conversation");
+});
+
+// fork() shares _resolveLiveId with dispatch() and needs the same coverage —
+// a forked codex session landing in its parent's cwd is exactly the nested-
+// worker shape the ownership check exists for.
+test('fork() never adopts a rollout another card already owns', async () => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  const owned = '33333333-3333-4333-8333-333333333333';
+  const mine = '44444444-4444-4444-8444-444444444444';
+  const now = Date.now();
+  const mintedAt = new Date(now);
+  writeAt(owned, mintedAt, now + 10);
+  writeAt(mine, mintedAt, now + 5);
+
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.map.set('other-card', { agent: 'codex', cwd: proj, liveSessionId: owned });
+  const codex = adapterFor('codex');
+  const original = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => original.call(codex, { ...opts, sessionsDir: root });
+  let sessionId;
+  try {
+    ({ sessionId } = await sm.fork({
+      sourceId: 'SRC', parentId: 'other-card',
+      parentEntry: { agent: 'codex', cwd: proj },
+      cwd: proj,
+    }));
+  } finally {
+    codex.discoverLiveId = original;
+  }
+  assert.equal(sm.map.get(sessionId).liveSessionId, mine, "must not double-bind another card's conversation");
 });
 
 function resumableCodex(cardId = 'card-race') {

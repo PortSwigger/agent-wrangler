@@ -1158,10 +1158,31 @@ export class SessionManager {
   // the rollout file's creation and usually finds nothing — poll briefly until it
   // appears. Returns null only if no rollout shows up (e.g. the agent died before
   // writing one), in which case the entry stores no live id rather than a wrong one.
+  //
+  // `mintedAfter` guards the same footgun `discoveryFloor` guards for resume: two
+  // Codex sessions sharing a cwd (a nested child spawned alongside its still-live
+  // parent) both match on cwd, and the parent's rollout — actively being written
+  // to — keeps winning the newest-mtime race, handing the CHILD's card the
+  // PARENT's conversation id. A rollout minted before this launch cannot be this
+  // launch's rollout, no matter how recently it was touched. The 2s slop mirrors
+  // discoverCodexLiveId's own mtime floor, absorbing the filename's whole-second
+  // truncation against a rollout minted in the same second as `launchedAt` — never
+  // clamped to 0, which is discoverCodexLiveId's own "guard off" sentinel for this
+  // param (`launchedAt` is always a real Date.now(), so the raw subtraction never
+  // needs it).
+  //
+  // `excludeIds` is `mintedAfter`'s complement: a time floor alone still lets two
+  // dispatches into the same cwd within the discovery window collide if neither
+  // rollout is older than the other's floor. Recomputed every poll (not once up
+  // front) so a sibling dispatch that registers its own liveSessionId mid-loop is
+  // excluded from the very next attempt — same ownership check noteLiveSessionId
+  // already enforces on repoint via cardForLive, applied here at first discovery.
   async _resolveLiveId(adapter, { sessionId, cwd, launchedAt }) {
     if (adapter.presetsSessionId) return sessionId;
+    const mintedAfter = launchedAt - 2000;
     for (let i = 0; i < 20; i++) {
-      const id = await adapter.discoverLiveId({ cwd, launchedAt });
+      const excludeIds = new Set([...this.map.values()].map((e) => e.liveSessionId).filter(Boolean));
+      const id = await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter, excludeIds });
       if (id) return id;
       await new Promise((r) => setTimeout(r, 150));
     }

@@ -69,7 +69,17 @@ async function allRollouts(sessionsDir) {
 // `mintedAfter` additionally excludes rollouts minted before that time — for callers
 // resolving an id long after launch, where mtime says only when a file was last
 // touched and cwd alone would match any session the directory has ever hosted.
-export async function discoverCodexLiveId({ cwd, launchedAt = 0, mintedAfter = 0, sessionsDir = CODEX_SESSIONS } = {}) {
+//
+// `excludeIds` skips a rollout already bound to another card. This has to live
+// in the scan itself, not at the call site: the caller polls this function
+// repeatedly while waiting for a fresh rollout to appear, and without this the
+// same already-owned match wins on every single poll — there is no "continue
+// past it next time", because nothing here remembers what a prior call
+// returned. Two Codex dispatches into the same cwd within the discovery
+// window (a `spawn_workflow` fan-out, not just a slow clock) would otherwise
+// both resolve to the FIRST match and collide, exactly the invariant
+// noteLiveSessionId already enforces on repoint via cardForLive.
+export async function discoverCodexLiveId({ cwd, launchedAt = 0, mintedAfter = 0, excludeIds = null, sessionsDir = CODEX_SESSIONS } = {}) {
   const floor = launchedAt - 2000;
   const target = realpathOrSelf(cwd);
   for (const r of await allRollouts(sessionsDir)) {
@@ -78,8 +88,10 @@ export async function discoverCodexLiveId({ cwd, launchedAt = 0, mintedAfter = 0
       const minted = mintedAtFromName(r.name);
       if (minted != null && minted < mintedAfter) continue; // predates the caller's session
     }
+    const uuid = uuidFromName(r.name);
+    if (excludeIds && uuid && excludeIds.has(uuid)) continue; // another card already owns this conversation
     const rc = rolloutCwd(r.full);
-    if (rc != null && realpathOrSelf(rc) === target) return uuidFromName(r.name);
+    if (rc != null && realpathOrSelf(rc) === target) return uuid;
   }
   return null;
 }
