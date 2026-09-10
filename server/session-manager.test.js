@@ -566,6 +566,32 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
   assert.match(captured, /'--effort' 'low'/);
 });
 
+// The job-worker skill's step protocol is injected through the always-on nudge
+// channel rather than each job prompt, so the two launch paths a job session can
+// take have to carry the automation flag — nothing else in the launch says a
+// session is a job step.
+test('dispatch injects the job-worker protocol only for an automationRun launch', async () => {
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.doesNotMatch(captured, /Wrangler automated-job step/);
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', automationRun: { jobId: 'job1', runId: 'run1' } });
+  assert.match(captured, /Wrangler automated-job step/);
+});
+
+test('resume re-injects the job-worker protocol for a session carrying an automationRun', async () => {
+  const sm = resumableCodex('card-job');
+  sm.killForSession = async () => [];
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-job', os.tmpdir());
+  assert.doesNotMatch(captured, /Wrangler automated-job step/);
+  sm.map.get('card-job').automationRun = { jobId: 'job1', runId: 'run1' };
+  await sm.resume('card-job', os.tmpdir());
+  assert.match(captured, /Wrangler automated-job step/);
+});
+
 // Trust is no longer part of the launch command (verified against the real
 // Codex binary that a `-c projects.<path>.trust_level` override is silently
 // ignored by its interactive trust dialog) — fork() instead calls

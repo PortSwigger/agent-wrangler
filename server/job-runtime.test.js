@@ -261,29 +261,54 @@ test('repository-free planning gets a scratch workspace and durable report assig
   manager.archive(sessionId); assert.equal(review, false);
 });
 
-test('prompts keep reports mandatory, retain previous Jira context and prohibit agent polling', () => {
-  const text = jobPrompt({ ...job, plan: null, previousPlan: { stories: [{ key: 'AUTH-1' }] }, feedback: 'Split by repo' }, null, { ...run, phase: 'planning' });
-  assert.match(text, /AUTH-1/); assert.match(text, /Split by repo/); assert.match(text, /job_report/); assert.match(text, /Do not spawn/);
-  assert.match(jobPrompt(job, sub, { ...run, phase: 'publish' }), /Do not merge or wait for CI/);
+// The job the prompts are written against: one shared context, briefs that lean
+// on it, and a second sub-job so the "After" line has something to name.
+const planned = {
+  ...job,
+  plan: { context: 'The sign-in service is Java; deploys are Helm.', stories: [{ id: 'story', key: 'AUTH-1', title: 'Sign-in' }], subJobs: [] },
+  subJobs: [{ id: 'proto', title: 'Sync the proto', kind: 'pr' }],
+};
+const briefed = { ...sub, title: 'Deliver api', brief: 'Retry the token exchange once', after: ['proto'], worktree: { branch: 'fix/AUTH-1-api' } };
+
+test('every phase ends with its own receipt call, naming this run and the blocked shape', () => {
+  for (const phase of ['planning', 'jira', 'implementation', 'repair', 'verify', 'session']) {
+    const text = jobPrompt(planned, { ...briefed, pr: { url: 'https://github.com/org/repo/pull/1', mergeCommit: 'abc123' }, check: 'Sign-in works in dev' }, { ...run, phase });
+    assert.match(text, /job_report \{runId:"run1"/, phase);
+    assert.match(text, /Blocked: \{kind:"blocked", summary:"one sentence", move\?:"fix-here"/, phase);
+  }
 });
 
-test('deployed verification is kept off production data', () => {
-  const verify = jobPrompt(job, { ...sub, pr: { mergeCommit: 'abc123' }, deployment: { verify: 'Expired links rejected' } }, { ...run, phase: 'verify' });
+test('the implementation prompt is one bounded step: context once, the brief, what it lands after, and the human\'s note', () => {
+  const text = jobPrompt(planned, { ...briefed, check: 'Sign-in works in dev', note: 'Call the flag sign_in_v2' }, run);
+  assert.match(text, /^AUTH-1 · Sign-in$/m);
+  assert.match(text, /Context: The sign-in service is Java/);
+  assert.match(text, /This PR \(repo\): Retry the token exchange once/);
+  assert.match(text, /Check after it lands: Sign-in works in dev/);
+  assert.match(text, /After: Sync the proto\./);
+  assert.match(text, /Note from the human: Call the flag sign_in_v2/);
+  assert.match(text, /Commit, push, open the PR, then job_report \{runId:"run1", kind:"published", url:"<PR url>"\}/);
+  const plainest = jobPrompt(planned, { ...briefed, after: [] }, run);
+  assert.match(plainest, /After: none\./);
+  assert.doesNotMatch(plainest, /Check after it lands|Note from the human/, 'nothing to say is nothing written');
+});
+
+test('a repair carries the human\'s note when there is one, and the checks otherwise', () => {
+  const pr = { url: 'https://github.com/org/repo/pull/7' };
+  const asked = jobPrompt(planned, { ...briefed, pr, fixRequested: { note: 'Rename the flag' } }, { ...run, phase: 'repair' });
+  assert.match(asked, /Fix PR https:\/\/github.com\/org\/repo\/pull\/7 on this worktree branch: the human asks: Rename the flag/);
+  const failing = jobPrompt(planned, { ...briefed, pr }, { ...run, phase: 'repair' });
+  assert.match(failing, /failing checks, merge conflicts or requested changes/);
+  for (const text of [asked, failing]) assert.match(text, /Never weaken checks; never merge/);
+});
+
+test('a verify session exists only for the plan\'s one check, and stays off production data', () => {
+  const verify = jobPrompt(planned, { ...briefed, check: 'Expired links are rejected', pr: { url: 'u', mergeCommit: 'abc123' },
+    deploymentResult: { runs: [{ workflow: 'Deploy', status: 'passing' }, { workflow: 'Scan', status: 'skipped' }] } }, { ...run, phase: 'verify' });
+  assert.match(verify, /merged as abc123; post-merge runs passed \(Deploy\)/);
+  assert.match(verify, /Confirm: Expired links are rejected/);
   assert.match(verify, /Never modify production data/);
-  assert.match(verify, /playground deployment if one exists, otherwise dev/);
-  assert.match(verify, /report blocked instead/);
-});
-
-test('PR-only validation is assigned after publication and retained in the publishing handoff', () => {
-  assert.match(jobPrompt(job, null, { ...run, phase: 'planning' }), /Never require a PR-triggered check before the PR exists/);
-  const implementation = jobPrompt(job, sub, run);
-  assert.match(implementation, /pendingChecks/);
-  assert.match(implementation, /essential local verification blocked by missing access still requires a blocked receipt/);
-  const pendingChecks = ['Dev/prod plans: no replacement or credential rotation'];
-  const publish = jobPrompt(job, { ...sub, local: { pendingChecks } }, { ...run, phase: 'publish' });
-  assert.match(publish, /Required PR checks still pending/);
-  assert.ok(publish.includes(pendingChecks[0]));
-  assert.match(publish, /Confirm the PR workflows cover them/);
+  assert.match(verify, /playground or dev/);
+  assert.match(verify, /Do not change the deployment/);
 });
 
 test('cleanup of a cancelled sub-job keeps unpushed commits and never fast-forwards main', async () => {
@@ -302,7 +327,7 @@ test('a session step launches in a scratch workspace like planning and its clean
   let launched, prepared;
   const runtime = new JobRuntime({ sessionManager: { async dispatch(opts) { launched = opts; opts.onAutomationPrepared('sid'); return { sessionId: 'sid' }; } }, memoryStore: { bindSession() {} }, taskStore: {} },
     async () => assert.fail('a session sub-job has no repository to fetch'));
-  const session = { id: 'spike', kind: 'session', jiraKey: 'AUTH-1', instructions: 'Investigate', dependsOn: [] };
+  const session = { id: 'spike', kind: 'session', jiraKey: 'AUTH-1', brief: 'Investigate', after: [] };
   await runtime.launch(job, session, { ...run, phase: 'session' }, (...v) => { prepared = v; });
   assert.equal(launched.cwd, ''); assert.equal(launched.worktree, false);
   assert.deepEqual(launched.addDirs, [path.join(os.homedir(), 'IdeaProjects')]);
@@ -314,13 +339,35 @@ test('a session step launches in a scratch workspace like planning and its clean
   assert.deepEqual(archived, ['sid']);
 });
 
-test('the session prompt forbids repository changes and the planner learns the session kind', () => {
-  const text = jobPrompt({ ...job, plan: { stories: [] }, subJobs: [{ id: 'spike', kind: 'session', title: 'Spike', instructions: 'x', result: { checks: ['Found it'] } }] },
-    { id: 'backfill', kind: 'session', dependsOn: ['spike'], feedback: 'Also check staging' }, { ...run, phase: 'session' });
-  assert.match(text, /not a PR: do not create branches, commit, push or open pull requests/);
-  assert.match(text, /kind=completed/); assert.match(text, /Found it/); assert.match(text, /Also check staging/);
-  const planning = jobPrompt(job, null, { ...run, phase: 'planning' });
-  assert.match(planning, /kind:"session"/); assert.match(planning, /waits for it to finish before starting implementation/);
+test('the session prompt keeps its step out of every repository and carries a review\'s feedback', () => {
+  const text = jobPrompt({ ...planned, subJobs: [{ id: 'spike', kind: 'session', title: 'Spike the schema' }] },
+    { id: 'backfill', kind: 'session', jiraKey: 'AUTH-1', brief: 'Backfill the audit rows', after: ['spike'], feedback: 'Also check staging' },
+    { ...run, phase: 'session' });
+  assert.match(text, /This session: Backfill the audit rows/);
+  assert.match(text, /After: Spike the schema\./);
+  assert.match(text, /no repository changes \(report blocked if one is needed\)/);
+  assert.match(text, /Feedback on your previous attempt: Also check staging/);
+  assert.match(text, /kind:"completed"/);
+});
+
+test('the planner is told to write the context once and never to describe a deployment', () => {
+  const text = jobPrompt({ ...planned, plan: null, previousPlan: { stories: [{ key: 'AUTH-1' }] }, feedback: 'Split by repo' }, null, { ...run, phase: 'planning' });
+  assert.match(text, /AUTH-1/); assert.match(text, /Split by repo/);
+  assert.match(text, /Write `context` ONCE for the whole job/);
+  assert.match(text, /Never describe deployments or verification steps/);
+  assert.match(text, /`after` on a PR means DEPLOY AFTER/);
+  assert.match(text, /Do not propose branch names/);
+  assert.match(text, /kind:"pr"\|"session"/);
+  assert.match(text, /kind:"plan", plan:\{context, stories:\[\{id,key\?,project\?,title\}\]/);
+  assert.doesNotMatch(text, /deployment:\{|pendingChecks|value/);
+  assert.ok(text.split(/\s+/).length < 400, 'the protocol lives in the job-worker skill, not in every prompt');
+});
+
+test('the ticketing prompt creates exactly the approved titles', () => {
+  const text = jobPrompt(planned, null, { ...run, phase: 'jira' });
+  assert.match(text, /"key":"AUTH-1"/);
+  assert.match(text, /Search first so a retry never duplicates one/);
+  assert.match(text, /kind:"jira", stories:\[\{id,key\}\]/);
 });
 
 const dialog = (cursorOnYes) => `

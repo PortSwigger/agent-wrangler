@@ -71,8 +71,18 @@ export function skillEntries(skillsRoot = SKILLS_ROOT) {
 // discoverable, which is inert without the nudge. The flags are options
 // (defaulting to live config) so tests never touch the shared config.json.
 const DISABLEABLE = { 'task-memory': 'taskMemory', checklist: 'checklist' };
+
+// job-worker's protocol is ~1k tokens of instructions that only make sense to a
+// session running one step of an automated job (job_report in its tools), so it
+// is kept out of both always-on channels for every ordinary session and injected
+// only when `automation` is set — the dispatch/resume of a session carrying an
+// automationRun. Like the disableable skills, Claude's --plugin-dir still lists
+// it as discoverable everywhere, which is inert without the nudge: an agent with
+// no job_report tool has no reason to match the description.
+export const AUTOMATION_ONLY = new Set(['job-worker']);
 function activeSkillEntries(skillsRoot, flags) {
   return skillEntries(skillsRoot).filter((e) => {
+    if (AUTOMATION_ONLY.has(e.name)) return Boolean(flags.automation);
     const flag = DISABLEABLE[e.name];
     return flag ? flags[flag] : true;
   });
@@ -86,8 +96,8 @@ function activeSkillEntries(skillsRoot, flags) {
 // always-on prompt (Claude's --append-system-prompt, Codex's
 // developer_instructions) alongside the on-demand catalog — most skills (links,
 // spawn-session) are genuinely optional and carry no nudge.
-export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled() } = {}) {
-  const nudges = activeSkillEntries(skillsRoot, { taskMemory, checklist }).map((e) => e.nudge).filter(Boolean);
+export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), automation = false } = {}) {
+  const nudges = activeSkillEntries(skillsRoot, { taskMemory, checklist, automation }).map((e) => e.nudge).filter(Boolean);
   return nudges.join('\n\n');
 }
 
@@ -95,8 +105,8 @@ export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = ta
 // reads a SKILL.md on demand (its workspace-write sandbox allows reads outside
 // cwd), mirroring Claude's progressive disclosure: the catalog is cheap and
 // always-visible; bodies load only when a task matches a description.
-export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled() } = {}) {
-  const lines = activeSkillEntries(skillsRoot, { taskMemory, checklist }).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
+export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), automation = false } = {}) {
+  const lines = activeSkillEntries(skillsRoot, { taskMemory, checklist, automation }).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
   return 'You have wrangler-meta skills available. When a task matches one of the '
     + 'descriptions below, read the corresponding SKILL.md file at the given absolute '
     + 'path for the full instructions before acting. The files are read-only.\n\n'
