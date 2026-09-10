@@ -45,6 +45,23 @@ function sumCards(byCard, ids) {
   return { usd: usd > 0 ? usd : null, usdEstimated: usd > 0 && estimated };
 }
 
+// A run's card carries the only live signal of whether its session is working,
+// idle or waiting on a prompt, and the jobs snapshot is written by a store that
+// knows nothing about sessions. Stamping it here is what lets the board show
+// "needs you" on a job card within one graph tick. Live runs only: a stopped
+// run's session is archived, so its card's status would say nothing.
+export function withRunStatus(jobs, sessions = []) {
+  const status = new Map((sessions || []).map((s) => [s.sessionId, s.status ?? null]));
+  return {
+    ...jobs,
+    jobs: (jobs?.jobs || []).map((job) => ({
+      ...job,
+      runs: (job.runs || []).map((run) => (!run.stopped && run.sessionId
+        ? { ...run, status: status.get(run.sessionId) ?? null } : run)),
+    })),
+  };
+}
+
 export function withJobSpend(snapshot, byCard = new Map()) {
   return {
     ...snapshot,

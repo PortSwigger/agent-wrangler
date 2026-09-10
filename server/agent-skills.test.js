@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { skillEntries, codexSkillCatalog, mandatorySkillPrompt, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR } from './agent-skills.js';
+import { skillEntries, codexSkillCatalog, mandatorySkillPrompt, AUTOMATION_ONLY, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR } from './agent-skills.js';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-skills-'));
@@ -63,9 +63,9 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
   assert.match(SKILLS_ROOT, /agent-skills\/skills$/);
 });
 
-test('the real agent-skills dir ships task-memory, links, mail, checklist, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
+test('the real agent-skills dir ships task-memory, links, mail, checklist, job-worker, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['advisor', 'checklist', 'job-worker', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
@@ -85,6 +85,8 @@ test('task-memory, mail and checklist are mandatory (carry a nudge); links, spaw
   assert.equal(byName['session-activity'].nudge, '');
   assert.equal(byName['session-hierarchy'].nudge, '');
   assert.equal(byName.advisor.nudge, '');
+  // job-worker carries a nudge too, but an automation-only one — see below.
+  assert.ok(byName['job-worker'].nudge.length > 0);
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /AW_TASK_MEMORY/);
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /read_mail/);
   // The send-tool disambiguation must ride the always-on nudge, not just the
@@ -101,6 +103,23 @@ test('task-memory, mail and checklist are mandatory (carry a nudge); links, spaw
   assert.match(nudge, /add_checklist_item/);
   assert.match(nudge, /`checklist` skill/);
   assert.match(nudge, /never synced/);
+});
+
+test('job-worker rides both always-on channels only for an automated-job session', () => {
+  const on = { taskMemory: true, automation: true };
+  // Default (every ordinary session): ~1k tokens of step protocol stays out of
+  // both channels, but the skill is still shipped for --plugin-dir discovery.
+  assert.ok(skillEntries().some((e) => e.name === 'job-worker'));
+  assert.ok(AUTOMATION_ONLY.has('job-worker'));
+  assert.doesNotMatch(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /job_report/);
+  assert.doesNotMatch(codexSkillCatalog(SKILLS_ROOT, { taskMemory: true }), /- job-worker — /);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, on), /job_report/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, on), /name_branch/);
+  assert.match(codexSkillCatalog(SKILLS_ROOT, on), /- job-worker — /);
+  // The gate is job-worker's alone: an automated-job session still gets every
+  // other nudge and catalog entry.
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, on), /AW_TASK_MEMORY/);
+  assert.match(codexSkillCatalog(SKILLS_ROOT, on), /- task-memory — /);
 });
 
 test('checklist:false drops the checklist skill from the mandatory nudge and the Codex catalog — nothing else', () => {

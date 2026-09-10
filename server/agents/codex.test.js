@@ -88,6 +88,18 @@ test('developer_instructions carries the mandatory-skill nudge and the skills ca
   assert.match(cmd, /You have wrangler-meta skills available/);
 });
 
+test('the job-worker protocol rides developer_instructions only for an automated-job session', () => {
+  // Both channels are gated: the nudge and the on-demand catalog entry.
+  const plain = codex.buildLaunch({ ...base, intent: '', addDirs: [], taskMemory: true });
+  const job = codex.buildLaunch({ ...base, intent: '', addDirs: [], taskMemory: true, automation: true });
+  const jobResume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', taskMemory: true, automation: true, ...memory });
+  assert.doesNotMatch(plain, /Wrangler automated-job step/);
+  assert.doesNotMatch(plain, /- job-worker — /);
+  assert.match(job, /Wrangler automated-job step/);
+  assert.match(job, /- job-worker — /);
+  assert.match(jobResume, /Wrangler automated-job step/);
+});
+
 test('codex resume and fork also carry the nudge + skills catalog in developer_instructions', () => {
   const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', taskMemory: true, ...memory });
   const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', model: 'gpt-5.5', taskMemory: true, ...memory });

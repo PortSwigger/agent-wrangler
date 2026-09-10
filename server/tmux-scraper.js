@@ -206,8 +206,9 @@ export function classify(paneText) {
   if (/oauth\/authorize|select login method|paste code here if prompted/i.test(recent)) return { status: 'needs-you' };
   // The first-launch "do you trust this folder" dialog. It replaces the whole screen
   // and has no "esc to interrupt", so it read as IDLE — a job worker parked on it was
-  // invisible on the board until maxRunMinutes expired. needs-you also keeps the
-  // idle-timer suspend gate off it, like the login screens above.
+  // invisible on the board, and would now be stopped as "finished without a receipt"
+  // once IDLE_RECEIPT_GRACE_MS ran out. needs-you also keeps the idle-timer suspend
+  // gate off it, like the login screens above.
   if (trustDialogState(recent)) return { status: 'needs-you', waitingFor: 'trust dialog' };
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,

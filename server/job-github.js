@@ -1,8 +1,10 @@
 import os from 'node:os';
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { COMMENTS_QUERY, normaliseComments } from './job-comments.js';
+import { inferDeploys } from './job-deploys.js';
 const exec = promisify(execFile);
 export async function runFile(bin, args, cwd) {
   const { stdout } = await exec(bin, args, { cwd: cwd?.startsWith('~/') ? path.join(os.homedir(), cwd.slice(2)) : cwd, timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
@@ -49,6 +51,27 @@ export class JobGithub {
   async comments(sub) {
     const raw = JSON.parse(await this.run('gh', ['api', 'graphql', '-f', `query=${COMMENTS_QUERY}`, '-f', `url=${sub.pr.url}`], sub.repo));
     return normaliseComments(raw?.data?.resource);
+  }
+  // Whether merging this diff into this base starts anything at all, read from
+  // the repo's own workflow files: a sub-job no workflow reacts to is delivered
+  // by the merge itself, and would otherwise watch for a post-merge run GitHub
+  // never queues until the stale flag gives up on it.
+  async deploys(sub, pr) {
+    const files = JSON.parse(await this.run('gh', ['pr', 'view', pr.url || sub.pr.url, '--json', 'files'], sub.repo)).files || [];
+    // The worker pushed from the worktree, so that tree IS the PR head's; the
+    // main checkout is only the fallback for a sub-job whose worktree is gone.
+    const dirs = [sub.worktree?.path, sub.repo].filter(Boolean)
+      .map((dir) => path.join(dir.startsWith('~/') ? path.join(os.homedir(), dir.slice(2)) : dir, '.github', 'workflows'));
+    let workflows = [];
+    for (const dir of dirs) { workflows = this.readWorkflows(dir); if (workflows.length) break; }
+    return { head: pr.head, base: pr.base, ...inferDeploys({ workflows, files: files.map((f) => f.path), base: pr.base }) };
+  }
+  readWorkflows(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { return []; }
+    return entries.filter((f) => /\.ya?ml$/i.test(f)).map((file) => {
+      try { return { file, text: fs.readFileSync(path.join(dir, file), 'utf8') }; } catch { return null; }
+    }).filter(Boolean);
   }
   async missingRequiredChecks(sub, pr, slug) {
     const branch = encodeURIComponent(pr.base);

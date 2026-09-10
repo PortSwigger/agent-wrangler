@@ -996,6 +996,10 @@ export class SessionManager {
       // (claude --resume … -- <intent>), avoiding a paste race against a booting
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
       intent,
+      // A restored job session keeps the job-worker protocol nudge: its prompt is
+      // gone from the relaunch argv, so the step protocol has to ride the always-on
+      // channel or the resumed worker no longer knows how a run ends.
+      automation: Boolean(prev?.automationRun),
       spawnedBy: prev?.spawnedBy,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
@@ -1522,7 +1526,9 @@ export class SessionManager {
       this._save();
       onAutomationPrepared?.(sessionId, worktreeEntry);
     }
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
+    // automation gates the job-worker skill's nudge/catalog entry: only a session
+    // running a job step (and so holding job_report) is given its protocol.
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, automation: Boolean(automationRun), ...memory });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);

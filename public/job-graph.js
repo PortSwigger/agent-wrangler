@@ -17,8 +17,8 @@ import { isSessionSub, kindChipHtml, kindLabel, kindClass, dependencyLevels, dep
 // after anything that can move a box.
 // The per-box dependency editor: one checkbox per other sub-job, `data-dep` naming
 // the edited sub-job (its index in the plan under review, its id on a live job's
-// Change plan form — the caller reads it back either way).
-export const dependencyEditorHtml = (s, others, depKey) => others.map((d) => `<label><input type="checkbox" data-dep="${esc(depKey)}" value="${esc(d.id)}" ${s.dependsOn.includes(d.id) ? 'checked' : ''}>${kindChipHtml(d)}<span>${esc(d.title)}</span></label>`).join('') || '<span>No other sub-jobs</span>';
+// Reorder move — the caller reads it back either way).
+export const dependencyEditorHtml = (s, others, depKey) => others.map((d) => `<label><input type="checkbox" data-dep="${esc(depKey)}" value="${esc(d.id)}" ${s.after.includes(d.id) ? 'checked' : ''}>${kindChipHtml(d)}<span>${esc(d.title)}</span></label>`).join('') || '<span>No other sub-jobs</span>';
 export function planGraphHtml(plan, { editable = false, statusOf = null, openDeps = new Set() } = {}) {
   const subs = plan.subJobs;
   if (!subs.length) return '';
@@ -40,7 +40,7 @@ export function planGraphHtml(plan, { editable = false, statusOf = null, openDep
     return `<button type="button" class="job-node ${kindClass(s)} ${s.stage === 'done' ? 'done' : ''}" data-node="${esc(s.id)}" data-open-sub="${esc(s.id)}">${head}<strong>${esc(s.title)}</strong>${where(s)}${line}<span class="job-status ${esc(status.tone)}"><i></i>${esc(status.text)}</span></button>`;
   };
   const columns = Array.from({ length: waves }, (_, w) => `<div class="job-graph-col"><h4>Wave ${w + 1}</h4>${subs.map((s, i) => levels.get(s.id) === w ? node(s, i) : '').join('')}</div>`).join('');
-  const edges = subs.flatMap((s) => s.dependsOn.filter((id) => levels.has(id)).map((id) => `<path data-from="${esc(id)}" data-to="${esc(s.id)}" marker-end="url(#job-graph-arrow)"/>`)).join('');
+  const edges = subs.flatMap((s) => s.after.filter((id) => levels.has(id)).map((id) => `<path data-from="${esc(id)}" data-to="${esc(s.id)}" marker-end="url(#job-graph-arrow)"/>`)).join('');
   const mixed = subs.some(isSessionSub) && subs.some((s) => !isSessionSub(s));
   const legend = [mixed ? `${kindChipHtml({})} opens a pull request` : '', mixed ? `${kindChipHtml({ kind: 'session' })} runs as an agent session here, no PR` : '', edges ? '<span>Arrows point from a prerequisite to the work that waits on it</span>' : ''].filter(Boolean);
   return `<div class="job-graph ${editable ? 'editable' : ''}">${legend.length ? `<p class="job-graph-legend">${legend.join('')}</p>` : ''}

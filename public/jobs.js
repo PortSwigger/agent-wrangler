@@ -2,12 +2,12 @@ import { esc, tildify } from './util.js';
 import { PULL_REQUEST_ICON, ROBOT_ICON } from './icons.js';
 export const JOB_COLUMNS = [
   ['backlog', 'Backlog', 'Ideas ready to shape'],
-  ['planning', 'PR planning', 'Titles, value and landing order'],
+  ['planning', 'Planning', 'Tickets, PRs and order'],
   ['jira', 'Jira tickets', 'Approved titles become tickets'],
-  ['implementation', 'Local implementation & verification', 'Build together. Verify briefly.'],
-  ['pr', 'PR', 'Checks, repairs and merge'],
-  ['deployment', 'Deployment verification', 'The right version, working live'],
-  ['cleanup', 'Cleanup', 'Leave the workspace tidy'],
+  ['implementation', 'Work & PR', 'One session: work, commit, push, open the PR'],
+  ['pr', 'PR', 'Checks, comments and merge'],
+  ['deployment', 'Landing', 'Post-merge runs, then the check if there is one'],
+  ['cleanup', 'Done', 'Worktree removed'],
 ];
 // A job's second board: sub-jobs that are an agent session on this machine
 // rather than a PR. Queued/Running are one stored stage ('session') split by
@@ -32,11 +32,15 @@ export function kindCountLabel(subJobs) {
   const prs = subJobs.filter((s) => !isSessionSub(s)).length, sessions = subJobs.length - prs;
   return [prs ? `${prs} PR${prs === 1 ? '' : 's'}` : '', sessions ? `${sessions} session${sessions === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
 }
-export const cancelledDependencies = (job, sub) => sub.dependsOn.filter((id) => job.subJobs.find((s) => s.id === id)?.cancelledAt);
+export const cancelledDependencies = (job, sub) => sub.after.filter((id) => job.subJobs.find((s) => s.id === id)?.cancelledAt);
 // Mirrors server/job-store.js dependencySatisfied: a PR counts once deployed, a session once done.
 export const dependencySatisfied = (dep) => isSessionSub(dep) ? dep.stage === 'done' && !dep.cancelledAt : !!dep?.deployed;
-export const pendingDependencies = (job, sub) => sub.dependsOn.map((id) => job.subJobs.find((s) => s.id === id)).filter((d) => !dependencySatisfied(d));
+export const pendingDependencies = (job, sub) => sub.after.map((id) => job.subJobs.find((s) => s.id === id)).filter((d) => !dependencySatisfied(d));
 const liveRun = (job, sub) => job.runs.find((r) => !r.stopped && r.subJobId === (sub?.id || null));
+// The live run's own card status, enriched onto the run server-side each graph
+// tick (server/index.js withRunStatus). 'needs-you' is the one the board acts on:
+// an automated step stuck on a prompt is nobody's but the human's.
+export const runStatus = (job, sub) => liveRun(job, sub)?.status ?? null;
 export const sessionColumn = (job, sub) => sub.stage === 'session' ? (liveRun(job, sub) ? 'running' : 'queued') : sub.stage === 'review' ? 'review' : 'done';
 // undefined: no comments on the PR; null: comments read, verdict still being
 // written (or stale after new comments); otherwise the summary for exactly the
@@ -49,53 +53,123 @@ export const COMMENT_TONE_LABEL = { green: 'All good', amber: 'Needs attention',
 export const redComments = (sub) => commentVerdict(sub)?.tone === 'red';
 // Automatic merge stays on hold while comments read as blocking; approving the
 // displayed head is the human override.
-// A merged sub-job whose named workflow has shown no run at all for longer than
+// A merged sub-job whose post-merge runs have shown nothing at all for longer than
 // the stale window (server job-runner.js): nothing automatic will ever move it,
 // so it is the human's to act on, unlike an ordinary slow deploy.
 export const deploymentStalled = (sub) => sub?.stage === 'deployment' && !!sub.deploymentStale;
 export const mergeHeldByComments = (job, sub) => sub?.stage === 'pr' && !job.reviewMerge && sub.pr?.checkStatus === 'passing' && redComments(sub) && sub.mergeApprovedHead !== sub.pr.head;
-// A pending plan change (server job-amendments.js) is the human's to decide, so
-// it counts under Needs me for the job and for every sub-job it touches — the
-// sub-job it was proposed from included, since that is where "Accept and retry"
-// lives when it arrived on a blocked receipt.
-export const amendmentTargets = (a) => [...new Set([...a.ops.map((o) => o.subJobId), a.subJobId].filter(Boolean))];
-export const pendingAmendments = (job, sub) => (job.amendments || []).filter((a) => a.status === 'proposed' && (!sub || amendmentTargets(a).includes(sub.id)));
-export const decidedAmendments = (job) => (job.amendments || []).filter((a) => a.status !== 'proposed');
-export const AMENDMENT_CLASS_LABEL = { tightening: 'Tightens', weakening: 'Weakens', neutral: 'Neutral' };
-export const AMENDMENT_STATUS_LABEL = { proposed: 'Proposed', accepted: 'Accepted', 'auto-accepted': 'Applied automatically', rejected: 'Rejected', invalid: 'No longer applies' };
-export const AMENDMENT_AUTHORITY_LABEL = { review: 'Plan changes reviewed', 'auto-tighten': 'Tightening auto-applies', auto: 'Plan changes auto-apply' };
-export const amendmentAuthorityLabel = (job) => AMENDMENT_AUTHORITY_LABEL[job.amendmentAuthority] || AMENDMENT_AUTHORITY_LABEL.review;
-export const reviewFlagsLabel = (job) => `${job.reviewCode ? 'Code review on' : 'Code review off'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''} · ${amendmentAuthorityLabel(job)}`;
+export const sessionReviewLabel = (job) => (job.reviewSessions ?? true) ? 'Session review on' : 'Sessions auto-complete';
+export const reviewFlagsLabel = (job) => `${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`;
+// What the merge inference found for this PR's head (server job-deploys.js), in
+// the words the human reads on the card and in the detail: "Deploys on merge · …"
+// or "Merge completes it · …". Absent until the PR exists.
+export const deploysLine = (sub) => sub?.deploys?.summary || '';
+
+// The six moves a human makes by hand when something goes wrong. Agents never
+// apply plan changes: a blocked receipt may only NAME one of these.
+export const MOVES = [
+  { id: 'fix-here', label: 'Fix here', blurb: 'New commit on this PR, with your note.' },
+  { id: 'split-out', label: 'Split out', blurb: 'New PR, same ticket. Lands before or after this one.' },
+  { id: 'new-ticket', label: 'New ticket', blurb: 'New story and PR for scope you didn’t know about.' },
+  { id: 'reorder', label: 'Reorder', blurb: 'Change what this lands after.' },
+  { id: 'drop', label: 'Drop', blurb: 'Cancel this sub-job.' },
+  { id: 'mark', label: 'Mark position', blurb: 'Merged by hand. Deploy confirmed. Already covered elsewhere.' },
+];
+export const moveById = (id) => MOVES.find((m) => m.id === id) || null;
+// Fix here on a sub-job with no PR yet is the same server move (note, then run it
+// again) but promising "a new commit on this PR" would name something that does
+// not exist, so the copy follows the sub-job's stage.
+export function moveCopy(sub, move) {
+  if (move.id !== 'fix-here' || (!isSessionSub(sub) && sub?.stage === 'pr')) return move;
+  return { ...move, label: 'Retry with a note', blurb: isSessionSub(sub) ? 'Run this session again, with your note.' : 'Start the work again, with your note.' };
+}
+// Which "Mark position" claims this sub-job's stage can still accept — mirrors the
+// server's gates so the form never offers a position the move would refuse.
+export function markOptions(sub) {
+  if (!sub || sub.cancelledAt || ['cleanup', 'done'].includes(sub.stage)) return [];
+  const pr = !isSessionSub(sub);
+  return [
+    ...(pr && sub.stage === 'implementation' && !sub.pr ? [{ value: 'pr', label: 'A PR is already open for this work' }] : []),
+    ...(pr && sub.stage === 'pr' ? [{ value: 'merged', label: 'Merged by hand' }] : []),
+    { value: 'done', label: 'Done: deployed, or already covered elsewhere' },
+  ];
+}
+// Mirrors server/job-moves.js: a move the server would refuse is never drawn.
+// Nothing at all once the sub-job is finished, dropped, or already cleaning up.
+export function movesFor(job, sub) {
+  if (!sub || sub.cancelledAt || ['cleanup', 'done'].includes(sub.stage)) return [];
+  const pr = !isSessionSub(sub);
+  const allowed = {
+    'fix-here': ['pr', 'implementation', 'session'].includes(sub.stage),
+    'split-out': pr && ['implementation', 'pr', 'deployment'].includes(sub.stage),
+    'new-ticket': true,
+    reorder: ['implementation', 'pr', 'session'].includes(sub.stage),
+    drop: true,
+    mark: markOptions(sub).length > 0,
+  };
+  return MOVES.filter((m) => allowed[m.id]).map((m) => moveCopy(sub, m));
+}
+// The runner writes these error strings itself, so the short title is derived
+// from them; anything it does not recognise keeps the neutral heading and lets
+// the detail line — the agent's own sentence, or the observation — do the work.
+const prNumber = (sub) => (sub?.pr?.url || '').split('/').filter(Boolean).pop();
+function eventTitle(sub) {
+  if (sub.blocked?.summary && sub.blocked.summary === sub.error) return 'Worker blocked';
+  if (/closed without merging/i.test(sub.error)) return 'PR was closed';
+  if (/repair limit/i.test(sub.error)) return prNumber(sub) ? `Checks failing on #${prNumber(sub)}` : 'Checks failing';
+  if (/^Post-merge run failed/i.test(sub.error)) return 'Post-merge run failed';
+  if (/without a receipt/i.test(sub.error)) return 'Session stopped early';
+  return 'Needs attention';
+}
+// What happened, in one line, plus the move the agent suggested if it named one.
+// `suggested` is only ever the agent's own `blocked.move` — the board never
+// guesses a move on the human's behalf.
+export function eventFor(job, sub) {
+  if (!sub) return job.error ? { title: 'Job needs attention', detail: job.error, suggested: null } : null;
+  if (sub.cancelledAt) return null;
+  const suggested = sub.blocked?.move || null;
+  if (sub.error) return { title: eventTitle(sub), detail: sub.error, suggested };
+  if (deploymentStalled(sub)) return { title: 'Nothing deployed', detail: `No post-merge run has started for merge commit ${(sub.pr?.mergeCommit || '').slice(0, 8)}.`, suggested };
+  if (sub.stage === 'pr' && redComments(sub)) return { title: 'Comments block merging', detail: commentVerdict(sub).text, suggested };
+  return null;
+}
 export function jobNeedsReview(job, sub) {
   if (job.error || sub?.error) return true;
-  if (pendingAmendments(job, sub).length) return true;
+  // A step waiting on a prompt is the human's, whatever else the job is doing.
+  if (runStatus(job, sub) === 'needs-you') return true;
   if (sub && mergeHeldByComments(job, sub)) return true;
   if (!sub) return job.stage === 'planning' && job.plan && !job.runs.some((r) => !r.stopped);
   if (!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return true;
   if (isSessionSub(sub)) return sub.stage === 'review';
   if (deploymentStalled(sub)) return true;
-  return (sub.stage === 'implementation' && sub.local && sub.dependenciesVerified && job.reviewCode && !sub.codeApprovedAt)
-    || (sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && job.reviewMerge && sub.mergeApprovedHead !== sub.pr.head);
+  return sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && job.reviewMerge && sub.mergeApprovedHead !== sub.pr.head;
 }
 export function jobStatus(job, sub) {
   if (job.error || sub?.error) return { tone: 'needs', text: 'Needs attention' };
-  if (sub?.cancelledAt) return { tone: sub.stage === 'done' ? 'done' : 'muted', text: sub.stage === 'done' ? 'Cancelled' : 'Cancelled · cleaning up' };
+  if (sub?.cancelledAt) return { tone: sub.stage === 'done' ? 'done' : 'muted', text: sub.stage === 'done' ? 'Dropped' : 'Dropped · cleaning up' };
   if (job.paused) return { tone: 'muted', text: 'Paused' };
-  if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a cancelled sub-job' };
+  if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a dropped sub-job' };
   const run = liveRun(job, sub);
-  if (run) return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: 'Implementing', publish: 'Opening PR', repair: 'Repairing CI', verify: 'Verifying live', session: 'Working' }[run.phase] || 'Working') };
-  if (pendingAmendments(job, sub).length) return { tone: 'needs', text: 'Plan change proposed' };
+  if (run) {
+    if (run.status === 'needs-you') return { tone: 'needs', text: 'Waiting on a prompt' };
+    return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: 'Working on the PR', repair: 'Fixing the PR', verify: 'Checking it landed', session: 'Working' }[run.phase] || 'Working') };
+  }
+  // A requested fix is a repair the runner picks up on its next tick, so it outranks
+  // whatever the checks currently say.
+  if (sub?.stage === 'pr' && sub.fixRequested) return { tone: 'working', text: 'Fix requested' };
   if (deploymentStalled(sub)) return { tone: 'needs', text: 'No deployment run' };
-  if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Ready for code review' : 'Plan ready to review' };
+  if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Needs you' : 'Plan ready to review' };
   if (!sub) return { tone: 'muted', text: job.stage === 'backlog' ? 'Ready when you are' : job.stage === 'done' ? 'Delivered' : job.stage === 'jira' ? 'Tickets queued' : 'Queued' };
-  // A session prerequisite blocks a build from starting; a PR prerequisite only blocks publishing.
+  // A session prerequisite blocks the work from starting; a PR prerequisite only blocks its merge.
   const waiting = pendingDependencies(job, sub);
-  const blocked = sub.stage === 'session' ? waiting : sub.stage === 'implementation' ? (sub.local ? waiting : waiting.filter(isSessionSub)) : [];
+  const blocked = sub.stage === 'session' ? waiting : sub.stage === 'implementation' ? waiting.filter(isSessionSub) : [];
   if (blocked.length) return { tone: 'muted', text: `Waiting for ${blocked.length} ${blocked.every(isSessionSub) ? 'session' : blocked.some(isSessionSub) ? 'prerequisite' : 'deployment'}${blocked.length === 1 ? '' : 's'}` };
+  // A story added by New ticket has no key until the jira phase runs, and nothing starts without one.
+  if (sub.stage === 'implementation' && !sub.jiraKey) return { tone: 'muted', text: 'Waiting for a Jira ticket' };
   if (sub.observationError) return { tone: 'needs', text: 'Pipeline polling will retry' };
   if (sub.stage === 'pr') return { tone: sub.pr?.checkStatus === 'passing' ? 'working' : 'muted', text: sub.mergeRequestedHead ? 'Merge requested' : sub.pr?.checkStatus === 'awaiting-review' ? 'GitHub review required' : 'Watching checks' };
-  if (sub.stage === 'deployment') return sub.recoveredBy ? { tone: 'muted', text: 'Awaiting fix' } : { tone: 'muted', text: 'Watching deployment' };
-  if (sub.stage === 'done') return sub.recoveryJobId ? { tone: 'muted', text: 'Recovery proposed' } : { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
+  if (sub.stage === 'deployment') return sub.recoveredBy ? { tone: 'muted', text: 'Awaiting fix' } : { tone: 'muted', text: 'Watching post-merge runs' };
+  if (sub.stage === 'done') return { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
   return { tone: 'muted', text: 'Queued' };
 }
 export function jobCards(jobs) {
@@ -105,7 +179,7 @@ export function jobCards(jobs) {
 }
 // "Deploy after" a PR, "after" a session (which must finish before this even starts).
 export function dependencyLine(job, sub) {
-  const deps = sub.dependsOn.map((id) => job.subJobs.find((s) => s.id === id) || { id, title: id });
+  const deps = sub.after.map((id) => job.subJobs.find((s) => s.id === id) || { id, title: id });
   const names = (list) => list.map((d) => d.title).join(' + ');
   if (isSessionSub(sub)) return deps.length ? `After ${names(deps)}` : '';
   const sessions = deps.filter(isSessionSub), prs = deps.filter((d) => !isSessionSub(d));
@@ -126,21 +200,20 @@ export const receiptHtml = (checks = []) => `<ul class="job-receipt">${checks.ma
 export function jobCardHtml({ job, sub }) {
   const status = jobStatus(job, sub);
   const deps = sub ? dependencyLine(job, sub) : '';
+  const deploys = sub ? deploysLine(sub) : '';
   const cost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
-  return `<button class="job-card ${jobNeedsReview(job, sub) ? 'job-card-review' : ''} ${sub?.stage === 'done' ? 'job-card-done' : ''}" data-job="${esc(job.id)}" data-sub="${esc(sub?.id || '')}">
-    <span class="job-card-eyebrow">${sub ? `${kindChipHtml(sub)}${sub.jiraKey ? `<span>${esc(sub.jiraKey)}</span>` : ''}` : esc(job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span>
+  return `<button class="job-card ${jobNeedsReview(job, sub) ? 'job-card-review' : ''} ${eventFor(job, sub) ? 'job-card-event' : ''} ${sub?.stage === 'done' ? 'job-card-done' : ''}" data-job="${esc(job.id)}" data-sub="${esc(sub?.id || '')}">
+    <span class="job-card-eyebrow">${sub ? `${kindChipHtml(sub)}${sub.jiraKey ? `<span>${esc(sub.jiraKey)}</span>` : ''}` : 'JOB'}</span>
     <strong>${esc(sub?.title || job.title)}</strong>
     ${sub ? `<span class="job-card-meta">${isSessionSub(sub) ? 'Agent session on this machine' : esc(tildify(sub.repo).split('/').pop())}</span>` : `<span class="job-card-meta">${job.repos.length ? `${job.repos.length} repositor${job.repos.length === 1 ? 'y' : 'ies'}` : 'Repositories to discover'}</span>`}
     ${deps ? `<span class="job-card-deps">↳ ${esc(deps)}</span>` : ''}
-    ${sub?.local ? `<span class="job-card-receipt">✓ ${sub.local.checks.length} local checks${sub.repairs.length ? ` · ${sub.repairs.length} CI repair${sub.repairs.length === 1 ? '' : 's'}` : ''}</span>` : ''}
-    ${sub?.result ? `<span class="job-card-receipt">✓ ${sub.result.checks.length} check${sub.result.checks.length === 1 ? '' : 's'} reported</span>` : ''}
-    ${sub?.deployed ? `<span class="job-card-receipt">✓ ${sub.deployment ? `${sub.deployed.checks.length} deployment checks` : 'Merged · nothing to deploy'}</span>` : ''}
+    ${deploys ? `<span class="job-card-deploys">${esc(deploys)}</span>` : ''}
+    ${sub?.note ? `<span class="job-card-note">Note: ${esc(sub.note)}</span>` : ''}
     ${commentsLineHtml(sub)}
     ${cost ? `<span class="job-card-cost" title="${esc(SUB_COST_TITLE)}">${esc(cost)}</span>` : ''}
     <span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>
   </button>`;
 }
-export const sessionReviewLabel = (job) => (job.reviewSessions ?? true) ? 'Session review on' : 'Sessions auto-complete';
 // The board header owns the job identity, so a sub-job card never has to carry
 // its job's title itself.
 export function jobBoardHeaderHtml(job) {
@@ -155,7 +228,7 @@ export function jobBoardHeaderHtml(job) {
     working ? `${working} agent${working === 1 ? '' : 's'} working` : '',
     reviewFlagsLabel(job),
   ].filter(Boolean);
-  return `<header class="job-board-header"><div class="job-board-title"><span class="jobs-kicker">${esc(job.recoveryOf ? 'RECOVERY JOB · APPROVAL REQUIRED' : 'JOB')}</span><button class="job-board-open" data-job="${esc(job.id)}" data-sub=""><h2>${esc(job.title)}</h2></button><span class="job-board-meta">${meta.map(esc).join(' · ')}</span></div>
+  return `<header class="job-board-header"><div class="job-board-title"><span class="jobs-kicker">JOB</span><button class="job-board-open" data-job="${esc(job.id)}" data-sub=""><h2>${esc(job.title)}</h2></button><span class="job-board-meta">${meta.map(esc).join(' · ')}</span></div>
     <div class="job-board-side">${cost ? `<span class="job-board-cost" title="${esc(JOB_COST_TITLE)}${job.usdEstimated ? ' · includes an estimate for Codex sessions' : ''}">${esc(cost)}</span>` : ''}<span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${needs ? `<span class="job-board-needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}<button data-pause="${esc(job.id)}" ${job.paused ? 'data-paused="1"' : ''}>${job.paused ? 'Resume job' : 'Pause job'}</button></div></header>`;
 }
 export function commentsLineHtml(sub) {
@@ -170,7 +243,7 @@ export function dependencyLevels(plan) {
     if (levels.has(sub.id)) return levels.get(sub.id);
     if (visiting.has(sub.id)) return 0;
     visiting.add(sub.id);
-    const n = sub.dependsOn.length ? 1 + Math.max(...sub.dependsOn.map((id) => {
+    const n = sub.after.length ? 1 + Math.max(...sub.after.map((id) => {
       const parent = plan.subJobs.find((s) => s.id === id); return parent ? level(parent, new Set(visiting)) : 0;
     })) : 0;
     levels.set(sub.id, n); return n;

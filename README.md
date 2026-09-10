@@ -307,228 +307,127 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 The **Automated jobs** button on the navigation rail opens one Kanban board per
 job for work that spans multiple repositories and PRs. Each board carries the
-job's title, status, pause control and its own seven columns, so sub-jobs from
-different jobs are never mixed in a column:
+job's title, status, price, pause control and its own seven columns, so sub-jobs
+from different jobs are never mixed in a column:
 
-**Backlog → PR planning → Jira tickets → Local implementation & verification →
-PR → Deployment verification → Cleanup**
+**Backlog → Planning → Jira tickets → Work & PR → PR → Landing → Done**
 
-Not every piece of work is a PR. Engineering work is either a PR to a repository
-or an agent session on your machine, so a plan may also contain **session
-sub-jobs**: a one-off script or migration run, a manual console change, an
-investigation whose findings later PRs need. A job whose plan has any gets a
-second lane of columns under its PR lane, **Agent sessions**:
+The plan is tickets, PRs and order. Verification is the same ladder for every
+PR, so nobody writes it into the plan. When something happens, the card shows
+what happened and the six moves you would make by hand. There is nothing else to
+configure.
 
-**Queued → Running → Review → Done**
+### The plan
 
-A session sub-job has no repository or deployment. It runs as a bounded agent
-step in a fresh scratch workspace (checkouts under `~/IdeaProjects` readable,
-never changed), submits a short `completed` receipt and stops; if the work turns
-out to need a repository change it reports blocked instead. It sits in the same
-dependency graph as the PRs, with one difference in meaning: a PR prerequisite
-means *deploy after*, so dependents build in parallel and wait to publish, but a
-session prerequisite is hard: anything depending on a session sub-job waits for
-it to finish before it even starts implementation, since its output is an input.
-A session that depends on a PR starts once that PR has deployed and verified.
-**Review agent-session results** (on by default when creating a job) holds each
-receipt under **Review** and **Needs me** until you approve it or request changes,
-which reruns the session with your feedback; off, a receipt completes it.
-Cancelling a session sub-job archives its session and removes nothing on disk.
+Create a job with the outcome, agent/model and review preferences. Repository
+paths are optional hints. **Start planning** launches a session in a fresh
+planning workspace to discover the repositories needed and propose Jira stories.
+Planning is read-only against Jira: it references existing stories by key and
+suggests titles for new ones, but writes nothing until you have agreed the
+titles and how they map to sub-jobs. Missing repositories are cloned into
+`~/IdeaProjects/<repo>`; existing checkouts are reused without resetting them.
 
-Create a job with the outcome, agent/model, and review preferences. Repository
-paths are optional hints under planning guidance. **Start planning** launches a
-session in a fresh planning workspace to discover the repositories needed and
-propose Jira stories. Planning is read-only against Jira: it references existing
-stories by key and suggests titles for new ones, but writes nothing until you
-have agreed the titles and how they map to sub-jobs. It can find additional repositories beyond any
-hints you provide. Missing repositories are cloned into `~/IdeaProjects/<repo>`;
-existing matching checkouts are reused without resetting them. Planning sessions
-can write to `~/IdeaProjects` for these clones, and implementation still gets a
-dedicated worktree for each sub-job. The plan presents business-value stories,
-proposed PR titles, repository mappings and deployment dependencies in a small
-editable table. Landing waves show what can ship independently. Additional
-planning guidance is configurable when creating the job, and **Request changes**
-sends a refinement without requiring a manual session prompt.
+A plan is a job-level **context** written once (the convention or background
+every worker needs, the way you would write it into a dispatch), a list of
+stories (title plus an existing key, or a project to create it in), and a
+dependency graph of sub-jobs. A sub-job is a **PR** to a repository or an agent
+**session** on your machine, carries a **brief** of at most 500 characters
+written like a dispatch intent, an `after` list, and optionally a one-line
+**check**: a post-landing acceptance the pipeline cannot prove by itself, such as
+"helm list shows auth-staff-dashboard in dev and prod". Nothing in the plan says
+whether a repository deploys or how to verify it. You edit titles and
+dependencies on the graph, then **Approve**; if any story is still a proposal the
+job moves to **Jira tickets**, where a short ticketing session creates exactly
+those stories and reports their keys.
 
-**Approve sub-jobs** authorises the Jira changes and then the implementation. If
-any approved story is still a proposal, the job moves to **Jira tickets**, where a
-short ticketing session creates exactly those stories with the approved titles
-and reports their keys; a plan whose stories all exist already skips the column.
-Implementation then starts. Each sub-job gets its own worktree
-from the fetched remote default branch. Independent builds run together; dependent
-builds can also start together, but must wait for prerequisites to **deploy and
-verify** before publishing. They then run verification again against the deployed
-dependencies. Optional local code review happens after that verification, in
-Wrangler's diff viewer or using the displayed worktree path in your own editor.
-Codex job sessions also receive write access to that repository's Git metadata
-for fetches and commits. The main checkout's source files stay outside this grant,
-and the metadata access survives publishing retries and session resumes.
+### A PR sub-job's life
 
-Review surfaces show brief results, normally 1–3 bullets of a few words:
+One session per PR. It gets a dedicated worktree cut from the fetched remote
+default branch on a placeholder branch, does the work, renames the branch in the
+repository's own convention via the `name_branch` tool, commits, pushes, opens
+the PR and reports the URL. That is the only agent run a healthy PR ever needs.
+A dependency on another PR still means **deploy after**: the worker builds now
+and the PR waits to merge. A dependency on a session sub-job gates the start.
+
+From there Wrangler polls GitHub without an agent. Failed checks, merge
+conflicts and requested changes dispatch a repair session (at most two automatic
+repairs per sub-job by default, then it is your move). The PR's comments are read
+on every poll and a headless Haiku call shades them **green**, **amber** or
+**red**; a red verdict holds an automatic merge until you approve the displayed
+head. Manual merge review is on by default; off, a green mergeable PR merges on
+its own (with `--admin` past a required review once every required check has
+reported). Merge approval is pinned to the head commit and invalidated by a push.
+
+Whether a merge **deploys** is inferred, never asked: when the PR is observed,
+Wrangler reads the repository's workflow files and the PR's changed paths and
+works out which `on: push` workflows would run on the base branch for this diff,
+honouring `branches`, `paths` and `paths-ignore`. The card says so — *Deploys on
+merge · deployment-pipeline* or *Merge completes it · deployment-pipeline ignores
+`**.md`*. A docs-only change to a repository that ignores markdown is delivered
+the moment GitHub reports the merge. A change that deploys moves to **Landing**,
+where Wrangler watches every Actions run GitHub started for the exact merge
+commit; once they pass, the sub-job is delivered, or, if it carries a `check`, a
+short session confirms the change works where it landed and reports. Silence
+past the stale window (30 minutes by default) turns the card amber rather than
+being read as success.
+
+Review surfaces show brief receipts, normally 1–3 bullets of a few words:
 
 ```text
-Commit message proposition: AUTH-123: validate recovery links
-Verified:
 ✓ Build passed
 ✓ Tests passed
 ✓ Expired links rejected
 ```
 
-Routine housekeeping is omitted unless it matters to the review. Commands, logs
-and explanations stay in the session transcript.
+### Events and moves
 
-Checks that require a PR, such as state-backed Terraform plans, appear separately
-under **Still required in PR checks**. They remain required before merge; they do
-not block opening the PR or appear as passed local checks.
+Nothing in a job is a form over the data model. When something happens — a
+worker reports blocked, checks fail and repair gives up, a PR is closed, a
+post-merge run fails, the check fails, comments block merging, nothing deployed —
+the card turns red, its detail shows the **event** (the agent's one-sentence
+summary, or what Wrangler observed), and beneath it the six **moves**:
 
-After local approval (when enabled), a session commits, pushes and opens the PR.
-Wrangler polls GitHub without an agent. Failed checks, requested changes and
-merge conflicts dispatch a repair session; its short **changes** and **verification**
-are retained for review. The default is at most **two automatic repairs per
-sub-job**, then an explicit retry. Manual merge review is on by default; turn it
-off when creating a job to merge automatically once GitHub reports readiness.
-Merge approval is tied to the displayed head commit and invalidated by a push.
+- **Fix here** — a new commit on this PR, with your one-line note for the agent.
+  Before a PR exists it retries the worker with the note.
+- **Split out** — a new PR on the same ticket, landing before or after this one.
+  From a merged sub-job it becomes the fix that must deploy before this one's
+  dependants proceed.
+- **New ticket** — a new story and PR for scope nobody knew about. A keyless story
+  is created by a ticketing session before its PR can start.
+- **Reorder** — change what this sub-job lands after.
+- **Drop** — cancel the sub-job: the running step is stopped, sessions archived,
+  the worktree removed only when its commits are pushed or the branch untouched.
+- **Mark position** — you merged by hand, the deploy is confirmed, or the work is
+  already covered elsewhere. The optional note is kept in the job's move history.
 
-The sub-job also shows the PR's comments: conversation comments, submitted
-reviews and inline review threads (with resolved state), read on every poll.
-A new or repaired PR is first observed ten seconds after its receipt, so
-reviewers and bots posting immediately are in that first read. Whenever the
-comment set changes, a headless Haiku call summarises it and shades the verdict
-**green** (all good), **amber** (needs attention) or **red** (blocks merging);
-its spend is billed to the sub-job's session. A red verdict holds an
-*automatic* merge until you approve the displayed head (the sub-job appears
-under **Needs me**); manual merge review is unaffected. If the summariser
-fails, the verdict is amber with the reason and never blocks a merge.
-When GitHub requires a review, Wrangler can merge with `--admin` once all checks
-pass and GitHub confirms there are no merge conflicts. It checks required status
-checks from branch protection and active rulesets, including checks which have
-not reported yet, and rechecks the PR before using the override. Requested
-changes, missing, failed or pending checks, and any configured Wrangler merge
-approval still block merging. Ordinary merges use GitHub's
-normal protections and merge queue; the admin override merges directly.
+A blocked agent may name the move it suggests; it never applies anything. A
+worker parked on a prompt shows as **Waiting on a prompt** within a graph tick
+and joins **Needs me**; a session that goes idle without reporting is stopped and
+flagged. There is no per-step time limit.
 
-Deployment monitoring uses **GitHub Actions only**, and it **discovers** the
-pipelines rather than being told them: the planner decides only whether merging
-a repository's PR deploys anything, and supplies the checks to perform against
-the running service. Wrangler then watches every Actions run GitHub actually
-started for the **exact merge commit** — pinned to the commit rather than the
-base branch, so a sibling sub-job merging into the same repository minutes later
-can never be mistaken for this one's deployment. PR-triggered runs are excluded
-(they were already judged before the merge), and a skipped run neither blocks nor
-satisfies the watch, since GitHub is saying the workflow did not apply to this
-commit. Once the discovered runs succeed, a session verifies the running version
-and behaviour and submits another short receipt. A failed deployment or behaviour
-check creates one linked recovery job in Backlog: you approve its planning and
-plan before it can publish a fix. Dependencies remain blocked until recovery is
-delivered.
+### Everything else
 
-Nothing running is never read as success — it cannot be told apart from a run
-that has not been queued yet — so silence goes to you instead. A PR that deploys
-nothing (documentation, CI or agent-instruction files, a client library) simply
-has **no deployment**: it counts as deployed the moment GitHub reports the merge,
-releasing anything that depends on it, and any post-merge check belongs in a
-dependent session sub-job. Should a sub-job the plan says *does* deploy see no
-run at all (or only skipped ones) after the stale window (30 minutes by default,
-under Automation settings), the card turns amber with **No deployment run** and
-joins **Needs me**; polling continues in case a run appears, but nothing
-automatic will move it. If the repository genuinely deploys nothing, **Change
-plan** drops its deployment and the merge completes the sub-job.
+Session sub-jobs run in a scratch workspace, may read checkouts under
+`~/IdeaProjects` but never change a repository, and submit a `completed`
+receipt; **Review agent-session results** (on by default) holds each under
+**Review** until you approve or request changes. Cleanup archives the step
+sessions, removes clean worktrees and deletes only branch refs that still match
+the verified commit. An optional setting fast-forwards your clean main checkout
+after delivery. **Agents at once** is shared across every job; polling, waits,
+reviews and cleanup use no agent slots.
 
-An approved plan is not frozen. Only the ledger (receipts, heads, merge commits,
-deployed markers) is append-only; the plan itself can be **amended** through
-typed, reviewable proposals when an agent or you discover mid-flight that it is
-wrong: a named deployment workflow that cannot run for this change, a pending
-check no stage can perform, a missing prerequisite, a deployment that needs new
-work. An amendment is one line of reason plus a list of ops: add a sub-job (to an
-existing story), add or remove a dependency, set or drop a sub-job's deployment
-(dropping it means the merge is the delivery, and a merged sub-job still
-watching for a workflow that will never run is delivered on the spot), rewrite
-its pending PR checks or its instructions (which restarts implementation). A
-sub-job's repository, kind, story and branch are fixed: if one is wrong, cancel
-it and add another. Every op is validated against the plan as it stands, under
-the same rules the plan was approved under, and gated by stage — dependencies
-move until the sub-job merges, instructions and pending checks change only
-before it publishes, the deployment any time before it has deployed.
-
-Agents attach `amendment: {reason, ops}` to any receipt; a **blocked** receipt
-with an amendment is the one-click fix for what blocked it, since accepting it
-also retries the sub-job. Proposals appear on the job as **Proposed changes** —
-plain-language diff lines with who proposed it and why — and on each sub-job
-they touch (there the button reads **Accept and retry** when the receipt was
-blocked); they count under **Needs me**. Accepting re-checks the proposal against
-the job as it is now, so one the job has moved past is marked *no longer
-applies* with the reason rather than forced through, and nothing is applied
-while a step is still running on a sub-job it touches. Each amendment is graded:
-**tightening** only adds a constraint (a wait, a deployment, a pending check),
-**weakening** removes one, and everything else — new sub-jobs, rewritten
-instructions or verification text — is **neutral**. The job's **Plan changes
-proposed by agents** setting (New job, beside the review points, shown with the
-other review flags on the board header) decides what applies without you:
-*Wait for my review* (the default) applies nothing, *Apply automatically when
-they only tighten the plan* applies tightening amendments on the spot, *Apply
-automatically* applies everything. **Change plan** on any unfinished sub-job
-opens the same edits for you — dependencies, whether it deploys on merge and how
-to verify it (or no deployment), pending checks, instructions — and applies at
-once. The job's collapsed **Plan changes** history lists every accepted,
-rejected, automatically applied and expired proposal with its reason and timing.
-
-A failed live verification can also propose its fix inside the same job instead
-of a separate recovery job: the verifying step's blocked receipt adds the fix
-sub-job and marks the failed one as recovered by it, so accepting parks the
-failed sub-job as **Awaiting fix** and delivers it the moment the fix deploys;
-rejecting falls back to the linked recovery job in Backlog.
-
-Cleanup stops and archives the step sessions, removes clean worktrees and deletes
-only local branch refs that still match the verified commit. Dirty worktrees,
-extra commits or branches checked out elsewhere stop cleanup for review. An
-optional setting fast-forwards your main checkout only when it is clean and on
-the PR's base branch. Remote branch deletion follows your repository's GitHub
-settings. The **Show delivered** filter brings back delivered jobs' boards and
-their completed work and receipts.
-
-**Cancel sub-job** (in a sub-job's detail view, before cleanup) skips straight to
-cleanup: the running step is stopped and its receipt ignored, sessions are
-archived, and the worktree is removed only when its commits are already pushed
-or the branch is unchanged. Nothing is merged and an open PR is left for you to
-close. Sub-jobs that deploy after a cancelled one are flagged under **Needs me**
-since they can no longer publish.
-
-**Agents at once** is shared across all automated jobs and covers planning,
-building, publication, repair and deployed verification. Pipeline watching,
-dependency waits, human reviews and cleanup consume no agent slots. Existing
-manually dispatched sessions and schedules remain independent. Automation settings
-also control repair attempts and a per-step time limit (120 minutes by default).
-Pause prevents new steps; current sessions finish and submit their receipts. The
-**Needs me** filter keeps only the boards with plan, code, merge or plan-change
-decisions or blocked work, and the job dropdown shows a single board.
+Job sessions carry the `job-worker` skill, whose always-on nudge (the bounded
+step protocol: work, PR, report, stop) is injected only into automated-job
+sessions. Agents use two MCP tools: `get_job_context()` returns the caller's job
+and run, and `job_report({runId, report})` submits a plan, PR URL, repair
+summary, deployed check, a session's receipt, or a one-sentence blocker with an
+optional suggested move. Receipts allow 1–8 single-line checks of at most 180
+characters.
 
 Requirements: authenticated `gh` with access to the repositories and Actions,
 working Wrangler agent dispatch, and Jira access available to the planning and
-ticketing agents. They use Jira through their own existing tools and authenticated setup,
-including tool discovery, Jira skills, CLIs or API helpers. Wrangler does not
-check server-side Jira credentials or require a separate Jira integration.
-The planner must attempt a query before reporting an access blocker and preserve
-its discovery work for a retry.
-Missing Jira or deployment access produces a visible block instead of fabricated
-tickets or verification. Receipts are agent attestations; Wrangler validates their
-shape, ownership and lifecycle, while GitHub supplies PR/pipeline evidence.
-
-The coordinator persists to `AW_DATA_DIR/jobs.json`. Claims are saved before
-launch and survive service restarts; interrupted launches or sessions that stop
-without a receipt require review and retry instead of silently launching duplicates.
-The feature is available after restarting Wrangler with this code; existing jobs
-and sessions are not migrated into the new flow automatically.
-
-Agent integration uses these MCP tools, automatically available to assigned sessions:
-
-- `get_job_context()` returns the caller's job and assigned run.
-- `job_report({runId, report})` submits a plan, local verification, PR URL, repair
-  summary, deployed verification, a session's completed receipt, or a short blocker. Successful submission ends
-  the step; identical retries are idempotent. Each receipt allows 1–8 single-line
-  checks, at most 180 characters each. Other sessions cannot submit it.
-
-The prompts live in `server/job-prompts.js`; schemas, persistence, coordination,
-GitHub observation and runtime side effects are separate modules under `server/job*`.
-`npm test` covers the lifecycle, restart/error paths, real HTTP MCP/control
-integration, and DOM interactions. DOM tests use Happy DOM as a development-only
-dependency; production adds no new dependency.
+ticketing agents through their own tools. The coordinator persists to
+`AW_DATA_DIR/jobs.json` (version 2; a version 1 file from the first design is
+migrated on load). Claims are saved before launch and survive restarts;
+interrupted launches and sessions that stop without a receipt wait for review
+instead of launching duplicates.

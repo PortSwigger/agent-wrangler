@@ -2983,14 +2983,17 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .job-card:hover { border-color:var(--blue); transform:translateY(-1px); }
 .job-card:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
 .job-card-review { border-left:3px solid var(--snooze); }
+/* A card carrying an event is the one to look at first, so red wins over the
+   amber "needs you" edge — this rule follows it deliberately. */
+.job-card-event { border-left:3px solid var(--red); }
 .job-card-done { opacity:.7; }
 .job-card>strong { font-size:13px; line-height:1.5; overflow-wrap:anywhere; font-weight:600; }
 .job-card-eyebrow { display:flex; align-items:center; gap:7px; font-size:9px; color:var(--fg-subtle); letter-spacing:.06em; text-transform:uppercase; max-width:100%; }
 .job-card-eyebrow>span:not(.job-kind) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.job-card-meta,.job-card-deps,.job-card-receipt,.job-card-cost { font-size:10px; line-height:1.5; color:var(--fg-muted); }
+.job-card-meta,.job-card-deps,.job-card-deploys,.job-card-note,.job-card-cost { font-size:10px; line-height:1.5; color:var(--fg-muted); }
+.job-card-note { color:var(--fg); }
 .job-card-cost { font-variant-numeric:tabular-nums; }
 .job-card-deps { border-top:1px solid var(--border-muted); padding-top:9px; }
-.job-card-receipt { color:var(--green-fg); }
 .job-status { display:inline-flex; align-items:center; gap:6px; font-size:10px; line-height:1.4; color:var(--fg-muted); }
 .job-status i { display:block; flex-shrink:0; width:5px; height:5px; border-radius:50%; background:currentColor; }
 .job-status.needs { color:var(--snooze-fg); }
@@ -3065,7 +3068,8 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-receipt li,.job-checks li { padding:3px 0; overflow-wrap:anywhere; }
 .job-receipt li>span { color:var(--green-fg); margin-right:5px; }
 .job-checks small { color:var(--fg-muted); margin-left:6px; }
-.job-commit { color:var(--fg) !important; background:var(--field-bg); padding:12px; border:1px solid var(--border-muted); border-radius:6px; }
+.job-note,.job-context { color:var(--fg) !important; background:var(--field-bg); padding:12px; border:1px solid var(--border-muted); border-radius:6px; }
+.job-deploys { margin:8px 0 0; }
 .job-actions { display:flex; flex-wrap:wrap; gap:8px; margin:22px 0 12px; }
 .job-more { margin:18px 0; padding:12px; border:1px solid var(--border-muted); border-radius:7px; font-size:12px; color:var(--fg-muted); }
 .job-more summary,.job-dialog summary { cursor:pointer; }
@@ -3080,7 +3084,7 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-footer-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .job-intent { white-space:pre-wrap; }
 .job-pipeline-status { font-size:12px; color:var(--fg-muted); }
-@media(max-width:700px) { #jobs { padding:20px 12px; } .job-board-header { flex-direction:column; } .jobs-cost-note { margin-left:0; } .job-dialog { padding:20px; width:95vw; } .jobs-header h1 { font-size:26px; } .job-form-row { flex-direction:column; gap:0; } }
+@media(max-width:700px) { #jobs { padding:20px 12px; } .job-board-header { flex-direction:column; } .jobs-cost-note { margin-left:0; } .job-dialog { padding:20px; width:95vw; } .jobs-header h1 { font-size:26px; } .job-form-row { flex-direction:column; gap:0; } .job-moves { grid-template-columns:repeat(2,1fr); } }
 @media(prefers-reduced-motion:reduce) { .job-card,button.job-node { transition:none; } }
 .layouts button[data-view=jobs] { position:relative; }
 .jobs-nav-badge { position:absolute; top:0; right:0; min-width:13px; padding:1px 3px; border-radius:5px; background:var(--snooze); color:var(--bar-on); font-size:9px; font-weight:700; line-height:1.3; }
@@ -3113,23 +3117,27 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-card-comments.green { color:var(--green-fg); }
 .job-card-comments.amber { color:var(--snooze-fg); }
 .job-card-comments.red { color:var(--red-fg); }
-/* Plan changes (amendments) reuse the verdict box: amber while a human's decision
-   is pending, green once applied, red when the job moved past it. The class badge
-   says what kind of change it is before the diff lines are read. */
-.job-amendments { display:grid; gap:8px; margin:8px 0; }
-.job-amendment-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
-.job-amendment-class { font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding:1px 6px; border-radius:4px; color:var(--fg-muted); border:1px solid color-mix(in srgb, currentColor 45%, transparent); }
-.job-amendment-class.tightening { color:var(--green-fg); }
-.job-amendment-class.weakening { color:var(--red-fg); }
-.job-amendment-by { font-size:10px; color:var(--fg-muted); }
-.job-amendment .job-amendment-reason { margin:8px 0 0; color:var(--fg); }
-.job-amendment-diff { margin:6px 0 0; padding-left:18px; font-size:12px; line-height:1.6; }
-.job-amendment-diff li { overflow-wrap:anywhere; }
-.job-amendment .job-amendment-note { margin:6px 0 0; }
-.job-amendment .job-actions { margin:12px 0 0; }
-.job-amendment-history summary { font-size:12px; }
-.job-amendment-history .job-amendments { margin-top:12px; }
-.job-amend-deps label>span:last-child { color:var(--fg); }
-/* The fieldset's flex row suits a checkbox beside its words; a textarea wants its label above it. */
-#job-amend-form fieldset label:has(textarea) { flex-direction:column; align-items:stretch; gap:7px; }
+/* An event is what went wrong, in the same danger register as .job-error: a dot,
+   the short title, the agent's own sentence, and the move it named. */
+.job-event { display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:start; margin:18px 0; padding:12px; border-radius:7px; background:var(--danger-bg); border:1px solid var(--danger-border); font-size:12px; }
+.job-event>i { display:block; width:7px; height:7px; margin-top:5px; border-radius:50%; background:var(--red-fg); }
+.job-event b { color:var(--red-fg); }
+.job-event p { margin:6px 0 0; color:var(--fg); }
+.job-event-move { display:inline-block; margin-top:9px; font-size:11px; color:var(--fg-muted); }
+/* The six moves as one grid of equal choices: the human picks, so no move is
+   pre-selected — the one the agent suggested is merely outlined. */
+.job-moves { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:8px 0 4px; }
+.job-move { display:flex; flex-direction:column; align-items:flex-start; gap:5px; width:100%; box-sizing:border-box; padding:11px 12px; text-align:left; background:var(--bg); border:1px solid var(--border-muted); border-radius:8px; color:var(--fg); font:inherit; font-size:12px; cursor:pointer; }
+.job-move:hover { border-color:var(--blue); }
+.job-move:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.job-move b { font-weight:650; }
+.job-move span { font-size:11px; line-height:1.5; color:var(--fg-muted); }
+.job-move.hot { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
+.job-move-deps label>span:last-child { color:var(--fg); }
+/* Every human intervention in the job, newest first, folded away until asked for. */
+.job-moves-history summary { font-size:12px; }
+.job-move-log { list-style:none; padding:0; margin:12px 0 0; font-size:12px; }
+.job-move-log li { display:flex; justify-content:space-between; align-items:baseline; gap:14px; padding:7px 0; border-top:1px solid var(--border-muted); line-height:1.5; overflow-wrap:anywhere; }
+.job-move-log li:first-child { border-top:0; }
+.job-move-log small { flex:none; color:var(--fg-subtle); font-size:10px; }
 .job-dialog .job-error[hidden] { display:none; }

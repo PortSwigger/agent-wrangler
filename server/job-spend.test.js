@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usdByCard, withJobSpend } from './job-spend.js';
+import { usdByCard, withJobSpend, withRunStatus } from './job-spend.js';
 
 // The scan row shape scanAllDaily returns: one row per costed transcript, tagged
 // with the card it was resolved from. estimatedUsd is a dollar slice (Codex), not a flag.
@@ -73,4 +73,26 @@ test('an empty map or a snapshot with no jobs is enriched without throwing', () 
   const { jobs: [job] } = withJobSpend({ jobs: [{ runs: [{ sessionId: 'mine' }], subJobs: [] }] },
     usdByCard({ sessions: [row('mine', { d: day(1) }), row('someone-else', { d: day(50) })] }));
   assert.equal(job.usd, 1);
+});
+
+test('withRunStatus stamps a live run with its card\'s status, and leaves stopped runs alone', () => {
+  const sessions = [{ sessionId: 'a', status: 'needs-you' }, { sessionId: 'b', status: 'working' }, { sessionId: 'c', status: 'idle' }];
+  const { jobs: [job], settings } = withRunStatus({ settings: { concurrency: 2 }, jobs: [{
+    id: 'job1',
+    runs: [
+      { id: 'r1', sessionId: 'a', stopped: false },
+      { id: 'r2', sessionId: 'b', stopped: true },      // finished: its card is archived
+      { id: 'r3', sessionId: 'gone', stopped: false },  // the card was purged
+      { id: 'r4', sessionId: null, stopped: false },    // claimed, not yet launched
+    ],
+  }] }, sessions);
+  assert.deepEqual(job.runs.map((r) => r.status), ['needs-you', undefined, null, undefined]);
+  assert.deepEqual(settings, { concurrency: 2 });
+});
+
+test('withRunStatus survives a graph with no sessions and a snapshot with no jobs', () => {
+  assert.deepEqual(withRunStatus({ jobs: [] }).jobs, []);
+  assert.deepEqual(withRunStatus({}).jobs, []);
+  const { jobs: [job] } = withRunStatus({ jobs: [{ runs: [{ sessionId: 'a', stopped: false }] }] });
+  assert.equal(job.runs[0].status, null);
 });

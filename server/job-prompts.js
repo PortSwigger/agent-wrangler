@@ -1,58 +1,102 @@
+import path from 'node:path';
+
 // The worktree starts on a placeholder branch (job-runtime.js). The session
 // working inside the repository is the one that can read its convention, so
 // the rename is its job, through name_branch — never `git branch -m`, which
 // would leave Wrangler's record (and the PR observer matching on it) behind.
-// Repeated in the publish step because that is where the name reaches origin.
 export const placeholderBranch = (job, sub) => `job-${job.id.slice(-8)}-${sub?.id || 'plan'}`;
 const branchNaming = (job, sub) => (!sub?.worktree?.branch || sub.worktree.branch === placeholderBranch(job, sub))
-  ? `Your worktree branch${sub?.worktree?.branch ? ` (${sub.worktree.branch})` : ''} is a placeholder. Before pushing, name it in THIS repository's own branch-naming convention: read its CLAUDE.md, AGENTS.md or CONTRIBUTING for a stated rule, and look at the names of its existing remote branches and recently merged PRs (git branch -r, gh pr list --state merged) for the pattern actually in use, e.g. "AUTH-123-short-description", "feat/short-description" or "fix/AUTH-123-short-description"; this sub-job's Jira key is ${sub?.jiraKey}. Rename it ONLY with the name_branch MCP tool (never git branch -m), which uses your name verbatim and keeps Wrangler's record of the branch in step. Never reuse an existing branch name and never use main/master.`
+  ? `Your worktree branch${sub?.worktree?.branch ? ` (${sub.worktree.branch})` : ''} is a placeholder. Before pushing, rename it with the name_branch MCP tool (never git branch -m) in THIS repository's own branch-naming convention — read its CLAUDE.md, AGENTS.md or CONTRIBUTING and the names of recently merged PRs; this sub-job's Jira key is ${sub?.jiraKey}. Never reuse an existing branch name, and never main/master.`
   : `Your worktree branch is ${sub.worktree.branch}; keep it.`;
 
-// One outlet for a plan that turns out to be wrong mid-flight, so a worker never
-// has to choose between a prose-only blocked receipt and silently working round
-// the plan. Repeated in each step that can see the plan fail (job-store.js
-// validates the ops; a blocked receipt carrying one is the human's one-click fix).
-const amendmentHint = (sub) => `If the approved plan is wrong in a way you can see — a deployment this repository does not actually perform on merge (or one it does that the plan omits), a pending check no stage can perform, a missing prerequisite, or a deployment that needs new work — attach amendment:{reason:"one line", ops:[...]} to your receipt rather than only describing it in prose; a blocked receipt with an amendment is the human's one-click fix, and the job may be set to apply it at once. Ops (this sub-job is "${sub?.id}"): {op:"set-deployment",subJobId,deployment:{verify}|null} (null: merging completes it), {op:"set-pending-checks",subJobId,pendingChecks:[...]}, {op:"add-dependency"|"remove-dependency",subJobId,dependsOn}, {op:"set-instructions",subJobId,instructions}, {op:"add-sub-job",spec:{id,title,kind,repo,storyId,jiraKey?,dependsOn,instructions,deployment?}} (a new id; reference an existing story with a key or give jiraKey). Repo, kind, story and branch are frozen: if one is wrong, report blocked and say so.`;
+// The receipt is the only thing that advances a job, so every prompt ends with
+// the exact call. `move` is a suggestion the human sees as a pre-selected
+// button on the card; nothing an agent reports ever changes the plan itself.
+const blockedLine = 'Blocked: {kind:"blocked", summary:"one sentence", move?:"fix-here"|"split-out"|"new-ticket"|"reorder"|"drop"|"mark"}.';
+const lines = (...parts) => parts.filter(Boolean).join('\n');
+const afterLine = (job, sub) => `After: ${(sub?.after || []).map((id) => (job.subJobs || []).find((s) => s.id === id)?.title || id).join(' · ') || 'none'}.`;
+const contextLine = (job) => job.plan?.context ? `Context: ${job.plan.context}` : '';
+const heading = (job, sub) => `${sub?.jiraKey ? `${sub.jiraKey} · ` : ''}${job.title}`;
+const noteLine = (sub) => sub?.note ? `Note from the human: ${sub.note}` : '';
+const passingWorkflows = (sub) => (sub?.deploymentResult?.runs || []).filter((r) => r.status === 'passing').map((r) => r.workflow).join(', ');
+
 export function jobPrompt(job, sub, run) {
-  const instructions = {
-    planning: `Split this job into independently verifiable pieces of business value. Each sub-job maps to one repository and eventually one PR. Propose Jira stories whose titles/value describe what users or the business gain, but DO NOT create, edit or transition anything in Jira: this step only suggests titles. The human reviews the titles and how they map to sub-jobs first; a separate ticketing step then creates the approved ones. Search Jira READ-ONLY for existing stories that already cover a piece of value and reference them by their real key; a story you propose as new has no key and, where you can tell, a project (the key prefix, e.g. "AUTH") it should be created in. Never invent ticket keys or print credentials. Preserve existing keys in refinements.
-Query Jira yourself using your existing tools and authenticated setup, just as you would in a normal session. Use tool discovery where available and follow your existing Jira skills, CLI, helpers or API workflow. Jira access belongs to your agent session; it does not depend on Wrangler having a Jira integration or server credentials. Do not infer that Jira is unavailable just because no Jira tool appears in the initial tool list. Try the existing access before reporting a blocker; do not ask the human to install an integration without attempting a query. If an actual Jira search fails, still submit the plan with keyless proposed stories and note the failed search in task memory: the ticketing step will search again before creating anything.
-Discover which repositories this outcome needs. The human may not know them yet: repository hints are optional starting points, and you may find others. Use task memory, Jira references, the user's repository-location guidance and local project directories to locate relevant code. Read applicable AGENTS.md and CLAUDE.md instructions. Use authenticated gh to discover repositories. Reuse a matching existing local checkout; if missing, clone it into ~/IdeaProjects/<repository-name> yourself. Verify the GitHub owner and origin before cloning, never overwrite an existing directory, and inspect an existing destination's origin before using it. Do not clone repositories into this session's scratch/planning workspace. Report the verified absolute ~/IdeaProjects checkout path in the plan so implementation can create its dedicated worktree beside it. Keep existing checkouts unchanged during discovery; do not reset, clean or switch their branches. Do not ask the human to list or clone repositories before investigating. Never invent repository paths.
-For each PR sub-job decide one thing about deployment: does merging this repository's PR deploy anything, or is the merge itself the delivery? Wrangler watches whatever GitHub Actions runs the merge commit actually starts, so you do NOT name workflows — give deployment:{verify} with practical checks against the deployed service, and Wrangler discovers the pipelines. When nothing deploys on merge — documentation, CI or agent-instruction files, a client library, anything whose delivery IS the merge — omit deployment entirely and the sub-job counts as deployed the moment GitHub reports the merge; put any post-merge check for it in a dependent kind:"session" sub-job. If you are unsure whether a repository deploys, look at whether its workflows run on a push to the default branch, and prefer including deployment: a merge that turns out to deploy nothing is flagged for the human, whereas a missed deployment is never verified at all. Dependencies on a PR mean DEPLOY AFTER, not merely merge after. Build work may proceed in parallel. Minimise dependencies and number of PRs while preserving independently deliverable value.
-Not every piece of work is a PR. Work done on the human's machine rather than in a repository (a one-off script or migration run, a manual configuration change in a console, an investigation or spike whose findings later PRs need, a verification that needs local tooling) is a sub-job with kind:"session": no repo and no deployment. It runs as a bounded Wrangler agent session in a scratch workspace on this machine and submits a short receipt; it must never change a repository, which is what a PR is for. A session sub-job may depend on PRs (it starts once they have deployed) and PRs may depend on it: anything depending on a session sub-job waits for it to finish before starting implementation at all, so use that for prerequisites whose output is an input to the code. Every sub-job still maps to a story. Prefer a PR for anything that changes a repository.
-Assign validation to the stage that can actually run it: local tests before publication, PR-triggered GitHub Actions (including state-backed Terraform plans) after opening the PR, and deployed-version checks after deployment. Never require a PR-triggered check before the PR exists. Keep resource replacement, credential stability and other required guarantees in the PR/deployment acceptance criteria; do not weaken them.
-Do not propose branch names: the implementing session names its own branch in its repository's convention once it is working there.
-Submit job_report with kind=plan and plan={stories:[{id,key?,project?,title,value}],subJobs:[{id,title,kind:"pr"|"session",repo,storyId,jiraKey?,dependsOn:[],instructions,deployment:{verify:"checks against deployed service"}}]}. kind defaults to "pr"; a "session" sub-job omits repo and deployment; a "pr" sub-job omits deployment only when nothing deploys on merge, and never names workflows. repo must be the absolute path of the verified local repository checkout. Include all discovered repositories needed for the work in the proposed sub-jobs; the human reviews these mappings before implementation. IDs are short stable strings; dependsOn references sub-job IDs. Instructions contain all implementation context; the human reviews titles, repositories, stories and dependency chains. Preserve existing Jira keys when refining the plan. Do not implement, commit, push or merge, and do not write to Jira.
-Planning guidance: ${job.planningPrompt || 'Prefer the smallest useful independently deployable change.'}
-Previous plan / feedback: ${JSON.stringify({ plan: job.plan || job.previousPlan, feedback: job.feedback })}`,
-    jira: `The human has approved this plan's story titles, their value statements and how each sub-job maps to a story. Make exactly those changes in Jira and nothing else. For every story WITHOUT a key, create one Jira story with the approved title as its summary and the approved value in its description, in the story's project if given, otherwise in the project of the plan's existing stories, task memory or your Jira setup. Search first for an identical existing story so a retry never creates a duplicate; if one exists, reuse its key. Do not reword approved titles, and do not create, edit or transition any other ticket. Stories that already have a key are approved as they are; leave them unchanged.
-Query Jira yourself using your existing tools and authenticated setup, just as you would in a normal session. Use tool discovery where available and follow your existing Jira skills, CLI, helpers or API workflow. Do not infer that Jira is unavailable just because no Jira tool appears in the initial tool list. Never invent ticket keys or print credentials. If a Jira operation fails, submit a short blocked receipt naming the failed operation and the specific help needed; the human can retry this step.
-Approved stories: ${JSON.stringify(job.plan?.stories || [])}
-Submit job_report kind=jira,stories=[{id,key}] naming the real key for every story that lacked one (existing keys may be repeated unchanged). Implementation starts only once every story has a key.`,
-    implementation: `Implement only this sub-job in this dedicated worktree. Fetch before editing.
-${branchNaming(job, sub)}
-Verify with appropriate tests, project checks and a running version where useful. You are authorised to edit locally; leave the changes uncommitted for the optional code review. Dependencies may still be building: use their agreed interfaces, and report honestly what was verified. The coordinator waits for dependencies to deploy before publication.
-Submit job_report kind=local, commitMessage="${sub?.jiraKey}: <short description>", checks=[brief verification results]. If a required check only runs in PR-triggered GitHub Actions, list it separately in pendingChecks=[short descriptions of the PR checks still required]. This includes state-backed Terraform plans that require publication, even if the approved instructions grouped them under implementation validation. Those checks remain required before merge; carry their exact acceptance criteria into the PR description. Do not claim they passed or block merely because the PR does not exist yet. A failed local check or an essential local verification blocked by missing access still requires a blocked receipt. A receipt is mandatory: terminal prose does not advance the job.
-${amendmentHint(sub)}`,
-    publish: `Local verification and any required code approval are complete; required dependencies have deployed. Recheck the approved changes. If new code changes are needed, report blocked for another local implementation/review pass. You are authorised to commit this sub-job on its worktree branch, push it and create its PR. ${branchNaming(job, sub)} Never commit on main/master. Push explicitly to the named worktree branch on origin; never rely on an inherited upstream. Inspect status/untracked files, exclude secrets and unrelated/generated files, follow repository commit conventions and use the proposed Jira-prefixed message. No AI attribution. If the installed auto-pr safe commit/push helpers exist, use them. A concise PR description should state behaviour and verification. Find an existing PR for this branch before creating one, so retrying is safe. Do not merge or wait for CI; the coordinator does that.
-${sub?.local?.pendingChecks?.length ? `Required PR checks still pending: ${JSON.stringify(sub.local.pendingChecks)}. Include these and their acceptance criteria in the PR description; they have not been verified locally. Confirm the PR workflows cover them. If they do not, report blocked instead of claiming publication completes verification.\n` : ''}Submit job_report kind=published,url=<actual GitHub PR URL>.
-${amendmentHint(sub)}`,
-    repair: `Diagnose the failed checks, merge conflicts or requested changes on ${sub?.pr?.url}. Read failed pipeline logs and review comments, fix the cause, rerun relevant verification, commit and push on this worktree branch. You are authorised to update this PR. Never weaken checks to make them green. Never merge. Do not watch CI after pushing: the coordinator polls without an agent.
-Submit job_report kind=repaired,changes=[brief descriptions of what changed],checks=[brief verification results].`,
-    session: `Carry out this sub-job on this machine as a bounded step. It is deliberately not a PR: do not create branches, commit, push or open pull requests. If completing it turns out to require a repository change, submit a blocked receipt describing the change instead of making it. You are in a fresh scratch workspace; checkouts under ~/IdeaProjects are readable for reference and must stay unchanged (no resets, checkouts or edits). Every prerequisite has finished; their receipts are in the dependency contracts above. Never modify production data. Record findings that later work will need in task memory as well as in the receipt. If the sub-job carries feedback from the human's review of a previous attempt, address it.
-Submit job_report kind=completed,checks=[brief results of what was done and how it was verified].`,
-    verify: `The GitHub Actions runs for merge commit ${sub?.pr?.mergeCommit} have succeeded. Verify the actual deployed version and expected behaviour using the checks below. Confirm the running version corresponds to the merged change; report blocked if the environment cannot be reached, version is wrong or behaviour fails. Do not modify the deployment or create a fix PR yourself. The coordinator creates a recovery job with a manual review gate.
-Never modify production data. Run behaviour checks against a playground deployment if one exists, otherwise dev, and confirm that environment runs the merged version. Production may only be observed read-only; if verifying the change would require creating, updating or deleting production data, report blocked instead.
-${sub?.deployment?.verify || ''}
-Submit job_report kind=deployed,checks=[brief verification results, including deployed version confirmation].
-${amendmentHint(sub)} If the deployed behaviour fails and you can name the fix, your blocked receipt may propose it inside this job instead of a separate recovery job: add-sub-job{spec} for the fix PR plus {op:"set-recovered-by",subJobId:"${sub?.id}",fixSubJobId:<the new id>}, so this sub-job counts as deployed once the fix deploys.`,
+  const report = (body, lead = '') => `${lead}job_report {runId:"${run.id}", ${body}}. ${blockedLine}`;
+  const prompts = {
+    planning: lines(
+      `Plan this job: ${job.title}`,
+      '',
+      `Goal: ${job.intent}`,
+      `Repository hints (optional; discover others as needed): ${JSON.stringify(job.repos || [])}`,
+      `Planning guidance: ${job.planningPrompt || 'Prefer the smallest useful independently deployable change.'}`,
+      '',
+      'Split the goal into Jira stories and the sub-jobs that deliver them. A "pr" sub-job is one repository, one PR, one session: it works, commits, pushes and opens the PR. A "session" sub-job is work on this machine that is not a repository change (a one-off script or migration run, a console change, a spike whose findings later PRs need): no repo, a scratch workspace, a short receipt. Prefer a PR for anything that changes a repository.',
+      'Search Jira READ-ONLY with your own tools and authenticated setup — do not infer Jira is unavailable because no Jira tool is listed. Reference an existing story by its real key; propose a new one with no key and, where you can tell, its project (the key prefix). Never invent keys or print credentials, and create, edit or transition NOTHING: the human approves the titles first and a separate step creates them.',
+      'Discover the repositories yourself: task memory, Jira references and local checkouts. Reuse a matching checkout; if one is missing, verify the GitHub owner and origin and clone it into ~/IdeaProjects/<repository-name> — never into this workspace, never over an existing directory. Leave every checkout unchanged (no reset, clean or branch switch). Report the verified absolute path so implementation can cut its own worktree beside it.',
+      'Write `context` ONCE for the whole job (≤2000 chars), the way a human writes a dispatch: the shared background, conventions and constraints every worker needs. Write each `brief` like a dispatch intent (≤500 chars) that refers to the context rather than repeating it.',
+      'Never describe deployments or verification steps: Wrangler reads the repository\'s own workflows to decide whether a merge deploys, and watches whatever GitHub starts. Give `check` (one line) ONLY when the pipeline cannot prove the change works where it lands, e.g. "helm list shows auth-staff-dashboard in dev and prod". A session sub-job has no check — its receipt is its check.',
+      '`after` on a PR means DEPLOY AFTER; `after` on a session means START AFTER (its output is an input). Minimise both dependencies and PRs while keeping each piece independently deliverable. Do not propose branch names: the implementing session names its own.',
+      job.plan || job.previousPlan || job.feedback ? `Previous plan / feedback: ${JSON.stringify({ plan: job.plan || job.previousPlan, feedback: job.feedback })}` : '',
+      '',
+      report('kind:"plan", plan:{context, stories:[{id,key?,project?,title}], subJobs:[{id,title,kind:"pr"|"session",repo,storyId,jiraKey?,after:[],brief,check?}]}'),
+    ),
+    jira: lines(
+      `Create the approved Jira stories for: ${job.title}`,
+      '',
+      'The human approved these titles and how each maps to a sub-job. Make exactly those changes and nothing else. For every story WITHOUT a key, create one story with the approved title as its summary (its description is that title, or nothing), in the story\'s project if given, otherwise the project of the plan\'s existing stories or your Jira setup. Search first so a retry never duplicates one; reuse an existing identical story\'s key. Do not reword approved titles, and do not touch any other ticket. Query Jira with your own tools and authenticated setup; never invent keys or print credentials.',
+      `Approved stories: ${JSON.stringify(job.plan?.stories || [])}`,
+      '',
+      report('kind:"jira", stories:[{id,key}]'),
+    ),
+    implementation: lines(
+      heading(job, sub),
+      '',
+      contextLine(job),
+      '',
+      `This PR (${sub?.repo ? path.basename(sub.repo) : 'this repository'}): ${sub?.brief}`,
+      sub?.check ? `Check after it lands: ${sub.check}` : '',
+      afterLine(job, sub),
+      noteLine(sub),
+      branchNaming(job, sub),
+      '',
+      report('kind:"published", url:"<PR url>"', 'Commit, push, open the PR, then '),
+    ),
+    repair: lines(
+      heading(job, sub),
+      '',
+      `Fix PR ${sub?.pr?.url} on this worktree branch: ${sub?.fixRequested ? `the human asks: ${sub.fixRequested.note || 'take another pass at it'}` : 'failing checks, merge conflicts or requested changes'}.`,
+      contextLine(job),
+      '',
+      'Read the failed logs and review comments, fix the cause, rerun what is relevant, commit and push. Never weaken checks; never merge.',
+      '',
+      report('kind:"repaired", changes:["what changed"], checks:["what you verified"]'),
+    ),
+    verify: lines(
+      heading(job, sub),
+      '',
+      `PR ${sub?.pr?.url} merged as ${sub?.pr?.mergeCommit}; post-merge runs passed${passingWorkflows(sub) ? ` (${passingWorkflows(sub)})` : ''}.`,
+      `Confirm: ${sub?.check}`,
+      '',
+      'Read-only against production; use a playground or dev where behaviour must be exercised, and confirm that environment runs the merged version. Do not change the deployment. Never modify production data — report blocked instead.',
+      '',
+      report('kind:"deployed", checks:["what you confirmed"]'),
+    ),
+    session: lines(
+      heading(job, sub),
+      '',
+      contextLine(job),
+      '',
+      `This session: ${sub?.brief}`,
+      afterLine(job, sub),
+      noteLine(sub),
+      sub?.feedback ? `Feedback on your previous attempt: ${sub.feedback}` : '',
+      '',
+      'Do it on this machine in this scratch workspace; no repository changes (report blocked if one is needed); checkouts under ~/IdeaProjects are read-only reference. Never modify production data. Record findings later work needs in task memory.',
+      '',
+      report('kind:"completed", checks:["what you did and how you know"]'),
+    ),
   };
-  return `You are a Wrangler automated-job session for the ${run.phase} step. Complete this bounded step, submit its structured receipt, then stop. Do not spawn other sessions/agents, schedule wake-ups, poll pipelines, or perform later steps; Wrangler controls concurrency and review gates. Keep final output under 8 short lines. Never claim a check you did not perform.
-Write verification receipts like a developer updating another developer: normally 1–3 bullets, each a few words. Use plain results such as "Build passed", "Tests passed" or "Expired links rejected". Combine related checks and omit routine housekeeping unless it affects the decision; if fetching matters, "Fetched origin/main" is enough. Keep commands, paths, logs, counts and explanations in the session transcript unless essential to understand a result. Add detail only for a meaningful limitation or acceptance criterion; keep pending checks explicit. Apply the same brevity to repair summaries and final output.
-Use the job_report MCP tool with runId="${run.id}" and report as described below. If blocked, submit {kind:"blocked",summary:"one short actionable sentence"}. Call get_job_context to recover context if needed. A successful report ends the run; save all files before submitting. Reports may be retried identically after a connection error.
-Job: ${job.title}
-Goal: ${job.intent}
-${run.phase === 'planning' ? 'Repository hints (optional; discover others as needed)' : 'Plan repositories'}: ${JSON.stringify(job.repos || [])}
-${sub ? `Approved sub-job: ${JSON.stringify(sub)}\nRelated stories: ${JSON.stringify(job.plan.stories)}\nDependency contracts: ${JSON.stringify((job.subJobs || []).filter((s) => sub.dependsOn?.includes(s.id)).map(({ id, title, kind, repo, instructions, deployed, result, worktree }) => ({ id, title, kind, repo, instructions, deployed, result, worktree })))}` : ''}
-${instructions[run.phase]}`;
+  // A version-1 `publish` run still live across the upgrade wants exactly what
+  // implementation now says: commit, push, open the PR, report the url.
+  return prompts[run.phase] || prompts.implementation;
 }

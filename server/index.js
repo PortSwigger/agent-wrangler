@@ -48,7 +48,7 @@ import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
 import { cachedScan } from './usage-scan-memo.js';
-import { usdByCard, withJobSpend } from './job-spend.js';
+import { usdByCard, withJobSpend, withRunStatus } from './job-spend.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
@@ -86,6 +86,9 @@ const jobStore = new JobStore();
 const jobRunner = new JobRunner({ store: jobStore,
   runtime: new JobRuntime({ sessionManager, memoryStore, taskStore }),
   github: new JobGithub(), onChange: () => rebuild(),
+  // No clock ends a run; a worker that stopped WORKING without a receipt does.
+  // The board's own status is the only place that distinction exists.
+  statusOf: (sid) => lastGraph?.sessions?.find((s) => s.sessionId === sid)?.status ?? null,
 });
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops
@@ -575,6 +578,7 @@ async function rebuildOnce() {
   graph.tasks = taskStore.snapshot();
   graph.jobs = withJobSpend(jobStore.snapshot(), jobSpendByCard);
   refreshJobSpendIfStale(graph.jobs.jobs);
+  graph.jobs = withRunStatus(graph.jobs, graph.sessions);
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   // Annotate each task with whether it has memory so tiles can render the dot
   // without fetching content.

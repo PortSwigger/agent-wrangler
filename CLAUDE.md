@@ -1271,20 +1271,56 @@ don't re-derive it.
 
 ## Automated jobs
 
-- `JobStore` (`server/job-store.js`) owns `jobs.json`; `JobRunner` claims before
-  dispatch and only releases a concurrency slot after the reporting session has
-  stopped. `SessionManager.dispatch` persists `automationRun` and invokes
-  `onAutomationPrepared` **before** `_newSession`, so a fast MCP report has an
-  owner and a restart cannot replay an uncertain launch. Preserve this marker on
-  resume. An interrupted claim blocks for review rather than guessing.
+- `JobStore` (`server/job-store.js`) owns `jobs.json` (**version 2**; a version-1
+  file from the first design is migrated in memory by `migrateJobs` and written
+  back on the next mutation — never refuse-and-discard it, it holds live claims
+  and receipts). `JobRunner` claims before dispatch and only releases a
+  concurrency slot after the reporting session has stopped. `SessionManager.dispatch`
+  persists `automationRun` and invokes `onAutomationPrepared` **before**
+  `_newSession`, so a fast MCP report has an owner and a restart cannot replay an
+  uncertain launch. Preserve this marker on resume. An interrupted claim blocks
+  for review rather than guessing.
+- **The plan is tickets, PRs and order — nothing else.** A plan carries a job-level
+  `context`, stories (title + optional key), and sub-jobs with `brief` (≤500 chars),
+  `after` and an optional one-line `check`. It never says whether a repository
+  deploys or how to verify: verification is the same ladder for every PR (checks
+  green → merged → post-merge runs green if this repo deploys for this diff → the
+  `check`, if any, confirmed by a short `verify` run). Whether a merge deploys is
+  **inferred** (`server/job-deploys.js`, pure; `JobGithub.deploys` does the IO)
+  from the repository's `on: push` workflow triggers × the PR's changed paths,
+  re-inferred per head, and carried as `sub.deploys.summary` on the card. Don't
+  reintroduce a plan field for it — the first design's planner guessed it wrong
+  for every docs-only repo and each wrong guess cost a typed amendment.
+- **One session per PR** (`implementation` phase: work, commit, push, open the PR,
+  report `published`). There is no local receipt, publish step, code-approval gate
+  or dependency re-verification; code review happens on the PR. A PR dependency
+  gates the MERGE (deploy-after), a session dependency gates the LAUNCH.
+- **Agents never change the plan; humans make MOVES.** The six moves (`fix-here`,
+  `split-out`, `new-ticket`, `reorder`, `drop`, `mark`) are validated and applied
+  by the pure `server/job-moves.js` and recorded in `job.moves`; a blocked receipt
+  may carry a one-word `move` hint, which is shown as a suggestion and never
+  applied. `split-out` from a MERGED sub-job sets `recoveredBy` (the fix must
+  deploy before this one's dependants proceed) — that field survives from the
+  first design and is the only remnant of it; there is no recovery job.
+  `new-ticket` may add a keyless story, which is why the runner launches a `jira`
+  phase while the job is `active`, not only in the `jira` stage.
+- **No per-step time limit.** A worker parked on a prompt is surfaced as needs-you
+  (live runs are stamped with their card's status by `withRunStatus` in
+  `index.js`; the runner reads the same via its `statusOf` option), and a run
+  whose session sits `idle` past `IDLE_RECEIPT_GRACE_MS` without a receipt is
+  stopped and flagged. Both replace the 120-minute timeout, which mostly fired on
+  sessions waiting for a human.
+- **The bounded-step protocol lives in the `job-worker` skill, not the intent.**
+  Its `WRANGLER.md` nudge is injected ONLY into automated-job sessions
+  (`AUTOMATION_ONLY` in `agent-skills.js`, threaded as `automation` from
+  dispatch/resume through the adapters); a job intent is a dispatch a human could
+  have typed plus the exact `job_report` call. Adding protocol sentences back into
+  `job-prompts.js` is the failure mode this exists to prevent.
 - Job sessions are excluded from the legacy PR poll/nudge/auto-merge loop; their
   coordinator owns those actions. Their MCP registry omits spawning/scheduling
-  tools, and archive skips the optional paid memory review. This prevents hidden
-  work outside the job concurrency and repair limits.
-- Review approvals refer to an immutable local receipt id or GitHub head SHA;
-  plan approval uses its displayed revision. Dependencies gate **deployment**,
-  and work verified before a dependency deploys gets reverified before review or
-  publication. `job_report` is an attestation, not inferred terminal prose.
+  tools, and archive skips the optional paid memory review.
+- Merge approval refers to a GitHub head SHA; plan approval uses its displayed
+  revision. `job_report` is an attestation, not inferred terminal prose.
 - Automated jobs may bypass `REVIEW_REQUIRED` with `--admin` after green checks
   and confirmed mergeability. Re-observe before the override and retain the
   approved head match; `--admin` also bypasses GitHub's check enforcement.
@@ -1294,7 +1330,6 @@ don't re-derive it.
 - Implementation creates worktrees from a fetched remote default ref (`worktreeBase`),
   never the main checkout's possibly local HEAD. Cleanup compare-deletes only the
   verified ref value; squash-merged branches cannot be tested with `branch -d`.
-- GitHub Actions deployments must match every explicitly selected workflow on
-  the exact merge commit/base branch. A missing/skipped run stays unverified.
-  The recovery job and backlink are one store mutation, preventing duplicate
-  recovery proposals on restart.
+- Post-merge runs are watched on the exact merge commit, never `--branch`; a
+  missing or skipped run is never success (silence past the stale window goes to
+  the human as an event, whose move is usually Mark position).

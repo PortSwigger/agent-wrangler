@@ -2,9 +2,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
-import { jobInputSchema, settingsSchema, planSchema, reportSchema, amendmentSchema, isSessionSub, storiesKeyed } from './jobs-schema.js';
+import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub, storiesKeyed } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
-import { validateAmendment, describeAmendment, authorityPermits } from './job-amendments.js';
+import { applyMove, MOVE_ACTIONS } from './job-moves.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
@@ -12,32 +12,73 @@ export const runnable = (run) => run && !run.stopped;
 // A PR dependency is satisfied once deployed; a session dependency once its
 // receipt was accepted through to done (a cancelled one never satisfies).
 export const dependencySatisfied = (dep) => isSessionSub(dep) ? dep.stage === 'done' && !dep.cancelledAt : !!dep?.deployed;
-export const dependenciesSatisfied = (job, sub) => sub.dependsOn.every((id) => dependencySatisfied(job.subJobs.find((s) => s.id === id)));
-// Session prerequisites gate the START of a dependent; PR prerequisites only gate publishing.
-export const sessionDependenciesDone = (job, sub) => sub.dependsOn.every((id) => { const d = job.subJobs.find((s) => s.id === id); return !isSessionSub(d) || dependencySatisfied(d); });
+export const dependenciesSatisfied = (job, sub) => sub.after.every((id) => dependencySatisfied(job.subJobs.find((s) => s.id === id)));
+// Session prerequisites gate the START of a dependent; PR prerequisites only gate merging.
+export const sessionDependenciesDone = (job, sub) => sub.after.every((id) => { const d = job.subJobs.find((s) => s.id === id); return !isSessionSub(d) || dependencySatisfied(d); });
 const reviewSessions = (job) => job.reviewSessions ?? true;
 const planRepos = (plan) => [...new Set(plan.subJobs.filter((s) => !isSessionSub(s)).map((s) => s.repo))];
-// The one place a plan entry becomes a live sub-job, so one approved with the plan
-// and one added later by an amendment are indistinguishable to the runner.
+// The one place a plan entry becomes a live sub-job, so one approved with the
+// plan and one added later by a move are indistinguishable to the runner. A
+// keyless story leaves `jiraKey` null: New ticket's Jira step fills it in, and
+// the sub-job cannot start until it has one.
 export function buildSubJob(plan, s) {
-  const jiraKey = s.jiraKey || plan.stories.find((t) => t.id === s.storyId).key;
+  const jiraKey = s.jiraKey || plan.stories.find((t) => t.id === s.storyId)?.key || null;
   return { ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued', jiraKey,
-    repairs: [], sessions: [], local: null, pr: null, prComments: null, commentSummary: null, deploymentResult: null, result: null };
+    repairs: [], sessions: [], pr: null, prComments: null, commentSummary: null, deploys: null,
+    deploymentResult: null, result: null, note: null, fixRequested: null, blocked: null };
 }
 function activate(j) {
   j.subJobs = j.plan.subJobs.map((s) => buildSubJob(j.plan, s));
   j.stage = 'active';
 }
-export const MERGE_IS_DELIVERY = 'Merged; nothing deploys from this repository';
+export const MERGE_IS_DELIVERY = 'Merged; nothing runs on push for these paths';
+export const CURRENT_VERSION = 2;
+
+const drop = (obj, ...keys) => { for (const k of keys) delete obj[k]; };
+// Version 1 named the plan's edges `dependsOn` and its text `instructions`, and
+// carried the whole verification vocabulary the runner now infers (deployment,
+// local receipts, code approval) plus amendments and recovery jobs. Migration is
+// in memory and persisted by the next ordinary write, so a downgrade before then
+// still finds its own file. Legacy text may exceed today's caps — it is NOT
+// truncated, because the cap is a rule for what a planner may propose, not a
+// reason to damage work already approved.
+function migrateSub(s) {
+  s.after = s.after || s.dependsOn || [];
+  s.brief = s.brief || s.instructions || s.title;
+  drop(s, 'dependsOn', 'instructions', 'deployment', 'local', 'dependenciesVerified', 'codeApprovedAt', 'recoveryJobId', 'recoveryReason');
+  // It had a local receipt and was waiting to publish; one implementation
+  // session now commits, pushes and opens the PR from that same worktree.
+  if (s.stage === 'implementation' && s.state === 'verified') s.state = 'queued';
+  return s;
+}
+function migratePlan(plan) {
+  if (!plan) return plan;
+  plan.context = plan.context ?? '';
+  for (const story of plan.stories || []) drop(story, 'value');
+  for (const s of plan.subJobs || []) migrateSub(s);
+  return plan;
+}
+export function migrateJobs(raw) {
+  if (!raw) return null;
+  if (![1, CURRENT_VERSION].includes(raw.version) || !Array.isArray(raw.jobs)) throw new Error('Unsupported jobs.json; refusing to discard jobs');
+  const data = structuredClone(raw);
+  data.version = CURRENT_VERSION;
+  if (data.settings) drop(data.settings, 'maxRunMinutes');
+  for (const job of data.jobs) {
+    drop(job, 'reviewCode', 'amendmentAuthority', 'amendments', 'recoveryOf');
+    migratePlan(job.plan); migratePlan(job.previousPlan);
+    for (const s of job.subJobs || []) migrateSub(s);
+  }
+  return data;
+}
 
 // Only this store writes jobs. Mutations validate a copy and persist it BEFORE
 // replacing memory, so failed validation/disk writes cannot half-approve a job.
 export class JobStore {
   constructor(file = path.join(DATA_DIR, 'jobs.json')) {
     this.file = file;
-    const raw = readJsonOrLoud(file, 'jobs.json');
-    if (raw && (raw.version !== 1 || !Array.isArray(raw.jobs))) throw new Error('Unsupported jobs.json; refusing to discard jobs');
-    this.data = raw || { version: 1, settings: settingsSchema.parse({}), jobs: [] };
+    this.data = migrateJobs(readJsonOrLoud(file, 'jobs.json'))
+      || { version: CURRENT_VERSION, settings: settingsSchema.parse({}), jobs: [] };
   }
   snapshot() { return structuredClone(this.data); }
   get(id) { return structuredClone(this.data.jobs.find((j) => j.id === id)); }
@@ -61,13 +102,13 @@ export class JobStore {
   }
   create(input, extra = {}) {
     const job = { ...jobInputSchema.parse(input), id: uid('job'), stage: 'backlog', revision: 0,
-      createdAt: Date.now(), updatedAt: Date.now(), paused: false, plan: null, subJobs: [], runs: [], ...extra };
+      createdAt: Date.now(), updatedAt: Date.now(), paused: false, plan: null, subJobs: [], runs: [], moves: [], ...extra };
     return this.change((d) => { d.jobs.push(job); return job; });
   }
   // Approval authorises two things in order: the Jira changes (only if a story
   // still needs a ticket; a fully-keyed plan has nothing to write) and then the
   // implementation. Sub-jobs are only built once every story has its key, since a
-  // sub-job's commit-message prefix and card eyebrow are that key.
+  // sub-job's card eyebrow and branch name are that key.
   approvePlan(id, revision, editedPlan) {
     return this.update(id, (j) => {
       if (j.revision !== revision) throw new Error('The plan changed. Review the latest version before approving.');
@@ -79,30 +120,21 @@ export class JobStore {
       if (storiesKeyed(plan)) activate(j); else j.stage = 'jira';
     });
   }
-  action(id, action, { subJobId, revision, feedback, plan, head, localReceiptId, sessionReceiptId, reason, ops, amendmentId } = {}) {
+  // Every action carries its own fields on the control message, so the payload
+  // rides through whole: a move's shape is job-moves.js's business, not a fixed
+  // parameter list here.
+  action(id, action, payload = {}) {
+    const { subJobId, revision, feedback, plan, head, sessionReceiptId } = payload;
     if (action === 'approve-plan') return this.approvePlan(id, revision, plan);
     return this.update(id, (j) => {
       const s = subJobId ? j.subJobs.find((s) => s.id === subJobId) : null;
       if (subJobId && !s) throw new Error('Sub-job not found');
-      // A human's plan change is proposed and applied in one step: the proposer is
-      // the reviewer. It still goes through the same validation and record as an
-      // agent's, so the history reads the same whoever asked.
-      if (action === 'propose-amendment') {
-        const a = this._propose(j, amendmentSchema.parse({ reason, ops }), 'human', s?.id || null);
-        this._applyAmendment(j, a, 'accepted');
-        return;
-      }
-      if (action === 'accept-amendment' || action === 'reject-amendment') {
-        const a = (j.amendments || []).find((x) => x.id === amendmentId);
-        if (!a || a.status !== 'proposed') throw new Error('No pending plan change with that id');
-        a.decidedAt = Date.now();
-        if (action === 'reject-amendment') { a.status = 'rejected'; a.feedback = String(feedback || '').trim().slice(0, 8000) || undefined; return; }
-        // Re-judged against the job as it is NOW, not as it was proposed: a
-        // proposal the job has moved past is recorded as invalid with the reason,
-        // rather than thrown away or forced through.
-        const check = validateAmendment(j, a.ops);
-        if (!check.ok) { a.status = 'invalid'; a.error = check.error; return; }
-        this._applyAmendment(j, a, 'accepted', check);
+      // `cancel` is Drop's old name and still arrives from an older board.
+      const move = action === 'cancel' ? 'drop' : action;
+      if (MOVE_ACTIONS.has(move)) {
+        const { detail } = applyMove(j, s, move, payload, { now: Date.now(), buildSubJob });
+        if (j.plan) j.repos = planRepos(j.plan);
+        (j.moves ||= []).push({ id: uid('mv'), at: Date.now(), subJobId: s.id, move, note: payload.note || null, detail });
         return;
       }
       if (action === 'pause') { j.paused = true; return; }
@@ -121,34 +153,15 @@ export class JobStore {
         const target = s || j;
         if (!target.error) throw new Error('Nothing is blocked');
         if (j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null))) throw new Error('The previous session is still stopping');
-        target.error = null;
+        target.error = null; target.blocked = null;
         if (s) { s.state = s.cancelledAt ? 'cancelled' : 'queued'; s.repairAllowance = (s.repairAllowance || 0) + 1; }
         return;
-      }
-      if (action === 'cancel') {
-        if (!s) throw new Error('Choose a sub-job to cancel');
-        if (s.stage === 'cleanup' || s.stage === 'done') throw new Error('Sub-job has already finished');
-        // Straight to cleanup. The runner stops any live step; nothing merged, so
-        // cleanup keeps every commit it cannot prove is retained elsewhere.
-        s.cancelledAt = Date.now(); s.stage = 'cleanup'; s.state = 'cancelled';
-        s.error = null; s.observationError = null; s.recoveryJobId = null; return;
-      }
-      if (action === 'revise-code') {
-        if (!s || s.stage !== 'implementation' || activeForSub(j, s)) throw new Error('Wait for the local session to stop');
-        s.feedback = String(feedback || '').trim().slice(0, 8000);
-        if (!s.feedback) throw new Error('Explain the requested code change');
-        s.local = null; s.error = null; s.codeApprovedAt = null; s.dependenciesVerified = false;
-        return;
-      }
-      if (action === 'approve-code') {
-        if (!s?.local || s.local.receiptId !== localReceiptId || !s.dependenciesVerified || s.stage !== 'implementation' || s.error) throw new Error('Local verification is not ready');
-        s.codeApprovedAt = Date.now(); return;
       }
       if (action === 'revise-session') {
         if (!isSessionSub(s) || s.stage !== 'review' || activeForSub(j, s)) throw new Error('The session result is not ready for review');
         s.feedback = String(feedback || '').trim().slice(0, 8000);
         if (!s.feedback) throw new Error('Explain the requested change');
-        s.result = null; s.error = null; s.stage = 'session'; s.state = 'queued';
+        s.result = null; s.error = null; s.blocked = null; s.stage = 'session'; s.state = 'queued';
         return;
       }
       if (action === 'approve-session') {
@@ -162,58 +175,6 @@ export class JobStore {
       }
       throw new Error('Unknown job action');
     });
-  }
-  _propose(j, { reason, ops }, proposedBy, subJobId) {
-    const check = validateAmendment(j, ops);
-    if (!check.ok) throw new Error(check.error);
-    const a = { id: uid('amd'), reason, proposedBy, subJobId, ops, classification: check.classification, summary: describeAmendment(j, ops), status: 'proposed', proposedAt: Date.now() };
-    (j.amendments ||= []).push(a);
-    return a;
-  }
-  // Applies an amendment that has already validated against THIS job state.
-  // Refuses while a run is live on a targeted sub-job (mirrors revise-code): the
-  // session is working to the plan it was launched with, and its receipt would
-  // land on a plan it never saw. The reporting run of a receipt that carries the
-  // amendment is exempt — it has reported, so it is finishing, not working.
-  _applyAmendment(j, a, status, check = validateAmendment(j, a.ops), { ignoreRunId = null } = {}) {
-    if (!check.ok) throw new Error(check.error);
-    const targets = new Set([...check.targets, a.subJobId].filter(Boolean));
-    if (j.runs.some((r) => runnable(r) && r.id !== ignoreRunId && targets.has(r.subJobId))) throw new Error('Wait for the session to stop before changing its plan');
-    const now = Date.now();
-    const both = (id, fn) => { fn(j.subJobs.find((x) => x.id === id)); const p = j.plan.subJobs.find((x) => x.id === id); if (p) fn(p); };
-    for (const op of a.ops) {
-      const s = j.subJobs.find((x) => x.id === op.subJobId);
-      if (op.op === 'add-sub-job') { j.plan.subJobs.push(op.spec); j.subJobs.push(buildSubJob(j.plan, op.spec)); }
-      else if (op.op === 'add-dependency') both(op.subJobId, (x) => { x.dependsOn = [...x.dependsOn, op.dependsOn]; });
-      else if (op.op === 'remove-dependency') both(op.subJobId, (x) => { x.dependsOn = x.dependsOn.filter((d) => d !== op.dependsOn); });
-      else if (op.op === 'set-deployment') {
-        both(op.subJobId, (x) => { if (op.deployment) x.deployment = op.deployment; else delete x.deployment; });
-        // A watching sub-job starts its watch over; dropping the deployment
-        // while merged-but-not-deployed is exactly the
-        // runner's no-deployment MERGED branch, taken late.
-        if (s.stage === 'deployment') {
-          s.deploymentResult = null; s.deploymentStale = null; s.nextPollAt = 0;
-          if (!op.deployment) { s.deployed = { at: now, checks: [MERGE_IS_DELIVERY], commit: s.pr?.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; s.error = null; }
-        }
-      } else if (op.op === 'set-pending-checks') s.local.pendingChecks = op.pendingChecks;
-      else if (op.op === 'set-instructions') {
-        both(op.subJobId, (x) => { x.instructions = op.instructions; });
-        s.local = null; s.codeApprovedAt = null; s.dependenciesVerified = false; s.feedback = a.reason;
-      } else if (op.op === 'set-recovered-by') {
-        // Parked: the runner marks it deployed once the fix sub-job is, in place of
-        // a separate recovery job (job-runner.js).
-        s.recoveredBy = op.fixSubJobId; s.recoveryReason = s.error || a.reason; s.error = null; s.state = 'awaiting-fix'; s.nextPollAt = 0;
-      }
-    }
-    // Accepting IS the retry: a sub-job the proposing receipt left blocked has its
-    // plan fixed now, so it re-queues the same way the Retry button would.
-    for (const id of targets) {
-      const s = j.subJobs.find((x) => x.id === id);
-      if (!s?.error || s.cancelledAt) continue;
-      s.error = null; s.state = ['pr', 'deployment'].includes(s.stage) ? 'watching' : 'queued'; s.nextPollAt = 0; s.repairAllowance = (s.repairAllowance || 0) + 1;
-    }
-    j.repos = planRepos(j.plan);
-    a.status = status; a.decidedAt = now;
   }
   claim(jobId, subJobId, phase) {
     const job = this.data.jobs.find((j) => j.id === jobId);
@@ -267,25 +228,15 @@ export class JobStore {
         throw new Error('This run already submitted a different report');
       }
       if (r.stopped) throw new Error('This run has stopped');
-      const expected = { planning: 'plan', jira: 'jira', implementation: 'local', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
+      // `publish` is a version-1 phase: a run still live across the upgrade can
+      // land the receipt it was launched for.
+      const expected = { planning: 'plan', jira: 'jira', implementation: 'published', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
       if (report.kind !== expected && report.kind !== 'blocked') throw new Error(`This run must submit ${expected}`);
       const s = j.subJobs.find((s) => s.id === r.subJobId);
       r.report = report; r.reportedAt = Date.now();
       // A receipt racing a cancel is kept on the run for the record but never
       // moves the sub-job: a late `published` must not pull it back out of cleanup.
       if (!s?.cancelledAt) this._applyReceipt(j, r, s, report);
-      // Judged against the state the receipt just produced, so a `published`
-      // receipt can drop its own deployment and a `blocked` one can fix what
-      // blocked it. An invalid amendment fails the whole report (update() discards
-      // the copy) so the agent gets the error and can correct it, as with the
-      // commit-message prefix.
-      if (report.amendment) {
-        const a = this._propose(j, report.amendment, { runId: r.id, sessionId: r.sessionId, phase: r.phase, subJobId: r.subJobId, receipt: report.kind }, r.subJobId);
-        if (authorityPermits(j.amendmentAuthority ?? 'review', a.classification)) {
-          // A live run on another targeted sub-job leaves it proposed for the human, never fails the receipt.
-          try { this._applyAmendment(j, a, 'auto-accepted', undefined, { ignoreRunId: r.id }); } catch (e) { if (!/Wait for the session/.test(e.message)) throw e; }
-        }
-      }
     });
   }
   _applyReceipt(j, r, s, report) {
@@ -302,19 +253,34 @@ export class JobStore {
         if (story.key && story.key !== key) throw new Error(`${id} was approved as ${story.key}; keep that key`);
         story.key = key;
       }
-      const missing = j.plan.stories.filter((t) => !t.key).map((t) => t.id);
-      if (missing.length) throw new Error(`Every story needs a Jira key; still missing: ${missing.join(', ')}`);
-      activate(j);
+      if (j.stage === 'jira') {
+        const missing = j.plan.stories.filter((t) => !t.key).map((t) => t.id);
+        if (missing.length) throw new Error(`Every story needs a Jira key; still missing: ${missing.join(', ')}`);
+        activate(j);
+      } else {
+        // A New ticket move on a running job: the sub-job waiting on that story
+        // gets its key here, which is what releases it to start.
+        for (const sub of [...j.subJobs, ...j.plan.subJobs]) {
+          if (sub.jiraKey) continue;
+          const key = j.plan.stories.find((t) => t.id === sub.storyId)?.key;
+          if (key) sub.jiraKey = key;
+        }
+      }
     }
-    if (report.kind === 'local') { if (!report.commitMessage.startsWith(`${s.jiraKey}:`)) throw new Error('Commit message must start with the sub-job Jira key and colon'); s.dependenciesVerified = dependenciesSatisfied(j, s); s.local = { ...report, receiptId: r.id, at: Date.now() }; s.state = 'verified'; s.codeApprovedAt = null; }
     // A fresh head (new PR or repair push) is first observed after the comment
     // settle, so reviewers posting seconds after it lands are in that first read.
-    if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
-    if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
+    if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
+    if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.fixRequested = null; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
     // A session's receipt is the whole deliverable; with review on it waits for a
     // human, otherwise cleanup (archive its session) takes it straight to done.
-    if (report.kind === 'completed') { s.result = { ...report, receiptId: r.id, at: Date.now() }; s.feedback = null; s.stage = reviewSessions(j) ? 'review' : 'cleanup'; s.state = reviewSessions(j) ? 'verified' : 'queued'; }
-    if (report.kind === 'deployed') { s.deployed = { checks: report.checks, at: Date.now(), commit: s.pr.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; }
-    if (report.kind === 'blocked') { (s || j).error = report.summary; }
+    if (report.kind === 'completed') { s.result = { ...report, receiptId: r.id, at: Date.now() }; s.feedback = null; s.note = null; s.stage = reviewSessions(j) ? 'review' : 'cleanup'; s.state = reviewSessions(j) ? 'verified' : 'queued'; }
+    if (report.kind === 'deployed') { s.deployed = { checks: report.checks, at: Date.now(), commit: s.pr?.mergeCommit || null }; s.stage = 'cleanup'; s.state = 'queued'; }
+    // The event box on the card: the agent's own sentence, plus the move it
+    // suggests (never applied — a human decides).
+    if (report.kind === 'blocked') {
+      const target = s || j;
+      target.error = report.summary;
+      target.blocked = { summary: report.summary, move: report.move || null, phase: r.phase, at: Date.now() };
+    }
   }
 }

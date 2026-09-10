@@ -50,15 +50,17 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, automation = false }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
   // this always-on text too — the catalog alone doesn't guarantee it's read at
   // session start. The worktree guardrail still appends when present. `taskMemory`
   // is only threaded so tests can pin it; undefined (the production path) falls
-  // through to the live-config default inside both skill helpers.
-  const base = [mandatorySkillPrompt(undefined, { taskMemory }), codexSkillCatalog(undefined, { taskMemory })].filter(Boolean).join('\n\n');
+  // through to the live-config default inside both skill helpers. `automation`
+  // gates the job-worker skill in both channels — its step protocol is dead
+  // weight in any session with no job_report to submit.
+  const base = [mandatorySkillPrompt(undefined, { taskMemory, automation }), codexSkillCatalog(undefined, { taskMemory, automation })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = [
     '--sandbox', 'workspace-write',
@@ -119,21 +121,21 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, automation = false }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir }));
+    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, automation }));
     let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, automation = false }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, automation }));
     return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
