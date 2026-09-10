@@ -63,9 +63,9 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
   assert.match(SKILLS_ROOT, /agent-skills\/skills$/);
 });
 
-test('the real agent-skills dir ships task-memory, links, mail, checklist, spawn-session, session-activity, session-hierarchy, and advisor with descriptions', () => {
+test('the real agent-skills dir ships task-memory, links, mail, checklist, spawn-session, session-activity, session-hierarchy, adversarial-pr-review, and advisor with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
