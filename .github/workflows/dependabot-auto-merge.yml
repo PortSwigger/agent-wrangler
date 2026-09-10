@@ -1,4 +1,4 @@
-name: Dependabot auto-merge
+name: Dependabot auto-merge for security fixes
 
 on: pull_request
 
@@ -17,7 +17,7 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Enable auto-merge for patch/minor updates
+      - name: Auto-merge patch/minor security fixes
         if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor' }}
         run: gh pr merge --auto --squash "$PR_URL"
         env:
