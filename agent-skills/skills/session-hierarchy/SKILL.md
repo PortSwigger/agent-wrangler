@@ -25,6 +25,22 @@ asking "who spawned me" wants `spawnedBy`, not `parent`. They frequently agree
 don't — e.g. a board-dispatched session that's later attached under an
 orchestrator has a real `parent` and a null `spawnedBy`.
 
+## Nesting is capped at one level deep
+
+The board only ever renders **one level of `parent` nesting** — a session's own
+`parent` may not itself have a `parent`. Both ways of setting `parent` enforce this and
+refuse rather than produce a depth the board can't draw:
+
+- `spawn_session`'s `nest: true` is refused if **you** (the caller, who'd become the new
+  session's parent) already have a `parent`.
+- `attach_session` is refused if the target `parent_session_id` already has a `parent`
+  (would push the attached session to depth 2), **or** if the session being attached
+  already has its own children (they'd be pushed from depth 1 to depth 2 along with it).
+
+If you're already nested and need to spawn or attach another session "alongside"
+yourself rather than under yourself, the fix is to target **your own `parent`** as the
+new session's parent (making it a sibling of you), not yourself.
+
 ## Fastest path: the env var (zero tool calls)
 
 If you were launched via `spawn_session`/`spawn_workflow`, your spawner's

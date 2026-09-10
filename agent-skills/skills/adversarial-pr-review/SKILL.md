@@ -22,17 +22,16 @@ you'll need to pass it explicitly to the reviewer (see step 4).
 
 ## 2. Decide child vs sibling
 
-Call `get_session_info`. The board only ever renders **one level of nesting** — an
-`attach_session`/`spawn_session(nest: true)` under a session that is itself already
-nested gets refused outright — so:
+Call `get_session_info`. Nesting is capped at one level deep (see the
+`session-hierarchy` skill), so:
 
 - **`parent` is null** — you're top-level. Spawn a plain **child**: `spawn_session` with
   `nest: true`.
 - **`parent` is already set** — you're nested, and `spawn_session`'s `nest: true` would be
-  refused ("it is itself nested under another session"). Spawn a **sibling** instead:
-  call `spawn_session` with `nest` left unset (a plain top-level session), then
-  `attach_session({ session_id: <new id>, parent_session_id: <your own parent> })` to land
-  it next to you, under the same parent.
+  refused (you'd be asking to nest under yourself, and you already have a parent). Spawn
+  a **sibling** instead: call `spawn_session` with `nest` left unset (a plain top-level
+  session), then `attach_session({ session_id: <new id>, parent_session_id: <your own
+  parent> })` to land it next to you, under the same parent.
 
 Either way, leave `into` unset so the reviewer lands on your current task.
 
@@ -43,11 +42,12 @@ Either way, leave `into` unset so the reviewer lands on your current task.
 
 **Always pass `model` explicitly — don't leave it unset.** `spawn_session`'s "inherit the
 caller's model" default only applies when the new session runs the *same* agent as you;
-since this skill always spawns the opposite one, that inheritance never fires. Left
-unset, Codex falls back to a fixed default (`gpt-5.6-sol`), but Claude's fallback is
-whatever this machine's Claude CLI currently has configured as *its* default (via
-`/model`) — not a fixed, predictable value. Pick one from the `spawn-session` skill's
-tables instead (Claude: `opus`/`fable`; Codex: `gpt-5.6-sol`/`gpt-5.5`).
+since this skill always spawns the opposite one, that inheritance never fires, and
+leaving it unset lands you on whatever that agent's ambient default happens to be right
+now — not necessarily its strongest option, and for Claude not even a fixed value (its
+default can be changed machine-wide by an unrelated `/model` call). There's no tool that
+lists valid model names — pick one from the `spawn-session` skill's model tables, the
+current reference for both agents.
 
 ## 4. Brief the reviewer
 
