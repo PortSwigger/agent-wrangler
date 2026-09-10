@@ -1245,6 +1245,23 @@ don't re-derive it.
 
 ## Ops & conventions
 
+- **Dependency updates: Dependabot security updates for CVEs, Renovate for
+  everything else.** No `.github/dependabot.yml` — Dependabot's version-update
+  feature is therefore inactive, which is what makes `dependabot-auto-merge.yml`'s
+  bare `github.actor == 'dependabot[bot]'` check a valid security-only gate
+  (every such PR is, by construction, a CVE fix). **Adding a `dependabot.yml`
+  breaks that gate** (it'd start auto-merging routine bumps too) — fix by
+  switching to `fetch-metadata`'s `alert-lookup`, which needs a PAT/App token
+  (`GITHUB_TOKEN` can't call it) so don't add it speculatively.
+  `renovate.json` owns routine bumps: `minimumReleaseAge: "7 days"` (explicit
+  even though it's Renovate's default — pinned because of known bypass bugs)
+  is the actual security control, so `automerge: true` for patch/minor is fine
+  (major stays manual, same split as the Dependabot lane) — it rides GitHub's
+  existing `platformAutomerge`, already proven by the Dependabot workflow.
+  `vulnerabilityAlerts` is disabled so Renovate never races Dependabot on the
+  same CVE. `helpers:pinGitHubActionDigests` pins `uses:` lines to a commit
+  SHA — `minimumReleaseAge` can't catch a moved tag (the tj-actions attack),
+  only a pinned digest can.
 - launchd service `net.portswigger.agent-wrangler` needs `~/.local/bin` on `PATH`
   (else dispatch/resume exit 127). Restart:
   `launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler`.
