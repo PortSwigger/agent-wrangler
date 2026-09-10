@@ -98,3 +98,28 @@ test('surfaces a store validation error as an error result (e.g. a bad cron)', a
   assert.equal(out.isError, true);
   assert.match(out.content[0].text, /Invalid cron/);
 });
+
+// Validated at CREATION because that is the only point where an error can reach
+// whoever got it wrong: at fire time the schedule runs unattended.
+test('a dispatch schedule refuses a model the chosen agent does not offer', async () => {
+  const d = deps();
+  const out = await scheduleSessionTool.handler(
+    { deps: d, caller: 'CARD_T' },
+    { at: '2026-06-25T15:00:00Z', intent: 'do the thing', agent: 'codex', model: 'opus' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown model "opus" for agent "codex"/);
+  assert.equal(d.calls.create.length, 0);
+  assert.equal(d.calls.rebuild, 0);
+});
+
+test('a dispatch schedule refuses an unknown agent', async () => {
+  const d = deps();
+  const out = await scheduleSessionTool.handler(
+    { deps: d, caller: 'CARD_T' },
+    { at: '2026-06-25T15:00:00Z', intent: 'do the thing', agent: 'codx' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown agent "codx"/);
+  assert.equal(d.calls.create.length, 0);
+});

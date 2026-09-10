@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { expandTilde } from '../../session-manager.js';
+import { launchTargetError } from '../../agents/index.js';
 
 // Shared plumbing for the spawn_* tools (spawn_session, spawn_workflow). Both
 // mirror the /ws `dispatch` handler: resolve the target task, bind memory to it
@@ -18,6 +19,16 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;
 
   const agent = args.agent || 'claude';
+
+  // Reject a caller-supplied agent/model the adapters don't offer, rather than
+  // passing it through to a CLI that either errors in the pane or (for a bad
+  // agent, which adapterFor silently resolves to claude) launches something the
+  // caller didn't ask for. Validates `args.model` and deliberately runs BEFORE
+  // the inheritance fallback below: an existing entry may carry a model value
+  // since dropped from an adapter, and failing a spawn over a string the caller
+  // never supplied would break the inheritance this tool is meant to provide.
+  const badTarget = launchTargetError(agent, args.model);
+  if (badTarget) return errorResult(badTarget);
 
   // Default the new session's model to the CALLER's model when none was given,
   // so work spun off inherits the model it was launched from. Only when the new

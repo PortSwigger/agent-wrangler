@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { knownAgentIds, modelChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { nestedParentError } from '../../dispatch-runner.js';
 
@@ -28,8 +29,12 @@ export const spawnSessionTool = {
       + 'what it should do next, and the key files/paths it needs. This is how you brief it.',
     ),
     cwd: z.string().optional().describe('Working directory to launch in. Defaults to a fresh scratch dir.'),
-    model: z.string().optional().describe('Model override for the new session. Defaults to your own model (when launching the same agent).'),
-    agent: z.string().optional().describe('Agent to launch (claude or codex). Defaults to claude.'),
+    model: z.string().optional().describe(
+      `Model override for the new session. Defaults to your own model, and only when launching the SAME `
+      + `agent — a cross-agent spawn falls back to that agent's own default unless you pass this. `
+      + `Valid values — ${modelChoicesText()}.`,
+    ),
+    agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the new session (--add-dir).'),
     into: z.string().optional().describe(
       'Task id to put the new session on, sourced from list_tasks. An id not sourced from '

@@ -10,7 +10,8 @@
   "scripts": {
     "prestart": "bash scripts/sync-deps.sh",
     "start": "node server/index.js",
-    "test": "node --test --import ./server/test-setup.js"
+    "test": "node --test --import ./server/test-setup.js",
+    "gen:models": "node scripts/gen-skill-models.mjs"
   },
   "dependencies": {
     "@devcontainers/cli": "^0.87.0",

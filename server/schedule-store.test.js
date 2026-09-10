@@ -207,3 +207,39 @@ test('_load migrates a legacy top-level dispatch into a dispatch action', () => 
   assert.equal(loaded.dispatch, undefined);
   assert.deepEqual(loaded.action, { kind: 'dispatch', dispatch: { cwd: '/r', intent: 'go' } });
 });
+
+// The second creation door: /ws schedule-create/-update writes here without
+// passing through the MCP tool's check.
+test('create: refuses a dispatch model the chosen agent does not offer', () => {
+  const store = new ScheduleStore(tmpFile());
+  assert.throws(
+    () => store.create({ when: ONCE, dispatch: { intent: 'go', agent: 'codex', model: 'opus' } }, NOW),
+    /Unknown model "opus" for agent "codex"/,
+  );
+  assert.equal(store.snapshot().schedules.length, 0);
+});
+
+test('update: refuses an unknown agent', () => {
+  const store = new ScheduleStore(tmpFile());
+  const s = store.create({ when: ONCE, dispatch: { intent: 'go' } }, NOW);
+  assert.throws(
+    () => store.update(s.id, { action: { kind: 'dispatch', dispatch: { intent: 'go', agent: 'codx' } } }, NOW),
+    /Unknown agent "codx"/,
+  );
+});
+
+// _load maps stored rows through migrateStored alone — never validateAction — so
+// a schedule persisted before validation (or before a model was retired) must
+// still load. Failing at startup would take the whole scheduler down.
+test('load: an already-stored legacy model does not break startup', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({
+    schedules: [{
+      id: 'sch_old', name: 'Legacy', enabled: true, when: ONCE,
+      action: { kind: 'dispatch', dispatch: { intent: 'go', agent: 'claude', model: 'claude-opus-4-8' } },
+    }],
+  }));
+  const store = new ScheduleStore(file);
+  const [s] = store.snapshot().schedules;
+  assert.equal(s.action.dispatch.model, 'claude-opus-4-8');
+});
