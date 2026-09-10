@@ -54,6 +54,7 @@ import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
+import { dispatchModePresentation } from './dispatch-mode.js';
 
 let currentView = 'grid';
 
@@ -4722,14 +4723,13 @@ function onWorktreeValidation(msg) {
 // Standard).
 function syncWorkflow() {
   const on = dispatchMode === 'workflow';
-  document.getElementById('m-mode-standard').classList.toggle('selected', !on);
-  document.getElementById('m-mode-workflow').classList.toggle('selected', on);
-  document.getElementById('m-intent-label').textContent = on
-    ? 'Issue (Jira key, GitHub issue, or description)'
-    : 'Intent / first prompt';
-  document.getElementById('m-intent').placeholder = on
-    ? 'ENT-1234, a GitHub issue URL or #number, or a free-text task'
-    : 'What should the agent work on?';
+  const presentation = dispatchModePresentation(dispatchMode);
+  document.getElementById('m-mode-standard').classList.toggle('selected', presentation.standardPressed);
+  document.getElementById('m-mode-workflow').classList.toggle('selected', presentation.workflowPressed);
+  document.getElementById('m-mode-standard').setAttribute('aria-pressed', String(presentation.standardPressed));
+  document.getElementById('m-mode-workflow').setAttribute('aria-pressed', String(presentation.workflowPressed));
+  document.getElementById('m-intent-label').textContent = presentation.intentLabel;
+  document.getElementById('m-intent').placeholder = presentation.intentPlaceholder;
   document.getElementById('m-mode-cards').classList.toggle('hidden', reviewMode);
   document.querySelector('.worktree-box').classList.toggle('hidden', on || reviewMode);
   document.getElementById('m-wf-worktree-note').classList.toggle('hidden', !on);
@@ -4737,7 +4737,7 @@ function syncWorkflow() {
   const go = document.getElementById('m-go');
   // Schedule mode owns the Save label (see syncScheduleGo); only set the launch
   // labels here. The violet wf tint applies in both (a scheduled workflow run).
-  if (!scheduleMode()) go.textContent = on ? 'Start workflow' : 'Launch';
+  if (!scheduleMode()) go.textContent = presentation.launchLabel;
   go.classList.toggle('wf', on);
   syncRuntimeToggle();
 }
@@ -4955,6 +4955,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
   document.getElementById('m-runtime').value = d.runtime || 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
+  document.getElementById('m-advanced-options').open = false;
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   reviewMode = false;
   parentSessionId = null;
