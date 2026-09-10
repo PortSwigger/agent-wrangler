@@ -45,9 +45,9 @@ caller's model" default only applies when the new session runs the *same* agent 
 since this skill always spawns the opposite one, that inheritance never fires, and
 leaving it unset lands you on whatever that agent's ambient default happens to be right
 now — not necessarily its strongest option, and for Claude not even a fixed value (its
-default can be changed machine-wide by an unrelated `/model` call). There's no tool that
-lists valid model names — pick one from the `spawn-session` skill's model tables, the
-current reference for both agents.
+default can be changed machine-wide by an unrelated `/model` call). Check `spawn_session`'s
+own `model` parameter description for the current valid values per agent — passing one
+that doesn't match the chosen `agent` is refused with the valid list rather than launched.
 
 ## 4. Brief the reviewer
 
