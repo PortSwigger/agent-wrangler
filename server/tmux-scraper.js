@@ -212,10 +212,20 @@ export function classify(paneText) {
   // TUI chrome, never written to the rollout, so it must be caught here or a
   // chat-view Send (which pastes text then presses Enter, same as any normal
   // prompt) silently confirms "Update now" and kills the session — this is
-  // exactly the incident that motivated this branch. Both anchor phrases are
-  // unique across the whole binary (grepped) and require BOTH to match, so
-  // ordinary conversation text mentioning "an update" can't false-positive.
-  if (/update available!/i.test(recent) && /skip until next version/i.test(recent)) {
+  // exactly the incident that motivated this branch.
+  //
+  // An adversarial review caught the first version of this regex: it required
+  // "update available!" and "skip until next version" ANYWHERE in the last-12
+  // -non-blank-line window, with no structural link between them — so ordinary
+  // prose containing both substrings (e.g. an agent's own message: "Update
+  // available! You can skip until next version") false-positived into a
+  // needs-you that blocked Send indefinitely. Reproduced directly:
+  // `classify('Update available! You can skip until next version')` returned
+  // needs-you. Anchored to the real menu's own ORDERED shape instead — all four
+  // phrases, in the order the CLI actually renders them, with the numbered
+  // option prefix on "Update now" — which is not a shape ordinary conversation
+  // text produces by accident.
+  if (/update available!(?:[\s\S]*?)\d\.\s*update now(?:[\s\S]*?)skip until next version(?:[\s\S]*?)press enter to continue/i.test(recent)) {
     return { status: 'needs-you', waitingFor: 'Codex has a CLI update available' };
   }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)

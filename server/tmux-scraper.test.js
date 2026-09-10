@@ -48,6 +48,15 @@ test('classify: Codex\'s own update-available banner reads as needs-you with a r
 test('classify: ordinary conversation text mentioning an update does not false-positive', () => {
   assert.equal(classify('I ran the update and it looks like everything is now available!').status, 'idle');
   assert.equal(classify('Skipping this file until the next version of the schema lands').status, 'idle');
+  // The exact case an adversarial review caught in the first version of this
+  // branch: both anchor SUBSTRINGS present in one ordinary sentence, with no
+  // menu structure around them. A loose "both regexes match somewhere in the
+  // window" check returned needs-you for this; the fix requires the real
+  // menu's own ordered shape instead.
+  assert.equal(classify('Update available! You can skip until next version').status, 'idle');
+  // Same idea split across two lines of the window, and with the numbered
+  // option missing — still just prose, never the real menu.
+  assert.equal(classify('Update available!\nRemember you can always skip until next version if you want').status, 'idle');
 });
 test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('… esc to interrupt …').status, 'working');

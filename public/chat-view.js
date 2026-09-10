@@ -137,7 +137,15 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     if (!text) return;
     const head = document.createElement('p');
     head.className = 'chat-exit-notice-head';
-    head.textContent = "This session's terminal exited unexpectedly. Last output:";
+    // Same trailing label the terminal panel uses (renderSidebar, app.js) —
+    // kept as one literal string in both places (not a shared helper, since
+    // the two build their DOM completely differently: innerHTML there,
+    // createElement/textContent here) so the two views can't quietly drift
+    // apart on what is otherwise identical data. The leading sentence is
+    // chat-only: the terminal panel already frames this ("its previous
+    // terminal exited") in a paragraph above its own block, which the chat
+    // view has no equivalent of.
+    head.textContent = "This session's terminal exited unexpectedly. Last output from the exited terminal:";
     exitNoticeEl.appendChild(head);
     const body = document.createElement('pre');
     body.className = 'term-exit';
@@ -932,14 +940,19 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
       if (blocked) {
         const msg = document.createElement('span');
-        // `waitingFor` is classify()'s scrape-derived hint (s.waitingFor off the
-        // graph node) — present for a needs-you the server can actually explain
-        // (Codex's own update banner, a devcontainer bring-up failure), absent
-        // for an ordinary Claude permission prompt (that reason lives only in
-        // the pane, which is exactly why this bar exists). Falls back to the
-        // generic line rather than showing nothing.
+        // `waitingFor` is s.waitingFor off the graph node — present for a
+        // needs-you the server can actually explain (Codex's own update
+        // banner, a devcontainer bring-up failure, a dropped-API-connection
+        // turn), absent for an ordinary Claude permission prompt (that reason
+        // lives only in the pane, which is exactly why this bar exists).
+        // Deliberately NOT "this needs the terminal" — that overclaims for a
+        // reason like the API-error one, which isn't itself a terminal
+        // matter. What's actually true in every needs-you case is narrower:
+        // Send is disabled below, so the terminal is the only place left to
+        // act at all, whatever the reason. Falls back to the generic line
+        // rather than showing nothing.
         msg.textContent = waitingFor
-          ? `${waitingFor} — this needs the terminal.`
+          ? `${waitingFor} — only actionable from the terminal right now.`
           : 'Waiting on you — this prompt only exists in the terminal.';
         bar.appendChild(msg);
         const go = document.createElement('button');

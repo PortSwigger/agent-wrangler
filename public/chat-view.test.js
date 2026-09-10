@@ -115,7 +115,7 @@ function stubDom() {
   return { document, byId, listeners };
 }
 
-async function mountView({ onSend, cwd = null } = {}) {
+async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
   const { document, byId } = stubDom();
   globalThis.document = document;
   // Just enough markdown-it for createRenderer's constructor dance. This suite is
@@ -156,7 +156,7 @@ async function mountView({ onSend, cwd = null } = {}) {
     send: (m) => { sent.push(m); onSend?.(m); },
     onSubagentClick() {},
     onOpenDiff() {},
-    onGoTerminal() {},
+    onGoTerminal: (id) => onGoTerminal?.(id),
     onPickModel() {},
     onOpenFile: (p) => opened.push(p),
     cwdFor: () => cwd,
@@ -614,4 +614,96 @@ test('mounting a different session resets the jump pill', async () => {
   assert.equal(byId.get('chat-jump-last').hidden, false);
   view.mount('s2');
   assert.equal(byId.get('chat-jump-last').hidden, true, 'a fresh session has nothing yet to jump to');
+});
+
+// --- the dead-pane exit notice --------------------------------------------
+
+test('setExitNotice renders a labelled block with the exact captured text', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.setExitNotice('boom: process exited 1\nAW_VERIFY_MARKER');
+  const el = byId.get('chat-exit-notice');
+  assert.equal(el.hidden, false);
+  assert.equal(el.children.length, 2, 'a head line plus the preformatted body');
+  assert.match(el.children[0].textContent, /exited/i);
+  assert.equal(el.children[1].textContent, 'boom: process exited 1\nAW_VERIFY_MARKER');
+});
+
+test('setExitNotice(null) hides the block and clears its content', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.setExitNotice('some output');
+  view.setExitNotice(null);
+  const el = byId.get('chat-exit-notice');
+  assert.equal(el.hidden, true);
+  assert.equal(el.children.length, 0);
+});
+
+test('mounting a different session clears the previous one\'s exit notice', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.setExitNotice('s1 died here');
+  view.mount('s2');
+  const el = byId.get('chat-exit-notice');
+  assert.equal(el.hidden, true, 's2 has not died — must not inherit s1\'s banner');
+  assert.equal(el.children.length, 0);
+});
+
+test('unmount clears the exit notice too', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.setExitNotice('s1 died here');
+  view.unmount();
+  const el = byId.get('chat-exit-notice');
+  assert.equal(el.hidden, true);
+});
+
+// --- the needs-you notice bar, including the waitingFor-specific wording -----
+
+test('setStatus(needs-you) with no waitingFor shows the generic line and blocks the composer', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, false);
+  assert.match(bar.children[0].textContent, /waiting on you/i);
+  assert.equal(input.disabled, true);
+  assert.equal(byId.get('chat-send').disabled, true);
+});
+
+test('setStatus(needs-you, waitingFor) shows the specific reason, not "this needs the terminal" verbatim for an unrelated cause', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'Codex has a CLI update available');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, false);
+  assert.match(bar.children[0].textContent, /Codex has a CLI update available/);
+  assert.equal(input.disabled, true);
+  assert.equal(byId.get('chat-send').disabled, true);
+  // The regression this guards: appending a hardcoded "this needs the
+  // terminal" to an arbitrary waitingFor overclaims for a reason (e.g. a
+  // dropped API connection) that isn't itself a terminal matter — see
+  // CLAUDE.md and the PR discussion. The wording must describe why Send is
+  // blocked, not assert the underlying cause lives in the terminal.
+  assert.doesNotMatch(bar.children[0].textContent, /this needs the terminal\.$/);
+});
+
+test('a "Terminal →" button is offered and calls onGoTerminal for the mounted session', async () => {
+  const goTo = [];
+  const { view, byId } = await mountView({ onGoTerminal: (id) => goTo.push(id) });
+  view.mount('s1');
+  view.setStatus('needs-you', 'Codex has a CLI update available');
+  const bar = byId.get('chat-notice-bar');
+  bar.children[1].dispatchEvent({ type: 'click' });
+  assert.deepEqual(goTo, ['s1']);
+});
+
+test('clearing needs-you re-enables the composer and hides the bar', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'Codex has a CLI update available');
+  view.setStatus('idle');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, true);
+  assert.equal(input.disabled, false);
 });
