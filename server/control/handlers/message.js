@@ -12,20 +12,25 @@ import { resolvePasteNames } from '../../paste-store.js';
 export const messageHandler = {
   type: 'message',
   async handler(msg, ctx) {
+    const replyResult = (ok, error, mode) => {
+      if (msg.requestId) ctx.reply({ type: 'message-result', requestId: msg.requestId, sessionId: msg.sessionId, ok, ...(error ? { error } : {}), ...(mode ? { mode } : {}) });
+      else if (!ok) ctx.reply({ type: 'error', message: error });
+    };
     const agent = ctx.sessionFromGraph?.(msg.sessionId)?.agent
       ?? ctx.sessionManager?.entryFor?.(msg.sessionId)?.agent;
     const imagePaths = resolvePasteNames(msg.sessionId, agent, msg.imageNames);
     // An image on its own is a complete prompt (the TUI submits the bare
     // `[Image #1]`), so empty text is only an error when nothing is attached
     // either.
-    if (!msg.text && !imagePaths.length) { ctx.reply({ type: 'error', message: 'No message text given.' }); return; }
+    if (!msg.text && !imagePaths.length) { replyResult(false, 'No message text given.'); return; }
     // clearComposer is set only by the chat view's Esc-then-edit flow, where the
     // wrangler's own interrupt is what put a restored prompt in the pane.
     const result = await deliverMessage(msg.sessionId, msg.text || '', ctx, {
       imagePaths,
       clearComposer: msg.clearComposer === true,
     });
-    if (result.mode === 'error') { ctx.reply({ type: 'error', message: result.error }); return; }
+    if (result.mode === 'error') { replyResult(false, result.error); return; }
     if (result.mode === 'dormant') await ctx.rebuild?.();
+    replyResult(true, null, result.mode);
   },
 };

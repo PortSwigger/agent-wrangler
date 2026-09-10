@@ -331,7 +331,14 @@ test('findAgentPid: null for a non-agent tree', () => {
 
 test('sendText shares the paste block but DOES submit with a trailing Enter', async () => {
   const cmds = [];
-  await sendText('cc_y', 'hello\nworld', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); });
+  const waits = [];
+  await sendText(
+    'cc_y',
+    'hello\nworld',
+    'sockB',
+    (socket, args) => { cmds.push(args); return Promise.resolve(); },
+    { wait: async (ms) => { waits.push(ms); } },
+  );
   const verbs = cmds.map((a) => a[0]);
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer', 'send-keys']);
   // Bracketed, so the embedded newline stays a newline in ONE message rather than
@@ -344,6 +351,51 @@ test('sendText shares the paste block but DOES submit with a trailing Enter', as
   // is one turn, not two.
   assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
   assert.equal(cmds.filter((a) => a.includes('Enter')).length, 1);
+  assert.deepEqual(waits, []);
+});
+
+test('sendText submits without a fixed settle delay', async () => {
+  const cmds = [];
+  const waits = [];
+  await sendText(
+    'cc_y',
+    'hello',
+    'sockB',
+    (socket, args) => { cmds.push(args); return Promise.resolve(); },
+    { wait: async (ms) => { waits.push(ms); } },
+  );
+  assert.deepEqual(waits, []);
+  assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
+});
+
+test('sendText retries Codex submission only when its pasted draft is still idle', async () => {
+  const cmds = [];
+  let captures = 0;
+  await sendText(
+    'cx_y',
+    'retry this prompt',
+    'sockB',
+    (socket, args) => { cmds.push(args); return Promise.resolve(); },
+    {
+      wait: async () => {},
+      capture: async () => (++captures === 1 ? '\x1b[1m›\x1b[0m retry this prompt' : 'esc to interrupt'),
+      classifyPane: (pane) => ({ status: /interrupt/.test(pane) ? 'working' : 'idle' }),
+      composerDraft: (pane) => pane.includes('›') ? 'retry this prompt' : null,
+      logRetry: () => {},
+    },
+  );
+  assert.equal(cmds.filter((args) => args.includes('Enter')).length, 2);
+});
+
+test('sendText does not retry from matching Codex history without a composer draft', async () => {
+  const cmds = [];
+  await sendText('cx_y', 'retry this prompt', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); }, {
+    wait: async () => {},
+    capture: async () => 'assistant said retry this prompt\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m',
+    classifyPane: () => ({ status: 'idle' }),
+    logRetry: () => {},
+  });
+  assert.equal(cmds.filter((args) => args.includes('Enter')).length, 1);
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {

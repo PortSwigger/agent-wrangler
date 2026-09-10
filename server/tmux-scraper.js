@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { logWarn } from './log.js';
 
 const exec = promisify(execFile);
 
@@ -187,6 +188,16 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
   } catch {
     return '';
   }
+}
+
+export function codexComposerDraft(paneText) {
+  if (typeof paneText !== 'string' || !paneText.includes('\x1b')) return null;
+  const line = paneText.split('\n').filter((entry) => stripAnsi(entry).trimStart().startsWith('›')).pop();
+  if (!line) return null;
+  const raw = line.slice(line.lastIndexOf('›') + 1);
+  const withoutGhost = raw.replace(/\x1b\[2m.*?(?:\x1b\[(?:0|22)?m|$)/g, '');
+  const draft = stripAnsi(withoutGhost).trim();
+  return draft || null;
 }
 
 // Derive live state from the pane: only the "esc to interrupt" working signal
@@ -400,8 +411,25 @@ export async function killSession(name, socket = '') {
 // shell-escaping pitfalls of `send-keys -l`) AND submit it with a trailing Enter.
 // Shares the paste-block mechanism with prefillPane, which omits the Enter. `run` is
 // the low-level tmux runner (test seam).
-export async function sendText(name, text, socket = '', run = tmux) {
+const CODEX_SUBMIT_CHECK_MS = 120;
+
+export async function sendText(name, text, socket = '', run = tmux, {
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  capture = capturePaneStyled,
+  classifyPane = classify,
+  composerDraft = codexComposerDraft,
+  logRetry = logWarn,
+} = {}) {
   await pasteBlock(name, text, socket, run);
-  await new Promise((r) => setTimeout(r, 120));
   await run(socket, ['send-keys', '-t', name, 'Enter']);
+  if (!name.startsWith('cx_')) return;
+
+  await wait(CODEX_SUBMIT_CHECK_MS);
+  const pane = await capture(name, 6, socket);
+  if (classifyPane(pane).status !== 'idle' || composerDraft(pane) !== text) return;
+
+  await run(socket, ['send-keys', '-t', name, 'Enter']);
+  await wait(CODEX_SUBMIT_CHECK_MS);
+  const afterRetry = await capture(name, 6, socket);
+  logRetry(`[delivery] retried Codex submit for ${name}; status=${classifyPane(afterRetry).status}`);
 }

@@ -241,6 +241,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let restoreToken = null;
   let restoreSeq = 0;
   let restoreOverDraft = false;
+  let messageSeq = 0;
+  let pendingMessage = null;
 
   function saveDraft(id) {
     if (!id) return;
@@ -392,40 +394,27 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // An attached image is a complete prompt on its own (the TUI submits the bare
   // `[Image #1]`), so Send has to stay live for an empty box that holds one.
   function renderSendability() {
+    if (pendingMessage?.sessionId === sessionId) { sendBtn.disabled = true; return; }
     if (lastStatus === 'needs-you') return; // setStatus owns the button while blocked
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || (!text && !attachments.length)) return;
+    if (!sessionId || pendingMessage?.sessionId === sessionId || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
+    const requestId = `${requestEra}#${++messageSeq}`;
+    pendingMessage = { requestId, sessionId };
     send({
       type: 'message', sessionId, text,
+      requestId,
       ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
       ...(paneRestoreArmed ? { clearComposer: true } : {}),
     });
-    // Disarmed by the send that consumed it: the restored prompt is gone from the
-    // pane once this lands, and a later message must not wipe a pane draft this
-    // view had nothing to do with.
-    paneRestoreArmed = false;
-    // A reply still in flight would land on an already-sent prompt.
-    restoreToken = null;
-    input.value = '';
-    input.style.height = 'auto';
-    // Cleared on send, not on reply: they have left with the message, and leaving
-    // them on screen would invite sending the same image twice.
-    attachments = [];
-    renderAttachments();
     renderSendability();
-    // Nothing is on screen until a poll reads the turn back — this view is
-    // strictly transcript-sourced and deliberately does not echo the message
-    // locally, since an optimistically drawn bubble has no uuid to live in the
-    // append-only stream and would be a lie for a send the server refuses.
-    kickBurst();
   }
 
   sendBtn.addEventListener('click', submit);
@@ -715,6 +704,22 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   return {
+    onMessageResult(msg) {
+      if (!pendingMessage || msg.requestId !== pendingMessage.requestId || msg.sessionId !== pendingMessage.sessionId) return;
+      const current = sessionId === msg.sessionId;
+      pendingMessage = null;
+      if (!msg.ok) { setPasteNote(`Not sent: ${msg.error || 'delivery was not confirmed'}`); renderSendability(); return; }
+      paneRestoreArmed = false;
+      restoreToken = null;
+      if (current) {
+        input.value = '';
+        input.style.height = 'auto';
+        attachments = [];
+        renderAttachments();
+        renderSendability();
+      }
+      kickBurst();
+    },
     // The answer to an interrupt: what to put back in the composer, resolved
     // server-side from the pane (authoritative when Claude Code restored the
     // prompt there) or else from a fresh transcript read. `source` is carried so
