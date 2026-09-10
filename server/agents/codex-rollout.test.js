@@ -36,6 +36,65 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.deepEqual(r.subAgents, []);
 });
 
+// The Codex CLI stopped writing EventMsg-shaped `user_message`/`agent_message`
+// lines entirely around 2026-08-19 — every rollout since is `response_item`
+// only. These fixtures pin the current shape so this file's own fixtures don't
+// mask the regression the old event_msg-only ones did.
+function fixtureResponseItemSessions() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-ri-'));
+  const day = path.join(root, '2026', '09', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const file = path.join(day, `rollout-2026-09-10T09-00-00-${uuid}.jsonl`);
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+    { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are an agent...' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions\n\nDo not add comments.' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix the parser bug' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } },
+  ];
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return { root, uuid };
+}
+
+test('analyzeCodex reads the summary from a response_item message (current rollout shape)', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.summary, 'Fix the parser bug');
+  assert.equal(r.currentModel, 'gpt-5.6-terra');
+});
+
+test('analyzeCodex skips a synthetic response_item user message (AGENTS.md, developer role) when picking the summary', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.notEqual(r.summary, '# AGENTS.md instructions\n\nDo not add comments.');
+});
+
+// Caught in review: isSyntheticCodexMessage originally short-circuited on a
+// blanket `text.startsWith('<')`, which is stricter than chat-events.js's own
+// isSyntheticCodex (prefix-list only). A real human message that happens to
+// start with '<' (pasted XML/HTML/markdown) must still be picked up.
+test('analyzeCodex uses a real user message that starts with "<" as the summary, rather than treating it as synthetic', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-angle-'));
+  const day = path.join(root, '2026', '09', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
+  const file = path.join(day, `rollout-2026-09-10T09-00-00-${uuid}.jsonl`);
+  fs.writeFileSync(file, [
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<config><value>hello</value></config>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'got it' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.summary, '<config><value>hello</value></config>');
+});
+
+test('listResumableCodex reads the summary from a response_item message', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const { candidates } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-09-10T10:00:00Z') });
+  assert.equal(candidates[0].summary, 'Fix the parser bug');
+});
+
 test('analyzeCodex returns nulls for an unknown id', async () => {
   const { root } = fixtureSessions();
   const r = await analyzeCodex('00000000-0000-0000-0000-000000000000', { sessionsDir: root });
@@ -91,17 +150,80 @@ test('activityInRangeCodex counts user_message/agent_message turns with a timest
   assert.equal(r.lastActivity, start + 9 * 3_600_000 + 5000);
 });
 
-test('activityInRangeCodex ignores non-message event kinds (token_count, task_started) and response_item lines', async () => {
+test('activityInRangeCodex ignores non-message event kinds (token_count, task_started)', async () => {
   const { root, uuid } = fixtureTimestamped([
     { timestamp: '2026-07-01T09:00:00.000Z', type: 'session_meta', payload: {} },
     { timestamp: '2026-07-01T09:00:01.000Z', type: 'event_msg', payload: { type: 'task_started' } },
     { timestamp: '2026-07-01T09:00:02.000Z', type: 'event_msg', payload: { type: 'token_count' } },
-    { timestamp: '2026-07-01T09:00:03.000Z', type: 'response_item', payload: { type: 'message', role: 'user' } },
   ]);
   const start = Date.parse('2026-07-01T00:00:00.000Z');
   const end = start + 86_400_000;
   const r = await activityInRangeCodex(uuid, start, end, root);
   assert.equal(r.messageCount, 0);
+});
+
+// Current rollouts (post ~2026-08-19) carry no event_msg user_message/agent_message
+// lines at all — only response_item. This is the shape that matters going forward.
+test('activityInRangeCodex counts response_item user/assistant messages (current rollout shape)', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+    { timestamp: '2026-07-02T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next day' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
+  assert.equal(r.firstActivity, start + 9 * 3_600_000);
+  assert.equal(r.lastActivity, start + 9 * 3_600_000 + 5000);
+});
+
+test('activityInRangeCodex excludes a developer-role response_item and a synthetic user-role one (AGENTS.md, environment_context)', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'instructions' }] } },
+    { timestamp: '2026-07-01T09:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>...</environment_context>' }] } },
+    { timestamp: '2026-07-01T09:00:02.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions' }] } },
+    { timestamp: '2026-07-01T09:00:03.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'a real prompt' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 1);
+});
+
+// Pre-8/19 rollouts carry BOTH shapes for the same turn (event_msg mirrors
+// response_item verbatim — see chat-events.js's own comment on this). ORing
+// the two shapes together would double the true turn count on every legacy
+// rollout; response_item must win outright when it has anything at all.
+test('activityInRangeCodex does not double-count a legacy rollout that carries both event_msg and response_item for the same turn', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: 'hi' } },
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'hello' } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
+});
+
+// Caught in review: on a legacy rollout with a real '<'-leading user message,
+// the (previously overbroad) synthetic filter dropped the user turn from the
+// "current" tally while the assistant turn still made it non-zero — so the
+// per-file preference picked the undercounted "current" tally over the
+// correct "legacy" one. Confirms the fix, not just the filter unit-level.
+test('activityInRangeCodex counts a "<"-leading real message on a mixed legacy/current rollout without losing it to the tally preference', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: '<config>hello</config>' } },
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<config>hello</config>' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'got it' } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'got it' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
 });
 
 test('activityInRangeCodex returns null when no rollout exists for the id', async () => {

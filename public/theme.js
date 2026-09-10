@@ -93,17 +93,51 @@ function styleIconMarkup(s) {
 // Apply = base class (so unspecified roles inherit dark/light) + inline var
 // overrides on body + wallpaper; readTerminalTheme reads the resolved vars, so a
 // live terminal re-themes off the same source (via the registered hook).
+// The palette half is skipped when neither base nor vars moved: a manifest that
+// only repointed its wallpaper (a watcher rotating stills every few minutes) must
+// not strip and re-set every var and repaint the xterm canvas for nothing.
 function applyStyle(style) {
-  document.body.classList.toggle('light', style.base === 'light');
-  for (const k of appliedVarKeys) document.body.style.removeProperty(k);
   const vars = style.vars || {};
-  appliedVarKeys = Object.keys(vars);
-  for (const [k, v] of Object.entries(vars)) document.body.style.setProperty(k, v);
-  document.body.style.backgroundImage = style.background
+  const paletteKey = JSON.stringify([style.base, vars]);
+  if (paletteKey !== appliedPaletteKey) {
+    appliedPaletteKey = paletteKey;
+    document.body.classList.toggle('light', style.base === 'light');
+    for (const k of appliedVarKeys) document.body.style.removeProperty(k);
+    appliedVarKeys = Object.keys(vars);
+    for (const [k, v] of Object.entries(vars)) document.body.style.setProperty(k, v);
+    themeChangeHook?.();
+  }
+  setBackground(style);
+  setFavicon(style);
+}
+
+// A background-image assigned before the browser holds the file paints as NO
+// image until the fetch+decode lands — on a translucent style that is a
+// whole-board flash to the flat colour, every frosted surface included, on
+// every wallpaper change. So a wallpaper URL is fetched and decoded off-screen
+// first and only assigned once it is ready; a raw CSS `background` (gradients)
+// needs no asset and goes straight on. Only the newest request may land — a
+// second change while a decode is in flight supersedes it — and a failed load
+// still assigns, so this degrades to the old behaviour rather than to a stuck
+// wallpaper. Without an Image constructor (tests) it assigns synchronously.
+let wantedBackground = null;
+let appliedPaletteKey = null;
+let wallpaperSeq = 0;
+function setBackground(style) {
+  const bg = style.background
     ? style.background
     : (style.wallpaperUrl ? `url("${style.wallpaperUrl}")` : '');
-  themeChangeHook?.();
-  setFavicon(style);
+  if (bg === wantedBackground) return;
+  wantedBackground = bg;
+  const seq = ++wallpaperSeq;
+  const commit = () => { if (seq === wallpaperSeq) document.body.style.backgroundImage = bg; };
+  if (!style.wallpaperUrl || style.background || typeof Image !== 'function') { commit(); return; }
+  const img = new Image();
+  img.src = style.wallpaperUrl;
+  const ready = typeof img.decode === 'function'
+    ? img.decode()
+    : new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+  ready.then(commit, commit);
 }
 
 function setFavicon(style) {
