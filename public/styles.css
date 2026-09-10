@@ -686,37 +686,21 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   box-sizing: border-box;
 }
 .modal-card textarea { resize: vertical; max-width: 100%; }
-/* Mode selector: two cards (Standard / Workflow) replacing the old workflow
-   checkbox. Selection reads as border + faint tint + a filled check, coloured to
-   echo the mode (--accent vs --wf) before the form below adapts. Cards are real
-   <button>s for native focus/Enter/Space; override the base button chrome. */
-.mode-cards { display: flex; gap: 10px; margin: 10px 0 4px; }
-.mode-cards.hidden { display: none; }   /* review session is always Standard — selector hidden */
-.mode-card {
-  flex: 1; text-align: left; cursor: pointer; font: inherit;
-  background: transparent; border: 1.5px solid var(--border); border-radius: 8px;
-  padding: 12px; color: var(--fg);
+.mode-segmented { display: flex; gap: 8px; margin: 10px 0 0; }
+.mode-segmented.hidden { display: none; }
+.mode-segment {
+  flex: 1; cursor: pointer; font: inherit; text-align: left; color: var(--fg); background: transparent;
+  border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
 }
-.mode-card:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
-.mode-card-head { display: flex; align-items: center; justify-content: space-between; }
-.mode-card-title { font-size: 13px; font-weight: 700; }
-.mode-card-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.45; margin-top: 7px; }
-/* Check shows only on the selected card; its fill colour comes from the mode rules. */
-.mode-card-check {
-  width: 16px; height: 16px; border-radius: 50%; color: var(--accent-fg);
-  font-size: 10px; display: none; align-items: center; justify-content: center; flex: none;
-}
-.mode-card.selected .mode-card-check { display: inline-flex; }
-.mode-card[data-mode="standard"].selected,
-.mode-card[data-mode="standard"].selected:hover {
-  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-.mode-card[data-mode="standard"].selected .mode-card-check { background: var(--accent); }
-.mode-card[data-mode="workflow"].selected,
-.mode-card[data-mode="workflow"].selected:hover {
-  border-color: var(--wf); background: color-mix(in srgb, var(--wf) 12%, transparent);
-}
-.mode-card[data-mode="workflow"].selected .mode-card-check { background: var(--wf); }
+.mode-segment:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.mode-segment-title { display: block; font-size: 13px; font-weight: 700; }
+.mode-segment-desc { display: block; color: var(--fg-muted); font-size: 11px; line-height: 1.3; margin-top: 2px; }
+.mode-segment.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.mode-segment[data-mode="workflow"].selected { border-color: var(--wf); background: color-mix(in srgb, var(--wf) 12%, transparent); }
+.mode-segment.selected .mode-segment-desc { color: inherit; opacity: 0.82; }
+.advanced-options { margin-top: 12px; }
+.advanced-options summary { color: var(--fg-muted); cursor: pointer; font-size: 12px; }
+.advanced-options-body { padding-top: 1px; }
 /* Workflow mode: the manual worktree box is hidden and this confirms the auto one. */
 .wf-worktree-note { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); margin-top: 14px; }
 .wf-worktree-note.hidden { display: none; }

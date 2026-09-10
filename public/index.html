@@ -256,20 +256,14 @@
       <div id="m-dispatch-fields">
       <label>Task</label>
       <select id="m-task"></select>
-      <div class="mode-cards" id="m-mode-cards">
-        <button type="button" class="mode-card" id="m-mode-standard" data-mode="standard">
-          <div class="mode-card-head" id="m-mode-standard-head">
-            <span class="mode-card-title" id="m-mode-standard-title">Standard</span>
-            <span class="mode-card-check" id="m-mode-standard-check">✓</span>
-          </div>
-          <div class="mode-card-desc" id="m-mode-standard-desc">Run the agent on a free-text prompt in any folder.</div>
+      <div class="mode-segmented" id="m-mode-cards" role="group" aria-label="Session type">
+        <button type="button" class="mode-segment" id="m-mode-standard" data-mode="standard" aria-pressed="true">
+          <span class="mode-segment-title">Standard</span>
+          <span class="mode-segment-desc">Free-text prompt in any folder.</span>
         </button>
-        <button type="button" class="mode-card" id="m-mode-workflow" data-mode="workflow">
-          <div class="mode-card-head" id="m-mode-workflow-head">
-            <span class="mode-card-title" id="m-mode-workflow-title">Workflow</span>
-            <span class="mode-card-check" id="m-mode-workflow-check">✓</span>
-          </div>
-          <div class="mode-card-desc" id="m-mode-workflow-desc">Issue to PR autopilot.</div>
+        <button type="button" class="mode-segment" id="m-mode-workflow" data-mode="workflow" aria-pressed="false">
+          <span class="mode-segment-title">Workflow</span>
+          <span class="mode-segment-desc">Issue to PR autopilot.</span>
         </button>
       </div>
       <label id="m-intent-label">Intent / first prompt</label>
@@ -281,13 +275,6 @@
       </div>
       <label>Model</label>
       <select id="m-model"></select>
-      <label>Effort</label>
-      <select id="m-effort"></select>
-      <label>Runtime</label>
-      <select id="m-runtime">
-        <option value="local">Local (host)</option>
-        <option value="devcontainer">Devcontainer</option>
-      </select>
       <div class="worktree-box">
         <div class="worktree-title">New worktree</div>
         <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
@@ -305,7 +292,19 @@
         <span class="wf-worktree-check" id="m-wf-worktree-check">✓</span>
         <span id="m-wf-worktree-text">A dedicated git worktree is created automatically.</span>
       </div>
-      <label class="check-row hidden" id="m-wf-auto-merge-row"><input type="checkbox" id="m-wf-auto-merge" /> Auto-merge when checks pass</label>
+      <details class="advanced-options" id="m-advanced-options">
+        <summary>Advanced options</summary>
+        <div class="advanced-options-body">
+          <label>Effort</label>
+          <select id="m-effort"></select>
+          <label>Runtime</label>
+          <select id="m-runtime">
+            <option value="local">Local (host)</option>
+            <option value="devcontainer">Devcontainer</option>
+          </select>
+          <label class="check-row hidden" id="m-wf-auto-merge-row"><input type="checkbox" id="m-wf-auto-merge" /> Auto-merge when checks pass</label>
+        </div>
+      </details>
       </div>
       <div id="m-subagent" class="hidden">
         <h4>Prompt</h4><pre id="m-sa-prompt"></pre>
