@@ -1,3 +1,4 @@
+import { launchTargetError } from './agents/index.js';
 import { workflowLaunchPrompt } from './workflow.js';
 import { slugFromIntent } from './worktree.js';
 
@@ -34,6 +35,18 @@ export function nestedParentError(sessionManager, parentSessionId) {
 export async function runDispatch(opts, { sessionManager, taskStore, memoryStore }, now = Date.now()) {
   const nestErr = nestedParentError(sessionManager, opts.parentSession);
   if (nestErr) throw new Error(nestErr);
+  // Both callers can carry an agent/model this install doesn't offer, and both
+  // have somewhere to report it: the /ws dispatch handler turns a throw into the
+  // dialog's {type:'error'}, and fireSchedule catches it into a `schedule-error`
+  // broadcast. That error channel is why validation belongs here and not only at
+  // schedule-creation time — a schedule stored while a model existed still fires
+  // months after that model is retired from an adapter, and launching it on the
+  // ambient default (or into a pane that dies) is worse than saying so.
+  // Deliberately NOT the spawn path: performSpawn dispatches through
+  // sessionManager.dispatch directly, so a caller-INHERITED legacy model never
+  // reaches here and keeps working (see performSpawn's own comment).
+  const badTarget = launchTargetError(opts.agent || 'claude', opts.model);
+  if (badTarget) throw new Error(badTarget);
   // Autopilot (issue→PR) mode: wrap the raw issue into a skill-naming imperative
   // (so the run goes through the tracked procedure, not freelance prose) and force
   // a fresh auto worktree on — a fleet of runs must never share a checkout. We pass

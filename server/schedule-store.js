@@ -2,6 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
+import { launchTargetError } from './agents/index.js';
 import { nextRunAt, isValidCron } from './cron-next.js';
 
 const SCHEDULES_FILE = path.join(DATA_DIR, 'schedules.json');
@@ -42,6 +43,15 @@ function validateAction(action, { isCron }) {
   const a = action && typeof action === 'object' && action.kind ? action : { kind: 'dispatch', dispatch: action };
   if (a.kind === 'dispatch') {
     const d = { ...(a.dispatch && typeof a.dispatch === 'object' ? a.dispatch : {}) };
+    // The OTHER creation door: `schedule-create`/`-update` over /ws writes here
+    // without passing through the MCP tool's check, so a stale tab or legacy
+    // client could persist an agent/model no adapter offers. Throws like the
+    // `when` validation beside it, which the control router turns into the
+    // client's {type:'error'}. Only reached from create/update — `_load` maps
+    // stored rows through migrateStored alone, so an already-persisted legacy
+    // value can never break startup.
+    const badTarget = launchTargetError(d.agent || 'claude', d.model);
+    if (badTarget) throw new Error(badTarget);
     if (isCron && d.worktree && !d.workflow) d.worktreeAuto = true;
     return { kind: 'dispatch', dispatch: d };
   }

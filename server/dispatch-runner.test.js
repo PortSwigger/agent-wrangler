@@ -115,3 +115,30 @@ test('a launch failure propagates (callers own the error envelope)', async () =>
   const d = deps({ sessionManager: { dispatch: async () => { throw new Error('Branch feat already exists'); } } });
   await assert.rejects(() => runDispatch({ intent: 'x', worktree: true }, d), /Branch feat already exists/);
 });
+
+// Both of runDispatch's callers have an error channel — the /ws dispatch handler
+// turns a throw into {type:'error'}, and fireSchedule into a `schedule-error`
+// broadcast — so a schedule stored while a model existed fails visibly once that
+// model is retired, rather than launching on the ambient default.
+test('runDispatch refuses a model the chosen agent does not offer', async () => {
+  const d = deps();
+  await assert.rejects(
+    () => runDispatch({ intent: 'go', agent: 'codex', model: 'opus' }, d),
+    /Unknown model "opus" for agent "codex"/,
+  );
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+test('runDispatch refuses an unknown agent rather than silently launching claude', async () => {
+  const d = deps();
+  await assert.rejects(() => runDispatch({ intent: 'go', agent: 'codx' }, d), /Unknown agent "codx"/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+// The spawn path dispatches through sessionManager.dispatch directly and never
+// reaches here, which is what keeps a caller-INHERITED legacy model working.
+test('runDispatch accepts a valid pair', async () => {
+  const d = deps();
+  await runDispatch({ intent: 'go', agent: 'codex', model: 'gpt-5.6-sol' }, d);
+  assert.equal(d.calls.dispatch[0].model, 'gpt-5.6-sol');
+});

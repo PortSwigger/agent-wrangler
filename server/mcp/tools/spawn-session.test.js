@@ -201,3 +201,40 @@ test('spawn_session surfaces a dispatch failure as an error result', async () =>
   assert.equal(out.isError, true);
   assert.match(out.content[0].text, /Branch feat already exists/);
 });
+
+// The tool takes `model`/`agent` as free strings from an agent, not from a UI
+// dropdown, so a typo'd or stale name would otherwise reach the CLI unchecked.
+test('spawn_session refuses a model the chosen agent does not offer', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler(
+    { deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', model: 'opus' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown model "opus" for agent "codex"/);
+  // Names the way out, since a cross-agent spawn is where this goes wrong.
+  assert.match(out.content[0].text, /is a claude model/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+// adapterFor silently resolves an unknown id to claude, so without this the
+// session launches on the wrong agent entirely and nothing says so.
+test('spawn_session refuses an unknown agent, ahead of the model', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler(
+    { deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codx', model: 'gpt-5.6-sol' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown agent "codx"/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+// Validation covers the CALLER-SUPPLIED model only. An entry may carry a value
+// since dropped from an adapter; failing the spawn over a string the caller
+// never passed would break the inheritance this tool exists to provide.
+test('spawn_session still inherits a caller model the adapter no longer offers', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude', model: 'opus-legacy' } } });
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+
+  assert.equal(out.isError, undefined);
+  assert.equal(d.calls.dispatch[0].model, 'opus-legacy');
+});

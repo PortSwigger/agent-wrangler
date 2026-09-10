@@ -19,23 +19,37 @@ information about the task itself, not a channel for briefing another session.
 ## Choosing the agent and model
 
 `agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
-`model` defaults to your own model when the new session runs the same agent. Pick
-the model to fit the work:
+
+**Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit
+your own model" default only fires when the new session runs the same agent as
+you — model names don't cross providers — so a cross-agent spawn with `model`
+unset lands on whatever that agent's ambient default currently is, which is not
+necessarily its strongest option.
+
+The table below is **generated from the wrangler's agent adapters**, so it is the
+same list the tool validates against; an invalid `model` or `agent` is rejected
+before launch with an error naming the valid options. Don't hand-edit it — change
+`server/agents/*.js` and run `npm run gen:models`.
+
+<!-- BEGIN GENERATED MODELS — edit server/agents/*.js then run `npm run gen:models` -->
 
 **Claude** (`agent: "claude"`):
-- `fable` — Fable 5, 1M context. Most capable; for the hardest, longest-running work.
-- `opus` — Opus 5, 1M context. Default for substantial work.
-- `sonnet` — Sonnet 5, 200K context. Faster/cheaper for well-scoped tasks.
-- `sonnet[1m]` — Sonnet 5, 1M context, for large contexts at Sonnet cost.
-- `haiku` — Haiku 4.5, 200K context. Fast and cheap for simple, mechanical work.
+- `fable` — Fable 5 · 1M context
+- `opus` — Opus 5 · 1M context (default)
+- `opusplan` — Opus plan · Sonnet execution
+- `sonnet` — Sonnet 5 · 200K context
+- `sonnet[1m]` — Sonnet 5 · 1M context
+- `haiku` — Haiku 4.5 · 200K context
 
 **Codex** (`agent: "codex"`):
-- `gpt-5.6-sol` — frontier; the default.
-- `gpt-5.6-terra` — everyday coding.
-- `gpt-5.6-luna` — fast and cheap.
-- `gpt-5.5` — frontier.
-- `gpt-5.4` — everyday coding.
-- `gpt-5.4-mini` — fast and cheap.
+- `gpt-5.5` — GPT-5.5 · frontier
+- `gpt-5.4` — GPT-5.4 · everyday coding
+- `gpt-5.4-mini` — GPT-5.4 mini · fast & cheap
+- `gpt-5.6-sol` — GPT-5.6 Sol · frontier (default)
+- `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
+- `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
+
+<!-- END GENERATED MODELS -->
 
 ## Placement
 

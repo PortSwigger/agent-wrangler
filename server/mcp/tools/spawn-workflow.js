@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { knownAgentIds, modelChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { workflowLaunchPrompt } from '../../workflow.js';
 import { slugFromIntent } from '../../worktree.js';
@@ -34,8 +35,12 @@ export const spawnWorkflowTool = {
       + 'description of the work. It is wrapped into the issue-to-pr skill launch prompt.',
     ),
     cwd: z.string().optional().describe('Working directory to launch in (the repo the worktree branches off). Defaults to a fresh scratch dir.'),
-    model: z.string().optional().describe('Model override for the run. Defaults to your own model (when launching the same agent).'),
-    agent: z.string().optional().describe('Agent to launch (claude or codex). Defaults to claude.'),
+    model: z.string().optional().describe(
+      `Model override for the run. Defaults to your own model, and only when launching the SAME `
+      + `agent — a cross-agent spawn falls back to that agent's own default unless you pass this. `
+      + `Valid values — ${modelChoicesText()}.`,
+    ),
+    agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
     into: z.string().optional().describe(
       'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '

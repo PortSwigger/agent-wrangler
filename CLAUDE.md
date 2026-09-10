@@ -286,6 +286,43 @@ don't re-derive it.
   send none; a browser always sends it) but **absent `Host` is REJECTED**. Caller
   *identity* (the MCP `X-AW-Session` header / Codex Bearer token, `extractCaller`) is
   **advisory only, not auth** — this gate, not the identity, is what accepts a request.
+- **The model vocabulary has exactly ONE source — each adapter's `models` array —
+  and nothing may hand-copy it.** `agents/index.js`'s `modelError`/`agentError`
+  (`launchTargetError`) is the check; `modelChoicesText()` generates the MCP
+  tools' `model` description and `modelTableMarkdown()` the spawn-session skill's
+  table, so every list an agent reads is rendered from the array it is validated
+  against. Four things are load-bearing. The agent is checked BEFORE the model,
+  because `adapterFor` silently falls back to claude — a model-first check
+  reports "unknown model for claude" and hides the agent typo that caused it
+  (`modelError` therefore returns `agentError` itself rather than trusting
+  callers to order it). Matching is on `m.value` ALONE, never
+  `transcriptPrefixes` (those map a transcript's `message.model` back to a pill
+  and would accept `claude-opus-5`, which the CLI rejects at launch).
+  **`performSpawn` validates `args.model` BEFORE its caller-inheritance
+  fallback** — an entry may carry a model since dropped from an adapter (7 real
+  cards did when this shipped), and rejecting an inherited value would fail a
+  spawn over a string the caller never supplied; that exception survives with no
+  special-casing precisely because spawn dispatches through
+  `sessionManager.dispatch` DIRECTLY and never reaches `runDispatch`. And
+  validation sits at **three** doors, not one: the MCP tools, `runDispatch` (the
+  /ws dispatch dialog AND schedule fire time), and `schedule-store`'s
+  `validateAction` (the /ws `schedule-create`/`-update` door). **"At fire time
+  there is nobody to return an error to" was the first draft's reasoning and it
+  is WRONG** — `fireSchedule` catches and broadcasts `schedule-error`, which the
+  panel renders, so a schedule stored while a model existed now fails visibly
+  once that model is retired instead of launching on the ambient default. Only
+  `_load` is exempt: it maps stored rows through `migrateStored` alone, so an
+  already-persisted legacy value can never break startup.
+  **A skill must never HAND-COPY the models, but the spawn-session skill does
+  carry a GENERATED table** (`skill-model-table.js`, `npm run gen:models`,
+  guarded by `spawn-session-skill-models.test.js` since this repo has no build
+  step). Pointing at the tool schema alone was tried and is not enough: measured
+  in a real Codex session, MCP input-schema descriptions are **absent from its
+  initial tool catalog** — it had to search the tool declarations to reach them —
+  where a loaded SKILL.md body is plainly in front of it. So "the schema is
+  always in context" holds for Claude and NOT for Codex; don't delete the table
+  again on that reasoning. The hand-copied table it replaced had already drifted
+  (missing `opusplan`).
 - **A new MCP tool is invisible to launched agents until it's in TWO places.**
   `server/mcp/tools/index.js`'s `TOOLS` registers it on the server; separately,
   `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched session's

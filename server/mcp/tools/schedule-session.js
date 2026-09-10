@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { launchTargetError, knownAgentIds, modelChoicesText } from '../../agents/index.js';
 
 // Create a schedule from inside a session: a saved action + a when, fired by the
 // wrangler's tick (the single-instance-per-DATA_DIR owner). Two action kinds,
@@ -29,8 +30,8 @@ export const scheduleSessionTool = {
     // dispatch fields
     intent: z.string().optional().describe('dispatch: the new session\'s launch prompt. Required for a dispatch schedule.'),
     cwd: z.string().optional().describe('dispatch: working directory to launch in. Defaults to a fresh scratch dir.'),
-    model: z.string().optional().describe('dispatch: model override for the new session.'),
-    agent: z.string().optional().describe('dispatch: agent to launch (claude or codex). Defaults to claude.'),
+    model: z.string().optional().describe(`dispatch: model override for the new session. Valid values — ${modelChoicesText()}.`),
+    agent: z.string().optional().describe(`dispatch: agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     into: z.string().optional().describe('dispatch: task id to put the new session on. Defaults to your current task.'),
     worktree: z.boolean().optional().describe('dispatch: launch in a fresh git worktree (auto-suffixed for recurring schedules).'),
     workflow: z.boolean().optional().describe('dispatch: run the issue→PR autopilot on `intent` as the issue.'),
@@ -60,6 +61,14 @@ export const scheduleSessionTool = {
     if (kind === 'dispatch') {
       const intent = (args.intent ?? '').trim();
       if (!intent) return errorResult('A dispatch schedule needs an `intent` (the launch prompt).');
+      // Validated here, at creation, because this is the only point where an
+      // error can reach whoever got it wrong. At fire time the schedule runs
+      // unattended, so a bad model would silently fall back to the agent's
+      // ambient default with nobody to tell — same reason runDispatch itself is
+      // left alone (its other caller is a UI dropdown that can't produce one).
+      const agent = args.agent || 'claude';
+      const badTarget = launchTargetError(agent, args.model);
+      if (badTarget) return errorResult(badTarget);
       // Default the task to the caller's current task, like spawn_session.
       const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;
       action = {
@@ -68,7 +77,7 @@ export const scheduleSessionTool = {
           cwd: args.cwd,
           intent,
           model: args.model,
-          agent: args.agent || 'claude',
+          agent,
           taskId: taskId || undefined,
           worktree: Boolean(args.worktree) || undefined,
           workflow: Boolean(args.workflow) || undefined,

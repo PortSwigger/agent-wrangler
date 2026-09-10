@@ -182,3 +182,15 @@ test('spawn_workflow surfaces a dispatch failure as an error result', async () =
   assert.equal(out.isError, true);
   assert.match(out.content[0].text, /worktree create failed/);
 });
+
+// Same guard as spawn_session — both tools share performSpawn, so this pins the
+// wiring rather than the rule (see launch-target.test.js for the rule itself).
+test('spawn_workflow refuses a model the chosen agent does not offer', async () => {
+  const d = deps();
+  const out = await spawnWorkflowTool.handler(
+    { deps: d, caller: 'CARD1' }, { issue: 'ENT-1', agent: 'codex', model: 'opus' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown model "opus" for agent "codex"/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
