@@ -34,6 +34,21 @@ test('classify: the real devcontainer-CLI failure line (Group-E capture) reads a
   assert.equal(c.status, 'needs-you');
   assert.match(c.waitingFor, /bring-up failed/);
 });
+test('classify: Codex\'s own update-available banner reads as needs-you with a reason', () => {
+  // Verbatim (a live, non-destructive capture: `~/.codex/version.json`'s
+  // latest_version faked to force the banner, pane captured, tmux session
+  // killed WITHOUT ever pressing a key — the real "Update now" default was
+  // never triggered). Option 1 is the default on a bare Enter, which is
+  // exactly the footgun this branch exists to prevent.
+  const pane = '› Ask Codex to do anything\n\n  ? for shortcuts\n\n  ✨ Update available! 0.154.0 -> 9.9.9\n\n  Release notes: https://github.com/openai/codex/releases/latest\n\n› 1. Update now (runs `brew upgrade --cask codex`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue';
+  const c = classify(pane);
+  assert.equal(c.status, 'needs-you');
+  assert.match(c.waitingFor, /update available/i);
+});
+test('classify: ordinary conversation text mentioning an update does not false-positive', () => {
+  assert.equal(classify('I ran the update and it looks like everything is now available!').status, 'idle');
+  assert.equal(classify('Skipping this file until the next version of the schema lands').status, 'idle');
+});
 test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('… esc to interrupt …').status, 'working');
   assert.equal(classify('a quiet prompt').status, 'idle');

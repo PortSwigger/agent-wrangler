@@ -204,6 +204,20 @@ export function classify(paneText) {
   // first launch parks on one of these awaiting the user — this must read as
   // non-idle or the idle-timer suspend gate reaps it.
   if (/oauth\/authorize|select login method|paste code here if prompted/i.test(recent)) return { status: 'needs-you' };
+  // Codex's own "a new CLI version exists" banner: a numbered menu ("1. Update
+  // now (runs `brew upgrade --cask codex`) / 2. Skip / 3. Skip until next
+  // version") that DEFAULTS to option 1 on a bare Enter — verified live
+  // against the installed binary by faking `~/.codex/version.json`'s
+  // latest_version and capturing the pane, never accepting the prompt. This is
+  // TUI chrome, never written to the rollout, so it must be caught here or a
+  // chat-view Send (which pastes text then presses Enter, same as any normal
+  // prompt) silently confirms "Update now" and kills the session — this is
+  // exactly the incident that motivated this branch. Both anchor phrases are
+  // unique across the whole binary (grepped) and require BOTH to match, so
+  // ordinary conversation text mentioning "an update" can't false-positive.
+  if (/update available!/i.test(recent) && /skip until next version/i.test(recent)) {
+    return { status: 'needs-you', waitingFor: 'Codex has a CLI update available' };
+  }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as

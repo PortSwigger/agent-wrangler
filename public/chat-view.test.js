@@ -100,7 +100,7 @@ function stubDom() {
   for (const id of [
     'chat-wrap', 'chat-stream', 'chat-input', 'chat-send', 'chat-stop',
     'chat-hint', 'chat-suggestion', 'chat-current-model', 'chat-attachments',
-    'chat-notice-bar', 'chat-jump-last',
+    'chat-notice-bar', 'chat-jump-last', 'chat-exit-notice',
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
   const document = {

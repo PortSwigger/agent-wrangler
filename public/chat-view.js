@@ -122,6 +122,28 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const modelEl = document.getElementById('chat-current-model');
   const attachEl = document.getElementById('chat-attachments');
   const jumpBtn = document.getElementById('chat-jump-last');
+  const exitNoticeEl = document.getElementById('chat-exit-notice');
+
+  // s.exitOutput (state-reader.js) off the graph node — the one thing this view
+  // shows that is neither transcript-sourced nor pane-scraped, because a dead
+  // pane can't be scraped and the transcript never records why the process
+  // exited. Mirrors the terminal panel's own exitOutput block (renderSidebar,
+  // app.js), which is the ONLY other place this text was ever shown — a Codex
+  // self-update quitting the process was invisible from here otherwise, with
+  // nothing to explain a session that just stopped responding.
+  function renderExitNotice(text) {
+    exitNoticeEl.hidden = !text;
+    exitNoticeEl.textContent = ''; // rebuild rather than accumulate children.
+    if (!text) return;
+    const head = document.createElement('p');
+    head.className = 'chat-exit-notice-head';
+    head.textContent = "This session's terminal exited unexpectedly. Last output:";
+    exitNoticeEl.appendChild(head);
+    const body = document.createElement('pre');
+    body.className = 'term-exit';
+    body.textContent = text;
+    exitNoticeEl.appendChild(body);
+  }
 
   // The node for the most recently appended `chat-user` item, so the jump
   // pill has something to scroll to. Reset wherever the stream itself is
@@ -769,6 +791,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
       renderModel();
+      // Same reasoning as the model: this belongs to the session being left,
+      // and the caller re-seeds it right after mount — otherwise a session
+      // whose pane never died would flash the PREVIOUS one's exit output.
+      renderExitNotice(null);
       poll();
       clearInterval(timer);
       timer = setInterval(poll, POLL_MS);
@@ -813,6 +839,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderLive();
       renderSuggestion();
       renderModel();
+      renderExitNotice(null);
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -882,8 +909,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     currentModelLabel() {
       return liveModel || graphModel?.label || null;
     },
+    // s.exitOutput off the graph node — null for a live/never-died session.
+    // Called wherever setStatus/setModel already are (renderSidebar's initial
+    // seed, renderPanel's ~4s refresh), so it tracks the same session those do.
+    setExitNotice(text) {
+      renderExitNotice(text || null);
+    },
 
-    setStatus(status) {
+    setStatus(status, waitingFor) {
       // A transition AWAY from 'working' must hide the line even with no new
       // reply in flight (e.g. suspend, or the pane dying mid-tool) — otherwise
       // the last reply's pending entry stays displayed after the Stop button
@@ -899,7 +932,15 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
       if (blocked) {
         const msg = document.createElement('span');
-        msg.textContent = 'Waiting on you — this prompt only exists in the terminal.';
+        // `waitingFor` is classify()'s scrape-derived hint (s.waitingFor off the
+        // graph node) — present for a needs-you the server can actually explain
+        // (Codex's own update banner, a devcontainer bring-up failure), absent
+        // for an ordinary Claude permission prompt (that reason lives only in
+        // the pane, which is exactly why this bar exists). Falls back to the
+        // generic line rather than showing nothing.
+        msg.textContent = waitingFor
+          ? `${waitingFor} — this needs the terminal.`
+          : 'Waiting on you — this prompt only exists in the terminal.';
         bar.appendChild(msg);
         const go = document.createElement('button');
         go.type = 'button';

@@ -3818,11 +3818,14 @@ function renderSidebar(s) {
     // re-seeding here an already-working session shows no "Working — running X" line
     // until the next ~4s graph rebuild, while Stop — driven off the same status — is
     // already visible. The two must never disagree.
-    chatView.setStatus(displayStatus(s));
+    chatView.setStatus(displayStatus(s), s.waitingFor);
     // Same reasoning for the model: mount clears it so a session switch cannot
     // leave the previous session's model showing, which means it has to be
     // re-seeded here or the chip stays blank until the next graph rebuild.
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+    // Same reasoning again: mount clears it, so a dead session's last output
+    // has to be re-seeded here or it stays hidden until the next graph rebuild.
+    chatView.setExitNotice(s.exitOutput);
     return;
   }
   chatView.unmount();
@@ -4005,8 +4008,9 @@ function renderPanel(sessionId) {
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
-    chatView.setStatus(displayStatus(s));
+    chatView.setStatus(displayStatus(s), s.waitingFor);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
+    chatView.setExitNotice(s.exitOutput);
   }
   const barWordPanel = barWord(s); // same vocabulary as the card bar; no waitingFor
   // Meta as .card-tag chips (full parity with the board card), each omitted when empty.

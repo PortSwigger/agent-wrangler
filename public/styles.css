@@ -2722,6 +2722,13 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: color-mix(in srgb, var(--red) 14%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--red) 55%, transparent); padding: 9px 14px; }
 .chat-notice-bar[hidden] { display: none; }
+
+/* A dead pane's own explanation, reusing #term-wrap's .term-exit look so the
+   two views agree on what "this exited" reads like. */
+.chat-exit-notice { border-top: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+  background: color-mix(in srgb, var(--red) 8%, transparent); padding: 9px 14px; }
+.chat-exit-notice[hidden] { display: none; }
+.chat-exit-notice-head { margin: 0 0 6px; font-size: 0.83em; font-weight: 600; color: var(--red-fg); }
 /* --warn/--text (brief names, aspirational) map to this file's real vars: --red is
    the documented needs-you identity (see the --snooze comment above, which spells
    out --red/--snooze/--just-finished as separate alarm roles) — --snooze reads as
