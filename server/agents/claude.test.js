@@ -60,6 +60,18 @@ test('a plain launch still carries --append-system-prompt for the mandatory-skil
   assert.doesNotMatch(plain, /already running inside a dedicated git worktree/);
 });
 
+test('the job-worker protocol rides launch and resume only for an automated-job session', () => {
+  // The step protocol is ~1k tokens; it belongs only to a session that holds
+  // job_report. A resumed job session keeps it — its prompt is not replayed.
+  const plain = claude.buildLaunch({ sessionId: 'SID', taskMemory: true });
+  const job = claude.buildLaunch({ sessionId: 'SID', taskMemory: true, automation: true });
+  const jobResume = claude.buildResume({ sessionId: 'SID', resumeId: 'LIVE', taskMemory: true, automation: true });
+  assert.doesNotMatch(plain, /Wrangler automated-job step/);
+  assert.match(job, /Wrangler automated-job step/);
+  assert.match(jobResume, /Wrangler automated-job step/);
+  assert.doesNotMatch(claude.buildResume({ sessionId: 'SID', resumeId: 'LIVE', taskMemory: true }), /Wrangler automated-job step/);
+});
+
 test('a worktree launch appends both the mandatory-skill nudge and the guardrail', () => {
   const wt = claude.buildLaunch({ sessionId: 'SID', worktree: { path: '/v/p-worktree-x', branch: 'x' } });
   assert.match(wt, /--append-system-prompt/);
