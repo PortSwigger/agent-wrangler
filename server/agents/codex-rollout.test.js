@@ -36,6 +36,47 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.deepEqual(r.subAgents, []);
 });
 
+// The Codex CLI stopped writing EventMsg-shaped `user_message`/`agent_message`
+// lines entirely around 2026-08-19 — every rollout since is `response_item`
+// only. These fixtures pin the current shape so this file's own fixtures don't
+// mask the regression the old event_msg-only ones did.
+function fixtureResponseItemSessions() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-ri-'));
+  const day = path.join(root, '2026', '09', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const file = path.join(day, `rollout-2026-09-10T09-00-00-${uuid}.jsonl`);
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+    { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are an agent...' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions\n\nDo not add comments.' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix the parser bug' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } },
+  ];
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return { root, uuid };
+}
+
+test('analyzeCodex reads the summary from a response_item message (current rollout shape)', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.summary, 'Fix the parser bug');
+  assert.equal(r.currentModel, 'gpt-5.6-terra');
+});
+
+test('analyzeCodex skips a synthetic response_item user message (AGENTS.md, developer role) when picking the summary', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.notEqual(r.summary, '# AGENTS.md instructions\n\nDo not add comments.');
+});
+
+test('listResumableCodex reads the summary from a response_item message', async () => {
+  const { root, uuid } = fixtureResponseItemSessions();
+  const { candidates } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-09-10T10:00:00Z') });
+  assert.equal(candidates[0].summary, 'Fix the parser bug');
+});
+
 test('analyzeCodex returns nulls for an unknown id', async () => {
   const { root } = fixtureSessions();
   const r = await analyzeCodex('00000000-0000-0000-0000-000000000000', { sessionsDir: root });
@@ -91,17 +132,45 @@ test('activityInRangeCodex counts user_message/agent_message turns with a timest
   assert.equal(r.lastActivity, start + 9 * 3_600_000 + 5000);
 });
 
-test('activityInRangeCodex ignores non-message event kinds (token_count, task_started) and response_item lines', async () => {
+test('activityInRangeCodex ignores non-message event kinds (token_count, task_started)', async () => {
   const { root, uuid } = fixtureTimestamped([
     { timestamp: '2026-07-01T09:00:00.000Z', type: 'session_meta', payload: {} },
     { timestamp: '2026-07-01T09:00:01.000Z', type: 'event_msg', payload: { type: 'task_started' } },
     { timestamp: '2026-07-01T09:00:02.000Z', type: 'event_msg', payload: { type: 'token_count' } },
-    { timestamp: '2026-07-01T09:00:03.000Z', type: 'response_item', payload: { type: 'message', role: 'user' } },
   ]);
   const start = Date.parse('2026-07-01T00:00:00.000Z');
   const end = start + 86_400_000;
   const r = await activityInRangeCodex(uuid, start, end, root);
   assert.equal(r.messageCount, 0);
+});
+
+// Current rollouts (post ~2026-08-19) carry no event_msg user_message/agent_message
+// lines at all — only response_item. This is the shape that matters going forward.
+test('activityInRangeCodex counts response_item user/assistant messages (current rollout shape)', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+    { timestamp: '2026-07-02T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next day' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
+  assert.equal(r.firstActivity, start + 9 * 3_600_000);
+  assert.equal(r.lastActivity, start + 9 * 3_600_000 + 5000);
+});
+
+test('activityInRangeCodex excludes a developer-role response_item and a synthetic user-role one (AGENTS.md, environment_context)', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'instructions' }] } },
+    { timestamp: '2026-07-01T09:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>...</environment_context>' }] } },
+    { timestamp: '2026-07-01T09:00:02.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions' }] } },
+    { timestamp: '2026-07-01T09:00:03.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'a real prompt' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 1);
 });
 
 test('activityInRangeCodex returns null when no rollout exists for the id', async () => {

@@ -90,10 +90,48 @@ export async function buildRolloutIndex(sessionsDir = CODEX_SESSIONS) {
   return byUuid;
 }
 
+// Every build of the Codex CLI up to ~2026-08-19 wrote EventMsg-shaped
+// `user_message`/`agent_message` lines (`payload.type`) alongside the raw
+// conversation, and this file's summary/activity logic was written against
+// that shape. Every build since drops those mirror lines entirely — verified
+// against real rollouts on disk: every one from before that date has at least
+// one `user_message`, every one from on/after it has zero — so a Codex session
+// dispatched today never gets a `summary`, silently falling back to a bare cwd
+// basename for its board title (and, separately, `activityInRangeCodex` always
+// reporting zero messages). The only shape left is `response_item` entries
+// with `payload.type === 'message'` and a `role` — the same shape
+// chat-events.js already had to switch the chat view to. Both shapes are
+// checked below (never just the new one) so a still-unarchived pre-8/19
+// rollout keeps working.
+//
+// Mirrors, rather than imports, chat-events.js's CODEX_SYNTHETIC_PREFIXES /
+// codexText / isSyntheticCodex: that module already solved "which role:'user'
+// response_item is real conversation vs. Codex's own injected context" for the
+// chat view, but this file is an agents/* leaf (must not gain a hard
+// dependency on a UI-facing module) and chat-events.js's own header says it
+// deliberately duplicates rather than imports for the same reason.
+const CODEX_MESSAGE_SYNTHETIC_PREFIXES = [
+  '# AGENTS.md instructions', '<recommended_plugins>', '<in-app-browser-context',
+  '<user_shell_command>',
+];
+function isSyntheticCodexMessage(text) {
+  const head = text.slice(0, 40).trimStart();
+  return text.startsWith('<') || CODEX_MESSAGE_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+function codexMessageText(content) {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b) => b && ['input_text', 'output_text', 'text'].includes(b.type) && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
 // Codex EventMsg payloads are a tagged union under `payload.type`. We read:
 //  - turn_context → the model id for pricing
 //  - token_count → usage accounting (nested under info.total_token_usage)
-//  - user_message → first one becomes the summary
+//  - user_message → first one becomes the summary (legacy shape; see above)
 function scanLine(line, state) {
   if (!line.trim()) return;
   let entry;
@@ -109,9 +147,14 @@ function scanLine(line, state) {
   }
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
-  if (!state.summary && kind === 'user_message') {
-    const text = (typeof p.message === 'string' ? p.message : p.text || '').trim();
-    if (text && !text.startsWith('<')) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
+  if (!state.summary) {
+    if (kind === 'user_message') {
+      const text = (typeof p.message === 'string' ? p.message : p.text || '').trim();
+      if (text && !text.startsWith('<')) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
+    } else if (entry.type === 'response_item' && p.type === 'message' && p.role === 'user') {
+      const text = codexMessageText(p.content);
+      if (text && !isSyntheticCodexMessage(text)) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
+    }
   }
 }
 
@@ -146,15 +189,24 @@ export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, in
   };
 }
 
-// Scan a rollout for real conversation turns — event_msg payloads of type
-// `user_message`/`agent_message` (the same two kinds scanLine already treats as
-// meaningful, e.g. for the summary) — whose top-level `timestamp` falls in
-// [startMs, endMs). Every rollout line carries a top-level ISO timestamp (unlike
-// Claude transcripts, no line-by-line presence check needed). A `response_item`
-// with role "user" is NOT used here: Codex injects a synthetic
-// <environment_context> block under that same shape with no corresponding
-// user_message event, which would double-count/miscount a turn that was never
-// typed by the user. Mirrors transcript-reader.js's activityInRange for Claude.
+// Scan a rollout for real conversation turns whose top-level `timestamp` falls
+// in [startMs, endMs). Every rollout line carries a top-level ISO timestamp
+// (unlike Claude transcripts, no line-by-line presence check needed). Mirrors
+// transcript-reader.js's activityInRange for Claude.
+//
+// Two shapes are counted, for the reason scanLine's header documents at
+// length: legacy event_msg `user_message`/`agent_message` lines (rollouts from
+// before the Codex CLI dropped that shape, ~2026-08-19), and — the only shape
+// current rollouts carry — `response_item` entries with `payload.type ===
+// 'message'`. A `role: 'developer'` message (injected instructions) is never
+// conversation and is excluded outright. A `role: 'user'` message CAN still be
+// Codex's own injected context rather than something the human typed — the
+// original comment here warned that a synthetic <environment_context> block
+// arrives under this exact shape with no corresponding event_msg turn, which
+// would double-count/miscount a turn nobody typed — so it only counts once
+// `isSyntheticCodexMessage` says it looks like real prose, the same rule the
+// chat view uses to decide what a human actually sees. A `role: 'assistant'`
+// message always counts, matching the old unconditional `agent_message` count.
 export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDir = CODEX_SESSIONS) {
   const file = await findRollout(sessionId, sessionsDir);
   if (!file) return null;
@@ -167,9 +219,19 @@ export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDi
       if (!line.trim()) continue;
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
+      if (typeof entry.timestamp !== 'string') continue;
       const p = entry.payload || entry;
       const kind = p.type || entry.type;
-      if ((kind !== 'user_message' && kind !== 'agent_message') || typeof entry.timestamp !== 'string') continue;
+      let counts;
+      if (kind === 'user_message' || kind === 'agent_message') {
+        counts = true;
+      } else if (entry.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
+        const msgText = codexMessageText(p.content);
+        counts = p.role === 'assistant' || (Boolean(msgText) && !isSyntheticCodexMessage(msgText));
+      } else {
+        counts = false;
+      }
+      if (!counts) continue;
       const t = Date.parse(entry.timestamp);
       if (!t || t < startMs || t >= endMs) continue;
       messageCount += 1;
@@ -192,9 +254,14 @@ function headMetaCodex(file) {
       const p = entry.payload || entry;
       if (!cwd && p.cwd) cwd = p.cwd;
       const kind = p.type || entry.type;
-      if (!summary && (kind === 'user_message' || kind === 'UserMessage')) {
-        const text2 = (typeof p.message === 'string' ? p.message : p.text || '').trim();
-        if (text2 && !text2.startsWith('<')) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
+      if (!summary) {
+        if (kind === 'user_message' || kind === 'UserMessage') {
+          const text2 = (typeof p.message === 'string' ? p.message : p.text || '').trim();
+          if (text2 && !text2.startsWith('<')) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
+        } else if (entry.type === 'response_item' && p.type === 'message' && p.role === 'user') {
+          const text2 = codexMessageText(p.content);
+          if (text2 && !isSyntheticCodexMessage(text2)) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
+        }
       }
       if (cwd && summary) break;
     }
