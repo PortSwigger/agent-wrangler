@@ -71,6 +71,24 @@ test('analyzeCodex skips a synthetic response_item user message (AGENTS.md, deve
   assert.notEqual(r.summary, '# AGENTS.md instructions\n\nDo not add comments.');
 });
 
+// Caught in review: isSyntheticCodexMessage originally short-circuited on a
+// blanket `text.startsWith('<')`, which is stricter than chat-events.js's own
+// isSyntheticCodex (prefix-list only). A real human message that happens to
+// start with '<' (pasted XML/HTML/markdown) must still be picked up.
+test('analyzeCodex uses a real user message that starts with "<" as the summary, rather than treating it as synthetic', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-angle-'));
+  const day = path.join(root, '2026', '09', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
+  const file = path.join(day, `rollout-2026-09-10T09-00-00-${uuid}.jsonl`);
+  fs.writeFileSync(file, [
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<config><value>hello</value></config>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'got it' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.summary, '<config><value>hello</value></config>');
+});
+
 test('listResumableCodex reads the summary from a response_item message', async () => {
   const { root, uuid } = fixtureResponseItemSessions();
   const { candidates } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-09-10T10:00:00Z') });
@@ -183,6 +201,24 @@ test('activityInRangeCodex does not double-count a legacy rollout that carries b
     { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
     { timestamp: '2026-07-01T09:00:05.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'hello' } },
     { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+  ]);
+  const start = Date.parse('2026-07-01T00:00:00.000Z');
+  const end = start + 86_400_000;
+  const r = await activityInRangeCodex(uuid, start, end, root);
+  assert.equal(r.messageCount, 2);
+});
+
+// Caught in review: on a legacy rollout with a real '<'-leading user message,
+// the (previously overbroad) synthetic filter dropped the user turn from the
+// "current" tally while the assistant turn still made it non-zero — so the
+// per-file preference picked the undercounted "current" tally over the
+// correct "legacy" one. Confirms the fix, not just the filter unit-level.
+test('activityInRangeCodex counts a "<"-leading real message on a mixed legacy/current rollout without losing it to the tally preference', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: '<config>hello</config>' } },
+    { timestamp: '2026-07-01T09:00:00.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<config>hello</config>' }] } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'got it' } },
+    { timestamp: '2026-07-01T09:00:05.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'got it' }] } },
   ]);
   const start = Date.parse('2026-07-01T00:00:00.000Z');
   const end = start + 86_400_000;

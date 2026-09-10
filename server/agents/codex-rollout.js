@@ -104,19 +104,43 @@ export async function buildRolloutIndex(sessionsDir = CODEX_SESSIONS) {
 // checked below (never just the new one) so a still-unarchived pre-8/19
 // rollout keeps working.
 //
-// Mirrors, rather than imports, chat-events.js's CODEX_SYNTHETIC_PREFIXES /
-// codexText / isSyntheticCodex: that module already solved "which role:'user'
-// response_item is real conversation vs. Codex's own injected context" for the
-// chat view, but this file is an agents/* leaf (must not gain a hard
-// dependency on a UI-facing module) and chat-events.js's own header says it
-// deliberately duplicates rather than imports for the same reason.
+// Mirrors, rather than imports, chat-events.js's combined filter for a Codex
+// role:'user' response_item — `isSynthetic(text) || isSyntheticCodex(text)`,
+// i.e. the UNION of its generic SYNTHETIC_PREFIXES list (also used for
+// Claude's own injected context) and its Codex-specific CODEX_SYNTHETIC_
+// PREFIXES one. Take the union, not just the Codex-specific half: chat-
+// events.js checks both for a Codex message too, and `<environment_context>`
+// in particular — from the generic list — is exactly the tag Codex was
+// already known to inject under this same role:'user' shape (the reason the
+// pre-response_item version of this file excluded response_item from
+// activity counting entirely). Missing it here isn't hypothetical: an earlier
+// draft of this fix used only the Codex-specific half and broke this file's
+// own test for that exact tag. Most of the generic list's entries (Claude's
+// slash-command output wrappers) will never match a Codex rollout — kept
+// anyway so this stays a true mirror of the chat view's check rather than a
+// second, independently-curated guess at which tags matter. This file is an
+// agents/* leaf (must not gain a hard dependency on a UI-facing module), and
+// chat-events.js's own header says it deliberately duplicates rather than
+// imports for the same reason.
 const CODEX_MESSAGE_SYNTHETIC_PREFIXES = [
+  '<environment_context>', '<user_instructions>', '<environment_details>',
+  '<command-name>', '<command-message>', '<command-args>',
+  '<local-command-stdout>', '<local-command-stderr>', '<local-command-caveat>',
+  '<task-notification>',
   '# AGENTS.md instructions', '<recommended_plugins>', '<in-app-browser-context',
   '<user_shell_command>',
 ];
+// A blanket "starts with '<'" check was here originally (matching the legacy
+// event_msg path's own `!text.startsWith('<')` below) and was wrong: caught in
+// review, it makes a real human message that happens to start with '<'
+// (pasted XML/HTML/markdown) look synthetic, undercounting activity and — via
+// scanLine/headMetaCodex sharing this same predicate — reproducing the exact
+// "falls back to a bare cwd basename" title bug this file exists to fix.
+// chat-events.js's isSyntheticCodex has no such blanket rule, only the prefix
+// list; match only the list here too.
 function isSyntheticCodexMessage(text) {
   const head = text.slice(0, 40).trimStart();
-  return text.startsWith('<') || CODEX_MESSAGE_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
+  return CODEX_MESSAGE_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
 }
 function codexMessageText(content) {
   if (typeof content === 'string') return content.trim();
@@ -126,6 +150,15 @@ function codexMessageText(content) {
     .map((b) => b.text)
     .join('\n')
     .trim();
+}
+
+// Shared by scanLine and headMetaCodex, which otherwise each carried a
+// near-identical block: pull the human-readable text out of a `response_item`
+// line iff it's a real (non-synthetic) role:'user' message, else null.
+function responseItemUserText(entry, p) {
+  if (entry.type !== 'response_item' || p.type !== 'message' || p.role !== 'user') return null;
+  const text = codexMessageText(p.content);
+  return text && !isSyntheticCodexMessage(text) ? text : null;
 }
 
 // Codex EventMsg payloads are a tagged union under `payload.type`. We read:
@@ -151,9 +184,9 @@ function scanLine(line, state) {
     if (kind === 'user_message') {
       const text = (typeof p.message === 'string' ? p.message : p.text || '').trim();
       if (text && !text.startsWith('<')) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
-    } else if (entry.type === 'response_item' && p.type === 'message' && p.role === 'user') {
-      const text = codexMessageText(p.content);
-      if (text && !isSyntheticCodexMessage(text)) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
+    } else {
+      const text = responseItemUserText(entry, p);
+      if (text) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
     }
   }
 }
@@ -240,9 +273,10 @@ export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDi
       let tally = null;
       if (kind === 'user_message' || kind === 'agent_message') {
         tally = legacy;
-      } else if (entry.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
-        const msgText = codexMessageText(p.content);
-        if (p.role === 'assistant' || (Boolean(msgText) && !isSyntheticCodexMessage(msgText))) tally = current;
+      } else if (entry.type === 'response_item' && p.type === 'message' && p.role === 'assistant') {
+        tally = current;
+      } else if (responseItemUserText(entry, p)) {
+        tally = current;
       }
       if (!tally) continue;
       const t = Date.parse(entry.timestamp);
@@ -269,9 +303,9 @@ function headMetaCodex(file) {
         if (kind === 'user_message' || kind === 'UserMessage') {
           const text2 = (typeof p.message === 'string' ? p.message : p.text || '').trim();
           if (text2 && !text2.startsWith('<')) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
-        } else if (entry.type === 'response_item' && p.type === 'message' && p.role === 'user') {
-          const text2 = codexMessageText(p.content);
-          if (text2 && !isSyntheticCodexMessage(text2)) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
+        } else {
+          const text2 = responseItemUserText(entry, p);
+          if (text2) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
         }
       }
       if (cwd && summary) break;
