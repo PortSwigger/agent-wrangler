@@ -122,8 +122,8 @@ export const SETTINGS = [
     id: 'codexBrowserToolEnabled',
     type: 'toggle',
     scope: 'server',
-    label: "Codex's browser tool",
-    help: "Codex's own bundled browser/computer-use integration. On some setups its recovery path launches a new Chrome process against your real default profile, which can crash an already-running Chrome. Off drops \"browser\" from Codex's launch env, leaving \"computer\" enabled — this removes that known recovery path, not a guarantee Codex can never touch Chrome. Only affects the next launch/resume/fork of a Codex session.",
+    label: 'Codex browser automation',
+    help: "Whether Codex launches with its bundled browser-automation surface enabled. If its extension-based browser control isn't working, that surface's own recovery path can launch a new Chrome process against your real default profile, which can crash an already-running Chrome on some setups. Off sets CUA_REPL_ENABLED_SURFACES=computer on launch, dropping the browser surface while leaving native-app automation enabled — this removes that known recovery path, not every way Codex could touch Chrome. Takes effect on the next launch, resume, or fork of a Codex session.",
     default: true,
   },
 ];
