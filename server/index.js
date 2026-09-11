@@ -12,7 +12,7 @@ import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { getExtensions, assertGraphKeys } from './extensions/index.js';
+import { getExtensions, assertGraphKeys, extensionsForGraph } from './extensions/index.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
@@ -583,9 +583,11 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
-  // Which extensions exist and whether each is on — what the settings toggles
-  // read back. Fixed at load; the rebuild only re-emits it.
-  graph.extensions = ext.list.map(({ id, enabled, label, help, defaultEnabled }) => ({ id, enabled, label, help, defaultEnabled }));
+  // Which extensions exist and whether each is on — what the settings toggles read
+  // back, and what the client mounts/unmounts its slot contributions from. `enabled`
+  // is re-read from config here, not taken from ext.list's boot snapshot: see
+  // extensionsForGraph.
+  graph.extensions = extensionsForGraph(ext.list);
   // Each enabled extension's graph contribution (the checklist's `checklists`
   // snapshot, say). Only enabled ones are in the list, keys were checked against
   // the core's at boot — and no logging here: this is the 4s rebuild.
