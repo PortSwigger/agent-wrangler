@@ -37,14 +37,16 @@ don't re-derive it.
   post-launch (recency under `~/.codex/sessions/`) and isn't cwd-bucketed, so it's
   skipped by the guard. Legacy pre-split entries have no `liveSessionId`; keep the
   card-id fallback.
-- **Codex specifics.** Pane-scraped status is working/idle by default, plus ONE
-  needs-you exception: Codex's own "Update available!" self-update banner (a
-  numbered menu defaulting to "Update now" on a bare Enter — see `classify()`,
-  tmux-scraper.js). That exception exists because the chat view sends a prompt
-  by pasting text then pressing Enter, same as any normal Send, which would
-  otherwise silently confirm the real self-update and kill the session — this
-  happened for real. `cx_` tmux prefix (Claude `cc_`), cost is an *estimate*
-  shown with `~`, offered only when the `codex` binary is on PATH.
+- **Codex specifics.** Pane-scraped status is working/idle by default, plus a
+  Codex-TUI-specific needs-you exception (on top of the agent-agnostic
+  devcontainer-bring-up-failure one below): Codex's own "Update available!"
+  self-update banner (a numbered menu defaulting to "Update now" on a bare
+  Enter — see `classify()`, tmux-scraper.js). That exception exists because the
+  chat view sends a prompt by pasting text then pressing Enter, same as any
+  normal Send, which would otherwise silently confirm the real self-update and
+  kill the session — this happened for real. `cx_` tmux prefix (Claude `cc_`),
+  cost is an *estimate* shown with `~`, offered only when the `codex` binary is
+  on PATH.
 - **Codex's "trust this directory" dialog cannot be silenced with a `-c` flag —
   verified against the installed binary.** `-c projects."<path>".trust_level="trusted"`
   is silently ignored by the interactive dialog, whichever path it's keyed on; only an

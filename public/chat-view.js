@@ -145,7 +145,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // chat-only: the terminal panel already frames this ("its previous
     // terminal exited") in a paragraph above its own block, which the chat
     // view has no equivalent of.
-    head.textContent = "This session's terminal exited unexpectedly. Last output from the exited terminal:";
+    // Neutral, not "unexpectedly" — a clean `/exit` produces the same
+    // exitOutput a crash does (state-reader.js doesn't distinguish them), and
+    // the terminal panel's own wording ("its previous terminal exited") is
+    // equally neutral for the same reason.
+    head.textContent = "This session's terminal exited. Last output from the exited terminal:";
     exitNoticeEl.appendChild(head);
     const body = document.createElement('pre');
     body.className = 'term-exit';
