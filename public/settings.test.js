@@ -1,18 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, isOpenSettingsKey, tabIndexAfterKey } from './settings.js';
+import { SETTINGS_TABS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, getSetting, EXT_SETTING_PREFIX } from './settings.js';
 
-test('settings are grouped into four ordered tabs', () => {
+test('settings are grouped into five ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
     { id: 'appearance', label: 'Appearance' },
     { id: 'sessions', label: 'Sessions' },
     { id: 'automation', label: 'Automation' },
+    { id: 'extensions', label: 'Extensions' },
     { id: 'shortcuts', label: 'Shortcuts' },
   ]);
 });
 
 test('each registered setting appears in exactly one tab', () => {
+  setExtensionDefs([]);
   const settingIds = SETTINGS_TABS.flatMap((tab) => tab.settingIds);
   assert.equal(settingIds.length, new Set(settingIds).size);
   assert.deepEqual(new Set(settingIds), new Set([
@@ -22,12 +24,39 @@ test('each registered setting appears in exactly one tab', () => {
     'soundOnFinish',
     'childFullViewByDefault',
     'chatViewDefault',
-    'checklistEnabled',
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
     'archiveReviewEnabled',
     'flipNavHotkeys',
   ]));
+});
+
+// The Extensions tab is built from the server's list, never hand-listed: one
+// server-scoped toggle per extension, carrying the restart note, replaced
+// wholesale on each call so a re-sent list can't accumulate stale rows.
+test('setExtensionDefs builds one server toggle per extension with the restart note, and replaces the previous set', () => {
+  const defs = setExtensionDefs([
+    { id: 'checklist', label: 'Per-session checklist', help: 'A list.', defaultEnabled: true },
+    { id: 'other', label: 'Other', help: 'Something. Turning it on or off takes effect after the wrangler restarts.', defaultEnabled: false },
+    { id: 'bare' },
+  ]);
+  assert.deepEqual(defs.map((d) => [d.id, d.type, d.scope, d.label, d.default]), [
+    [`${EXT_SETTING_PREFIX}checklist`, 'toggle', 'server', 'Per-session checklist', true],
+    [`${EXT_SETTING_PREFIX}other`, 'toggle', 'server', 'Other', false],
+    [`${EXT_SETTING_PREFIX}bare`, 'toggle', 'server', 'bare', true],
+  ]);
+  assert.equal(defs[0].help, 'A list. Takes effect after the wrangler restarts.');
+  assert.equal(defs[1].help, 'Something. Turning it on or off takes effect after the wrangler restarts.', 'a help text that already says so is not doubled');
+  assert.equal(defs[2].help, 'Takes effect after the wrangler restarts.');
+  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds, defs.map((d) => d.id));
+  // Registered: readable through the ordinary getSetting path, falling back to
+  // the manifest default when the server bridge has nothing for it.
+  assert.equal(getSetting(`${EXT_SETTING_PREFIX}checklist`), true);
+  assert.equal(getSetting(`${EXT_SETTING_PREFIX}other`), false);
+  setExtensionDefs([{ id: 'solo', label: 'Solo' }]);
+  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds, [`${EXT_SETTING_PREFIX}solo`]);
+  assert.equal(getSetting(`${EXT_SETTING_PREFIX}checklist`), undefined, 'a dropped extension is unregistered');
+  setExtensionDefs([]);
 });
 
 test('tab arrow navigation wraps in both directions', () => {
