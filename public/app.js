@@ -4556,7 +4556,12 @@ let fsProbed = null;
 // selection renders an empty list (the probe is still in flight), and the reply
 // then saw a hidden box and declined to re-render.
 let suggestWanted = false;
-let cwdExists = null;   // null = no opinion yet / blank field; false blocks Launch
+let cwdExists = null;   // null = no opinion yet / blank field
+// Whether dispatch could mkdir -p the typed path (same tri-state as cwdExists, and
+// only meaningful alongside `exists === false`). It's what separates "will be
+// created" from a real refusal, so the two always arrive on the same reply and
+// can't desync.
+let cwdCreatable = null;
 let browseTimer = null;
 function requestFolderBrowse() {
   const raw = document.getElementById('m-cwd').value;
@@ -4569,23 +4574,34 @@ function onFolderBrowse(msg) {
   fsProbed = msg.path;
   fsFolders = msg.entries || [];
   cwdExists = msg.exists;
+  cwdCreatable = msg.creatable ?? null;
   renderCwdState();
   renderFolderSuggest();
 }
-// A folder that doesn't exist can't be launched into — the server would fail
-// the spawn — so say so and disable Launch. Blank is fine (it falls back to
-// proposedCwd), which is why `exists` is a tri-state and only `false` blocks.
-// A scratch path is exempt: the dialog proposes a fresh timestamped sessions dir
-// that deliberately doesn't exist yet (dispatch creates it), so "missing" is the
-// normal state for one and blocking on it would refuse a perfectly good launch.
-function cwdMissing() { return cwdExists === false && !isScratchDir(cwdField()); }
+// A folder that isn't there splits two ways. `dispatch` already mkdir -p's a typed
+// cwd (_ensureCwd), so a creatable one is a perfectly good launch and only earns a
+// hint — the hint IS the safeguard, since it's the only thing between a typo and a
+// stray empty folder. One that can't be made (a file sits at that path, an
+// unwritable parent, a relative path) would die in mkdir after the dialog closed,
+// so that stays a refusal. Blank is fine (it falls back to proposedCwd), which is
+// why `exists` is a tri-state and only `false` gets this far. Creatability is read
+// as "only an explicit true unblocks": a reply that somehow carries no verdict
+// falls back to refusing, which is the safe direction. A scratch path is exempt
+// outright: the dialog proposes a fresh timestamped sessions dir that deliberately
+// doesn't exist yet, so "missing" is the normal state for one.
+function cwdGone() { return cwdExists === false && !isScratchDir(cwdField()); }
+function cwdBlocked() { return cwdGone() && cwdCreatable !== true; }
+function cwdWillCreate() { return cwdGone() && cwdCreatable === true; }
 function renderCwdState() {
   const el = document.getElementById('m-cwd-msg');
   if (el) {
-    el.textContent = cwdMissing() ? "That folder doesn't exist — pick one from the list." : '';
-    el.className = cwdMissing() ? 'worktree-msg error' : 'worktree-msg hidden';
+    const blocked = cwdBlocked();
+    el.textContent = blocked ? "That folder can't be created — something else is at that path, or it's not writable."
+      : cwdWillCreate() ? "That folder doesn't exist yet — it'll be created."
+      : '';
+    el.className = blocked ? 'worktree-msg error' : cwdWillCreate() ? 'worktree-msg hint' : 'worktree-msg hidden';
   }
-  document.getElementById('m-cwd').classList.toggle('input-error', cwdMissing());
+  document.getElementById('m-cwd').classList.toggle('input-error', cwdBlocked());
   renderWorktreeState();
 }
 function refreshFolderList() {
@@ -4733,7 +4749,7 @@ function renderWorktreeState() {
   // In schedule mode the worktree validation is advisory (the authoritative
   // create+classify happens at fire time), so Save is gated only by the picker.
   if (scheduleMode()) { syncScheduleGo(); return; }
-  go.disabled = wtPending || nonGit || cwdMissing() || Boolean(wt && wt.blocks);
+  go.disabled = wtPending || nonGit || cwdBlocked() || Boolean(wt && wt.blocks);
   go.textContent = wtPending ? 'Creating…' : 'Launch';
 }
 
@@ -5030,7 +5046,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   // A reopened dialog must not inherit the last folder's verdict — the field it
   // belonged to may have been refilled from a different task.
-  fsFolders = []; fsProbed = null; cwdExists = null; suggestWanted = false; renderCwdState();
+  fsFolders = []; fsProbed = null; cwdExists = null; cwdCreatable = null; suggestWanted = false; renderCwdState();
   reviewMode = false;
   parentSessionId = null;
   document.getElementById('m-sch-name').value = schedule?.name || '';
@@ -5125,7 +5141,7 @@ function submitDispatch() {
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdMissing()) { renderCwdState(); return; }
+  if (cwdBlocked()) { renderCwdState(); return; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return; // can't create a worktree here — let the user untick or fix the folder
