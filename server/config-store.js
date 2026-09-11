@@ -156,6 +156,29 @@ export function chatViewDefault(cfg = readConfig()) {
   return cfg.chatViewDefault === true;
 }
 
+// Whether a Codex launch/resume/fork leaves Codex's own bundled "browser" tool
+// surface (the ChatGPT app's cua_node/browser-desktop computer-use integration)
+// enabled. Default ON — Codex enables it itself unless told otherwise, and for
+// many setups it's harmless. Off sets `CUA_REPL_ENABLED_SURFACES=computer` in the
+// launch env, dropping "browser" from the surface list so that integration never
+// initializes. This exists because that integration's own bundled recovery script
+// (open-chrome-window.js) launches a brand-new Chrome process against the user's
+// REAL default profile (via `open -n`, which forces a new OS-level process rather
+// than activating the existing one) whenever it decides its extension-based
+// control isn't working — colliding with an already-running interactive Chrome on
+// the same profile and crashing it (macOS SIGABRT during app registration,
+// verified against real crash reports). Not everyone runs an interactive Chrome
+// alongside their Codex sessions, so this is opt-out rather than a hardcoded
+// disable; toggled from the board's settings modal (config.json
+// `codexBrowserToolEnabled: false`). This removes the one KNOWN recovery path
+// that causes the crash, not a guarantee Codex can never touch Chrome at all —
+// the separate "computer" surface (left enabled) has its own native-app
+// automation that hasn't been audited for the same failure mode. Takes cfg
+// (like taskMemoryEnabled) so tests never write the shared config.json.
+export function codexBrowserToolEnabled(cfg = readConfig()) {
+  return cfg.codexBrowserToolEnabled !== false;
+}
+
 // Whether the per-session checklist exists at all: the four MCP tools
 // (registration AND the launch --allowedTools grant), the always-on nudge
 // pointing at the `checklist` skill, and the board's Checklist panel. Default

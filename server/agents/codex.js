@@ -32,10 +32,14 @@ function launchMemory(sessionId, memoryDir, memoryPath) {
 // Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). memoryPath is the launch-time real
 // task/scratch file, never the by-session symlink rejected by Codex 0.149+.
-function envPrefix(sessionId, spawnedBy, memoryPath) {
+// `browserToolEnabled: false` drops "browser" from Codex's own bundled
+// cua_node/browser-desktop surface list (default is "browser,computer") — see
+// codexBrowserToolEnabled in config-store.js for why.
+function envPrefix(sessionId, spawnedBy, memoryPath, browserToolEnabled = true) {
   let env = `AW_SESSION_ID=${shellQuote(sessionId)} AW_TASK_MEMORY=${shellQuote(memoryPath)} `
     + `${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
+  if (!browserToolEnabled) env += 'CUA_REPL_ENABLED_SURFACES=computer ';
   return env;
 }
 
@@ -118,32 +122,32 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, browserToolEnabled }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir }));
-    let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    let inner = `${envPrefix(sessionId, spawnedBy, memoryPath, browserToolEnabled)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, browserToolEnabled }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
-    return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    return `${envPrefix(sessionId, spawnedBy, memoryPath, browserToolEnabled)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath }) {
+  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, browserToolEnabled }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
-    let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    let inner = `${envPrefix(sessionId, undefined, memoryPath, browserToolEnabled)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },

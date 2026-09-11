@@ -118,6 +118,14 @@ export const SETTINGS = [
     help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel, drops those tools, and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. An already-running session only gains or loses the tools when it is next resumed.',
     default: true,
   },
+  {
+    id: 'codexBrowserToolEnabled',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Codex browser automation',
+    help: "Whether Codex launches with its bundled browser automation enabled. If its extension-based browser control isn't working, the recovery path can start a new Chrome process using your real default profile — on some setups this can crash an already-running Chrome. Off disables that browser integration but leaves Codex's native-app automation enabled, removing the known recovery path without guaranteeing Codex can never touch Chrome. Takes effect on the next launch, resume, or fork of a Codex session.",
+    default: true,
+  },
 ];
 
 export const SETTINGS_TABS = [
@@ -133,7 +141,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
+    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled', 'codexBrowserToolEnabled'],
   },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
 ];

@@ -136,6 +136,7 @@ let autoFixPrChecksDefault = true; // server config flag, carried on every graph
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let checklistEnabled = true; // server config flag, carried on every graph push
+let codexBrowserToolEnabled = true; // server config flag, carried on every graph push
 // Whole-store snapshot { cardId: [{id,text,done,createdAt}] } off the graph —
 // session-scoped, but the only consumer is the ONE selected session's panel, so
 // it rides the graph as a snapshot rather than being enriched onto every card.
@@ -330,6 +331,7 @@ function applyGraph(graph) {
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
   checklistEnabled = graph.checklistEnabled !== false;
+  codexBrowserToolEnabled = graph.codexBrowserToolEnabled !== false;
   latestChecklists = graph.checklists || {};
   trackJustFinished(latestSessions);
   detectNewTask();
@@ -5222,6 +5224,7 @@ initSettings({
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'checklistEnabled') return checklistEnabled;
+      if (id === 'codexBrowserToolEnabled') return codexBrowserToolEnabled;
       return undefined;
     },
     set: (id, value) => {
@@ -5252,6 +5255,9 @@ initSettings({
         // Show/hide at once rather than waiting for the rebuild echo — the panel
         // is right beside the modal that just toggled it.
         renderChecklist(selectedSessionId);
+      } else if (id === 'codexBrowserToolEnabled') {
+        codexBrowserToolEnabled = Boolean(value);
+        send({ type: 'set-codex-browser-tool-enabled', enabled: codexBrowserToolEnabled });
       }
     },
   },

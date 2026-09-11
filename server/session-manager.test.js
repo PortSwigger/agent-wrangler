@@ -597,6 +597,64 @@ test('fork() threads trustCodexLaunchCwd into ensureCodexTrust for a codex paren
   assert.deepEqual(trusted, ['/repo']);
 });
 
+// codexBrowserToolEnabled is read bare (no cfg injection) at all three call
+// sites, same as childFullViewByDefault — so proving it reaches the real
+// generated codex command needs the same real-config-with-restore isolation
+// as withChildFullViewDefault, not codex.js's own buildLaunch/buildResume/
+// buildFork unit tests (those pass browserToolEnabled directly and so can't
+// catch a manager call site silently dropping the option before it gets there).
+async function withCodexBrowserToolEnabled(value, fn) {
+  let saved;
+  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
+  try {
+    writeConfig({ codexBrowserToolEnabled: value });
+    await fn();
+  } finally {
+    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
+    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
+  }
+}
+
+test('dispatch/resume/fork all thread codexBrowserToolEnabled into the real generated codex command', async () => {
+  await withCodexBrowserToolEnabled(false, async () => {
+    const dsm = smForDispatch();
+    dsm._ensureCodexTrust = () => {};
+    let dispatchCaptured = '';
+    dsm._newSession = async (_t, _d, inner) => { dispatchCaptured = inner; };
+    await dsm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+    assert.match(dispatchCaptured, /CUA_REPL_ENABLED_SURFACES=computer/);
+
+    const rsm = resumableCodex('card-browser-tool');
+    rsm.killForSession = async () => [];
+    rsm._ensureCodexTrust = () => {};
+    let resumeCaptured = '';
+    rsm._newSession = async (_t, _d, inner) => { resumeCaptured = inner; };
+    await rsm.resume('card-browser-tool', os.tmpdir());
+    assert.match(resumeCaptured, /CUA_REPL_ENABLED_SURFACES=computer/);
+
+    const fsm = new SessionManager();
+    fsm._save = () => {};
+    fsm.refreshAlive = async () => {};
+    fsm._ensureCodexTrust = () => {};
+    let forkCaptured = '';
+    fsm._newSession = async (_t, _d, inner) => { forkCaptured = inner; };
+    await fsm.fork({
+      sourceId: 'SRC', parentId: 'PARENT',
+      parentEntry: { agent: 'codex', cwd: os.tmpdir() },
+      cwd: os.tmpdir(),
+    });
+    assert.match(forkCaptured, /CUA_REPL_ENABLED_SURFACES=computer/);
+  });
+
+  // Default (no override) must NOT emit the restriction — the feature is opt-out.
+  const dsm2 = smForDispatch();
+  dsm2._ensureCodexTrust = () => {};
+  let defaultCaptured = '';
+  dsm2._newSession = async (_t, _d, inner) => { defaultCaptured = inner; };
+  await dsm2.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  assert.doesNotMatch(defaultCaptured, /CUA_REPL_ENABLED_SURFACES/);
+});
+
 // Codex's sandbox grants filesystem write only to the workspace roots it's
 // launched with; a linked worktree's common git-dir (the main checkout's own
 // `.git`) lives in a SIBLING directory that's never one of them, so `git add`/

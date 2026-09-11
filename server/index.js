@@ -25,7 +25,7 @@ import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, codexBrowserToolEnabled, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -557,6 +557,7 @@ async function rebuildOnce() {
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
   graph.checklistEnabled = checklistEnabled();
+  graph.codexBrowserToolEnabled = codexBrowserToolEnabled();
   // Session-scoped, but carried as a whole-store snapshot rather than
   // per-session enrichment inside buildGraph: the only consumer is the ONE
   // selected session's Checklist panel, so there is nothing to enrich per card.

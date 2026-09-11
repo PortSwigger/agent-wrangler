@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, codexBrowserToolEnabled, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -162,4 +162,13 @@ test('checklistEnabled defaults to ON; only an explicit false disables', () => {
   assert.equal(checklistEnabled({ checklistEnabled: true }), true);
   assert.equal(checklistEnabled({ checklistEnabled: false }), false);
   assert.equal(checklistEnabled({ checklistEnabled: 'no' }), true, 'only a real boolean false opts out');
+});
+
+// Default ON (Codex enables its own browser surface unless told otherwise); only
+// an explicit false opts out. Not everyone hits the Chrome-crash failure mode
+// this exists for, so it must stay opt-out rather than a hardcoded disable.
+test('codexBrowserToolEnabled defaults to on; only an explicit false disables', () => {
+  assert.equal(codexBrowserToolEnabled({}), true);
+  assert.equal(codexBrowserToolEnabled({ codexBrowserToolEnabled: true }), true);
+  assert.equal(codexBrowserToolEnabled({ codexBrowserToolEnabled: false }), false);
 });
