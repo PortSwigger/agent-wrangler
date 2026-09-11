@@ -110,16 +110,11 @@ export const SETTINGS = [
     help: 'Which side of the board the selected session\'s terminal / chat pane sits on. Per-browser rather than shared, like the theme and the pane\'s own drag-resized width — which side of the screen it wants to be on is a property of the machine you are sitting at. The nav rail stays on the far left either way.',
     default: 'right',
   },
-  {
-    id: 'checklistEnabled',
-    type: 'toggle',
-    scope: 'server',
-    label: 'Per-session checklist',
-    help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel, drops those tools, and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. An already-running session only gains or loses the tools when it is next resumed.',
-    default: true,
-  },
 ];
 
+// The Extensions tab's rows are not hand-listed: setExtensionDefs builds one
+// toggle per server extension off graph.extensions, so a new extension needs
+// no settings.js edit at all.
 export const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
   {
@@ -127,7 +122,7 @@ export const SETTINGS_TABS = [
     label: 'Sessions',
     settingIds: [
       'taskMemoryEnabled', 'subagentsExpandedByDefault', 'soundOnFinish',
-      'childFullViewByDefault', 'chatViewDefault', 'checklistEnabled',
+      'childFullViewByDefault', 'chatViewDefault',
     ],
   },
   {
@@ -135,8 +130,35 @@ export const SETTINGS_TABS = [
     label: 'Automation',
     settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
   },
+  { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
 ];
+
+// Every extension toggle is a scope:'server' def under this prefix, so app.js's
+// bridge handles them all with ONE `startsWith` rung instead of a branch per
+// feature flag — the ladder this replaces.
+export const EXT_SETTING_PREFIX = 'ext:';
+const RESTART_NOTE = 'Takes effect after the wrangler restarts.';
+
+// Synthesises the Extensions tab's toggle defs from the server's loaded
+// extension list [{id, label, help, defaultEnabled}] and refreshes the id
+// index. Called on every graph push (the list is fixed at server boot, so this
+// is idempotent in practice); the modal renders on open, so the rows are
+// always current. Returns the defs for tests.
+export function setExtensionDefs(list) {
+  const defs = (Array.isArray(list) ? list : []).map((e) => ({
+    id: EXT_SETTING_PREFIX + e.id,
+    type: 'toggle',
+    scope: 'server',
+    label: String(e.label || e.id),
+    help: e.help && /restarts?\./i.test(e.help) ? e.help : [e.help, RESTART_NOTE].filter(Boolean).join(' '),
+    default: e.defaultEnabled !== false,
+  }));
+  for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
+  for (const d of defs) byId.set(d.id, d);
+  SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds = defs.map((d) => d.id);
+  return defs;
+}
 
 export function tabIndexAfterKey(index, key, count) {
   if (key === 'ArrowRight') return (index + 1) % count;

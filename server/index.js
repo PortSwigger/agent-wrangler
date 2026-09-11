@@ -12,7 +12,9 @@ import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { ChecklistStore } from './checklist-store.js';
+import { getExtensions, assertGraphKeys, extensionsForGraph } from './extensions/index.js';
+import { TOOLS } from './mcp/tools/index.js';
+import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
@@ -24,7 +26,7 @@ import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDi
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -66,7 +68,35 @@ const shutdownLog = installShutdownLog();
 
 ensurePtyHelperExecutable();
 
+// Load the extensions FIRST, before any store exists, through the memoised
+// getExtensions so the adapters (client-config.js / agent-skills.js default to
+// the same memo) read the very object composed below. The core registry names
+// go in here so a manifest colliding with a core tool/handler fails boot loudly
+// — same posture as InstanceLockError in main(): a bad manifest is a config
+// error a human must see, not something to limp past.
+let ext;
+let extStores;
+try {
+  ext = getExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
+  extStores = Object.fromEntries(Object.entries(ext.stores).map(([k, factory]) => [k, factory()]));
+  // Graph contributors run every ~4s tick where nothing may log or throw, so
+  // their keys are checked ONCE here against the real stores instead.
+  for (const { id, contribute } of ext.graphContributors) assertGraphKeys(id, contribute({ stores: extStores, graph: {} }));
+} catch (err) {
+  logError(`[agent-wrangler] ${err.message}`);
+  process.exit(1);
+}
+// The one bag both the MCP tool deps and the control-WS ctx carry: an
+// extension's tools/handlers reach their own stores through it and nowhere else.
+const extBag = { stores: extStores, list: ext.list };
+
 const sessionManager = new SessionManager();
+// Extension session hooks (server/extensions/index.js `sessionHooks`) — bound
+// alongside the seams below, with the instantiated stores closed over so a hook
+// sees the same store its tools and handlers write.
+for (const [name, fns] of Object.entries(ext.sessionHooks)) {
+  sessionManager._extHooks[name].push(...fns.map((fn) => (payload) => fn({ ...payload, stores: extStores })));
+}
 const taskStore = new TaskStore();
 const memoryStore = new MemoryStore();
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
@@ -87,7 +117,6 @@ sessionManager._pruneMailOnArchive = (sessionId, now = Date.now()) => {
   mailStore.pruneOnArchive(sessionId);
   mailStore.expireStaleUnread(sessionId, now - UNREAD_TTL_MS);
 };
-const checklistStore = new ChecklistStore();
 const terminalRegistry = new TerminalRegistry();
 
 // A one-off missed during downtime fires once when overdue, UNLESS it's older than
@@ -461,9 +490,10 @@ const mcpRequestHandler = createMcpRequestHandler({
   messageThrottle: createMessageThrottle(),
   // The durable mailbox send_message/read_mail/list_mail all share.
   mailStore,
-  // The per-session checklist the four *_checklist* tools write, resolved from
-  // the caller's own card id — never a session argument.
-  checklistStore,
+  // Every extension's instantiated stores (+ the extension list): an extension's
+  // MCP tools reach their own store through deps.ext.stores — the checklist's
+  // four resolve the target from the caller's card id, never a session argument.
+  ext: extBag,
   config: { jiraBaseUrl },
   onPrLinksChanged: (scope, ownerId) => { pollPrStatuses({ scope, ownerId }).catch(() => {}); },
   // create_terminal deps
@@ -548,11 +578,15 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
-  graph.checklistEnabled = checklistEnabled();
-  // Session-scoped, but carried as a whole-store snapshot rather than
-  // per-session enrichment inside buildGraph: the only consumer is the ONE
-  // selected session's Checklist panel, so there is nothing to enrich per card.
-  graph.checklists = checklistStore.snapshot();
+  // Which extensions exist and whether each is on — what the settings toggles read
+  // back, and what the client mounts/unmounts its slot contributions from. `enabled`
+  // is re-read from config here, not taken from ext.list's boot snapshot: see
+  // extensionsForGraph.
+  graph.extensions = extensionsForGraph(ext.list);
+  // Each enabled extension's graph contribution (the checklist's `checklists`
+  // snapshot, say). Only enabled ones are in the list, keys were checked against
+  // the core's at boot — and no logging here: this is the 4s rebuild.
+  for (const { contribute } of ext.graphContributors) Object.assign(graph, contribute({ stores: extStores, graph }));
   lastGraph = graph;
 
   for (const sid of autoArchived) {
@@ -577,6 +611,9 @@ const rebuild = createRebuildCoalescer(rebuildOnce);
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
   ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir() }));
+  // Which enabled extensions ship a client module (served under /ext/<id>/).
+  // Sent before the first graph, every connect; nothing consumes it yet.
+  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest }));
   if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
   if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
   availableAgents()
@@ -594,7 +631,9 @@ controlWss.on('connection', (ws) => {
     memoryStore,
     scheduleStore,
     mailStore,
-    checklistStore,
+    // Same bag the MCP deps carry — an extension's control handlers reach their
+    // store through ctx.ext.stores; extension-enabled reads ctx.ext.list.
+    ext: extBag,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
@@ -786,6 +825,18 @@ async function main() {
   mailRetentionWarm.unref();
   const mailRetentionPoll = setInterval(mailRetentionSweep, 24 * 60 * 60 * 1000);
   mailRetentionPoll.unref();
+
+  // Extension sweeps (server/extensions/index.js `sweeps`): the same fire-and-
+  // forget, unref'd shape as every poll above. A throw is logged with the
+  // extension and sweep ids — the only per-sweep line allowed, since a sweep
+  // that throws every tick is a bug a human must see. None ship today; this is
+  // the pattern for a later extension.
+  for (const s of ext.sweeps) {
+    const t = setInterval(() => {
+      Promise.resolve(s.run({ stores: extStores, rebuild, broadcast })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
+    }, s.everyMs);
+    t.unref();
+  }
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle

@@ -14,9 +14,9 @@ export const removeHandler = {
     // purged from mappings.json" moment the spec ties mail deletion to — never
     // on archive, only here.
     ctx.mailStore.forget(msg.sessionId);
-    // Same rule for the checklist: retained through archive (a resume restores
-    // it), dropped only here.
-    ctx.checklistStore.forget(msg.sessionId);
+    // An extension's per-session state (the checklist) follows the same rule and
+    // is dropped by its `session.onPurge` hook, fired from sessionManager.forget()
+    // above — never from here directly.
     setTimeout(() => ctx.rebuild().catch(() => {}), 200);
   },
 };

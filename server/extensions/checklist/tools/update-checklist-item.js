@@ -31,14 +31,14 @@ export const updateChecklistItemTool = {
     if (args.done !== undefined) patch.done = args.done;
     let changed;
     try {
-      changed = deps.checklistStore.update(caller, args.id, patch);
+      changed = deps.ext.stores.checklist.update(caller, args.id, patch);
     } catch (err) {
       return errorResult(String(err.message || err));
     }
     if (!changed) {
       // Deliberately not an error: the id may be right and the values already
       // what was asked for, which is the state the caller wanted.
-      const exists = deps.checklistStore.list(caller).some((it) => it.id === args.id);
+      const exists = deps.ext.stores.checklist.list(caller).some((it) => it.id === args.id);
       if (!exists) return errorResult(`No checklist item with id ${args.id} on this session.`);
     }
     if (changed) await deps.rebuild?.();

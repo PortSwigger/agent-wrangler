@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ChecklistStore } from './checklist-store.js';
-import { SessionManager } from './session-manager.js';
-import { removeHandler } from './control/handlers/remove.js';
+import { ChecklistStore } from './store.js';
+import { SessionManager } from '../../session-manager.js';
+import checklistExtension from './index.js';
 
 function store() {
   return new ChecklistStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ck-life-')), 'checklists.json'));
@@ -58,19 +58,29 @@ test('archive then resume: the checklist is retained and comes back', async () =
   assert.deepEqual(new ChecklistStore(file).list('CARD1'), [{ ...item }]);
 });
 
-test('purge (the remove handler) is the ONLY thing that drops a checklist', async () => {
+test('purge (the manifest\'s onPurge hook) is the ONLY thing that drops a checklist', async () => {
   const checklistStore = store();
   checklistStore.add('CARD1', 'doomed');
   checklistStore.add('CARD2', 'unrelated');
-  const ctx = {
-    sessionManager: { killForSession: async () => {}, forget: () => {} },
-    taskStore: { unassign: () => {} },
-    memoryStore: { forget: () => {} },
-    mailStore: { forget: () => {} },
-    checklistStore,
-    rebuild: async () => {},
-  };
-  await removeHandler.handler({ type: 'remove', sessionId: 'CARD1' }, ctx);
+  await checklistExtension.session.onPurge({ sessionId: 'CARD1', stores: { checklist: checklistStore } });
   assert.deepEqual(checklistStore.list('CARD1'), []);
   assert.deepEqual(checklistStore.list('CARD2').map((i) => i.text), ['unrelated'], 'only the purged card');
+});
+
+// The lifecycle above holds BY CONSTRUCTION — there is no hook to get wrong. A
+// fork/archive/resume hook appearing here is someone adding a copy-on-fork or a
+// drop-on-archive the design deliberately rejected.
+test('the manifest declares onPurge and nothing else — no onFork, onArchive, onResume or onDispatch', () => {
+  assert.deepEqual(Object.keys(checklistExtension.session), ['onPurge']);
+});
+
+test('the purge hook fires through SessionManager.forget()', () => {
+  const checklistStore = store();
+  checklistStore.add('CARD1', 'doomed');
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('CARD1', { tmux: 'cc_a', cwd: os.tmpdir(), agent: 'claude' });
+  sm._extHooks.onPurge.push((p) => checklistExtension.session.onPurge({ ...p, stores: { checklist: checklistStore } }));
+  sm.forget('CARD1');
+  assert.deepEqual(checklistStore.list('CARD1'), []);
 });

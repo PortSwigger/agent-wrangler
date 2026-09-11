@@ -20,7 +20,7 @@ import { ensureCodexTrust } from './codex-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
-import { log, logWarn, humanDuration } from './log.js';
+import { log, logWarn, logError, humanDuration } from './log.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -336,7 +336,19 @@ export class SessionManager {
     // a no-op by default so this class never learns about the mailbox store;
     // server/index.js binds mailStore.pruneOnArchive.
     this._pruneMailOnArchive = () => {};
+    // Extension session hooks (server/extensions/index.js `sessionHooks`), bound
+    // by server/index.js. Empty by default — same property as the seams above:
+    // every existing test stays inert. Fired sequentially and never abort the
+    // core operation: a hook throw is logged (event-only — these run on
+    // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
+    this._extHooks = { onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
     this._load();
+  }
+
+  async _fireExtHooks(name, payload) {
+    for (const fn of this._extHooks[name] || []) {
+      try { await fn(payload); } catch (err) { logError(`[ext-hook:${name}]`, err); }
+    }
   }
 
   entryFor(sessionId) {
@@ -365,7 +377,12 @@ export class SessionManager {
   }
 
   forget(sessionId) {
-    if (this.map.delete(sessionId)) this._save();
+    if (!this.map.delete(sessionId)) return;
+    this._save();
+    // Fire-and-forget after the delete; forget() stays synchronous for its
+    // callers. This is the ONE "card purged from mappings.json" moment an
+    // extension's per-session state (the checklist) is tied to.
+    this._fireExtHooks('onPurge', { sessionId }).catch(() => {});
   }
 
   // Tear down every owned tmux currently hosting this session: the recorded
@@ -466,6 +483,9 @@ export class SessionManager {
     // it runs twice, while the prune is idempotent and must run on every archive
     // of an archive→resume→archive cycle so each live span's read mail goes too.
     this._pruneMailOnArchive(sessionId);
+    // Unawaited like _archiveReview below (archive() is sync); `wasArchived` lets
+    // a hook skip a re-archive of an archive→resume→archive cycle if it needs to.
+    this._fireExtHooks('onArchive', { sessionId, entry, wasArchived }).catch(() => {});
     // Fire-and-forget: archive never waits on this. Skipped for a re-archive of
     // an already-archived session (see wasArchived above) — otherwise archive→
     // resume→archive would review the same growing transcript every time.
@@ -965,6 +985,10 @@ export class SessionManager {
       short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now(),
     }));
     this._save();
+    // Here, not in resume(): that wrapper coalesces concurrent callers onto one
+    // in-flight promise, so a hook there would fire twice for one relaunch (the
+    // same reason the log line below lives here).
+    await this._fireExtHooks('onResume', { sessionId, entry: this.map.get(sessionId), reason });
     await this.refreshAlive();
     // Logged here rather than in resume(): that wrapper hands a second concurrent
     // caller the in-flight promise, so a line there would report one relaunch twice
@@ -1014,6 +1038,7 @@ export class SessionManager {
     entry.socket = this.socket;
     this.map.set(sessionId, entry);
     this._save();
+    await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     await this.refreshAlive();
     return { sessionId, tmux };
   }
@@ -1483,6 +1508,7 @@ export class SessionManager {
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
+    await this._fireExtHooks('onDispatch', { sessionId, entry });
     await this.refreshAlive();
     return { sessionId, tmux, cwd };
   }

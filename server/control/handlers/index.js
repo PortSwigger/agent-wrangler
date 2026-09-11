@@ -20,7 +20,7 @@ import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
-import { checklistEnabledHandler } from './checklist-enabled.js';
+import { extensionEnabledHandler } from './extension-enabled.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
@@ -31,12 +31,6 @@ import {
   taskReorderHandler,
   taskReorderSessionsHandler,
 } from './tasks.js';
-import {
-  checklistAddHandler,
-  checklistUpdateHandler,
-  checklistRemoveHandler,
-  checklistReorderHandler,
-} from './checklist.js';
 import {
   todoAddHandler,
   todoEditHandler,
@@ -63,6 +57,7 @@ import { pasteImageHandler } from './paste-image.js';
 import { usageHandler } from './usage.js';
 import { searchHandler, searchStatusHandler, searchReindexHandler } from './search.js';
 import { adoptConversationHandler } from './adopt.js';
+import { getExtensions } from '../../extensions/index.js';
 
 // The control-WS handler registry, mirroring server/mcp/tools. Adding a message
 // type = adding a module here. Each handler: { type, handler(msg, ctx) }, where
@@ -95,7 +90,7 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
-  checklistEnabledHandler,
+  extensionEnabledHandler,
   setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,
@@ -109,10 +104,6 @@ export const CONTROL_HANDLERS = [
   todoDeleteHandler,
   todoMoveHandler,
   todoReorderHandler,
-  checklistAddHandler,
-  checklistUpdateHandler,
-  checklistRemoveHandler,
-  checklistReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,
@@ -135,4 +126,10 @@ export const CONTROL_HANDLERS = [
   adoptConversationHandler,
 ];
 
-export const HANDLER_BY_TYPE = Object.fromEntries(CONTROL_HANDLERS.map((h) => [h.type, h]));
+// The handlers a control socket actually routes: the core list plus every
+// ENABLED extension's (server/extensions/*/index.js `handlers`). `ext` is
+// injectable so tests never touch the loader's memo; the loader has already
+// refused any type that collides with a core one.
+export function activeHandlers({ ext = getExtensions() } = {}) {
+  return [...CONTROL_HANDLERS, ...ext.handlers];
+}

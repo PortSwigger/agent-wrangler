@@ -49,7 +49,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
-import { initSettings, getSetting } from './settings.js';
+import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
 import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
@@ -135,7 +135,13 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
-let checklistEnabled = true; // server config flag, carried on every graph push
+// The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
+// carried on every graph push — what the generic `ext:<id>` settings toggles
+// read back. Fixed at server boot; a flip takes effect after a restart.
+let latestExtensions = [];
+// Transitional (until the checklist client moves into its extension): derived
+// from latestExtensions rather than its own server flag.
+let checklistEnabled = true;
 // Whole-store snapshot { cardId: [{id,text,done,createdAt}] } off the graph —
 // session-scoped, but the only consumer is the ONE selected session's panel, so
 // it rides the graph as a snapshot rather than being enriched onto every card.
@@ -328,7 +334,9 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
-  checklistEnabled = graph.checklistEnabled !== false;
+  latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
+  setExtensionDefs(latestExtensions);
+  checklistEnabled = latestExtensions.find((e) => e.id === 'checklist')?.enabled !== false;
   latestChecklists = graph.checklists || {};
   trackJustFinished(latestSessions);
   detectNewTask();
@@ -5128,7 +5136,13 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
-      if (id === 'checklistEnabled') return checklistEnabled;
+      // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
+      // back off graph.extensions — one rung for all of them, no per-extension
+      // branch. Undefined for an unknown id so settings.js falls back to its
+      // default.
+      if (id.startsWith(EXT_SETTING_PREFIX)) {
+        return latestExtensions.find((e) => e.id === id.slice(EXT_SETTING_PREFIX.length))?.enabled;
+      }
       return undefined;
     },
     set: (id, value) => {
@@ -5153,12 +5167,11 @@ initSettings({
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
-      } else if (id === 'checklistEnabled') {
-        checklistEnabled = Boolean(value);
-        send({ type: 'set-checklist-enabled', enabled: checklistEnabled });
-        // Show/hide at once rather than waiting for the rebuild echo — the panel
-        // is right beside the modal that just toggled it.
-        renderChecklist(selectedSessionId);
+      } else if (id.startsWith(EXT_SETTING_PREFIX)) {
+        // Nothing flips locally: the server fixed the extension's tools/handlers
+        // at boot, so the toggle only records the choice (read back off the next
+        // graph) and the help text says it takes effect after a restart.
+        send({ type: 'extension-enabled', id: id.slice(EXT_SETTING_PREFIX.length), enabled: Boolean(value) });
       }
     },
   },

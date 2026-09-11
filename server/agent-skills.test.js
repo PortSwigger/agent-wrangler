@@ -97,20 +97,23 @@ test('task-memory, mail and checklist are mandatory (carry a nudge); links, spaw
   // The nudge is a POINTER, not the guidance: it must name the tool and the
   // skill, and must say the checklist is separate from the agent's own planner
   // (the one thing an agent would otherwise get wrong without reading further).
-  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { checklist: true });
+  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true, ext: { disabledSkillIds: [] } });
   assert.match(nudge, /add_checklist_item/);
   assert.match(nudge, /`checklist` skill/);
   assert.match(nudge, /never synced/);
 });
 
-test('checklist:false drops the checklist skill from the mandatory nudge and the Codex catalog — nothing else', () => {
+// A disabled extension's skill ids (the loader's `disabledSkillIds`) drop from
+// both always-on channels; a fake `ext` pins the set rather than whatever this
+// developer's config.json says.
+test('a disabled extension\'s skill ids drop from the mandatory nudge and the Codex catalog — nothing else', () => {
   const root = fixture();
   const dir = path.join(root, 'checklist');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: checklist\ndescription: Keep a visible checklist\n---\n\nBody.\n');
   fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Use add_checklist_item for visible progress.\n');
 
-  const off = { taskMemory: true, checklist: false };
+  const off = { taskMemory: true, ext: { disabledSkillIds: ['checklist'] } };
   assert.doesNotMatch(mandatorySkillPrompt(root, off), /add_checklist_item/);
   assert.match(mandatorySkillPrompt(root, off), /alpha thing/); // other nudges survive
   assert.doesNotMatch(codexSkillCatalog(root, off), /checklist/);
@@ -118,7 +121,7 @@ test('checklist:false drops the checklist skill from the mandatory nudge and the
   // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
   assert.ok(skillEntries(root).some((e) => e.name === 'checklist'));
 
-  const on = { taskMemory: true, checklist: true };
+  const on = { taskMemory: true, ext: { disabledSkillIds: [] } };
   assert.match(mandatorySkillPrompt(root, on), /add_checklist_item/);
   assert.match(codexSkillCatalog(root, on), /checklist/);
 });
