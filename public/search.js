@@ -1,8 +1,9 @@
-import { send, setPendingSelect, latestTasks, restoreTaskWithPrompt } from './app.js';
+import { send, setPendingSelect, latestTasks, latestSessions, latestHistory, restoreTaskWithPrompt } from './app.js';
 import { toast } from './toast.js';
 import { openFork } from './modals.js';
 import { timeAgo, truncate, fmtDuration } from './util.js';
-import { buildBrowseBuckets, filterTasksByName, rowTitle } from './search-browse.js';
+import { buildBrowseBuckets, filterTasksByName, rowTitle, taskFilterGroups } from './search-browse.js';
+import { closeTaskFilterOnOutsideClick } from './search-filter.js';
 import { FORK_ICON, TRASH_ICON } from './icons.js';
 
 // The Search view: substring search across every conversation on disk, and — for
@@ -37,6 +38,7 @@ const state = {
   agent: 'all',    // all | claude | codex
   status: 'all',   // all | board | archived | offboard
   time: 'any',     // any | 24h | 7d | 30d
+  taskIds: [],
   requestId: 0,    // monotonic; a reply for an older id is stale and dropped
   building: false,
 };
@@ -83,6 +85,7 @@ function fire() {
     // the server-side agent filter stays unset (same as 'all') to keep the index
     // stats/timing line accurate.
     agents: state.agent === 'all' || state.agent === 'task' ? null : [state.agent],
+    taskIds: state.taskIds,
     status: state.status,
     since: sinceMs(),
     until: null,
@@ -95,6 +98,65 @@ function fire() {
 function schedule() {
   clearTimeout(debounce);
   debounce = setTimeout(fire, DEBOUNCE_MS);
+}
+
+function renderTaskFilter() {
+  const summary = el('search-task-summary');
+  const options = el('search-task-options');
+  if (!summary || !options) return;
+  const groups = taskFilterGroups(latestTasks.tasks || [], [...latestSessions, ...latestHistory], latestTasks.assignments || {});
+  summary.textContent = state.taskIds.length ? `Tasks (${state.taskIds.length})` : 'Tasks';
+  options.textContent = '';
+  const append = (tasks, heading) => {
+    if (!tasks.length) return;
+    const head = document.createElement('div');
+    head.className = 'search-task-heading';
+    head.textContent = heading;
+    options.appendChild(head);
+    for (const task of tasks) {
+    const label = document.createElement('label');
+    label.className = 'search-task-option';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = state.taskIds.includes(task.id);
+    input.addEventListener('change', () => {
+      state.taskIds = input.checked
+        ? [...state.taskIds, task.id]
+        : state.taskIds.filter((id) => id !== task.id);
+      renderTaskFilter();
+      fire();
+    });
+    label.append(input, document.createTextNode(task.name || task.id));
+    options.appendChild(label);
+    }
+  };
+  append(groups.live, 'Live tasks');
+  append(groups.archived, 'Archived tasks');
+  if (state.taskIds.length) {
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'search-task-clear';
+    clear.textContent = 'Clear';
+    clear.addEventListener('click', () => {
+      state.taskIds = [];
+      renderTaskFilter();
+      fire();
+    });
+    options.appendChild(clear);
+  }
+}
+
+export function clearSearch() {
+  clearTimeout(debounce);
+  state.query = '';
+  state.taskIds = [];
+  const input = el('search-input');
+  if (input) input.value = '';
+  renderTaskFilter();
+}
+
+export function refreshSearchTaskFilter() {
+  renderTaskFilter();
 }
 
 // ── replies ────────────────────────────────────────────────────────────────
@@ -542,7 +604,7 @@ function matchingArchivedTasks() {
   let tasks = (latestTasks.tasks || []).filter((t) => t.archivedAt);
   const since = sinceMs();
   if (since) tasks = tasks.filter((t) => (t.archivedAt || 0) >= since);
-  return filterTasksByName(tasks, state.query);
+  return filterTasksByName(tasks, state.query, state.taskIds);
 }
 
 function bucketHeadNode(b) {
@@ -669,6 +731,10 @@ export function initSearchView() {
     send({ type: 'search-reindex', rebuild: true });
     toast('Rebuilding the search index…');
   });
+  document.addEventListener('pointerdown', (e) => {
+    closeTaskFilterOnOutsideClick(el('search-task-filter'), e.target);
+  });
+  renderTaskFilter();
   renderIdle();
 }
 
@@ -676,6 +742,7 @@ export function initSearchView() {
 // the first build if this is a cold install), load the browse list (or re-run
 // the current query), and put the cursor in the box.
 export function onEnterSearchView() {
+  renderTaskFilter();
   send({ type: 'search-status' });
   fire();
   const input = el('search-input');

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bucketMetaFor, buildBrowseBuckets, filterTasksByName, rowTitle } from './search-browse.js';
+import { bucketMetaFor, buildBrowseBuckets, filterTasksByName, rowTitle, taskFilterGroups } from './search-browse.js';
 
 const HOUR = 3600e3;
 const DAY = 24 * HOUR;
@@ -102,6 +102,27 @@ test('filterTasksByName: empty query returns all; matches by name case-insensiti
 test('filterTasksByName: a null/missing name does not throw', () => {
   assert.deepEqual(filterTasksByName([{ id: 't1' }], 'x'), []);
   assert.deepEqual(filterTasksByName([{ id: 't1' }], ''), [{ id: 't1' }]);
+});
+
+test('filterTasksByName: task ids restrict archived task rows independently of their names', () => {
+  const tasks = [{ id: 't1', name: 'Scanner General' }, { id: 't2', name: 'Personal' }];
+  assert.deepEqual(filterTasksByName(tasks, '', ['t1']).map((t) => t.id), ['t1']);
+});
+
+test('taskFilterGroups: live tasks sort by their most recently active session and archived tasks follow separately', () => {
+  const tasks = [
+    { id: 'live-old', name: 'Live old' },
+    { id: 'archived', name: 'Archived', archivedAt: 600 },
+    { id: 'live-new', name: 'Live new' },
+  ];
+  const sessions = [
+    { sessionId: 'a', lastActivity: 200 },
+    { sessionId: 'b', lastActivity: 500 },
+    { sessionId: 'c', archivedAt: 700 },
+  ];
+  const groups = taskFilterGroups(tasks, sessions, { a: 'live-old', b: 'live-new', c: 'archived' });
+  assert.deepEqual(groups.live.map((t) => t.id), ['live-new', 'live-old']);
+  assert.deepEqual(groups.archived.map((t) => t.id), ['archived']);
 });
 
 test('rowTitle falls through boardLabel → title → cwd basename → id prefix', () => {

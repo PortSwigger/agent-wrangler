@@ -48,7 +48,7 @@ import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
-import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed } from './search.js';
+import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, getSetting } from './settings.js';
 import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
@@ -320,6 +320,7 @@ function applyGraph(graph) {
   // empty array, and `|| []` would read that as "unchanged" and never clear.
   if ('history' in graph) latestHistory = graph.history || [];
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
+  if (currentView === 'search') refreshSearchTaskFilter();
   latestSchedules = graph.schedules || { schedules: [] };
   taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
@@ -386,6 +387,7 @@ function applyGraph(graph) {
 }
 
 function setView(view) {
+  if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
   // The diff panel overlays the board, so leaving grid must dismiss it.
   if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
