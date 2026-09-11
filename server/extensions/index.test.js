@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS,
-  validateManifest, assertGraphKeys, loadExtensions, getExtensions, _resetExtensionsForTests,
+  validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph, _resetExtensionsForTests,
 } from './index.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
@@ -136,7 +136,10 @@ test('BUILTIN: the checklist ships enabled by default with its four tools grante
   assert.deepEqual([...out.allowedToolNames].sort(), out.tools.map((t) => t.name).sort());
   assert.deepEqual(out.handlers.map((h) => h.type).sort(), ['checklist-add', 'checklist-remove', 'checklist-reorder', 'checklist-update']);
   assert.deepEqual(out.skillIds, ['checklist']);
-  assert.match(out.list[0].help, /after the wrangler restarts/);
+  // The help text is the only place a human is told the two halves move at
+  // different times: the panel goes on the next tick, the tools at next resume.
+  assert.match(out.list[0].help, /hides the panel straight away/);
+  assert.match(out.list[0].help, /at its next resume/);
 });
 
 test('BUILTIN: cfg.extensions.checklist=false empties every channel and marks the skill disabled', () => {
@@ -205,4 +208,33 @@ test('getExtensions() memoises and _resetExtensionsForTests() clears', () => {
   assert.notEqual(c, a);
   assert.deepEqual(c.list, []);
   _resetExtensionsForTests();
+});
+
+test('extensionsForGraph re-reads `enabled` per call, so a toggle lands on the next tick', () => {
+  const loaded = loadExtensions({ cfg: { extensions: { fake: true } }, builtin: [manifest()] });
+  assert.deepEqual(loaded.list.map((e) => e.enabled), [true], 'boot snapshot');
+
+  // The config as it stands AFTER the toggle wrote it — the boot snapshot cannot
+  // see this, which is the whole reason the graph reads it live.
+  let enabled = false;
+  const rows = extensionsForGraph(loaded.list, () => enabled);
+  assert.deepEqual(rows.map((e) => e.enabled), [false]);
+  enabled = true;
+  assert.deepEqual(extensionsForGraph(loaded.list, () => enabled).map((e) => e.enabled), [true]);
+});
+
+test('extensionsForGraph carries identity off the boot snapshot, never the live read', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  const [row] = extensionsForGraph(loaded.list, () => true);
+  assert.deepEqual(
+    { id: row.id, label: row.label, help: row.help, defaultEnabled: row.defaultEnabled },
+    { id: 'fake', label: loaded.list[0].label, help: loaded.list[0].help, defaultEnabled: loaded.list[0].defaultEnabled },
+  );
+});
+
+test('extensionsForGraph defaults to the real config reader', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  // defaultEnabled is falsy on the fake manifest and nothing is in config.json,
+  // so the live reader must agree with the snapshot rather than throw.
+  assert.deepEqual(extensionsForGraph(loaded.list).map((e) => e.enabled), [Boolean(loaded.list[0].defaultEnabled)]);
 });
