@@ -503,7 +503,12 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
-const server = createHttpServer({ port: PORT, mcpRequestHandler, prAttachHandler, fileHandler });
+// /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
+// extensions alone — so a disabled extension's client is a 404, never served.
+const server = createHttpServer({
+  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler,
+  extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
+});
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
 const controlWss = new WebSocketServer({ noServer: true });

@@ -23,9 +23,16 @@ const MIME = {
 };
 
 // The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach (the launch
-// hook's callback), the styles manifest + asset routes, and static public/
-// serving. WS upgrades are wired separately on the returned server in index.js.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler }) {
+// hook's callback), the styles manifest + asset routes, the /ext/<id>/ extension
+// client route, and static public/ serving. WS upgrades are wired separately on
+// the returned server in index.js.
+//
+// `extensionAssets(id)` returns the extension's directory or null. Only a LOADED,
+// ENABLED extension resolves (index.js binds it to the loader's `dirs`, which
+// holds enabled ids alone) — a disabled extension's client must not be served,
+// and that membership check, not an id regex, is the whole gate. GET-only static
+// content, so no origin gate, same posture as public/.
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extensionAssets = () => null }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -67,6 +74,31 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
       fs.readFile(asset, (err, data) => {
         if (err) { res.writeHead(404).end('not found'); return; }
         res.writeHead(200, { 'Content-Type': MIME[path.extname(asset)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+        res.end(data);
+      });
+      return;
+    }
+
+    if (urlPath.startsWith('/ext/')) {
+      const [id, ...rest] = urlPath.slice('/ext/'.length).split('/');
+      const base = extensionAssets(id);
+      if (!base) {
+        res.writeHead(404).end('not found');
+        return;
+      }
+      // Only the extension's public/ subdir is servable (validateManifest holds
+      // its `client` to the same subdir). resolve() rather than join(normalize())
+      // so a `..` that would climb out — or an absolute segment — fails the
+      // prefix check instead of being quietly folded back inside.
+      const pubDir = path.join(base, 'public');
+      const file = path.resolve(pubDir, rest.join('/'));
+      if (!file.startsWith(pubDir + path.sep)) {
+        res.writeHead(403).end('forbidden');
+        return;
+      }
+      fs.readFile(file, (err, data) => {
+        if (err) { res.writeHead(404).end('not found'); return; }
+        res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
         res.end(data);
       });
       return;
