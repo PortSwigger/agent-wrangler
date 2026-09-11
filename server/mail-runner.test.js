@@ -29,6 +29,13 @@ function deps({ mailStore, live = {}, entries = {} } = {}) {
     memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+    // The live announcement now goes through paneDeferral (held while the human
+    // is mid-prompt). This double records the same shape the direct paste did,
+    // so the live-path assertions below are unchanged; pane-deferral.test.js
+    // owns the gating behaviour, and the wiring test pins that it is consulted.
+    paneDeferral: {
+      deliverOrDefer: async ({ text, tmux, socket }) => { sent.push({ name: tmux, text, socket }); return 'sent'; },
+    },
     // Models a TUI that's already ready (real classify()'s "esc to interrupt"
     // working marker shows up as soon as anything is pasted), so the
     // dormant-Codex post-resume paste lands on the first attempt
@@ -133,7 +140,12 @@ test('sweepDueSettles: an unexpected throw also re-arms the settle window (not j
   const store = new MailboxStore(tmpFile());
   store.append('CARD1', { from: 'sess_a', body: 'hi' }, 0);
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
-  d.sendText = async () => { throw new Error('tmux gone'); };
+  // The live transport is paneDeferral now, so that is what has to throw. (The
+  // real one doesn't throw on a dead pane — it queues the line for its own
+  // drain, which is a strictly better retry owner than re-arming the window.
+  // This pins the surrounding guarantee: whatever the transport throws, the
+  // mail is never dropped and the window re-arms.)
+  d.paneDeferral = { deliverOrDefer: async () => { throw new Error('tmux gone'); } };
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(store.boxes.get('CARD1').settleDeadline, SETTLE_MS + SETTLE_MS);
   assert.equal(store.list('CARD1')[0].state, 'unread');
