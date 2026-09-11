@@ -94,6 +94,15 @@ test('speaker and agent filters change the counts', async () => {
   assert.equal(claudeOnly.groups[0].title, 'Rebase help');
 });
 
+test('sessionIds restrict the scan before result limiting', async () => {
+  const res = await search({
+    query: 'rebase',
+    sessionIds: ['bbbbbbbb-1111-2222-3333-444444444444'],
+  });
+  assert.equal(res.matches, 2);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['bbbbbbbb-1111-2222-3333-444444444444']);
+});
+
 test('results carry the conversation, snippet and highlight offsets', async () => {
   const res = await search({ query: 'rebase onto' });
   const g = res.groups[0];

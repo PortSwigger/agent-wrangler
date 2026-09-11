@@ -35,7 +35,7 @@ test('buildCandidates: a doc with a board entry yields ONE joined row, never two
   assert.equal(forA.length, 1);
   const r = forA[0];
   assert.equal(r.cardId, 'card-a');
-  assert.equal(r.boardLabel, 'Login fixer');
+  assert.equal(r.boardLabel, 'login');
   assert.equal(r.task, 'Auth work');
   assert.equal(r.model, 'opus');
   assert.equal(r.worktreeBranch, 'aw/login');
@@ -69,6 +69,21 @@ test('buildCandidates: an archive-time snapshot wins over the (possibly since-ch
   const a = rows.find((r) => r.sessionId === 'conv-a'); // fixture entry carries its own e.task
   assert.equal(a.taskId, 't1');
   assert.equal(a.task, 'Auth work');
+});
+
+test('buildCandidates: a renamed task uses its current name when the task id is unchanged', () => {
+  const rows = buildCandidates({
+    docs: DOCS,
+    entries: new Map([['card-a', {
+      liveSessionId: 'conv-a',
+      task: { id: 't1', name: 'Old task name' },
+      archivedAt: 1,
+    }]]),
+    live: new Map(),
+    taskFor: () => ({ id: 't1', name: 'Current task name' }),
+  });
+  const a = rows.find((r) => r.sessionId === 'conv-a');
+  assert.equal(a.task, 'Current task name');
 });
 
 test('buildCandidates: taskFor defaults to a no-op, so callers that never pass it keep task-less on-board rows', () => {
@@ -153,6 +168,22 @@ test('matchMeta: multi-token AND, case-insensitive, with per-field attribution',
   assert.deepEqual(matchMeta(a, tokenize('ENT-1')), ['issue']);
   assert.deepEqual(matchMeta(a, tokenize('conv-a')), ['id']);
   assert.equal(matchMeta(a, []), null); // no tokens is never a match (browse handles empty separately)
+});
+
+test('matchMeta: a custom session name remains searchable after a cached label exists', () => {
+  const rows = buildCandidates({
+    docs: [],
+    entries: new Map([['card-a', {
+      liveSessionId: 'conv-a',
+      name: 'Search regression',
+      lastLabel: 'Old terminal title',
+      createdAt: 1,
+    }]]),
+    live: new Map(),
+  });
+  const row = rows[0];
+  assert.equal(row.boardLabel, 'Search regression');
+  assert.ok(matchMeta(row, tokenize('search regression')).includes('label'));
 });
 
 test('statusOf: archived beats board; a doc-only row is offboard', () => {

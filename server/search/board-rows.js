@@ -19,7 +19,7 @@ const META_FIELDS = [
   ['title', (r) => r.title],
   ['cwd', (r) => r.cwd],
   ['branch', (r) => r.branch],
-  ['label', (r) => r.boardLabel],
+  ['label', (r) => [r.boardLabel, r.lastLabel].filter(Boolean).join(' ')],
   ['task', (r) => r.task],
   ['model', (r) => r.model],
   ['worktree', (r) => [r.worktreeBranch, r.worktreePath].filter(Boolean).join(' ')],
@@ -27,10 +27,10 @@ const META_FIELDS = [
   ['id', (r) => [r.sessionId, r.cardId].filter(Boolean).join(' ')],
 ];
 
-// Same label chain as the old boardIndex/enrich pair: the frozen archive label,
-// then the user's name, then the first line of the dispatch intent.
+// Same label chain as the board: the user's name, then the frozen archive label,
+// then the first line of the dispatch intent.
 function labelOf(e) {
-  return e.lastLabel || e.name || String(e.intent || '').split('\n')[0].slice(0, 120);
+  return e.name || e.lastLabel || String(e.intent || '').split('\n')[0].slice(0, 120);
 }
 
 // The board-join fields, split out so the handler can Object.assign them onto a
@@ -45,10 +45,12 @@ function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
   // per its own comment below) over the live assignment, which may have since
   // been reassigned or cleared. Anything else (on-board, or a mapping with no
   // snapshot): fall back to whatever it's assigned to right now.
-  const task = e.task || taskFor(cardId);
+  const currentTask = taskFor(cardId);
+  const task = e.task && (!currentTask || e.task.id !== currentTask.id) ? e.task : currentTask || e.task;
   return {
     cardId,
     boardLabel: labelOf(e),
+    lastLabel: e.lastLabel || '',
     task: (task && task.name) || '',
     // The task's id, not just its name — lets the client group same-task rows
     // even if two tasks happen to share a display name.
@@ -136,7 +138,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
 // The join subset a scan group gains from its candidate row — everything that
 // isn't already the group's own doc-derived shape (docIdx/title/cwd/branch/hits
 // stay the scan's). A doc-only candidate contributes just lastActivity.
-const BOARD_KEYS = ['cardId', 'boardLabel', 'task', 'taskId', 'onBoard', 'archived', 'model', 'createdAt',
+const BOARD_KEYS = ['cardId', 'boardLabel', 'lastLabel', 'task', 'taskId', 'onBoard', 'archived', 'model', 'createdAt',
   'archivedAt', 'worktreeBranch', 'worktreePath', 'workflowIssue', 'parentSession', 'isWorkflow',
   'viaTaskArchive', 'lastActivity'];
 export function boardFields(row) {
@@ -174,9 +176,10 @@ export function statusOf(row) {
 // The non-text facets, applied uniformly to browse rows and meta-only rows in
 // search mode. `since`/`until` are ms and cut on lastActivity — the per-hit
 // timestamp cut stays the scan's own business.
-export function passesFacets(row, { agents = null, status = 'all', since = 0, until = 0 } = {}) {
+export function passesFacets(row, { agents = null, taskIds = null, status = 'all', since = 0, until = 0 } = {}) {
   if (status && status !== 'all' && statusOf(row) !== status) return false;
   if (Array.isArray(agents) && agents.length && !agents.includes(row.agent)) return false;
+  if (Array.isArray(taskIds) && taskIds.length && !taskIds.includes(row.taskId)) return false;
   const at = row.lastActivity || 0;
   if (since && at < since) return false;
   if (until && at > until) return false;

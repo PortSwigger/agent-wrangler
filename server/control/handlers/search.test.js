@@ -9,11 +9,12 @@ const DOCS = [
   { id: 'conv-b', agent: 'codex', cwd: '/repos/api', title: 'API tweak', branch: '', lastTs: 2000 },
 ];
 
-function harness({ docs = DOCS, entries = new Map(), sessions = [], scanResult = null } = {}) {
+function harness({ docs = DOCS, entries = new Map(), sessions = [], taskFor = () => null, scanResult = null } = {}) {
   const scans = [];
   const ctx = {
     sessionManager: { map: entries },
     graph: () => ({ sessions }),
+    taskStore: { taskFor },
   };
   const deps = {
     docs: () => docs,
@@ -112,19 +113,19 @@ const scanRes = (groups) => ({
   ms: 1, scannedBytes: 99, mode: 'resident', workers: 0, index: { records: 42 },
 });
 
-test('search: scan groups gain the board join, and a label-only match is APPENDED as a metaMatch group', async () => {
+test('search: a metadata title match outranks the scan group after gaining the board join', async () => {
   const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
-  // "migration" was never said in any conversation — it only exists in card-old's label.
+  // "migration" was never said in any conversation — it only exists in card-old's metadata.
   const res = await answerSearch({ query: 'migration' }, h.ctx, h.deps);
   assert.equal(res.browse, false);
   assert.equal(h.scans.length, 1);
-  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-a', 'conv-gone']); // scan first, meta appended
-  const scan = res.groups[0];
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-gone', 'conv-a']);
+  const scan = res.groups[1];
   assert.equal(scan.cardId, 'card-a');
   assert.equal(scan.boardLabel, 'Login fixer');
   assert.equal(scan.metaMatch, undefined); // "migration" isn't in conv-a's metadata
   assert.equal(scan.matches, 2); // scan-portion semantics untouched
-  const meta = res.groups[1];
+  const meta = res.groups[0];
   assert.equal(meta.metaMatch, true);
   assert.ok(meta.matchedFields.includes('label'));
   assert.deepEqual(meta.hits, []);
@@ -143,6 +144,31 @@ test('search: a scan group that ALSO metadata-matches is flagged in place, never
   assert.ok(g.matchedFields.includes('title'));
   assert.ok(g.matchedFields.includes('label'));
   assert.equal(g.hits.length, 1); // still the scan group, hits intact
+});
+
+test('search: a title match outranks a body-only match', async () => {
+  const entries = new Map([
+    ['card-a', { liveSessionId: 'conv-a', agent: 'claude', name: 'Body result', createdAt: 1 }],
+    ['card-b', { liveSessionId: 'conv-b', agent: 'codex', name: 'Title result', createdAt: 2 }],
+  ]);
+  const h = harness({
+    entries,
+    scanResult: scanRes([structuredClone(SCAN_GROUP_A)]),
+  });
+  const res = await answerSearch({ query: 'API' }, h.ctx, h.deps);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-b', 'conv-a']);
+});
+
+test('search: a partial title match does not outrank a body-only match for a multi-token query', async () => {
+  const entries = new Map([
+    ['card-b', { liveSessionId: 'conv-b', agent: 'codex', name: 'Migration guide', createdAt: 2 }],
+  ]);
+  const h = harness({
+    entries,
+    scanResult: scanRes([structuredClone(SCAN_GROUP_A)]),
+  });
+  const res = await answerSearch({ query: 'API migration' }, h.ctx, h.deps);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-a', 'conv-b']);
 });
 
 test('search: multi-token AND over metadata', async () => {
@@ -169,6 +195,29 @@ test('search: agents and since/until apply to meta-only rows via lastActivity', 
   assert.deepEqual(tooOld.groups, []); // lastActivity 3M < since
   const inRange = await answerSearch({ query: 'migration', since: 2_000_000, until: 4_000_000 }, h.ctx, h.deps);
   assert.deepEqual(inRange.groups.map((g) => g.sessionId), ['conv-gone']);
+});
+
+test('search: taskIds restrict both transcript and metadata-only matches', async () => {
+  const entries = new Map([
+    ['card-a', { liveSessionId: 'conv-a', agent: 'claude', name: 'Alpha session', createdAt: 1 }],
+    ['card-b', { liveSessionId: 'conv-b', agent: 'codex', name: 'Beta session', createdAt: 2 }],
+  ]);
+  const taskFor = (cardId) => ({
+    'card-a': { id: 'task-alpha', name: 'Alpha' },
+    'card-b': { id: 'task-beta', name: 'Beta' },
+  })[cardId] || null;
+  const h = harness({
+    entries,
+    taskFor,
+    scanResult: { ...scanRes([structuredClone(SCAN_GROUP_A), {
+      ...structuredClone(SCAN_GROUP_A), docIdx: 1, sessionId: 'conv-b', agent: 'codex', title: 'API tweak', cwd: '/repos/api', branch: '',
+    }]), matches: 2, shownHits: 1 },
+  });
+  const res = await answerSearch({ query: 'session', taskIds: ['task-alpha'] }, h.ctx, h.deps);
+  assert.deepEqual(h.scans[0].sessionIds, ['conv-a']);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-a']);
+  assert.equal(res.matches, 2);
+  assert.equal(res.shownHits, 1);
 });
 
 test('search: appended meta rows sort among themselves by lastActivity desc', async () => {
