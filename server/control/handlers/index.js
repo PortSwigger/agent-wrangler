@@ -21,6 +21,7 @@ import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
 import { checklistEnabledHandler } from './checklist-enabled.js';
+import { codexBrowserToolHandler } from './codex-browser-tool.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
@@ -96,6 +97,7 @@ export const CONTROL_HANDLERS = [
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
   checklistEnabledHandler,
+  codexBrowserToolHandler,
   setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,

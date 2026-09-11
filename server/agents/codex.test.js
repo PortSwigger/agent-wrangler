@@ -140,3 +140,16 @@ test('codex omits model_reasoning_effort when no effort is given', () => {
   assert.doesNotMatch(codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL' }), /model_reasoning_effort/);
   assert.doesNotMatch(codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL' }), /model_reasoning_effort/);
 });
+
+test('codex browserToolEnabled: omitted/true emits no override; false drops "browser" from the surface list', () => {
+  const launch = codex.buildLaunch({ ...base });
+  const launchTrue = codex.buildLaunch({ ...base, browserToolEnabled: true });
+  const launchFalse = codex.buildLaunch({ ...base, browserToolEnabled: false });
+  const resumeFalse = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL', ...memory, browserToolEnabled: false });
+  const forkFalse = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL', ...memory, browserToolEnabled: false });
+  assert.doesNotMatch(launch, /CUA_REPL_ENABLED_SURFACES/);
+  assert.doesNotMatch(launchTrue, /CUA_REPL_ENABLED_SURFACES/);
+  for (const cmd of [launchFalse, resumeFalse, forkFalse]) {
+    assert.match(cmd, /CUA_REPL_ENABLED_SURFACES=computer/);
+  }
+});

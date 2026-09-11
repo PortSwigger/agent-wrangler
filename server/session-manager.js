@@ -15,7 +15,7 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault, codexBrowserToolEnabled } from './config-store.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
@@ -954,6 +954,7 @@ export class SessionManager {
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
       intent,
       spawnedBy: prev?.spawnedBy,
+      browserToolEnabled: codexBrowserToolEnabled(),
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
     await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -1001,6 +1002,7 @@ export class SessionManager {
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
       addDirs,
       ...memory,
+      browserToolEnabled: codexBrowserToolEnabled(),
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
@@ -1460,7 +1462,7 @@ export class SessionManager {
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, browserToolEnabled: codexBrowserToolEnabled() });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
