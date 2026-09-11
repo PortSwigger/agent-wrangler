@@ -88,6 +88,19 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
   return true;
 }
 
+// What `graph.extensions` carries every rebuild. Identity/label/help/defaultEnabled
+// come from the boot snapshot (they cannot change without a restart), but `enabled`
+// is re-read from config on EVERY call — the settings toggle has to take an
+// extension's UI off the board on the next tick rather than at the next restart,
+// which is what the pre-extensions per-tick `graph.checklistEnabled` read did.
+// Only the UI moves: tools, handlers, stores and graph contributors were all fixed
+// by loadExtensions, so an extension that booted OFF stays off until a restart.
+export function extensionsForGraph(list, enabledFor = extensionEnabled) {
+  return list.map(({ id, label, help, defaultEnabled }) => ({
+    id, label, help, defaultEnabled, enabled: enabledFor(id, defaultEnabled),
+  }));
+}
+
 // Boot-time check for a graph contributor's keys, run once against the real
 // stores (index.js) rather than every tick — see RESERVED_GRAPH_KEYS.
 export function assertGraphKeys(id, contribution) {

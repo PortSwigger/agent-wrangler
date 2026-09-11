@@ -9,9 +9,19 @@
 // connect retries it (a server restart may have shipped the fix). One broken
 // extension never stops the others loading, and never blanks the board: the
 // core does not `await` this at all.
+//
+// `unload` is the settings toggle's half: graph.extensions[].enabled is read
+// live by the server, so a flip has to take the extension's DOM off the board
+// without a reload. It drops the id from `loaded` as well as tearing the
+// contributions down, so turning the toggle back on re-imports and re-registers
+// (the browser's module cache makes the second import free). The server only
+// ever announces extensions that were ON at boot, so an extension that booted
+// OFF has nothing to re-import here and still needs a restart — which is what
+// the manifest's help text says.
 export function createClientExtensionLoader(slots, { importer = (url) => import(url), onError = (...a) => console.error(...a) } = {}) {
   const loaded = new Set();
-  return async function load(list) {
+
+  async function load(list) {
     let changed = false;
     for (const entry of Array.isArray(list) ? list : []) {
       const { id, client } = entry || {};
@@ -29,5 +39,14 @@ export function createClientExtensionLoader(slots, { importer = (url) => import(
       }
     }
     return changed;
-  };
+  }
+
+  function unload(id) {
+    if (!loaded.has(id)) return false;
+    loaded.delete(id);
+    slots.removeExtension(id);
+    return true;
+  }
+
+  return { load, unload, isLoaded: (id) => loaded.has(id) };
 }
