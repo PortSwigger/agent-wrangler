@@ -323,13 +323,18 @@ don't re-derive it.
   always in context" holds for Claude and NOT for Codex; don't delete the table
   again on that reasoning. The hand-copied table it replaced had already drifted
   (missing `opusplan`).
-- **A new MCP tool is invisible to launched agents until it's in TWO places.**
-  `server/mcp/tools/index.js`'s `TOOLS` registers it on the server; separately,
-  `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched session's
-  `--allowedTools` grants without a per-call permission prompt (a non-interactive
-  agent that never gets a prompt answered effectively can't use a tool missing from
-  it). Registering without allow-listing ships a tool that works in tests and dies
-  silently in a real launch. `read_mail`/`list_mail` are the current example
+- **A new CORE MCP tool is invisible to launched agents until it's in TWO places
+  — and for an EXTENSION's tools the rule is DERIVED, not manual.**
+  `server/mcp/tools/index.js`'s `TOOLS` registers a core tool on the server;
+  separately, `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched
+  session's `--allowedTools` grants without a per-call permission prompt (a
+  non-interactive agent that never gets a prompt answered effectively can't use a
+  tool missing from it). Registering without allow-listing ships a tool that works
+  in tests and dies silently in a real launch. A tool declared in an extension
+  manifest's `tools[]` (`server/extensions/*/index.js`) is exempt: the loader
+  builds `allowedToolNames` from the very list it registers, so `activeTools()`
+  and `allowedToolsArg()` read one source and the pair cannot drift (asserted
+  generically by `extensions/index.test.js`); the hand-kept list is core-only. `read_mail`/`list_mail` are the current example
   (`client-config.test.js` asserts the pair) — and because `--allowedTools` is
   baked into a session's launch argv, a session already running when this
   shipped has neither until it's resumed/relaunched: `entry.mailCapable`
@@ -482,7 +487,7 @@ don't re-derive it.
   rule prevents.
 - **Three lists exist and none of them is the other: the task **TODO**
   (task-scoped, human-only, `task-store.js`), the per-session **checklist**
-  (`checklist-store.js`, human AND agent), and the agent's own **native plan**
+  (`server/extensions/checklist/store.js`, human AND agent), and the agent's own **native plan**
   (`TaskCreate`/`TaskUpdate`, or Codex `update_plan`) which the wrangler never
   reads, mirrors or reconciles.** "todo" and "task" were both already taken (the
   latter by Claude's own tool *and* the board's `t_...` ids), which is why this
@@ -493,11 +498,13 @@ don't re-derive it.
   reference in `archive-review-runner.js`), and the two lists serve different
   audiences on purpose.
 - **The per-session checklist is keyed on the card id and its four MCP tools take
-  NO `session` parameter — that omission is the access control.** Store is
-  `checklist-store.js` (`checklists.json`), the same synchronous-mutator mould as
+  NO `session` parameter — that omission is the access control.** The whole
+  feature is ONE extension, `server/extensions/checklist/` (manifest `index.js`;
+  see the Extensions API bullet below). Store is its `store.js`
+  (`checklists.json`), the same synchronous-mutator mould as
   `mailbox-store.js` and for the same reason: the human (control WS
-  `checklist-add`/`-update`/`-remove`/`-reorder`, `control/handlers/checklist.js`)
-  and the agent (MCP) both write from this one process, and an `await` between a
+  `checklist-add`/`-update`/`-remove`/`-reorder`, `handlers.js`)
+  and the agent (MCP, `tools/*.js`) both write from this one process, and an `await` between a
   read and its write is where one clobbers the other. `add_checklist_item`/
   `update_checklist_item`/`remove_checklist_item`/`list_checklist` resolve their
   target from `extractCaller` alone, so a session can only ever touch its own
@@ -505,31 +512,40 @@ don't re-derive it.
   sibling's checklist** off an id it hallucinated or read from `list_sessions`.
   They're granular per-item on purpose (no `set_checklist(items[])`): the human
   edits the same list live, and a whole-list replace would let a stale agent read
-  silently wipe an edit made seconds earlier. Registered in BOTH places per the
-  two-place rule, and the whole feature is flag-gated (`checklistEnabled`,
-  default **true**) through **four** channels that must stay in step —
-  `activeTools()` (registration), `allowedToolsArg({checklist})` (the launch
-  grant, whose `CHECKLIST_TOOLS` name list lives in the `client-config.js` leaf so
-  the registry imports from it and never the reverse), `agent-skills.js`'s
-  `DISABLEABLE` map (the nudge + Codex catalog, same shape as `task-memory`), and
-  `graph.checklistEnabled` (the panel). Lifecycle follows the mailbox's shape
+  silently wipe an edit made seconds earlier. Gated by the extension being
+  enabled (`extensions.checklist` in config.json, default **true**) — one place,
+  `server/extensions/index.js`: registration, launch grant, skill nudge/catalog,
+  graph contribution and client module all come off the loaded manifest, so
+  there is no per-channel flag to keep in step. Lifecycle follows the mailbox's shape
   but is NO LONGER an exact mirror: resume keeps it, a **fork starts EMPTY**
   (fresh card id, no copy — deliberate, don't add one), and only a purge
-  (`control/handlers/remove.js`) calls `forget` — but **archive keeps the whole
+  reaches `forget` (the manifest's `session.onPurge`, fired from
+  `sessionManager.forget()`; the manifest deliberately declares NO `onFork`/
+  `onArchive`, and `lifecycle.test.js` asserts that) — but **archive keeps the whole
   checklist**, where archive now prunes a mailbox's read/undeliverable mail (see
   the mailbox bullet). The divergence is deliberate: mail retention only has to
   outlive an excerpt follow-up seconds later, while a checklist is the work the
   card comes back to. Item text is
-  **agent-written**, so `public/checklist-dom.js` renders it via `textContent`
+  **agent-written**, so `checklist-dom.js` (beside the panel module in the
+  extension's `public/`) renders it via `textContent`
   only and the panel is patched in place rather than re-`innerHTML`'d — the ~4s
   graph poll would otherwise reset the list's scroll every tick, and
-  `checklistDragActive`/`checklistEditing` (`app.js`) freeze the patch so a tick
-  can't reorder rows mid-drag or eat a half-typed item. **Collapsed is the panel
+  `checklistDragActive`/`checklistEditing` (`public/index.js`, the extension's
+  client module, served at `/ext/checklist/index.js`) freeze the patch so a tick
+  can't reorder rows mid-drag or eat a half-typed item. That module imports the
+  board's icons by ABSOLUTE URL (`/icons.js`): it is served from `/ext/checklist/`,
+  so a relative import resolves under that prefix and 404s. **Collapsed is the panel
   not rendered at all, and the collapsed form is a disclosure chip in `#panel`'s
-  own meta row** — deliberately the sub-agents-zone idiom (`.checklist-pill`
-  shares `.subagent-pill`'s two rules rather than forking a third pill style), so
-  a collapsed checklist costs the terminal ZERO height. Per-session and persisted
-  per browser in `wrangler.checklistOpen`, mirroring
+  own meta row** — the panel mounts into the `panel.section` slot (`#panel-sections`)
+  and the chip into `panel.metaChip` (`.sess-meta-ext`), both `display: contents`
+  hosts so the slot adds no box of its own — deliberately the sub-agents-zone
+  idiom (`.checklist-pill` shares `.subagent-pill`'s two rules rather than forking
+  a third pill style; the CSS stays in `public/styles.css`, a CSS slot being a
+  noted follow-up), so a collapsed checklist costs the terminal ZERO height.
+  Per-session and persisted per browser in `wrangler.checklistOpen` — read through
+  `api.storage.raw()`, the ONE deliberate escape from the per-extension
+  `ext.<id>.` key prefix, because the key predates the extension and renaming it
+  would lose every user's open state — mirroring
   `panelSubagentShownOverrides` — but with **no server-side default to fall back
   to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
   `parseChecklistOpen` fails towards collapsed for the same reason, since that's
@@ -539,6 +555,63 @@ don't re-derive it.
   session. Caps (`MAX_ITEMS` 100,
   `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
   the first store an agent can grow with no human in the loop.
+- **Extensions API (`server/extensions/index.js`, `public/slots.js`,
+  `public/extensions.js`) — an optional feature is ONE manifest, loaded ONCE at
+  boot, and every gate reads the loaded list, never the config.** A manifest
+  (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
+  default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
+  graph, session, sweeps, client}`) is validated at boot (`validateManifest`,
+  every throw names the id) and `index.js` exits 1 on a bad one — a manifest
+  colliding with a core tool name or handler type is a config error a human must
+  see, not something to limp past. Enabled is `extensions.<id>` in config.json
+  (`extensionEnabled`, `config-store.js`), and **it is load-time only: the
+  `extension-enabled` handler writes the flag and re-emits `graph.extensions[]`
+  so the settings toggle reads back, but tools/handlers/skills/client stay as
+  loaded until a restart** (the manifest's `help` must say so; `setExtensionDefs`
+  appends a restart note if it doesn't). Graph contributors, sweeps and session
+  hooks are "call-time" only in the sense that they run from that fixed list.
+  Six things are load-bearing. **`server/extensions/**` is imported by the
+  `client-config.js` and `agent-skills.js` leaves (which the agent adapters
+  import), so every manifest and everything it imports must itself stay
+  leaf-compatible — never `session-manager`/`state-reader`/`tmux-scraper`/
+  `index.js`** (`extensions/index.test.js` asserts this over the real `BUILTIN`
+  by regex); a tool or handler reaches the server only through the
+  `deps.ext.stores`/`ctx.ext.stores` bag, which is the SAME `extBag` object in
+  both the MCP deps and the WS ctx (`index.js`), and the loader takes
+  `coreToolNames`/`coreHandlerTypes` as ARGUMENTS from `index.js` for the same
+  reason — it cannot import the core registries. The memoised `getExtensions()`
+  is what lets those leaves derive their lists with no threading; `index.js`
+  must call it FIRST, with the core names, or an adapter's parameterless call
+  memoises a copy that skipped the cross-registry check (`router.js` builds its
+  handler map lazily on the first frame for exactly this ordering reason).
+  A graph contributor's keys are checked ONCE at boot against
+  `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run in `index.js` against the real
+  stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;
+  a core graph key added to `rebuildOnce` must be added to that set or a
+  contributor can silently overwrite it every tick. Session hooks
+  (`_extHooks` on `SessionManager`, `_fireExtHooks`) are logged-not-thrown and
+  sequential, never abort the core operation, and fire only on
+  archive/fork/purge/dispatch/resume (never per tick, so `logError` there obeys
+  the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
+  coalescing reason the resume log line does. `/ext/<id>/*`
+  (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
+  which holds enabled extensions alone — a disabled extension's client is a 404,
+  never served — and resolves the rest via `path.resolve` against the
+  extension's `public/` with a prefix check, since `join(normalize())` folds a
+  climbing `..` back inside instead of rejecting it. A new client slot needs a
+  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that calls
+  `mountInto`/`update` for it (`card.pill` is declared for shape only and has
+  no host: `cards.js` renders innerHTML strings); mount-once is per HOST
+  ELEMENT, so a host rebuilt via innerHTML (`renderPanel`'s chips row) re-mounts
+  each render while `#panel-sections` mounts once, and a throwing contribution
+  is REMOVED rather than allowed to blank the board. And `migrateLegacyFlags`'s
+  `LEGACY_FLAGS` table (`config-store.js`) is the ONE place a retired
+  per-feature flag maps to `extensions.<id>`, written back from `readConfig()`
+  exactly once; an explicit new-style value wins. **The fan-out for the next
+  flagged feature (task-memory, archive-review) is therefore: manifest + one
+  `LEGACY_FLAGS` row + delete its accessor and `set-<x>-enabled` handler** —
+  never a fresh `if (id === …)` rung in `app.js` or a new settings def, since
+  `setExtensionDefs` renders the Extensions tab off `graph.extensions`.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage
@@ -588,8 +661,9 @@ don't re-derive it.
   scrolls. Defaulting `absorbedChildCount` to `childRowCount` previously made
   collapsing a workflow box grow the tile instead of shrinking it. **TODO and
   checklist data are the two exceptions to "carried via `buildGraph`"** — both
-  ride their store's `snapshot()` on the graph directly (`taskStore.snapshot()`,
-  `checklistStore.snapshot()`), so don't go looking for either in `buildGraph`.
+  ride their store's `snapshot()` on the graph directly (`taskStore.snapshot()`
+  in `rebuildOnce`; the checklist manifest's `graph` contributor, which
+  `rebuildOnce` runs after it), so don't go looking for either in `buildGraph`.
   TODO because it's task-scoped rather than session-scoped; the checklist
   *is* session-scoped but its only consumer is the ONE selected session's
   sidebar panel, so there's nothing to enrich per card.
