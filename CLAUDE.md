@@ -577,9 +577,17 @@ don't re-derive it.
   `ext.list`.** Tools/handlers/skills/stores/graph-contributors/client assets
   ARE fixed at load, so an agent's MCP tools follow at its next relaunch, and an
   extension that booted OFF has no store, no handler and no client asset to
-  serve — it cannot be turned on live at all and genuinely needs a restart. The
-  manifest's `help` must say which half moves when (`setExtensionDefs` appends a
-  restart note if it doesn't). Sweeps and session hooks run from the fixed list.
+  serve — it cannot be turned on live at all and genuinely needs a restart. **Timing is told to a human by
+  `extensionFlipNote` (`public/settings.js`) AFTER a flip, never by the
+  manifest's `help`** — the row's note picks one of three lines from
+  `{enabled, bootEnabled}` (`bootEnabled` being the loader's own snapshot
+  value, carried on the graph beside the live read), so it can name the
+  restart only in the case that needs one. A static help sentence cannot: a
+  blanket "takes effect after the wrangler restarts" was appended to any help
+  that didn't mention one, and it is now false for the half of a flip that
+  lands on the next tick. A manifest's `help` says what the feature IS and what
+  survives a toggle, nothing about when. Sweeps and session hooks run from the
+  fixed list.
   Six things are load-bearing. **`server/extensions/**` is imported by the
   `client-config.js` and `agent-skills.js` leaves (which the agent adapters
   import), so every manifest and everything it imports must itself stay

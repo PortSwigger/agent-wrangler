@@ -33,7 +33,7 @@ export const dir = fileURLToPath(new URL('.', import.meta.url));
 export default {
   id: 'checklist',                 // /^[a-z][a-z0-9-]*$/, unique
   label: 'Per-session checklist',  // settings toggle label
-  help: '... Turning it off hides the panel straight away; the MCP tools follow at a session\'s next resume.',
+  help: 'What the feature is, and what survives a toggle. No timing — see extensionFlipNote.',
   defaultEnabled: true,
   dir,
   stores:   { checklist: () => new ChecklistStore() },   // factories, instantiated once by index.js
@@ -63,7 +63,7 @@ as the instance lock.
 
 | key | contents | enabled only? |
 |---|---|---|
-| `list` | `[{id, label, help, defaultEnabled, enabled}]` for every builtin | no |
+| `list` | `[{id, label, help, defaultEnabled, enabled}]` for every builtin — `enabled` here is the BOOT value, which `extensionsForGraph` carries onto the graph as `bootEnabled` beside a live re-read | no |
 | `stores` | `{name: factory}` | yes |
 | `handlers` | control-WS handlers | yes |
 | `tools` | MCP tools | yes |
@@ -120,9 +120,16 @@ off takes its panel off the board on the next tick, which is what the
 per-feature flag it replaced already did. Tools, handlers, stores, graph
 contributors and client assets stay as loaded, so a running session's MCP tools
 follow at its next resume, and an extension that was OFF at boot has none of
-those loaded at all and cannot be turned on without a restart. The manifest's
-`help` must say which half moves when; `public/settings.js`'s `setExtensionDefs`
-appends a restart note if it does not.
+those loaded at all and cannot be turned on without a restart. Which half of a flip just landed is told on the settings row itself, after the
+flip: `extensionFlipNote` (`public/settings.js`) picks one of three lines from
+`{enabled, bootEnabled}`, where `bootEnabled` is the loader's snapshot value
+carried on the graph beside the live read. The three are the whole state space —
+gone from the board (running sessions keep the tools until their next resume),
+back on the board (they get them at their next resume), and on in config but off
+at boot, the only one that asks for a restart. `setExtensionDefs` no longer
+appends a blanket restart sentence to a manifest's `help`: it was false for the
+tick-level half, and a static line cannot know which direction was taken. A
+manifest's `help` describes the feature and what survives a toggle.
 
 Retired flags map onto the new key through `LEGACY_FLAGS` in `config-store.js`
 (`{ checklistEnabled: ['extensions', 'checklist'] }`). `readConfig()` runs
