@@ -394,14 +394,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // An attached image is a complete prompt on its own (the TUI submits the bare
   // `[Image #1]`), so Send has to stay live for an empty box that holds one.
   function renderSendability() {
-    if (pendingMessage?.sessionId === sessionId) { sendBtn.disabled = true; return; }
+    if (pendingMessage) { sendBtn.disabled = true; return; }
     if (lastStatus === 'needs-you') return; // setStatus owns the button while blocked
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || pendingMessage?.sessionId === sessionId || (!text && !attachments.length)) return;
+    if (!sessionId || pendingMessage || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
@@ -708,7 +708,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (!pendingMessage || msg.requestId !== pendingMessage.requestId || msg.sessionId !== pendingMessage.sessionId) return;
       const current = sessionId === msg.sessionId;
       pendingMessage = null;
-      if (!msg.ok) { setPasteNote(`Not sent: ${msg.error || 'delivery was not confirmed'}`); renderSendability(); return; }
+      if (!msg.ok) { if (current) setPasteNote(`Not sent: ${msg.error || 'delivery was not confirmed'}`); renderSendability(); return; }
       paneRestoreArmed = false;
       restoreToken = null;
       if (current) {
@@ -717,7 +717,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         attachments = [];
         renderAttachments();
         renderSendability();
-      }
+      } else drafts.delete(msg.sessionId);
       kickBurst();
     },
     // The answer to an interrupt: what to put back in the composer, resolved

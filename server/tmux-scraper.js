@@ -411,25 +411,7 @@ export async function killSession(name, socket = '') {
 // shell-escaping pitfalls of `send-keys -l`) AND submit it with a trailing Enter.
 // Shares the paste-block mechanism with prefillPane, which omits the Enter. `run` is
 // the low-level tmux runner (test seam).
-const CODEX_SUBMIT_CHECK_MS = 120;
-
-export async function sendText(name, text, socket = '', run = tmux, {
-  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  capture = capturePaneStyled,
-  classifyPane = classify,
-  composerDraft = codexComposerDraft,
-  logRetry = logWarn,
-} = {}) {
+export async function sendText(name, text, socket = '', run = tmux) {
   await pasteBlock(name, text, socket, run);
   await run(socket, ['send-keys', '-t', name, 'Enter']);
-  if (!name.startsWith('cx_')) return;
-
-  await wait(CODEX_SUBMIT_CHECK_MS);
-  const pane = await capture(name, 6, socket);
-  if (classifyPane(pane).status !== 'idle' || composerDraft(pane) !== text) return;
-
-  await run(socket, ['send-keys', '-t', name, 'Enter']);
-  await wait(CODEX_SUBMIT_CHECK_MS);
-  const afterRetry = await capture(name, 6, socket);
-  logRetry(`[delivery] retried Codex submit for ${name}; status=${classifyPane(afterRetry).status}`);
 }

@@ -25,10 +25,9 @@ export const messageHandler = {
     if (!msg.text && !imagePaths.length) { replyResult(false, 'No message text given.'); return; }
     // clearComposer is set only by the chat view's Esc-then-edit flow, where the
     // wrangler's own interrupt is what put a restored prompt in the pane.
-    const result = await deliverMessage(msg.sessionId, msg.text || '', ctx, {
-      imagePaths,
-      clearComposer: msg.clearComposer === true,
-    });
+    let result;
+    try { result = await deliverMessage(msg.sessionId, msg.text || '', ctx, { imagePaths, clearComposer: msg.clearComposer === true }); }
+    catch (err) { replyResult(false, err?.message || String(err)); return; }
     if (result.mode === 'error') { replyResult(false, result.error); return; }
     if (result.mode === 'dormant') await ctx.rebuild?.();
     replyResult(true, null, result.mode);

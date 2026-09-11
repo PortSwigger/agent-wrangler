@@ -368,36 +368,6 @@ test('sendText submits without a fixed settle delay', async () => {
   assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
 });
 
-test('sendText retries Codex submission only when its pasted draft is still idle', async () => {
-  const cmds = [];
-  let captures = 0;
-  await sendText(
-    'cx_y',
-    'retry this prompt',
-    'sockB',
-    (socket, args) => { cmds.push(args); return Promise.resolve(); },
-    {
-      wait: async () => {},
-      capture: async () => (++captures === 1 ? '\x1b[1m›\x1b[0m retry this prompt' : 'esc to interrupt'),
-      classifyPane: (pane) => ({ status: /interrupt/.test(pane) ? 'working' : 'idle' }),
-      composerDraft: (pane) => pane.includes('›') ? 'retry this prompt' : null,
-      logRetry: () => {},
-    },
-  );
-  assert.equal(cmds.filter((args) => args.includes('Enter')).length, 2);
-});
-
-test('sendText does not retry from matching Codex history without a composer draft', async () => {
-  const cmds = [];
-  await sendText('cx_y', 'retry this prompt', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); }, {
-    wait: async () => {},
-    capture: async () => 'assistant said retry this prompt\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m',
-    classifyPane: () => ({ status: 'idle' }),
-    logRetry: () => {},
-  });
-  assert.equal(cmds.filter((args) => args.includes('Enter')).length, 1);
-});
-
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {
   const p = parsePaneLine('cc_d3059a0b|18544|/Users/x/proj|%1|0|⠂ general-purpose');
   assert.equal(p.name, 'cc_d3059a0b');
