@@ -11,11 +11,40 @@ import { writeJsonAtomic } from './atomic-json.js';
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
 export function readConfig() {
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) || {};
+    parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) || {};
   } catch {
+    // A missing/unparseable file is read as empty and NEVER written back here —
+    // the migration below must not turn a read into the creation of a file.
     return {};
   }
+  const { cfg, changed } = migrateLegacyFlags(parsed);
+  // The write-back is what makes the legacy key's deletion durable; a second
+  // read then finds nothing to migrate and never writes.
+  if (changed) writeJsonAtomic(CONFIG_FILE, cfg, { trailingNewline: true });
+  return cfg;
+}
+
+// Retired per-feature flags, mapped to the extension whose enabled state they
+// now are. This table is the ONE place a retired flag maps to `extensions.<id>`
+// — a feature migrating onto the extensions API adds a row here and deletes its
+// accessor. An explicit new-style `extensions.<id>` boolean always wins over the
+// legacy key; either way the legacy key is dropped so it can't resurrect.
+export const LEGACY_FLAGS = { checklistEnabled: ['extensions', 'checklist'] };
+
+export function migrateLegacyFlags(input) {
+  const cfg = { ...input };
+  let changed = false;
+  for (const [legacyKey, [section, id]] of Object.entries(LEGACY_FLAGS)) {
+    if (!(legacyKey in cfg)) continue;
+    const bucket = { ...(cfg[section] && typeof cfg[section] === 'object' ? cfg[section] : {}) };
+    if (typeof bucket[id] !== 'boolean') bucket[id] = cfg[legacyKey] !== false;
+    cfg[section] = bucket;
+    delete cfg[legacyKey];
+    changed = true;
+  }
+  return { cfg, changed };
 }
 
 export function writeConfig(patch) {
@@ -156,14 +185,18 @@ export function chatViewDefault(cfg = readConfig()) {
   return cfg.chatViewDefault === true;
 }
 
-// Whether the per-session checklist exists at all: the four MCP tools
-// (registration AND the launch --allowedTools grant), the always-on nudge
-// pointing at the `checklist` skill, and the board's Checklist panel. Default
-// ON — a feature nobody discovers might as well not exist, and the panel is
-// the whole point (see the design spec's Optionality section). Off is
-// deliberately shallow: checklists.json and every stored item stay intact, so
-// re-enabling restores every list. Takes cfg (like taskMemoryEnabled) so tests
-// never write the shared config.json.
+// Whether an extension (server/extensions/index.js) is enabled on this install:
+// an explicit `extensions.<id>` boolean in config.json, else the manifest's own
+// default. Non-boolean values are ignored rather than coerced. Takes cfg (like
+// taskMemoryEnabled) so tests never write the shared config.json.
+export function extensionEnabled(id, defaultEnabled, cfg = readConfig()) {
+  const v = cfg.extensions?.[id];
+  return typeof v === 'boolean' ? v : Boolean(defaultEnabled);
+}
+
+// Transitional: replaced by the `checklist` extension's enabled state above
+// (extensionEnabled('checklist', true)). Removed once every consumer derives
+// its gating from the extension loader.
 export function checklistEnabled(cfg = readConfig()) {
-  return cfg.checklistEnabled !== false;
+  return extensionEnabled('checklist', true, migrateLegacyFlags(cfg).cfg);
 }

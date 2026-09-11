@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, migrateLegacyFlags, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -155,11 +155,59 @@ test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
   assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
 });
 
-test('checklistEnabled defaults to ON; only an explicit false disables', () => {
-  // Default-on is deliberate (see the design spec's Optionality section): a
-  // feature nobody discovers might as well not exist.
-  assert.equal(checklistEnabled({}), true);
-  assert.equal(checklistEnabled({ checklistEnabled: true }), true);
-  assert.equal(checklistEnabled({ checklistEnabled: false }), false);
-  assert.equal(checklistEnabled({ checklistEnabled: 'no' }), true, 'only a real boolean false opts out');
+test('extensionEnabled: the manifest default applies until an explicit boolean overrides it', () => {
+  assert.equal(extensionEnabled('checklist', true, {}), true);
+  assert.equal(extensionEnabled('checklist', false, {}), false);
+  assert.equal(extensionEnabled('checklist', true, { extensions: { checklist: false } }), false);
+  assert.equal(extensionEnabled('checklist', false, { extensions: { checklist: true } }), true);
+  assert.equal(extensionEnabled('checklist', true, { extensions: { checklist: 'no' } }), true, 'a non-boolean is ignored, not coerced');
+  assert.equal(extensionEnabled('checklist', true, { extensions: { other: false } }), true, "another extension's value is not this one's");
+});
+
+test('migrateLegacyFlags copies a retired flag to extensions.<id> and deletes it', () => {
+  const { cfg, changed } = migrateLegacyFlags({ checklistEnabled: false, tmuxSocket: 'aw-1' });
+  assert.equal(changed, true);
+  assert.deepEqual(cfg, { tmuxSocket: 'aw-1', extensions: { checklist: false } });
+  assert.deepEqual(migrateLegacyFlags({ checklistEnabled: true }).cfg, { extensions: { checklist: true } });
+});
+
+test('migrateLegacyFlags: an explicit new-style value wins over the legacy key, which is still dropped', () => {
+  const { cfg, changed } = migrateLegacyFlags({ checklistEnabled: false, extensions: { checklist: true, other: false } });
+  assert.equal(changed, true);
+  assert.deepEqual(cfg, { extensions: { checklist: true, other: false } });
+});
+
+test('migrateLegacyFlags is idempotent and reports changed:false with nothing legacy present', () => {
+  const first = migrateLegacyFlags({ checklistEnabled: false });
+  const second = migrateLegacyFlags(first.cfg);
+  assert.equal(second.changed, false);
+  assert.deepEqual(second.cfg, first.cfg);
+  const untouched = { tmuxSocket: 'aw-1', extensions: { checklist: false } };
+  const out = migrateLegacyFlags(untouched);
+  assert.equal(out.changed, false);
+  assert.deepEqual(out.cfg, untouched);
+  assert.notEqual(out.cfg, untouched, 'never mutates its input');
+});
+
+test('readConfig migrates a legacy flag on disk and writes the file back exactly once', () => {
+  withConfigRestored(() => {
+    writeJsonAtomic(CONFIG_PATH, { checklistEnabled: false, tmuxSocket: 'aw-x' }, { trailingNewline: true });
+    const cfg = readConfig();
+    assert.deepEqual(cfg, { tmuxSocket: 'aw-x', extensions: { checklist: false } });
+    const onDisk = fs.readFileSync(CONFIG_PATH, 'utf8');
+    assert.deepEqual(JSON.parse(onDisk), cfg, 'the deletion is durable');
+    const mtime = fs.statSync(CONFIG_PATH).mtimeMs;
+    // A second read finds nothing to migrate: byte-identical file, no rewrite.
+    assert.deepEqual(readConfig(), cfg);
+    assert.equal(fs.readFileSync(CONFIG_PATH, 'utf8'), onDisk);
+    assert.equal(fs.statSync(CONFIG_PATH).mtimeMs, mtime);
+  });
+});
+
+test('readConfig never creates a file when none exists', () => {
+  withConfigRestored(() => {
+    try { fs.rmSync(CONFIG_PATH); } catch { /* absent already */ }
+    assert.deepEqual(readConfig(), {});
+    assert.equal(fs.existsSync(CONFIG_PATH), false);
+  });
 });
