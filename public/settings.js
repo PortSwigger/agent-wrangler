@@ -138,26 +138,61 @@ export const SETTINGS_TABS = [
 // bridge handles them all with ONE `startsWith` rung instead of a branch per
 // feature flag — the ladder this replaces.
 export const EXT_SETTING_PREFIX = 'ext:';
-const RESTART_NOTE = 'Takes effect after the wrangler restarts.';
+// What a human is told AFTER flipping an extension toggle, given the pair the
+// server carries (`enabled` live, `bootEnabled` from the loader's snapshot).
+// Three outcomes, and only the third needs an action — but the other two still
+// need saying, because "the panel went and my agent still has the tools" and
+// "nothing happened at all" are indistinguishable from an unlabelled switch.
+// Deliberately a note on the row rather than a toast: it belongs beside the
+// control that caused it, and a toast is gone before a reader looks down.
+export function extensionFlipNote({ enabled, bootEnabled } = {}) {
+  if (enabled && !bootEnabled) return 'Restart the wrangler to finish turning this on.';
+  if (enabled) return 'Back on the board. Running sessions get its tools at their next resume.';
+  return 'Gone from the board. Running sessions keep its tools until their next resume.';
+}
 
 // Synthesises the Extensions tab's toggle defs from the server's loaded
-// extension list [{id, label, help, defaultEnabled}] and refreshes the id
-// index. Called on every graph push (the list is fixed at server boot, so this
-// is idempotent in practice); the modal renders on open, so the rows are
-// always current. Returns the defs for tests.
+// extension list [{id, label, help, defaultEnabled, enabled, bootEnabled}] and
+// refreshes the id index. Called on every graph push; the modal renders on
+// open, so the rows are always current. Returns the defs for tests.
+//
+// `help` is passed through UNTOUCHED — an earlier version appended a blanket
+// "Takes effect after the wrangler restarts." to any help that did not mention
+// one, which is now simply false for the half of a flip that lands on the next
+// tick. Timing is the flip note's job, and it can be exact because it knows
+// which direction was taken; a static sentence cannot.
 export function setExtensionDefs(list) {
   const defs = (Array.isArray(list) ? list : []).map((e) => ({
     id: EXT_SETTING_PREFIX + e.id,
     type: 'toggle',
     scope: 'server',
     label: String(e.label || e.id),
-    help: e.help && /restarts?\./i.test(e.help) ? e.help : [e.help, RESTART_NOTE].filter(Boolean).join(' '),
+    help: e.help || '',
     default: e.defaultEnabled !== false,
+    // Carried onto the def so the flip handler can build its note without
+    // reaching back into app.js's graph state. Safe to snapshot: bootEnabled
+    // cannot change while the process is up, which is the whole point of it.
+    bootEnabled: e.bootEnabled !== false,
   }));
   for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
   for (const d of defs) byId.set(d.id, d);
   SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds = defs.map((d) => d.id);
   return defs;
+}
+
+// One note element per row, created on first flip and rewritten after. Never
+// innerHTML: the text is ours, but the row it lands in is built from a
+// server-supplied label and this module has no other escape hatch.
+function showFlipNote(row, text) {
+  if (!row) return;
+  let note = row.querySelector('.setting-flip-note');
+  if (!note) {
+    note = document.createElement('div');
+    note.className = 'setting-flip-note';
+    note.setAttribute('role', 'status');
+    row.querySelector('.setting-copy')?.appendChild(note);
+  }
+  note.textContent = text;
 }
 
 export function tabIndexAfterKey(index, key, count) {
@@ -389,6 +424,12 @@ export function initSettings({ server, appearance, onChange } = {}) {
     setSetting(def.id, next);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
+    // Extension rows only: what just happened and what is still pending. Shown
+    // on the row rather than as a toast, and only after a real flip, so an
+    // unread row carries no standing warning about a state nobody chose.
+    if (def.id.startsWith(EXT_SETTING_PREFIX)) {
+      showFlipNote(row, extensionFlipNote({ enabled: next, bootEnabled: def.bootEnabled }));
+    }
   });
 
   body.addEventListener('keydown', (e) => {

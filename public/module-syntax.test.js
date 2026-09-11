@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The board's frontend is a graph of ES modules the browser loads directly, and
@@ -17,14 +17,34 @@ import { fileURLToPath } from 'node:url';
 // parsed as ESM — don't "fix" this by copying to a .mjs temp file.
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)));
 
+// The walk (the same one element-ids.test.js does — kept as its own copy, since
+// importing a test file would register its tests twice) covers public/ AND
+// every extension's client under server/extensions/<id>/public/. Those are
+// served to the same browser, and an unparseable one is dropped by extensions.js
+// at load — quieter than a blank board, but still a silently missing feature.
+function frontendModules() {
+  const out = readdirSync(PUBLIC_DIR).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).map((f) => join(PUBLIC_DIR, f));
+  const extRoot = join(PUBLIC_DIR, '..', 'server', 'extensions');
+  for (const ext of readdirSync(extRoot, { withFileTypes: true })) {
+    if (!ext.isDirectory()) continue;
+    const pub = join(extRoot, ext.name, 'public');
+    let files = [];
+    try { files = readdirSync(pub); } catch { continue; }
+    out.push(...files.filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).map((f) => join(pub, f)));
+  }
+  return out;
+}
+
 test('every frontend module parses', () => {
-  const files = readdirSync(PUBLIC_DIR).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'));
+  const files = frontendModules();
   assert.ok(files.length > 20, `expected the frontend module set, found ${files.length}`);
+  assert.ok(files.some((f) => f.includes(join('server', 'extensions', 'checklist', 'public'))), 'the walk must reach the checklist extension\'s client');
 
   const broken = [];
-  for (const file of files) {
+  for (const path of files) {
+    const file = relative(join(PUBLIC_DIR, '..'), path);
     try {
-      execFileSync(process.execPath, ['--check', join(PUBLIC_DIR, file)], { stdio: 'pipe' });
+      execFileSync(process.execPath, ['--check', path], { stdio: 'pipe' });
     } catch (err) {
       broken.push(`${file}: ${String(err.stderr || err).split('\n').find((l) => l.includes('Error')) || 'parse failed'}`);
     }
