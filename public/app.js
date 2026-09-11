@@ -5408,7 +5408,11 @@ schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedules
 
 // --- websocket control ---
 let ws;
-export function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+export function send(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(obj));
+  return true;
+}
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -5416,7 +5420,7 @@ function connect() {
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
   ws.onopen = () => { if (currentView === 'search') onEnterSearchView(); };
-  ws.onclose = () => { setTimeout(connect, 1500); };
+  ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
@@ -5519,6 +5523,7 @@ function connect() {
     else if (msg.type === 'styles') setCustomStyles(msg.styles);
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
+    else if (msg.type === 'message-result') chatView.onMessageResult(msg);
     else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);

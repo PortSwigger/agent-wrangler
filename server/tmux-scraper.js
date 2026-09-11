@@ -400,8 +400,8 @@ export async function killSession(name, socket = '') {
 // shell-escaping pitfalls of `send-keys -l`) AND submit it with a trailing Enter.
 // Shares the paste-block mechanism with prefillPane, which omits the Enter. `run` is
 // the low-level tmux runner (test seam).
-export async function sendText(name, text, socket = '', run = tmux) {
+export async function sendText(name, text, socket = '', run = tmux, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   await pasteBlock(name, text, socket, run);
-  await new Promise((r) => setTimeout(r, 120));
+  await wait(120);
   await run(socket, ['send-keys', '-t', name, 'Enter']);
 }
