@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deliverMailNotification } from './mailbox-delivery.js';
+import { createPaneDeferral } from './pane-deferral.js';
 
 function realDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aw-maild-'));
@@ -43,6 +44,13 @@ function deps({
     memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+    // The live announcement now goes through paneDeferral (held while the human
+    // is mid-prompt). This double records the same shape the direct paste did,
+    // so the live-path assertions below are unchanged; pane-deferral.test.js
+    // owns the gating behaviour, and the wiring test pins that it is consulted.
+    paneDeferral: {
+      deliverOrDefer: async ({ text, tmux, socket }) => { sent.push({ name: tmux, text, socket }); return 'sent'; },
+    },
     // Models a freshly-resumed pane whose TUI discards pastes until it's ready:
     // before `pasteLandsOnAttempt` pastes have been sent, the pane shows only the
     // paste's own raw terminal echo (real classify() reads that as 'idle', same
@@ -256,4 +264,25 @@ test('resume failure: returns error (with the real failure message, never undefi
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.equal(mode.mode, 'error');
   assert.match(mode.error, /transcript gone/);
+});
+
+// Wiring, not gating logic (that lives in pane-deferral.test.js): the live
+// announcement must go through the gate, so a "you've got mail" line can never
+// be spliced into a prompt the human is half-way through typing.
+test('live recipient mid-prompt: the announcement is held, not spliced into the draft', async () => {
+  const pasted = [];
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } } });
+  const pd = createPaneDeferral({
+    tmuxFor: d.tmuxFor,
+    socketFor: d.socketFor,
+    capture: async () => `${'\x1b'}[39m❯ half a question`,
+    sendText: async (name, text, socket) => { pasted.push({ name, text, socket }); },
+  });
+  d.paneDeferral = pd;
+
+  const res = await deliverMailNotification('CARD1', '[Agent Wrangler] 📬 New mail', d);
+
+  assert.equal(res.mode, 'live', 'the mail is notified-as-live; only the tap on the shoulder waits');
+  assert.deepEqual(pasted, [], 'nothing pasted on top of the draft');
+  assert.deepEqual(pd.pending('CARD1'), ['[Agent Wrangler] 📬 New mail']);
 });

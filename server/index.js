@@ -22,6 +22,7 @@ import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText } from './tmux-scraper.js';
+import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
@@ -99,6 +100,13 @@ const STALE_MS = 12 * 60 * 60 * 1000;
 let lastGraph = null;
 const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, () => lastGraph);
 
+// Every AUTOMATED paste into a pane goes through here. A paste lands at the
+// composer's cursor, so a PR line arriving while the human is mid-prompt splices
+// itself into their draft and the Enter submits the pair fused together — the
+// gate holds the line until the composer reads empty. Deliberately NOT used by
+// deliverMessage (a human pressing send chose this moment) — see pane-deferral.js.
+const paneDeferral = createPaneDeferral({ tmuxFor, socketFor, sendText });
+
 // Current fd-watchdog alert, or null when clear — sent to any client that
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone
 // only reaches tabs already open at the moment it fires.
@@ -149,7 +157,7 @@ async function runPrStatusSweep(only) {
           const target = tmuxFor(ownerId);
           if (target) {
             const phrase = `${res.state === 'MERGED' ? 'merged' : 'closed'} — link removed`;
-            sendText(target, prPaneLine(number, url, phrase), socketFor(ownerId)).catch(() => {});
+            paneDeferral.deliverOrDefer({ id: ownerId, text: prPaneLine(number, url, phrase), tmux: target, socket: socketFor(ownerId) }).catch(() => {});
           }
         }
       }
@@ -196,12 +204,12 @@ async function runPrStatusSweep(only) {
         // and-forget so concurrent wakes for the same card (same-owner PRs in one
         // sweep, or a racing manual Resume) all reach resume()'s coalescing: the first
         // OWNS the relaunch (intent carries its nudge), each joiner delivers its own
-        // nudge via a post-resume sendText fallback — so no nudge is dropped (see
+        // nudge via a post-resume paste fallback — so no nudge is dropped (see
         // deliverPrNudge). Rebuild only on a genuine 'dormant' wake so the woken card
         // flips live promptly; an 'error' (resume failed) surfaces via onPrWakeError
         // and must NOT rebuild.
         deliverPrNudge(ev, entry, {
-          message: prPaneNudge(ev), tmuxFor, socketFor, sendText,
+          message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
@@ -215,7 +223,7 @@ async function runPrStatusSweep(only) {
                     url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error });
         if (target) {
           const phrase = res.ok ? 'auto-merged' : `auto-merge failed: ${res.error}`;
-          sendText(target, prPaneLine(ev.number, ev.url, phrase), socketFor(ev.ownerId)).catch(() => {});
+          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) }).catch(() => {});
         }
       }
     }
@@ -228,7 +236,7 @@ async function runPrStatusSweep(only) {
       const entry = sessionManager.entryFor(ev.ownerId);
       if (planDirtyTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
-          message: prDirtyPaneNudge(ev), tmuxFor, socketFor, sendText,
+          message: prDirtyPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
@@ -250,7 +258,7 @@ async function runPrStatusSweep(only) {
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
-          message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, sendText,
+          message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, memoryStore, taskStore, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
@@ -370,7 +378,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore,
+  mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore, paneDeferral,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 }, { onWoken: () => rebuild() });
 
@@ -746,6 +754,17 @@ async function main() {
     fireMailSettlesTick().catch(() => {});
   }, 2000);
   mailPoll.unref();
+
+  // Drain pane notifications that were held back while the human was mid-prompt
+  // (pane-deferral.js). Same 2s cadence as the mail sweep so a cleared composer
+  // is served promptly rather than waiting up to a minute for the next PR poll.
+  // Free when nothing is held — the queue is empty in the normal case, so the
+  // tick captures no panes and runs no tmux at all. No logging here for the same
+  // reason as the sweeps above: at 2s a line would be tens of thousands a day.
+  const paneDrainPoll = setInterval(() => {
+    paneDeferral.drain().catch(() => {});
+  }, 2000);
+  paneDrainPoll.unref();
 
   // Keep the Usage dashboard's per-file scan cache populated even if nobody ever opens
   // the panel: Claude Code deletes its transcripts past ~30 days and a costed day only

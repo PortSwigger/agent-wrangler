@@ -1,14 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
-import { sendText as defaultSendText } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a PR check-status transition nudge to the owning session, treating a
 // DORMANT session exactly like an idle-but-live one — dormancy is only a RAM
 // optimization (James: "behaviour should be the same for a dormant session as with
 // an idle-but-live session"). ONE routing that branches on the target at fire time:
-//   - LIVE (tmuxFor truthy): sendText the nudge into the pane (unchanged behavior).
+//   - LIVE (tmuxFor truthy): hand the nudge to paneDeferral, which pastes it into
+//     the pane when the composer is confirmed empty and HOLDS it when the human is
+//     mid-prompt (a paste lands at the cursor and would fuse with their draft).
 //   - DORMANT (a mapping entry, not archived, not snoozed, no live tmux): wake it via
 //     resume(). When we OWN the relaunch AND the agent's buildResume threads the intent
 //     (Claude), the SAME nudge rides the resume intent so it auto-runs unattended with
@@ -30,13 +31,12 @@ import { adapterFor } from './agents/index.js';
 // failed). Only 'dormant' warrants the caller's rebuild(); 'error' must NOT rebuild
 // (nothing woke) and is surfaced via onError instead.
 export async function deliverPrNudge(ev, entry, deps) {
-  const { message, tmuxFor, socketFor, sessionManager, memoryStore, taskStore, onError } = deps;
-  const sendText = deps.sendText ?? defaultSendText;
+  const { message, tmuxFor, socketFor, sessionManager, memoryStore, taskStore, onError, paneDeferral } = deps;
   const id = ev.ownerId;
 
   const target = tmuxFor(id);
   if (target) {
-    await sendText(target, message, socketFor(id));
+    await paneDeferral.deliverOrDefer({ id, text: message, tmux: target, socket: socketFor(id) });
     return 'live';
   }
 
@@ -89,10 +89,10 @@ export async function deliverPrNudge(ev, entry, deps) {
   // no-op). Read the capability off the adapter (self-documenting, vs hardcoding an
   // agent-name string here). In every other dormant case — any Codex resume, or ANY
   // joined resume of either agent (coalescing ignores our intent) — deliver the nudge by
-  // pasting into the now-live pane via sendText after resume() resolves (the joined
+  // pasting into the now-live pane via paneDeferral after resume() resolves (the joined
   // result carries the live tmux; its socket is on the entry resume() _save()s before
   // returning). We NEVER do both — intentCarriesNudge ⇒ intent already carried it ⇒ no
-  // sendText — so there's no double delivery. Same-owner PRs transitioning in one sweep
+  // paste — so there's no double delivery. Same-owner PRs transitioning in one sweep
   // also benefit: the first OWNS, each later one JOINS and delivers its own distinct
   // nudge, so every transition is delivered rather than the second silently coalesced.
   const owned = !sessionManager.isResuming(id);
@@ -105,7 +105,7 @@ export async function deliverPrNudge(ev, entry, deps) {
       // No explicit pane-readiness wait here: waitForPaneReady lives in the
       // control-handlers layer, which this leaf runner must not import — so this
       // mirrors the joined path's exact timing and shares its paste-timing residual.
-      if (tmux) await sendText(tmux, message, socket);
+      if (tmux) await paneDeferral.deliverOrDefer({ id, text: message, tmux, socket });
       else onError?.(ev, new Error('resume produced no live pane to deliver the PR nudge'));
     }
   } catch (err) {

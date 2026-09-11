@@ -608,6 +608,32 @@ don't re-derive it.
   live bug (a parent-with-children could never be dragged, and any drag in its
   task permanently dropped it from `sessionOrder`), not a "sessions with children
   sink last" feature.
+- **Every AUTOMATED paste into a pane is gated on a CONFIRMED-EMPTY composer
+  (`pane-deferral.js`) — a paste lands at the cursor, so an ungated one splices
+  itself into a half-typed prompt and the Enter submits the pair fused.** This is
+  the same hazard `/model` already refuses on (`paneComposerIsEmpty`,
+  `ghost-suggestion.js`); the gate applies it to everything the SERVER decides to
+  send: the two `prPaneLine` sites in `index.js` (merged/closed, auto-merge
+  outcome), `deliverPrNudge`'s live and post-resume pastes, and
+  `mailbox-delivery.js`'s live announcement via `liveTransport`. **`deliverMessage`
+  is deliberately NOT gated** — a human pressing send chose this moment, and that
+  path owns its own `clearComposer` semantics for the interrupt-restore case.
+  Five things are load-bearing. The gate **fails safe**: `paneComposerIsEmpty`
+  answers false for an unreadable capture, a missing composer line or a pane it
+  could not parse, so any doubt defers — a deferred notification costs a delay, a
+  pasted one corrupts a prompt the human is about to send. It is unbounded in
+  TIME on purpose: the notifier's diff baselines CONSUME a transition, so it
+  never re-fires and an expiry would silently drop the one signal
+  `autoFixPrChecks` runs on — it is bounded in SIZE only
+  (`MAX_PENDING_PER_CARD`), as a memory backstop against a draft left open for
+  days. A drain delivers a card's whole backlog as **ONE** paste, because two
+  back-to-back pastes to one pane interleave — the same hazard `index.js`'s
+  `checkStatusKeys` suppression already guards against. The queue is
+  **in-memory**: a restart drops it, the accepted trade for not adding a JSON
+  store for text whose board toast already fired. And the drain is a 2s
+  `setInterval` in `main()` that is **free when nothing is held** — an empty map
+  captures no panes and runs no tmux — which is what makes that cadence
+  affordable; like the sweeps beside it, it must log nothing.
 - **Every paste into a pane goes out BRACKETED (`paste-buffer -p`) — dropping the
   `-p` silently splits one multi-line message into several turns.** `pasteBlock`
   (`tmux-scraper.js`) is the single chokepoint for the composer, peer mail, PR nudges
