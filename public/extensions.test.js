@@ -8,7 +8,7 @@ function harness(modules) {
   const errors = [];
   const slots = createSlots({ document, storage: null, onError: (msg) => errors.push(String(msg)) });
   const imported = [];
-  const load = createClientExtensionLoader(slots, {
+  const loader = createClientExtensionLoader(slots, {
     importer: async (url) => {
       imported.push(url);
       const m = modules[url];
@@ -18,7 +18,7 @@ function harness(modules) {
     },
     onError: (msg) => errors.push(String(msg)),
   });
-  return { slots, errors, imported, load };
+  return { slots, errors, imported, loader, load: loader.load };
 }
 
 const good = (id) => ({ default: { register(reg) { reg.register('panel.section', { id: `${id}-panel`, mount() {} }); } } });
@@ -81,4 +81,35 @@ test('malformed entries are skipped rather than thrown on', async () => {
   assert.equal(await load([null, {}, { id: 'a' }, { client: '/x' }]), false);
   assert.equal(await load('not a list'), false);
   assert.deepEqual(errors, []);
+});
+
+test('unload tears an extension down and a later load re-registers it', async () => {
+  const { slots, loader, imported } = harness({ '/ext/a/index.js': good('a') });
+  const list = [{ id: 'a', client: '/ext/a/index.js' }];
+  await loader.load(list);
+  assert.equal(slots.contributions('panel.section').length, 1);
+
+  assert.equal(loader.unload('a'), true);
+  assert.deepEqual(slots.contributions('panel.section'), [], 'the toggle takes its DOM off the board');
+  assert.equal(loader.isLoaded('a'), false);
+
+  // Turning the toggle back on re-imports (the browser module cache makes the
+  // second import free) and re-registers — without this the id would stay in
+  // `loaded` and the extension could never come back without a reload.
+  assert.equal(await loader.load(list), true);
+  assert.equal(slots.contributions('panel.section').length, 1);
+  assert.deepEqual(imported, ['/ext/a/index.js', '/ext/a/index.js']);
+});
+
+test('unload of an id that was never loaded is a no-op, not an error', async () => {
+  const { loader, errors } = harness({});
+  assert.equal(loader.unload('nope'), false);
+  assert.deepEqual(errors, []);
+});
+
+test('unload leaves every other extension mounted', async () => {
+  const { slots, loader } = harness({ '/ext/a/index.js': good('a'), '/ext/b/index.js': good('b') });
+  await loader.load([{ id: 'a', client: '/ext/a/index.js' }, { id: 'b', client: '/ext/b/index.js' }]);
+  loader.unload('a');
+  assert.deepEqual(slots.contributions('panel.section').map((c) => c.extId), ['b']);
 });

@@ -135,7 +135,8 @@ let archiveReviewEnabled = false; // server config flag, carried on every graph 
 let chatViewDefault = false; // server config flag, carried on every graph push
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
-// read back. Fixed at server boot; a flip takes effect after a restart.
+// read back, and what mounts/unmounts each one's slot contributions. The
+// identity fields are fixed at server boot; `enabled` is live.
 let latestExtensions = [];
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution (`graph.checklists`,
@@ -153,7 +154,32 @@ const extApi = {
   selectedSessionId: () => selectedSessionId,
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
 };
-const loadClientExtensions = createClientExtensionLoader(slots);
+const clientExtensions = createClientExtensionLoader(slots);
+// The `extensions` connect message announces which extensions ship a client
+// module and where it lives; `graph.extensions[].enabled` (re-read from config
+// server-side every rebuild) is what decides whether each one is actually
+// mounted right now. Keeping the announcement here is what lets a settings flip
+// mount or unmount without a reload — see syncClientExtensions.
+let extClientManifest = [];
+
+// Bring the mounted client extensions in line with what the server says is on.
+// Called from both inputs — the connect announcement and every graph — because
+// either can move first: a reconnect re-announces before any graph arrives, and
+// a settings flip changes only `enabled` on a graph the manifest already covers.
+// Nothing is awaited by the caller: one extension failing to import must never
+// hold up a render, and the loader already reports and drops it.
+function syncClientExtensions() {
+  const enabled = new Set(latestExtensions.filter((e) => e.enabled).map((e) => e.id));
+  let unmounted = false;
+  for (const { id } of extClientManifest) {
+    if (!enabled.has(id) && clientExtensions.unload(id)) unmounted = true;
+  }
+  // A panel re-render is what draws the gap the unmount left, and what gives a
+  // freshly-loaded contribution its host to mount into.
+  if (unmounted) extApi.requestPanelRender();
+  clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
+    .then((changed) => { if (changed) extApi.requestPanelRender(); });
+}
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -345,6 +371,11 @@ function applyGraph(graph) {
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   setExtensionDefs(latestExtensions);
   latestGraph = graph;
+  // `enabled` is live server-side, so this is where a settings flip becomes a
+  // mount or an unmount. After `latestGraph` is assigned, because the render it
+  // can ask for reads that — and before the renderPanel further down, so the
+  // panel is drawn against the contributions that survive this tick.
+  syncClientExtensions();
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -5098,7 +5129,7 @@ function connect() {
     // extension that fails to load is logged and dropped, never the board's
     // problem. A render is asked for once something new registered, since the
     // first graph may already have been applied while the module was in flight.
-    else if (msg.type === 'extensions') { loadClientExtensions(msg.list).then((changed) => { if (changed) extApi.requestPanelRender(); }); }
+    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; syncClientExtensions(); }
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.
