@@ -95,9 +95,16 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
 // which is what the pre-extensions per-tick `graph.checklistEnabled` read did.
 // Only the UI moves: tools, handlers, stores and graph contributors were all fixed
 // by loadExtensions, so an extension that booted OFF stays off until a restart.
+//
+// `bootEnabled` is that boot value, carried separately so the settings toggle can
+// tell a human WHICH of those two worlds they are in. The pair is the whole state
+// space: enabled && bootEnabled is live; !enabled is hidden now with a running
+// session's tools following at its next resume; enabled && !bootEnabled is the one
+// case nothing can finish without a restart, and saying so is the only way a human
+// tells it apart from a toggle that silently did nothing.
 export function extensionsForGraph(list, enabledFor = extensionEnabled) {
-  return list.map(({ id, label, help, defaultEnabled }) => ({
-    id, label, help, defaultEnabled, enabled: enabledFor(id, defaultEnabled),
+  return list.map(({ id, label, help, defaultEnabled, enabled: bootEnabled }) => ({
+    id, label, help, defaultEnabled, bootEnabled, enabled: enabledFor(id, defaultEnabled),
   }));
 }
 

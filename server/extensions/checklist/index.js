@@ -22,7 +22,7 @@ export const dir = fileURLToPath(new URL('.', import.meta.url));
 export default {
   id: 'checklist',
   label: 'Per-session checklist',
-  help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel straight away and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. The four MCP tools are baked into the launch command, so an already-running session only gains or loses them at its next resume. Turning it back on restores the panel immediately unless it was already off when the wrangler started, in which case it needs a restart.',
+  help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Stored checklists are kept while it is off.',
   defaultEnabled: true,
   dir,
   stores: { checklist: () => new ChecklistStore() },
