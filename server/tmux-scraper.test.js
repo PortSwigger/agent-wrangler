@@ -47,12 +47,9 @@ test('classify: Codex\'s own update-available banner reads as needs-you with a r
 });
 // Simulates tmux's ordinary word-wrap (`capture-pane -p`, no `-J`): break at
 // word boundaries where they fit, hard-break a single token wider than the
-// column. This is what a THIRD adversarial review used to prove the
-// round-3 regex's real bug was the 12-non-blank-line WINDOW, not the
-// pattern: at a narrow enough width, enough of the banner's earlier content
-// (the release-notes URL especially) wraps into extra physical lines that
-// "update available!" itself gets sliced out of `recent` before the regex
-// ever runs, however well the regex itself is written.
+// column. Proves the detection survives narrow panes, where enough of the
+// banner's earlier content (the release-notes URL especially) can wrap into
+// extra lines to push a leading anchor out of classify()'s 12-line window.
 function wordWrap(line, width) {
   if (line.length <= width) return [line];
   const words = line.split(' ');
@@ -92,14 +89,11 @@ test('classify: the real banner reads as needs-you at every realistic (and sever
 test('classify: ordinary conversation text mentioning an update does not false-positive', () => {
   assert.equal(classify('I ran the update and it looks like everything is now available!').status, 'idle');
   assert.equal(classify('Skipping this file until the next version of the schema lands').status, 'idle');
-  // The exact case a FIRST adversarial review caught: both anchor SUBSTRINGS
-  // present in one ordinary sentence, with no menu structure around them.
+  // Both anchor phrases present in one ordinary sentence, no menu structure.
   assert.equal(classify('Update available! You can skip until next version').status, 'idle');
   assert.equal(classify('Update available!\nRemember you can always skip until next version if you want').status, 'idle');
-  // The case a SECOND adversarial review caught: the four-phrase-in-order fix
-  // for the first finding still matched this short, plausible sentence —
-  // reproduced directly against that version and confirmed here to stay
-  // fixed against the current one.
+  // All four phrases present in order, but never as actual numbered options
+  // at the start of their own lines.
   assert.equal(
     classify('Update available! Choose an option:\n1. Update now\nOtherwise you can skip until next version.\nPress Enter to continue.').status,
     'idle',

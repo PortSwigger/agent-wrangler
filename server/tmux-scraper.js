@@ -206,63 +206,30 @@ export function classify(paneText) {
   if (/oauth\/authorize|select login method|paste code here if prompted/i.test(recent)) return { status: 'needs-you' };
   // Codex's own "a new CLI version exists" banner: a numbered menu ("1. Update
   // now (runs `brew upgrade --cask codex`) / 2. Skip / 3. Skip until next
-  // version") that DEFAULTS to option 1 on a bare Enter — verified live
-  // against the installed binary by faking `~/.codex/version.json`'s
-  // latest_version and capturing the pane, never accepting the prompt. This is
-  // TUI chrome, never written to the rollout, so it must be caught here or a
-  // chat-view Send (which pastes text then presses Enter, same as any normal
-  // prompt) silently confirms "Update now" and kills the session — this is
-  // exactly the incident that motivated this branch.
+  // version") that DEFAULTS to option 1 on a bare Enter. This is TUI chrome,
+  // never written to the rollout, so it must be caught here or a chat-view
+  // Send (paste + Enter, same as any normal prompt) silently confirms "Update
+  // now" and kills the session — this happened for real.
   //
-  // THREE rounds of adversarial review found real problems with earlier
-  // versions of this regex, each reproduced directly against `classify()`:
+  // Anchored on the TRAILING menu, not the leading "Update available!" line.
+  // While the banner is live, Codex is blocked on stdin waiting for it, so
+  // "press enter to continue" is always the LAST non-blank content on screen
+  // — content measured from the end of the pane contains it regardless of how
+  // much wraps ahead of it. A leading-phrase anchor doesn't have that
+  // guarantee: on a narrow enough pane, `capture-pane -p` (no `-J`) can wrap
+  // enough of the banner's earlier lines (the release-notes URL especially)
+  // that "update available!" gets sliced out of `recent`'s 12-line window
+  // before any regex sees it, however well-written. The three option lines
+  // are `^`-anchored so wrapping can push a line's continuation onto the next
+  // line but never move its "N." prefix off the start. Verified against a
+  // real word-wrap simulation at column widths from 40 down to 12, and
+  // against ordinary prose mentioning updates/skipping/versions (no match —
+  // nothing in it starts a line with a bare "N.").
   //
-  // Round 1: requiring "update available!" and "skip until next version"
-  // ANYWHERE in the window, with no structural link, false-positived on
-  // ordinary prose containing both substrings.
-  //
-  // Round 2 (requiring all four menu phrases in order): still false-positived
-  // on different, short, plausible prose containing the same four phrases in
-  // order. WORSE, it introduced a false NEGATIVE: `capture-pane -p` (no `-J`)
-  // records a soft-wrapped line as separate physical lines with no join
-  // marker, and a moderately narrow real pane wraps "Update now" as
-  // "Update\nnow" — the literal single space in that phrase then never
-  // matched, so a real banner on a narrow pane read as idle.
-  //
-  // Round 3 (anchoring on "update available!" + Codex's X.Y.Z -> A.B.C
-  // version notation + a bounded gap + "press enter to continue", every
-  // multi-word phrase internally `\s+`): fixed the round-2 wrapping case, but
-  // missed a DIFFERENT, more fundamental wrapping failure — `recent` above is
-  // the last 12 NON-BLANK lines, and on a narrow enough pane the banner's
-  // earlier content (the release-notes URL, the sparkle line) wraps into
-  // enough extra physical lines that "update available!" itself gets sliced
-  // OUT of that window entirely, even though the regex matching it was
-  // otherwise fine. Simulating real word-wrap at 20 columns against the exact
-  // real banner text pushed `recent`'s line count to 17 and confirmed the
-  // match returns false — the window, not the pattern, was the bug.
-  //
-  // The fix: stop requiring the LEADING phrase ("update available!") at all,
-  // and anchor entirely on the TRAILING menu instead. While the banner is
-  // live, Codex is blocked on stdin waiting for it, so "press enter to
-  // continue" is the LAST non-blank content on screen — nothing renders after
-  // it. Content measured from the END of the pane always contains it,
-  // regardless of how much wraps ahead of it. The three option lines
-  // (`^` anchored, so wrapping can push their CONTINUATION onto a following
-  // line but can never move the `N.` prefix off the start of ITS line) are
-  // what a numbered-list-with-this-exact-wording requires — round 2's
-  // false-positive prose had no literal "2. Skip"/"3. Skip until next
-  // version" *at the start of their own lines*, so it fails here too, without
-  // needing the version-arrow discriminator at all. Verified directly:
-  // simulated word-wrap at 40/30/24/20/16/12 columns against the real banner
-  // all return needs-you; the real unwrapped capture; both round-1 and
-  // round-2's false positives return idle.
-  //
-  // Residual, accepted risk (same class the OAuth-screen check above already
-  // accepts): a numbered list an agent deliberately writes with this exact
-  // wording ("1. Update now" / "2. Skip" / "3. Skip until next version" /
-  // "press enter to continue", each option on its own line) would still
-  // match. That requires reproducing the real menu's specific wording and
-  // line structure, not prose a person or agent would write by chance.
+  // Residual, accepted risk (same class as the OAuth-screen check above): a
+  // numbered list an agent deliberately writes with this exact wording, each
+  // option on its own line, would still match — that requires reproducing the
+  // real menu's specific wording, not prose produced by chance.
   if (
     /^[\s›]*1\.\s*update\s+now\b/im.test(recent)
     && /^[\s›]*2\.\s*skip\b/im.test(recent)
