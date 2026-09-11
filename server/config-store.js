@@ -170,8 +170,11 @@ export function chatViewDefault(cfg = readConfig()) {
 // verified against real crash reports). Not everyone runs an interactive Chrome
 // alongside their Codex sessions, so this is opt-out rather than a hardcoded
 // disable; toggled from the board's settings modal (config.json
-// `codexBrowserToolEnabled: false`). Takes cfg (like taskMemoryEnabled) so tests
-// never write the shared config.json.
+// `codexBrowserToolEnabled: false`). This removes the one KNOWN recovery path
+// that causes the crash, not a guarantee Codex can never touch Chrome at all —
+// the separate "computer" surface (left enabled) has its own native-app
+// automation that hasn't been audited for the same failure mode. Takes cfg
+// (like taskMemoryEnabled) so tests never write the shared config.json.
 export function codexBrowserToolEnabled(cfg = readConfig()) {
   return cfg.codexBrowserToolEnabled !== false;
 }

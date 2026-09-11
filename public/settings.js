@@ -123,7 +123,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: "Codex's browser tool",
-    help: "Codex's own bundled browser/computer-use integration. On some setups its recovery path launches a new Chrome process against your real default profile, which can crash an already-running Chrome. Off drops \"browser\" from Codex's launch env, leaving \"computer\" enabled. Only affects the next launch/resume/fork of a Codex session.",
+    help: "Codex's own bundled browser/computer-use integration. On some setups its recovery path launches a new Chrome process against your real default profile, which can crash an already-running Chrome. Off drops \"browser\" from Codex's launch env, leaving \"computer\" enabled — this removes that known recovery path, not a guarantee Codex can never touch Chrome. Only affects the next launch/resume/fork of a Codex session.",
     default: true,
   },
 ];
