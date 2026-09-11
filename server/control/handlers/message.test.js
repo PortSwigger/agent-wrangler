@@ -84,6 +84,14 @@ test('message: rebuild failure does not suppress a successful correlated acknowl
   assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-3', sessionId: 'CARD1', ok: true, outcome: 'submitted', mode: 'dormant' }]);
 });
 
+test('message: synchronous rebuild failure does not suppress a successful correlated acknowledgement', async () => {
+  const dir = realDir();
+  const c = ctx({ entries: { CARD1: { cwd: dir, agent: 'claude' } } });
+  c.rebuild = () => { throw new Error('rebuild failed'); };
+  await messageHandler.handler({ sessionId: 'CARD1', text: 'wake up', requestId: 'req-3b' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-3b', sessionId: 'CARD1', ok: true, outcome: 'submitted', mode: 'dormant' }]);
+});
+
 test('message: delivery exception is reported as unknown rather than rejected', async () => {
   const c = ctx({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } } });
   c.sendText = async () => { throw new Error('tmux connection lost'); };

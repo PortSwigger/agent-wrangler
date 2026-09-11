@@ -32,6 +32,8 @@ export const messageHandler = {
     catch (err) { replyResult(false, err?.message || String(err), null, 'unknown'); return; }
     if (result.mode === 'error') { replyResult(false, result.error); return; }
     replyResult(true, null, result.mode);
-    if (result.mode === 'dormant') await ctx.rebuild?.().catch(() => {});
+    if (result.mode === 'dormant') {
+      try { await ctx.rebuild?.(); } catch {}
+    }
   },
 };
