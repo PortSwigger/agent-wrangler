@@ -5420,7 +5420,7 @@ function connect() {
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
   ws.onopen = () => { if (currentView === 'search') onEnterSearchView(); };
-  ws.onclose = () => { setTimeout(connect, 1500); };
+  ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);

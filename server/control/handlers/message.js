@@ -30,7 +30,7 @@ export const messageHandler = {
     let result;
     try { result = await deliverMessage(msg.sessionId, msg.text || '', ctx, { imagePaths, clearComposer: msg.clearComposer === true }); }
     catch (err) { replyResult(false, err?.message || String(err), null, 'unknown'); return; }
-    if (result.mode === 'error') { replyResult(false, result.error); return; }
+    if (result.mode === 'error') { replyResult(false, result.error, null, result.outcome); return; }
     replyResult(true, null, result.mode);
     if (result.mode === 'dormant') {
       try { await ctx.rebuild?.(); } catch {}

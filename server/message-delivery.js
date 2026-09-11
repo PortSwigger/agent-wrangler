@@ -104,7 +104,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
       else return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
     }
   } catch (err) {
-    return { mode: 'error', error: err?.message || String(err) };
+    return { mode: 'error', error: err?.message || String(err), outcome: 'unknown' };
   }
   return { mode: 'dormant' };
 }

@@ -243,6 +243,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let restoreOverDraft = false;
   let messageSeq = 0;
   const pendingMessages = new Map();
+  const retryNeedsClear = new Set();
 
   function saveDraft(id) {
     if (!id) return;
@@ -412,8 +413,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
     const requestId = `${requestEra}#${++messageSeq}`;
-    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed };
+    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed || retryNeedsClear.has(sessionId) };
     pendingMessages.set(sessionId, pending);
+    if (pending.clearComposer) {
+      paneRestoreArmed = false;
+      restoreToken = null;
+    }
     const accepted = send({
       type: 'message', sessionId, text,
       requestId,
@@ -424,6 +429,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       pendingMessages.delete(sessionId);
       setPasteNote('Not sent: connection unavailable.');
     }
+    else setPasteNote('Sending…');
     renderSendability();
   }
 
@@ -720,6 +726,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const current = sessionId === msg.sessionId;
       pendingMessages.delete(msg.sessionId);
       if (!msg.ok) {
+        if (msg.outcome === 'unknown' || pending.clearComposer) retryNeedsClear.add(msg.sessionId);
         if (current) {
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
@@ -727,19 +734,28 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         }
         return;
       }
+      retryNeedsClear.delete(msg.sessionId);
       if (current) {
-        if (pending.clearComposer) {
-          paneRestoreArmed = false;
-          restoreToken = null;
-        }
         input.value = '';
         input.style.height = 'auto';
         attachments = [];
         drafts.delete(msg.sessionId);
+        setPasteNote(null);
         renderAttachments();
         renderSendability();
         kickBurst();
       } else drafts.delete(msg.sessionId);
+    },
+    onConnectionClosed() {
+      for (const pending of [...pendingMessages.values()]) {
+        this.onMessageResult({
+          requestId: pending.requestId,
+          sessionId: pending.sessionId,
+          ok: false,
+          outcome: 'unknown',
+          error: 'connection closed; check the terminal before sending again',
+        });
+      }
     },
     // The answer to an interrupt: what to put back in the composer, resolved
     // server-side from the pane (authoritative when Claude Code restored the

@@ -413,6 +413,29 @@ test('a dropped websocket message leaves the composer editable', async () => {
   assert.match(byId.get('chat-hint').textContent, /Not sent: connection unavailable/);
 });
 
+test('a connection close releases an unacknowledged delivery and retains its draft', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'keep me after reconnect';
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 1);
+  view.onConnectionClosed();
+  assert.equal(input.disabled, false);
+  assert.equal(input.value, 'keep me after reconnect');
+  assert.match(byId.get('chat-hint').textContent, /Delivery status unknown/);
+});
+
+test('a second Enter while delivery is pending sends only one frame', async () => {
+  const { view, input, sent } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'once only';
+  send(input);
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 1);
+});
+
 test('pending delivery in one session does not block another session', async () => {
   const { view, input, sent } = await mountView();
   view.mount('sess-1');
