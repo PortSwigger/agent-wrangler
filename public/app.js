@@ -4539,6 +4539,51 @@ const modal = document.getElementById('modal');
 // custom dropdown (not <datalist>) so we can anchor it below the input and cap it.
 let recentFolders = [];
 let suggestIndex = -1;
+// Filesystem completion for whatever is typed, answered by the 'browse-folders'
+// control message. `fsProbed` is the exact input value the reply belongs to —
+// the control socket doesn't serialize handlers, so a reply that lost the race
+// with a later keystroke is dropped rather than rendered against the wrong text.
+let fsFolders = [];
+let fsProbed = null;
+// Whether the list SHOULD be showing, which is not the same as whether it is —
+// a render with nothing to show hides the box but leaves the intent standing, so
+// the reply that arrives ~a keystroke later can open it. Reading the box's own
+// `hidden` class instead is what made drilling into a picked folder dead-end:
+// selection renders an empty list (the probe is still in flight), and the reply
+// then saw a hidden box and declined to re-render.
+let suggestWanted = false;
+let cwdExists = null;   // null = no opinion yet / blank field; false blocks Launch
+let browseTimer = null;
+function requestFolderBrowse() {
+  const raw = document.getElementById('m-cwd').value;
+  if (raw === fsProbed) return;
+  clearTimeout(browseTimer);
+  browseTimer = setTimeout(() => send({ type: 'browse-folders', path: raw }), 90);
+}
+function onFolderBrowse(msg) {
+  if (msg.path !== document.getElementById('m-cwd').value) return; // stale keystroke
+  fsProbed = msg.path;
+  fsFolders = msg.entries || [];
+  cwdExists = msg.exists;
+  renderCwdState();
+  renderFolderSuggest();
+}
+// A folder that doesn't exist can't be launched into — the server would fail
+// the spawn — so say so and disable Launch. Blank is fine (it falls back to
+// proposedCwd), which is why `exists` is a tri-state and only `false` blocks.
+// A scratch path is exempt: the dialog proposes a fresh timestamped sessions dir
+// that deliberately doesn't exist yet (dispatch creates it), so "missing" is the
+// normal state for one and blocking on it would refuse a perfectly good launch.
+function cwdMissing() { return cwdExists === false && !isScratchDir(cwdField()); }
+function renderCwdState() {
+  const el = document.getElementById('m-cwd-msg');
+  if (el) {
+    el.textContent = cwdMissing() ? "That folder doesn't exist — pick one from the list." : '';
+    el.className = cwdMissing() ? 'worktree-msg error' : 'worktree-msg hidden';
+  }
+  document.getElementById('m-cwd').classList.toggle('input-error', cwdMissing());
+  renderWorktreeState();
+}
 function refreshFolderList() {
   // Live sessions and history both, so a folder survives the session ending;
   // newest activity first so the most relevant folders lead.
@@ -4552,22 +4597,42 @@ function refreshFolderList() {
   for (const { cwd } of items) if (!seen.has(cwd)) { seen.add(cwd); recentFolders.push(cwd); }
   if (!document.getElementById('folder-suggest')?.classList.contains('hidden')) renderFolderSuggest();
 }
+// The folder field's canonical value. Picking a folder from the dropdown leaves a
+// trailing '/' behind (that's what makes the next keystroke list its children), so
+// strip it here — an unnormalised cwd would break isScratchDir's equality test and
+// reach dispatch/validate-worktree as a different string for the same folder.
+function cwdField() { return document.getElementById('m-cwd').value.trim().replace(/(?!^)\/+$/, ''); }
 function renderFolderSuggest() {
   const box = document.getElementById('folder-suggest');
   const input = document.getElementById('m-cwd');
   if (!box || !input) return;
+  if (!suggestWanted) { closeSuggestBox(box); return; }
   const q = input.value.trim().toLowerCase();
-  const matches = recentFolders.filter((p) => !q || p.toLowerCase().includes(q)).slice(0, 10);
+  // Recents lead (a substring match, so a bare project name finds it wherever it
+  // lives), then real sibling/child folders on disk so you can walk down a tree
+  // you've never launched in. De-duplicated: a recent folder that's also on disk
+  // right here shows once, as a recent.
+  const recents = recentFolders.filter((p) => !q || p.toLowerCase().includes(q)).slice(0, 8);
+  const seen = new Set(recents.map((p) => p.replace(/\/+$/, '')));
+  const matches = [
+    ...recents.map((p) => ({ path: p, recent: true })),
+    ...fsFolders.filter((p) => !seen.has(p)).map((p) => ({ path: p, recent: false })),
+  ].slice(0, 12);
   if (suggestIndex >= matches.length) suggestIndex = matches.length - 1;
-  if (!matches.length) { hideFolderSuggest(); return; }
+  if (!matches.length) { closeSuggestBox(box); return; } // nothing yet — stays wanted
   box.innerHTML = matches
-    .map((p, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(p)}">${esc(p)}</div>`)
+    .map((m, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(m.path)}">${esc(m.path)}${m.recent ? '<span class="suggest-tag">recent</span>' : ''}</div>`)
     .join('');
   box.classList.remove('hidden');
 }
-function hideFolderSuggest() {
-  const box = document.getElementById('folder-suggest');
+function closeSuggestBox(box) {
   if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+}
+// The user-intent close (blur, Escape, a pick that ends the interaction): unlike an
+// empty render, this also drops the intent, so a late reply can't pop the list open.
+function hideFolderSuggest() {
+  suggestWanted = false;
+  closeSuggestBox(document.getElementById('folder-suggest'));
   suggestIndex = -1;
 }
 // The most frequent cwd among a task's sessions (ties → most recently active),
@@ -4615,7 +4680,7 @@ function worktreeStatusMsg(v) {
 //  - real git repo: everything enabled.
 function renderWorktreeState() {
   const box = document.getElementById('m-worktree');
-  const cwd = document.getElementById('m-cwd').value.trim();
+  const cwd = cwdField();
   const scratch = !cwd || isScratchDir(cwd);
   const nonGit = !scratch && box.checked && wtValidation && wtValidation.ok === false;
 
@@ -4664,13 +4729,13 @@ function renderWorktreeState() {
   // In schedule mode the worktree validation is advisory (the authoritative
   // create+classify happens at fire time), so Save is gated only by the picker.
   if (scheduleMode()) { syncScheduleGo(); return; }
-  go.disabled = wtPending || nonGit || Boolean(wt && wt.blocks);
+  go.disabled = wtPending || nonGit || cwdMissing() || Boolean(wt && wt.blocks);
   go.textContent = wtPending ? 'Creating…' : 'Launch';
 }
 
 // Toggle/blank logic + kick a server validation when on with a real cwd.
 function syncWorktreeFields() {
-  const cwd = document.getElementById('m-cwd').value.trim();
+  const cwd = cwdField();
   if (cwd !== wtLastCwd) { wtValidation = null; wtLastCwd = cwd; } // cwd changed → revalidate
   renderWorktreeState();
   refreshWorktreeDefaults();
@@ -4691,14 +4756,14 @@ function refreshWorktreeDefaults() {
       folderEl.value = `${parent}/${wtValidation.repoName}-worktree-${branch}`;
     } else {
       // Before validation lands we don't know the repo root — show a bare name.
-      const repo = (document.getElementById('m-cwd').value.trim() || proposedCwd || '').replace(/\/+$/, '').split('/').pop() || 'repo';
+      const repo = (cwdField() || proposedCwd || '').replace(/\/+$/, '').split('/').pop() || 'repo';
       folderEl.value = `${repo}-worktree-${branch}`;
     }
   }
 }
 
 function validateWorktree() {
-  const cwd = document.getElementById('m-cwd').value.trim();
+  const cwd = cwdField();
   const box = document.getElementById('m-worktree');
   if (!box.checked || !cwd || isScratchDir(cwd)) return; // only need git-ness when worktree is on for a real folder
   // Always classify the real target — refreshWorktreeDefaults() keeps the branch
@@ -4896,7 +4961,7 @@ function readDispatchFields() {
   // resolve to local for them regardless of a stale selection — a dispatch safety net.
   const runtime = agent === 'claude' ? document.getElementById('m-runtime').value : 'local';
   return {
-    cwd: document.getElementById('m-cwd').value.trim() || proposedCwd,
+    cwd: cwdField() || proposedCwd,
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -4959,6 +5024,9 @@ function openModal({ mode, taskId = null, schedule = null }) {
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
+  // A reopened dialog must not inherit the last folder's verdict — the field it
+  // belonged to may have been refilled from a different task.
+  fsFolders = []; fsProbed = null; cwdExists = null; suggestWanted = false; renderCwdState();
   reviewMode = false;
   parentSessionId = null;
   document.getElementById('m-sch-name').value = schedule?.name || '';
@@ -4967,6 +5035,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   syncWorkflow();
   setDispatchPending(false);
   syncWorktreeFields();
+  requestFolderBrowse();
   suggestIndex = -1;
   modal.classList.remove('hidden');
   (scheduleMode() ? document.getElementById('m-sch-name') : document.getElementById('m-intent')).focus();
@@ -5051,6 +5120,8 @@ function submitDispatch() {
   const fields = readDispatchFields();
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
+  // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
+  if (cwdMissing()) { renderCwdState(); return; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return; // can't create a worktree here — let the user untick or fix the folder
@@ -5200,7 +5271,7 @@ document.querySelectorAll('#m-sch-action .sched-action-btn').forEach((b) =>
   b.addEventListener('click', () => setScheduleAction(b.dataset.action)));
 document.getElementById('m-sch-target').addEventListener('change', syncScheduleGo);
 document.getElementById('m-sch-message').addEventListener('input', syncScheduleGo);
-document.getElementById('m-cwd').addEventListener('input', syncWorktreeFields);
+document.getElementById('m-cwd').addEventListener('input', () => { syncWorktreeFields(); requestFolderBrowse(); });
 document.getElementById('m-intent').addEventListener('input', () => { refreshWorktreeDefaults(); validateWorktree(); });
 // Strip disallowed chars as you type, preserving the cursor (1:1 → '-').
 function wtSanitize(el, re) {
@@ -5221,24 +5292,31 @@ modal.addEventListener('keydown', (e) => {
 (() => {
   const input = document.getElementById('m-cwd');
   const box = document.getElementById('folder-suggest');
-  input.addEventListener('focus', () => { suggestIndex = -1; renderFolderSuggest(); });
-  input.addEventListener('input', () => { suggestIndex = -1; renderFolderSuggest(); });
+  input.addEventListener('focus', () => { suggestIndex = -1; suggestWanted = true; requestFolderBrowse(); renderFolderSuggest(); });
+  input.addEventListener('input', () => { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); });
+  // Picking a folder leaves the caret inside it (trailing '/') and re-opens the
+  // list on its children, so a deep path is reachable by repeated selection.
+  function pickFolder(path) {
+    input.value = `${path.replace(/\/+$/, '')}/`;
+    fsProbed = null; fsFolders = []; suggestIndex = -1; suggestWanted = true;
+    requestFolderBrowse();
+    syncWorktreeFields();
+    renderFolderSuggest();
+  }
   input.addEventListener('blur', () => setTimeout(hideFolderSuggest, 120)); // let a click land first
   input.addEventListener('keydown', (e) => {
     if (box.classList.contains('hidden')) return;
     const items = [...box.querySelectorAll('.suggest-item')];
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); suggestIndex = Math.max(suggestIndex - 1, 0); renderFolderSuggest(); }
-    else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); input.value = items[suggestIndex].dataset.path; hideFolderSuggest(); syncWorktreeFields(); }
+    else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickFolder(items[suggestIndex].dataset.path); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideFolderSuggest(); } // first Esc closes the dropdown, not the dialog
   });
   box.addEventListener('mousedown', (e) => {
     const item = e.target.closest('.suggest-item');
     if (!item) return;
     e.preventDefault(); // keep focus; avoids the blur-hide race
-    input.value = item.dataset.path;
-    hideFolderSuggest();
-    syncWorktreeFields();
+    pickFolder(item.dataset.path);
   });
 })();
 
@@ -5429,6 +5507,7 @@ function connect() {
     else if (msg.type === 'memory') onMemory(msg);
     else if (msg.type === 'memory-changed') onMemoryChanged(msg);
     else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
+    else if (msg.type === 'folder-browse') onFolderBrowse(msg);
     else if (msg.type === 'dispatched') {
       if (wtPending) {
         wtPending = false; setDispatchPending(false);

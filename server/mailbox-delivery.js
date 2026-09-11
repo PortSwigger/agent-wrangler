@@ -32,7 +32,7 @@ import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 // unreadInfo fallback + reopenSettle), but the caller (mail-runner.js) still
 // needs the real message to log, not just "undefined".
 export async function deliverMailNotification(to, text, deps) {
-  const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
+  const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore, paneDeferral } = deps;
   const sendText = deps.sendText ?? defaultSendText;
   const capturePane = deps.capturePane ?? defaultCapturePane;
   const classify = deps.classify ?? defaultClassify;
@@ -52,7 +52,11 @@ export async function deliverMailNotification(to, text, deps) {
     // marking the mail undeliverable.
     const entry = sessionManager.entryFor(to);
     if (entry?.archivedAt) return { mode: 'skip' };
-    await liveTransport(target, text, socketFor(to), sendText);
+    // Held rather than pasted when the human is mid-prompt (pane-deferral.js).
+    // Returning 'live' either way is correct: the mail itself is already safe in
+    // the store, and the queue guarantees the announcement lands once the
+    // composer clears — the only thing deferred is the tap on the shoulder.
+    await liveTransport(to, target, text, socketFor(to), paneDeferral);
     return { mode: 'live' };
   }
 
@@ -121,11 +125,14 @@ export async function deliverMailNotification(to, text, deps) {
   return { mode: 'dormant' };
 }
 
-// Today's only live transport: paste into the pane. The swap point for a live
+// Today's only live transport: paste into the pane, gated by paneDeferral so it
+// can never land in the middle of a half-typed prompt. The swap point for a live
 // Claude session to instead use Claude Code's SendMessage socket (deferred past
-// Phase 1 — see the spec's "Claude Code cross-session messaging" section).
-function liveTransport(tmux, text, socket, sendText) {
-  return sendText(tmux, text, socket);
+// Phase 1 — see the spec's "Claude Code cross-session messaging" section); that
+// swap would make the gate unnecessary for Claude, since a socket message does
+// not go through the composer at all.
+function liveTransport(id, tmux, text, socket, paneDeferral) {
+  return paneDeferral.deliverOrDefer({ id, text, tmux, socket });
 }
 
 const MCP_READY_TIMEOUT_MS = 15000;

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deliverPrNudge } from './pr-nudge-runner.js';
+import { createPaneDeferral } from './pane-deferral.js';
 
 // A real cwd so the runner's resolveResumeDir existence check operates on a path
 // that's actually present — the dormant entry's cwd points here.
@@ -39,6 +40,14 @@ function deps({
     memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+    // The live paste now goes through paneDeferral. This double records the same
+    // shape the old direct sendText did, so every delivery assertion below still
+    // reads the pane text it always did; pane-deferral.test.js owns the gating
+    // behaviour itself, and the wiring test at the bottom pins that the runner
+    // really does route through it.
+    paneDeferral: {
+      deliverOrDefer: async ({ text, tmux, socket }) => { sent.push({ name: tmux, text, socket }); return 'sent'; },
+    },
     onError: (ev, err) => { errors.push({ ev, err }); },
   };
 }
@@ -187,4 +196,25 @@ test('FIX 4 — resume failure: surfaced via onError and returns "error" (so the
   assert.equal(d.errors.length, 1);
   assert.equal(d.errors[0].ev, EV);
   assert.match(String(d.errors[0].err.message), /transcript gone/);
+});
+
+// Wiring, not gating logic: proves the LIVE branch really goes through
+// paneDeferral rather than pasting directly, so a human mid-prompt can't have a
+// nudge spliced into their draft. The gate's own behaviour lives in
+// pane-deferral.test.js.
+test('a live session whose composer holds a draft has its nudge held, not pasted', async () => {
+  const sent = [];
+  const d = deps({ live: { c1: { tmux: 'cc_one', socket: '' } } });
+  const pd = createPaneDeferral({
+    tmuxFor: d.tmuxFor,
+    socketFor: d.socketFor,
+    capture: async () => `${'\x1b'}[39m❯ half a question`,
+    sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+  });
+  d.paneDeferral = pd;
+
+  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1' }, d), 'live');
+  assert.deepEqual(sent, [], 'nothing pasted on top of the draft');
+  assert.deepEqual(d.sent, [], 'and not smuggled past the gate by a direct paste either');
+  assert.deepEqual(pd.pending('c1'), ['nudge'], 'held for the next drain');
 });
