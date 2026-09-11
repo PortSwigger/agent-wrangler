@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { DATA_DIR } from './data-dir.js';
-import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
+import { DATA_DIR } from '../../data-dir.js';
+import { writeJsonAtomic, readJsonOrLoud } from '../../atomic-json.js';
 
 const CHECKLIST_FILE = path.join(DATA_DIR, 'checklists.json');
 

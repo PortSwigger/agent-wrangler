@@ -12,7 +12,7 @@ export const listChecklistTool = {
   inputSchema: {},
   async handler({ deps, caller }) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to list.');
-    const structuredContent = { items: deps.checklistStore.list(caller) };
+    const structuredContent = { items: deps.ext.stores.checklist.list(caller) };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
       structuredContent,

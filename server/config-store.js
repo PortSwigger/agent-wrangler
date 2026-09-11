@@ -193,10 +193,3 @@ export function extensionEnabled(id, defaultEnabled, cfg = readConfig()) {
   const v = cfg.extensions?.[id];
   return typeof v === 'boolean' ? v : Boolean(defaultEnabled);
 }
-
-// Transitional: replaced by the `checklist` extension's enabled state above
-// (extensionEnabled('checklist', true)). Removed once every consumer derives
-// its gating from the extension loader.
-export function checklistEnabled(cfg = readConfig()) {
-  return extensionEnabled('checklist', true, migrateLegacyFlags(cfg).cfg);
-}

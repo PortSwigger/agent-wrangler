@@ -15,7 +15,7 @@ export const removeChecklistItemTool = {
   },
   async handler({ deps, caller }, args = {}) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to remove from.');
-    const removed = deps.checklistStore.remove(caller, args.id);
+    const removed = deps.ext.stores.checklist.remove(caller, args.id);
     if (!removed) return errorResult(`No checklist item with id ${args.id} on this session.`);
     await deps.rebuild?.();
     const structuredContent = { id: args.id, removed: true };

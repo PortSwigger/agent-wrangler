@@ -23,7 +23,7 @@ export const addChecklistItemTool = {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to add to.');
     let item;
     try {
-      item = deps.checklistStore.add(caller, args.text);
+      item = deps.ext.stores.checklist.add(caller, args.text);
     } catch (err) {
       return errorResult(String(err.message || err));
     }

@@ -10,7 +10,7 @@
 export const checklistAddHandler = {
   type: 'checklist-add',
   async handler(msg, ctx) {
-    ctx.checklistStore.add(msg.sessionId, msg.text);
+    ctx.ext.stores.checklist.add(msg.sessionId, msg.text);
     await ctx.rebuild();
   },
 };
@@ -23,7 +23,7 @@ export const checklistUpdateHandler = {
     const patch = {};
     if (msg.text !== undefined) patch.text = msg.text;
     if (msg.done !== undefined) patch.done = msg.done;
-    ctx.checklistStore.update(msg.sessionId, msg.itemId, patch);
+    ctx.ext.stores.checklist.update(msg.sessionId, msg.itemId, patch);
     await ctx.rebuild();
   },
 };
@@ -31,7 +31,7 @@ export const checklistUpdateHandler = {
 export const checklistRemoveHandler = {
   type: 'checklist-remove',
   async handler(msg, ctx) {
-    ctx.checklistStore.remove(msg.sessionId, msg.itemId);
+    ctx.ext.stores.checklist.remove(msg.sessionId, msg.itemId);
     await ctx.rebuild();
   },
 };
@@ -39,7 +39,7 @@ export const checklistRemoveHandler = {
 export const checklistReorderHandler = {
   type: 'checklist-reorder',
   async handler(msg, ctx) {
-    ctx.checklistStore.reorder(msg.sessionId, Array.isArray(msg.order) ? msg.order : []);
+    ctx.ext.stores.checklist.reorder(msg.sessionId, Array.isArray(msg.order) ? msg.order : []);
     await ctx.rebuild();
   },
 };

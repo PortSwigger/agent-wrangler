@@ -18,28 +18,24 @@ import { scheduleSessionTool } from './schedule-session.js';
 import { createTerminalTool } from './create-terminal.js';
 import { readMailTool } from './read-mail.js';
 import { listMailTool } from './list-mail.js';
-import { addChecklistItemTool } from './add-checklist-item.js';
-import { updateChecklistItemTool } from './update-checklist-item.js';
-import { removeChecklistItemTool } from './remove-checklist-item.js';
-import { listChecklistTool } from './list-checklist.js';
-import { CHECKLIST_TOOLS } from '../client-config.js';
-import { checklistEnabled } from '../../config-store.js';
+import { getExtensions } from '../../extensions/index.js';
 
-// The MCP tool registry. Adding a capability = adding a module here. Each tool:
-// { name, description, inputSchema (zod raw shape), handler({deps, caller}, args) }.
-// A new tool must ALSO be added to client-config.js's ALLOWED_TOOLS —
-// registering here without allow-listing there ships a tool that passes tests
-// and dies silently in a real launch (CLAUDE.md; asserted by
-// client-config.test.js for read_mail/list_mail and the four checklist tools).
-export const TOOLS = [listSessionsTool, getSessionInfoTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
+// The CORE MCP tool registry. Adding a core capability = adding a module here.
+// Each tool: { name, description, inputSchema (zod raw shape),
+// handler({deps, caller}, args) }. A new CORE tool must ALSO be added to
+// client-config.js's ALLOWED_TOOLS — registering here without allow-listing
+// there ships a tool that passes tests and dies silently in a real launch
+// (CLAUDE.md; asserted by client-config.test.js for read_mail/list_mail). An
+// EXTENSION's tools (server/extensions/*/index.js `tools`) are exempt from that
+// two-place rule: the loader derives their launch grant from the same list it
+// registers, so they exist in exactly one place.
+export const TOOLS = [listSessionsTool, getSessionInfoTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool];
 
-// The tools a request actually gets, after the one feature flag that can remove
-// some: `checklistEnabled: false` must leave the four checklist tools
-// unregistered, not merely un-granted, so a disabled install doesn't advertise a
-// capability its UI won't render. TOOLS itself stays the full, unfiltered
-// registry — that is what client-config.test.js's two-place assertion reads.
-// `checklist` is injectable (defaulting to the live read) so tests never write
-// the shared config.json.
-export function activeTools({ checklist = checklistEnabled() } = {}) {
-  return checklist ? TOOLS : TOOLS.filter((t) => !CHECKLIST_TOOLS.includes(t.name));
+// The tools a request actually gets: the core set plus every ENABLED extension's
+// tools. A disabled extension's tools are genuinely unregistered, not merely
+// un-granted, so a disabled install doesn't advertise a capability its UI won't
+// render. `ext` is injectable (defaulting to the boot-loaded extensions) so tests
+// never touch the memo or config.json.
+export function activeTools({ ext = getExtensions() } = {}) {
+  return [...TOOLS, ...ext.tools];
 }
