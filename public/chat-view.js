@@ -122,6 +122,40 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const modelEl = document.getElementById('chat-current-model');
   const attachEl = document.getElementById('chat-attachments');
   const jumpBtn = document.getElementById('chat-jump-last');
+  const exitNoticeEl = document.getElementById('chat-exit-notice');
+
+  // s.exitOutput (state-reader.js) off the graph node — the one thing this view
+  // shows that is neither transcript-sourced nor pane-scraped, because a dead
+  // pane can't be scraped and the transcript never records why the process
+  // exited. Mirrors the terminal panel's own exitOutput block (renderSidebar,
+  // app.js), which is the ONLY other place this text was ever shown — a Codex
+  // self-update quitting the process was invisible from here otherwise, with
+  // nothing to explain a session that just stopped responding.
+  function renderExitNotice(text) {
+    exitNoticeEl.hidden = !text;
+    exitNoticeEl.textContent = ''; // rebuild rather than accumulate children.
+    if (!text) return;
+    const head = document.createElement('p');
+    head.className = 'chat-exit-notice-head';
+    // Same trailing label the terminal panel uses (renderSidebar, app.js) —
+    // kept as one literal string in both places (not a shared helper, since
+    // the two build their DOM completely differently: innerHTML there,
+    // createElement/textContent here) so the two views can't quietly drift
+    // apart on what is otherwise identical data. The leading sentence is
+    // chat-only: the terminal panel already frames this ("its previous
+    // terminal exited") in a paragraph above its own block, which the chat
+    // view has no equivalent of.
+    // Neutral, not "unexpectedly" — a clean `/exit` produces the same
+    // exitOutput a crash does (state-reader.js doesn't distinguish them), and
+    // the terminal panel's own wording ("its previous terminal exited") is
+    // equally neutral for the same reason.
+    head.textContent = "This session's terminal exited. Last output from the exited terminal:";
+    exitNoticeEl.appendChild(head);
+    const body = document.createElement('pre');
+    body.className = 'term-exit';
+    body.textContent = text;
+    exitNoticeEl.appendChild(body);
+  }
 
   // The node for the most recently appended `chat-user` item, so the jump
   // pill has something to scroll to. Reset wherever the stream itself is
@@ -769,6 +803,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
       renderModel();
+      // Same reasoning as the model: this belongs to the session being left,
+      // and the caller re-seeds it right after mount — otherwise a session
+      // whose pane never died would flash the PREVIOUS one's exit output.
+      renderExitNotice(null);
       poll();
       clearInterval(timer);
       timer = setInterval(poll, POLL_MS);
@@ -813,6 +851,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderLive();
       renderSuggestion();
       renderModel();
+      renderExitNotice(null);
     },
     onChatReply(msg) {
       if (!sessionId || msg.sessionId !== sessionId) return;
@@ -882,8 +921,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     currentModelLabel() {
       return liveModel || graphModel?.label || null;
     },
+    // s.exitOutput off the graph node — null for a live/never-died session.
+    // Called wherever setStatus/setModel already are (renderSidebar's initial
+    // seed, renderPanel's ~4s refresh), so it tracks the same session those do.
+    setExitNotice(text) {
+      renderExitNotice(text || null);
+    },
 
-    setStatus(status) {
+    setStatus(status, waitingFor) {
       // A transition AWAY from 'working' must hide the line even with no new
       // reply in flight (e.g. suspend, or the pane dying mid-tool) — otherwise
       // the last reply's pending entry stays displayed after the Stop button
@@ -899,7 +944,20 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
       if (blocked) {
         const msg = document.createElement('span');
-        msg.textContent = 'Waiting on you — this prompt only exists in the terminal.';
+        // `waitingFor` is s.waitingFor off the graph node — present for a
+        // needs-you the server can actually explain (Codex's own update
+        // banner, a devcontainer bring-up failure, a dropped-API-connection
+        // turn), absent for an ordinary Claude permission prompt (that reason
+        // lives only in the pane, which is exactly why this bar exists).
+        // Deliberately NOT "this needs the terminal" — that overclaims for a
+        // reason like the API-error one, which isn't itself a terminal
+        // matter. What's actually true in every needs-you case is narrower:
+        // Send is disabled below, so the terminal is the only place left to
+        // act at all, whatever the reason. Falls back to the generic line
+        // rather than showing nothing.
+        msg.textContent = waitingFor
+          ? `${waitingFor} — only actionable from the terminal right now.`
+          : 'Waiting on you — this prompt only exists in the terminal.';
         bar.appendChild(msg);
         const go = document.createElement('button');
         go.type = 'button';
