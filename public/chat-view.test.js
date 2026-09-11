@@ -438,6 +438,20 @@ test('an unknown delivery does not clear a terminal draft on a later send', asyn
   assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, undefined);
 });
 
+test('a failed Esc-then-edit send keeps the pane-clear flag for its retry', async () => {
+  let accepted = false;
+  const { view, input, sent } = await mountView({ onSend: (m) => m.type === 'message' ? accepted : true });
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
+  view.setStatus('idle');
+  input.value = 'edited';
+  send(input);
+  accepted = true;
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, true);
+});
+
 test('a second Enter while delivery is pending sends only one frame', async () => {
   const { view, input, sent } = await mountView();
   view.mount('sess-1');

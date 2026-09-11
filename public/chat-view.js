@@ -426,6 +426,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     });
     if (!accepted) {
       pendingMessages.delete(sessionId);
+      if (pending.clearComposer) paneRestoreArmed = true;
       setPasteNote('Not sent: connection unavailable.');
     }
     else setPasteNote('Sending…');
@@ -725,6 +726,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const current = sessionId === msg.sessionId;
       pendingMessages.delete(msg.sessionId);
       if (!msg.ok) {
+        if (current && pending.clearComposer) paneRestoreArmed = true;
         if (current) {
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
