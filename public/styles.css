@@ -817,6 +817,10 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .setting-copy { min-width: 0; }
 .setting-label { font-size: 13px; color: var(--fg); font-weight: 500; }
 .setting-help { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
+/* What a just-flipped extension toggle did, and what is still pending. Accent
+   rather than muted: it is the one line on the row that was not there a moment
+   ago, and it has to read as an answer to the switch the reader just pressed. */
+.setting-flip-note { font-size: 12px; color: var(--accent); line-height: 1.5; margin-top: 5px; }
 /* Toggle switch: an accent-filled track + sliding knob, off = muted surface. */
 .setting-toggle {
   flex: 0 0 auto; position: relative; width: 38px; height: 22px; padding: 0;
