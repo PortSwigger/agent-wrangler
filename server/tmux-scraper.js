@@ -214,47 +214,61 @@ export function classify(paneText) {
   // prompt) silently confirms "Update now" and kills the session — this is
   // exactly the incident that motivated this branch.
   //
-  // TWO rounds of adversarial review found real problems with earlier versions
-  // of this regex, both reproduced directly against `classify()`:
+  // THREE rounds of adversarial review found real problems with earlier
+  // versions of this regex, each reproduced directly against `classify()`:
   //
   // Round 1: requiring "update available!" and "skip until next version"
   // ANYWHERE in the window, with no structural link, false-positived on
-  // ordinary prose containing both substrings ("Update available! You can
-  // skip until next version").
+  // ordinary prose containing both substrings.
   //
-  // Round 2 (the "fix" for round 1 — requiring all four menu phrases in
-  // order): still false-positived on short, plausible prose that happens to
-  // contain the same four phrases in the same order ("Update available!
-  // Choose an option: / 1. Update now / Otherwise you can skip until next
-  // version. / Press Enter to continue."). WORSE, it introduced a false
-  // NEGATIVE: `capture-pane -p` (no `-J`) records a soft-wrapped line as
-  // separate physical lines with no join marker, and a moderately narrow real
-  // pane wraps "Update now" as "Update\nnow" — the literal single space in
-  // "update now" then never matches, so a real banner on a narrow pane read as
-  // idle, silently reinstating the exact hazard this branch exists to
-  // prevent (Send re-enabled over a live "confirm the upgrade" menu).
+  // Round 2 (requiring all four menu phrases in order): still false-positived
+  // on different, short, plausible prose containing the same four phrases in
+  // order. WORSE, it introduced a false NEGATIVE: `capture-pane -p` (no `-J`)
+  // records a soft-wrapped line as separate physical lines with no join
+  // marker, and a moderately narrow real pane wraps "Update now" as
+  // "Update\nnow" — the literal single space in that phrase then never
+  // matched, so a real banner on a narrow pane read as idle.
   //
-  // This version drops the numbered-menu phrases entirely (they're exactly
-  // the multi-word phrases most prone to wrap) and anchors on the two things
-  // that are both short enough to never realistically wrap AND distinctive
-  // enough that ordinary prose won't produce them together: the literal
-  // "update available!" phrase immediately followed by Codex's own X.Y.Z ->
-  // A.B.C version-transition notation (`->`, not typical in conversational
-  // text about updates), bounded by "press enter to continue" appearing
-  // within a generous but finite gap (real banner content between them is a
-  // few dozen characters; an unbounded gap is what let round 2's four-phrase
-  // match span an entire unrelated paragraph). Every multi-word phrase is
-  // internally `\s+`, not a literal space, so a wrap between any two of its
-  // words still matches. Verified directly against: the real banner
-  // (unwrapped and realistically word-wrapped), both prior false positives,
-  // and ordinary conversational prose mentioning updates/skipping/versions.
+  // Round 3 (anchoring on "update available!" + Codex's X.Y.Z -> A.B.C
+  // version notation + a bounded gap + "press enter to continue", every
+  // multi-word phrase internally `\s+`): fixed the round-2 wrapping case, but
+  // missed a DIFFERENT, more fundamental wrapping failure — `recent` above is
+  // the last 12 NON-BLANK lines, and on a narrow enough pane the banner's
+  // earlier content (the release-notes URL, the sparkle line) wraps into
+  // enough extra physical lines that "update available!" itself gets sliced
+  // OUT of that window entirely, even though the regex matching it was
+  // otherwise fine. Simulating real word-wrap at 20 columns against the exact
+  // real banner text pushed `recent`'s line count to 17 and confirmed the
+  // match returns false — the window, not the pattern, was the bug.
+  //
+  // The fix: stop requiring the LEADING phrase ("update available!") at all,
+  // and anchor entirely on the TRAILING menu instead. While the banner is
+  // live, Codex is blocked on stdin waiting for it, so "press enter to
+  // continue" is the LAST non-blank content on screen — nothing renders after
+  // it. Content measured from the END of the pane always contains it,
+  // regardless of how much wraps ahead of it. The three option lines
+  // (`^` anchored, so wrapping can push their CONTINUATION onto a following
+  // line but can never move the `N.` prefix off the start of ITS line) are
+  // what a numbered-list-with-this-exact-wording requires — round 2's
+  // false-positive prose had no literal "2. Skip"/"3. Skip until next
+  // version" *at the start of their own lines*, so it fails here too, without
+  // needing the version-arrow discriminator at all. Verified directly:
+  // simulated word-wrap at 40/30/24/20/16/12 columns against the real banner
+  // all return needs-you; the real unwrapped capture; both round-1 and
+  // round-2's false positives return idle.
   //
   // Residual, accepted risk (same class the OAuth-screen check above already
-  // accepts): an agent could still construct prose that deliberately mimics
-  // this exact shape — e.g. quoting the banner verbatim while discussing this
-  // very fix. That requires deliberate, specific phrasing, not the kind of
-  // sentence produced by chance.
-  if (/update\s+available!\s*v?[\d.]+\s*-+>\s*v?[\d.]+[\s\S]{0,600}?press\s+enter\s+to\s+continue/i.test(recent)) {
+  // accepts): a numbered list an agent deliberately writes with this exact
+  // wording ("1. Update now" / "2. Skip" / "3. Skip until next version" /
+  // "press enter to continue", each option on its own line) would still
+  // match. That requires reproducing the real menu's specific wording and
+  // line structure, not prose a person or agent would write by chance.
+  if (
+    /^[\s›]*1\.\s*update\s+now\b/im.test(recent)
+    && /^[\s›]*2\.\s*skip\b/im.test(recent)
+    && /^[\s›]*3\.\s*skip\s+until\s+next\s+version/im.test(recent)
+    && /press\s+enter\s+to\s+continue/i.test(recent)
+  ) {
     return { status: 'needs-you', waitingFor: 'Codex has a CLI update available' };
   }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
