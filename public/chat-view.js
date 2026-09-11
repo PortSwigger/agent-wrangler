@@ -242,7 +242,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let restoreSeq = 0;
   let restoreOverDraft = false;
   let messageSeq = 0;
-  let pendingMessage = null;
+  const pendingMessages = new Map();
 
   function saveDraft(id) {
     if (!id) return;
@@ -394,26 +394,36 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // An attached image is a complete prompt on its own (the TUI submits the bare
   // `[Image #1]`), so Send has to stay live for an empty box that holds one.
   function renderSendability() {
-    if (pendingMessage) { sendBtn.disabled = true; return; }
+    if (sessionId && pendingMessages.has(sessionId)) {
+      input.disabled = true;
+      sendBtn.disabled = true;
+      return;
+    }
     if (lastStatus === 'needs-you') return; // setStatus owns the button while blocked
+    input.disabled = false;
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || pendingMessage || (!text && !attachments.length)) return;
+    if (!sessionId || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
     const requestId = `${requestEra}#${++messageSeq}`;
-    pendingMessage = { requestId, sessionId };
-    send({
+    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed };
+    pendingMessages.set(sessionId, pending);
+    const accepted = send({
       type: 'message', sessionId, text,
       requestId,
       ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
-      ...(paneRestoreArmed ? { clearComposer: true } : {}),
+      ...(pending.clearComposer ? { clearComposer: true } : {}),
     });
+    if (!accepted) {
+      pendingMessages.delete(sessionId);
+      setPasteNote('Not sent: connection unavailable.');
+    }
     renderSendability();
   }
 
@@ -705,20 +715,31 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   return {
     onMessageResult(msg) {
-      if (!pendingMessage || msg.requestId !== pendingMessage.requestId || msg.sessionId !== pendingMessage.sessionId) return;
+      const pending = pendingMessages.get(msg.sessionId);
+      if (!pending || msg.requestId !== pending.requestId) return;
       const current = sessionId === msg.sessionId;
-      pendingMessage = null;
-      if (!msg.ok) { if (current) setPasteNote(`Not sent: ${msg.error || 'delivery was not confirmed'}`); renderSendability(); return; }
-      paneRestoreArmed = false;
-      restoreToken = null;
+      pendingMessages.delete(msg.sessionId);
+      if (!msg.ok) {
+        if (current) {
+          const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
+          setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
+          renderSendability();
+        }
+        return;
+      }
       if (current) {
+        if (pending.clearComposer) {
+          paneRestoreArmed = false;
+          restoreToken = null;
+        }
         input.value = '';
         input.style.height = 'auto';
         attachments = [];
+        drafts.delete(msg.sessionId);
         renderAttachments();
         renderSendability();
+        kickBurst();
       } else drafts.delete(msg.sessionId);
-      kickBurst();
     },
     // The answer to an interrupt: what to put back in the composer, resolved
     // server-side from the pane (authoritative when Claude Code restored the

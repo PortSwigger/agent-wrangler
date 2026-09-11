@@ -5408,7 +5408,11 @@ schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedules
 
 // --- websocket control ---
 let ws;
-export function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+export function send(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(obj));
+  return true;
+}
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);

@@ -7,7 +7,6 @@ import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
-import { logWarn } from './log.js';
 
 const exec = promisify(execFile);
 
@@ -188,16 +187,6 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
   } catch {
     return '';
   }
-}
-
-export function codexComposerDraft(paneText) {
-  if (typeof paneText !== 'string' || !paneText.includes('\x1b')) return null;
-  const line = paneText.split('\n').filter((entry) => stripAnsi(entry).trimStart().startsWith('›')).pop();
-  if (!line) return null;
-  const raw = line.slice(line.lastIndexOf('›') + 1);
-  const withoutGhost = raw.replace(/\x1b\[2m.*?(?:\x1b\[(?:0|22)?m|$)/g, '');
-  const draft = stripAnsi(withoutGhost).trim();
-  return draft || null;
 }
 
 // Derive live state from the pane: only the "esc to interrupt" working signal
@@ -411,7 +400,8 @@ export async function killSession(name, socket = '') {
 // shell-escaping pitfalls of `send-keys -l`) AND submit it with a trailing Enter.
 // Shares the paste-block mechanism with prefillPane, which omits the Enter. `run` is
 // the low-level tmux runner (test seam).
-export async function sendText(name, text, socket = '', run = tmux) {
+export async function sendText(name, text, socket = '', run = tmux, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   await pasteBlock(name, text, socket, run);
+  await wait(120);
   await run(socket, ['send-keys', '-t', name, 'Enter']);
 }

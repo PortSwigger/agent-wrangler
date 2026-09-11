@@ -63,3 +63,30 @@ test('message: no text replies with an error and touches nothing', async () => {
   assert.equal(c.calls.reply.length, 1);
   assert.equal(c.calls.reply[0].type, 'error');
 });
+
+test('message: correlated live delivery acknowledges only after sendText completes', async () => {
+  const c = ctx({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } } });
+  await messageHandler.handler({ sessionId: 'CARD1', text: 'hi', requestId: 'req-1' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-1', sessionId: 'CARD1', ok: true, outcome: 'submitted', mode: 'live' }]);
+});
+
+test('message: correlated refusal preserves the request id', async () => {
+  const c = ctx({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } } });
+  await messageHandler.handler({ sessionId: 'CARD1', text: '', requestId: 'req-2' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-2', sessionId: 'CARD1', ok: false, outcome: 'rejected', error: 'No message text given.' }]);
+});
+
+test('message: rebuild failure does not suppress a successful correlated acknowledgement', async () => {
+  const dir = realDir();
+  const c = ctx({ entries: { CARD1: { cwd: dir, agent: 'claude' } } });
+  c.rebuild = async () => { throw new Error('rebuild failed'); };
+  await messageHandler.handler({ sessionId: 'CARD1', text: 'wake up', requestId: 'req-3' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-3', sessionId: 'CARD1', ok: true, outcome: 'submitted', mode: 'dormant' }]);
+});
+
+test('message: delivery exception is reported as unknown rather than rejected', async () => {
+  const c = ctx({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } } });
+  c.sendText = async () => { throw new Error('tmux connection lost'); };
+  await messageHandler.handler({ sessionId: 'CARD1', text: 'hi', requestId: 'req-4' }, c);
+  assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'req-4', sessionId: 'CARD1', ok: false, outcome: 'unknown', error: 'tmux connection lost' }]);
+});
