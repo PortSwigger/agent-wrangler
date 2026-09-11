@@ -136,10 +136,12 @@ test('BUILTIN: the checklist ships enabled by default with its four tools grante
   assert.deepEqual([...out.allowedToolNames].sort(), out.tools.map((t) => t.name).sort());
   assert.deepEqual(out.handlers.map((h) => h.type).sort(), ['checklist-add', 'checklist-remove', 'checklist-reorder', 'checklist-update']);
   assert.deepEqual(out.skillIds, ['checklist']);
-  // The help text is the only place a human is told the two halves move at
-  // different times: the panel goes on the next tick, the tools at next resume.
-  assert.match(out.list[0].help, /hides the panel straight away/);
-  assert.match(out.list[0].help, /at its next resume/);
+  // The help says what the feature IS and what survives a toggle; WHEN each
+  // half of a flip lands is the settings row's own after-the-fact note, not a
+  // paragraph a human has to finish reading before touching the switch.
+  assert.match(out.list[0].help, /shown beside its terminal/);
+  assert.match(out.list[0].help, /kept while it is off/);
+  assert.doesNotMatch(out.list[0].help, /restart/i);
 });
 
 test('BUILTIN: cfg.extensions.checklist=false empties every channel and marks the skill disabled', () => {
@@ -221,6 +223,17 @@ test('extensionsForGraph re-reads `enabled` per call, so a toggle lands on the n
   assert.deepEqual(rows.map((e) => e.enabled), [false]);
   enabled = true;
   assert.deepEqual(extensionsForGraph(loaded.list, () => enabled).map((e) => e.enabled), [true]);
+});
+
+test('extensionsForGraph reports the boot value alongside the live one', () => {
+  // The pair is what the settings note reads: live, hidden-now, or the one case
+  // (on in config, off at boot) that a restart has to finish.
+  const booted = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest()] });
+  const [row] = extensionsForGraph(booted.list, () => true);
+  assert.deepEqual({ enabled: row.enabled, bootEnabled: row.bootEnabled }, { enabled: true, bootEnabled: false });
+
+  const live = loadExtensions({ cfg: { extensions: { fake: true } }, builtin: [manifest()] });
+  assert.deepEqual(extensionsForGraph(live.list, () => false).map((e) => [e.enabled, e.bootEnabled]), [[false, true]]);
 });
 
 test('extensionsForGraph carries identity off the boot snapshot, never the live read', () => {
