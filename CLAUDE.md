@@ -564,12 +564,22 @@ don't re-derive it.
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
-  (`extensionEnabled`, `config-store.js`), and **it is load-time only: the
-  `extension-enabled` handler writes the flag and re-emits `graph.extensions[]`
-  so the settings toggle reads back, but tools/handlers/skills/client stay as
-  loaded until a restart** (the manifest's `help` must say so; `setExtensionDefs`
-  appends a restart note if it doesn't). Graph contributors, sweeps and session
-  hooks are "call-time" only in the sense that they run from that fixed list.
+  (`extensionEnabled`, `config-store.js`), and **the two halves of a toggle move
+  at DIFFERENT times — the UI on the next tick, everything else at the next
+  restart.** `graph.extensions[].enabled` is re-read from config on every rebuild
+  (`extensionsForGraph`, NOT `ext.list`'s boot snapshot, which carries only the
+  identity/label/help/defaultEnabled that cannot change without a restart), and
+  the client mounts or unmounts that extension's slot contributions off it
+  (`syncClientExtensions` in `app.js`, the loader's `unload`). That liveness is
+  the pre-extensions `graph.checklistEnabled = checklistEnabled()` per-tick read,
+  preserved: **a toggle that changed nothing visible until a restart was the
+  regression the migration introduced, so don't collapse this back onto
+  `ext.list`.** Tools/handlers/skills/stores/graph-contributors/client assets
+  ARE fixed at load, so an agent's MCP tools follow at its next relaunch, and an
+  extension that booted OFF has no store, no handler and no client asset to
+  serve — it cannot be turned on live at all and genuinely needs a restart. The
+  manifest's `help` must say which half moves when (`setExtensionDefs` appends a
+  restart note if it doesn't). Sweeps and session hooks run from the fixed list.
   Six things are load-bearing. **`server/extensions/**` is imported by the
   `client-config.js` and `agent-skills.js` leaves (which the agent adapters
   import), so every manifest and everything it imports must itself stay
@@ -595,8 +605,8 @@ don't re-derive it.
   the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
   coalescing reason the resume log line does. `/ext/<id>/*`
   (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
-  which holds enabled extensions alone — a disabled extension's client is a 404,
-  never served — and resolves the rest via `path.resolve` against the
+  which holds the extensions that were enabled AT BOOT — one disabled at boot is
+  a 404, never served, which is exactly why it cannot be turned back on live — and resolves the rest via `path.resolve` against the
   extension's `public/` with a prefix check, since `join(normalize())` folds a
   climbing `..` back inside instead of rejecting it. A new client slot needs a
   `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that calls

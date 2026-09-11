@@ -33,7 +33,7 @@ export const dir = fileURLToPath(new URL('.', import.meta.url));
 export default {
   id: 'checklist',                 // /^[a-z][a-z0-9-]*$/, unique
   label: 'Per-session checklist',  // settings toggle label
-  help: '... Turning it on or off takes effect after the wrangler restarts.',
+  help: '... Turning it off hides the panel straight away; the MCP tools follow at a session\'s next resume.',
   defaultEnabled: true,
   dir,
   stores:   { checklist: () => new ChecklistStore() },   // factories, instantiated once by index.js
@@ -111,11 +111,18 @@ skill dropped from the nudge and the Codex catalog, its graph keys absent and it
 client not served.
 
 The generic `extension-enabled` control handler (replacing every
-`set-<feature>-enabled`) writes the flag and rebuilds. Nothing flips live: the
-rebuild only re-emits `graph.extensions[].enabled` so the settings toggle reads
-back, and everything else changes at the next restart. The manifest's `help`
-must say so; `public/settings.js`'s `setExtensionDefs` appends a restart note if
-it does not.
+`set-<feature>-enabled`) writes the flag and rebuilds. The UI flips live and
+nothing else does. `graph.extensions[].enabled` is re-read from config on every
+rebuild (`extensionsForGraph`) rather than taken from `ext.list`'s boot
+snapshot, and the client mounts or unmounts that extension's slot contributions
+off it (`syncClientExtensions`, the loader's `unload`) — so turning an extension
+off takes its panel off the board on the next tick, which is what the
+per-feature flag it replaced already did. Tools, handlers, stores, graph
+contributors and client assets stay as loaded, so a running session's MCP tools
+follow at its next resume, and an extension that was OFF at boot has none of
+those loaded at all and cannot be turned on without a restart. The manifest's
+`help` must say which half moves when; `public/settings.js`'s `setExtensionDefs`
+appends a restart note if it does not.
 
 Retired flags map onto the new key through `LEGACY_FLAGS` in `config-store.js`
 (`{ checklistEnabled: ['extensions', 'checklist'] }`). `readConfig()` runs
@@ -238,6 +245,11 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
 - Migrating task-memory and archive-review onto manifests. task-memory keeps its
   own `taskMemoryEnabled` flag and its special case in `activeSkillEntries`
   until then.
-- Live enable/disable without a restart. Deliberately out of scope: `--allowedTools`
-  is baked into a session's launch argv, so a running session could not gain or
-  lose tools anyway.
+- Turning an extension ON live when it was OFF at boot. Its store, handlers,
+  graph contribution and client asset are all decided by `loadExtensions`, so
+  the panel would mount backed by nothing. Making that work means loading every
+  extension unconditionally and checking `enabled` at each call site instead —
+  a change to the loader's contract, not a patch. (Turning one OFF live, and
+  back on within the same boot, both work today.) `--allowedTools` is baked into
+  a session's launch argv regardless, so a running session can never gain or
+  lose tools without a relaunch.
