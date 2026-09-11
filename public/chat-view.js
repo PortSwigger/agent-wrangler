@@ -243,7 +243,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let restoreOverDraft = false;
   let messageSeq = 0;
   const pendingMessages = new Map();
-  const retryNeedsClear = new Set();
 
   function saveDraft(id) {
     if (!id) return;
@@ -413,7 +412,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
     const requestId = `${requestEra}#${++messageSeq}`;
-    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed || retryNeedsClear.has(sessionId) };
+    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed };
     pendingMessages.set(sessionId, pending);
     if (pending.clearComposer) {
       paneRestoreArmed = false;
@@ -726,7 +725,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const current = sessionId === msg.sessionId;
       pendingMessages.delete(msg.sessionId);
       if (!msg.ok) {
-        if (msg.outcome === 'unknown' || pending.clearComposer) retryNeedsClear.add(msg.sessionId);
         if (current) {
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
@@ -734,7 +732,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         }
         return;
       }
-      retryNeedsClear.delete(msg.sessionId);
       if (current) {
         input.value = '';
         input.style.height = 'auto';

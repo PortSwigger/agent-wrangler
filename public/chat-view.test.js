@@ -426,6 +426,18 @@ test('a connection close releases an unacknowledged delivery and retains its dra
   assert.match(byId.get('chat-hint').textContent, /Delivery status unknown/);
 });
 
+test('an unknown delivery does not clear a terminal draft on a later send', async () => {
+  const { view, input, sent } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'first';
+  send(input);
+  view.onConnectionClosed();
+  input.value = 'later prompt';
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, undefined);
+});
+
 test('a second Enter while delivery is pending sends only one frame', async () => {
   const { view, input, sent } = await mountView();
   view.mount('sess-1');
