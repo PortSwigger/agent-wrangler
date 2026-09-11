@@ -214,18 +214,47 @@ export function classify(paneText) {
   // prompt) silently confirms "Update now" and kills the session — this is
   // exactly the incident that motivated this branch.
   //
-  // An adversarial review caught the first version of this regex: it required
-  // "update available!" and "skip until next version" ANYWHERE in the last-12
-  // -non-blank-line window, with no structural link between them — so ordinary
-  // prose containing both substrings (e.g. an agent's own message: "Update
-  // available! You can skip until next version") false-positived into a
-  // needs-you that blocked Send indefinitely. Reproduced directly:
-  // `classify('Update available! You can skip until next version')` returned
-  // needs-you. Anchored to the real menu's own ORDERED shape instead — all four
-  // phrases, in the order the CLI actually renders them, with the numbered
-  // option prefix on "Update now" — which is not a shape ordinary conversation
-  // text produces by accident.
-  if (/update available!(?:[\s\S]*?)\d\.\s*update now(?:[\s\S]*?)skip until next version(?:[\s\S]*?)press enter to continue/i.test(recent)) {
+  // TWO rounds of adversarial review found real problems with earlier versions
+  // of this regex, both reproduced directly against `classify()`:
+  //
+  // Round 1: requiring "update available!" and "skip until next version"
+  // ANYWHERE in the window, with no structural link, false-positived on
+  // ordinary prose containing both substrings ("Update available! You can
+  // skip until next version").
+  //
+  // Round 2 (the "fix" for round 1 — requiring all four menu phrases in
+  // order): still false-positived on short, plausible prose that happens to
+  // contain the same four phrases in the same order ("Update available!
+  // Choose an option: / 1. Update now / Otherwise you can skip until next
+  // version. / Press Enter to continue."). WORSE, it introduced a false
+  // NEGATIVE: `capture-pane -p` (no `-J`) records a soft-wrapped line as
+  // separate physical lines with no join marker, and a moderately narrow real
+  // pane wraps "Update now" as "Update\nnow" — the literal single space in
+  // "update now" then never matches, so a real banner on a narrow pane read as
+  // idle, silently reinstating the exact hazard this branch exists to
+  // prevent (Send re-enabled over a live "confirm the upgrade" menu).
+  //
+  // This version drops the numbered-menu phrases entirely (they're exactly
+  // the multi-word phrases most prone to wrap) and anchors on the two things
+  // that are both short enough to never realistically wrap AND distinctive
+  // enough that ordinary prose won't produce them together: the literal
+  // "update available!" phrase immediately followed by Codex's own X.Y.Z ->
+  // A.B.C version-transition notation (`->`, not typical in conversational
+  // text about updates), bounded by "press enter to continue" appearing
+  // within a generous but finite gap (real banner content between them is a
+  // few dozen characters; an unbounded gap is what let round 2's four-phrase
+  // match span an entire unrelated paragraph). Every multi-word phrase is
+  // internally `\s+`, not a literal space, so a wrap between any two of its
+  // words still matches. Verified directly against: the real banner
+  // (unwrapped and realistically word-wrapped), both prior false positives,
+  // and ordinary conversational prose mentioning updates/skipping/versions.
+  //
+  // Residual, accepted risk (same class the OAuth-screen check above already
+  // accepts): an agent could still construct prose that deliberately mimics
+  // this exact shape — e.g. quoting the banner verbatim while discussing this
+  // very fix. That requires deliberate, specific phrasing, not the kind of
+  // sentence produced by chance.
+  if (/update\s+available!\s*v?[\d.]+\s*-+>\s*v?[\d.]+[\s\S]{0,600}?press\s+enter\s+to\s+continue/i.test(recent)) {
     return { status: 'needs-you', waitingFor: 'Codex has a CLI update available' };
   }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)

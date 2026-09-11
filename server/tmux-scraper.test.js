@@ -45,18 +45,32 @@ test('classify: Codex\'s own update-available banner reads as needs-you with a r
   assert.equal(c.status, 'needs-you');
   assert.match(c.waitingFor, /update available/i);
 });
+test('classify: a realistically word-wrapped real banner still reads as needs-you', () => {
+  // A moderately narrow real pane: `capture-pane -p` (no `-J`) records a
+  // soft-wrapped line as separate physical lines with no join marker, so
+  // "Update now" and "next version" each split across two lines here — a
+  // shape a second adversarial review reproduced directly against an
+  // earlier, four-phrase-anchored version of this branch and showed reads as
+  // idle with it (silently reinstating the original hazard: Send re-enabled
+  // over a live "confirm the upgrade" menu).
+  const wrapped = '✨ Update available! 0.154.0 -> 9.9.9\n\nRelease notes: https://github.com/openai/codex/releases/latest\n\n1. Update\nnow (runs `brew upgrade --cask codex`)\n  2. Skip\n  3. Skip until next\nversion\n\n  Press enter\nto continue';
+  assert.equal(classify(wrapped).status, 'needs-you');
+});
 test('classify: ordinary conversation text mentioning an update does not false-positive', () => {
   assert.equal(classify('I ran the update and it looks like everything is now available!').status, 'idle');
   assert.equal(classify('Skipping this file until the next version of the schema lands').status, 'idle');
-  // The exact case an adversarial review caught in the first version of this
-  // branch: both anchor SUBSTRINGS present in one ordinary sentence, with no
-  // menu structure around them. A loose "both regexes match somewhere in the
-  // window" check returned needs-you for this; the fix requires the real
-  // menu's own ordered shape instead.
+  // The exact case a FIRST adversarial review caught: both anchor SUBSTRINGS
+  // present in one ordinary sentence, with no menu structure around them.
   assert.equal(classify('Update available! You can skip until next version').status, 'idle');
-  // Same idea split across two lines of the window, and with the numbered
-  // option missing — still just prose, never the real menu.
   assert.equal(classify('Update available!\nRemember you can always skip until next version if you want').status, 'idle');
+  // The case a SECOND adversarial review caught: the four-phrase-in-order fix
+  // for the first finding still matched this short, plausible sentence —
+  // reproduced directly against that version and confirmed here to stay
+  // fixed against the current one.
+  assert.equal(
+    classify('Update available! Choose an option:\n1. Update now\nOtherwise you can skip until next version.\nPress Enter to continue.').status,
+    'idle',
+  );
 });
 test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('… esc to interrupt …').status, 'working');
