@@ -88,13 +88,16 @@ function roleMaskOf(roles) {
   return mask === ((1 << ROLE_USER) | (1 << ROLE_ASSISTANT)) ? 0 : mask;
 }
 
-function docMaskOf(docs, agents) {
+function docMaskOf(docs, agents, sessionIds) {
   const filterAgents = Array.isArray(agents) && agents.length === 1;
+  const allowedSessions = Array.isArray(sessionIds) ? new Set(sessionIds) : null;
   const mask = Buffer.alloc(docs.length);
   let excluded = false;
   for (let i = 0; i < docs.length; i++) {
     const d = docs[i];
-    const ok = !d.dead && (!filterAgents || agents.includes(d.agent));
+    const ok = !d.dead
+      && (!filterAgents || agents.includes(d.agent))
+      && (!allowedSessions || allowedSessions.has(d.id));
     mask[i] = ok ? 1 : 0;
     if (!ok) excluded = true;
   }
@@ -118,7 +121,7 @@ export async function search(opts = {}) {
     needle,
     wholeWord: Boolean(opts.wholeWord),
     roleMask: roleMaskOf(opts.roles),
-    docMask: docMaskOf(meta.docs, opts.agents),
+    docMask: docMaskOf(meta.docs, opts.agents, opts.sessionIds),
     since: opts.since ? Math.floor(opts.since / 1000) : 0,
     until: opts.until ? Math.floor(opts.until / 1000) : 0,
     limit,
