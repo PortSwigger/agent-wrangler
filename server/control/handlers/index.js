@@ -1,5 +1,6 @@
 import { dispatchHandler } from './dispatch.js';
 import { validateWorktreeHandler } from './validate-worktree.js';
+import { browseFoldersHandler } from './browse-folders.js';
 import { messageHandler } from './message.js';
 import { resumeHandler } from './resume.js';
 import { forkHandler } from './fork.js';
@@ -72,6 +73,7 @@ import { adoptConversationHandler } from './adopt.js';
 export const CONTROL_HANDLERS = [
   dispatchHandler,
   validateWorktreeHandler,
+  browseFoldersHandler,
   messageHandler,
   resumeHandler,
   forkHandler,

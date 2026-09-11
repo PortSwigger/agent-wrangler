@@ -748,6 +748,10 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .modal-card .suggest-item:hover, .modal-card .suggest-item.active { background: var(--accent); color: var(--accent-fg); }
+/* Marks a folder that came from the board's own history rather than from disk —
+   inherits currentColor so it stays legible on the accent-filled active row. */
+.modal-card .suggest-tag { float: right; margin-left: 10px; font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.04em; }
+.modal-card input.input-error { border-color: var(--danger-strong); }
 .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
 /* Quick-launch shortcuts sit at the bottom-left; margin-right:auto pushes Cancel/Launch to the right. */
 .quick-launch { display: flex; gap: 8px; margin-right: auto; }
