@@ -180,6 +180,15 @@
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           </button>
         </div>
+        <!-- The terminal panel has always shown a dead pane's last output
+             (see renderSidebar's exitOutput block, app.js) so a crash or a
+             self-exit (e.g. Codex applying its own CLI update and quitting)
+             is explained rather than silent. The chat view read from the
+             transcript alone until now, which is exactly why it couldn't:
+             the pane exiting writes nothing to it. Same data (`s.exitOutput`
+             off the graph node), surfaced here too instead of only in the
+             terminal view. -->
+        <div id="chat-exit-notice" class="chat-exit-notice" hidden></div>
         <div id="chat-notice-bar" class="chat-notice-bar" hidden></div>
         <div id="chat-composer" class="chat-composer">
           <button type="button" id="chat-suggestion" class="chat-suggestion" hidden></button>

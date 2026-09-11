@@ -34,6 +34,71 @@ test('classify: the real devcontainer-CLI failure line (Group-E capture) reads a
   assert.equal(c.status, 'needs-you');
   assert.match(c.waitingFor, /bring-up failed/);
 });
+test('classify: Codex\'s own update-available banner reads as needs-you with a reason', () => {
+  // Verbatim (a live, non-destructive capture: `~/.codex/version.json`'s
+  // latest_version faked to force the banner, pane captured, tmux session
+  // killed WITHOUT ever pressing a key — the real "Update now" default was
+  // never triggered). Option 1 is the default on a bare Enter, which is
+  // exactly the footgun this branch exists to prevent.
+  const pane = '› Ask Codex to do anything\n\n  ? for shortcuts\n\n  ✨ Update available! 0.154.0 -> 9.9.9\n\n  Release notes: https://github.com/openai/codex/releases/latest\n\n› 1. Update now (runs `brew upgrade --cask codex`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue';
+  const c = classify(pane);
+  assert.equal(c.status, 'needs-you');
+  assert.match(c.waitingFor, /update available/i);
+});
+// Simulates tmux's ordinary word-wrap (`capture-pane -p`, no `-J`): break at
+// word boundaries where they fit, hard-break a single token wider than the
+// column. Proves the detection survives narrow panes, where enough of the
+// banner's earlier content (the release-notes URL especially) can wrap into
+// extra lines to push a leading anchor out of classify()'s 12-line window.
+function wordWrap(line, width) {
+  if (line.length <= width) return [line];
+  const words = line.split(' ');
+  const out = [];
+  let cur = '';
+  for (const w of words) {
+    if (!cur.length) { cur = w; continue; }
+    if (`${cur} ${w}`.length <= width) cur += ` ${w}`;
+    else { out.push(cur); cur = w; }
+  }
+  if (cur) out.push(cur);
+  return out.flatMap((l) => {
+    if (l.length <= width) return [l];
+    const pieces = [];
+    for (let i = 0; i < l.length; i += width) pieces.push(l.slice(i, i + width));
+    return pieces;
+  });
+}
+const REAL_BANNER_LINES = [
+  '› Ask Codex to do anything', '', '  ? for shortcuts', '',
+  '  ✨ Update available! 0.154.0 -> 9.9.9', '',
+  '  Release notes: https://github.com/openai/codex/releases/latest', '',
+  '› 1. Update now (runs `brew upgrade --cask codex`)',
+  '  2. Skip', '  3. Skip until next version', '',
+  '  Press enter to continue',
+];
+test('classify: the real banner reads as needs-you at every realistic (and several unrealistic) pane widths', () => {
+  // 40 down to 12 columns — well past anything this product would actually
+  // render a terminal at, which is the point: the fix must not depend on
+  // guessing a "safe enough" minimum width at all.
+  for (const width of [40, 30, 24, 20, 16, 12]) {
+    const wrapped = REAL_BANNER_LINES.flatMap((l) => (l === '' ? [''] : wordWrap(l, width)));
+    const c = classify(wrapped.join('\n'));
+    assert.equal(c.status, 'needs-you', `width ${width} should still read as needs-you`);
+  }
+});
+test('classify: ordinary conversation text mentioning an update does not false-positive', () => {
+  assert.equal(classify('I ran the update and it looks like everything is now available!').status, 'idle');
+  assert.equal(classify('Skipping this file until the next version of the schema lands').status, 'idle');
+  // Both anchor phrases present in one ordinary sentence, no menu structure.
+  assert.equal(classify('Update available! You can skip until next version').status, 'idle');
+  assert.equal(classify('Update available!\nRemember you can always skip until next version if you want').status, 'idle');
+  // All four phrases present in order, but never as actual numbered options
+  // at the start of their own lines.
+  assert.equal(
+    classify('Update available! Choose an option:\n1. Update now\nOtherwise you can skip until next version.\nPress Enter to continue.').status,
+    'idle',
+  );
+});
 test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('… esc to interrupt …').status, 'working');
   assert.equal(classify('a quiet prompt').status, 'idle');
