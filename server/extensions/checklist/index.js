@@ -14,8 +14,9 @@ import { listChecklistTool } from './tools/list-checklist.js';
 // derived from them by the loader), its skill, its graph contribution and its
 // one session hook. Lifecycle is by construction: resume keeps the list (no hook),
 // a fork starts EMPTY (no onFork — do not add one), archive keeps it (no
-// onArchive), only a purge forgets (onPurge). `dir` is what the loader resolves a
-// `client` path against; the client module itself lands in a later PR.
+// onArchive), only a purge forgets (onPurge). `dir` is what the loader resolves
+// the `client` path against — the panel + chip module under public/, served at
+// /ext/checklist/ and loaded by the board's public/extensions.js.
 export const dir = fileURLToPath(new URL('.', import.meta.url));
 
 export default {
@@ -32,4 +33,5 @@ export default {
   // enrichment: the only consumer is the ONE selected session's panel.
   graph: ({ stores }) => ({ checklists: stores.checklist.snapshot() }),
   session: { onPurge: ({ sessionId, stores }) => stores.checklist.forget(sessionId) },
+  client: 'public/index.js',
 };

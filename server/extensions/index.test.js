@@ -129,9 +129,11 @@ test('assertGraphKeys refuses a reserved core graph key and a non-object contrib
 
 // --- invariants over the REAL builtin set ---
 
-test('BUILTIN: the checklist ships enabled by default with its four tools granted and no client yet', () => {
+test('BUILTIN: the checklist ships enabled by default with its four tools granted and its client announced', () => {
   const out = loadExtensions({ cfg: {}, builtin: BUILTIN });
   assert.deepEqual(out.list.map((e) => [e.id, e.enabled]), [['checklist', true]]);
+  assert.deepEqual(out.clientManifest, [{ id: 'checklist', client: '/ext/checklist/index.js' }]);
+  assert.ok(fs.existsSync(path.join(out.dirs.checklist, 'public', 'index.js')), 'the announced client module exists on disk');
   assert.deepEqual(out.tools.map((t) => t.name).sort(), ['add_checklist_item', 'list_checklist', 'remove_checklist_item', 'update_checklist_item']);
   assert.deepEqual([...out.allowedToolNames].sort(), out.tools.map((t) => t.name).sort());
   assert.deepEqual(out.handlers.map((h) => h.type).sort(), ['checklist-add', 'checklist-remove', 'checklist-reorder', 'checklist-update']);

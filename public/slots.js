@@ -2,7 +2,7 @@
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
 // import; `document` is injected so the reconciliation rules are unit-testable
-// the way checklist-dom.js is.
+// the way chat-dom.js is.
 //
 // A new slot needs BOTH an entry here AND a host in app.js that calls mountInto/
 // update for it — SLOT_NAMES is the registry, and register() refuses a name

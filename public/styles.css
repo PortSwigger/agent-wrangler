@@ -370,10 +370,19 @@ body.dragging { user-select: none; cursor: col-resize; }
 button.danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--red-fg); }
 button.danger:hover { background: var(--danger-bg); border-color: var(--danger-strong); }
 
-/* Per-session Checklist panel — a #panel sibling inside #sidebar. Bordered and
-   sized to its content (never flex:1), so it takes only what it needs and the
-   terminal/chat pane below keeps the rest. Its own --card-bg matches #panel's
-   single-layer frosted backdrop over the wallpaper. */
+/* Extension slot hosts (#panel-sections, .sess-meta-ext) and the per-contribution
+   wrapper slots.js creates inside them (.ext-slot) are layout-transparent: an
+   extension's element lays out exactly as if it were the host's own child —
+   the checklist strip as a #sidebar flex item, a chip as a .sess-meta flex item
+   — so the slot machinery adds no box of its own to size or style. */
+#panel-sections, .sess-meta-ext, .ext-slot { display: contents; }
+
+/* Per-session Checklist panel — mounted into #panel-sections (a #panel sibling
+   inside #sidebar) by server/extensions/checklist/public/index.js; the rules
+   stay here in the board's stylesheet (a CSS slot is a noted follow-up).
+   Bordered and sized to its content (never flex:1), so it takes only what it
+   needs and the terminal/chat pane below keeps the rest. Its own --card-bg
+   matches #panel's single-layer frosted backdrop over the wallpaper. */
 #checklist {
   flex: 0 0 auto; display: flex; flex-direction: column;
   border-bottom: 1px solid var(--border-muted); background: var(--card-bg);
