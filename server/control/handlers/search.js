@@ -28,6 +28,11 @@ let lastRefresh = 0;
 const BROWSE_LIMIT = 60;
 const VALID_STATUS = new Set(['board', 'archived', 'offboard']);
 
+function titleMatches(row, tokens) {
+  const title = String(row.title || '').toLowerCase();
+  return tokens.length > 0 && tokens.every((token) => title.includes(token));
+}
+
 // The candidate list the join runs over: index docs + board entries, with live
 // activity from the graph (graph sessions are keyed on the CARD id, which is
 // what every entry field is keyed on too — never the conversation id).
@@ -50,11 +55,15 @@ export async function answerSearch(msg, ctx, {
   const requestId = msg.requestId ?? null;
   const facets = {
     agents: Array.isArray(msg.agents) ? msg.agents : null,
+    taskIds: Array.isArray(msg.taskIds) ? msg.taskIds.filter((id) => typeof id === 'string' && id) : null,
     status: VALID_STATUS.has(msg.status) ? msg.status : 'all',
     since: Number(msg.since) || 0,
     until: Number(msg.until) || 0,
   };
   const rows = candidateRows(ctx, docs());
+  const taskSessionIds = facets.taskIds?.length
+    ? rows.filter((r) => facets.taskIds.includes(r.taskId)).map((r) => r.sessionId)
+    : null;
 
   // Browse: too short to scan for, so list instead. A 1-char query (or any
   // tokens) still filters by metadata — same multi-token AND as History's
@@ -82,6 +91,7 @@ export async function answerSearch(msg, ctx, {
     wholeWord: Boolean(msg.wholeWord),
     roles: Array.isArray(msg.roles) ? msg.roles : null,
     agents: facets.agents,
+    sessionIds: taskSessionIds,
     since: facets.since,
     until: facets.until,
     limit: Number(msg.limit) || 0,
@@ -102,7 +112,7 @@ export async function answerSearch(msg, ctx, {
       const mf = matchMeta(c, tokens);
       if (mf) { g.metaMatch = true; g.matchedFields = mf; }
     }
-    if (facets.status !== 'all' && statusOf(c || {}) !== facets.status) continue;
+    if (!passesFacets(c || {}, facets)) continue;
     groups.push(g);
   }
 
@@ -120,6 +130,7 @@ export async function answerSearch(msg, ctx, {
   }
   metaOnly.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   groups.push(...metaOnly);
+  groups.sort((a, b) => Number(titleMatches(b, tokens)) - Number(titleMatches(a, tokens)));
 
   return { type: 'search-results', requestId, browse: false, ...res, groups };
 }

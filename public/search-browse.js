@@ -199,13 +199,29 @@ export function buildBrowseBuckets(groups, archivedTasks, now) {
 // text an archived task carries. Same semantics as History's filterArchivedTasks:
 // empty/whitespace query is a no-op; a task matches iff every whitespace-delimited
 // token is a case-insensitive substring of its name.
-export function filterTasksByName(tasks, query) {
+export function filterTasksByName(tasks, query, taskIds = []) {
   const tokens = (query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return tasks;
+  const allowed = taskIds.length ? new Set(taskIds) : null;
+  if (!tokens.length) return allowed ? tasks.filter((t) => allowed.has(t.id)) : tasks;
   return tasks.filter((t) => {
+    if (allowed && !allowed.has(t.id)) return false;
     const name = (t.name || '').toLowerCase();
     return tokens.every((tok) => name.includes(tok));
   });
+}
+
+export function taskFilterGroups(tasks = [], sessions = [], assignments = {}) {
+  const activity = new Map();
+  for (const session of sessions) {
+    const taskId = assignments[session.sessionId];
+    if (!taskId) continue;
+    activity.set(taskId, Math.max(activity.get(taskId) || 0, session.lastActivity || session.archivedAt || 0));
+  }
+  const sort = (a, b) => (activity.get(b.id) || 0) - (activity.get(a.id) || 0)
+    || String(a.name || a.id).localeCompare(String(b.name || b.id));
+  const live = tasks.filter((t) => !t.archivedAt).sort(sort);
+  const archived = tasks.filter((t) => t.archivedAt).sort(sort);
+  return { live, archived };
 }
 
 // The display title for one search/browse group, in falling priority: the board
