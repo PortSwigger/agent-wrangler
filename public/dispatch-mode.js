@@ -12,3 +12,14 @@ export function dispatchModePresentation(mode) {
     launchLabel: workflow ? 'Start workflow' : 'Launch',
   };
 }
+
+export function cwdStatePresentation({ exists, scratch }) {
+  if (exists === false && !scratch) {
+    return {
+      message: 'This folder will be created when the session starts.',
+      className: 'worktree-msg hint',
+      blocks: false,
+    };
+  }
+  return { message: '', className: 'worktree-msg hidden', blocks: false };
+}

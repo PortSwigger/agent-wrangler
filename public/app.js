@@ -54,7 +54,7 @@ import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
-import { dispatchModePresentation } from './dispatch-mode.js';
+import { dispatchModePresentation, cwdStatePresentation } from './dispatch-mode.js';
 
 let currentView = 'grid';
 
@@ -4556,7 +4556,7 @@ let fsProbed = null;
 // selection renders an empty list (the probe is still in flight), and the reply
 // then saw a hidden box and declined to re-render.
 let suggestWanted = false;
-let cwdExists = null;   // null = no opinion yet / blank field; false blocks Launch
+let cwdExists = null;
 let browseTimer = null;
 function requestFolderBrowse() {
   const raw = document.getElementById('m-cwd').value;
@@ -4572,20 +4572,17 @@ function onFolderBrowse(msg) {
   renderCwdState();
   renderFolderSuggest();
 }
-// A folder that doesn't exist can't be launched into — the server would fail
-// the spawn — so say so and disable Launch. Blank is fine (it falls back to
-// proposedCwd), which is why `exists` is a tri-state and only `false` blocks.
-// A scratch path is exempt: the dialog proposes a fresh timestamped sessions dir
-// that deliberately doesn't exist yet (dispatch creates it), so "missing" is the
-// normal state for one and blocking on it would refuse a perfectly good launch.
-function cwdMissing() { return cwdExists === false && !isScratchDir(cwdField()); }
+function cwdState() {
+  return cwdStatePresentation({ exists: cwdExists, scratch: isScratchDir(cwdField()) });
+}
 function renderCwdState() {
+  const state = cwdState();
   const el = document.getElementById('m-cwd-msg');
   if (el) {
-    el.textContent = cwdMissing() ? "That folder doesn't exist — pick one from the list." : '';
-    el.className = cwdMissing() ? 'worktree-msg error' : 'worktree-msg hidden';
+    el.textContent = state.message;
+    el.className = state.className;
   }
-  document.getElementById('m-cwd').classList.toggle('input-error', cwdMissing());
+  document.getElementById('m-cwd').classList.remove('input-error');
   renderWorktreeState();
 }
 function refreshFolderList() {
@@ -4733,7 +4730,7 @@ function renderWorktreeState() {
   // In schedule mode the worktree validation is advisory (the authoritative
   // create+classify happens at fire time), so Save is gated only by the picker.
   if (scheduleMode()) { syncScheduleGo(); return; }
-  go.disabled = wtPending || nonGit || cwdMissing() || Boolean(wt && wt.blocks);
+  go.disabled = wtPending || nonGit || Boolean(wt && wt.blocks);
   go.textContent = wtPending ? 'Creating…' : 'Launch';
 }
 
@@ -5124,8 +5121,6 @@ function submitDispatch() {
   const fields = readDispatchFields();
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
-  // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdMissing()) { renderCwdState(); return; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return; // can't create a worktree here — let the user untick or fix the folder

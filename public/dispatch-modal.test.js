@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dispatchModePresentation } from './dispatch-mode.js';
+import * as dispatchMode from './dispatch-mode.js';
+
+const { dispatchModePresentation } = dispatchMode;
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
 const dispatch = html.match(/<div id="m-dispatch-fields">([\s\S]*?)<\/div>\s*<div id="m-subagent"/)?.[1];
@@ -40,5 +42,13 @@ test('workflow mode presentation updates the compact control and contextual copy
     intentLabel: 'Issue (Jira key, GitHub issue, or description)',
     intentPlaceholder: 'ENT-1234, a GitHub issue URL or #number, or a free-text task',
     launchLabel: 'Start workflow',
+  });
+});
+
+test('a missing typed folder is announced as created on launch without blocking dispatch', () => {
+  assert.deepEqual(dispatchMode.cwdStatePresentation?.({ exists: false, scratch: false }), {
+    message: 'This folder will be created when the session starts.',
+    className: 'worktree-msg hint',
+    blocks: false,
   });
 });
