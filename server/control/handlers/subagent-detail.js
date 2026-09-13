@@ -1,4 +1,5 @@
 import { subagentDetail as realDetail } from '../../transcript-reader.js';
+import { codexSubagentDetail as realCodexDetail } from '../../agents/codex-rollout.js';
 
 // On-demand, uncached read of one sub-agent's transcript for the detail modal. A
 // fresh, TARGETED reply to the requesting client only (like get-memory), never
@@ -6,13 +7,15 @@ import { subagentDetail as realDetail } from '../../transcript-reader.js';
 export const subagentDetailHandler = {
   type: 'subagent-detail',
   async handler(msg, ctx) {
-    const fetch = ctx.subagentDetail || realDetail;
     // The client sends the CARD id; the transcript (and its subagents/ dir) is named
     // by the CONVERSATION id. Resolve card → liveSessionId off the graph, falling
     // back to the card id for legacy pre-split entries — exactly the id the eager
     // `analyze(entry.liveSessionId || sid)` enrichment uses (state-reader.js).
     const node = ctx.sessionFromGraph?.(msg.sessionId);
     const convId = node?.liveSessionId || msg.sessionId;
+    const fetch = node?.agent === 'codex'
+      ? (ctx.codexSubagentDetail || realCodexDetail)
+      : (ctx.subagentDetail || realDetail);
     const { prompt, toolCalls, result } = await fetch(convId, msg.subagentId);
     // Echo back the CARD id the client sent (not convId) so it can correlate the
     // reply against the exact modal request it made — subagentId alone is fine in

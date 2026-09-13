@@ -336,6 +336,31 @@ test('attributes Codex spend to its createdAt day and flags it estimated', async
   assert.equal(day.total.estimatedUsd, day.total.usd, 'all codex spend is estimated');
 });
 
+test('includes native Codex sub-agent spend in the parent bucket and breakout', async () => {
+  const d = makeDirs();
+  const parent = '10101010-1010-1010-1010-101010101010';
+  const child = '20202020-2020-2020-2020-202020202020';
+  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${parent}.jsonl`), [
+    { type: 'session_meta', payload: { id: parent } },
+    { type: 'turn_context', payload: { model: 'gpt-5.5-codex' } },
+    { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 100 } } } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-01-00-${child}.jsonl`), [
+    { type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_path: '/root/inspect', agent_role: 'worker' } },
+    { type: 'turn_context', payload: { model: 'gpt-5.5-codex' } },
+    { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 500, output_tokens: 50 } } } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: {
+    cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+  } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const day = r.buckets.find((b) => b.key === '2026-07-11');
+  assert.equal(day.total.tokens.input, 1500);
+  assert.ok(r.totals.subAgentUsd > 0);
+  assert.equal(day.total.usd, day.total.estimatedUsd);
+});
+
 // mappings.json stores createdAt as epoch ms (every write is Date.now()/launchedAt),
 // not the ISO string the sibling test above happens to use — and Date.parse of a
 // number is NaN, which silently dropped every Codex session from the report.

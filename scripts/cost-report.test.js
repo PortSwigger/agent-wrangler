@@ -55,6 +55,34 @@ test('attributes Codex spend when createdAt is epoch ms, as mappings.json stores
   assert.equal(report.topSessions[0].estimated, true);
 });
 
+test('breaks native Codex sub-agent spend out while retaining it in the parent total', () => {
+  const dataDir = tmp('aw-cr-data-');
+  const homeDir = tmp('aw-cr-home-');
+  fs.mkdirSync(path.join(homeDir, '.claude', 'projects'), { recursive: true });
+  const sessionsDir = path.join(homeDir, '.codex', 'sessions');
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const parent = '99999999-9999-4999-8999-999999999999';
+  const child = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  fs.writeFileSync(path.join(sessionsDir, `rollout-2026-07-11T10-00-00-${parent}.jsonl`), [
+    { type: 'session_meta', payload: { id: parent } },
+    { payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 100 } } } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  fs.writeFileSync(path.join(sessionsDir, `rollout-2026-07-11T10-01-00-${child}.jsonl`), [
+    { type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_path: '/root/inspect', agent_role: 'worker' } },
+    { payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 500, output_tokens: 50 } } } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  fs.writeFileSync(path.join(dataDir, 'mappings.json'), JSON.stringify({ sessions: {
+    cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T09:59:00.000Z') },
+  } }));
+
+  const report = runReport('2026-07', { dataDir, homeDir });
+  assert.ok(report.totals.subAgentCostIncluded > 0);
+  assert.equal(report.topSessions[0].subAgentUsd, report.totals.subAgentCostIncluded);
+  assert.ok(report.topSessions[0].usd > report.topSessions[0].subAgentUsd);
+});
+
 test('skips a Codex session with no usable createdAt without crashing', () => {
   const dataDir = tmp('aw-cr-data-');
   const homeDir = tmp('aw-cr-home-');

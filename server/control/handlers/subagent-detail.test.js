@@ -48,3 +48,15 @@ test('passes a legacy toolCalls: null through unchanged', async () => {
   await subagentDetailHandler.handler({ sessionId: 'S', subagentId: 'L' }, ctx);
   assert.equal(replies[0].toolCalls, null);
 });
+
+test('uses the Codex rollout reader for a native Codex sub-agent', async () => {
+  const seen = [];
+  const ctx = {
+    reply: () => {},
+    sessionFromGraph: () => ({ agent: 'codex', liveSessionId: 'ROOT' }),
+    subagentDetail: async () => { throw new Error('Claude reader must not run'); },
+    codexSubagentDetail: async (sid, aid) => { seen.push([sid, aid]); return { prompt: 'p', toolCalls: [], result: 'r' }; },
+  };
+  await subagentDetailHandler.handler({ sessionId: 'CARD', subagentId: 'CHILD' }, ctx);
+  assert.deepEqual(seen, [['ROOT', 'CHILD']]);
+});

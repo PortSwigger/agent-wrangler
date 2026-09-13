@@ -286,6 +286,7 @@ for (const [cardId, entry] of Object.entries(entries)) {
     sessions.push({
       cardId, agent, label, task: taskNameFor(cardId),
       totals: {}, usd: a.usd,
+      subAgentUsd: a.subAgentUsd || 0,
       tokens: { ...tok, total: tok.input + tok.output + tok.cacheWrite + tok.cacheRead },
       estimated: true,
     });
