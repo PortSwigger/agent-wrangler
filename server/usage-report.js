@@ -680,6 +680,9 @@ export async function scanAllDaily({
   const entries = mappings.sessions || mappings;
   const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
   const assignments = tasks.assignments || {};
+  const codexSessionIds = new Set(Object.entries(entries)
+    .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
+    .map(([cardId, entry]) => entry.liveSessionId || cardId));
   const index = buildClaudeIndex(projectsDir);
   loadUsageFileCaches(dataDir);
 
@@ -731,6 +734,8 @@ export async function scanAllDaily({
       if (!Number.isFinite(created)) continue;
       const sessionKey = entry.liveSessionId || cardId;
       const rolloutIndex = await codexRolloutIndex();
+      const parentId = rolloutIndex.metaById?.get(sessionKey)?.parentId;
+      if (parentId && codexSessionIds.has(parentId)) continue;
       const rolloutFile = rolloutIndex.files.get(sessionKey) || null;
       if (rolloutFile) seenCodexFiles.add(rolloutFile);
       const a = rolloutFile

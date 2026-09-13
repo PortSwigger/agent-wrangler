@@ -75,12 +75,15 @@ test('breaks native Codex sub-agent spend out while retaining it in the parent t
   ].map((line) => JSON.stringify(line)).join('\n') + '\n');
   fs.writeFileSync(path.join(dataDir, 'mappings.json'), JSON.stringify({ sessions: {
     cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T09:59:00.000Z') },
+    adoptedChild: { agent: 'codex', liveSessionId: child, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T10:01:00.000Z') },
   } }));
 
   const report = runReport('2026-07', { dataDir, homeDir });
   assert.ok(report.totals.subAgentCostIncluded > 0);
   assert.equal(report.topSessions[0].subAgentUsd, report.totals.subAgentCostIncluded);
   assert.ok(report.topSessions[0].usd > report.topSessions[0].subAgentUsd);
+  assert.equal(report.topSessions.length, 1, 'an adopted child is already included in its parent rollup');
+  assert.equal(report.byModel[0].name, 'gpt-5.5-codex');
 });
 
 test('skips a Codex session with no usable createdAt without crashing', () => {

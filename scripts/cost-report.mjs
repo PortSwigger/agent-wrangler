@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { costUsd, costUsdByType } from '../server/pricing.js';
+import { costUsd, costUsdByType, codexCostUsd } from '../server/pricing.js';
 
 const HOME = os.homedir();
 const DATA_DIR = process.env.AW_DATA_DIR || path.join(HOME, '.agent-wrangler');
@@ -48,6 +48,9 @@ const tasks = readJson(path.join(DATA_DIR, 'tasks.json'), {});
 const entries = mappings.sessions || mappings;
 const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
 const assignments = tasks.assignments || {};
+const codexSessionIds = new Set(Object.entries(entries)
+  .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
+  .map(([cardId, entry]) => entry.liveSessionId || cardId));
 function taskNameFor(cardId) {
   const tid = assignments[cardId];
   if (!tid || tid === 'adhoc') return '(unassigned)';
@@ -250,7 +253,9 @@ function tokensOf(totals) {
 
 // ---- collect per-session ------------------------------------------------
 let analyzeCodex = null;
-try { ({ analyzeCodex } = await import('../server/agents/codex-rollout.js')); } catch { /* codex optional */ }
+let buildRolloutFamilyIndex = null;
+try { ({ analyzeCodex, buildRolloutFamilyIndex } = await import('../server/agents/codex-rollout.js')); } catch { /* codex optional */ }
+const codexIndex = buildRolloutFamilyIndex ? await buildRolloutFamilyIndex() : null;
 
 const sessions = [];
 let unresolved = 0;
@@ -280,12 +285,15 @@ for (const [cardId, entry] of Object.entries(entries)) {
     // silently drop every Codex session. new Date() takes both that and an ISO string.
     const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
     if (!Number.isFinite(created) || created < monthStart || created >= monthEnd) continue;
-    const a = await analyzeCodex(entry.liveSessionId || cardId).catch(() => null);
+    const sessionKey = entry.liveSessionId || cardId;
+    const parentId = codexIndex?.metaById.get(sessionKey)?.parentId;
+    if (parentId && codexSessionIds.has(parentId)) continue;
+    const a = await analyzeCodex(sessionKey, { index: codexIndex }).catch(() => null);
     if (!a || a.usd == null) { unresolved++; continue; }
     const tok = a.tokens || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
     sessions.push({
       cardId, agent, label, task: taskNameFor(cardId),
-      totals: {}, usd: a.usd,
+      totals: a.totals || {}, usd: a.usd,
       subAgentUsd: a.subAgentUsd || 0,
       tokens: { ...tok, total: tok.input + tok.output + tok.cacheWrite + tok.cacheRead },
       estimated: true,
@@ -344,11 +352,11 @@ for (const s of sessions) {
     const agg = byModel.get(model);
     // Cost/tokens per model from this session's per-model split when available.
     if (s.totals[model]) {
-      agg.cost += costUsd({ [model]: s.totals[model] });
+      agg.cost += s.agent === 'codex' ? codexCostUsd({ [model]: s.totals[model] }) : costUsd({ [model]: s.totals[model] });
       const t = s.totals[model];
       agg.tokens.input += t.input; agg.tokens.output += t.output;
-      agg.tokens.cacheWrite += t.cacheWrite5m + t.cacheWrite1h; agg.tokens.cacheRead += t.cacheRead;
-      agg.tokens.total += t.input + t.output + t.cacheWrite5m + t.cacheWrite1h + t.cacheRead;
+      agg.tokens.cacheWrite += (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0); agg.tokens.cacheRead += t.cacheRead || 0;
+      agg.tokens.total += t.input + t.output + (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0) + (t.cacheRead || 0);
     } else {
       agg.cost += s.usd;
       for (const k of ['input', 'output', 'cacheWrite', 'cacheRead', 'total']) agg.tokens[k] += s.tokens[k];

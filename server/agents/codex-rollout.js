@@ -143,7 +143,7 @@ export async function buildRolloutFamilyIndex(sessionsDir = CODEX_SESSIONS) {
 }
 
 const familyIndexCache = new Map();
-const FAMILY_INDEX_TTL_MS = 1000;
+const FAMILY_INDEX_TTL_MS = 5000;
 
 async function cachedFamilyIndex(sessionsDir) {
   const cached = familyIndexCache.get(sessionsDir);
@@ -165,6 +165,20 @@ function descendantsOf(sessionId, childrenByParent) {
     pending.push(...(childrenByParent.get(id) || []));
   }
   return out;
+}
+
+function familySignature(sessionId, family) {
+  return [sessionId, ...descendantsOf(sessionId, family.childrenByParent || new Map())]
+    .sort()
+    .map((id) => {
+      try {
+        const stat = fs.statSync(family.files.get(id));
+        return id + ':' + stat.size + ':' + stat.mtimeMs;
+      } catch {
+        return id + ':?';
+      }
+    })
+    .join(',');
 }
 
 // Every build of the Codex CLI up to ~2026-08-19 wrote EventMsg-shaped
@@ -257,7 +271,11 @@ function scanLine(line, state) {
   }
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
-  if (kind === 'task_started' && state.startedAt == null && typeof entry.timestamp === 'string') state.startedAt = Date.parse(entry.timestamp) || null;
+  if (kind === 'task_started' && typeof entry.timestamp === 'string') {
+    const timestamp = Date.parse(entry.timestamp) || null;
+    if (state.startedAt == null) state.startedAt = timestamp;
+    state.lastTaskStartedAt = timestamp;
+  }
   if (kind === 'task_complete' && typeof entry.timestamp === 'string') state.endedAt = Date.parse(entry.timestamp) || null;
   if (!state.summary) {
     if (kind === 'user_message') {
@@ -301,7 +319,7 @@ function tokensFor(totals) {
 }
 
 async function analyzeRollout(file, meta = null) {
-  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null };
+  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -323,13 +341,15 @@ async function analyzeRollout(file, meta = null) {
     summary: state.summary,
     lastActivity,
     startedAt: state.startedAt,
-    endedAt: state.endedAt,
+    endedAt: state.endedAt && state.endedAt >= state.lastTaskStartedAt ? state.endedAt : null,
   };
 }
 
-export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
-  const family = index?.files ? index : await cachedFamilyIndex(sessionsDir);
-  const files = family.files || index;
+async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
+  const family = index?.files ? index : index
+    ? { files: index, metaById: new Map(), childrenByParent: new Map() }
+    : await cachedFamilyIndex(sessionsDir);
+  const files = family.files;
   const file = files?.get(sessionId) || null;
   if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
   const own = await analyzeRollout(file, family.metaById?.get(sessionId));
@@ -369,10 +389,32 @@ export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, in
   };
 }
 
+const analysisCache = new Map();
+
+export async function analyzeCodex(sessionId, opts = {}) {
+  if (opts.index) return analyzeCodexUncached(sessionId, opts);
+  const sessionsDir = opts.sessionsDir || CODEX_SESSIONS;
+  const family = await cachedFamilyIndex(sessionsDir);
+  const signature = familySignature(sessionId, family);
+  const key = sessionsDir + '\0' + sessionId;
+  const cached = analysisCache.get(key);
+  if (cached?.signature === signature) return cached.result;
+  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, index: family });
+  if (result.usd != null) analysisCache.set(key, { signature, result });
+  return result;
+}
+
 function detailToolInput(p) {
   if (p.type === 'custom_tool_call') return p.input && typeof p.input === 'object' ? p.input : { input: p.input };
   if (typeof p.arguments !== 'string') return p.arguments || {};
   try { return JSON.parse(p.arguments); } catch { return { input: p.arguments }; }
+}
+
+function agentMessageTaskName(p) {
+  if (p.type !== 'agent_message') return null;
+  const text = codexMessageText(p.content);
+  const match = text.match(/^Task name:\s*(.+)$/m);
+  return match ? match[1].trim().split('/').filter(Boolean).at(-1) || null : null;
 }
 
 function detailToolTarget(input) {
@@ -403,6 +445,8 @@ export async function codexSubagentDetail(sessionId, subagentId, { sessionsDir =
       const message = codexMessageText(p.content);
       if (p.role === 'user' && prompt == null && message && !isSyntheticCodexMessage(message)) prompt = message;
       if (p.role === 'assistant' && message) result = message;
+    } else if (p.type === 'agent_message' && prompt == null) {
+      prompt = agentMessageTaskName(p);
     } else if (p.type === 'function_call' || p.type === 'tool_search_call' || p.type === 'custom_tool_call') {
       const input = detailToolInput(p);
       toolCalls.push({ name: p.name || p.type, target: detailToolTarget(input) });
@@ -506,10 +550,11 @@ function headMetaCodex(file) {
 export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
   const { windowDays = 7, now = Date.now(), sessionsDir = CODEX_SESSIONS } = opts;
   const cutoff = now - windowDays * 86_400_000;
+  const family = await cachedFamilyIndex(sessionsDir);
   const candidates = [];
   for (const r of await allRollouts(sessionsDir)) {
     const sessionId = uuidFromName(r.name);
-    if (!sessionId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
+    if (!sessionId || family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
     const { cwd, summary } = headMetaCodex(r.full);
     candidates.push({ sessionId, cwd, summary, lastActivity: Math.round(r.mtimeMs), agent: 'codex' });
   }
