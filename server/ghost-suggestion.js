@@ -24,6 +24,8 @@ const ESC = '\x1b';
 // The composer's prompt marker (U+276F). Everything before it on the line is
 // frame; the suggestion, when there is one, follows it.
 const PROMPT_MARK = '❯';
+const CODEX_PROMPT_MARK = `${ESC}[1m›${ESC}[0m`;
+const CODEX_EMPTY_COMPOSER = `${CODEX_PROMPT_MARK} ${ESC}[2mAsk Codex to do anything${ESC}[0m`;
 
 // Ghost text is drawn with SGR 2 (faint) and closed by a reset. Matched exactly
 // rather than by "any sequence containing a 2" — SGR 2 is what the TUI emits,
@@ -58,22 +60,24 @@ const visible = (s) => s.replace(ANSI, '').trim();
 // into a pane whose state we could not read is exactly what must not happen —
 // the paste lands at the cursor, so a draft already there would turn
 // "/model sonnet" into a mangled prompt the Enter then submits.
-export function paneComposerIsEmpty(paneText) {
+export function paneComposerIsEmpty(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
-  const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
-  if (line) {
-    const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
-    // Drop faint runs before judging: ghost text occupies the composer visually
-    // but is not content — pressing Enter on it does submit it, but it is not
-    // something the human typed, and it is replaced wholesale by a paste.
-    const withoutGhost = after.split(DIM_OPEN).map((part, i) => {
-      if (i === 0) return part;
-      const close = part.search(DIM_CLOSE);
-      return close === -1 ? '' : part.slice(close);
-    }).join('');
-    return !visible(withoutGhost);
+  if (agent === 'codex') {
+    const line = paneText.split('\n').filter((candidate) => candidate.includes(CODEX_PROMPT_MARK)).pop();
+    return line === CODEX_EMPTY_COMPOSER;
   }
-  return paneText.split('\n').some((candidate) => candidate === `${ESC}[1m›${ESC}[0m ${ESC}[2mAsk Codex to do anything${ESC}[0m`);
+  const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
+  if (!line) return false;
+  const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
+  // Drop faint runs before judging: ghost text occupies the composer visually
+  // but is not content — pressing Enter on it does submit it, but it is not
+  // something the human typed, and it is replaced wholesale by a paste.
+  const withoutGhost = after.split(DIM_OPEN).map((part, i) => {
+    if (i === 0) return part;
+    const close = part.search(DIM_CLOSE);
+    return close === -1 ? '' : part.slice(close);
+  }).join('');
+  return !visible(withoutGhost);
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.

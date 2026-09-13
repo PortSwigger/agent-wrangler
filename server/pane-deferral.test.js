@@ -8,7 +8,7 @@ const E = '\x1b';
 const composer = (body = '') => `${E}[39m❯ ${body}`;
 const codexComposer = () => `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
 
-function deps({ live = { c1: { tmux: 'cc_one', socket: '' } }, pane = composer(), captureThrows = false, sendThrows = false } = {}) {
+function deps({ live = { c1: { tmux: 'cc_one', socket: '' } }, pane = composer(), agent = 'claude', captureThrows = false, sendThrows = false } = {}) {
   const sent = [];
   const captures = [];
   // A function lets a test change what the pane shows between calls.
@@ -18,6 +18,7 @@ function deps({ live = { c1: { tmux: 'cc_one', socket: '' } }, pane = composer()
     captures,
     tmuxFor: (id) => live[id]?.tmux ?? null,
     socketFor: (id) => live[id]?.socket ?? '',
+    agentFor: () => agent,
     capture: async (name, lines, socket) => {
       captures.push({ name, lines, socket });
       if (captureThrows) throw new Error('pane gone');
@@ -41,13 +42,24 @@ test('a confirmed-empty composer takes the paste immediately and queues nothing'
 });
 
 test('an empty Codex composer takes the notification immediately', async () => {
-  const d = deps({ pane: codexComposer() });
+  const d = deps({ pane: codexComposer(), agent: 'codex' });
   const pd = createPaneDeferral(d);
 
   assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'You have mail' }), 'sent');
 
   assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'You have mail', socket: '' }]);
   assert.deepEqual(pd.pending('c1'), []);
+});
+
+test('a Codex draft stays protected when output contains a Claude prompt mark', async () => {
+  const strayClaudeMark = `${E}[0m    ${E}[2m───── ❯ ${E}[0m`;
+  const codexDraft = `${E}[1m›${E}[0m explain this failure`;
+  const d = deps({ pane: [strayClaudeMark, codexDraft].join('\n'), agent: 'codex' });
+  const pd = createPaneDeferral(d);
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'You have mail' }), 'deferred');
+  assert.deepEqual(d.sent, []);
+  assert.deepEqual(pd.pending('c1'), ['You have mail']);
 });
 
 test('a composer holding a human draft defers the paste instead of fusing with it', async () => {

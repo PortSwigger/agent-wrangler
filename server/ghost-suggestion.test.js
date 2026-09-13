@@ -102,17 +102,23 @@ test('typed text means not empty', () => {
 });
 
 test('the styled Codex placeholder confirms an empty Codex composer', () => {
-  assert.equal(paneComposerIsEmpty(codexPlaceholder), true);
+  assert.equal(paneComposerIsEmpty(codexPlaceholder, 'codex'), true);
 });
 
 test('a placeholder-looking output line never masks a Codex draft', () => {
   const echoedPlaceholder = `${E}[39m› Ask Codex to do anything${E}[0m`;
   const draft = `${E}[1m›${E}[0m explain this failure`;
-  assert.equal(paneComposerIsEmpty([echoedPlaceholder, draft].join('\n')), false);
+  assert.equal(paneComposerIsEmpty([echoedPlaceholder, draft].join('\n'), 'codex'), false);
 });
 
 test('a placeholder without Codex composer styling is not trusted', () => {
-  assert.equal(paneComposerIsEmpty(`${E}[39m› Ask Codex to do anything${E}[0m`), false);
+  assert.equal(paneComposerIsEmpty(`${E}[39m› Ask Codex to do anything${E}[0m`, 'codex'), false);
+});
+
+test('a stray Claude prompt mark never masks a Codex draft', () => {
+  const strayClaudeMark = `${E}[0m    ${E}[2m───── ❯ ${E}[0m`;
+  const draft = `${E}[1m›${E}[0m explain this failure`;
+  assert.equal(paneComposerIsEmpty([strayClaudeMark, draft].join('\n'), 'codex'), false);
 });
 
 // Fail-safe: anything unreadable must answer "not empty" so no paste happens.
