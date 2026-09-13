@@ -218,3 +218,44 @@ test('a live session whose composer holds a draft has its nudge held, not pasted
   assert.deepEqual(d.sent, [], 'and not smuggled past the gate by a direct paste either');
   assert.deepEqual(pd.pending('c1'), ['nudge'], 'held for the next drain');
 });
+
+// Same wiring guarantee, for a live Codex owner. paneComposerIsEmpty's PROMPT_MARK
+// is Claude's `❯` — a Codex pane never contains it, so composerIsClear was always
+// false and a GitHub PR nudge to a live Codex session sat in the deferred queue
+// forever (until the in-memory queue was dropped on the next restart). Fixed by
+// making createPaneDeferral agent-aware (agentFor); this proves the fix at the
+// same boundary deliverPrNudge itself is wired through, not just in
+// pane-deferral.test.js's generic gate coverage.
+test('a live Codex owner with a confirmed-empty composer receives the PR nudge', async () => {
+  const sent = [];
+  const d = deps({ message: 'PR #7 failing', live: { c1: { tmux: 'cx_one', socket: '' } } });
+  const pd = createPaneDeferral({
+    tmuxFor: d.tmuxFor,
+    socketFor: d.socketFor,
+    agentFor: () => 'codex',
+    capture: async () => `${'\x1b'}[1m›${'\x1b'}[0m ${'\x1b'}[2mAsk Codex to do anything${'\x1b'}[0m`,
+    sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+  });
+  d.paneDeferral = pd;
+
+  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1', agent: 'codex' }, d), 'live');
+  assert.deepEqual(sent, [{ name: 'cx_one', text: 'PR #7 failing', socket: '' }], 'delivered immediately, not deferred forever');
+  assert.deepEqual(pd.pending('c1'), []);
+});
+
+test('a live Codex owner mid-prompt has its PR nudge held, not pasted into the draft', async () => {
+  const sent = [];
+  const d = deps({ message: 'PR #7 failing', live: { c1: { tmux: 'cx_one', socket: '' } } });
+  const pd = createPaneDeferral({
+    tmuxFor: d.tmuxFor,
+    socketFor: d.socketFor,
+    agentFor: () => 'codex',
+    capture: async () => `${'\x1b'}[1m›${'\x1b'}[0m explain this failure`,
+    sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
+  });
+  d.paneDeferral = pd;
+
+  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1', agent: 'codex' }, d), 'live');
+  assert.deepEqual(sent, [], 'nothing pasted on top of the Codex draft');
+  assert.deepEqual(pd.pending('c1'), ['PR #7 failing'], 'held for the next drain');
+});
