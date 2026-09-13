@@ -6,6 +6,7 @@ const E = '\x1b';
 // The composer as capturePaneStyled renders it: an SGR-prefixed `❯` line whose
 // tail is whatever the human has typed. Empty tail ⇒ paneComposerIsEmpty true.
 const composer = (body = '') => `${E}[39m❯ ${body}`;
+const codexComposer = () => `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
 
 function deps({ live = { c1: { tmux: 'cc_one', socket: '' } }, pane = composer(), captureThrows = false, sendThrows = false } = {}) {
   const sent = [];
@@ -36,6 +37,16 @@ test('a confirmed-empty composer takes the paste immediately and queues nothing'
   assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 merged' }), 'sent');
 
   assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'PR #1 merged', socket: '' }]);
+  assert.deepEqual(pd.pending('c1'), []);
+});
+
+test('an empty Codex composer takes the notification immediately', async () => {
+  const d = deps({ pane: codexComposer() });
+  const pd = createPaneDeferral(d);
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'You have mail' }), 'sent');
+
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'You have mail', socket: '' }]);
   assert.deepEqual(pd.pending('c1'), []);
 });
 

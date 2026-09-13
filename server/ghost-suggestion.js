@@ -61,17 +61,19 @@ const visible = (s) => s.replace(ANSI, '').trim();
 export function paneComposerIsEmpty(paneText) {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
-  if (!line) return false;
-  const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
-  // Drop faint runs before judging: ghost text occupies the composer visually
-  // but is not content — pressing Enter on it does submit it, but it is not
-  // something the human typed, and it is replaced wholesale by a paste.
-  const withoutGhost = after.split(DIM_OPEN).map((part, i) => {
-    if (i === 0) return part;
-    const close = part.search(DIM_CLOSE);
-    return close === -1 ? '' : part.slice(close);
-  }).join('');
-  return !visible(withoutGhost);
+  if (line) {
+    const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
+    // Drop faint runs before judging: ghost text occupies the composer visually
+    // but is not content — pressing Enter on it does submit it, but it is not
+    // something the human typed, and it is replaced wholesale by a paste.
+    const withoutGhost = after.split(DIM_OPEN).map((part, i) => {
+      if (i === 0) return part;
+      const close = part.search(DIM_CLOSE);
+      return close === -1 ? '' : part.slice(close);
+    }).join('');
+    return !visible(withoutGhost);
+  }
+  return paneText.split('\n').some((candidate) => candidate === `${ESC}[1m›${ESC}[0m ${ESC}[2mAsk Codex to do anything${ESC}[0m`);
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.
