@@ -153,7 +153,7 @@ async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
   const sent = [];
   const opened = [];
   const view = initChatView({
-    send: (m) => { sent.push(m); onSend?.(m); },
+    send: (m) => { sent.push(m); return onSend?.(m) ?? true; },
     onSubagentClick() {},
     onOpenDiff() {},
     onGoTerminal: (id) => onGoTerminal?.(id),
@@ -317,6 +317,8 @@ test('the clear is consumed by one send, not carried into the next', async () =>
   view.setStatus('idle');
   input.value = 'first';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
+  const first = sent.filter((m) => m.type === 'message').pop();
+  view.onMessageResult({ requestId: first.requestId, sessionId: 'sess-1', ok: true });
   input.value = 'second';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
   const messages = sent.filter((m) => m.type === 'message');
@@ -370,12 +372,112 @@ test('an empty composer sends nothing', async () => {
   assert.equal(sent.some((m) => m.type === 'message'), false);
 });
 
-test('sending clears the composer so the same prompt cannot go twice', async () => {
-  const { view, input } = await mountView();
+test('sending retains the composer until its matching delivery acknowledgement', async () => {
+  const { view, input, sent } = await mountView();
   view.mount('sess-1');
   view.setStatus('idle');
   input.value = 'once';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
+  const message = sent.find((m) => m.type === 'message');
+  assert.equal(input.value, 'once');
+  assert.equal(input.disabled, true);
+  view.onMessageResult({ requestId: 'other', sessionId: 'sess-1', ok: true });
+  assert.equal(input.value, 'once');
+  view.onMessageResult({ requestId: message.requestId, sessionId: 'sess-1', ok: true });
+  assert.equal(input.value, '');
+  assert.equal(input.disabled, false);
+});
+
+test('a rejected delivery retains and re-enables the composer', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'do not lose this';
+  send(input);
+  const message = sent.find((m) => m.type === 'message');
+  view.onMessageResult({ requestId: message.requestId, sessionId: 'sess-1', ok: false, error: 'pane unavailable' });
+  assert.equal(input.value, 'do not lose this');
+  assert.equal(input.disabled, false);
+  assert.match(byId.get('chat-hint').textContent, /Not sent: pane unavailable/);
+});
+
+test('a dropped websocket message leaves the composer editable', async () => {
+  const { view, input, sent, byId } = await mountView({ onSend: () => false });
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'keep me';
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 1);
+  assert.equal(input.value, 'keep me');
+  assert.equal(input.disabled, false);
+  assert.match(byId.get('chat-hint').textContent, /Not sent: connection unavailable/);
+});
+
+test('a connection close releases an unacknowledged delivery and retains its draft', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'keep me after reconnect';
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 1);
+  view.onConnectionClosed();
+  assert.equal(input.disabled, false);
+  assert.equal(input.value, 'keep me after reconnect');
+  assert.match(byId.get('chat-hint').textContent, /Delivery status unknown/);
+});
+
+test('an unknown delivery does not clear a terminal draft on a later send', async () => {
+  const { view, input, sent } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'first';
+  send(input);
+  view.onConnectionClosed();
+  input.value = 'later prompt';
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, undefined);
+});
+
+test('a failed Esc-then-edit send keeps the pane-clear flag for its retry', async () => {
+  let accepted = false;
+  const { view, input, sent } = await mountView({ onSend: (m) => m.type === 'message' ? accepted : true });
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
+  view.setStatus('idle');
+  input.value = 'edited';
+  send(input);
+  accepted = true;
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, true);
+});
+
+test('a second Enter while delivery is pending sends only one frame', async () => {
+  const { view, input, sent } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'once only';
+  send(input);
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 1);
+});
+
+test('pending delivery in one session does not block another session', async () => {
+  const { view, input, sent } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'first';
+  send(input);
+  const first = sent.find((m) => m.type === 'message');
+  view.mount('sess-2');
+  view.setStatus('idle');
+  input.value = 'second';
+  send(input);
+  const second = sent.filter((m) => m.type === 'message').at(-1);
+  assert.notEqual(second.requestId, first.requestId);
+  view.onMessageResult({ requestId: first.requestId, sessionId: 'sess-1', ok: true });
+  assert.equal(input.value, 'second');
+  view.onMessageResult({ requestId: second.requestId, sessionId: 'sess-2', ok: true });
   assert.equal(input.value, '');
 });
 
@@ -480,6 +582,8 @@ test('sending brings the next polls forward instead of waiting for the tick', as
   const before = sent.filter((m) => m.type === 'chat').length;
   input.value = 'hello';
   send(input);
+  const message = sent.find((m) => m.type === 'message');
+  view.onMessageResult({ requestId: message.requestId, sessionId: 's1', ok: true });
   assert.deepEqual(timers.filter((t) => !t.cancelled).map((t) => t.ms), SEND_BURST_MS);
   runTimers();
   assert.equal(sent.filter((m) => m.type === 'chat').length - before, SEND_BURST_MS.length);

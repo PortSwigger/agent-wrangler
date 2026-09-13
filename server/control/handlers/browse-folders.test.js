@@ -69,3 +69,49 @@ test('browse-folders: a trailing slash on an existing folder still reads as exis
   const root = tempTree();
   assert.equal((await call(`${root}/beta/`)).exists, true);
 });
+
+test('browse-folders: a missing folder under a writable parent is creatable', async () => {
+  const root = tempTree();
+  const r = await call(`${root}/brand-new`);
+  assert.equal(r.exists, false);
+  assert.equal(r.creatable, true);
+});
+
+test('browse-folders: several missing levels are creatable — dispatch mkdirs recursively', async () => {
+  const root = tempTree();
+  assert.equal((await call(`${root}/one/two/three`)).creatable, true);
+});
+
+test('browse-folders: a file at the typed path is not creatable', async () => {
+  const root = tempTree();
+  const r = await call(`${root}/alfafile`);
+  assert.equal(r.exists, false);
+  assert.equal(r.creatable, false);
+});
+
+test('browse-folders: a file part-way along the path is not creatable', async () => {
+  const root = tempTree();
+  assert.equal((await call(`${root}/alfafile/sub/dir`)).creatable, false);
+});
+
+test('browse-folders: an unwritable nearest-existing ancestor is not creatable', async () => {
+  const root = tempTree();
+  const locked = path.join(root, 'locked');
+  fs.mkdirSync(locked);
+  fs.chmodSync(locked, 0o500);
+  try {
+    assert.equal((await call(`${locked}/child`)).creatable, false);
+  } finally {
+    fs.chmodSync(locked, 0o700);
+  }
+});
+
+test('browse-folders: creatable has no opinion when the folder already exists or the field is blank', async () => {
+  const root = tempTree();
+  assert.equal((await call(`${root}/beta`)).creatable, null);
+  assert.equal((await call('')).creatable, null);
+});
+
+test('browse-folders: a relative path is never creatable', async () => {
+  assert.equal((await call('server')).creatable, false);
+});

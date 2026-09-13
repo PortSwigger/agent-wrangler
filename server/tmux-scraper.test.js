@@ -329,21 +329,44 @@ test('findAgentPid: null for a non-agent tree', () => {
   assert.equal(findAgentPid(300, tree), null);
 });
 
-test('sendText shares the paste block but DOES submit with a trailing Enter', async () => {
+test('sendText waits for the paste to settle before its trailing Enter', async () => {
   const cmds = [];
-  await sendText('cc_y', 'hello\nworld', 'sockB', (socket, args) => { cmds.push(args); return Promise.resolve(); });
+  const waits = [];
+  await sendText(
+    'cc_y',
+    'hello\nworld',
+    'sockB',
+    (socket, args) => { cmds.push(args); return Promise.resolve(); },
+    { wait: async (ms) => { waits.push(ms); } },
+  );
   const verbs = cmds.map((a) => a[0]);
   assert.deepEqual(verbs, ['load-buffer', 'paste-buffer', 'delete-buffer', 'send-keys']);
   // Bracketed, so the embedded newline stays a newline in ONE message rather than
-  // submitting the first line and queueing the second as its own prompt. This is the
-  // path the chat composer's Shift+Enter multi-line prompt takes, so the flag matters
-  // here as much as it does for the no-Enter prefill above.
+  // submitting the first line and queueing the second as its own prompt.
   const paste = cmds.find((a) => a[0] === 'paste-buffer');
   assert.deepEqual(paste, ['paste-buffer', '-p', '-b', paste[3], '-t', 'cc_y']);
   // The final send-keys is the submit — and it is the ONLY Enter, so a two-line message
   // is one turn, not two.
   assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
   assert.equal(cmds.filter((a) => a.includes('Enter')).length, 1);
+  assert.deepEqual(waits, [120]);
+});
+
+test('sendText does not press Enter until the settle wait completes', async () => {
+  const cmds = [];
+  let release;
+  const delivery = sendText(
+    'cc_y',
+    'hello',
+    'sockB',
+    (socket, args) => { cmds.push(args); return Promise.resolve(); },
+    { wait: () => new Promise((resolve) => { release = resolve; }) },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(cmds.some((args) => args.includes('Enter')), false);
+  release();
+  await delivery;
+  assert.deepEqual(cmds.at(-1), ['send-keys', '-t', 'cc_y', 'Enter']);
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {
