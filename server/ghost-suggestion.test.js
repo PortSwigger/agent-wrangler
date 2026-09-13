@@ -121,6 +121,11 @@ test('a stray Claude prompt mark never masks a Codex draft', () => {
   assert.equal(paneComposerIsEmpty([strayClaudeMark, draft].join('\n'), 'codex'), false);
 });
 
+test('a working Codex pane is not safe to notify yet', () => {
+  const working = `${E}[1m•${E}[0m Working ${E}[2m(12s · esc to interrupt)${E}[0m`;
+  assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
+});
+
 // Fail-safe: anything unreadable must answer "not empty" so no paste happens.
 test('an unreadable capture is never reported as empty', () => {
   assert.equal(paneComposerIsEmpty('❯ '), false, 'no escapes: cannot judge');

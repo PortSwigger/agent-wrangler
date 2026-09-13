@@ -63,6 +63,7 @@ const visible = (s) => s.replace(ANSI, '').trim();
 export function paneComposerIsEmpty(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   if (agent === 'codex') {
+    if (/esc to interrupt/i.test(paneText.replace(ANSI, ''))) return false;
     const line = paneText.split('\n').filter((candidate) => candidate.includes(CODEX_PROMPT_MARK)).pop();
     return line === CODEX_EMPTY_COMPOSER;
   }
