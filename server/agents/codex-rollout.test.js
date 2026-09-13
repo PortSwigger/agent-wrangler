@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
+import { analyzeCodex, codexSubagentDetail, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
 
 function fixtureSessions() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
@@ -34,6 +34,88 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.ok(r.usd > 0);
   assert.equal(r.summary, 'Fix the parser bug');
   assert.deepEqual(r.subAgents, []);
+});
+
+test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, [
+    { timestamp: '2026-06-10T09:05:00.000Z', type: 'session_meta', payload: {
+      id: child, parent_thread_id: uuid, thread_source: 'subagent', agent_path: '/root/investigate_parser', agent_role: 'worker',
+    } },
+    { type: 'turn_context', payload: { model: 'gpt-5.5' } },
+    { timestamp: '2026-06-10T09:06:00.000Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 400, cached_input_tokens: 100, output_tokens: 50 } } } },
+    { timestamp: '2026-06-10T09:07:00.000Z', type: 'event_msg', payload: { type: 'task_complete' } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+
+  const parent = await analyzeCodex(uuid, { sessionsDir: root });
+  const own = await analyzeCodex(child, { sessionsDir: root });
+
+  assert.equal(parent.tokens.input, 1600);
+  assert.equal(parent.tokens.cacheRead, 300);
+  assert.equal(parent.tokens.output, 350);
+  assert.equal(parent.subAgentUsd, own.usd);
+  assert.ok(parent.usd > own.usd);
+  assert.deepEqual(parent.subAgents, [{
+    id: child,
+    agentType: 'worker',
+    label: 'investigate_parser',
+    kind: 'background',
+    status: 'completed',
+    startedAt: Date.parse('2026-06-10T09:05:00.000Z'),
+    endedAt: Date.parse('2026-06-10T09:07:00.000Z'),
+    usd: own.usd,
+  }]);
+});
+
+test('codexSubagentDetail reads prompt, tool calls, and result from a child rollout', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '12121212-3434-5656-7878-909090909090';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, [
+    { type: 'session_meta', payload: { id: child, parent_thread_id: uuid, thread_source: 'subagent' } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Inspect the parser' }] } },
+    { type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ command: 'npm test' }) } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The parser is sound.' }] } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+
+  assert.deepEqual(await codexSubagentDetail(uuid, child, { sessionsDir: root }), {
+    prompt: 'Inspect the parser',
+    toolCalls: [{ name: 'exec_command', target: 'npm test' }],
+    result: 'The parser is sound.',
+  });
+});
+
+test('codexSubagentDetail uses the native agent_message task path when its payload is encrypted', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '21212121-3434-5656-7878-909090909090';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, [
+    { type: 'session_meta', payload: { id: child, parent_thread_id: uuid, thread_source: 'subagent' } },
+    { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are an agent in a team.' }] } },
+    { type: 'response_item', payload: { type: 'agent_message', author: '/root', recipient: '/root/investigate_parser', content: [{ type: 'input_text', text: 'Message Type: NEW_TASK\nTask name: /root/investigate_parser\nSender: /root\nPayload:\n' }, { type: 'encrypted_content', text: '' }] } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+
+  assert.deepEqual(await codexSubagentDetail(uuid, child, { sessionsDir: root }), {
+    prompt: 'investigate_parser', toolCalls: [], result: null,
+  });
+});
+
+test('analyzeCodex keeps a multi-turn sub-agent running after a later task start', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '31313131-3434-5656-7878-909090909090';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, [
+    { timestamp: '2026-06-10T09:05:00.000Z', type: 'session_meta', payload: { id: child, parent_thread_id: uuid, thread_source: 'subagent' } },
+    { timestamp: '2026-06-10T09:06:00.000Z', type: 'event_msg', payload: { type: 'task_started' } },
+    { timestamp: '2026-06-10T09:07:00.000Z', type: 'event_msg', payload: { type: 'task_complete' } },
+    { timestamp: '2026-06-10T09:08:00.000Z', type: 'event_msg', payload: { type: 'task_started' } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+
+  const { subAgents } = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(subAgents[0].status, 'running');
+  assert.equal(subAgents[0].endedAt, null);
 });
 
 // The Codex CLI stopped writing EventMsg-shaped `user_message`/`agent_message`
@@ -126,6 +208,17 @@ test('listResumableCodex excludes ids already shown', async () => {
   const { root, uuid } = fixtureSessions();
   const { total } = await listResumableCodex(new Set([uuid]), { sessionsDir: root, now: Date.parse('2026-06-10T10:00:00Z') });
   assert.equal(total, 0);
+});
+
+test('listResumableCodex excludes native sub-agent rollouts', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '41414141-3434-5656-7878-909090909090';
+  fs.writeFileSync(path.join(root, '2026', '06', '10', 'rollout-2026-06-10T09-05-00-' + child + '.jsonl'), [
+    { type: 'session_meta', payload: { id: child, parent_thread_id: uuid, thread_source: 'subagent' } },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+
+  const { candidates } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-06-10T10:00:00Z') });
+  assert.deepEqual(candidates.map((candidate) => candidate.sessionId), [uuid]);
 });
 
 function fixtureTimestamped(lines) {

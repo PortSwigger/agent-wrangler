@@ -90,6 +90,97 @@ export async function buildRolloutIndex(sessionsDir = CODEX_SESSIONS) {
   return byUuid;
 }
 
+async function rolloutMeta(file, id) {
+  let stream;
+  try {
+    stream = fs.createReadStream(file, { encoding: 'utf8' });
+    let buf = '';
+    for await (const chunk of stream) {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        const p = entry.payload;
+        if (entry.type !== 'session_meta' || !p || typeof p !== 'object') continue;
+        return {
+          id: p.id || id,
+          parentId: p.thread_source === 'subagent' ? p.parent_thread_id || null : null,
+          agentPath: p.agent_path || null,
+          agentRole: p.agent_role || null,
+          startedAt: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) || null : null,
+        };
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    stream?.destroy();
+  }
+  return null;
+}
+
+// The normal rollout index answers "where is this one conversation?". Codex
+// sub-agents are separate conversations, so this companion index also records
+// their parent thread relationship from each rollout's session metadata.
+export async function buildRolloutFamilyIndex(sessionsDir = CODEX_SESSIONS) {
+  const files = await buildRolloutIndex(sessionsDir);
+  const metaById = new Map();
+  const childrenByParent = new Map();
+  for (const [id, file] of files) {
+    const meta = await rolloutMeta(file, id);
+    if (!meta) continue;
+    metaById.set(id, meta);
+    if (meta.parentId) {
+      const children = childrenByParent.get(meta.parentId) || [];
+      children.push(id);
+      childrenByParent.set(meta.parentId, children);
+    }
+  }
+  return { files, metaById, childrenByParent };
+}
+
+const familyIndexCache = new Map();
+const FAMILY_INDEX_TTL_MS = 5000;
+
+async function cachedFamilyIndex(sessionsDir) {
+  const cached = familyIndexCache.get(sessionsDir);
+  if (cached && Date.now() - cached.at < FAMILY_INDEX_TTL_MS) return cached.index;
+  const index = await buildRolloutFamilyIndex(sessionsDir);
+  familyIndexCache.set(sessionsDir, { at: Date.now(), index });
+  return index;
+}
+
+function descendantsOf(sessionId, childrenByParent) {
+  const out = [];
+  const seen = new Set([sessionId]);
+  const pending = [...(childrenByParent.get(sessionId) || [])];
+  while (pending.length) {
+    const id = pending.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    pending.push(...(childrenByParent.get(id) || []));
+  }
+  return out;
+}
+
+function familySignature(sessionId, family) {
+  return [sessionId, ...descendantsOf(sessionId, family.childrenByParent || new Map())]
+    .sort()
+    .map((id) => {
+      try {
+        const stat = fs.statSync(family.files.get(id));
+        return id + ':' + stat.size + ':' + stat.mtimeMs;
+      } catch {
+        return id + ':?';
+      }
+    })
+    .join(',');
+}
+
 // Every build of the Codex CLI up to ~2026-08-19 wrote EventMsg-shaped
 // `user_message`/`agent_message` lines (`payload.type`) alongside the raw
 // conversation, and this file's summary/activity logic was written against
@@ -180,6 +271,12 @@ function scanLine(line, state) {
   }
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
+  if (kind === 'task_started' && typeof entry.timestamp === 'string') {
+    const timestamp = Date.parse(entry.timestamp) || null;
+    if (state.startedAt == null) state.startedAt = timestamp;
+    state.lastTaskStartedAt = timestamp;
+  }
+  if (kind === 'task_complete' && typeof entry.timestamp === 'string') state.endedAt = Date.parse(entry.timestamp) || null;
   if (!state.summary) {
     if (kind === 'user_message') {
       const text = (typeof p.message === 'string' ? p.message : p.text || '').trim();
@@ -191,10 +288,38 @@ function scanLine(line, state) {
   }
 }
 
-export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
-  const file = index ? index.get(sessionId) || null : await findRollout(sessionId, sessionsDir);
-  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
-  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null };
+function totalsFor(model, usage) {
+  const cacheRead = usage.cached_input_tokens || 0;
+  return {
+    [model]: {
+      input: Math.max(0, (usage.input_tokens || 0) - cacheRead),
+      output: usage.output_tokens || 0,
+      cacheRead,
+    },
+  };
+}
+
+function mergeTotals(dest, src) {
+  for (const [model, t] of Object.entries(src)) {
+    const d = (dest[model] ||= { input: 0, output: 0, cacheRead: 0 });
+    d.input += t.input || 0;
+    d.output += t.output || 0;
+    d.cacheRead += t.cacheRead || 0;
+  }
+}
+
+function tokensFor(totals) {
+  const tokens = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const t of Object.values(totals)) {
+    tokens.input += t.input || 0;
+    tokens.output += t.output || 0;
+    tokens.cacheRead += t.cacheRead || 0;
+  }
+  return tokens;
+}
+
+async function analyzeRollout(file, meta = null) {
+  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -202,24 +327,132 @@ export async function analyzeCodex(sessionId, { sessionsDir = CODEX_SESSIONS, in
     const text = await fsp.readFile(file, 'utf8');
     for (const line of text.split('\n')) scanLine(line, state);
   } catch {
-    return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
+    return null;
   }
-  const u = state.usage || {};
-  const cacheRead = u.cached_input_tokens || 0;
-  const input = Math.max(0, (u.input_tokens || 0) - cacheRead);
-  const output = u.output_tokens || 0;
   const model = state.model || 'gpt-5.5-codex';
-  const totals = { [model]: { input, output, cacheRead } };
+  const totals = totalsFor(model, state.usage || {});
   return {
     usd: codexCostUsd(totals),
-    costByType: codexCostUsdByType(totals), // $ split across input/output/cache for the usage dashboard's Token-type slice
-    model, // surfaced so the dashboard can attribute Codex spend to its model bucket
+    costByType: codexCostUsdByType(totals),
+    model,
     currentModel: state.currentModel || null,
-    tokens: { input, output, cacheWrite: 0, cacheRead },
-    subAgents: [],
+    totals,
+    tokens: tokensFor(totals),
     summary: state.summary,
     lastActivity,
+    startedAt: state.startedAt,
+    endedAt: state.endedAt && state.endedAt >= state.lastTaskStartedAt ? state.endedAt : null,
   };
+}
+
+async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
+  const family = index?.files ? index : index
+    ? { files: index, metaById: new Map(), childrenByParent: new Map() }
+    : await cachedFamilyIndex(sessionsDir);
+  const files = family.files;
+  const file = files?.get(sessionId) || null;
+  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
+  const own = await analyzeRollout(file, family.metaById?.get(sessionId));
+  if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
+  const totals = {};
+  mergeTotals(totals, own.totals);
+  const subTotals = {};
+  const subAgents = [];
+  for (const id of descendantsOf(sessionId, family.childrenByParent || new Map())) {
+    const child = await analyzeRollout(files.get(id), family.metaById.get(id));
+    if (!child) continue;
+    mergeTotals(totals, child.totals);
+    mergeTotals(subTotals, child.totals);
+    const meta = family.metaById.get(id) || {};
+    subAgents.push({
+      id,
+      agentType: meta.agentRole || 'subagent',
+      label: meta.agentPath?.split('/').filter(Boolean).at(-1) || id,
+      kind: 'background',
+      status: child.endedAt == null ? 'running' : 'completed',
+      startedAt: child.startedAt,
+      endedAt: child.endedAt,
+      usd: child.usd,
+    });
+  }
+  return {
+    usd: codexCostUsd(totals),
+    subAgentUsd: codexCostUsd(subTotals),
+    costByType: codexCostUsdByType(totals),
+    model: own.model,
+    currentModel: own.currentModel,
+    totals,
+    tokens: tokensFor(totals),
+    subAgents,
+    summary: own.summary,
+    lastActivity: own.lastActivity,
+  };
+}
+
+const analysisCache = new Map();
+
+export async function analyzeCodex(sessionId, opts = {}) {
+  if (opts.index) return analyzeCodexUncached(sessionId, opts);
+  const sessionsDir = opts.sessionsDir || CODEX_SESSIONS;
+  const family = await cachedFamilyIndex(sessionsDir);
+  const signature = familySignature(sessionId, family);
+  const key = sessionsDir + '\0' + sessionId;
+  const cached = analysisCache.get(key);
+  if (cached?.signature === signature) return cached.result;
+  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, index: family });
+  if (result.usd != null) analysisCache.set(key, { signature, result });
+  return result;
+}
+
+function detailToolInput(p) {
+  if (p.type === 'custom_tool_call') return p.input && typeof p.input === 'object' ? p.input : { input: p.input };
+  if (typeof p.arguments !== 'string') return p.arguments || {};
+  try { return JSON.parse(p.arguments); } catch { return { input: p.arguments }; }
+}
+
+function agentMessageTaskName(p) {
+  if (p.type !== 'agent_message') return null;
+  const text = codexMessageText(p.content);
+  const match = text.match(/^Task name:\s*(.+)$/m);
+  return match ? match[1].trim().split('/').filter(Boolean).at(-1) || null : null;
+}
+
+function detailToolTarget(input) {
+  if (!input || typeof input !== 'object') return '';
+  for (const key of ['file_path', 'path', 'notebook_path', 'pattern', 'command', 'cmd', 'url', 'query', 'prompt', 'description']) {
+    if (typeof input[key] === 'string' && input[key].trim()) return input[key].replace(/\s+/g, ' ').trim();
+  }
+  const first = Object.values(input).find((value) => typeof value === 'string' && value.trim());
+  return first ? first.replace(/\s+/g, ' ').trim() : '';
+}
+
+export async function codexSubagentDetail(sessionId, subagentId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
+  const family = index?.files ? index : await cachedFamilyIndex(sessionsDir);
+  if (!descendantsOf(sessionId, family.childrenByParent || new Map()).includes(subagentId)) {
+    return { prompt: null, toolCalls: null, result: null };
+  }
+  let text;
+  try { text = await fsp.readFile(family.files.get(subagentId), 'utf8'); } catch { return { prompt: null, toolCalls: null, result: null }; }
+  let prompt = null;
+  let result = null;
+  const toolCalls = [];
+  for (const line of text.split('\n')) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry.type !== 'response_item') continue;
+    const p = entry.payload || {};
+    if (p.type === 'message') {
+      const message = codexMessageText(p.content);
+      if (p.role === 'user' && prompt == null && message && !isSyntheticCodexMessage(message)) prompt = message;
+      if (p.role === 'assistant' && message) result = message;
+    } else if (p.type === 'agent_message' && prompt == null) {
+      prompt = agentMessageTaskName(p);
+    } else if (p.type === 'function_call' || p.type === 'tool_search_call' || p.type === 'custom_tool_call') {
+      const input = detailToolInput(p);
+      toolCalls.push({ name: p.name || p.type, target: detailToolTarget(input) });
+    }
+  }
+  return { prompt, toolCalls, result };
 }
 
 // Scan a rollout for real conversation turns whose top-level `timestamp` falls
@@ -317,10 +550,11 @@ function headMetaCodex(file) {
 export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
   const { windowDays = 7, now = Date.now(), sessionsDir = CODEX_SESSIONS } = opts;
   const cutoff = now - windowDays * 86_400_000;
+  const family = await cachedFamilyIndex(sessionsDir);
   const candidates = [];
   for (const r of await allRollouts(sessionsDir)) {
     const sessionId = uuidFromName(r.name);
-    if (!sessionId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
+    if (!sessionId || family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
     const { cwd, summary } = headMetaCodex(r.full);
     candidates.push({ sessionId, cwd, summary, lastActivity: Math.round(r.mtimeMs), agent: 'codex' });
   }

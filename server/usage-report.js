@@ -18,7 +18,7 @@ import fsp from 'node:fs/promises';
 import readline from 'node:readline';
 import os from 'node:os';
 import path from 'node:path';
-import { costUsd, costUsdByType } from './pricing.js';
+import { costUsd, costUsdByType, codexCostUsd } from './pricing.js';
 import { CLAUDE_DIR } from './claude-paths.js';
 import { usageSince } from './transcript-reader.js';
 import { DATA_DIR as DEFAULT_DATA_DIR } from './data-dir.js';
@@ -628,19 +628,37 @@ async function claudeDailyCached(file, since = 0) {
   return result;
 }
 
+function codexFamilySignature(sessionId, family) {
+  const ids = [sessionId];
+  const seen = new Set(ids);
+  for (let i = 0; i < ids.length; i += 1) {
+    for (const child of family.childrenByParent?.get(ids[i]) || []) {
+      if (!seen.has(child)) { seen.add(child); ids.push(child); }
+    }
+  }
+  return ids.sort().map((id) => {
+    try {
+      const st = fs.statSync(family.files.get(id));
+      return `${id}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      return `${id}:?`;
+    }
+  }).join(',');
+}
+
 async function analyzeCodexCached(analyzeCodex, sessionKey, file, codexSessionsDir, index) {
   const run = () => analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index }).catch(() => null);
-  let st;
-  try { st = fs.statSync(file); } catch { return run(); }
+  const signature = codexFamilySignature(sessionKey, index);
+  if (!signature) return run();
   const cached = codexFileCache.get(file);
-  if (cached && cached.mtimeMs === st.mtimeMs) {
+  if (cached && cached.signature === signature && cached.result?.subAgentUsd != null) {
     usageFileCacheStats.hits += 1;
     return cached.result;
   }
   usageFileCacheStats.misses += 1;
   const result = await run();
   if (result && result.usd != null) {
-    codexFileCache.set(file, { mtimeMs: st.mtimeMs, result });
+    codexFileCache.set(file, { signature, result });
     usageFileCacheDirty = true;
   }
   return result;
@@ -662,16 +680,19 @@ export async function scanAllDaily({
   const entries = mappings.sessions || mappings;
   const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
   const assignments = tasks.assignments || {};
+  const codexSessionIds = new Set(Object.entries(entries)
+    .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
+    .map(([cardId, entry]) => entry.liveSessionId || cardId));
   const index = buildClaudeIndex(projectsDir);
   loadUsageFileCaches(dataDir);
 
   let analyzeCodex = null;
-  let buildRolloutIndex = null;
-  try { ({ analyzeCodex, buildRolloutIndex } = await import('./agents/codex-rollout.js')); } catch { /* codex optional */ }
+  let buildRolloutFamilyIndex = null;
+  try { ({ analyzeCodex, buildRolloutFamilyIndex } = await import('./agents/codex-rollout.js')); } catch { /* codex optional */ }
   // Built once on the first Codex entry and reused for every subsequent one, so the
   // sessions tree is walked once per scan, not once per Codex id (was O(sessions²)).
   let codexIndex = null;
-  const codexRolloutIndex = async () => (codexIndex ||= buildRolloutIndex ? await buildRolloutIndex(codexSessionsDir) : new Map());
+  const codexRolloutIndex = async () => (codexIndex ||= buildRolloutFamilyIndex ? await buildRolloutFamilyIndex(codexSessionsDir) : { files: new Map(), childrenByParent: new Map() });
 
   // Files that read/parse partially or not at all — surfaced so the UI can note the
   // total may be understated, rather than a broken transcript vanishing as a silent $0.
@@ -713,7 +734,9 @@ export async function scanAllDaily({
       if (!Number.isFinite(created)) continue;
       const sessionKey = entry.liveSessionId || cardId;
       const rolloutIndex = await codexRolloutIndex();
-      const rolloutFile = rolloutIndex.get(sessionKey) || null;
+      const parentId = rolloutIndex.metaById?.get(sessionKey)?.parentId;
+      if (parentId && codexSessionIds.has(parentId)) continue;
+      const rolloutFile = rolloutIndex.files.get(sessionKey) || null;
       if (rolloutFile) seenCodexFiles.add(rolloutFile);
       const a = rolloutFile
         ? await analyzeCodexCached(analyzeCodex, sessionKey, rolloutFile, codexSessionsDir, rolloutIndex)
@@ -723,13 +746,19 @@ export async function scanAllDaily({
       const tok = a.tokens || blankTokens();
       const codexTokens = { input: tok.input || 0, output: tok.output || 0, cacheWrite: tok.cacheWrite || 0, cacheRead: tok.cacheRead || 0 };
       const model = a.model || 'gpt-5.5-codex';
+      const byModel = {};
+      for (const [modelId, modelTotals] of Object.entries(a.totals || { [model]: codexTokens })) {
+        const modelTokens = { input: modelTotals.input || 0, output: modelTotals.output || 0, cacheWrite: 0, cacheRead: modelTotals.cacheRead || 0 };
+        const modelUsd = codexCostUsd({ [modelId]: modelTotals });
+        byModel[modelId] = { usd: modelUsd, estimatedUsd: modelUsd, tokens: modelTokens };
+      }
       raw.push({
         file: null, owner: true, task,
         days: { [dayKeyOf(created)]: {
-          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(),
+          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: a.subAgentUsd || 0, advisorUsd: 0, advisorTokens: blankTokens(),
           tokens: codexTokens,
           // Codex $ is estimated, so its per-model and per-type breakdowns are too.
-          byModel: { [model]: { usd: a.usd, estimatedUsd: a.usd, tokens: codexTokens } },
+          byModel,
           costByType: a.costByType || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
         } },
       });
