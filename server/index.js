@@ -105,7 +105,12 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 // itself into their draft and the Enter submits the pair fused together — the
 // gate holds the line until the composer reads empty. Deliberately NOT used by
 // deliverMessage (a human pressing send chose this moment) — see pane-deferral.js.
-const paneDeferral = createPaneDeferral({ tmuxFor, socketFor, sendText });
+const paneDeferral = createPaneDeferral({
+  tmuxFor,
+  socketFor,
+  agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
+  sendText,
+});
 
 // Current fd-watchdog alert, or null when clear — sent to any client that
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone

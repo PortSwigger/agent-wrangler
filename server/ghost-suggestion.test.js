@@ -8,6 +8,7 @@ const E = '\x1b';
 // codes, which is why the faint match has to be exact rather than "contains a 2".
 const FRAME = `${E}[38;5;244m${'─'.repeat(20)}`;
 const composer = (body) => `${E}[39m❯ ${body}`;
+const codexPlaceholder = `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
 const realCapture = [
   `${E}[38;5;246m✻${E}[39m ${E}[38;5;246mBrewed for 13s${E}[39m`,
   '',
@@ -98,6 +99,31 @@ test('a composer holding only ghost text is still empty', () => {
 test('typed text means not empty', () => {
   assert.equal(paneComposerIsEmpty(composer('half a prompt')), false);
   assert.equal(paneComposerIsEmpty(composer(`typed${E}[2mpoint 5${E}[0m`)), false);
+});
+
+test('the styled Codex placeholder confirms an empty Codex composer', () => {
+  assert.equal(paneComposerIsEmpty(codexPlaceholder, 'codex'), true);
+});
+
+test('a placeholder-looking output line never masks a Codex draft', () => {
+  const echoedPlaceholder = `${E}[39m› Ask Codex to do anything${E}[0m`;
+  const draft = `${E}[1m›${E}[0m explain this failure`;
+  assert.equal(paneComposerIsEmpty([echoedPlaceholder, draft].join('\n'), 'codex'), false);
+});
+
+test('a placeholder without Codex composer styling is not trusted', () => {
+  assert.equal(paneComposerIsEmpty(`${E}[39m› Ask Codex to do anything${E}[0m`, 'codex'), false);
+});
+
+test('a stray Claude prompt mark never masks a Codex draft', () => {
+  const strayClaudeMark = `${E}[0m    ${E}[2m───── ❯ ${E}[0m`;
+  const draft = `${E}[1m›${E}[0m explain this failure`;
+  assert.equal(paneComposerIsEmpty([strayClaudeMark, draft].join('\n'), 'codex'), false);
+});
+
+test('a working Codex pane is not safe to notify yet', () => {
+  const working = `${E}[1m•${E}[0m Working ${E}[2m(12s · esc to interrupt)${E}[0m`;
+  assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
 });
 
 // Fail-safe: anything unreadable must answer "not empty" so no paste happens.

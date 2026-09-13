@@ -31,7 +31,7 @@ export const MAX_PENDING_PER_CARD = 200;
 const CAPTURE_LINES = 6;
 
 export function createPaneDeferral({
-  tmuxFor, socketFor,
+  tmuxFor, socketFor, agentFor = () => 'claude',
   sendText = defaultSendText,
   capture = defaultCapture,
 } = {}) {
@@ -50,9 +50,9 @@ export function createPaneDeferral({
     pending.set(id, q);
   }
 
-  async function composerIsClear(tmux, socket) {
+  async function composerIsClear(id, tmux, socket) {
     try {
-      return paneComposerIsEmpty(await capture(tmux, CAPTURE_LINES, socket));
+      return paneComposerIsEmpty(await capture(tmux, CAPTURE_LINES, socket), agentFor(id));
     } catch {
       return false;
     }
@@ -69,7 +69,7 @@ export function createPaneDeferral({
     // capture here — a dormant card must cost zero tmux execs.
     if (!name) { enqueue(id, text); return 'deferred'; }
     const sock = socket ?? socketFor?.(id) ?? '';
-    if (!(await composerIsClear(name, sock))) { enqueue(id, text); return 'deferred'; }
+    if (!(await composerIsClear(id, name, sock))) { enqueue(id, text); return 'deferred'; }
     try {
       await sendText(name, text, sock);
     } catch {
@@ -95,7 +95,7 @@ export function createPaneDeferral({
       const sock = socketFor?.(id) ?? '';
       inFlight.add(id);
       try {
-        if (!(await composerIsClear(name, sock))) continue;
+        if (!(await composerIsClear(id, name, sock))) continue;
         // Snapshot before the await: anything enqueued while the paste is in
         // flight belongs to the next drain, not this one.
         const lines = [...q];
