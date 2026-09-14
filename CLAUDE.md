@@ -588,23 +588,35 @@ don't re-derive it.
   `client-config.js` and `agent-skills.js` leaves (which the agent adapters
   import), so every manifest and everything it imports must itself stay
   leaf-compatible — never `session-manager`/`state-reader`/`tmux-scraper`/
-  `index.js`** (`extensions/index.test.js` asserts this over the real `BUILTIN`
-  by regex); a tool or handler reaches the server only through the
-  `deps.ext.stores`/`ctx.ext.stores` bag, which is the SAME `extBag` object in
-  both the MCP deps and the WS ctx (`index.js`), and the loader takes
-  `coreToolNames`/`coreHandlerTypes` as ARGUMENTS from `index.js` for the same
-  reason — it cannot import the core registries. That bag is also the ONLY way
-  an extension reaches a pane: `ext.deliver(sessionId, text)`
-  (`ext-deliver.js`, bound over `message-delivery.js` and the target resolvers,
-  which is why `extBag` is built below `createTargets`) is on it and in every
-  sweep's run args, and its **two-argument signature IS the access control** —
+  `index.js` **or `server/host-api/**`** (`extensions/index.test.js` asserts all
+  of these over the real `BUILTIN` by regex; `semver` is an npm package, not a
+  server module, and breaches nothing). **The one-object-for-everyone `extBag` is
+  GONE — a tool, handler, hook, sweep or gate reaches the server ONLY through its
+  own versioned `host` façade (`server/host-api/`, the non-leaf half, imported
+  only by `index.js`), whose keys are selected by the manifest's `requires: [...]`
+  list.** That import direction being one-way is exactly why the LOADER cannot
+  build façades: a capability builder binds singletons it may not import, so the
+  loader only REPORTS `requires`, the `engines.wranglerApi` range and each
+  manifest's store names, and tags every tool, handler and session hook with its
+  owning `extId` (which is what `mcp/server.js` and `control/router.js` branch on
+  — a tagged frame gets the façade, an untagged core one keeps `deps`/`ctx`). The
+  loader still takes `coreToolNames`/`coreHandlerTypes` as ARGUMENTS from
+  `index.js` for the same leaf reason. `deps.ext`/`ctx.ext` survive with `list`
+  and `hideTool` ONLY — both core-owned reads over ALL extensions, not
+  per-extension capabilities; that is finished, not a half-done migration.
+  The façade is how an extension reaches a pane: `host.deliver(sessionId, text)`
+  behind the `deliver` capability (`ext-deliver.js`, bound over
+  `message-delivery.js` and the target resolvers, which is why the façades are
+  built below `createTargets`), and its **two-argument signature IS the access
+  control** —
   `deliverMessage`'s `imagePaths` are absolute paths handed straight to a pane
   (safe only because `paste-store.js` mints them inside one session's own
   pastes dir) and `clearComposer` wipes a human's composer, so neither may be
   passed through; a bad id or blank text is an `error` result, not a throw. It
   wakes a dormant target and refuses an archived one, exactly as a human's send
-  does, but logs its relaunch as `reason=extension` — that line names what woke
-  a card and `message` would read as a human pressing send. **It is the
+  does, but logs its relaunch as `reason=ext:<id>` — that line names WHAT woke
+  a card, `message` would read as a human pressing send, and the pre-façade
+  shared `'extension'` named nothing; it is bound once PER FAÇADE for that. **It is the
   ADDRESSED primitive, NOT a notifier**: an automated nudge off a poll wants
   `pane-deferral.js`'s mid-prompt hold, which nothing here can apply because
   the two intents are indistinguishable at this seam. The memoised `getExtensions()`
@@ -612,12 +624,46 @@ don't re-derive it.
   must call it FIRST, with the core names, or an adapter's parameterless call
   memoises a copy that skipped the cross-registry check (`router.js` builds its
   handler map lazily on the first frame for exactly this ordering reason).
-  **Anything an extension may need but cannot import arrives on `core`
-  (`{sessionManager, taskStore, memoryStore}`) — which is why the extension
-  stores are instantiated AFTER those three exist, not beside the loader.** A
-  store factory is called with `{core}`, and sweeps and session hooks get it in
-  their args: a manifest owning a runner that has to tick sessions or read task
-  memory could not otherwise be CONSTRUCTED, let alone run. **`onBeforeDispatch`
+  **The `host` façade is the ONLY route to anything an extension cannot import,
+  and three of its values are FORCED from the closed-over extension id and are
+  NOT caller-passable** — `broadcast`'s `type`, `mail.send`'s `from`, and
+  `wake`/`kill`'s `reason` (all `ext:<id>`), so an extension can never
+  impersonate the core or a sibling. Same rule as `deliver`'s two arguments:
+  narrowness of signature is the control, because a runtime check a caller can
+  pass a value through is not one. An UNDECLARED capability's key is
+  structurally ABSENT (`'sessions' in host` is false), never a method that
+  throws, and the façade plus every nested sub-object is frozen.
+  `sessions:read`/`tasks:read` hand back frozen allow-list PROJECTIONS
+  (`host-api/project.js`) that **deliberately omit `liveSessionId` and
+  `priorLiveSessionIds`** — a conversation id is `--resume`-able, so handing one
+  out reaches a conversation outside the board's lifecycle and outside
+  `resolveResumeDir`'s guard; that omission is the most likely thing a future
+  contributor "helpfully" adds back. `host.stores` is that extension's OWN
+  stores only (narrowed by the manifest's store names), and `memory:append` has
+  no `write` sibling on purpose. **A store FACTORY is the one thing that gets no
+  capabilities** — a deliberately minimal `{id, log}` bag — because factories run
+  before `rebuild`/`broadcast`/`deliver` exist at all and a constructor has no
+  need for them; every boot-time seam (session hooks, the skill gate, the tool
+  filter) is instead bound over a `hostApiFor(extId)` LOOKUP so it can be wired
+  before the Map is filled, since all three only fire at run time.
+  **Failure posture, three tiers**: a bad `requires`, an unknown capability or an
+  invalid/unsatisfied range is a BOOT failure (logged naming the extension,
+  `process.exit(1)` — a manifest wanting a surface this server does not serve is
+  a mistake, not a degradation to run around); a runtime throw from a façade
+  method PROPAGATES (MCP error result, or the router's error envelope — no
+  per-method try/catch); and the two advisory gates KEEP their asymmetry,
+  `hideTool` failing OPEN and `skillsFor` suppressing nothing, because both
+  narrow UX over an *advisory* identity and a bug must not leave sessions unable
+  to act. Don't "fix" that for symmetry. **Versioning**: `HOST_API_VERSION`
+  (`host-api/version.js`) is what the server serves and a breaking reshape adds
+  `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
+  edit builders in place. `semver` is a real dependency, so
+  `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
+  (`node server/index.js` directly skips that). The client half mirrors the
+  forced-value rule: `slots.apiFor` binds each extension's `send` to its OWN
+  registered `handlerTypes` (carried on both the `extensions` connect message and
+  `graph.extensions`) and FAILS CLOSED — an extension the board has heard nothing
+  about may send nothing. **`onBeforeDispatch`
   is the only session hook that runs while the session exists nowhere** — after
   `dispatch` settles the card id, cwd and worktree, `await`ed, before the launch
   command is built — and that window is the whole point: state the agent's very

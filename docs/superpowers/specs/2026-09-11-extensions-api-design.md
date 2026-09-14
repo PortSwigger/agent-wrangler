@@ -62,17 +62,31 @@ export default {
 };
 ```
 
-`core` is `{ sessionManager, taskStore, memoryStore }` — the singletons an
-extension may need but can never import (the leaf rule below). It reaches a
-store factory, a session hook and a sweep, which is what lets a manifest own a
-runner that has to tick sessions or read task memory: a factory called bare
-could not be constructed at all. Extension stores are therefore instantiated
-*after* those three exist in `index.js`, not beside the loader.
+A manifest additionally declares what of the host it touches:
+
+```js
+requires: ['board:rebuild', 'deliver'],   // the capability list, see Host API
+engines: { wranglerApi: '^1.0.0' },       // the host API range it was written against
+```
+
+`requires` selects the keys on the per-extension `host` façade (below).
+`engines.wranglerApi` is SHAPE-checked here (`semver.validRange`) and
+SATISFACTION-checked by `buildHostApi`, because the loader — a leaf — does not
+know which version the server serves.
+
+The singletons an extension may need but can never import (the leaf rule below)
+are reached only through that façade. A store FACTORY is the one exception and
+gets a deliberately minimal `{ id, log }` bag instead: factories run in
+`index.js` before `rebuild`/`broadcast`/`deliver` exist at all, and a store's
+constructor has no legitimate need for them — the capabilities are for the tools,
+handlers, hooks and sweeps that use the store.
 
 `validateManifest` runs at boot and throws with the extension id in the message
 for: a bad or duplicate id, a tool without `name`/`handler`, a handler without
 `type`/`handler`, a store that is not a factory, a non-function `skillsFor` or
-`hideTool`, an unknown `session` hook name (the known set is `SESSION_HOOKS`:
+`hideTool`, a `requires` that is not an array of strings or names a capability
+outside `CAPABILITIES`, an `engines.wranglerApi` that is not a valid semver
+range, an unknown `session` hook name (the known set is `SESSION_HOOKS`:
 `onBeforeDispatch`, `onArchive`, `onFork`, `onPurge`, `onDispatch`,
 `onResume`), a sweep without a positive finite `everyMs`, and a `client` or
 `styles` path that does not resolve inside the manifest's own `public/`.
@@ -86,24 +100,31 @@ as the instance lock.
 
 | key | contents | enabled only? |
 |---|---|---|
-| `list` | `[{id, label, help, defaultEnabled, enabled}]` for every builtin — `enabled` here is the BOOT value, which `extensionsForGraph` carries onto the graph as `bootEnabled` beside a live re-read | no |
+| `list` | `[{id, label, help, defaultEnabled, enabled, requires, range, storeNames, handlerTypes}]` for every builtin — `requires`/`range`/`storeNames` are the façade's build inputs (`index.js`, not this leaf, is what can build one) and `handlerTypes` is what the BOARD binds an extension's client `send` to — `enabled` here is the BOOT value, which `extensionsForGraph` carries onto the graph as `bootEnabled` beside a live re-read | no |
 | `stores` | `{name: factory}` | yes |
-| `handlers` | control-WS handlers | yes |
-| `tools` | MCP tools | yes |
+| `handlers` | control-WS handlers, each tagged `extId` | yes |
+| `tools` | MCP tools, each tagged `extId` | yes |
 | `allowedToolNames` | `tools.map(t => t.name)` | yes |
 | `skillIds` / `disabledSkillIds` | skill names of enabled / disabled manifests | split |
 | `graphContributors` | `[{id, contribute}]` | yes |
-| `sessionHooks` | `{onBeforeDispatch: [], onArchive: [], ...}` | yes |
+| `sessionHooks` | `{onBeforeDispatch: [{extId, fn}], onArchive: [...], ...}` — tagged, since each hook needs its own façade | yes |
 | `skillGates` | `[{id, skills, gate}]` — a manifest's own declared skills plus its `skillsFor` | yes, and only with a `skillsFor` |
 | `toolFilters` | `[{id, hide}]` | yes, and only with a `hideTool` |
 | `sweeps` | `[{extId, id, everyMs, run}]` | yes |
-| `clientManifest` | `[{id, client?: '/ext/<id>/index.js', styles?: '/ext/<id>/x.css'}]` — each key present only when the manifest declares it | yes, and only with one of them |
+| `clientManifest` | `[{id, client?: '/ext/<id>/index.js', styles?: '/ext/<id>/x.css', handlerTypes?: [...]}]` — each key present only when the manifest declares it | yes, and only with one of them |
 | `dirs` | `{id: dir}` | yes |
 
-`createSkillGate(ext, bag, onError)` and `createToolFilter(ext, bag, onError)`
-compose those two lists into the one function each consumer wants, with the
-stores and `core` closed over. Both live in the loader (a leaf) so they are unit
-testable without a server; `index.js` binds them.
+`createSkillGate(ext, hostApiFor, onError)` and `createToolFilter(ext,
+hostApiFor, onError)` compose those two lists into the one function each consumer
+wants. They take a `hostApiFor(extId)` LOOKUP rather than one shared bag, so each
+gate is called with `{ ...context, host }` — its own extension's façade and
+nothing else. Both live in the loader (a leaf) so they are unit testable without
+a server; `index.js` binds them.
+
+The `extId` tag on every tool, handler and session hook is what makes a
+per-extension façade possible at the frame boundary: `mcp/server.js` and
+`control/router.js` branch on it, and a tagged frame gets the façade while an
+untagged (core) one keeps `deps`/`ctx`.
 
 Tool names and handler types are checked for uniqueness against each other and
 against `coreToolNames`/`coreHandlerTypes`. Those are passed in by `index.js`
@@ -121,21 +142,25 @@ the core names in.
 ## Leaf constraint
 
 `server/mcp/client-config.js` and `server/agent-skills.js` are imported by the
-agent adapters (`server/agents/*`), and both now import the loader. So
+agent adapters (`server/agents/*`), and both import the loader. So
 `server/extensions/index.js`, every manifest and everything a manifest imports
 must stay leaf-compatible: no import of `session-manager`, `state-reader`,
-`tmux-scraper` or `index.js`. `server/extensions/index.test.js` asserts this
-over the real `BUILTIN` with a static regex over import lines. A manifest's
-tools and handlers reach server state only through the bag they are handed
-(`deps.ext.*` for MCP tools, `ctx.ext.*` for control handlers). Both bags are the
-same `extBag = { stores, list, deliver, core, hideTool }` object in `index.js`.
+`tmux-scraper`, `index.js` **or `server/host-api/**`**.
+`server/extensions/index.test.js` asserts this over the real `BUILTIN` with a
+static regex over import lines. (`semver` is an npm package, not a server module,
+so importing it breaches nothing — the rule is about reaching back into the core.)
 
-`deliver` is the second thing on that bag for the same reason `stores` is the
-first: an extension cannot reach a pane itself. It is `createExtDeliver`
-(`server/ext-deliver.js`) bound over `message-delivery.js` and the target
-resolvers, which is why `extBag` is now built below `createTargets` rather than
-at the top of `index.js`. Sweeps get it in their run args too, that being the
-shape of extension that most wants it.
+`server/host-api/**` is the non-leaf half and is imported ONLY by
+`server/index.js`. The direction being one-way is exactly why the LOADER cannot
+build façades: a capability builder binds singletons the loader may not import.
+The loader reports `requires`, the range and each manifest's store names;
+`index.js` builds.
+
+`host.deliver` is the `deliver` capability, and it exists for the same reason the
+whole façade does: an extension cannot reach a pane itself. It is
+`createExtDeliver` (`server/ext-deliver.js`) bound over `message-delivery.js` and
+the target resolvers, which is why the façades are built below `createTargets`
+rather than at the top of `index.js`.
 
 The signature is `deliver(sessionId, text)` — two arguments, no options — and
 that narrowness is the access control, the same reasoning as the checklist tools
@@ -150,10 +175,102 @@ comes back as an `error` result rather than a throw. The routing is
 and deliver after the relaunch, refuse an archived one — reported back as
 `{mode: 'live'|'dormant'}` or `{mode: 'error', error}`. The one thing added for
 this caller is `reason`, threaded into `resume()`: an extension's wake logs as
-`reason=extension`, never `message`, because that log line exists to name what
-woke a card. It is not per-extension — the bag is one object shared by every
-manifest, and the loader is the only thing that knows which manifest a tool came
-from.
+`reason=ext:<id>`, never `message`, because that log line exists to name WHAT
+woke a card. It is bound PER EXTENSION (one `createExtDeliver` per façade), which
+is the gain over the pre-façade shared bag's one `reason: 'extension'`.
+
+## Host API
+
+`buildHostApi({ id, requires, range, ...wiring })` (`server/host-api/index.js`)
+returns the frozen `host` object an extension's tools, handlers, hooks, sweeps
+and gates are handed. One builder per capability lives in `host-api/v1.js`
+(`V1_BUILDERS`), and those builders are the only place a singleton is touched on
+an extension's behalf. Each is a thin bind over a primitive the core already
+owns — the point is a declared, closed vocabulary, not a second implementation of
+session lifecycle.
+
+The 17 v1 capabilities:
+
+| capability | surface |
+|---|---|
+| `sessions:read` | `host.sessions.list()` / `.get(id)` / `.forTask(taskId)` → **projections** |
+| `sessions:wake` | `host.sessions.wake(id)` → `resume` with `reason: 'ext:<id>'` (forced) |
+| `sessions:archive` | `host.sessions.archive(id, { cascade })` |
+| `sessions:spawn` | `host.sessions.spawn({cwd,intent,agent,model,effort,parentSession})` → `dispatch` |
+| `sessions:kill` | `host.sessions.kill(id)` — `reason` forced to `ext:<id>` |
+| `tasks:read` | `host.tasks.list()` / `.get(id)` / `.forSession(id)` → projections |
+| `tasks:write` | `host.tasks.create/rename/assign/unassign` |
+| `memory:read` | `host.memory.read(taskId)` / `.has(taskId)` |
+| `memory:append` | `host.memory.append(taskId, text)` — **append only** |
+| `deliver` | `host.deliver(sessionId, text)` — per-extension `createExtDeliver` |
+| `board:rebuild` | `host.rebuild()` |
+| `board:broadcast` | `host.broadcast(payload)` — `type` forced to `ext:<id>` |
+| `terminals:create` | `host.terminals.create({cwd, command})` |
+| `schedules:read` | `host.schedules.list()` / `.get(id)` |
+| `schedules:write` | `host.schedules.create/update/remove` — straight through `schedule-store`, whose `validateAction` is the third model-validation door |
+| `mail:read` | `host.mail.unread(sessionId)` / `.list(sessionId)` |
+| `mail:send` | `host.mail.send(to, text)` — `from` forced to `ext:<id>` |
+
+Always present, no capability required: `host.id`, `host.version`
+(`HOST_API_VERSION`), `host.stores` (its OWN stores only — narrowed by the
+manifest's store names, where the pre-façade `extStores` was one flat object
+every manifest shared) and `host.log(...)` (through `server/log.js`, prefixed
+`[ext:<id>]` into the first argument only when that is a string, so an `Error`
+stays its own argument).
+
+An undeclared capability's key is **structurally ABSENT**, not a method that
+throws: `'sessions' in host` is false for an extension that declared none. The
+façade and every nested sub-object are frozen.
+
+**Three forced values** — `broadcast`'s `type`, `mail.send`'s `from`, and
+`wake`/`kill`'s `reason`. All three are set by the builder from the closed-over
+extension id and are not caller-passable, so an extension can never impersonate
+the core or another extension on any of them. This is `createExtDeliver`'s
+narrow-signature rule generalised: narrowness of signature IS the access control,
+because a runtime check a caller can pass a value through is not a control.
+
+`sessions:spawn` **may** set `parentSession` to a card the extension did not
+create — a resolved decision, not an oversight. Board nesting is not ownership,
+and `attach_session` already re-parents anything.
+
+**Projections** (`host-api/project.js`): `sessions:read` and `tasks:read` hand
+back explicit frozen allow-list COPIES, never the live mapping entry. They
+exclude `liveSessionId` and `priorLiveSessionIds` deliberately — a conversation
+id is `--resume`-able, so handing one out reaches a conversation outside the
+board's own lifecycle (and outside `resolveResumeDir`'s guard). They also include
+nothing wanted merely so it can be written back: a mutation belongs behind a
+capability method, not behind a read plus a store poke.
+
+**Versioning.** `HOST_API_VERSION` (`host-api/version.js`) is what the server
+serves; a manifest's `engines.wranglerApi` is the range it needs. A breaking
+reshape adds `v2.js` and keeps `v1.js` as the shim, selected by that range,
+rather than editing builders in place.
+
+**Extension tool and handler signatures.** An extension MCP tool is
+`handler({ host, caller }, args)` — no `deps`. An extension control handler is
+`handler(msg, host)` — no `ctx`. Core tools and handlers keep `deps`/`ctx`
+unchanged; `mcp/server.js` and `control/router.js` branch on the loader's `extId`
+tag.
+
+**Failure posture**, three tiers:
+
+1. **Boot failure** — a bad `requires`, an unknown capability, or an invalid or
+   unsatisfied range: logged naming the extension, `process.exit(1)`, the same
+   posture as a colliding tool name. A manifest declaring a capability this
+   server does not serve is a mistake, not a degradation to run around.
+2. **Runtime throw from a façade method** — propagates normally: an MCP tool
+   returns an error result, a control handler hits the router's error envelope.
+   No swallowing, no per-method try/catch in the façade.
+3. **The two advisory gates keep their asymmetry** — `hideTool` fails OPEN
+   (hides nothing) and `skillsFor` suppresses nothing. Both are UX narrowings
+   over an *advisory* identity (`extractCaller` is not authentication), so a bug
+   there must not leave sessions unable to act. Not to be "fixed" for symmetry.
+
+`deps.ext` / `ctx.ext` do not vanish: they keep `list` (the settings panel's read
+over every extension) and `hideTool` (a core-owned filter over ALL tools,
+including ones no extension owns). Neither is a per-extension capability, so both
+stay on the core bag rather than becoming a meta-capability — this is finished,
+not a half-done migration.
 
 ## Gating model
 
@@ -204,23 +321,36 @@ there is no migration table; the first migration adds one.
 
 ## Composition in `server/index.js`
 
-1. `getExtensions({ coreToolNames, coreHandlerTypes })`, then — after
-   `sessionManager`, `taskStore` and `memoryStore` exist — instantiate every
-   store factory once into `extStores`, each called with `{ core }`.
-2. `assertGraphKeys` on each contributor's output against `RESERVED_GRAPH_KEYS`
-   (every key `rebuildOnce` sets itself). Checked once at boot because the
-   rebuild is a ~4 s tick where nothing may log or throw.
-3. Bind `ext.sessionHooks` onto `sessionManager._extHooks`, closing over
-   `extStores` and `core`, and `createSkillGate(...)` onto
-   `sessionManager._extLaunchSkills`.
-4. MCP deps and WS ctx both carry `ext: extBag`, whose `hideTool` is
-   `createToolFilter(...)` — null when no manifest declares one.
-5. `rebuildOnce` sets `graph.extensions` from `ext.list` and then
-   `Object.assign`s each contributor's output onto the graph.
-6. The connect path sends `{ type: 'extensions', list: ext.clientManifest }`
+1. `getExtensions({ coreToolNames, coreHandlerTypes })`, then instantiate every
+   store factory once into `extStores`, each called with the minimal
+   `{ id, log }` bag (they run before the board primitives exist).
+2. Declare `hostApis` (extId → façade) and `hostApiFor` EARLY, and bind every
+   boot-time seam over the lookup rather than the façade: session hooks
+   (`fn({ ...payload, host })`, losing `stores` and `core`) and
+   `createSkillGate(ext, hostApiFor, logError)` onto
+   `sessionManager._extLaunchSkills`. All of them fire at run time, long after
+   the Map is filled.
+3. Once `rebuild`, `broadcast` and the target resolvers exist, build one façade
+   per ENABLED extension with `buildHostApi`, each with its own
+   `createExtDeliver(deps, { reason: \`ext:${id}\` })` and its own
+   `host.stores`. Wrapped in the boot try/catch: a bad `requires`, capability or
+   range logs naming the extension and exits 1. Asserted in the same block: every
+   tagged tool and handler has a façade (a boot-time invariant, not a per-frame
+   guard).
+4. `assertGraphKeys` on each contributor's output — called with
+   `{ host, graph: {} }` — against `RESERVED_GRAPH_KEYS` (every key `rebuildOnce`
+   sets itself). Checked once here because the rebuild is a ~4 s tick where
+   nothing may log or throw.
+5. MCP deps and WS ctx carry `ext: extBag` (now `list` + `hideTool` only) plus
+   `hostApiFor`, which is what `mcp/server.js` and `control/router.js` select
+   with.
+6. `rebuildOnce` sets `graph.extensions` from `ext.list` (each entry carrying its
+   own `handlerTypes`) and then `Object.assign`s each contributor's output.
+7. The connect path sends
+   `{ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }`
    right after `config`, before the first graph.
-7. `main()` starts one unref'd interval per sweep, errors logged with
-   `[ext:<extId>:<sweepId>]`.
+8. `main()` starts one unref'd interval per sweep, each run as
+   `s.run({ host })`, errors logged with `[ext:<extId>:<sweepId>]`.
 
 ## Session lifecycle hooks
 
@@ -258,7 +388,7 @@ whose launches are of two kinds — an automation run versus an ordinary one —
 needs the same call made per session, which is what `taskMemoryEnabled`'s
 hand-threaded boolean does for the one non-extension case.
 
-`skillsFor({sessionId, entry, phase, skills, stores, core, ...})` is handed its
+`skillsFor({sessionId, entry, phase, skills, host, ...})` is handed its
 own extension's declared skills and returns the subset active for this launch.
 `createSkillGate` intersects the answer with `skills` and returns what is left
 over, so a gate can only ever narrow its OWN manifest's list — naming another
@@ -279,7 +409,7 @@ resume, and the PARENT's at fork (a fork's own entry is written after launch).
 
 The one extension surface that shapes tools an extension does not own — the case
 is a session KIND that must not be offered `spawn_session`. `hideTool({caller,
-tool, stores, core})` is a **veto**, not a rewrite: `createToolFilter` asks each
+tool, host})` is a **veto**, not a rewrite: `createToolFilter` asks each
 one and the tool stays listed unless some filter says otherwise.
 `buildMcpServer` (`server/mcp/server.js`) applies `deps.ext.hideTool` to
 `activeTools()` per request, so the narrowing is genuinely absent from
@@ -304,7 +434,8 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
 ## Client slots
 
 `public/slots.js` declares `SLOT_NAMES = ['panel.section', 'panel.metaChip',
-'card.pill', 'view']` and `createSlots({ document, storage })` with `register`,
+'card.pill', 'view']` and `createSlots({ document, storage, handlerTypesFor,
+version })` with `register`,
 `forExtension(id)` (a registrar bound to one id), `mountInto(slot, hostEl, api)`,
 `syncHosts(slot, entries, api, graph)`, `update(slot, session, graph)`,
 `removeExtension(id)` and `contributions(slot)`. A new slot needs an entry in
@@ -409,6 +540,23 @@ module must import the board's own modules by ABSOLUTE URL (`/icons.js`),
 because it is served from `/ext/<id>/` and a relative import resolves under
 that prefix and 404s.
 
+- `apiFor(extId)` mints the per-extension client façade, the browser mirror of
+  the server façade's forced-value rule. `send` is **bound to that extension's
+  own registered handler types**: a frame whose `type` is not in its
+  `handlerTypes` is dropped and reported through `onError`, never sent, so an
+  extension's client half cannot drive another extension's — or the core's —
+  control handlers. `handlerTypesFor(extId)` defaults to allowing NOTHING, so a
+  board that has been told nothing fails closed and reports rather than
+  forwarding blind, and it is read at SEND time because the announcement can
+  arrive after a contribution has mounted. The api also carries `version` (the
+  served `HOST_API_VERSION`), `selectedSessionId`, `requestPanelRender` and the
+  namespaced `storage` (with `raw()` retained for `wrangler.checklistOpen`).
+- The type list rides BOTH server inputs — the `extensions` connect message
+  (which also carries `version`) and `graph.extensions` — because either can
+  arrive first; `app.js` owns the map and hands `createSlots` the lookup.
+  `app.js`'s `extApi` keeps the RAW `send`; the binding happens inside `apiFor`,
+  which is the only place the extension id is known.
+
 ## Settings
 
 `public/settings.js` has an Extensions tab whose rows are built by
@@ -436,6 +584,11 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
   (`pane-deferral.js`). `deliver` is the addressed primitive and cannot tell the
   two intents apart, so that gate belongs to a second hook or an explicit
   opt-in, not to this one.
+- **External / third-party manifest loading, install-and-trust prompts, and a
+  settings UI for reviewing or revoking capabilities.** `requires` is declared,
+  validated and enforced at boot for IN-REPO manifests only; nothing here loads
+  a manifest the repo does not ship, and there is no runtime (as opposed to
+  boot-time) capability revocation. Those need their own design.
 - Migrating the first feature. The checklist is the intended one — its store,
   handlers, four MCP tools, skill, graph snapshot and client panel map onto the
   manifest one for one — followed by task-memory and archive-review. Each keeps
