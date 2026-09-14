@@ -518,6 +518,81 @@ test('every move is refused on a finished or dropped sub-job', async (t) => {
   }
 });
 
+test('cancelling a job drops every unfinished sub-job, stops its steps, cleans up and finishes as cancelled', async (t) => {
+  const f = fixture(t); await f.approve(plan([spec('api'), spec('web'), spec('docs')]));
+  assert.deepEqual(f.launched.filter((w) => w.sub).map((w) => w.sub.id), ['api', 'web'], 'two slots, so docs is still queued');
+  f.store.action(f.job.id, 'pause');
+  const before = f.launched.length, api = f.workerFor('api');
+  f.store.action(f.job.id, 'cancel-job');
+  let job = f.store.get(f.job.id);
+  assert.ok(job.cancelledAt); assert.equal(job.paused, false, 'a paused job is un-paused so cleanup can run');
+  for (const s of job.subJobs) { assert.equal(s.stage, 'cleanup', s.id); assert.equal(s.state, 'cancelled', s.id); assert.ok(s.cancelledAt, s.id); }
+  assert.throws(() => f.store.action(f.job.id, 'cancel-job'), /already cancelled/);
+  f.report({ kind: 'published', url: PR_URL }, api);
+  assert.equal(f.sub().pr, null, 'a racing receipt never pulls a sub-job back out of cleanup');
+  await f.tick();
+  job = f.store.get(f.job.id);
+  for (const w of [api, f.workerFor('web')]) assert.ok(f.stopped.includes(w.run.id), w.sub.id);
+  assert.deepEqual(f.cleaned, ['api', 'web', 'docs']);
+  assert.deepEqual(job.subJobs.map((s) => [s.stage, s.state, s.error ?? null]), [['done', 'cancelled', null], ['done', 'cancelled', null], ['done', 'cancelled', null]]);
+  assert.equal(job.stage, 'done'); assert.ok(job.completedAt); assert.equal(job.error ?? null, null);
+  assert.equal(f.launched.length, before, 'the freed slots launch nothing');
+  for (const action of ['pause', 'resume', 'start', 'replan', 'approve-session', 'approve-merge', 'drop', 'fix-here']) {
+    assert.throws(() => f.store.action(f.job.id, action, { subJobId: action === 'drop' || action === 'fix-here' ? 'docs' : undefined, feedback: 'x' }), /Job was cancelled/, action);
+  }
+  assert.throws(() => f.store.action(f.job.id, 'cancel-job'), /already finished/);
+  assert.deepEqual(movesOf(f), [], 'a cancel is job state, not one of the six moves');
+});
+
+test('a sub-job already delivered or refused cleanup is left alone by a cancel, and Retry still clears a refused cleanup', async (t) => {
+  const f = fixture(t); await f.approve(plan([spec('api'), spec('web')]));
+  f.alive.delete(f.workerFor('api').sid); await f.tick();
+  f.store.action(f.job.id, 'mark', { subJobId: 'api', position: 'done', note: 'Landed by hand' });
+  const cleanupError = new Error('Branch has additional commits; preserve it for review');
+  f.runtime.cleanup = async (j, s) => { if (s.id === 'web' && s.cancelledAt) throw cleanupError; f.cleaned.push(s.id); };
+  f.store.action(f.job.id, 'cancel-job');
+  let [api, web] = f.store.get(f.job.id).subJobs;
+  assert.equal(api.cancelledAt, undefined, 'work marked done stays delivered'); assert.equal(api.stage, 'cleanup');
+  assert.equal(web.state, 'cancelled');
+  await f.tick();
+  [api, web] = f.store.get(f.job.id).subJobs;
+  assert.deepEqual([api.stage, api.state], ['done', 'done']);
+  assert.deepEqual([web.stage, web.error], ['cleanup', cleanupError.message]);
+  assert.equal(f.store.get(f.job.id).stage, 'active', 'the job waits for the human while a cleanup is refused');
+  await f.tick();
+  assert.equal(f.cleaned.filter((id) => id === 'web').length, 0, 'a refused cleanup is not retried by the clock');
+  f.store.action(f.job.id, 'retry', { subJobId: 'web' });
+  assert.deepEqual([f.sub(1).error, f.sub(1).state], [null, 'cancelled']);
+  f.runtime.cleanup = async (j, s) => { f.cleaned.push(s.id); };
+  await f.tick();
+  const job = f.store.get(f.job.id);
+  assert.deepEqual(job.subJobs.map((s) => s.state), ['done', 'cancelled']);
+  assert.equal(job.stage, 'done'); assert.ok(job.cancelledAt);
+});
+
+test('cancelling before there are sub-jobs stops the planner quietly, ignores its late plan and finishes without launching anything', async (t) => {
+  const f = fixture(t); let planningCleanups = 0;
+  f.runtime.cleanupPlanning = async () => { planningCleanups++; };
+  f.store.action(f.job.id, 'start'); await f.tick();
+  const planner = f.last(); assert.equal(planner.run.phase, 'planning');
+  f.store.action(f.job.id, 'cancel-job');
+  f.report({ kind: 'plan', plan: plan() }, planner);
+  assert.equal(f.store.get(f.job.id).plan, null, 'a plan reported after the cancel does not activate the job');
+  assert.throws(() => f.store.approvePlan(f.job.id, f.store.get(f.job.id).revision), /Job was cancelled/);
+  await f.tick();
+  const job = f.store.get(f.job.id);
+  assert.ok(f.stopped.includes(planner.run.id)); assert.equal(job.error ?? null, null, 'no missing-receipt error for a step the human ended');
+  assert.equal(job.stage, 'done'); assert.ok(job.cancelledAt); assert.deepEqual(job.subJobs, []);
+  assert.equal(planningCleanups, 1, 'the planning worktree is cleaned up');
+  assert.equal(f.launched.length, 1);
+  // From the backlog there is nothing to stop; the next tick simply closes it.
+  const idle = f.store.create(input);
+  f.store.action(idle.id, 'cancel-job'); await f.tick();
+  assert.equal(f.store.get(idle.id).stage, 'done'); assert.equal(f.launched.length, 1); assert.equal(planningCleanups, 2);
+  await f.tick();
+  assert.equal(planningCleanups, 2, 'a finished job is never cleaned up again');
+});
+
 // --- Settle ---
 
 test('a long step is never killed by a clock, but one that stops working without a receipt is an error', async (t) => {

@@ -405,6 +405,16 @@ worker parked on a prompt shows as **Waiting on a prompt** within a graph tick
 and joins **Needs me**; a session that goes idle without reporting is stopped and
 flagged. There is no per-step time limit.
 
+**Cancel job**, in a job's detail footer, is Drop applied to the whole job at
+once, confirmed first. Every unfinished sub-job is dropped: running steps are
+stopped and their receipts ignored, sessions archived, and each worktree removed
+only if its commits are already pushed or the branch is unchanged (one with
+unpushed commits is kept and flagged for you, with Retry once you have looked).
+Sub-jobs already delivered stay delivered, merged work stays merged, and open
+PRs stay open on GitHub for you to close. A job cancelled while planning stops
+the planner and creates no tickets. The job finishes as **Cancelled** rather than
+**Delivered** and returns to the board with **Show finished**.
+
 ### Everything else
 
 Session sub-jobs run in a scratch workspace, may read checkouts under

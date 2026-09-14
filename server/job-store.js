@@ -4,7 +4,7 @@ import { DATA_DIR } from './data-dir.js';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
 import { jobInputSchema, settingsSchema, planSchema, reportSchema, isSessionSub, storiesKeyed } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
-import { applyMove, MOVE_ACTIONS } from './job-moves.js';
+import { applyMove, dropSub, MOVE_ACTIONS } from './job-moves.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
@@ -30,6 +30,21 @@ export function buildSubJob(plan, s) {
 function activate(j) {
   j.subJobs = j.plan.subJobs.map((s) => buildSubJob(j.plan, s));
   j.stage = 'active';
+}
+// The whole job at once: Drop applied to every sub-job that has not finished,
+// plus the job-level state Drop never touches. A sub-job already in cleanup is
+// left alone — a delivered one finishes as delivered, and one whose cleanup was
+// refused keeps that error for the human. Pause is cleared because the runner
+// does nothing for a paused job, cleanup included, and a cancelled job has
+// nothing left to pause; the job error is cleared for the same reason. The
+// runner takes it from here (job-runner.js): live steps stop, each sub-job's
+// cleanup runs, then the planning sessions and worktrees go, and the job lands
+// in `done` with `cancelledAt` telling it apart from a delivered one.
+function cancelJob(j, now) {
+  if (j.stage === 'done') throw new Error('Job has already finished');
+  if (j.cancelledAt) throw new Error('Job is already cancelled');
+  j.cancelledAt = now; j.paused = false; j.error = null; j.blocked = null;
+  for (const s of j.subJobs) if (!['cleanup', 'done'].includes(s.stage)) dropSub(s, now);
 }
 export const MERGE_IS_DELIVERY = 'Merged; nothing runs on push for these paths';
 export const CURRENT_VERSION = 2;
@@ -112,6 +127,7 @@ export class JobStore {
   approvePlan(id, revision, editedPlan) {
     return this.update(id, (j) => {
       if (j.revision !== revision) throw new Error('The plan changed. Review the latest version before approving.');
+      if (j.cancelledAt) throw new Error('Job was cancelled');
       if (j.stage !== 'planning' || !j.plan || j.runs.some(runnable)) throw new Error('The plan is not ready for review');
       const plan = planSchema.parse(editedPlan || j.plan);
       j.plan = plan;
@@ -129,6 +145,10 @@ export class JobStore {
     return this.update(id, (j) => {
       const s = subJobId ? j.subJobs.find((s) => s.id === subJobId) : null;
       if (subJobId && !s) throw new Error('Sub-job not found');
+      if (action === 'cancel-job') { cancelJob(j, Date.now()); return; }
+      // Retry is the one thing left to do on a cancelled job: a refused cleanup
+      // (a worktree with unpushed commits) is still the human's to clear.
+      if (j.cancelledAt && action !== 'retry') throw new Error('Job was cancelled');
       // `cancel` is Drop's old name and still arrives from an older board.
       const move = action === 'cancel' ? 'drop' : action;
       if (MOVE_ACTIONS.has(move)) {
@@ -178,13 +198,13 @@ export class JobStore {
   }
   claim(jobId, subJobId, phase) {
     const job = this.data.jobs.find((j) => j.id === jobId);
-    if (!job || job.paused || this.data.settings.paused
+    if (!job || job.paused || job.cancelledAt || this.data.settings.paused
       || job.runs.some((r) => runnable(r) && r.subJobId === subJobId)
       || this.data.jobs.flatMap((j) => j.runs).filter(runnable).length >= this.data.settings.concurrency) return null;
     return this.change((d) => {
       const j = d.jobs.find((j) => j.id === jobId);
       const active = d.jobs.flatMap((j) => j.runs).filter(runnable);
-      if (!j || j.paused || d.settings.paused || active.length >= d.settings.concurrency) return null;
+      if (!j || j.paused || j.cancelledAt || d.settings.paused || active.length >= d.settings.concurrency) return null;
       if (j.runs.some((r) => runnable(r) && r.subJobId === subJobId)) return null;
       const run = { id: uid('run'), subJobId, phase, startedAt: Date.now(), sessionId: null, stopped: false, report: null };
       j.runs.push(run); j.revision++;
@@ -235,8 +255,9 @@ export class JobStore {
       const s = j.subJobs.find((s) => s.id === r.subJobId);
       r.report = report; r.reportedAt = Date.now();
       // A receipt racing a cancel is kept on the run for the record but never
-      // moves the sub-job: a late `published` must not pull it back out of cleanup.
-      if (!s?.cancelledAt) this._applyReceipt(j, r, s, report);
+      // moves the sub-job: a late `published` must not pull it back out of cleanup,
+      // and a late `plan` must not activate a job that was cancelled while planning.
+      if (!j.cancelledAt && !s?.cancelledAt) this._applyReceipt(j, r, s, report);
     });
   }
   _applyReceipt(j, r, s, report) {

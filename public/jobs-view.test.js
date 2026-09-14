@@ -206,6 +206,46 @@ test('Drop is the old cancel: confirmed first, and it sends nothing but the move
   assert.match(f.q('#jobs-active-count').textContent, /0 delivered/);
 });
 
+test('Cancel job is confirmed first, sends only the job action, and a cancelled job reads as cancelled rather than delivered', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'pr', pr: { url: 'https://github.com/org/repo/pull/1', checkStatus: 'pending' } }, { ...sub('web', ['api']), stage: 'implementation' }, { ...sub('docs'), stage: 'done', deployed: { checks: ['Merged'], at: 1 } }];
+  job.runs = [{ id: 'r1', subJobId: 'api', phase: 'repair', stopped: false }];
+  f.view.update(f.data);
+  f.q('[data-job="job1"]').click(); f.q('#job-cancel').click();
+  assert.equal(f.sent.length, 0, 'cancelling needs a confirmation first');
+  const text = () => f.q('#job-dialog').textContent;
+  assert.match(text(), /drops the 2 unfinished sub-jobs and stops the running step/); assert.match(text(), /already delivered stay delivered/); assert.match(text(), /Its open pull request stays open/);
+  assert.ok(f.q('#job-cancel-form'), 'a form, so a live graph tick leaves the question alone');
+  f.q('#job-move-back').click(); assert.ok(f.q('#job-cancel'), 'backing out returns to the detail view');
+  f.q('#job-cancel').click(); f.q('[data-cancel-job]').click();
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', action: 'cancel-job' });
+  job.cancelledAt = Date.now(); job.runs = [];
+  job.subJobs[0] = { ...job.subJobs[0], stage: 'cleanup', cancelledAt: job.cancelledAt }; job.subJobs[1] = { ...job.subJobs[1], stage: 'cleanup', cancelledAt: job.cancelledAt };
+  f.view.update(f.data); f.q('#job-move-back').click();
+  assert.equal(jobStatus(job, null).text, 'Cancelled · cleaning up');
+  assert.equal(jobNeedsReview(job, job.subJobs[1]), false, 'nothing under a cancelled job asks for a human');
+  assert.equal(f.q('#job-cancel'), null); assert.equal(f.q('[data-action="pause"]'), null);
+  assert.match(text(), /Cancelled .* being stopped and cleaned up/);
+  job.stage = 'done'; for (const s of job.subJobs) s.stage = 'done'; f.view.update(f.data);
+  assert.equal(jobStatus(job, null).text, 'Cancelled');
+  assert.equal(document.querySelectorAll('.job-board').length, 0, 'a cancelled job is finished: hidden until Show finished');
+  f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
+  assert.match(f.q('.job-board-header .job-status').textContent, /Cancelled/); assert.match(f.q('.job-board-meta').textContent, /1 delivered/);
+  assert.match(f.q('#jobs-active-count').textContent, /1 delivered/, 'dropped sub-jobs are never counted as delivered');
+});
+
+test('a job cancelled before it had sub-jobs keeps a card in Done and never offers Start planning', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'backlog'; job.plan = null; job.cancelledAt = 5; f.view.update(f.data);
+  f.q('[data-job="job1"]').click();
+  assert.equal(f.q('[data-action="start"]'), null); assert.match(f.q('#job-dialog').textContent, /Cancelled/);
+  assert.equal(jobNeedsReview({ ...job, stage: 'planning', plan }, null), false, 'a cancelled plan is not waiting for review');
+  job.stage = 'done'; f.view.update(f.data);
+  f.q('#jobs-done').checked = true; f.q('#jobs-done').dispatchEvent(f.event('change'));
+  assert.equal(jobCards([job]).length, 1);
+  assert.equal(f.q('.job-column[aria-label="Done"] .job-card').dataset.job, 'job1');
+  assert.equal(f.q('.job-column[aria-label="Done"] .job-status').textContent, 'Cancelled');
+});
+
 test('Mark position offers only the claims this stage can accept, and insists on the URL for an open PR', (t) => {
   const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
   job.subJobs = [{ ...sub('api'), stage: 'implementation' }, { ...sub('open'), stage: 'pr', pr: { url: 'https://github.com/org/repo/pull/1', head: 'h1', checkStatus: 'pending', checks: [] } }];
