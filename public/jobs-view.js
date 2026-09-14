@@ -64,7 +64,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
   const openDeps = new Set();
   root.innerHTML = `<header class="jobs-header"><div><span class="jobs-kicker">AUTOMATED WORK</span><h1>Jobs</h1><p>From intent to delivered. Your decisions, at a glance.</p></div><button class="primary" id="job-new">＋ New job</button></header>
     <div class="jobs-toolbar"><label>Agents at once <input id="jobs-concurrency" type="number" min="1" max="16" value="2"></label><button id="jobs-pause">Pause new work</button><button id="jobs-settings">Automation settings</button><span class="jobs-cost-note">Pipeline watching uses no agents</span></div>
-    <div class="jobs-filters"><select id="jobs-filter" aria-label="Show one job"><option value="">Every job</option></select><label><input id="jobs-needs" type="checkbox"> Needs me <span id="jobs-review-count">0</span></label><label><input id="jobs-done" type="checkbox"> Show delivered</label><span id="jobs-active-count" aria-live="polite"></span></div>
+    <div class="jobs-filters"><select id="jobs-filter" aria-label="Show one job"><option value="">Every job</option></select><label><input id="jobs-needs" type="checkbox"> Needs me <span id="jobs-review-count">0</span></label><label><input id="jobs-done" type="checkbox"> Show finished</label><span id="jobs-active-count" aria-live="polite"></span></div>
     <div id="jobs-boards" class="jobs-boards"></div>`;
   const q = (s) => root.querySelector(s);
   function update(snapshot) { data = snapshot || data; render(); }
@@ -95,7 +95,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     q('#jobs-pause').textContent = data.settings.paused ? 'Resume automation' : 'Pause new work';
     q('#jobs-filter').innerHTML = `<option value="">Every job</option>${data.jobs.map((j) => `<option value="${esc(j.id)}" ${filter === j.id ? 'selected' : ''}>${esc(j.title)}</option>`).join('')}`;
     const visible = cards.filter((c) => (!filter || c.job.id === filter) && (!needsOnly || jobNeedsReview(c.job, c.sub)) && (showDone || c.sub?.stage !== 'done'));
-    // A delivered job's board only returns with Show delivered; a board every filter emptied is dropped rather than drawn blank.
+    // A finished (delivered or cancelled) job's board only returns with Show finished; a board every filter emptied is dropped rather than drawn blank.
     const boards = data.jobs.filter((j) => (!filter || j.id === filter) && (showDone || j.stage !== 'done')).map((j) => [j, visible.filter((c) => c.job === j)]).filter(([, c]) => c.length);
     const empty = !data.jobs.length ? 'Start with an outcome.<br>Wrangler will shape the work.' : needsOnly ? 'Nothing needs you right now.' : 'No jobs match these filters.';
     q('#jobs-boards').innerHTML = boards.map(([job, c]) => boardHtml(job, c)).join('') || `<div class="job-empty jobs-empty">${empty}</div>`;
@@ -138,6 +138,20 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     layoutGraphEdges(graph);
   }
   const noteFor = (sub) => sub.note ? `<p class="job-note">Note for the next session: ${esc(sub.note)}</p>` : '';
+  // What a whole-job cancel did and what it left: the sub-job cards beneath say
+  // Dropped one by one, this is the line that says why all of them do.
+  const cancelledHtml = (job) => job.cancelledAt ? `<p class="job-authority">Cancelled ${esc(when(job.cancelledAt))}. ${job.stage === 'done' ? 'Every unfinished sub-job was dropped and cleaned up' : 'Every unfinished sub-job was dropped; running steps are being stopped and cleaned up'}. Merged work stays merged, open pull requests stay open on GitHub, and a worktree with unpushed commits is kept for you to look at.</p>` : '';
+  // Confirmed first, like Drop, and wrapped in a form so a live graph tick does not
+  // re-render the detail view over the question (render() leaves any open form alone).
+  function openCancel(job) {
+    const live = job.runs.filter((r) => !r.stopped).length;
+    const unfinished = job.subJobs.filter((s) => !['cleanup', 'done'].includes(s.stage)).length;
+    const prs = job.subJobs.filter((s) => s.pr && s.stage === 'pr').length;
+    const what = job.stage === 'active' ? `This drops the ${unfinished === 1 ? 'one unfinished sub-job' : `${unfinished} unfinished sub-jobs`}${live ? ` and stops the ${live === 1 ? 'running step' : `${live} running steps`}; their receipts are ignored` : ''}. Sub-jobs already delivered stay delivered. ` : `This stops ${live ? 'the running ' : ''}${job.stage === 'jira' ? 'ticketing' : 'planning'}${live ? '' : ' before it starts'}; no tickets or PRs are created. `;
+    show(`<span class="jobs-kicker">${esc(job.title)}</span><h2>Cancel this job?</h2><form id="job-cancel-form"><p>${what}${prs ? `${prs === 1 ? 'Its open pull request stays' : `${prs} open pull requests stay`} open on GitHub for you to close. ` : ''}Sessions are archived; each worktree is removed only if its commits are already pushed or the branch is unchanged, and kept otherwise.</p><div class="job-actions"><button type="button" class="danger" data-cancel-job="1">Cancel job</button><button type="button" id="job-move-back">Keep working</button></div></form>`);
+    dialog.querySelector('[data-cancel-job]').onclick = () => send({ type: 'job-action', id: job.id, action: 'cancel-job' });
+    dialog.querySelector('#job-move-back').onclick = () => renderDetail();
+  }
   const contextHtml = (plan) => plan?.context ? `<h3>Context</h3><p>${esc(plan.context)}</p>` : '';
   // One escaped line per move, newest first, with when it was made — the record of
   // every human intervention in a job, kept out of the way until asked for.
@@ -196,7 +210,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.observationError ? `<p class="job-error">${esc(sub.observationError)} · Retrying automatically</p>` : ''}
         <div class="job-actions">${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button data-action="retry">Retry</button>' : ''}</div>
         <details class="job-more"><summary>Worktree & brief</summary><code>${esc(sub.worktree?.path || 'Worktree created on dispatch')}</code><p>${esc(sub.brief)}</p>${sub.check ? `<p>Check after it lands: ${esc(sub.check)}</p>` : ''}</details>`;
-    } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or work begins.</p><button class="primary" data-action="start">Start planning</button>` : job.stage === 'jira' ? `${contextHtml(job.plan)}<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Work starts once every story has a key.</p><h3>Approved work</h3>${planGraphHtml(job.plan)}` : job.stage === 'active' || job.stage === 'done' ? `${contextHtml(job.plan)}${job.plan?.stories?.length ? `<h3>Stories <small>${job.plan.stories.length}</small></h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div>` : ''}<h3>Sub-jobs <small>${esc(kindCountLabel(job.subJobs))}</small></h3>${planGraphHtml({ subJobs: job.subJobs, stories: job.plan?.stories }, { statusOf: (s) => jobStatus(job, s) })}${movesHistoryHtml(job)}` : '<p>Wrangler will bring the plan here for review.</p>'}`;
+    } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${cancelledHtml(job)}${job.cancelledAt && !job.subJobs.length ? '' : job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or work begins.</p><button class="primary" data-action="start">Start planning</button>` : job.stage === 'jira' ? `${contextHtml(job.plan)}<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Work starts once every story has a key.</p><h3>Approved work</h3>${planGraphHtml(job.plan)}` : job.stage === 'active' || job.stage === 'done' ? `${contextHtml(job.plan)}${job.plan?.stories?.length ? `<h3>Stories <small>${job.plan.stories.length}</small></h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div>` : ''}<h3>Sub-jobs <small>${esc(kindCountLabel(job.subJobs))}</small></h3>${planGraphHtml({ subJobs: job.subJobs, stories: job.plan?.stories }, { statusOf: (s) => jobStatus(job, s) })}${movesHistoryHtml(job)}` : job.cancelledAt ? '' : '<p>Wrangler will bring the plan here for review.</p>'}`;
     // The board's number, restated where the decision is actually taken — and on a
     // sub-job the job total beside it, so a step's price always reads against the whole.
     const subCost = sub ? jobCostLabel(sub.usd, sub.usdEstimated) : '';
@@ -205,7 +219,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       jobCost ? `<span class="job-detail-cost" title="${esc(JOB_COST_TITLE)}">${esc(jobCost)} job total</span>` : ''].filter(Boolean).join('');
     show(`<span class="jobs-kicker">${esc(sub ? job.title : 'JOB')}</span><h2>${esc(sub?.title || job.title)}</h2><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${costs}
       ${job.error && !sub ? `<p class="job-error">${esc(job.error)}</p><button data-action="retry">Retry</button>` : ''}${body}
-      <footer class="job-detail-footer"><span class="job-footer-actions"><button data-action="${job.paused ? 'resume' : 'pause'}">${job.paused ? 'Resume job' : 'Pause new work for this job'}</button></span><span>${esc(reviewFlagsLabel(job))}</span></footer>`);
+      <footer class="job-detail-footer"><span class="job-footer-actions">${job.cancelledAt || job.stage === 'done' ? '' : `<button data-action="${job.paused ? 'resume' : 'pause'}">${job.paused ? 'Resume job' : 'Pause new work for this job'}</button><button class="danger" id="job-cancel">Cancel job</button>`}</span><span>${esc(reviewFlagsLabel(job))}</span></footer>`);
     dialog.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => {
       const name = b.dataset.action;
       action(name, name === 'approve-plan' ? { plan: planDraft, revision }
@@ -232,6 +246,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       show('<h2>Request changes</h2><form><label>What should change?<textarea name="feedback" required rows="4" maxlength="8000"></textarea></label><button class="primary">Send to a new session</button></form>');
       dialog.querySelector('form').onsubmit = (e) => { e.preventDefault(); action('revise-session', { feedback: new FormData(e.target).get('feedback') }); };
     });
+    bind('#job-cancel', () => openCancel(job));
     bind('#job-session', () => { dialog.close(); onSession(sub.sessions.at(-1)); });
     // Reviewing the code is a round trip out to the board's diff panel, so hand over
     // where the reader came FROM as well as what to show — app.js re-opens this same
@@ -265,7 +280,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     const merged = sub.stage === 'deployment';
     if (id === 'drop') {
       const live = job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
-      show(`<h2>Drop ${esc(sub.title)}?</h2><p>This skips straight to cleanup. ${live ? 'The running step is stopped and its receipt is ignored. ' : ''}${sub.pr ? 'The pull request stays open on GitHub for you to close. ' : ''}${isSessionSub(sub) ? 'Its session is archived; nothing on disk is removed.' : 'Sessions are archived; the worktree is removed only if its commits are already pushed or the branch is unchanged.'} Sub-jobs that ${isSessionSub(sub) ? 'start' : 'land'} after this one will need dropping too.</p><div class="job-actions"><button class="danger" data-drop="1">Drop sub-job</button><button id="job-move-back">Keep working</button></div>`);
+      show(`<h2>Drop ${esc(sub.title)}?</h2><p>This skips straight to cleanup. ${live ? 'The running step is stopped and its receipt is ignored. ' : ''}${sub.pr ? 'The pull request stays open on GitHub for you to close. ' : ''}${isSessionSub(sub) ? 'Its session is archived; nothing on disk is removed.' : 'Sessions are archived; the worktree is removed only if its commits are already pushed or the branch is unchanged.'} Sub-jobs that ${isSessionSub(sub) ? 'start' : 'land'} after this one will need dropping too.</p><form id="job-drop-form"><div class="job-actions"><button type="button" class="danger" data-drop="1">Drop sub-job</button><button type="button" id="job-move-back">Keep working</button></div></form>`);
       dialog.querySelector('[data-drop]').onclick = () => action('drop');
       dialog.querySelector('#job-move-back').onclick = () => renderDetail();
       return;

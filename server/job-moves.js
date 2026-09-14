@@ -61,6 +61,14 @@ function addPrSubJob(job, sub, data, { storyId, jiraKey, story, position, buildS
   if (position === 'before') both(job, sub.id, (s) => { s.after = [...s.after, spec.id]; });
   return spec;
 }
+// Straight to cleanup. The runner stops any live step; nothing merged, so
+// cleanup keeps every commit it cannot prove is retained elsewhere. Shared by
+// Drop (one sub-job) and a whole-job cancel (job-store.js), so the two can
+// never disagree about what dropping means.
+export function dropSub(sub, now) {
+  sub.cancelledAt = now; sub.stage = 'cleanup'; sub.state = 'cancelled';
+  sub.error = null; sub.blocked = null; sub.observationError = null;
+}
 // A sub-job whose plan just changed goes back to work: the same retry semantics
 // the Retry button carries, including the extra repair attempt.
 function requeue(sub) {
@@ -140,10 +148,7 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
 
   if (move === 'drop') {
     if (sub.stage === 'cleanup') throw new Error('Sub-job has already finished');
-    // Straight to cleanup. The runner stops any live step; nothing merged, so
-    // cleanup keeps every commit it cannot prove is retained elsewhere.
-    sub.cancelledAt = now; sub.stage = 'cleanup'; sub.state = 'cancelled';
-    sub.error = null; sub.blocked = null; sub.observationError = null;
+    dropSub(sub, now);
     return { detail: `Dropped ${quoted(sub.title)}` };
   }
 

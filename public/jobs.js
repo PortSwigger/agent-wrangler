@@ -138,7 +138,7 @@ export function jobNeedsReview(job, sub) {
   // A step waiting on a prompt is the human's, whatever else the job is doing.
   if (runStatus(job, sub) === 'needs-you') return true;
   if (sub && mergeHeldByComments(job, sub)) return true;
-  if (!sub) return job.stage === 'planning' && job.plan && !job.runs.some((r) => !r.stopped);
+  if (!sub) return !job.cancelledAt && job.stage === 'planning' && job.plan && !job.runs.some((r) => !r.stopped);
   if (!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return true;
   if (isSessionSub(sub)) return sub.stage === 'review';
   if (deploymentStalled(sub)) return true;
@@ -147,6 +147,7 @@ export function jobNeedsReview(job, sub) {
 export function jobStatus(job, sub) {
   if (job.error || sub?.error) return { tone: 'needs', text: 'Needs attention' };
   if (sub?.cancelledAt) return { tone: sub.stage === 'done' ? 'done' : 'muted', text: sub.stage === 'done' ? 'Dropped' : 'Dropped · cleaning up' };
+  if (!sub && job.cancelledAt) return { tone: job.stage === 'done' ? 'done' : 'muted', text: job.stage === 'done' ? 'Cancelled' : 'Cancelled · cleaning up' };
   if (job.paused) return { tone: 'muted', text: 'Paused' };
   if (sub && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return { tone: 'needs', text: 'Depends on a dropped sub-job' };
   const run = liveRun(job, sub);
@@ -172,9 +173,12 @@ export function jobStatus(job, sub) {
   if (sub.stage === 'done') return { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
   return { tone: 'muted', text: 'Queued' };
 }
+// A job card joins the sub-job cards when the job itself needs attention, and
+// stands alone for a job cancelled before it had any sub-jobs — otherwise that
+// job would have no card at all and its board would never be drawn.
 export function jobCards(jobs) {
   return jobs.flatMap((job) => job.stage === 'active' || job.stage === 'done'
-    ? [...job.subJobs.map((sub) => isSessionSub(sub) ? { job, sub, board: 'sessions', stage: sessionColumn(job, sub) } : { job, sub, board: 'prs', stage: sub.stage === 'done' ? 'cleanup' : sub.stage }), ...(job.error ? [{ job, sub: null, board: 'prs', stage: 'cleanup' }] : [])]
+    ? [...job.subJobs.map((sub) => isSessionSub(sub) ? { job, sub, board: 'sessions', stage: sessionColumn(job, sub) } : { job, sub, board: 'prs', stage: sub.stage === 'done' ? 'cleanup' : sub.stage }), ...(job.error || !job.subJobs.length ? [{ job, sub: null, board: 'prs', stage: 'cleanup' }] : [])]
     : [{ job, sub: null, board: 'prs', stage: job.stage }]);
 }
 // "Deploy after" a PR, "after" a session (which must finish before this even starts).

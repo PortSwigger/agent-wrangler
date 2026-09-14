@@ -40,7 +40,10 @@ export class JobRunner {
   async settle(id) {
     for (const run of this.store.get(id).runs.filter(runnable)) {
       let error;
-      const cancelled = run.subJobId && this.store.get(id).subJobs.find((s) => s.id === run.subJobId)?.cancelledAt;
+      const job = this.store.get(id);
+      // A cancelled job stops its planning/ticketing run the way a dropped
+      // sub-job stops its step: quietly, no missing-receipt error.
+      const cancelled = job.cancelledAt || (run.subJobId && job.subJobs.find((s) => s.id === run.subJobId)?.cancelledAt);
       if (!run.report && !cancelled) {
         if (!run.sessionId) error = 'Launch was interrupted. Check for an existing session/worktree before retrying.';
         else if (!(await this.runtime.isAlive(run))) error = 'Session stopped without a receipt. Open it to see why, then retry.';
@@ -120,7 +123,11 @@ export class JobRunner {
   }
   async advance(id) {
     let job = this.store.get(id);
-    if (!this.allowed(id) || job.error) return;
+    if (!this.allowed(id) || job.error || job.stage === 'done') return;
+    // Cancelled before it had sub-jobs: nothing to clean up per sub-job, so the
+    // job finishes as soon as settle() has stopped its planning run. An active
+    // one takes the ordinary road below — every sub-job is already in cleanup.
+    if (job.cancelledAt && job.stage !== 'active') { if (!job.runs.some(runnable)) await this.finish(id); return; }
     if (job.stage === 'planning' && !job.plan && !activeFor(job)) { await this.launch(job, null, 'planning'); return; }
     if (job.stage === 'jira' && !activeFor(job)) { await this.launch(job, null, 'jira'); return; }
     if (job.stage !== 'active') return;
@@ -230,11 +237,14 @@ export class JobRunner {
       }
     }
     job = this.store.get(id);
-    if (job.subJobs.length && job.subJobs.every((s) => s.stage === 'done')) {
-      try {
-        await this.runtime.cleanupPlanning(job);
-        this.store.update(id, (j) => { j.stage = 'done'; j.completedAt = this.now(); });
-      } catch (e) { this.store.update(id, (j) => { j.error = shortError(e); }); }
-    }
+    if (job.subJobs.length && job.subJobs.every((s) => s.stage === 'done')) await this.finish(id);
+  }
+  // Delivered or cancelled, the job ends the same way: planning sessions and
+  // worktrees go, then `done`. `cancelledAt` is what tells the two apart.
+  async finish(id) {
+    try {
+      await this.runtime.cleanupPlanning(this.store.get(id));
+      this.store.update(id, (j) => { j.stage = 'done'; j.completedAt = this.now(); });
+    } catch (e) { this.store.update(id, (j) => { j.error = shortError(e); }); }
   }
 }
