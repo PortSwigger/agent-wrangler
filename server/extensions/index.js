@@ -1,4 +1,5 @@
 import path from 'node:path';
+import semver from 'semver';
 import { readConfig, extensionEnabled } from '../config-store.js';
 
 // The in-repo extensions API: one manifest per optional feature, loaded ONCE at
@@ -10,10 +11,14 @@ import { readConfig, extensionEnabled } from '../config-store.js';
 // This module is a LEAF and every builtin manifest must stay leaf-compatible: it
 // is imported by server/mcp/client-config.js and server/agent-skills.js, which the
 // agent adapters (server/agents/*) import, so nothing under server/extensions/**
-// may import session-manager / state-reader / tmux-scraper / index.js (asserted
-// by index.test.js). A manifest's tools/handlers/stores therefore reach the
-// server only through the `deps`/`ctx` bags they are handed (`deps.ext.stores`,
-// `ctx.ext.stores`), the same way core tools reach sessionManager.
+// may import session-manager / state-reader / tmux-scraper / index.js / the
+// host-api/ directory (asserted by index.test.js). A manifest's tools, handlers,
+// hooks and sweeps therefore reach the server only through the per-extension
+// `host` façade they are handed, built by server/index.js from this loader's
+// `requires` list — the loader itself cannot build one, since a builder binds
+// singletons it may not import. `semver` below is an npm package, not a server
+// module, so importing it breaches nothing: the leaf rule is about reaching back
+// into the server core, not about third-party code.
 //
 // Empty for now: this lands the API and its seams, with no feature migrated onto
 // it yet. Nothing here is dead — every consumer below already routes through the
@@ -38,6 +43,23 @@ export const RESERVED_GRAPH_KEYS = new Set([
 // very first tool call may already depend on. `onDispatch` fires after the
 // entry is saved — correct for anything reacting to a new card, too late for an
 // invariant the launched process itself relies on.
+// The CLOSED capability vocabulary a manifest's `requires` is drawn from. It
+// lives HERE rather than beside the builders because the loader validates
+// `requires` at manifest-load time and cannot import the non-leaf host-api/.
+// host-api/index.test.js asserts V1_BUILDERS' keys and this set match in BOTH
+// directions — that test is what keeps the two in step without an import, so a
+// new capability is a two-file change by design.
+export const CAPABILITIES = new Set([
+  'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:kill',
+  'tasks:read', 'tasks:write',
+  'memory:read', 'memory:append',
+  'deliver',
+  'board:rebuild', 'board:broadcast',
+  'terminals:create',
+  'schedules:read', 'schedules:write',
+  'mail:read', 'mail:send',
+]);
+
 export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
@@ -57,6 +79,27 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
   if (typeof ext.id !== 'string' || !ID_RE.test(ext.id)) fail(ext, `id must match ${ID_RE} (got ${JSON.stringify(ext.id)})`);
   if (typeof ext.label !== 'string' || !ext.label) fail(ext, 'label must be a non-empty string');
   if (ext.help != null && typeof ext.help !== 'string') fail(ext, 'help must be a string');
+  // What of the host façade this manifest gets. An undeclared capability's key
+  // is structurally absent, so a typo here is a TypeError deep in a tool rather
+  // than anything a human would connect back to the manifest — refuse at boot.
+  if (ext.requires != null) {
+    if (!Array.isArray(ext.requires) || ext.requires.some((c) => typeof c !== 'string' || !c)) {
+      fail(ext, 'requires must be an array of capability names');
+    }
+    for (const c of ext.requires) {
+      if (!CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES].sort().join(', ')})`);
+    }
+  }
+  // The host API range this manifest was written against. Only its SHAPE is
+  // checked here — whether the served version satisfies it is buildHostApi's
+  // call, since this leaf does not know what version is served. Duplicated
+  // one-liner, deliberately: see host-api/version.js isValidRange.
+  if (ext.engines?.wranglerApi != null) {
+    const range = ext.engines.wranglerApi;
+    if (typeof range !== 'string' || semver.validRange(range) == null) {
+      fail(ext, 'engines.wranglerApi must be a valid semver range');
+    }
+  }
   if (ext.stores != null) {
     if (typeof ext.stores !== 'object') fail(ext, 'stores must be an object of factories');
     for (const [name, factory] of Object.entries(ext.stores)) {
@@ -120,9 +163,16 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
 // session's tools following at its next resume; enabled && !bootEnabled is the one
 // case nothing can finish without a restart, and saying so is the only way a human
 // tells it apart from a toggle that silently did nothing.
+//
+// `handlerTypes` is the one addition the client half needs rather than the
+// human: the browser façade binds an extension's `send` to its OWN registered
+// types (public/slots.js), so this array is what makes that possible. Boot-fixed
+// and a handful of short strings per extension — nowhere near graph.history's
+// problem — and deliberately off the per-card path.
 export function extensionsForGraph(list, enabledFor = extensionEnabled) {
-  return list.map(({ id, label, help, defaultEnabled, enabled: bootEnabled }) => ({
+  return list.map(({ id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes }) => ({
     id, label, help, defaultEnabled, bootEnabled, enabled: enabledFor(id, defaultEnabled),
+    handlerTypes: [...(handlerTypes || [])],
   }));
 }
 
@@ -165,7 +215,23 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     if (ids.has(ext.id)) fail(ext, 'duplicate extension id');
     ids.add(ext.id);
     const enabled = extensionEnabled(ext.id, ext.defaultEnabled, cfg);
-    out.list.push({ id: ext.id, label: ext.label, help: ext.help || '', defaultEnabled: Boolean(ext.defaultEnabled), enabled });
+    // `requires`/`range`/`storeNames` are the façade's build inputs, carried on
+    // the list entry because index.js — not this leaf — is what can build one.
+    // `handlerTypes` is filled below, as the handlers are collected: it is what
+    // tells the BOARD which control types this extension owns, so the client
+    // façade's `send` can refuse a frame aimed at anything else.
+    const listEntry = {
+      id: ext.id,
+      label: ext.label,
+      help: ext.help || '',
+      defaultEnabled: Boolean(ext.defaultEnabled),
+      enabled,
+      requires: [...(ext.requires || [])],
+      range: ext.engines?.wranglerApi ?? null,
+      storeNames: Object.keys(ext.stores || {}),
+      handlerTypes: [],
+    };
+    out.list.push(listEntry);
     if (!enabled) {
       out.disabledSkillIds.push(...(ext.skills || []));
       continue;
@@ -173,13 +239,19 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     for (const t of ext.tools || []) {
       if (toolNames.has(t.name)) fail(ext, `tool name "${t.name}" is already registered`);
       toolNames.add(t.name);
-      out.tools.push(t);
+      // Tagged with its owner as it is collected: each frame is invoked with
+      // THAT extension's façade, so the tag is how mcp/server.js and
+      // control/router.js tell an extension's tool/handler from a core one (an
+      // untagged one is core and still gets deps/ctx). Same for handlers and
+      // session hooks below — sweeps were already tagged.
+      out.tools.push({ ...t, extId: ext.id });
       out.allowedToolNames.push(t.name);
     }
     for (const h of ext.handlers || []) {
       if (handlerTypes.has(h.type)) fail(ext, `handler type "${h.type}" is already registered`);
       handlerTypes.add(h.type);
-      out.handlers.push(h);
+      out.handlers.push({ ...h, extId: ext.id });
+      listEntry.handlerTypes.push(h.type);
     }
     for (const [name, factory] of Object.entries(ext.stores || {})) {
       if (storeNames.has(name)) fail(ext, `store name "${name}" is already registered`);
@@ -194,7 +266,7 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
     if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
     if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
-    for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push(fn);
+    for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
     for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
     if (ext.dir) out.dirs[ext.id] = ext.dir;
     // Omitted rather than nulled when absent, so the announcement a stock
@@ -227,13 +299,15 @@ function extAssetUrl(id, rel) {
 // adapters beyond one more array. A gate that throws suppresses nothing for its
 // own extension and never touches another's — a broken gate must not silently
 // strip an unrelated feature's skill out of a real launch.
-export function createSkillGate(ext, bag = {}, onError = () => {}) {
+// `hostApiFor(extId)` rather than one shared bag: each gate is called with its
+// OWN extension's façade, so a gate reads only what its manifest declared.
+export function createSkillGate(ext, hostApiFor = () => undefined, onError = () => {}) {
   return function disabledSkillsFor(context = {}) {
     const out = [];
     for (const { id, skills, gate } of ext.skillGates) {
       let keep;
       try {
-        keep = gate({ ...context, ...bag, skills: [...skills] });
+        keep = gate({ ...context, host: hostApiFor(id), skills: [...skills] });
       } catch (err) {
         onError(`[ext:${id}] skillsFor failed`, err);
         continue;
@@ -255,12 +329,12 @@ export function createSkillGate(ext, bag = {}, onError = () => {}) {
 // UX narrowing on an advisory identity (extractCaller is not authentication —
 // see server/mcp/server.js), so a bug here must degrade to the full tool list
 // rather than silently leaving every session unable to do anything.
-export function createToolFilter(ext, bag = {}, onError = () => {}) {
+export function createToolFilter(ext, hostApiFor = () => undefined, onError = () => {}) {
   if (!ext.toolFilters.length) return null;
   return function hideTool(caller, toolName) {
     for (const { id, hide } of ext.toolFilters) {
       try {
-        if (hide({ ...bag, caller, tool: toolName })) return true;
+        if (hide({ host: hostApiFor(id), caller, tool: toolName })) return true;
       } catch (err) {
         onError(`[ext:${id}] hideTool failed`, err);
       }

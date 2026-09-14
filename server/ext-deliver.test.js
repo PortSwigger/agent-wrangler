@@ -55,14 +55,13 @@ test("deliverMessage's own refusals come back untouched", async () => {
   assert.deepEqual(await deliver('c1', 'ping'), { mode: 'error', error: 'Session c1 is archived; messaging an archived session isn\'t supported.' });
 });
 
-// Nothing lints a bag key into existence: a hook registered nowhere is a hook an
-// extension's tool can only discover as `undefined` at run time, in production.
-// Same class of invisible-wiring guard as client-config.test.js's tool-pair
-// assertion, and the two sites here are the two audiences — tools/handlers get it
-// on the shared bag, a sweep gets it in its run args.
-test('index.js wires deliver into BOTH the extensions bag and the sweep run args', () => {
+// Nothing lints a capability into existence: a `deliver` an extension declared
+// but index.js never bound is something its tool can only discover as
+// `undefined` at run time, in production. Same class of invisible-wiring guard as
+// client-config.test.js's tool-pair assertion — and it is now PER EXTENSION, so
+// what matters is that the facade's deliver carries that extension's own reason.
+test('index.js binds deliver per extension, with the extension id as the resume reason', () => {
   const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  assert.match(src, /const extDeliver = createExtDeliver\(\{[^}]*sessionManager[^}]*tmuxFor[^}]*\}\)/);
-  assert.match(src, /const extBag = \{[^}]*deliver: extDeliver[^}]*\}/);
-  assert.match(src, /s\.run\(\{[^}]*deliver: extDeliver[^}]*\}\)/);
+  assert.match(src, /deliver: createExtDeliver\(\{[^}]*sessionManager[^}]*tmuxFor[^}]*\}, \{ reason: `ext:\$\{e\.id\}` \}\)/);
+  assert.doesNotMatch(src, /deliver: extDeliver/, 'the one shared deliver is gone');
 });

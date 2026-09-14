@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS,
+  BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createToolFilter, _resetExtensionsForTests,
 } from './index.js';
@@ -24,7 +24,7 @@ function manifest(overrides = {}) {
     handlers: [{ type: 'fake-do', handler() {} }],
     tools: [{ name: 'fake_tool', handler() {} }],
     skills: ['fake'],
-    graph: ({ stores }) => ({ fakes: stores.fake.snapshot() }),
+    graph: ({ host }) => ({ fakes: host.stores.fake.snapshot() }),
     session: { onPurge() {} },
     ...overrides,
   };
@@ -89,7 +89,10 @@ test('a manifest without `client` contributes nothing to clientManifest', () => 
 
 test('enabled filtering: a disabled extension is listed but contributes nothing except its disabledSkillIds', () => {
   const out = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ client: 'public/index.js', sweeps: [{ id: 's', everyMs: 1000, run() {} }] })] });
-  assert.deepEqual(out.list, [{ id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false }]);
+  assert.deepEqual(out.list, [{
+    id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
+    requires: [], range: null, storeNames: ['fake'], handlerTypes: [],
+  }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
   assert.deepEqual(out.handlers, []);
@@ -114,7 +117,7 @@ test('enabled: every channel is populated, allowedToolNames is derived from tool
   assert.equal(out.graphContributors.length, 1);
   assert.equal(out.graphContributors[0].id, 'fake');
   const stores = Object.fromEntries(Object.entries(out.stores).map(([k, f]) => [k, f()]));
-  assert.deepEqual(out.graphContributors[0].contribute({ stores }), { fakes: { n: 1 } });
+  assert.deepEqual(out.graphContributors[0].contribute({ host: { stores } }), { fakes: { n: 1 } });
   assert.equal(out.sessionHooks.onPurge.length, 1);
   assert.deepEqual(out.sessionHooks.onArchive, []);
 });
@@ -185,7 +188,10 @@ test('no module under server/extensions/** imports session-manager, state-reader
   assert.ok(files.length >= 1, `expected at least the loader, found ${files.length}`);
   // A manifest importing its OWN './x/index.js' is fine; the forbidden index.js
   // is the server entry, reached only by climbing out of server/extensions/.
-  const forbidden = [/\/(session-manager|state-reader|tmux-scraper)\.js['"]/, /from\s+['"](\.\.\/)+index\.js['"]/];
+  // host-api/** is the NON-leaf half of the extensions API: a builder binds the
+  // singletons this directory may not touch, so the import direction is one-way
+  // and the loader can only ever REPORT `requires` for index.js to build from.
+  const forbidden = [/\/(session-manager|state-reader|tmux-scraper)\.js['"]/, /from\s+['"](\.\.\/)+index\.js['"]/, /\/host-api\//];
   const offenders = [];
   for (const f of files) {
     for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
@@ -265,48 +271,51 @@ test('createSkillGate returns the declared skills a gate left out, and only thos
     cfg: {},
     builtin: [manifest({ skills: ['alpha', 'beta'], skillsFor: ({ phase }) => (phase === 'dispatch' ? ['alpha'] : ['alpha', 'beta']) })],
   });
-  const gate = createSkillGate(loaded, { stores: {}, core: {} });
+  const gate = createSkillGate(loaded);
   assert.deepEqual(gate({ phase: 'dispatch' }), ['beta']);
   assert.deepEqual(gate({ phase: 'resume' }), []);
 });
 
-test('createSkillGate hands the gate its own declared skills plus the bound bag', () => {
+test('createSkillGate hands the gate its own declared skills plus its OWN facade', () => {
   const seen = [];
-  const bag = { stores: { s: 1 }, core: { sessionManager: 2 } };
+  const asked = [];
+  const host = { id: 'fake' };
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: (ctx) => { seen.push(ctx); return ctx.skills; } })] });
-  createSkillGate(loaded, bag)({ sessionId: 'CARD1', phase: 'resume' });
+  createSkillGate(loaded, (extId) => { asked.push(extId); return host; })({ sessionId: 'CARD1', phase: 'resume' });
   assert.deepEqual(seen[0].skills, ['alpha']);
-  assert.equal(seen[0].stores, bag.stores);
-  assert.equal(seen[0].core, bag.core);
+  assert.equal(seen[0].host, host);
+  assert.equal(seen[0].stores, undefined, 'the shared bag is gone');
+  assert.equal(seen[0].core, undefined);
   assert.equal(seen[0].sessionId, 'CARD1');
+  assert.deepEqual(asked, ['fake'], 'the facade is looked up by the OWNING extension id');
 });
 
 test('createSkillGate cannot suppress a skill the extension did not declare', () => {
   // The gate's answer is intersected with its own `skills`, so naming someone
   // else's skill (or task-memory, which is not an extension at all) does nothing.
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [] })] });
-  assert.deepEqual(createSkillGate(loaded, {})({}), ['alpha']);
+  assert.deepEqual(createSkillGate(loaded)({}), ['alpha']);
 });
 
 test('a throwing gate suppresses nothing and is reported', () => {
   const errs = [];
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => { throw new Error('boom'); } })] });
-  assert.deepEqual(createSkillGate(loaded, {}, (...a) => errs.push(a))({}), [], 'a bug here must not strip a real launch');
+  assert.deepEqual(createSkillGate(loaded, undefined, (...a) => errs.push(a))({}), [], 'a bug here must not strip a real launch');
   assert.match(errs[0][0], /\[ext:fake\] skillsFor failed/);
 });
 
 test('no gate at all means no per-launch suppression', () => {
-  assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'] })] }), {})({}), []);
+  assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'] })] }))({}), []);
 });
 
 // ── Per-caller MCP tool filtering ─────────────────────────────────────────
 test('createToolFilter is null when no manifest declares a veto', () => {
-  assert.equal(createToolFilter(loadExtensions({ cfg: {}, builtin: [manifest()] }), {}), null);
+  assert.equal(createToolFilter(loadExtensions({ cfg: {}, builtin: [manifest()] })), null);
 });
 
 test('createToolFilter vetoes per caller and tool', () => {
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hideTool: ({ caller, tool }) => caller === 'JOB1' && tool === 'spawn_session' })] });
-  const hide = createToolFilter(loaded, { stores: {}, core: {} });
+  const hide = createToolFilter(loaded);
   assert.equal(hide('JOB1', 'spawn_session'), true);
   assert.equal(hide('JOB1', 'list_sessions'), false);
   assert.equal(hide('CARD1', 'spawn_session'), false);
@@ -315,14 +324,14 @@ test('createToolFilter vetoes per caller and tool', () => {
 test('a throwing veto fails OPEN and is reported', () => {
   const errs = [];
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hideTool: () => { throw new Error('boom'); } })] });
-  assert.equal(createToolFilter(loaded, {}, (...a) => errs.push(a))('CARD1', 'list_sessions'), false);
+  assert.equal(createToolFilter(loaded, undefined, (...a) => errs.push(a))('CARD1', 'list_sessions'), false);
   assert.match(errs[0][0], /\[ext:fake\] hideTool failed/);
 });
 
 test('a disabled extension contributes neither a gate nor a veto', () => {
   const off = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [], hideTool: () => true })] });
   assert.deepEqual(off.skillGates, []);
-  assert.equal(createToolFilter(off, {}), null);
+  assert.equal(createToolFilter(off), null);
 });
 
 // ── Manifest validation for the new keys ──────────────────────────────────
@@ -347,4 +356,41 @@ test('styles is path-checked exactly like client and announced beside it', () =>
 test('an extension may ship styles with no client module', () => {
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ dir: HERE, styles: 'public/jobs.css' })] });
   assert.deepEqual(loaded.clientManifest, [{ id: 'fake', styles: '/ext/fake/jobs.css' }]);
+});
+
+// -- requires / engines.wranglerApi ----------------------------------------
+test('requires must be an array of known capability names', () => {
+  rejects(manifest({ requires: 'board:rebuild' }), /Extension fake: requires must be an array of capability names/);
+  rejects(manifest({ requires: [1] }), /requires must be an array of capability names/);
+  rejects(manifest({ requires: ['board:teleport'] }), /Extension fake: unknown capability "board:teleport" \(known: /);
+  assert.ok(validateManifest(manifest({ requires: [...CAPABILITIES] })));
+});
+
+test('the capability vocabulary is closed and carried onto the list entry', () => {
+  assert.ok(CAPABILITIES.has('board:rebuild'));
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ requires: ['board:rebuild'], engines: { wranglerApi: '^1.0.0' } })] });
+  assert.deepEqual(out.list[0].requires, ['board:rebuild']);
+  assert.equal(out.list[0].range, '^1.0.0');
+  assert.deepEqual(out.list[0].storeNames, ['fake']);
+});
+
+test('engines.wranglerApi must be a valid semver RANGE; satisfaction is buildHostApi\'s call', () => {
+  rejects(manifest({ engines: { wranglerApi: 'whenever' } }), /Extension fake: engines.wranglerApi must be a valid semver range/);
+  rejects(manifest({ engines: { wranglerApi: 5 } }), /must be a valid semver range/);
+  // A range this server could never satisfy is still SHAPE-valid here: the
+  // loader does not know the served version.
+  assert.ok(validateManifest(manifest({ engines: { wranglerApi: '^99.0.0' } })));
+});
+
+test('tools, handlers and session hooks come out tagged with their owning extension', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ session: { onPurge() {} } })] });
+  assert.deepEqual(out.tools.map((t) => t.extId), ['fake']);
+  assert.deepEqual(out.handlers.map((h) => h.extId), ['fake']);
+  assert.deepEqual(out.sessionHooks.onPurge.map((h) => h.extId), ['fake']);
+  assert.equal(typeof out.sessionHooks.onPurge[0].fn, 'function');
+});
+
+test('extensionsForGraph carries each extension\'s own handler types', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].handlerTypes, ['fake-do']);
 });
