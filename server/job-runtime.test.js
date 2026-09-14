@@ -311,6 +311,24 @@ test('a verify session exists only for the plan\'s one check, and stays off prod
   assert.match(verify, /Do not change the deployment/);
 });
 
+test('cleanup of a merged sub-job deletes the branch on origin only while it still points at the merged head', async () => {
+  const wt = { path: path.join(DATA_DIR, 'merged-gone'), repoRoot: '/repo', branch: 'job-api', cleanupHead: 'base' };
+  const merged = { ...sub, sessions: [], worktree: wt, pr: { head: 'head1', base: 'main', url: 'u' } };
+  const fake = (remote) => { const calls = []; return { calls, run: async (_bin, args) => { calls.push(args);
+    if (args[0] === 'ls-remote') { if (remote === null) throw Object.assign(new Error('exit 2'), { code: 2 }); return remote; }
+    return args[0] === 'for-each-ref' ? 'head1' : ''; } }; };
+  const matching = fake('head1\trefs/heads/job-api');
+  await new JobRuntime({}, matching.run).cleanup({}, merged);
+  assert.deepEqual(matching.calls.at(-2), ['ls-remote', '--exit-code', 'origin', 'refs/heads/job-api']);
+  assert.deepEqual(matching.calls.at(-1), ['push', 'origin', '--force-with-lease=refs/heads/job-api:head1', '--delete', 'refs/heads/job-api']);
+  const gone = fake(null);
+  await new JobRuntime({}, gone.run).cleanup({}, merged);
+  assert.ok(!gone.calls.some((c) => c[0] === 'push'), 'GitHub or a human already deleted it');
+  const moved = fake('head2\trefs/heads/job-api');
+  await assert.rejects(new JobRuntime({}, moved.run).cleanup({}, merged), /beyond the merged PR/);
+  assert.ok(!moved.calls.some((c) => c[0] === 'push'));
+});
+
 test('cleanup of a cancelled sub-job keeps unpushed commits and never fast-forwards main', async () => {
   const calls = [], archived = [], wt = { path: path.join(DATA_DIR, 'cancelled-gone'), repoRoot: '/repo', branch: 'job-api', cleanupHead: 'base' };
   const runtime = new JobRuntime({ sessionManager: { async suspend() {}, entryFor: () => ({}), isArchived: () => false, archive(sid) { archived.push(sid); } }, taskStore: { taskFor() { return null; } } },
@@ -319,6 +337,7 @@ test('cleanup of a cancelled sub-job keeps unpushed commits and never fast-forwa
   assert.deepEqual(archived, ['sid']);
   assert.deepEqual(calls.at(-1), ['update-ref', '-d', 'refs/heads/job-api', 'base']);
   assert.ok(!calls.some((c) => c[0] === 'merge'), 'nothing merged, so main is left alone');
+  assert.ok(!calls.some((c) => c[0] === 'ls-remote' || c[0] === 'push'), 'its PR stays open, so its branch on origin stays too');
   const committed = new JobRuntime({}, async (_bin, args) => args[0] === 'for-each-ref' ? 'unpushed' : '');
   await assert.rejects(committed.cleanup({}, { ...sub, cancelledAt: 1, sessions: [], worktree: wt, pr: null }), /additional commits/);
 });
