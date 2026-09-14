@@ -50,6 +50,7 @@ import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
+import { createExtDeliver } from './ext-deliver.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 
@@ -86,10 +87,6 @@ try {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
 }
-// The one bag both the MCP tool deps and the control-WS ctx carry: an
-// extension's tools/handlers reach their own stores through it and nowhere else.
-const extBag = { stores: extStores, list: ext.list };
-
 const sessionManager = new SessionManager();
 // Extension session hooks (server/extensions/index.js `sessionHooks`) — bound
 // alongside the seams below, with the instantiated stores closed over so a hook
@@ -127,6 +124,16 @@ const STALE_MS = 12 * 60 * 60 * 1000;
 
 let lastGraph = null;
 const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, () => lastGraph);
+
+// The one bag both the MCP tool deps and the control-WS ctx carry: an
+// extension's tools/handlers reach their own stores through it and nowhere else.
+// Declared HERE, below the target resolvers, because `deliver` needs them —
+// getting text in front of a session's agent means finding its pane (or waking
+// it), and an extension may not import tmux-scraper/session-manager itself (the
+// leaf rule, extensions/index.test.js). The narrow two-argument signature is
+// deliberate, see ext-deliver.js.
+const extDeliver = createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor });
+const extBag = { stores: extStores, list: ext.list, deliver: extDeliver };
 
 // Current fd-watchdog alert, or null when clear — sent to any client that
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone
@@ -838,7 +845,7 @@ async function main() {
   // the pattern for a later extension.
   for (const s of ext.sweeps) {
     const t = setInterval(() => {
-      Promise.resolve(s.run({ stores: extStores, rebuild, broadcast })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
+      Promise.resolve(s.run({ stores: extStores, rebuild, broadcast, deliver: extDeliver })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
     }, s.everyMs);
     t.unref();
   }

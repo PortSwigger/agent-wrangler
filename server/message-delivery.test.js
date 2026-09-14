@@ -63,6 +63,16 @@ test('dormant Claude target (we OWN the resume): resumes with the message as the
   assert.equal(d.sent.length, 0); // Claude + owned ⇒ intent carried the message
 });
 
+// An extension's delivery (ext-deliver.js) rides this same primitive but must not
+// log its wake as a human pressing send — the resume line exists to name what woke
+// a card, which is why `reason` is an option rather than a constant here.
+test('a caller-supplied reason is what the relaunch is logged as; it defaults to message', async () => {
+  const dir = realDir();
+  const d = deps({ entries: { CARD1: { cwd: dir, agent: 'claude' } } });
+  await deliverMessage('CARD1', 'ping', d, { reason: 'extension' });
+  assert.deepEqual(d.resumed[0].opts, { intent: 'ping', reason: 'extension' });
+});
+
 test('dormant Codex target (we OWN the resume): `codex resume` ignores the intent, so the message is delivered via sendText into the resumed pane', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };

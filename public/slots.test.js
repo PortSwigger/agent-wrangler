@@ -125,6 +125,57 @@ test('a throwing mount removes that contribution without stopping the others', (
   assert.match(errors[0], /\[ext:bad\] p mount failed/);
 });
 
+test('syncHosts mounts one element per card host and updates each with its own session', () => {
+  const { document, slots } = harness();
+  const updates = [];
+  slots.register('card.pill', 'a', { id: 'pill', mount() {}, update: (el, s) => updates.push([el, s?.sessionId]) });
+  const h1 = document.make(); const h2 = document.make();
+  const s1 = { sessionId: 's1' }; const s2 = { sessionId: 's2' };
+  assert.equal(slots.syncHosts('card.pill', [{ host: h1, session: s1 }, { host: h2, session: s2 }], {}, { g: 1 }), 2);
+  assert.equal(h1.children.length, 1);
+  assert.equal(h2.children.length, 1);
+  assert.deepEqual(updates.map(([, id]) => id), ['s1', 's2'], 'each host is updated with ITS card\'s session');
+  assert.notEqual(updates[0][0], updates[1][0], 'a separate element per host');
+  // A second pass over the SAME hosts re-updates without re-mounting.
+  slots.syncHosts('card.pill', [{ host: h1, session: s1 }, { host: h2, session: s2 }], {});
+  assert.equal(h1.children.length, 1);
+  assert.deepEqual(updates.map(([, id]) => id), ['s1', 's2', 's1', 's2']);
+});
+
+test('syncHosts tears down a host left out of the set, and mountInto still means one host only', () => {
+  const { document, slots } = harness();
+  const log = [];
+  slots.register('card.pill', 'a', { id: 'pill', mount: (el) => log.push(['mount', el]), unmount: (el) => log.push(['unmount', el]) });
+  const h1 = document.make(); const h2 = document.make();
+  slots.syncHosts('card.pill', [{ host: h1 }, { host: h2 }], {});
+  const firstEl = h1.children[0];
+  // The card h1 rendered is gone: its element is torn down by omission, h2 keeps its own.
+  assert.equal(slots.syncHosts('card.pill', [{ host: h2 }], {}), 1);
+  assert.equal(h1.children.length, 0);
+  assert.equal(h2.children.length, 1);
+  assert.deepEqual(log.filter(([k]) => k === 'unmount').map(([, el]) => el), [firstEl]);
+  // Nothing on screen at all (a board with no cards) tears the slot right down.
+  assert.equal(slots.syncHosts('card.pill', [], {}), 0);
+  assert.equal(h2.children.length, 0);
+  assert.equal(slots.contributions('card.pill')[0].mounted, false);
+  // An entry with no host is skipped rather than mounted anywhere.
+  assert.equal(slots.syncHosts('card.pill', [{ host: null, session: { sessionId: 'x' } }], {}), 0);
+});
+
+test('a throwing card contribution is removed from EVERY host, not just the one that threw', () => {
+  const { document, slots, errors } = harness();
+  const good = [];
+  slots.register('card.pill', 'bad', { id: 'pill', mount() {}, update(el, s) { if (s.sessionId === 's2') throw new Error('boom'); } });
+  slots.register('card.pill', 'good', { id: 'pill', mount() {}, update: (el, s) => good.push(s.sessionId) });
+  const h1 = document.make(); const h2 = document.make();
+  slots.syncHosts('card.pill', [{ host: h1, session: { sessionId: 's1' } }, { host: h2, session: { sessionId: 's2' } }], {});
+  assert.deepEqual(slots.contributions('card.pill').map((c) => c.extId), ['good']);
+  assert.deepEqual(h1.children.map((c) => c.dataset.ext), ['good'], 'the first host loses it too');
+  assert.deepEqual(h2.children.map((c) => c.dataset.ext), ['good']);
+  assert.deepEqual(good, ['s1', 's2']);
+  assert.match(errors[0], /\[ext:bad\] pill update failed/);
+});
+
 test('removeExtension unmounts and drops every contribution of one extension across slots', () => {
   const { document, slots } = harness();
   const unmounted = [];

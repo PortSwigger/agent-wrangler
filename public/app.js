@@ -1224,7 +1224,32 @@ function focusSession(sid) {
   else selectSession(sid);
 }
 
+// The `card.pill` slot's hosts: one `.card-meta-ext` per rendered card
+// (cards.js cardPillHostHtml), reconciled as a SET because the board rebuilds
+// its whole grid via innerHTML — every host is a fresh element each render, and
+// a card that has gone is a host that simply isn't in this list, which is how
+// its element gets torn down (slots.js syncHosts). Each host is updated with
+// ITS OWN card's session, never the selected one, which is the difference from
+// the panel slots' mountInto/update pair.
+//
+// A host whose data-sid is no longer in the graph is skipped rather than mounted
+// with a null session: a contribution reads the session it is handed, and the
+// card is about to disappear on the next render anyway.
+function mountCardPills(el) {
+  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const entries = [];
+  for (const host of el.querySelectorAll('.card-meta-ext')) {
+    const s = byId.get(host.closest('.session-card')?.dataset.sid);
+    if (s) entries.push({ host, session: s });
+  }
+  slots.syncHosts('card.pill', entries, extApi, latestGraph);
+}
+
 function wireGridEvents(el) {
+  // Both render paths (renderGrid and renderFocusedTile) end here, so this is
+  // the one place the freshly-built cards' extension pill hosts can be filled
+  // without the two sites drifting apart.
+  mountCardPills(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open

@@ -597,7 +597,21 @@ don't re-derive it.
   `deps.ext.stores`/`ctx.ext.stores` bag, which is the SAME `extBag` object in
   both the MCP deps and the WS ctx (`index.js`), and the loader takes
   `coreToolNames`/`coreHandlerTypes` as ARGUMENTS from `index.js` for the same
-  reason — it cannot import the core registries. The memoised `getExtensions()`
+  reason — it cannot import the core registries. That bag is also the ONLY way
+  an extension reaches a pane: `ext.deliver(sessionId, text)`
+  (`ext-deliver.js`, bound over `message-delivery.js` and the target resolvers,
+  which is why `extBag` is built below `createTargets`) is on it and in every
+  sweep's run args, and its **two-argument signature IS the access control** —
+  `deliverMessage`'s `imagePaths` are absolute paths handed straight to a pane
+  (safe only because `paste-store.js` mints them inside one session's own
+  pastes dir) and `clearComposer` wipes a human's composer, so neither may be
+  passed through; a bad id or blank text is an `error` result, not a throw. It
+  wakes a dormant target and refuses an archived one, exactly as a human's send
+  does, but logs its relaunch as `reason=extension` — that line names what woke
+  a card and `message` would read as a human pressing send. **It is the
+  ADDRESSED primitive, NOT a notifier**: an automated nudge off a poll wants
+  `pane-deferral.js`'s mid-prompt hold, which nothing here can apply because
+  the two intents are indistinguishable at this seam. The memoised `getExtensions()`
   is what lets those leaves derive their lists with no threading; `index.js`
   must call it FIRST, with the core names, or an adapter's parameterless call
   memoises a copy that skipped the cross-registry check (`router.js` builds its
@@ -617,12 +631,23 @@ don't re-derive it.
   a 404, never served, which is exactly why it cannot be turned back on live — and resolves the rest via `path.resolve` against the
   extension's `public/` with a prefix check, since `join(normalize())` folds a
   climbing `..` back inside instead of rejecting it. A new client slot needs a
-  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that calls
-  `mountInto`/`update` for it (`card.pill` is declared for shape only and has
-  no host: `cards.js` renders innerHTML strings); mount-once is per HOST
-  ELEMENT, so a host rebuilt via innerHTML (`renderPanel`'s chips row) re-mounts
+  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it;
+  mount-once is per HOST ELEMENT (a contribution's `c.mounts` is a host→element
+  map), so a host rebuilt via innerHTML (`renderPanel`'s chips row) re-mounts
   each render while `#panel-sections` mounts once, and a throwing contribution
-  is REMOVED rather than allowed to blank the board. And `migrateLegacyFlags`'s
+  is REMOVED from every host it occupies rather than allowed to blank the
+  board. **A slot with one host per CARD is `syncHosts`, not
+  `mountInto`/`update`, and the difference is load-bearing twice**:
+  `card.pill`'s hosts are `.card-meta-ext` (cards.js `cardPillHostHtml`, on
+  `.session-card` only — a `.worker-row` has no chip row to host anything), and
+  `app.js`'s `mountCardPills` hands `syncHosts` `[{host, session}]` for EVERY
+  card on screen, so each element is updated with its OWN card's session
+  (`update` knows one session and would hand every card the selected one) and a
+  card that has gone is torn down by OMISSION from that list — never by probing
+  the DOM, since the caller has just rendered and `isConnected` would make the
+  reconciliation untestable against an element stub. It hangs off
+  `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
+  `renderFocusedTile`) already end with. And `migrateLegacyFlags`'s
   `LEGACY_FLAGS` table (`config-store.js`) is the ONE place a retired
   per-feature flag maps to `extensions.<id>`, written back from `readConfig()`
   exactly once; an explicit new-style value wins. **The fan-out for the next

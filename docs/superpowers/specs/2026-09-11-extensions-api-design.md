@@ -8,8 +8,9 @@ only feature migrated so far; it is the proof of concept and the template for th
 next one. No external loader, no third-party extensions: every manifest is a
 static import in `server/extensions/index.js`.
 
-This records the design as implemented (PRs `extensions-api-client` and
-`extensions-api-docs`). Where the original plan and the code differ, the code is
+This records the design as implemented (PRs `extensions-api-client`,
+`extensions-api-docs` and `deferred-card-pill-host`, which filled in the
+`card.pill` host and the `deliver` hook this spec first listed as deferred). Where the original plan and the code differ, the code is
 described here.
 
 ## Problem
@@ -42,7 +43,7 @@ export default {
   skills:   ['checklist'],          // agent-skills/skills/<name>
   graph:    ({ stores }) => ({ checklists: stores.checklist.snapshot() }),
   session:  { onPurge: ({ sessionId, stores }) => stores.checklist.forget(sessionId) },
-  sweeps:   [ /* {id, everyMs, run({stores, rebuild, broadcast})} */ ],
+  sweeps:   [ /* {id, everyMs, run({stores, rebuild, broadcast, deliver})} */ ],
   client:   'public/index.js',      // must resolve inside <dir>/public/
 };
 ```
@@ -97,8 +98,33 @@ must stay leaf-compatible: no import of `session-manager`, `state-reader`,
 `tmux-scraper` or `index.js`. `server/extensions/index.test.js` asserts this
 over the real `BUILTIN` with a static regex over import lines. A manifest's
 tools and handlers reach server state only through the bag they are handed
-(`deps.ext.stores` for MCP tools, `ctx.ext.stores` for control handlers). Both
-bags are the same `extBag = { stores, list }` object in `index.js`.
+(`deps.ext.*` for MCP tools, `ctx.ext.*` for control handlers). Both bags are the
+same `extBag = { stores, list, deliver }` object in `index.js`.
+
+`deliver` is the second thing on that bag for the same reason `stores` is the
+first: an extension cannot reach a pane itself. It is `createExtDeliver`
+(`server/ext-deliver.js`) bound over `message-delivery.js` and the target
+resolvers, which is why `extBag` is now built below `createTargets` rather than
+at the top of `index.js`. Sweeps get it in their run args too, that being the
+shape of extension that most wants it.
+
+The signature is `deliver(sessionId, text)` — two arguments, no options — and
+that narrowness is the access control, the same reasoning as the checklist tools
+taking no `session` parameter. `deliverMessage`'s `imagePaths` are absolute paths
+handed straight to a pane, safe only because `paste-store.js` mints and
+existence-checks them inside one session's own pastes dir; `clearComposer`
+empties a pane before pasting and means exactly one thing (the chat view's
+Esc-then-edit flow, where the wrangler's own interrupt put the text there).
+Neither is something an extension may pass through, and a bad id or blank text
+comes back as an `error` result rather than a throw. The routing is
+`deliverMessage`'s as-is — paste into a live pane, wake a dormant/suspended card
+and deliver after the relaunch, refuse an archived one — reported back as
+`{mode: 'live'|'dormant'}` or `{mode: 'error', error}`. The one thing added for
+this caller is `reason`, threaded into `resume()`: an extension's wake logs as
+`reason=extension`, never `message`, because that log line exists to name what
+woke a card. It is not per-extension — the bag is one object shared by every
+manifest, and the loader is the only thing that knows which manifest a tool came
+from.
 
 ## Gating model
 
@@ -196,18 +222,50 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
 `public/slots.js` declares `SLOT_NAMES = ['panel.section', 'panel.metaChip',
 'card.pill']` and `createSlots({ document, storage })` with `register`,
 `forExtension(id)` (a registrar bound to one id), `mountInto(slot, hostEl, api)`,
-`update(slot, session, graph)`, `removeExtension(id)` and `contributions(slot)`.
-A new slot needs an entry in `SLOT_NAMES` and a host in `app.js`.
+`syncHosts(slot, entries, api, graph)`, `update(slot, session, graph)`,
+`removeExtension(id)` and `contributions(slot)`. A new slot needs an entry in
+`SLOT_NAMES` and a host in `app.js`.
 
-- Every contribution owns one element per host element; mount-once is per host
-  element identity. `#panel-sections` is stable and mounts once;
-  `renderPanel`'s chips row is rebuilt via innerHTML each render, so its
-  `.sess-meta-ext` host is re-mounted each time.
-- Hosts (`#panel-sections`, `.sess-meta-ext`) and the per-contribution wrapper
-  (`.ext-slot`) are `display: contents`, so an extension's element lays out as
-  if it were the host's own child.
+- Every contribution owns one element per host element — `c.mounts` is that
+  host→element map — and mount-once is per host element identity.
+  `#panel-sections` is stable and mounts once; `renderPanel`'s chips row is
+  rebuilt via innerHTML each render, so its `.sess-meta-ext` host is re-mounted
+  each time.
+- The two panel slots have ONE host each and go through `mountInto` + `update`.
+  `card.pill` has one host PER CARD and goes through `syncHosts`, whose
+  `entries` are `[{host, session}]` for every host the slot should occupy after
+  this render: it mounts the new ones, updates each element with ITS OWN card's
+  session (the one thing `update` cannot do, knowing only one), and tears down
+  by OMISSION — a card that has gone is simply a host that isn't in the list.
+  Which hosts are gone is the caller's word, never a DOM probe: the caller has
+  just rendered, so it knows, and `isConnected` would make the reconciliation
+  untestable against a plain element stub.
+- `mountInto` is that same reconciliation with a one-host set, which is what
+  keeps the chips-row teardown working: this host in, every other host out.
+- The `card.pill` host is `.card-meta-ext`, rendered by `cards.js`
+  (`cardPillHostHtml`) between the core chips and the right-aligned links — the
+  same position in the row as the panel's `.sess-meta-ext`. Empty and
+  unconditional: `cards.js` is a pure string builder that knows nothing about
+  which extensions are loaded. On `.session-card` only — a `.worker-row` is a
+  one-line spine row with no chip row to host anything and a `.snoozed-row` is
+  not a card, while a full-view child gets one because it renders through
+  `sessionCardHtml` like any card.
+- `app.js`'s `mountCardPills(el)` maps each host to its session by the card's
+  `data-sid` and calls `syncHosts`. It is called from `wireGridEvents`, where
+  BOTH render paths (`renderGrid`, `renderFocusedTile`) already end, so the two
+  sites cannot drift. A host whose `data-sid` is no longer in the graph is
+  skipped rather than mounted with a null session. The board is not re-rendered
+  while it is hidden, maximized or has a card menu open
+  (`renderGridIfVisible`), so a freshly loaded extension's card pills appear on
+  the next board render — its panel contribution is asked for immediately, a
+  card pill waits a tick.
+- Hosts (`#panel-sections`, `.sess-meta-ext`, `.card-meta-ext`) and the
+  per-contribution wrapper (`.ext-slot`) are `display: contents`, so an
+  extension's element lays out as if it were the host's own child.
 - `mount`/`update`/`unmount` each run under try/catch; a throwing contribution is
-  removed and reported, and the rest of the board carries on.
+  removed — every element it has, in every host, so a card pill that throws on
+  one card leaves none behind on the others — and reported, and the rest of the
+  board carries on.
 - Each extension's `api` is app.js's base (`send`, `selectedSessionId`,
   `requestPanelRender`) plus a `namespacedStorage('ext.<id>.')` wrapper.
   `storage.raw(key)` escapes the prefix for a key that predates the API (the
@@ -245,8 +303,12 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
 
 ## Deferred
 
-- `card.pill` slot host: declared in `SLOT_NAMES` for shape only. `cards.js`
-  builds cards as innerHTML strings and has no element to mount into yet.
+- A mid-prompt hold for `deliver`. A paste lands at the composer's cursor, so an
+  extension whose text is an automated NOTIFICATION rather than something a
+  human or peer addressed wants the deferral the server's own pane pastes use
+  (`pane-deferral.js`). `deliver` is the addressed primitive and cannot tell the
+  two intents apart, so that gate belongs to a second hook or an explicit
+  opt-in, not to this one.
 - CSS slot: an extension's rules still live in `public/styles.css`
   (`#checklist...`, `.checklist-pill`).
 - Migrating task-memory and archive-review onto manifests. task-memory keeps its

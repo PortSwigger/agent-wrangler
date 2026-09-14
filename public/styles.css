@@ -370,12 +370,13 @@ body.dragging { user-select: none; cursor: col-resize; }
 button.danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--red-fg); }
 button.danger:hover { background: var(--danger-bg); border-color: var(--danger-strong); }
 
-/* Extension slot hosts (#panel-sections, .sess-meta-ext) and the per-contribution
-   wrapper slots.js creates inside them (.ext-slot) are layout-transparent: an
-   extension's element lays out exactly as if it were the host's own child —
-   the checklist strip as a #sidebar flex item, a chip as a .sess-meta flex item
-   — so the slot machinery adds no box of its own to size or style. */
-#panel-sections, .sess-meta-ext, .ext-slot { display: contents; }
+/* Extension slot hosts (#panel-sections, .sess-meta-ext, and .card-meta-ext once
+   per card) and the per-contribution wrapper slots.js creates inside them
+   (.ext-slot) are layout-transparent: an extension's element lays out exactly as
+   if it were the host's own child — the checklist strip as a #sidebar flex item,
+   a chip as a .sess-meta or .card-meta flex item — so the slot machinery adds no
+   box of its own to size or style. */
+#panel-sections, .sess-meta-ext, .card-meta-ext, .ext-slot { display: contents; }
 
 /* Per-session Checklist panel — mounted into #panel-sections (a #panel sibling
    inside #sidebar) by server/extensions/checklist/public/index.js; the rules
