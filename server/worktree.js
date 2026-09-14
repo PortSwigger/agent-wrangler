@@ -321,25 +321,24 @@ export async function worktreeStatus(wt) {
   };
 }
 
-// Remove a worktree directory. A clean `git worktree remove` refuses when the
-// worktree has uncommitted/untracked changes — surfaced as { blocked, reason } so
-// the caller can re-try with force on explicit confirmation. An already-removed
-// dir is a no-op success. Hard failures throw WorktreeError.
-export async function removeWorktree({ worktreePath, repoRoot = '', force = false }) {
+// Remove a worktree directory, uncommitted and untracked files included. Every
+// caller has already decided the work is disposable (a human clicked Delete, or a
+// job verified the branch head is what the merged PR retains — commits are
+// guarded there, working-tree dirt is not), so a plain remove's refusal to touch
+// a dirty tree would only park the cleanup on a stray scratch file. A single
+// --force also clears a checked-out submodule, but still refuses a locked
+// worktree, which surfaces as an error rather than being retried. An
+// already-removed dir is a no-op success.
+export async function removeWorktree({ worktreePath, repoRoot = '' }) {
   if (!worktreePath) throw new WorktreeError('No worktree path');
   if (!fs.existsSync(worktreePath)) return { ok: true, alreadyGone: true };
   const root = repoRoot || (await gitRepoRoot(worktreePath));
   if (!root) throw new WorktreeError('Could not resolve the repository for this worktree');
-  const args = ['-C', root, 'worktree', 'remove', worktreePath];
-  if (force) args.push('--force');
   try {
-    await exec('git', args);
+    await exec('git', ['-C', root, 'worktree', 'remove', '--force', worktreePath]);
     return { ok: true };
   } catch (e) {
     const reason = (e.stderr || e.message || '').toString().trim();
-    if (!force && /use --force|contains modified or untracked|is dirty|locked working tree|submodules cannot be/i.test(reason)) {
-      return { ok: false, blocked: true, reason };
-    }
     throw new WorktreeError(`git worktree remove failed: ${reason}`);
   }
 }

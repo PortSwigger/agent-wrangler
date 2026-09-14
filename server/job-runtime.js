@@ -143,8 +143,7 @@ export class JobRuntime {
       const branch = await this.run('git', ['symbolic-ref', 'HEAD'], wt.path);
       const head = await this.run('git', ['rev-parse', 'HEAD'], wt.path);
       if (branch !== ref || head !== expectedHead) throw new Error('Worktree has changed since verification; preserve it for review');
-      const result = await removeWorktree({ worktreePath: wt.path, repoRoot: wt.repoRoot });
-      if (!result.ok) throw new Error(`Cleanup needs attention: ${result.reason}`);
+      await removeWorktree({ worktreePath: wt.path, repoRoot: wt.repoRoot });
     }
     const trees = await this.run('git', ['worktree', 'list', '--porcelain'], wt.repoRoot);
     if (trees.split('\n').includes(`branch ${ref}`)) throw new Error('Branch is in use by another worktree');

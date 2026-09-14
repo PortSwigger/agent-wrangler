@@ -34,17 +34,14 @@ test('worktree-remove: removes a clean worktree and offers branch deletion', asy
   assert.equal(fs.existsSync(wt.path), false);
 });
 
-test('worktree-remove: a dirty worktree replies blocked, then force removes', async () => {
+test('worktree-remove: a dirty worktree is removed on the first send, no blocked round-trip', async () => {
   const repo = tempRepo();
   const wt = await createWorktree({ cwd: repo, branch: 'dirty', auto: false });
   fs.writeFileSync(path.join(wt.path, 'README.md'), '# changed\n');
+  fs.writeFileSync(path.join(wt.path, 'scratch.log'), 'junk\n');
   const c = ctx({ path: wt.path, branch: 'dirty', repoRoot: repo });
   await worktreeRemoveHandler.handler({ type: 'worktree-remove', sessionId: 'S1' }, c);
-  assert.equal(c.sent[0].type, 'worktree-remove-blocked');
-  assert.ok(c.sent[0].reason);
-  assert.equal(fs.existsSync(wt.path), true);
-  await worktreeRemoveHandler.handler({ type: 'worktree-remove', sessionId: 'S1', force: true }, c);
-  assert.equal(c.sent[1].type, 'worktree-removed');
+  assert.deepEqual(c.sent, [{ type: 'worktree-removed', sessionId: 'S1', branch: 'dirty', branchExists: true }]);
   assert.equal(fs.existsSync(wt.path), false);
 });
 
