@@ -154,7 +154,32 @@ let latestGraph = null;
 // `send` for control messages, the current selection, and a way to ask for a
 // panel re-render — deliberately NOT the board's internals. Declared up here,
 // before any render can run, because renderPanel reads `slots` directly.
-const slots = createSlots({ document, storage: (() => { try { return localStorage; } catch { return null; } })() });
+//
+// `extHandlerTypes` is which control types each extension registered server-side,
+// and it is what slots.js binds each extension's `send` to — a frame aimed at
+// anything else is refused in the browser. Filled from BOTH server inputs for the
+// same reason syncClientExtensions listens to both: the `extensions` connect
+// message lands before the first graph, and the graph re-reports it every tick.
+// A missing entry means "allow nothing", so a board that has heard neither fails
+// closed and reports rather than forwarding blind.
+const extHandlerTypes = new Map();
+// The host API version the server serves, announced alongside the manifest.
+// Handed to each extension's client api as `version` — the browser counterpart
+// of the `engines.wranglerApi` range its manifest declares server-side.
+let hostApiVersion = null;
+function noteHandlerTypes(list) {
+  for (const e of Array.isArray(list) ? list : []) {
+    if (e && typeof e.id === 'string' && Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
+  }
+}
+// `extApi.send` stays the RAW send: the per-extension binding happens inside
+// slots.apiFor, which is the only place the extension id is known.
+const slots = createSlots({
+  document,
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
+  handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
+  version: () => hostApiVersion,
+});
 const extApi = {
   send,
   selectedSessionId: () => selectedSessionId,
@@ -378,6 +403,7 @@ function applyGraph(graph) {
   checklistEnabled = graph.checklistEnabled !== false;
   latestChecklists = graph.checklists || {};
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
+  noteHandlerTypes(latestExtensions);
   setExtensionDefs(latestExtensions);
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
@@ -5621,7 +5647,7 @@ function connect() {
     // extension that fails to load is logged and dropped, never the board's
     // problem. A render is asked for once something new registered, since the
     // first graph may already have been applied while the module was in flight.
-    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; syncClientExtensions(); }
+    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteHandlerTypes(extClientManifest); syncClientExtensions(); }
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.

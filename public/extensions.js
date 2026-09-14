@@ -1,7 +1,13 @@
 // Loads the client half of every enabled extension the server announced
-// (`{type:'extensions', list:[{id, client}]}` on connect, before the first
-// graph) as an ES module from its /ext/<id>/ URL, and hands it a registrar bound
-// to its own id (slots.forExtension) so it can only contribute under that id.
+// (`{type:'extensions', version, list:[{id, client, styles, handlerTypes}]}` on
+// connect, before the first graph) as an ES module from its /ext/<id>/ URL, and
+// hands it a registrar bound to its own id (slots.forExtension) so it can only
+// contribute under that id.
+//
+// `handlerTypes` and `version` are deliberately NOT read here: they belong to the
+// per-extension api slots.js mints (the bound `send`), and app.js — which already
+// listens to this message AND to every graph, the other place the types arrive —
+// owns the map slots reads. Nothing in this loader needs them.
 //
 // Idempotent per id — the server re-sends the list on EVERY connect, so a
 // reconnect must register nothing twice. A failed load is reported, whatever it
