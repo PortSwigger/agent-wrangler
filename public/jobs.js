@@ -7,7 +7,7 @@ export const JOB_COLUMNS = [
   ['implementation', 'Work & PR', 'One session: work, commit, push, open the PR'],
   ['pr', 'PR', 'Checks, comments and merge'],
   ['deployment', 'Landing', 'Post-merge runs, then the check if there is one'],
-  ['cleanup', 'Done', 'Worktree removed'],
+  ['cleanup', 'Done', 'Worktree and merged branch removed'],
 ];
 // A job's second board: sub-jobs that are an agent session on this machine
 // rather than a PR. Queued/Running are one stored stage ('session') split by

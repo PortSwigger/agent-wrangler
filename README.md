@@ -421,8 +421,8 @@ Session sub-jobs run in a scratch workspace, may read checkouts under
 `~/IdeaProjects` but never change a repository, and submit a `completed`
 receipt; **Review agent-session results** (on by default) holds each under
 **Review** until you approve or request changes. Cleanup archives the step
-sessions, removes clean worktrees and deletes only branch refs that still match
-the verified commit. An optional setting fast-forwards your clean main checkout
+sessions, removes clean worktrees and deletes only branch refs, local and on
+origin, that still match the verified commit. An optional setting fast-forwards your clean main checkout
 after delivery. **Agents at once** is shared across every job; polling, waits,
 reviews and cleanup use no agent slots.
 

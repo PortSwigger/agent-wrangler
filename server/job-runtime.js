@@ -125,6 +125,7 @@ export class JobRuntime {
     // A cancelled sub-job merged nothing. Its bytes are retained only if the
     // branch was pushed (the PR head) or never left the base it was cut from.
     if (sub.worktree) await this.cleanupWorktree(sub.worktree, sub.cancelledAt ? sub.pr?.head || sub.worktree.cleanupHead : sub.pr.head);
+    if (sub.worktree && sub.pr && !sub.cancelledAt) await this.deleteRemoteBranch(sub.worktree, sub.pr.head);
     if (job.updateMain && !sub.cancelledAt && sub.pr) {
       const root = await gitRepoRoot(expandRepo(sub.repo));
       if (!root) throw new Error('Cannot resolve main checkout');
@@ -153,6 +154,22 @@ export class JobRuntime {
     // The merged PR (or unchanged planning base) proves these exact bytes are
     // retained. Compare-and-delete also refuses a racing local commit.
     await this.run('git', ['update-ref', '-d', ref, expectedHead], wt.repoRoot);
+  }
+  // The merged PR's branch on origin, deleted the same way as the local ref: only
+  // while it still points at the merged head. Not `gh pr merge --delete-branch` —
+  // that also runs `git branch -D` in the main checkout, which fails while the
+  // branch is checked out in the sub-job's worktree (still there at merge time),
+  // and would fire before a failed deploy had been looked at. A cancelled sub-job
+  // never reaches here: its PR stays open, so its branch stays too.
+  async deleteRemoteBranch(wt, mergedHead) {
+    const ref = `refs/heads/${wt.branch}`;
+    const remote = await this.run('git', ['ls-remote', '--exit-code', 'origin', ref], wt.repoRoot).catch((e) => {
+      if (e.code === 2) return '';
+      throw e;
+    });
+    if (!remote) return;
+    if (remote.split(/\s+/)[0] !== mergedHead) throw new Error('Remote branch has commits beyond the merged PR; preserve it for review');
+    await this.run('git', ['push', 'origin', `--force-with-lease=${ref}:${mergedHead}`, '--delete', ref], wt.repoRoot);
   }
   async cleanupPlanning(job) {
     for (const run of job.runs.filter((r) => (r.phase === 'planning' || r.phase === 'jira') && r.sessionId)) {
