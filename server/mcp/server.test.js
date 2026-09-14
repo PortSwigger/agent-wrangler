@@ -65,6 +65,29 @@ test('a disabled checklist extension leaves its four tools out of tools/list ent
   await server.close();
 });
 
+// The per-caller veto (deps.ext.hideTool, composed from the enabled manifests'
+// `hideTool` by createToolFilter). This is the one extension surface that shapes
+// tools an extension does not own, so both directions matter: it really does
+// remove the tool from the listing, and it is asked per caller.
+test('deps.ext.hideTool drops a tool from one caller\'s listing only', async () => {
+  const asked = [];
+  const deps = { ...fakeDeps(), ext: { hideTool: (caller, tool) => { asked.push([caller, tool]); return caller === 'JOB1' && tool === 'spawn_session'; } } };
+  const hidden = await connect(deps, 'JOB1');
+  assert.ok(!(await hidden.client.listTools()).tools.map((t) => t.name).includes('spawn_session'));
+  await hidden.server.close();
+  const shown = await connect(deps, 'CARD1');
+  assert.ok((await shown.client.listTools()).tools.map((t) => t.name).includes('spawn_session'));
+  await shown.server.close();
+  assert.ok(asked.some(([c, t]) => c === 'JOB1' && t === 'spawn_session'));
+});
+
+test('no hideTool at all leaves the tool list untouched by identity', async () => {
+  const tools = activeTools({ ext: loadExtensions({ cfg: {} }) });
+  const { client, server } = await connect({ ...fakeDeps(), ext: { hideTool: null } }, 'CARD1', { tools });
+  assert.equal((await client.listTools()).tools.length, tools.length);
+  await server.close();
+});
+
 test('buildMcpServer runs list_sessions with the bound caller', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1');
   const res = await client.callTool({ name: 'list_sessions', arguments: {} });

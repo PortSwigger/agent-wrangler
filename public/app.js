@@ -176,9 +176,9 @@ function syncClientExtensions() {
   }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
-  if (unmounted) extApi.requestPanelRender();
+  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); }
   clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) extApi.requestPanelRender(); });
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); } });
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -445,6 +445,10 @@ function setView(view) {
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
+  // Every extension view host, shown only when it is the current one. Done for
+  // ALL of them on every setView rather than just the pair being swapped, so a
+  // host created while another view was current starts hidden.
+  for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
   const mid = document.querySelector('.rail-mid');
   if (mid) mid.classList.toggle('hidden', view !== 'grid');
   if (view === 'grid') renderGrid();
@@ -453,6 +457,11 @@ function setView(view) {
     // behind the results.
     if (selectedSessionId) deselectSession();
     onEnterSearchView();
+  } else if (isExtView(view) && selectedSessionId) {
+    // Same rule as Search, for the same reason: an extension view owns the
+    // whole board area, so a terminal left attached behind it is invisible and
+    // still 80 columns wide when you come back.
+    deselectSession();
   }
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
@@ -461,6 +470,71 @@ function setView(view) {
 document.querySelectorAll('.layouts button').forEach((btn) => {
   btn.addEventListener('click', () => setView(btn.dataset.view));
 });
+
+// ── Extension views (slots.js `view`) ──────────────────────────────────────
+// A view contribution gets a whole top-level pane of its own beside the board
+// and Search, reached by its own rail button and its own #view= hash. All three
+// — the button, the host, the route — are DERIVED from what is registered right
+// now, so an extension toggled off takes its chrome with it and one toggled on
+// gets it without a reload. Keyed `ext:<extId>:<id>`: a compound key is what
+// keeps two extensions (or one extension's two views) from colliding in
+// `currentView` and in the hash, and the `ext:` prefix is what tells every
+// view-shaped check below that this is not one of the board's own.
+const EXT_VIEW_PREFIX = 'ext:';
+const extViewHosts = new Map(); // view key -> its host element in #ext-views
+function isExtView(view) {
+  return typeof view === 'string' && view.startsWith(EXT_VIEW_PREFIX) && extViewHosts.has(view);
+}
+function extViewKey(c) {
+  return `${EXT_VIEW_PREFIX}${c.extId}:${c.id}`;
+}
+
+// Bring the rail buttons and the view hosts in line with the registered `view`
+// contributions, then mount each one into its OWN host (`only`, see slots.js).
+// Called from syncClientExtensions — the one place that learns an extension has
+// loaded or been switched off — and deliberately not from a render path: this
+// chrome changes on a toggle, not on a graph tick.
+function renderExtViews() {
+  const views = slots.contributions('view');
+  const wanted = new Map(views.map((c) => [extViewKey(c), c]));
+  const layouts = document.querySelector('.layouts');
+  const container = document.getElementById('ext-views');
+  if (!layouts || !container) return;
+  for (const [key, host] of [...extViewHosts]) {
+    if (wanted.has(key)) continue;
+    extViewHosts.delete(key);
+    host.remove();
+    layouts.querySelector(`button[data-view="${CSS.escape(key)}"]`)?.remove();
+    // The view we were looking at has just gone (its extension was switched
+    // off): fall back to the board rather than leaving an empty <main>.
+    if (currentView === key) setView('grid');
+  }
+  for (const [key, c] of wanted) {
+    if (extViewHosts.has(key)) continue;
+    const host = document.createElement('div');
+    host.className = 'ext-view hidden';
+    host.dataset.view = key;
+    container.appendChild(host);
+    extViewHosts.set(key, host);
+    const btn = document.createElement('button');
+    btn.dataset.view = key;
+    btn.title = c.label;
+    btn.setAttribute('aria-label', c.label);
+    // The icon is markup from the extension's own client module — the same
+    // trust level as the module itself, which already owns a whole pane — so
+    // it goes in as HTML. A view with none gets its label's initial rather than
+    // an invisible button.
+    if (c.icon) btn.innerHTML = c.icon;
+    else btn.textContent = c.label.slice(0, 1).toUpperCase();
+    btn.addEventListener('click', () => setView(key));
+    layouts.appendChild(btn);
+  }
+  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
+  // A deep link can land before the extension's module has loaded, so the hash
+  // is re-read once its view finally exists (hashView refuses an unknown one).
+  const deep = hashView();
+  if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+}
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
 // Grid geometry (constants + packing math) lives in ./layout.js; MAX_ONSCREEN_ROWS
@@ -2931,10 +3005,18 @@ function hashSessionId() {
 // bookmarks resolve to Search (the view that replaced History); new hashes only
 // ever write search (syncHash writes from HASH_VIEWS).
 const HASH_VIEWS = ['search'];
+// A view is deep-linkable if it is one of the board's own or an extension view
+// that is registered RIGHT NOW — an unknown `ext:` key is refused rather than
+// selected, so a stale bookmark (or one for an extension that is off) lands on
+// the board instead of a blank pane. renderExtViews re-reads the hash once a
+// view registers, which is what makes a deep link survive the load race.
+function isHashView(view) {
+  return HASH_VIEWS.includes(view) || isExtView(view);
+}
 function hashView() {
   const m = (location.hash || '').match(/^#view=(.+)$/);
   if (m && m[1] === 'history') return 'search';
-  return m && HASH_VIEWS.includes(m[1]) ? m[1] : null;
+  return m && isHashView(m[1]) ? m[1] : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
@@ -2942,7 +3024,7 @@ function hashView() {
 // replaceState so no bare "#" lingers. Skip writes that already match to avoid a
 // hashchange feedback loop.
 function syncHash() {
-  const target = HASH_VIEWS.includes(currentView)
+  const target = isHashView(currentView)
     ? `#view=${currentView}`
     : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
   if (target) {

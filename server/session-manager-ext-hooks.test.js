@@ -25,7 +25,7 @@ function captureErrors(fn) {
 
 test('hooks default to empty arrays, so a bare SessionManager fires nothing', async () => {
   const sm = manager();
-  assert.deepEqual(Object.keys(sm._extHooks), ['onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume']);
+  assert.deepEqual(Object.keys(sm._extHooks), ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume']);
   for (const fns of Object.values(sm._extHooks)) assert.deepEqual(fns, []);
   sm.map.set('CARD1', { tmux: 'cc_a', cwd: os.tmpdir(), agent: 'claude' });
   sm.archive('CARD1');
@@ -82,4 +82,84 @@ test('dispatch() fires onDispatch after the entry is saved', async () => {
   assert.equal(payload.sessionId, sessionId);
   assert.equal(payload.entry, sm.entryFor(sessionId));
   assert.equal(payload.entry.intent, 'hello');
+});
+
+test('dispatch() fires onBeforeDispatch before the pane starts, and awaits it', async () => {
+  // The whole point of the hook: whatever it persists is on disk before the
+  // agent process — and therefore its first tool call — exists.
+  const sm = manager();
+  const order = [];
+  let payload = null;
+  sm._newSession = async () => { order.push('launch'); };
+  sm._extHooks.onBeforeDispatch.push(async (p) => {
+    await new Promise((r) => setTimeout(r, 5));
+    payload = p;
+    order.push('before');
+  });
+  sm._extHooks.onDispatch.push(() => order.push('after'));
+  const { sessionId, cwd } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'hello', agent: 'claude', model: 'sonnet' });
+  assert.deepEqual(order, ['before', 'launch', 'after']);
+  // No entry exists yet — that is what "before" means — so the payload carries
+  // the dispatch's own shape instead.
+  assert.equal(payload.sessionId, sessionId);
+  assert.equal(payload.cwd, cwd);
+  assert.equal(payload.intent, 'hello');
+  assert.equal(payload.agent, 'claude');
+  assert.equal(payload.model, 'sonnet');
+  assert.equal(payload.entry, undefined);
+});
+
+test('a throwing onBeforeDispatch never aborts the dispatch', async () => {
+  // captureErrors is sync-only (it restores in a finally), and this path has to
+  // be awaited across the hook — so the swap is done by hand here.
+  const sm = manager();
+  const errors = [];
+  const orig = console.error;
+  console.error = (...args) => errors.push(args);
+  let sessionId;
+  try {
+    sm._extHooks.onBeforeDispatch.push(() => { throw new Error('hook exploded'); });
+    ({ sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'hello', agent: 'claude' }));
+  } finally {
+    console.error = orig;
+  }
+  assert.match(String(errors[0][0]), /\[ext-hook:onBeforeDispatch\]/);
+  assert.ok(sm.entryFor(sessionId));
+});
+
+// ── The per-launch skill gate seam ────────────────────────────────────────
+test('_extLaunchSkills answers nothing by default, so a bare launch is unchanged', async () => {
+  const sm = manager();
+  assert.deepEqual(sm._extLaunchSkills({}), []);
+});
+
+test('dispatch consults the gate after onBeforeDispatch and threads its answer to the adapter', async () => {
+  // Order matters: the hook is what an extension writes its per-session state
+  // with, and the gate is what reads it back to answer for this launch.
+  const sm = manager();
+  const order = [];
+  let ctx = null;
+  let built = null;
+  sm._extHooks.onBeforeDispatch.push(() => order.push('before'));
+  sm._extLaunchSkills = (c) => { order.push('gate'); ctx = c; return ['jobs']; };
+  sm._newSession = async (tmux, dir, inner) => { built = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'hello', agent: 'claude' });
+  assert.deepEqual(order, ['before', 'gate']);
+  assert.equal(ctx.sessionId, sessionId);
+  assert.equal(ctx.phase, 'dispatch');
+  assert.equal(ctx.entry, null);
+  // A suppressed skill's nudge is genuinely absent from the launch argv.
+  assert.doesNotMatch(built, /jobs/);
+});
+
+test('the gate sees the existing entry on resume and the parent on fork', async () => {
+  const sm = manager();
+  const seen = [];
+  sm._extLaunchSkills = (c) => { seen.push(c); return []; };
+  sm.forkedFrom = undefined;
+  const parentEntry = { agent: 'claude', cwd: os.tmpdir(), model: 'sonnet' };
+  await sm.fork({ sourceId: 'LIVE1', parentId: 'CARD1', parentEntry, cwd: os.tmpdir() });
+  assert.equal(seen[0].phase, 'fork');
+  assert.equal(seen[0].entry, parentEntry);
+  assert.equal(seen[0].parentId, 'CARD1');
 });

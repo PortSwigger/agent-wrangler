@@ -27,7 +27,15 @@ export const RESERVED_GRAPH_KEYS = new Set([
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
 ]);
 
-export const SESSION_HOOKS = ['onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
+// `onBeforeDispatch` is the one hook that runs while the session does not yet
+// exist anywhere: it fires after dispatch has settled the card id, cwd and
+// worktree but BEFORE the launch command is built and the pane started, which
+// is the only window in which an extension can persist state that the agent's
+// very first tool call may already depend on. `onDispatch` fires after the
+// entry is saved — correct for anything reacting to a new card, too late for an
+// invariant the launched process itself relies on.
+export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
+export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
 function fail(ext, reason) {
@@ -62,6 +70,8 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
   for (const [i, s] of (ext.skills || []).entries()) {
     if (typeof s !== 'string' || !s) fail(ext, `skills[${i}] must be a skill name`);
   }
+  if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
+  if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
   if (ext.session != null) {
     if (typeof ext.session !== 'object') fail(ext, 'session must be an object of hooks');
@@ -75,14 +85,18 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
     if (!(typeof s.everyMs === 'number' && Number.isFinite(s.everyMs) && s.everyMs > 0)) fail(ext, `sweep ${s.id} everyMs must be a positive finite number`);
     if (typeof s.run !== 'function') fail(ext, `sweep ${s.id} has no run function`);
   }
-  if (ext.client != null) {
-    if (typeof ext.client !== 'string' || !ext.client) fail(ext, 'client must be a relative path string');
-    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, 'client requires the manifest to export its absolute `dir`');
+  // `client` and `styles` are the two asset paths, checked identically: both are
+  // served by the /ext/<id>/ static route, so both must resolve under the
+  // manifest's own public/ and nowhere else.
+  for (const key of ['client', 'styles']) {
+    if (ext[key] == null) continue;
+    if (typeof ext[key] !== 'string' || !ext[key]) fail(ext, `${key} must be a relative path string`);
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, `${key} requires the manifest to export its absolute \`dir\``);
     const base = path.resolve(dir);
     const pubDir = path.join(base, 'public');
-    const resolved = path.resolve(base, ext.client);
+    const resolved = path.resolve(base, ext[key]);
     if (!resolved.startsWith(base + path.sep) || !resolved.startsWith(pubDir + path.sep)) {
-      fail(ext, `client "${ext.client}" must resolve inside ${pubDir}`);
+      fail(ext, `${key} "${ext[key]}" must resolve inside ${pubDir}`);
     }
   }
   return true;
@@ -136,6 +150,8 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     disabledSkillIds: [],
     graphContributors: [],
     sessionHooks: Object.fromEntries(SESSION_HOOKS.map((k) => [k, []])),
+    skillGates: [],
+    toolFilters: [],
     sweeps: [],
     clientManifest: [],
     dirs: {},
@@ -167,13 +183,86 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
       out.stores[name] = factory;
     }
     out.skillIds.push(...(ext.skills || []));
+    // A gate can only ever narrow THIS manifest's own declared skills (its
+    // `skills` list is passed back to it and its answer is intersected below),
+    // so one extension can never silently suppress another's — nor task-memory's,
+    // which is not an extension at all and keeps its own flag.
+    if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
+    if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
     if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
     for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push(fn);
     for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
     if (ext.dir) out.dirs[ext.id] = ext.dir;
-    if (ext.client) out.clientManifest.push({ id: ext.id, client: `/ext/${ext.id}/${path.posix.relative('public', ext.client.split(path.sep).join('/'))}` });
+    // Omitted rather than nulled when absent, so the announcement a stock
+    // install sends is byte-identical to the pre-styles one.
+    if (ext.client || ext.styles) {
+      out.clientManifest.push({
+        id: ext.id,
+        ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) } : {}),
+        ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) } : {}),
+      });
+    }
   }
   return out;
+}
+
+function extAssetUrl(id, rel) {
+  return `/ext/${id}/${path.posix.relative('public', rel.split(path.sep).join('/'))}`;
+}
+
+// Per-launch skill gating. The manifest-level `skills` list is all-or-nothing
+// (a disabled extension's skills drop out of the nudge and the Codex catalog for
+// every session); a `skillsFor` gate is what makes the same call PER SESSION,
+// which is what a feature whose launches are of two kinds — an automation run
+// versus an ordinary one — needs, and what `taskMemoryEnabled`'s hand-threaded
+// boolean does for the one non-extension case.
+//
+// Returns the skill names to suppress for THIS launch, which is the direction
+// that composes: `agent-skills.js` already filters a global disabled list, and a
+// per-launch value threaded alongside `taskMemory` adds nothing new to the
+// adapters beyond one more array. A gate that throws suppresses nothing for its
+// own extension and never touches another's — a broken gate must not silently
+// strip an unrelated feature's skill out of a real launch.
+export function createSkillGate(ext, bag = {}, onError = () => {}) {
+  return function disabledSkillsFor(context = {}) {
+    const out = [];
+    for (const { id, skills, gate } of ext.skillGates) {
+      let keep;
+      try {
+        keep = gate({ ...context, ...bag, skills: [...skills] });
+      } catch (err) {
+        onError(`[ext:${id}] skillsFor failed`, err);
+        continue;
+      }
+      const kept = new Set(Array.isArray(keep) ? keep : skills);
+      for (const name of skills) if (!kept.has(name)) out.push(name);
+    }
+    return out;
+  };
+}
+
+// Per-caller MCP tool visibility. Unlike every other extension surface this one
+// shapes tools an extension does NOT own — the point is a session KIND (a job
+// run, say) that must not see `spawn_session` — so it is a veto, not a rewrite:
+// a filter answers true to hide one named tool from one caller, and the tool
+// stays listed unless some filter says otherwise.
+//
+// Fails OPEN by design. A throwing filter hides nothing and is logged: this is a
+// UX narrowing on an advisory identity (extractCaller is not authentication —
+// see server/mcp/server.js), so a bug here must degrade to the full tool list
+// rather than silently leaving every session unable to do anything.
+export function createToolFilter(ext, bag = {}, onError = () => {}) {
+  if (!ext.toolFilters.length) return null;
+  return function hideTool(caller, toolName) {
+    for (const { id, hide } of ext.toolFilters) {
+      try {
+        if (hide({ ...bag, caller, tool: toolName })) return true;
+      } catch (err) {
+        onError(`[ext:${id}] hideTool failed`, err);
+      }
+    }
+    return false;
+  };
 }
 
 // Memoised so the leaf consumers (client-config.js, agent-skills.js,

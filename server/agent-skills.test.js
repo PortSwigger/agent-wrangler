@@ -126,6 +126,26 @@ test('a disabled extension\'s skill ids drop from the mandatory nudge and the Co
   assert.match(codexSkillCatalog(root, on), /checklist/);
 });
 
+// The per-LAUNCH channel (an enabled extension's own `skillsFor` gate, resolved
+// by session-manager and threaded down beside taskMemory). Same two channels as
+// the global one, but decided per session rather than per install.
+test('disabledSkills drops a skill from this launch only, leaving the install\'s own lists alone', () => {
+  const root = fixture();
+  const dir = path.join(root, 'checklist');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: checklist\ndescription: Keep a visible checklist\n---\n\nBody.\n');
+  fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Use add_checklist_item for visible progress.\n');
+
+  const base = { taskMemory: true, ext: { disabledSkillIds: [] } };
+  const gated = { ...base, disabledSkills: ['checklist'] };
+  assert.doesNotMatch(mandatorySkillPrompt(root, gated), /add_checklist_item/);
+  assert.doesNotMatch(codexSkillCatalog(root, gated), /checklist/);
+  assert.match(mandatorySkillPrompt(root, gated), /alpha thing/);
+  // The very next launch, with no gate, is unaffected — this is per-session.
+  assert.match(mandatorySkillPrompt(root, base), /add_checklist_item/);
+  assert.ok(skillEntries(root).some((e) => e.name === 'checklist'));
+});
+
 test('taskMemory:false drops task-memory from the mandatory nudge and the Codex catalog — nothing else', () => {
   const root = fixture();
   const dir = path.join(root, 'task-memory');

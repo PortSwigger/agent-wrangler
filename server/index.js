@@ -12,7 +12,7 @@ import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { getExtensions, assertGraphKeys, extensionsForGraph } from './extensions/index.js';
+import { getExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter } from './extensions/index.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
@@ -76,10 +76,25 @@ ensurePtyHelperExecutable();
 // — same posture as InstanceLockError in main(): a bad manifest is a config
 // error a human must see, not something to limp past.
 let ext;
-let extStores;
 try {
   ext = getExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
-  extStores = Object.fromEntries(Object.entries(ext.stores).map(([k, factory]) => [k, factory()]));
+} catch (err) {
+  logError(`[agent-wrangler] ${err.message}`);
+  process.exit(1);
+}
+const sessionManager = new SessionManager();
+const taskStore = new TaskStore();
+const memoryStore = new MemoryStore();
+// The core singletons an extension's store, sweep or hook may need but can
+// never import (the leaf rule — see server/extensions/index.js). Handed in
+// rather than reached for, exactly like `deliver` below, which is why the
+// extension stores are instantiated HERE and not beside the loader: a store
+// backing a runner (one that has to tick sessions, read task memory or write a
+// task) cannot be constructed without them.
+const extCore = { sessionManager, taskStore, memoryStore };
+let extStores;
+try {
+  extStores = Object.fromEntries(Object.entries(ext.stores).map(([k, factory]) => [k, factory({ core: extCore })]));
   // Graph contributors run every ~4s tick where nothing may log or throw, so
   // their keys are checked ONCE here against the real stores instead.
   for (const { id, contribute } of ext.graphContributors) assertGraphKeys(id, contribute({ stores: extStores, graph: {} }));
@@ -87,15 +102,16 @@ try {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
 }
-const sessionManager = new SessionManager();
 // Extension session hooks (server/extensions/index.js `sessionHooks`) — bound
 // alongside the seams below, with the instantiated stores closed over so a hook
 // sees the same store its tools and handlers write.
 for (const [name, fns] of Object.entries(ext.sessionHooks)) {
-  sessionManager._extHooks[name].push(...fns.map((fn) => (payload) => fn({ ...payload, stores: extStores })));
+  sessionManager._extHooks[name].push(...fns.map((fn) => (payload) => fn({ ...payload, stores: extStores, core: extCore })));
 }
-const taskStore = new TaskStore();
-const memoryStore = new MemoryStore();
+// Per-launch skill gating (the _extLaunchSkills seam): consulted by
+// dispatch/resume/fork before the adapter builds the command, so an extension
+// can answer "not this session" for a skill its manifest declares.
+sessionManager._extLaunchSkills = createSkillGate(ext, { stores: extStores, core: extCore }, logError);
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
 // to the real runner with memoryStore injected — keeps SessionManager itself
 // free of that dependency, and every test that doesn't stub _archiveReview
@@ -133,7 +149,15 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 // leaf rule, extensions/index.test.js). The narrow two-argument signature is
 // deliberate, see ext-deliver.js.
 const extDeliver = createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor });
-const extBag = { stores: extStores, list: ext.list, deliver: extDeliver };
+const extBag = {
+  stores: extStores,
+  list: ext.list,
+  deliver: extDeliver,
+  core: extCore,
+  // Null unless some enabled manifest declares a `hideTool` veto, so the MCP
+  // listing keeps its unfiltered identity in the common case.
+  hideTool: createToolFilter(ext, { stores: extStores, core: extCore }, logError),
+};
 
 // Current fd-watchdog alert, or null when clear — sent to any client that
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone
@@ -845,7 +869,7 @@ async function main() {
   // the pattern for a later extension.
   for (const s of ext.sweeps) {
     const t = setInterval(() => {
-      Promise.resolve(s.run({ stores: extStores, rebuild, broadcast, deliver: extDeliver })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
+      Promise.resolve(s.run({ stores: extStores, rebuild, broadcast, deliver: extDeliver, core: extCore })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
     }, s.everyMs);
     t.unref();
   }

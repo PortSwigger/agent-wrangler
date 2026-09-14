@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS,
-  validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph, _resetExtensionsForTests,
+  validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
+  createSkillGate, createToolFilter, _resetExtensionsForTests,
 } from './index.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
@@ -252,4 +253,105 @@ test('extensionsForGraph defaults to the real config reader', () => {
   // defaultEnabled is falsy on the fake manifest and nothing is in config.json,
   // so the live reader must agree with the snapshot rather than throw.
   assert.deepEqual(extensionsForGraph(loaded.list).map((e) => e.enabled), [Boolean(loaded.list[0].defaultEnabled)]);
+});
+
+
+// ── Store/sweep core deps ─────────────────────────────────────────────────
+test('a store factory is handed the core deps bag rather than called bare', () => {
+  let got = null;
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ stores: { s: (deps) => { got = deps; return { deps }; } } })] });
+  const core = { sessionManager: {}, taskStore: {}, memoryStore: {} };
+  const built = Object.fromEntries(Object.entries(loaded.stores).map(([k, f]) => [k, f({ core })]));
+  assert.equal(got.core, core, 'a runner-backed store cannot be constructed without them');
+  assert.equal(built.s.deps.core, core);
+});
+
+// ── Per-launch skill gating ───────────────────────────────────────────────
+test('createSkillGate returns the declared skills a gate left out, and only those', () => {
+  const loaded = loadExtensions({
+    cfg: {},
+    builtin: [manifest({ skills: ['alpha', 'beta'], skillsFor: ({ phase }) => (phase === 'dispatch' ? ['alpha'] : ['alpha', 'beta']) })],
+  });
+  const gate = createSkillGate(loaded, { stores: {}, core: {} });
+  assert.deepEqual(gate({ phase: 'dispatch' }), ['beta']);
+  assert.deepEqual(gate({ phase: 'resume' }), []);
+});
+
+test('createSkillGate hands the gate its own declared skills plus the bound bag', () => {
+  const seen = [];
+  const bag = { stores: { s: 1 }, core: { sessionManager: 2 } };
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: (ctx) => { seen.push(ctx); return ctx.skills; } })] });
+  createSkillGate(loaded, bag)({ sessionId: 'CARD1', phase: 'resume' });
+  assert.deepEqual(seen[0].skills, ['alpha']);
+  assert.equal(seen[0].stores, bag.stores);
+  assert.equal(seen[0].core, bag.core);
+  assert.equal(seen[0].sessionId, 'CARD1');
+});
+
+test('createSkillGate cannot suppress a skill the extension did not declare', () => {
+  // The gate's answer is intersected with its own `skills`, so naming someone
+  // else's skill (or task-memory, which is not an extension at all) does nothing.
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [] })] });
+  assert.deepEqual(createSkillGate(loaded, {})({}), ['alpha']);
+});
+
+test('a throwing gate suppresses nothing and is reported', () => {
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => { throw new Error('boom'); } })] });
+  assert.deepEqual(createSkillGate(loaded, {}, (...a) => errs.push(a))({}), [], 'a bug here must not strip a real launch');
+  assert.match(errs[0][0], /\[ext:fake\] skillsFor failed/);
+});
+
+test('no gate at all means no per-launch suppression', () => {
+  assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'] })] }), {})({}), []);
+});
+
+// ── Per-caller MCP tool filtering ─────────────────────────────────────────
+test('createToolFilter is null when no manifest declares a veto', () => {
+  assert.equal(createToolFilter(loadExtensions({ cfg: {}, builtin: [manifest()] }), {}), null);
+});
+
+test('createToolFilter vetoes per caller and tool', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hideTool: ({ caller, tool }) => caller === 'JOB1' && tool === 'spawn_session' })] });
+  const hide = createToolFilter(loaded, { stores: {}, core: {} });
+  assert.equal(hide('JOB1', 'spawn_session'), true);
+  assert.equal(hide('JOB1', 'list_sessions'), false);
+  assert.equal(hide('CARD1', 'spawn_session'), false);
+});
+
+test('a throwing veto fails OPEN and is reported', () => {
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hideTool: () => { throw new Error('boom'); } })] });
+  assert.equal(createToolFilter(loaded, {}, (...a) => errs.push(a))('CARD1', 'list_sessions'), false);
+  assert.match(errs[0][0], /\[ext:fake\] hideTool failed/);
+});
+
+test('a disabled extension contributes neither a gate nor a veto', () => {
+  const off = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [], hideTool: () => true })] });
+  assert.deepEqual(off.skillGates, []);
+  assert.equal(createToolFilter(off, {}), null);
+});
+
+// ── Manifest validation for the new keys ──────────────────────────────────
+test('skillsFor and hideTool must be functions', () => {
+  assert.throws(() => validateManifest(manifest({ skillsFor: 'yes' })), /skillsFor must be a function/);
+  assert.throws(() => validateManifest(manifest({ hideTool: 1 })), /hideTool must be a function/);
+});
+
+test('onBeforeDispatch is a known session hook', () => {
+  assert.ok(SESSION_HOOKS.includes('onBeforeDispatch'));
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ session: { onBeforeDispatch: () => {} } })] });
+  assert.equal(loaded.sessionHooks.onBeforeDispatch.length, 1);
+});
+
+// ── Stylesheet asset ──────────────────────────────────────────────────────
+test('styles is path-checked exactly like client and announced beside it', () => {
+  assert.throws(() => validateManifest(manifest({ styles: '../../etc/x.css' }), { dir: HERE }), /styles ".*" must resolve inside/);
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ dir: HERE, client: 'public/index.js', styles: 'public/jobs.css' })] });
+  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', styles: '/ext/fake/jobs.css' }]);
+});
+
+test('an extension may ship styles with no client module', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ dir: HERE, styles: 'public/jobs.css' })] });
+  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', styles: '/ext/fake/jobs.css' }]);
 });

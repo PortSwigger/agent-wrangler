@@ -341,7 +341,13 @@ export class SessionManager {
     // every existing test stays inert. Fired sequentially and never abort the
     // core operation: a hook throw is logged (event-only — these run on
     // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
-    this._extHooks = { onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    // Seam (same mould) for per-launch skill gating: server/index.js binds
+    // createSkillGate (server/extensions/index.js) with the extension stores
+    // closed over, and dispatch/resume/fork consult it BEFORE building the
+    // launch command. Returns the skill names to suppress for that one launch;
+    // the default answers none, so every existing launch is byte-identical.
+    this._extLaunchSkills = () => [];
     this._load();
   }
 
@@ -960,6 +966,7 @@ export class SessionManager {
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
     const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, []);
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
       addDirs,
@@ -974,6 +981,7 @@ export class SessionManager {
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
       intent,
       spawnedBy: prev?.spawnedBy,
+      disabledSkills,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
     await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -1021,10 +1029,15 @@ export class SessionManager {
     // while Claude continues to derive and use the stable per-session symlink.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     const addDirs = await withCodexWorktreeAddDir(agent, parentEntry?.worktree, []);
+    // A fork has no entry of its own yet (forkEntry runs after launch), so the
+    // gate is shown the PARENT's — which is what it would inherit anyway, and
+    // the only thing that exists to gate on at this point.
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
       addDirs,
       ...memory,
+      disabledSkills,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
@@ -1485,7 +1498,19 @@ export class SessionManager {
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
+    // Awaited, and deliberately ahead of both the skill gate and the launch: the
+    // card id, cwd and worktree are settled but nothing has started, so this is
+    // the only window in which an extension can persist state the agent's very
+    // first tool call may already depend on (a receipt needing an owner). There
+    // is no entry to hand it — this is what "before the entry exists" means — so
+    // it gets the dispatch's own shape, and the gate below can then read back
+    // whatever it just wrote. A throwing hook never aborts the dispatch.
+    await this._fireExtHooks('onBeforeDispatch', {
+      sessionId, cwd, agent, intent, model: model || null, effort: effort || null,
+      worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
+    });
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);

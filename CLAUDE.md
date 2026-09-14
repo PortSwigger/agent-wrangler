@@ -560,7 +560,7 @@ don't re-derive it.
   boot, and every gate reads the loaded list, never the config.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  graph, session, sweeps, client}`) is validated at boot (`validateManifest`,
+  skillsFor, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
@@ -616,6 +616,37 @@ don't re-derive it.
   must call it FIRST, with the core names, or an adapter's parameterless call
   memoises a copy that skipped the cross-registry check (`router.js` builds its
   handler map lazily on the first frame for exactly this ordering reason).
+  **Anything an extension may need but cannot import arrives on `core`
+  (`{sessionManager, taskStore, memoryStore}`) — which is why the extension
+  stores are instantiated AFTER those three exist, not beside the loader.** A
+  store factory is called with `{core}`, and sweeps and session hooks get it in
+  their args: a manifest owning a runner that has to tick sessions or read task
+  memory could not otherwise be CONSTRUCTED, let alone run. **`onBeforeDispatch`
+  is the only session hook that runs while the session exists nowhere** — after
+  `dispatch` settles the card id, cwd and worktree, `await`ed, before the launch
+  command is built — and that window is the whole point: state the agent's very
+  first tool call depends on cannot be written by `onDispatch`, which fires
+  after the entry is saved and therefore after the process is already running.
+  **A manifest's `skills` list is all-or-nothing; `skillsFor` is the PER-LAUNCH
+  narrowing, and it can only ever narrow its OWN manifest's list** —
+  `createSkillGate` intersects the gate's answer with the `skills` it declared,
+  so naming a sibling's skill (or `task-memory`, not an extension at all) does
+  nothing, and a throwing gate suppresses nothing rather than stripping a real
+  launch. It reaches the adapters as `disabledSkills`, threaded beside
+  `taskMemory` through `buildLaunch`/`buildResume`/`buildFork` on BOTH adapters
+  into `mandatorySkillPrompt`/`codexSkillCatalog` — a fourth launch path must
+  thread it too. The `_extLaunchSkills` seam is consulted before the adapter
+  builds and, in dispatch, deliberately AFTER `onBeforeDispatch`, so a gate can
+  read back what that hook just persisted; `entry` is null at dispatch, the
+  existing entry at resume and the PARENT's at fork (a fork's own entry is
+  written after launch). **`hideTool` is the one surface that shapes tools an
+  extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
+  filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
+  filter hides nothing and is logged, because this is a UX narrowing over an
+  ADVISORY identity (`extractCaller` is not auth) and a bug must degrade to the
+  full tool list, never to a session that can do nothing. `--allowedTools` is
+  baked into launch argv and unaffected: granting a tool the listing does not
+  advertise is inert.
   A graph contributor's keys are checked ONCE at boot against
   `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run in `index.js` against the real
   stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;
@@ -632,6 +663,21 @@ don't re-derive it.
   extension's `public/` with a prefix check, since `join(normalize())` folds a
   climbing `..` back inside instead of rejecting it. A new client slot needs a
   `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it;
+  **`view` is the one slot with ONE host PER CONTRIBUTION, and `only` is what
+  enforces that** — every other slot's host holds every contribution (a card's
+  chip row shows all the pills), so `sync()` computes its keep-set per
+  contribution: a host nobody addressed this round is not one to evict from, it
+  is one that was never that contribution's. Its rail button, `.ext-view` host
+  and `#view=ext:<extId>:<id>` route are all DERIVED by `app.js`'s
+  `renderExtViews`, called from `syncClientExtensions` (a toggle, not a graph
+  tick); `hashView` refuses an unregistered `ext:` key and `renderExtViews`
+  re-reads the hash once a view registers, which is the only thing that makes a
+  deep link survive the load race. **A manifest's `styles` is a `<link>` the
+  loader adds BEFORE the module import and removes in `unload` and on a failed
+  import** — rules that outlived their extension would style elements the core
+  still draws — and an announcement carrying neither `client` nor `styles` is
+  skipped rather than marked loaded, which would swallow the real entry on a
+  later connect;
   mount-once is per HOST ELEMENT (a contribution's `c.mounts` is a host→element
   map), so a host rebuilt via innerHTML (`renderPanel`'s chips row) re-mounts
   each render while `#panel-sections` mounts once, and a throwing contribution

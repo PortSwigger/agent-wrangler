@@ -4,7 +4,14 @@ import { createClientExtensionLoader } from './extensions.js';
 import { createSlots } from './slots.js';
 
 function harness(modules) {
-  const document = { createElement: () => ({ children: [], dataset: {}, appendChild() {}, removeChild() {} }) };
+  // `head` is real enough for the stylesheet <link> bookkeeping: the loader only
+  // ever appends one and removes it again.
+  const head = {
+    children: [],
+    appendChild(c) { this.children.push(c); c.parentNode = head; return c; },
+    removeChild(c) { const at = this.children.indexOf(c); if (at >= 0) this.children.splice(at, 1); c.parentNode = null; return c; },
+  };
+  const document = { head, createElement: () => ({ children: [], dataset: {}, appendChild() {}, removeChild() {} }) };
   const errors = [];
   const slots = createSlots({ document, storage: null, onError: (msg) => errors.push(String(msg)) });
   const imported = [];
@@ -17,8 +24,9 @@ function harness(modules) {
       return m;
     },
     onError: (msg) => errors.push(String(msg)),
+    document,
   });
-  return { slots, errors, imported, loader, load: loader.load };
+  return { slots, errors, imported, loader, load: loader.load, head };
 }
 
 const good = (id) => ({ default: { register(reg) { reg.register('panel.section', { id: `${id}-panel`, mount() {} }); } } });
@@ -112,4 +120,30 @@ test('unload leaves every other extension mounted', async () => {
   await loader.load([{ id: 'a', client: '/ext/a/index.js' }, { id: 'b', client: '/ext/b/index.js' }]);
   loader.unload('a');
   assert.deepEqual(slots.contributions('panel.section').map((c) => c.extId), ['b']);
+});
+
+
+// ── The manifest `styles` sheet ───────────────────────────────────────────
+test('an announced stylesheet is linked with the module and removed with it', () => {
+  const { load, loader, head } = harness({ '/ext/a/index.js': good('a') });
+  return load([{ id: 'a', client: '/ext/a/index.js', styles: '/ext/a/a.css' }]).then(() => {
+    assert.deepEqual(head.children.map((l) => [l.rel, l.href, l.dataset.ext]), [['stylesheet', '/ext/a/a.css', 'a']]);
+    loader.unload('a');
+    assert.deepEqual(head.children, [], 'a toggled-off extension leaves no rules behind');
+  });
+});
+
+test('a styles-only extension needs no client module', async () => {
+  const { load, imported, head, errors } = harness({});
+  assert.equal(await load([{ id: 'a', styles: '/ext/a/a.css' }]), true);
+  assert.deepEqual(imported, []);
+  assert.equal(head.children.length, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('a module that fails to import takes its stylesheet back off', async () => {
+  const { load, head, errors } = harness({});
+  assert.equal(await load([{ id: 'a', client: '/ext/a/index.js', styles: '/ext/a/a.css' }]), false);
+  assert.deepEqual(head.children, []);
+  assert.equal(errors.length, 1);
 });

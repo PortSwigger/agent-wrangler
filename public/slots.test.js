@@ -33,7 +33,10 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view']);
+  // A view needs a label before it has a host: the rail button is drawn from it.
+  assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
+  slots.register('view', 'x', { id: 'v', label: 'Jobs', mount() {} });
 });
 
 test('forExtension binds the extension id so a module cannot register under another', () => {
@@ -219,4 +222,61 @@ test('namespacedStorage prefixes keys, swallows storage failures, and raw() esca
   const none = namespacedStorage('p.', undefined);
   assert.equal(none.get('x'), null);
   assert.doesNotThrow(() => none.set('x', '1'));
+});
+
+
+// ── The `view` slot ───────────────────────────────────────────────────────
+// A view's host is ITS host, not a shared one: `only` is what keeps two views
+// out of each other's pane (every other slot deliberately puts every
+// contribution into every host).
+test('syncHosts with `only` mounts each view into its own host and nowhere else', () => {
+  const { document, slots } = harness();
+  slots.register('view', 'jobs', { id: 'board', label: 'Jobs', mount() {} });
+  slots.register('view', 'logs', { id: 'stream', label: 'Logs', mount() {} });
+  const jobsHost = document.make();
+  const logsHost = document.make();
+  slots.syncHosts('view', [
+    { host: jobsHost, only: { extId: 'jobs', id: 'board' } },
+    { host: logsHost, only: { extId: 'logs', id: 'stream' } },
+  ]);
+  assert.equal(jobsHost.children.length, 1);
+  assert.equal(jobsHost.children[0].dataset.ext, 'jobs');
+  assert.equal(logsHost.children.length, 1);
+  assert.equal(logsHost.children[0].dataset.ext, 'logs');
+});
+
+test('a view left out of the entry list is torn down, and the others are untouched', () => {
+  const { document, slots } = harness();
+  const unmounted = [];
+  slots.register('view', 'jobs', { id: 'board', label: 'Jobs', mount() {}, unmount: () => unmounted.push('jobs') });
+  slots.register('view', 'logs', { id: 'stream', label: 'Logs', mount() {} });
+  const jobsHost = document.make();
+  const logsHost = document.make();
+  const all = [
+    { host: jobsHost, only: { extId: 'jobs', id: 'board' } },
+    { host: logsHost, only: { extId: 'logs', id: 'stream' } },
+  ];
+  slots.syncHosts('view', all);
+  slots.syncHosts('view', [all[1]]);
+  assert.deepEqual(unmounted, ['jobs']);
+  assert.equal(jobsHost.children.length, 0);
+  assert.equal(logsHost.children.length, 1, 'a host nobody addressed this round is not a host to evict from');
+});
+
+test('contributions carries the label and icon the board draws a rail button from', () => {
+  const { slots } = harness();
+  slots.register('view', 'jobs', { id: 'board', label: 'Jobs', icon: '<svg/>', mount() {} });
+  assert.deepEqual(slots.contributions('view'), [{ extId: 'jobs', id: 'board', mounted: false, label: 'Jobs', icon: '<svg/>' }]);
+  // Absent rather than undefined for the slots that need neither.
+  slots.register('panel.section', 'jobs', { id: 'p', mount() {} });
+  assert.deepEqual(slots.contributions('panel.section'), [{ extId: 'jobs', id: 'p', mounted: false }]);
+});
+
+test('an entry with no `only` still reaches every contribution (card.pill is unchanged)', () => {
+  const { document, slots } = harness();
+  slots.register('card.pill', 'a', { id: 'pill', mount() {} });
+  slots.register('card.pill', 'b', { id: 'pill', mount() {} });
+  const host = document.make();
+  slots.syncHosts('card.pill', [{ host, session: { sessionId: 'CARD1' } }]);
+  assert.equal(host.children.length, 2);
 });

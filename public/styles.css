@@ -378,6 +378,16 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    box of its own to size or style. */
 #panel-sections, .sess-meta-ext, .card-meta-ext, .ext-slot { display: contents; }
 
+/* A `view` contribution's host, created per view by app.js renderExtViews. The
+   ONE exception to the layout-transparent rule above: a top-level view is a
+   <main> flex item in its own right (same shape as #search), so it needs a real
+   box — the .ext-slot inside it still adds none. #ext-views itself is
+   transparent so the hosts are <main>'s own children. Everything inside is the
+   extension's, styled by its own manifest `styles` sheet. */
+#ext-views { display: contents; }
+.ext-view { flex: 1; min-width: 0; overflow-y: auto; background: transparent; }
+.ext-view.hidden { display: none; }
+
 /* Per-session Checklist panel — mounted into #panel-sections (a #panel sibling
    inside #sidebar) by server/extensions/checklist/public/index.js; the rules
    stay here in the board's stylesheet (a CSS slot is a noted follow-up).

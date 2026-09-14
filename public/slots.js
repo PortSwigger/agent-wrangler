@@ -10,7 +10,17 @@
 // panel slots have ONE host each and go through mountInto/update; `card.pill`
 // has one host PER CARD (`.card-meta-ext`, cards.js) and goes through
 // syncHosts, which is the whole reason mounts are keyed by host below.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill'];
+//
+// `view` is the third shape: a whole top-level view beside the board and
+// Search, one OWN host per contribution (app.js renderExtViews creates it, and
+// the rail button and #view= hash route that reach it, from `label`/`icon`).
+// It goes through syncHosts too, but with each entry carrying `only` so a
+// contribution lands in its own host and not in every view's — see sync().
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view'];
+
+// Slots whose contribution must carry more than mount() — a view has no host
+// until the board has something to label its rail button with.
+const REQUIRED_FIELDS = { view: ['label'] };
 
 // Every contribution owns exactly ONE element per host element, created here and
 // handed to mount(el, api) once — `c.mounts` is that host -> element map. A
@@ -109,11 +119,19 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // Reconcile a slot against the hosts it should be in RIGHT NOW: mount into
   // each, tear down anything left in a host that isn't listed, and (when the
   // caller passed sessions) update each element with its own host's session.
+  //
+  // An entry may name ONE contribution via `only: {extId, id}`, which is what
+  // the `view` slot uses: every other slot's host holds every contribution
+  // (each card's chip row shows all the pills), but a view's host IS one
+  // contribution's view and must hold nothing else. The keep-set is therefore
+  // computed per contribution — an unaddressed host is not a host that
+  // contribution should be torn out of, it is one that was never its.
   function sync(slotName, entries, baseApi, withUpdate) {
-    const keep = new Set(entries.map((e) => e.host));
     for (const c of [...slotList(slotName)]) {
+      const mine = entries.filter((e) => !e.only || (e.only.extId === c.extId && e.only.id === c.id));
+      const keep = new Set(mine.map((e) => e.host));
       for (const host of [...c.mounts.keys()]) if (!keep.has(host)) teardownAt(c, host);
-      for (const { host, session, graph } of entries) {
+      for (const { host, session, graph } of mine) {
         if (!ensure(slotName, c, host, baseApi)) break;
         if (withUpdate && !updateAt(slotName, c, host, session, graph)) break;
       }
@@ -125,6 +143,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       const list = slotList(slotName);
       if (!contribution || typeof contribution.id !== 'string' || !contribution.id) throw new Error(`[ext:${extId}] contribution to ${slotName} has no id`);
       if (typeof contribution.mount !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} has no mount function`);
+      for (const field of REQUIRED_FIELDS[slotName] || []) {
+        if (typeof contribution[field] !== 'string' || !contribution[field]) throw new Error(`[ext:${extId}] ${contribution.id} in ${slotName} has no ${field}`);
+      }
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
     },
@@ -159,7 +180,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // own entry's session — the one thing `update` below cannot do, since it
     // knows only one. Returns the number of mounted elements across all hosts.
     syncHosts(slotName, entries, baseApi = {}, graph = null) {
-      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, graph }));
+      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, only: e.only ?? null, graph }));
       sync(slotName, rows, baseApi, true);
       return slotList(slotName).reduce((n, c) => n + c.mounts.size, 0);
     },
@@ -174,8 +195,15 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       }
     },
 
+    // `label`/`icon` are what the board needs to DRAW a chrome affordance for a
+    // contribution before it has a host at all — the view slot's rail button.
+    // Both are undefined for the slots that need neither.
     contributions(slotName) {
-      return slotList(slotName).map((c) => ({ extId: c.extId, id: c.id, mounted: c.mounts.size > 0 }));
+      return slotList(slotName).map((c) => ({
+        extId: c.extId, id: c.id, mounted: c.mounts.size > 0,
+        ...(c.label ? { label: c.label } : {}),
+        ...(c.icon ? { icon: c.icon } : {}),
+      }));
     },
   };
 }

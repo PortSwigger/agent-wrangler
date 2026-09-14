@@ -10,8 +10,12 @@ static import in `server/extensions/index.js`.
 
 This records the design as implemented (PRs `extensions-api-client`,
 `extensions-api-docs` and `deferred-card-pill-host`, which filled in the
-`card.pill` host and the `deliver` hook this spec first listed as deferred). Where the original plan and the code differ, the code is
-described here.
+`card.pill` host and the `deliver` hook this spec first listed as deferred, then
+the five hook points below — core deps for stores and sweeps, per-launch skill
+gating, a pre-launch dispatch hook, per-caller MCP tool filtering, and a whole
+client `view` plus the CSS slot — added after a second feature's migration
+found the API had no seam for any of them). Where the original plan and the code
+differ, the code is described here.
 
 ## Problem
 
@@ -37,23 +41,34 @@ export default {
   help: 'What the feature is, and what survives a toggle. No timing — see extensionFlipNote.',
   defaultEnabled: true,
   dir,
-  stores:   { checklist: () => new ChecklistStore() },   // factories, instantiated once by index.js
+  stores:   { checklist: ({ core }) => new ChecklistStore() },  // factories, instantiated once by index.js
   handlers: [ /* control-WS handlers {type, handler} */ ],
   tools:    [ /* MCP tools {name, description, inputSchema, handler} */ ],
   skills:   ['checklist'],          // agent-skills/skills/<name>
+  skillsFor: ({ sessionId, entry, phase, skills, stores, core }) => skills,  // per-launch narrowing
+  hideTool: ({ caller, tool, stores, core }) => false,   // per-caller MCP veto
   graph:    ({ stores }) => ({ checklists: stores.checklist.snapshot() }),
-  session:  { onPurge: ({ sessionId, stores }) => stores.checklist.forget(sessionId) },
-  sweeps:   [ /* {id, everyMs, run({stores, rebuild, broadcast, deliver})} */ ],
+  session:  { onPurge: ({ sessionId, stores, core }) => stores.checklist.forget(sessionId) },
+  sweeps:   [ /* {id, everyMs, run({stores, core, rebuild, broadcast, deliver})} */ ],
   client:   'public/index.js',      // must resolve inside <dir>/public/
+  styles:   'public/checklist.css', // same, and loaded/unloaded with the module
 };
 ```
 
+`core` is `{ sessionManager, taskStore, memoryStore }` — the singletons an
+extension may need but can never import (the leaf rule below). It reaches a
+store factory, a session hook and a sweep, which is what lets a manifest own a
+runner that has to tick sessions or read task memory: a factory called bare
+could not be constructed at all. Extension stores are therefore instantiated
+*after* those three exist in `index.js`, not beside the loader.
+
 `validateManifest` runs at boot and throws with the extension id in the message
 for: a bad or duplicate id, a tool without `name`/`handler`, a handler without
-`type`/`handler`, a store that is not a factory, an unknown `session` hook name
-(the known set is `SESSION_HOOKS`: `onArchive`, `onFork`, `onPurge`,
-`onDispatch`, `onResume`), a sweep without a positive finite `everyMs`, and a
-`client` path that does not resolve inside the manifest's own `public/`.
+`type`/`handler`, a store that is not a factory, a non-function `skillsFor` or
+`hideTool`, an unknown `session` hook name (the known set is `SESSION_HOOKS`:
+`onBeforeDispatch`, `onArchive`, `onFork`, `onPurge`, `onDispatch`,
+`onResume`), a sweep without a positive finite `everyMs`, and a `client` or
+`styles` path that does not resolve inside the manifest's own `public/`.
 `server/index.js` catches any loader error, logs it and exits 1, the same posture
 as the instance lock.
 
@@ -71,10 +86,17 @@ as the instance lock.
 | `allowedToolNames` | `tools.map(t => t.name)` | yes |
 | `skillIds` / `disabledSkillIds` | skill names of enabled / disabled manifests | split |
 | `graphContributors` | `[{id, contribute}]` | yes |
-| `sessionHooks` | `{onArchive: [], onFork: [], ...}` | yes |
+| `sessionHooks` | `{onBeforeDispatch: [], onArchive: [], ...}` | yes |
+| `skillGates` | `[{id, skills, gate}]` — a manifest's own declared skills plus its `skillsFor` | yes, and only with a `skillsFor` |
+| `toolFilters` | `[{id, hide}]` | yes, and only with a `hideTool` |
 | `sweeps` | `[{extId, id, everyMs, run}]` | yes |
-| `clientManifest` | `[{id, client: '/ext/<id>/index.js'}]` | yes, and only with a `client` |
+| `clientManifest` | `[{id, client?: '/ext/<id>/index.js', styles?: '/ext/<id>/x.css'}]` — each key present only when the manifest declares it | yes, and only with one of them |
 | `dirs` | `{id: dir}` | yes |
+
+`createSkillGate(ext, bag, onError)` and `createToolFilter(ext, bag, onError)`
+compose those two lists into the one function each consumer wants, with the
+stores and `core` closed over. Both live in the loader (a leaf) so they are unit
+testable without a server; `index.js` binds them.
 
 Tool names and handler types are checked for uniqueness against each other and
 against `coreToolNames`/`coreHandlerTypes`. Those are passed in by `index.js`
@@ -99,7 +121,7 @@ must stay leaf-compatible: no import of `session-manager`, `state-reader`,
 over the real `BUILTIN` with a static regex over import lines. A manifest's
 tools and handlers reach server state only through the bag they are handed
 (`deps.ext.*` for MCP tools, `ctx.ext.*` for control handlers). Both bags are the
-same `extBag = { stores, list, deliver }` object in `index.js`.
+same `extBag = { stores, list, deliver, core, hideTool }` object in `index.js`.
 
 `deliver` is the second thing on that bag for the same reason `stores` is the
 first: an extension cannot reach a pane itself. It is `createExtDeliver`
@@ -177,14 +199,17 @@ deleted either way. A missing or unparseable file is never written.
 
 ## Composition in `server/index.js`
 
-1. `getExtensions({ coreToolNames, coreHandlerTypes })`, then instantiate every
-   store factory once into `extStores`.
+1. `getExtensions({ coreToolNames, coreHandlerTypes })`, then — after
+   `sessionManager`, `taskStore` and `memoryStore` exist — instantiate every
+   store factory once into `extStores`, each called with `{ core }`.
 2. `assertGraphKeys` on each contributor's output against `RESERVED_GRAPH_KEYS`
    (every key `rebuildOnce` sets itself). Checked once at boot because the
    rebuild is a ~4 s tick where nothing may log or throw.
 3. Bind `ext.sessionHooks` onto `sessionManager._extHooks`, closing over
-   `extStores`.
-4. MCP deps and WS ctx both carry `ext: extBag`.
+   `extStores` and `core`, and `createSkillGate(...)` onto
+   `sessionManager._extLaunchSkills`.
+4. MCP deps and WS ctx both carry `ext: extBag`, whose `hideTool` is
+   `createToolFilter(...)` — null when no manifest declares one.
 5. `rebuildOnce` sets `graph.extensions` from `ext.list` and then
    `Object.assign`s each contributor's output onto the graph.
 6. The connect path sends `{ type: 'extensions', list: ext.clientManifest }`
@@ -196,17 +221,70 @@ deleted either way. A missing or unparseable file is never written.
 
 `SessionManager._extHooks` holds an array per hook name; `_fireExtHooks` runs
 them sequentially, catches and logs each throw, and never aborts the core
-operation. Fire sites: `onArchive` in `archive()` (unawaited, with
-`wasArchived`), `onFork` after the fork entry is saved, `onPurge` from
-`forget()` (fire-and-forget; `forget` stays synchronous), `onDispatch` after the
-new entry is saved, `onResume` at the end of `_doResume` (not `resume()`, whose
-coalescing would fire it twice for one relaunch). Hooks default to empty so every
-pre-existing SessionManager test stays inert.
+operation. Fire sites: `onBeforeDispatch` in `dispatch()` (see below),
+`onArchive` in `archive()` (unawaited, with `wasArchived`), `onFork` after the
+fork entry is saved, `onPurge` from `forget()` (fire-and-forget; `forget` stays
+synchronous), `onDispatch` after the new entry is saved, `onResume` at the end
+of `_doResume` (not `resume()`, whose coalescing would fire it twice for one
+relaunch). Hooks default to empty so every pre-existing SessionManager test
+stays inert.
+
+`onBeforeDispatch` is the only one that runs while the session exists nowhere,
+and it is `await`ed: the card id, cwd and worktree are settled, but no entry has
+been saved and no pane started. That window is the point — an extension that
+persists something the agent's very first tool call depends on (a receipt that
+needs an owner before the agent can file against it) cannot use `onDispatch`,
+which fires after the entry is saved and therefore after the process is already
+running. It gets the dispatch's own shape — `{sessionId, cwd, agent, intent,
+model, effort, worktree, workflow, spawnedBy, parentSession}` — because there is
+no entry to hand it. A throw is logged and the dispatch continues.
 
 The checklist declares only `onPurge`. Its lifecycle is by construction: resume
 keeps the list, a fork starts empty, archive keeps it, only a purge forgets.
 `server/extensions/checklist/lifecycle.test.js` asserts the manifest has no
 `onFork`/`onArchive`.
+
+## Per-launch skill gating
+
+A manifest's `skills` list is all-or-nothing: a disabled extension's skills drop
+out of the mandatory nudge and the Codex catalog for every session. A feature
+whose launches are of two kinds — an automation run versus an ordinary one —
+needs the same call made per session, which is what `taskMemoryEnabled`'s
+hand-threaded boolean does for the one non-extension case.
+
+`skillsFor({sessionId, entry, phase, skills, stores, core, ...})` is handed its
+own extension's declared skills and returns the subset active for this launch.
+`createSkillGate` intersects the answer with `skills` and returns what is left
+over, so a gate can only ever narrow its OWN manifest's list — naming another
+extension's skill (or `task-memory`, which is not an extension at all) does
+nothing. A throwing gate suppresses nothing for its extension and never touches
+another's: a bug here must not strip a real launch.
+
+`sessionManager._extLaunchSkills` is the seam, consulted by dispatch, resume and
+fork BEFORE the adapter builds the command — in dispatch, deliberately after
+`onBeforeDispatch`, so a gate can read back what that hook just persisted. Its
+answer threads down as `disabledSkills`, an array beside `taskMemory`, through
+`buildLaunch`/`buildResume`/`buildFork` on both adapters into
+`mandatorySkillPrompt` and `codexSkillCatalog`. `phase` is `dispatch` | `resume`
+| `fork`; `entry` is null at dispatch (there is none yet), the existing entry at
+resume, and the PARENT's at fork (a fork's own entry is written after launch).
+
+## Per-caller MCP tool filtering
+
+The one extension surface that shapes tools an extension does not own — the case
+is a session KIND that must not be offered `spawn_session`. `hideTool({caller,
+tool, stores, core})` is a **veto**, not a rewrite: `createToolFilter` asks each
+one and the tool stays listed unless some filter says otherwise.
+`buildMcpServer` (`server/mcp/server.js`) applies `deps.ext.hideTool` to
+`activeTools()` per request, so the narrowing is genuinely absent from
+`tools/list` for that caller and present for every other.
+
+It fails OPEN: a throwing filter hides nothing and is logged. This is a UX
+narrowing over an advisory identity (`extractCaller` is not authentication — the
+origin gate is what accepts a request), so a bug must degrade to the full tool
+list rather than leave every session unable to do anything. `--allowedTools` is
+baked into launch argv and is unaffected: granting a tool the listing does not
+advertise is inert.
 
 ## `/ext/<id>/*` route
 
@@ -220,7 +298,7 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
 ## Client slots
 
 `public/slots.js` declares `SLOT_NAMES = ['panel.section', 'panel.metaChip',
-'card.pill']` and `createSlots({ document, storage })` with `register`,
+'card.pill', 'view']` and `createSlots({ document, storage })` with `register`,
 `forExtension(id)` (a registrar bound to one id), `mountInto(slot, hostEl, api)`,
 `syncHosts(slot, entries, api, graph)`, `update(slot, session, graph)`,
 `removeExtension(id)` and `contributions(slot)`. A new slot needs an entry in
@@ -242,6 +320,33 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
   untestable against a plain element stub.
 - `mountInto` is that same reconciliation with a one-host set, which is what
   keeps the chips-row teardown working: this host in, every other host out.
+- `view` is the third shape: a whole top-level pane beside the board and Search,
+  with ONE host per contribution. It goes through `syncHosts` too, but each
+  entry carries `only: {extId, id}` — every other slot's host holds every
+  contribution (a card's chip row shows all the pills), while a view's host IS
+  one contribution's view and must hold nothing else. `sync()` therefore
+  computes its keep-set PER contribution: a host nobody addressed this round is
+  not a host to evict from, it is one that was never that contribution's.
+  A `view` contribution must carry a `label` (`REQUIRED_FIELDS`), because the
+  board draws its rail button before it has a host at all; `contributions(slot)`
+  carries `label`/`icon` back for exactly that, and omits both keys where a slot
+  needs neither.
+- `app.js`'s `renderExtViews()` derives all three pieces of chrome from what is
+  registered right now — a `.layouts` rail button, a `.ext-view` host under
+  `#ext-views`, and a `#view=ext:<extId>:<id>` hash route — and is called from
+  `syncClientExtensions`, the one place that learns an extension has loaded or
+  been switched off, never from a render path (this chrome changes on a toggle,
+  not on a graph tick). The compound key is what keeps two extensions (or one
+  extension's two views) from colliding in `currentView` and in the hash.
+  `hashView` refuses an `ext:` key that is not registered, so a stale bookmark
+  lands on the board rather than a blank pane, and `renderExtViews` re-reads the
+  hash once a view registers — which is what makes a deep link survive the load
+  race. Switching to a view deselects the session, same rule as Search and for
+  the same reason (an attached terminal behind a full-width pane is invisible
+  and still 80 columns wide when you come back). A view that disappears while
+  you are looking at it falls back to the board. The icon is markup from the
+  extension's own module, the same trust level as the module itself, which
+  already owns a whole pane; a view with none gets its label's initial.
 - The `card.pill` host is `.card-meta-ext`, rendered by `cards.js`
   (`cardPillHostHtml`) between the core chips and the right-aligned links — the
   same position in the row as the panel's `.sess-meta-ext`. Empty and
@@ -259,9 +364,11 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
   (`renderGridIfVisible`), so a freshly loaded extension's card pills appear on
   the next board render — its panel contribution is asked for immediately, a
   card pill waits a tick.
-- Hosts (`#panel-sections`, `.sess-meta-ext`, `.card-meta-ext`) and the
-  per-contribution wrapper (`.ext-slot`) are `display: contents`, so an
-  extension's element lays out as if it were the host's own child.
+- Hosts (`#panel-sections`, `.sess-meta-ext`, `.card-meta-ext`, `#ext-views`)
+  and the per-contribution wrapper (`.ext-slot`) are `display: contents`, so an
+  extension's element lays out as if it were the host's own child. `.ext-view`
+  is the one exception: a top-level view is a `<main>` flex item in its own
+  right (same shape as `#search`), so it needs a real box.
 - `mount`/`update`/`unmount` each run under try/catch; a throwing contribution is
   removed — every element it has, in every host, so a card pill that throws on
   one card leaves none behind on the others — and reported, and the rest of the
@@ -275,6 +382,17 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
 `client` URL as an ES module, requires `default.register(slots)`, and is
 idempotent per id across reconnects. A failed load is reported, its
 registrations removed and the id released so the next connect retries.
+
+A manifest's `styles` is attached as a plain `<link>` in `document.head` — not
+injected text, so the browser dedupes and caches it, and (the point here)
+removing the rules again is dropping one node rather than bookkeeping which
+selectors belonged to whom. It goes on BEFORE the module import, so a module's
+first render already has its rules, and comes off in `unload` and on a failed
+import, so a toggled-off extension leaves no rules styling elements the core
+still draws. `client` may be absent for a styles-only extension and `styles` for
+the common case of a module with no CSS; an announcement carrying NEITHER is
+malformed and skipped rather than marked loaded, which would swallow the real
+entry on a later connect.
 
 The checklist client lives in `server/extensions/checklist/public/index.js`
 (with `checklist-dom.js` beside it) and contributes the panel to
@@ -309,8 +427,9 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
   (`pane-deferral.js`). `deliver` is the addressed primitive and cannot tell the
   two intents apart, so that gate belongs to a second hook or an explicit
   opt-in, not to this one.
-- CSS slot: an extension's rules still live in `public/styles.css`
-  (`#checklist...`, `.checklist-pill`).
+- Migrating the checklist's own rules out of `public/styles.css`
+  (`#checklist...`, `.checklist-pill`) onto the manifest's `styles`. The slot
+  exists now; the checklist has not moved onto it.
 - Migrating task-memory and archive-review onto manifests. task-memory keeps its
   own `taskMemoryEnabled` flag and its special case in `activeSkillEntries`
   until then.

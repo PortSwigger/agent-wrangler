@@ -87,6 +87,10 @@
         </div>
       </div>
     </section>
+    <!-- One host per extension-contributed top-level view (slots.js `view`),
+         created and torn down by app.js renderExtViews as extensions load and
+         the settings toggle flips. Empty in a stock install. -->
+    <div id="ext-views"></div>
     <!-- Conversation search (search.js). Static shell: only #search-results is
          re-rendered per query, so the input is never torn down mid-keystroke. -->
     <div id="search" class="hidden">
