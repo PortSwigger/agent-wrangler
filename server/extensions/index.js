@@ -36,13 +36,6 @@ export const RESERVED_GRAPH_KEYS = new Set([
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
 ]);
 
-// `onBeforeDispatch` is the one hook that runs while the session does not yet
-// exist anywhere: it fires after dispatch has settled the card id, cwd and
-// worktree but BEFORE the launch command is built and the pane started, which
-// is the only window in which an extension can persist state that the agent's
-// very first tool call may already depend on. `onDispatch` fires after the
-// entry is saved — correct for anything reacting to a new card, too late for an
-// invariant the launched process itself relies on.
 // The CLOSED capability vocabulary a manifest's `requires` is drawn from. It
 // lives HERE rather than beside the builders because the loader validates
 // `requires` at manifest-load time and cannot import the non-leaf host-api/.
@@ -60,6 +53,13 @@ export const CAPABILITIES = new Set([
   'mail:read', 'mail:send',
 ]);
 
+// `onBeforeDispatch` is the one hook that runs while the session does not yet
+// exist anywhere: it fires after dispatch has settled the card id, cwd and
+// worktree but BEFORE the launch command is built and the pane started, which
+// is the only window in which an extension can persist state that the agent's
+// very first tool call may already depend on. `onDispatch` fires after the
+// entry is saved — correct for anything reacting to a new card, too late for an
+// invariant the launched process itself relies on.
 export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
@@ -276,6 +276,12 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
         id: ext.id,
         ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) } : {}),
         ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) } : {}),
+        // The control types this extension's BROWSER half may send, carried on
+        // the connect announcement as well as on graph.extensions because the
+        // announcement lands before the first graph — and slots.js fails closed
+        // until it has heard one of the two. Omitted when it has none, keeping a
+        // handler-less extension's entry byte-identical to the pre-façade one.
+        ...(listEntry.handlerTypes.length ? { handlerTypes: [...listEntry.handlerTypes] } : {}),
       });
     }
   }

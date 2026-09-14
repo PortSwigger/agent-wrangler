@@ -16,6 +16,7 @@ import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
 import { getExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter } from './extensions/index.js';
 import { buildHostApi } from './host-api/index.js';
+import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
@@ -740,9 +741,12 @@ const rebuild = createRebuildCoalescer(rebuildOnce);
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
   ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir() }));
-  // Which enabled extensions ship a client module (served under /ext/<id>/).
-  // Sent before the first graph, every connect; nothing consumes it yet.
-  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest }));
+  // Which enabled extensions ship a client module (served under /ext/<id>/),
+  // each with the control types its browser half may send (slots.js binds its
+  // `send` to them and fails closed until it has heard this or a graph), plus
+  // the host API version this server serves. Sent before the first graph,
+  // every connect.
+  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }));
   if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
   if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
   availableAgents()

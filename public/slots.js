@@ -42,7 +42,7 @@ const REQUIRED_FIELDS = { view: ['label'] };
 // in every host, the error reported) while every other contribution carries on —
 // the same lesson as module-syntax.test.js's blank-dashboard incident, applied
 // at run time to code the core does not own.
-export function createSlots({ document, storage, onError = (...a) => console.error(...a) }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   const apis = new Map();
 
@@ -71,12 +71,45 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     for (const host of [...c.mounts.keys()]) teardownAt(c, host);
   }
 
-  // The per-extension `api` is the base one the caller hands in, plus a storage
-  // namespaced to `ext.<id>.` so two extensions cannot collide on a
-  // localStorage key. Built once per extension, so a contribution can compare
-  // it by identity across renders.
+  // The per-extension `api` — the VERSIONED client half of the host façade, and
+  // the browser mirror of its forced-value rule. It is the base api the caller
+  // hands in, plus:
+  //   storage — namespaced `ext.<id>.` so two extensions cannot collide on a
+  //             localStorage key (`raw()` still escapes it, see below).
+  //   send    — BOUND to this extension's OWN registered control types. A frame
+  //             whose type it did not register is DROPPED and reported, never
+  //             sent: otherwise an extension's browser half could drive another
+  //             extension's — or the core's — control handlers, which is exactly
+  //             what the server-side façade stops it doing over MCP.
+  //   version — the host API the server serves, so a client module can check what
+  //             it is talking to the way its manifest's range does server-side.
+  // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
+  // told an extension's types (no announcement, no graph) must fail closed and
+  // report rather than forward blind.
+  // Built once per extension, so a contribution can compare it by identity
+  // across renders — the type list is read at SEND time, not captured here,
+  // since the announcement can arrive after a contribution has mounted.
   function apiFor(extId, baseApi) {
-    if (!apis.has(extId)) apis.set(extId, { ...baseApi, storage: namespacedStorage(`ext.${extId}.`, storage) });
+    if (!apis.has(extId)) {
+      apis.set(extId, {
+        ...baseApi,
+        // Resolved HERE rather than at createSlots time: the server announces it,
+        // and an api is only ever built once a module has loaded — which cannot
+        // happen before that announcement. A function is accepted so the caller
+        // need not have the value at construction.
+        version: typeof version === 'function' ? version() : version,
+        storage: namespacedStorage(`ext.${extId}.`, storage),
+        send: (frame) => {
+          const type = frame && typeof frame === 'object' ? frame.type : null;
+          const allowed = handlerTypesFor(extId) || [];
+          if (typeof type !== 'string' || !allowed.includes(type)) {
+            onError(`[ext:${extId}] send refused: "${type}" is not one of this extension's control handlers (${allowed.join(', ') || 'none'})`);
+            return;
+          }
+          baseApi.send?.(frame);
+        },
+      });
+    }
     return apis.get(extId);
   }
 

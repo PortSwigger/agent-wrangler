@@ -79,7 +79,7 @@ test('client paths must resolve inside the manifest dir\'s public/ subdir', () =
   rejects(manifest({ client: 'public/index.js', dir: 'relative/dir' }), /absolute `dir`/);
   assert.ok(validateManifest(manifest({ client: 'public/index.js' })));
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js' })] });
-  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', handlerTypes: ['fake-do'] }]);
   assert.deepEqual(out.dirs, { fake: path.join(HERE, 'fake') });
 });
 
@@ -350,12 +350,12 @@ test('onBeforeDispatch is a known session hook', () => {
 test('styles is path-checked exactly like client and announced beside it', () => {
   assert.throws(() => validateManifest(manifest({ styles: '../../etc/x.css' }), { dir: HERE }), /styles ".*" must resolve inside/);
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ dir: HERE, client: 'public/index.js', styles: 'public/jobs.css' })] });
-  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', styles: '/ext/fake/jobs.css' }]);
+  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', styles: '/ext/fake/jobs.css', handlerTypes: ['fake-do'] }]);
 });
 
 test('an extension may ship styles with no client module', () => {
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ dir: HERE, styles: 'public/jobs.css' })] });
-  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', styles: '/ext/fake/jobs.css' }]);
+  assert.deepEqual(loaded.clientManifest, [{ id: 'fake', styles: '/ext/fake/jobs.css', handlerTypes: ['fake-do'] }]);
 });
 
 // -- requires / engines.wranglerApi ----------------------------------------
@@ -393,4 +393,9 @@ test('tools, handlers and session hooks come out tagged with their owning extens
 test('extensionsForGraph carries each extension\'s own handler types', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
   assert.deepEqual(extensionsForGraph(out.list, () => true)[0].handlerTypes, ['fake-do']);
+});
+
+test('a handler-less extension omits handlerTypes from its announcement entry', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
 });
