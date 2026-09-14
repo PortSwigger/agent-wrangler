@@ -31,6 +31,8 @@ import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
 } from './checklist-dom.js';
+import { createSlots } from './slots.js';
+import { createClientExtensionLoader } from './extensions.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -49,7 +51,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, getSetting } from './settings.js';
+import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
 import { sidebarWidthFromDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
@@ -135,11 +137,55 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
+// The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
+// carried on every graph push — what the generic `ext:<id>` settings toggles
+// read back, and what mounts/unmounts each one's slot contributions. The
+// identity fields are fixed at server boot; `enabled` is live.
 let checklistEnabled = true; // server config flag, carried on every graph push
-// Whole-store snapshot { cardId: [{id,text,done,createdAt}] } off the graph —
-// session-scoped, but the only consumer is the ONE selected session's panel, so
-// it rides the graph as a snapshot rather than being enriched onto every card.
+let latestExtensions = [];
 let latestChecklists = {};
+// The latest graph as received, handed whole to extension slot updates
+// (slots.update) so an extension reads its own contribution off it — the core
+// never learns those keys.
+let latestGraph = null;
+// The extension slots (slots.js) and the loader that fills them from the
+// server's `extensions` connect message. `extApi` is what every extension's
+// mount() receives (plus a per-extension namespaced storage slots adds):
+// `send` for control messages, the current selection, and a way to ask for a
+// panel re-render — deliberately NOT the board's internals. Declared up here,
+// before any render can run, because renderPanel reads `slots` directly.
+const slots = createSlots({ document, storage: (() => { try { return localStorage; } catch { return null; } })() });
+const extApi = {
+  send,
+  selectedSessionId: () => selectedSessionId,
+  requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
+};
+const clientExtensions = createClientExtensionLoader(slots);
+// The `extensions` connect message announces which extensions ship a client
+// module and where it lives; `graph.extensions[].enabled` (re-read from config
+// server-side every rebuild) is what decides whether each one is actually
+// mounted right now. Keeping the announcement here is what lets a settings flip
+// mount or unmount without a reload — see syncClientExtensions.
+let extClientManifest = [];
+
+// Bring the mounted client extensions in line with what the server says is on.
+// Called from both inputs — the connect announcement and every graph — because
+// either can move first: a reconnect re-announces before any graph arrives, and
+// a settings flip changes only `enabled` on a graph the manifest already covers.
+// Nothing is awaited by the caller: one extension failing to import must never
+// hold up a render, and the loader already reports and drops it.
+function syncClientExtensions() {
+  const enabled = new Set(latestExtensions.filter((e) => e.enabled).map((e) => e.id));
+  let unmounted = false;
+  for (const { id } of extClientManifest) {
+    if (!enabled.has(id) && clientExtensions.unload(id)) unmounted = true;
+  }
+  // A panel re-render is what draws the gap the unmount left, and what gives a
+  // freshly-loaded contribution its host to mount into.
+  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); }
+  clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); } });
+}
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
@@ -331,6 +377,14 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   checklistEnabled = graph.checklistEnabled !== false;
   latestChecklists = graph.checklists || {};
+  latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
+  setExtensionDefs(latestExtensions);
+  latestGraph = graph;
+  // `enabled` is live server-side, so this is where a settings flip becomes a
+  // mount or an unmount. After `latestGraph` is assigned, because the render it
+  // can ask for reads that — and before the renderPanel further down, so the
+  // panel is drawn against the contributions that survive this tick.
+  syncClientExtensions();
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -401,6 +455,10 @@ function setView(view) {
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
+  // Every extension view host, shown only when it is the current one. Done for
+  // ALL of them on every setView rather than just the pair being swapped, so a
+  // host created while another view was current starts hidden.
+  for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
   const mid = document.querySelector('.rail-mid');
   if (mid) mid.classList.toggle('hidden', view !== 'grid');
   if (view === 'grid') renderGrid();
@@ -409,6 +467,11 @@ function setView(view) {
     // behind the results.
     if (selectedSessionId) deselectSession();
     onEnterSearchView();
+  } else if (isExtView(view) && selectedSessionId) {
+    // Same rule as Search, for the same reason: an extension view owns the
+    // whole board area, so a terminal left attached behind it is invisible and
+    // still 80 columns wide when you come back.
+    deselectSession();
   }
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
@@ -417,6 +480,71 @@ function setView(view) {
 document.querySelectorAll('.layouts button').forEach((btn) => {
   btn.addEventListener('click', () => setView(btn.dataset.view));
 });
+
+// ── Extension views (slots.js `view`) ──────────────────────────────────────
+// A view contribution gets a whole top-level pane of its own beside the board
+// and Search, reached by its own rail button and its own #view= hash. All three
+// — the button, the host, the route — are DERIVED from what is registered right
+// now, so an extension toggled off takes its chrome with it and one toggled on
+// gets it without a reload. Keyed `ext:<extId>:<id>`: a compound key is what
+// keeps two extensions (or one extension's two views) from colliding in
+// `currentView` and in the hash, and the `ext:` prefix is what tells every
+// view-shaped check below that this is not one of the board's own.
+const EXT_VIEW_PREFIX = 'ext:';
+const extViewHosts = new Map(); // view key -> its host element in #ext-views
+function isExtView(view) {
+  return typeof view === 'string' && view.startsWith(EXT_VIEW_PREFIX) && extViewHosts.has(view);
+}
+function extViewKey(c) {
+  return `${EXT_VIEW_PREFIX}${c.extId}:${c.id}`;
+}
+
+// Bring the rail buttons and the view hosts in line with the registered `view`
+// contributions, then mount each one into its OWN host (`only`, see slots.js).
+// Called from syncClientExtensions — the one place that learns an extension has
+// loaded or been switched off — and deliberately not from a render path: this
+// chrome changes on a toggle, not on a graph tick.
+function renderExtViews() {
+  const views = slots.contributions('view');
+  const wanted = new Map(views.map((c) => [extViewKey(c), c]));
+  const layouts = document.querySelector('.layouts');
+  const container = document.getElementById('ext-views');
+  if (!layouts || !container) return;
+  for (const [key, host] of [...extViewHosts]) {
+    if (wanted.has(key)) continue;
+    extViewHosts.delete(key);
+    host.remove();
+    layouts.querySelector(`button[data-view="${CSS.escape(key)}"]`)?.remove();
+    // The view we were looking at has just gone (its extension was switched
+    // off): fall back to the board rather than leaving an empty <main>.
+    if (currentView === key) setView('grid');
+  }
+  for (const [key, c] of wanted) {
+    if (extViewHosts.has(key)) continue;
+    const host = document.createElement('div');
+    host.className = 'ext-view hidden';
+    host.dataset.view = key;
+    container.appendChild(host);
+    extViewHosts.set(key, host);
+    const btn = document.createElement('button');
+    btn.dataset.view = key;
+    btn.title = c.label;
+    btn.setAttribute('aria-label', c.label);
+    // The icon is markup from the extension's own client module — the same
+    // trust level as the module itself, which already owns a whole pane — so
+    // it goes in as HTML. A view with none gets its label's initial rather than
+    // an invisible button.
+    if (c.icon) btn.innerHTML = c.icon;
+    else btn.textContent = c.label.slice(0, 1).toUpperCase();
+    btn.addEventListener('click', () => setView(key));
+    layouts.appendChild(btn);
+  }
+  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
+  // A deep link can land before the extension's module has loaded, so the hash
+  // is re-read once its view finally exists (hashView refuses an unknown one).
+  const deep = hashView();
+  if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+}
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
 // Grid geometry (constants + packing math) lives in ./layout.js; MAX_ONSCREEN_ROWS
@@ -593,8 +721,11 @@ function gridEditing() {
     || a.classList.contains('todo-text-input')
     // The checklist's inline input lives in the sidebar, not #grid — but the
     // grid re-render is what steals focus from whatever is focused anywhere, so
-    // it has to be listed here like the todo inputs.
-    || a.classList.contains('ck-input');
+    // it has to be listed here like the todo inputs. Same for anything focused
+    // inside the extension panel host, generically: the core doesn't know an
+    // extension's classes.
+    || a.classList.contains('ck-input')
+    || Boolean(a.closest?.('#panel-sections'));
 }
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
@@ -1179,7 +1310,32 @@ function focusSession(sid) {
   else selectSession(sid);
 }
 
+// The `card.pill` slot's hosts: one `.card-meta-ext` per rendered card
+// (cards.js cardPillHostHtml), reconciled as a SET because the board rebuilds
+// its whole grid via innerHTML — every host is a fresh element each render, and
+// a card that has gone is a host that simply isn't in this list, which is how
+// its element gets torn down (slots.js syncHosts). Each host is updated with
+// ITS OWN card's session, never the selected one, which is the difference from
+// the panel slots' mountInto/update pair.
+//
+// A host whose data-sid is no longer in the graph is skipped rather than mounted
+// with a null session: a contribution reads the session it is handed, and the
+// card is about to disappear on the next render anyway.
+function mountCardPills(el) {
+  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const entries = [];
+  for (const host of el.querySelectorAll('.card-meta-ext')) {
+    const s = byId.get(host.closest('.session-card')?.dataset.sid);
+    if (s) entries.push({ host, session: s });
+  }
+  slots.syncHosts('card.pill', entries, extApi, latestGraph);
+}
+
 function wireGridEvents(el) {
+  // Both render paths (renderGrid and renderFocusedTile) end here, so this is
+  // the one place the freshly-built cards' extension pill hosts can be filled
+  // without the two sites drifting apart.
+  mountCardPills(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open
@@ -3106,10 +3262,18 @@ function hashSessionId() {
 // bookmarks resolve to Search (the view that replaced History); new hashes only
 // ever write search (syncHash writes from HASH_VIEWS).
 const HASH_VIEWS = ['search'];
+// A view is deep-linkable if it is one of the board's own or an extension view
+// that is registered RIGHT NOW — an unknown `ext:` key is refused rather than
+// selected, so a stale bookmark (or one for an extension that is off) lands on
+// the board instead of a blank pane. renderExtViews re-reads the hash once a
+// view registers, which is what makes a deep link survive the load race.
+function isHashView(view) {
+  return HASH_VIEWS.includes(view) || isExtView(view);
+}
 function hashView() {
   const m = (location.hash || '').match(/^#view=(.+)$/);
   if (m && m[1] === 'history') return 'search';
-  return m && HASH_VIEWS.includes(m[1]) ? m[1] : null;
+  return m && isHashView(m[1]) ? m[1] : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
@@ -3117,7 +3281,7 @@ function hashView() {
 // replaceState so no bare "#" lingers. Skip writes that already match to avoid a
 // hashchange feedback loop.
 function syncHash() {
-  const target = HASH_VIEWS.includes(currentView)
+  const target = isHashView(currentView)
     ? `#view=${currentView}`
     : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
   if (target) {
@@ -4000,6 +4164,12 @@ function renderPanel(sessionId) {
   // from here purely so there is one call site that can't drift out of sync with
   // panel renders (selection, the ~4s poll, every pill toggle).
   renderChecklist(sessionId);
+  // Extension panel sections (#panel-sections, the other #panel SIBLING) are
+  // mounted once and updated from the same call site, for the same reason. The
+  // meta-chip slot is mounted further down, once the chips row it lives in has
+  // been rebuilt.
+  slots.mountInto('panel.section', document.getElementById('panel-sections'), extApi);
+  slots.update('panel.section', s, latestGraph);
   // Both persisted per session id (see the two maps above) — looked up fresh
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
@@ -4033,6 +4203,8 @@ function renderPanel(sessionId) {
     const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
     chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
   }
+  // Extension chips are mounted into this row AFTER it is written — see the
+  // panel.metaChip slot below.
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;
   if (saList.length) {
@@ -4070,7 +4242,7 @@ function renderPanel(sessionId) {
           ${branchBadge(s.branch)}
           ${s.addDirs?.length ? `<span class="sess-more">+${s.addDirs.length}</span>` : ''}
         </div>
-        <div class="sess-meta">${chips.join('')}${s.links?.length ? `<span class="sess-meta-links">${linkChipsHtml(s.links, cardCtx())}</span>` : ''}</div>
+        <div class="sess-meta">${chips.join('')}<span class="sess-meta-ext"></span>${s.links?.length ? `<span class="sess-meta-links">${linkChipsHtml(s.links, cardCtx())}</span>` : ''}</div>
         ${saDisclosure}`;
   const panel = document.getElementById('panel');
   // Keep the status bar a persistent element: the ~4s graph poll re-renders the
@@ -4106,6 +4278,13 @@ function renderPanel(sessionId) {
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
   const ckToggle = panel.querySelector('#panel-checklist-toggle');
   if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
+  // The chips row above was just rebuilt via innerHTML, so its .sess-meta-ext
+  // host (between the core chips and the right-aligned links) is a fresh
+  // element every render: mountInto re-mounts each extension chip into it
+  // (mount-once is per host element, see slots.js) — the same cadence the
+  // sub-agent pills' click wiring two lines up runs at.
+  slots.mountInto('panel.metaChip', panel.querySelector('.sess-meta-ext'), extApi);
+  slots.update('panel.metaChip', s, latestGraph);
   panel.querySelectorAll('.subagent-row').forEach((row) => {
     row.addEventListener('click', () => openSubagentModal(row.dataset.ownerSid, row.dataset.subagentId));
   });
@@ -5222,6 +5401,13 @@ initSettings({
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'checklistEnabled') return checklistEnabled;
+      // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
+      // back off graph.extensions — one rung for all of them, no per-extension
+      // branch. Undefined for an unknown id so settings.js falls back to its
+      // default.
+      if (id.startsWith(EXT_SETTING_PREFIX)) {
+        return latestExtensions.find((e) => e.id === id.slice(EXT_SETTING_PREFIX.length))?.enabled;
+      }
       return undefined;
     },
     set: (id, value) => {
@@ -5252,6 +5438,11 @@ initSettings({
         // Show/hide at once rather than waiting for the rebuild echo — the panel
         // is right beside the modal that just toggled it.
         renderChecklist(selectedSessionId);
+      } else if (id.startsWith(EXT_SETTING_PREFIX)) {
+        // Nothing flips locally: the server fixed the extension's tools/handlers
+        // at boot, so the toggle only records the choice (read back off the next
+        // graph) and the help text says it takes effect after a restart.
+        send({ type: 'extension-enabled', id: id.slice(EXT_SETTING_PREFIX.length), enabled: Boolean(value) });
       }
     },
   },
@@ -5425,6 +5616,12 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // Sent on EVERY connect (before the first graph); the loader is idempotent
+    // per id, so a reconnect registers nothing twice. Not awaited — an
+    // extension that fails to load is logged and dropped, never the board's
+    // problem. A render is asked for once something new registered, since the
+    // first graph may already have been applied while the module was in flight.
+    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; syncClientExtensions(); }
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.

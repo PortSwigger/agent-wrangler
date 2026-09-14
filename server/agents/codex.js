@@ -50,7 +50,7 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, disabledSkills }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
@@ -58,7 +58,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
   // session start. The worktree guardrail still appends when present. `taskMemory`
   // is only threaded so tests can pin it; undefined (the production path) falls
   // through to the live-config default inside both skill helpers.
-  const base = [mandatorySkillPrompt(undefined, { taskMemory }), codexSkillCatalog(undefined, { taskMemory })].filter(Boolean).join('\n\n');
+  const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = [
     '--sandbox', 'workspace-write',
@@ -118,31 +118,31 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir }));
+    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath }) {
+  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
