@@ -30,6 +30,8 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+  visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
+  parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
 } from './checklist-dom.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -2307,12 +2309,23 @@ const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
 const checklistOpenOverrides = (() => {
   try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
 })();
+const CHECKLIST_SHOW_DONE_KEY = 'wrangler.checklistShowDone';
+const checklistShowDoneIds = (() => {
+  try { return parseChecklistShowDone(localStorage.getItem(CHECKLIST_SHOW_DONE_KEY)); } catch { return new Set(); }
+})();
 function checklistOpen(sessionId) {
   return isChecklistOpen(checklistOpenOverrides, sessionId);
 }
 function toggleChecklist(sessionId) {
   toggleChecklistOpen(checklistOpenOverrides, sessionId);
   try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
+}
+function checklistShowDone(sessionId) {
+  return isChecklistShowDone(checklistShowDoneIds, sessionId);
+}
+function toggleChecklistDoneFilter(sessionId) {
+  toggleChecklistShowDone(checklistShowDoneIds, sessionId);
+  try { localStorage.setItem(CHECKLIST_SHOW_DONE_KEY, serializeChecklistShowDone(checklistShowDoneIds)); } catch {}
 }
 
 // The live array for a session (not a copy) — the optimistic mutations below
@@ -2338,9 +2351,15 @@ function renderChecklist(sessionId) {
   if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
   el.hidden = false;
   document.getElementById('ck-count').textContent = checklistCountLabel(items);
+  const showDone = checklistShowDone(sessionId);
+  const filter = document.getElementById('ck-filter');
+  filter.classList.toggle('showing', showDone);
+  filter.setAttribute('aria-pressed', String(showDone));
+  filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
+  document.getElementById('ck-filter-label').textContent = showDone ? 'All' : 'Open';
   if (checklistDragActive || checklistEditing) return;
   const list = document.getElementById('ck-list');
-  checklistDom.patch(list, { sessionId, items });
+  checklistDom.patch(list, { sessionId, items: visibleChecklistItems(items, { showDone }) });
   syncChecklistScrollHint(list);
 }
 
@@ -2482,6 +2501,10 @@ function endChecklistDrag() {
 function initChecklist() {
   const list = document.getElementById('ck-list');
   document.getElementById('ck-add').addEventListener('click', beginChecklistAdd);
+  document.getElementById('ck-filter').addEventListener('click', () => {
+    toggleChecklistDoneFilter(selectedSessionId);
+    renderChecklist(selectedSessionId);
+  });
   list.addEventListener('click', (e) => {
     const row = e.target.closest('.ck-row');
     if (!row || !row.dataset.ckid) return;
@@ -2510,17 +2533,19 @@ function initChecklist() {
     e.preventDefault();
     if (!checklistDragActive) return;
     const sid = selectedSessionId;
-    const order = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
+    const visibleOrder = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
     // A `tmp_` id belongs to an add still in flight — the server has never heard
     // of it, so sending it would just be ignored. Filter it out rather than
     // skipping the whole round trip (skipping would let the next graph echo
     // revert the drag). Reorder appends anything it isn't told about, and an
     // optimistic item is always the last row anyway, so it lands where it was.
+    const items = checklistFor(sid);
+    const reordered = reorderVisibleChecklistItems(items, visibleOrder);
+    const order = reordered.map((item) => item.id);
     send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
     // Optimistic reorder of the local snapshot, so the next patch agrees with
     // the DOM the drag already produced rather than snapping it back.
-    const byId = new Map(checklistFor(sid).map((i) => [i.id, i]));
-    latestChecklists[sid] = order.map((id) => byId.get(id)).filter(Boolean);
+    latestChecklists[sid] = reordered;
     endChecklistDrag();
     renderChecklist(sid);
   });

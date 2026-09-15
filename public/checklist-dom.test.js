@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+  visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
+  parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
 } from './checklist-dom.js';
 
 // A DOM stub sufficient for the reconciliation assertions: no jsdom, matching how
@@ -175,6 +177,59 @@ test('checklistCountLabel summarises progress, and is empty for an empty list', 
   assert.equal(checklistCountLabel([]), '');
   assert.equal(checklistCountLabel(), '');
   assert.equal(checklistCountLabel([{ done: false }, { done: true }, { done: true }]), '2/3 done');
+});
+
+test('visibleChecklistItems hides done items by default and shows every item in All mode', () => {
+  const items = [
+    { id: 'ck_1', text: 'open', done: false },
+    { id: 'ck_2', text: 'done', done: true },
+    { id: 'ck_3', text: 'also open', done: false },
+  ];
+  assert.deepEqual(visibleChecklistItems(items).map((item) => item.id), ['ck_1', 'ck_3']);
+  assert.deepEqual(visibleChecklistItems(items, { showDone: true }), items);
+});
+
+test('the Show done filter defaults off and toggles independently per session', () => {
+  const shown = new Set();
+  assert.equal(isChecklistShowDone(shown, 'CARD1'), false);
+  toggleChecklistShowDone(shown, 'CARD1');
+  assert.equal(isChecklistShowDone(shown, 'CARD1'), true);
+  assert.equal(isChecklistShowDone(shown, 'CARD2'), false);
+  toggleChecklistShowDone(shown, 'CARD1');
+  assert.equal(isChecklistShowDone(shown, 'CARD1'), false);
+});
+
+test('the Show done choice survives a reload and malformed storage defaults off', () => {
+  const restored = parseChecklistShowDone(serializeChecklistShowDone(new Set(['CARD1', 'CARD3'])));
+  assert.deepEqual([...restored], ['CARD1', 'CARD3']);
+  for (const raw of [null, undefined, '', 'not json', '{}', '42', 'null']) {
+    assert.deepEqual([...parseChecklistShowDone(raw)], [], `${JSON.stringify(raw)} must show open items only`);
+  }
+});
+
+test('reordering visible items preserves hidden done items in their original slots', () => {
+  const items = [
+    { id: 'ck_1', done: false },
+    { id: 'ck_2', done: true },
+    { id: 'ck_3', done: false },
+    { id: 'ck_4', done: true },
+  ];
+  assert.deepEqual(
+    reorderVisibleChecklistItems(items, ['ck_3', 'ck_1']).map((item) => item.id),
+    ['ck_3', 'ck_2', 'ck_1', 'ck_4'],
+  );
+});
+
+test('reordering preserves items added concurrently while the drag DOM is frozen', () => {
+  const items = [
+    { id: 'ck_1', done: false },
+    { id: 'ck_new', done: false },
+    { id: 'ck_2', done: false },
+  ];
+  assert.deepEqual(
+    reorderVisibleChecklistItems(items, ['ck_2', 'ck_2', 'missing', 'ck_1']).map((item) => item.id),
+    ['ck_2', 'ck_new', 'ck_1'],
+  );
 });
 
 test('isPendingChecklistId spots the optimistic local id and nothing else', () => {

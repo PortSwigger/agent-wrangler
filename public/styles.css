@@ -388,8 +388,9 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 }
 .ck-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-subtle); }
 .ck-count { font-size: 10px; color: var(--fg-muted); }
+.checklist-filter { margin-left: auto; }
 .ck-add {
-  margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: transparent; color: var(--fg-muted);
   border: 1px solid var(--border-muted); cursor: pointer;
 }
@@ -1456,14 +1457,14 @@ body.system-banner-open { padding-top: 30px; }
    slightly toward --fg (lightens in dark mode, darkens in light mode, so it
    stays a small nudge rather than a fixed color in either theme) for the
    contrast .card-tag chips get for free elsewhere from having non-chip content
-   around them. Scoped to this pill only, not .card-tag itself. */
-.subagent-pill, .checklist-pill { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
+   around them. Scoped to these toggles only, not .card-tag itself. */
+.subagent-pill, .checklist-pill, .checklist-filter { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
 .subagent-toggle-icon { display: inline-flex; }
 /* Same tinted-fill convention as .card-tag.automerge: a light accent wash over
    the base chip fill, with --blue-fg (this codebase's readable-on-a-tint accent
    text, e.g. .search-act--adopt) rather than --accent-fg (reserved for solid-accent
    buttons — it's a stark white, too low-contrast on a mostly-neutral tint). */
-.subagent-pill.showing, .checklist-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
+.subagent-pill.showing, .checklist-pill.showing, .checklist-filter.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
 /* The card's pill disables itself when no sub-agents are currently recent (see
    subagentPillHtml) — toggling it on would show nothing. aria-disabled, not
    :disabled — the button stays clickable so the click can fall through to the

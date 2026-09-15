@@ -123,6 +123,48 @@ export function checklistPillLabel(items = []) {
   return `${items.filter((i) => i.done).length}/${items.length}`;
 }
 
+export function visibleChecklistItems(items = [], { showDone = false } = {}) {
+  return showDone ? items : items.filter((item) => !item.done);
+}
+
+export function isChecklistShowDone(sessionIds, sessionId) {
+  return Boolean(sessionId) && sessionIds.has(sessionId);
+}
+
+export function toggleChecklistShowDone(sessionIds, sessionId) {
+  if (!sessionId) return sessionIds;
+  if (sessionIds.has(sessionId)) sessionIds.delete(sessionId);
+  else sessionIds.add(sessionId);
+  return sessionIds;
+}
+
+export function parseChecklistShowDone(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id) => typeof id === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+export function serializeChecklistShowDone(sessionIds) {
+  return JSON.stringify([...sessionIds]);
+}
+
+export function reorderVisibleChecklistItems(items, visibleOrder) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set();
+  const reordered = [];
+  for (const id of visibleOrder) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    reordered.push(byId.get(id));
+  }
+  let cursor = 0;
+  return items.map((item) => (seen.has(item.id) ? reordered[cursor++] : item));
+}
+
 // --- per-session disclosure state ---
 // Mirrors the sub-agents zone's own override map (app.js
 // panelSubagentShownOverrides): a { sessionId: boolean } map persisted per
