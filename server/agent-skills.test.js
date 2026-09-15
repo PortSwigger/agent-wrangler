@@ -97,7 +97,7 @@ test('task-memory, mail and checklist are mandatory (carry a nudge); links, spaw
   // The nudge is a POINTER, not the guidance: it must name the tool and the
   // skill, and must say the checklist is separate from the agent's own planner
   // (the one thing an agent would otherwise get wrong without reading further).
-  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { checklist: true });
+  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { checklist: true, taskMemory: true, ext: { disabledSkillIds: [] } });
   assert.match(nudge, /add_checklist_item/);
   assert.match(nudge, /`checklist` skill/);
   assert.match(nudge, /never synced/);
@@ -110,7 +110,7 @@ test('checklist:false drops the checklist skill from the mandatory nudge and the
   fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: checklist\ndescription: Keep a visible checklist\n---\n\nBody.\n');
   fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Use add_checklist_item for visible progress.\n');
 
-  const off = { taskMemory: true, checklist: false };
+  const off = { taskMemory: true, checklist: false, ext: { disabledSkillIds: [] } };
   assert.doesNotMatch(mandatorySkillPrompt(root, off), /add_checklist_item/);
   assert.match(mandatorySkillPrompt(root, off), /alpha thing/); // other nudges survive
   assert.doesNotMatch(codexSkillCatalog(root, off), /checklist/);
@@ -118,9 +118,40 @@ test('checklist:false drops the checklist skill from the mandatory nudge and the
   // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
   assert.ok(skillEntries(root).some((e) => e.name === 'checklist'));
 
-  const on = { taskMemory: true, checklist: true };
+  const on = { taskMemory: true, checklist: true, ext: { disabledSkillIds: [] } };
   assert.match(mandatorySkillPrompt(root, on), /add_checklist_item/);
   assert.match(codexSkillCatalog(root, on), /checklist/);
+});
+
+// A disabled extension's skill ids (the loader's `disabledSkillIds`) drop from
+// both always-on channels; a fake `ext` pins the set rather than whatever this
+// developer's config.json says. No extension ships a skill yet, so the fixture
+// stands in for the first one that does.
+test('a disabled extension\'s skill ids drop from the mandatory nudge and the Codex catalog — nothing else', () => {
+  const root = fixture();
+  const base = { taskMemory: true, checklist: true };
+  const off = { ...base, ext: { disabledSkillIds: ['zebra'] } };
+  assert.doesNotMatch(codexSkillCatalog(root, off), /- zebra —/);
+  assert.match(codexSkillCatalog(root, off), /- alpha —/);
+  assert.match(mandatorySkillPrompt(root, off), /alpha thing/);
+  // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
+  assert.ok(skillEntries(root).some((e) => e.name === 'zebra'));
+  assert.match(codexSkillCatalog(root, { ...base, ext: { disabledSkillIds: [] } }), /- zebra —/);
+});
+
+// The per-LAUNCH channel (an enabled extension's own `skillsFor` gate, resolved
+// by session-manager and threaded down beside taskMemory). Same two channels as
+// the global one, but decided per session rather than per install.
+test('disabledSkills drops a skill from this launch only, leaving the install\'s own lists alone', () => {
+  const root = fixture();
+  const base = { taskMemory: true, checklist: true, ext: { disabledSkillIds: [] } };
+  const gated = { ...base, disabledSkills: ['alpha'] };
+  assert.doesNotMatch(mandatorySkillPrompt(root, gated), /alpha thing/);
+  assert.doesNotMatch(codexSkillCatalog(root, gated), /- alpha —/);
+  assert.match(codexSkillCatalog(root, gated), /- zebra —/);
+  // The very next launch, with no gate, is unaffected — this is per-session.
+  assert.match(mandatorySkillPrompt(root, base), /alpha thing/);
+  assert.ok(skillEntries(root).some((e) => e.name === 'alpha'));
 });
 
 test('taskMemory:false drops task-memory from the mandatory nudge and the Codex catalog — nothing else', () => {

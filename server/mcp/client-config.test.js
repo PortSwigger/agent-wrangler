@@ -1,5 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { loadExtensions, BUILTIN } from '../extensions/index.js';
+
+// No extension contributes a tool today; pinned rather than inherited so these
+// assert the core grant itself.
+const NO_EXT = { allowedToolNames: [] };
 import {
   MCP_SERVER_NAME, MCP_TOKEN_ENV, mcpUrl,
   claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg, CHECKLIST_TOOLS,
@@ -84,7 +89,7 @@ test('allowedToolsArg grants read_mail and list_mail (the mailbox tools) — the
 // happens to say.
 test('allowedToolsArg grants the four checklist tools — the two-place registration pair', async () => {
   const { TOOLS } = await import('./tools/index.js');
-  const names = allowedToolsArg({ checklist: true }).split(',');
+  const names = allowedToolsArg({ checklist: true, ext: NO_EXT }).split(',');
   assert.equal(CHECKLIST_TOOLS.length, 4);
   for (const toolName of CHECKLIST_TOOLS) {
     assert.ok(TOOLS.some((t) => t.name === toolName), `${toolName} must be registered in tools/index.js TOOLS`);
@@ -96,8 +101,8 @@ test('allowedToolsArg grants the four checklist tools — the two-place registra
 // all — a tool an agent can never get a permission prompt answered for is worse
 // than one that isn't there.
 test('allowedToolsArg drops ONLY the checklist tools when the feature is off', () => {
-  const on = allowedToolsArg({ checklist: true }).split(',');
-  const off = allowedToolsArg({ checklist: false }).split(',');
+  const on = allowedToolsArg({ checklist: true, ext: NO_EXT }).split(',');
+  const off = allowedToolsArg({ checklist: false, ext: NO_EXT }).split(',');
   for (const toolName of CHECKLIST_TOOLS) assert.ok(!off.includes(allowedToolName(toolName)));
   assert.deepEqual(off, on.filter((n) => !CHECKLIST_TOOLS.map(allowedToolName).includes(n)));
   // Every other always-on tool survives — a bad filter here would silently
@@ -105,4 +110,20 @@ test('allowedToolsArg drops ONLY the checklist tools when the feature is off', (
   for (const toolName of ['list_sessions', 'spawn_session', 'send_message', 'read_mail']) {
     assert.ok(off.includes(allowedToolName(toolName)));
   }
+});
+
+// Extension tools are the one place the two-place rule is DERIVED rather than
+// hand-kept: allowedToolsArg grants exactly the names the loader registers, so
+// a manifest that adds a tool has granted it in the same edit. BUILTIN is empty
+// today, so a fake stands in for the first manifest that ships one.
+test('allowedToolsArg grants every enabled extension tool, derived from the loader', () => {
+  const ext = { allowedToolNames: ['do_a_thing', 'do_another'] };
+  const names = allowedToolsArg({ checklist: true, ext }).split(',');
+  for (const n of ext.allowedToolNames) {
+    assert.ok(names.includes(allowedToolName(n)), `${n} must be granted by allowedToolsArg`);
+  }
+  // And a disabled extension (the loader hands back no names) grants none of
+  // them, leaving the core list exactly as it was.
+  assert.deepEqual(allowedToolsArg({ checklist: true, ext: NO_EXT }).split(','), names.filter((n) => !ext.allowedToolNames.map(allowedToolName).includes(n)));
+  assert.deepEqual(allowedToolsArg({ checklist: true, ext: loadExtensions({ cfg: {}, builtin: BUILTIN }) }), allowedToolsArg({ checklist: true, ext: NO_EXT }));
 });

@@ -204,6 +204,19 @@ export function mailBadgeHtml(s) {
   return `<span class="mail-badge${stale ? ' stale' : ''}" title="${esc(title)}">${icon}${mail.unread}</span>`;
 }
 
+// The `card.pill` slot's host (public/slots.js), one per card, sitting between
+// the core chips and the right-aligned links — the same place in the row as the
+// panel's `.sess-meta-ext`, and `display: contents` for the same reason (the
+// host adds no box of its own). Rendered unconditionally and empty: this module
+// is a pure string builder that knows nothing about which extensions are
+// loaded, and app.js's mountCardPills is what fills the hosts after the render.
+// On `.session-card` ONLY — a `.worker-row` is a one-line spine row with no chip
+// row to host anything, and a `.snoozed-row` is not a card either; a full-view
+// child gets one because it renders through sessionCardHtml like any card.
+export function cardPillHostHtml() {
+  return '<span class="card-meta-ext"></span>';
+}
+
 export function modelPillHtml(model) {
   if (!model) return '';
   return `<span class="card-tag model-pill" title="${esc(model.title)}">${CPU_ICON}<span class="model-pill-label">${esc(model.label)}</span></span>`;
@@ -282,7 +295,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${metaLinks}</div>
+    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }

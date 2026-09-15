@@ -330,13 +330,18 @@ don't re-derive it.
   always in context" holds for Claude and NOT for Codex; don't delete the table
   again on that reasoning. The hand-copied table it replaced had already drifted
   (missing `opusplan`).
-- **A new MCP tool is invisible to launched agents until it's in TWO places.**
-  `server/mcp/tools/index.js`'s `TOOLS` registers it on the server; separately,
-  `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched session's
-  `--allowedTools` grants without a per-call permission prompt (a non-interactive
-  agent that never gets a prompt answered effectively can't use a tool missing from
-  it). Registering without allow-listing ships a tool that works in tests and dies
-  silently in a real launch. `read_mail`/`list_mail` are the current example
+- **A new CORE MCP tool is invisible to launched agents until it's in TWO places
+  — and for an EXTENSION's tools the rule is DERIVED, not manual.**
+  `server/mcp/tools/index.js`'s `TOOLS` registers a core tool on the server;
+  separately, `server/mcp/client-config.js`'s `ALLOWED_TOOLS` is what a launched
+  session's `--allowedTools` grants without a per-call permission prompt (a
+  non-interactive agent that never gets a prompt answered effectively can't use a
+  tool missing from it). Registering without allow-listing ships a tool that works
+  in tests and dies silently in a real launch. A tool declared in an extension
+  manifest's `tools[]` (`server/extensions/*/index.js`) is exempt: the loader
+  builds `allowedToolNames` from the very list it registers, so `activeTools()`
+  and `allowedToolsArg()` read one source and the pair cannot drift (asserted
+  generically by `extensions/index.test.js`); the hand-kept list is core-only. `read_mail`/`list_mail` are the current example
   (`client-config.test.js` asserts the pair) — and because `--allowedTools` is
   baked into a session's launch argv, a session already running when this
   shipped has neither until it's resumed/relaunched: `entry.mailCapable`
@@ -546,6 +551,155 @@ don't re-derive it.
   session. Caps (`MAX_ITEMS` 100,
   `MAX_TEXT_LENGTH` 500) are an addition the design spec didn't ask for: this is
   the first store an agent can grow with no human in the loop.
+- **Extensions API (`server/extensions/index.js`, `public/slots.js`,
+  `public/extensions.js`) — an optional feature is ONE manifest, loaded ONCE at
+  boot, and every gate reads the loaded list, never the config.** A manifest
+  (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
+  default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
+  skillsFor, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
+  every throw names the id) and `index.js` exits 1 on a bad one — a manifest
+  colliding with a core tool name or handler type is a config error a human must
+  see, not something to limp past. Enabled is `extensions.<id>` in config.json
+  (`extensionEnabled`, `config-store.js`), and **the two halves of a toggle move
+  at DIFFERENT times — the UI on the next tick, everything else at the next
+  restart.** `graph.extensions[].enabled` is re-read from config on every rebuild
+  (`extensionsForGraph`, NOT `ext.list`'s boot snapshot, which carries only the
+  identity/label/help/defaultEnabled that cannot change without a restart), and
+  the client mounts or unmounts that extension's slot contributions off it
+  (`syncClientExtensions` in `app.js`, the loader's `unload`). That liveness
+  matches what a per-feature flag's own per-tick read (`graph.checklistEnabled
+  = checklistEnabled()`) already gives the features that still have one:
+  **a toggle that changes nothing visible until a restart is a regression, so
+  don't collapse this back onto `ext.list`.** Tools/handlers/skills/stores/graph-contributors/client assets
+  ARE fixed at load, so an agent's MCP tools follow at its next relaunch, and an
+  extension that booted OFF has no store, no handler and no client asset to
+  serve — it cannot be turned on live at all and genuinely needs a restart. **Timing is told to a human by
+  `extensionFlipNote` (`public/settings.js`) AFTER a flip, never by the
+  manifest's `help`** — the row's note picks one of three lines from
+  `{enabled, bootEnabled}` (`bootEnabled` being the loader's own snapshot
+  value, carried on the graph beside the live read), so it can name the
+  restart only in the case that needs one. A static help sentence cannot: a
+  blanket "takes effect after the wrangler restarts" was appended to any help
+  that didn't mention one, and it is now false for the half of a flip that
+  lands on the next tick. A manifest's `help` says what the feature IS and what
+  survives a toggle, nothing about when. Sweeps and session hooks run from the
+  fixed list.
+  Six things are load-bearing. **`server/extensions/**` is imported by the
+  `client-config.js` and `agent-skills.js` leaves (which the agent adapters
+  import), so every manifest and everything it imports must itself stay
+  leaf-compatible — never `session-manager`/`state-reader`/`tmux-scraper`/
+  `index.js`** (`extensions/index.test.js` asserts this over the real `BUILTIN`
+  by regex); a tool or handler reaches the server only through the
+  `deps.ext.stores`/`ctx.ext.stores` bag, which is the SAME `extBag` object in
+  both the MCP deps and the WS ctx (`index.js`), and the loader takes
+  `coreToolNames`/`coreHandlerTypes` as ARGUMENTS from `index.js` for the same
+  reason — it cannot import the core registries. That bag is also the ONLY way
+  an extension reaches a pane: `ext.deliver(sessionId, text)`
+  (`ext-deliver.js`, bound over `message-delivery.js` and the target resolvers,
+  which is why `extBag` is built below `createTargets`) is on it and in every
+  sweep's run args, and its **two-argument signature IS the access control** —
+  `deliverMessage`'s `imagePaths` are absolute paths handed straight to a pane
+  (safe only because `paste-store.js` mints them inside one session's own
+  pastes dir) and `clearComposer` wipes a human's composer, so neither may be
+  passed through; a bad id or blank text is an `error` result, not a throw. It
+  wakes a dormant target and refuses an archived one, exactly as a human's send
+  does, but logs its relaunch as `reason=extension` — that line names what woke
+  a card and `message` would read as a human pressing send. **It is the
+  ADDRESSED primitive, NOT a notifier**: an automated nudge off a poll wants
+  `pane-deferral.js`'s mid-prompt hold, which nothing here can apply because
+  the two intents are indistinguishable at this seam. The memoised `getExtensions()`
+  is what lets those leaves derive their lists with no threading; `index.js`
+  must call it FIRST, with the core names, or an adapter's parameterless call
+  memoises a copy that skipped the cross-registry check (`router.js` builds its
+  handler map lazily on the first frame for exactly this ordering reason).
+  **Anything an extension may need but cannot import arrives on `core`
+  (`{sessionManager, taskStore, memoryStore}`) — which is why the extension
+  stores are instantiated AFTER those three exist, not beside the loader.** A
+  store factory is called with `{core}`, and sweeps and session hooks get it in
+  their args: a manifest owning a runner that has to tick sessions or read task
+  memory could not otherwise be CONSTRUCTED, let alone run. **`onBeforeDispatch`
+  is the only session hook that runs while the session exists nowhere** — after
+  `dispatch` settles the card id, cwd and worktree, `await`ed, before the launch
+  command is built — and that window is the whole point: state the agent's very
+  first tool call depends on cannot be written by `onDispatch`, which fires
+  after the entry is saved and therefore after the process is already running.
+  **A manifest's `skills` list is all-or-nothing; `skillsFor` is the PER-LAUNCH
+  narrowing, and it can only ever narrow its OWN manifest's list** —
+  `createSkillGate` intersects the gate's answer with the `skills` it declared,
+  so naming a sibling's skill (or `task-memory`, not an extension at all) does
+  nothing, and a throwing gate suppresses nothing rather than stripping a real
+  launch. It reaches the adapters as `disabledSkills`, threaded beside
+  `taskMemory` through `buildLaunch`/`buildResume`/`buildFork` on BOTH adapters
+  into `mandatorySkillPrompt`/`codexSkillCatalog` — a fourth launch path must
+  thread it too. The `_extLaunchSkills` seam is consulted before the adapter
+  builds and, in dispatch, deliberately AFTER `onBeforeDispatch`, so a gate can
+  read back what that hook just persisted; `entry` is null at dispatch, the
+  existing entry at resume and the PARENT's at fork (a fork's own entry is
+  written after launch). **`hideTool` is the one surface that shapes tools an
+  extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
+  filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
+  filter hides nothing and is logged, because this is a UX narrowing over an
+  ADVISORY identity (`extractCaller` is not auth) and a bug must degrade to the
+  full tool list, never to a session that can do nothing. `--allowedTools` is
+  baked into launch argv and unaffected: granting a tool the listing does not
+  advertise is inert.
+  A graph contributor's keys are checked ONCE at boot against
+  `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run in `index.js` against the real
+  stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;
+  a core graph key added to `rebuildOnce` must be added to that set or a
+  contributor can silently overwrite it every tick. Session hooks
+  (`_extHooks` on `SessionManager`, `_fireExtHooks`) are logged-not-thrown and
+  sequential, never abort the core operation, and fire only on
+  archive/fork/purge/dispatch/resume (never per tick, so `logError` there obeys
+  the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
+  coalescing reason the resume log line does. `/ext/<id>/*`
+  (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
+  which holds the extensions that were enabled AT BOOT — one disabled at boot is
+  a 404, never served, which is exactly why it cannot be turned back on live — and resolves the rest via `path.resolve` against the
+  extension's `public/` with a prefix check, since `join(normalize())` folds a
+  climbing `..` back inside instead of rejecting it. A new client slot needs a
+  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it;
+  **`view` is the one slot with ONE host PER CONTRIBUTION, and `only` is what
+  enforces that** — every other slot's host holds every contribution (a card's
+  chip row shows all the pills), so `sync()` computes its keep-set per
+  contribution: a host nobody addressed this round is not one to evict from, it
+  is one that was never that contribution's. Its rail button, `.ext-view` host
+  and `#view=ext:<extId>:<id>` route are all DERIVED by `app.js`'s
+  `renderExtViews`, called from `syncClientExtensions` (a toggle, not a graph
+  tick); `hashView` refuses an unregistered `ext:` key and `renderExtViews`
+  re-reads the hash once a view registers, which is the only thing that makes a
+  deep link survive the load race. **A manifest's `styles` is a `<link>` the
+  loader adds BEFORE the module import and removes in `unload` and on a failed
+  import** — rules that outlived their extension would style elements the core
+  still draws — and an announcement carrying neither `client` nor `styles` is
+  skipped rather than marked loaded, which would swallow the real entry on a
+  later connect;
+  mount-once is per HOST ELEMENT (a contribution's `c.mounts` is a host→element
+  map), so a host rebuilt via innerHTML (`renderPanel`'s chips row) re-mounts
+  each render while `#panel-sections` mounts once, and a throwing contribution
+  is REMOVED from every host it occupies rather than allowed to blank the
+  board. **A slot with one host per CARD is `syncHosts`, not
+  `mountInto`/`update`, and the difference is load-bearing twice**:
+  `card.pill`'s hosts are `.card-meta-ext` (cards.js `cardPillHostHtml`, on
+  `.session-card` only — a `.worker-row` has no chip row to host anything), and
+  `app.js`'s `mountCardPills` hands `syncHosts` `[{host, session}]` for EVERY
+  card on screen, so each element is updated with its OWN card's session
+  (`update` knows one session and would hand every card the selected one) and a
+  card that has gone is torn down by OMISSION from that list — never by probing
+  the DOM, since the caller has just rendered and `isConnected` would make the
+  reconciliation untestable against an element stub. It hangs off
+  `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
+  `renderFocusedTile`) already end with. **`BUILTIN` is EMPTY — this lands the
+  API and its seams, with nothing migrated onto it yet** (asserted, so a stray
+  manifest can't register tools and handlers on every install unnoticed), which
+  is also why nothing here is exercised end-to-end by a real feature: the first
+  manifest is the proof. **Migrating a flagged feature (checklist, task-memory,
+  archive-review) is: manifest + `BUILTIN` row + delete its accessor,
+  `set-<x>-enabled` handler and settings def** — never a fresh `if (id === …)`
+  rung in `app.js`, since `setExtensionDefs` renders the Extensions tab off
+  `graph.extensions`. A retired flag's stored value needs carrying over to
+  `extensions.<id>` at that point; there is no migration table yet, because
+  nothing has been retired.
 - **Diff-view text is untrusted.** The session diff view renders agent/repo-generated
   content (paths, hunk headers, line text) — it goes in via `textContent`/`dataset`,
   **never `innerHTML`** (`public/diff-dom.js`). Review drafts persist to localStorage

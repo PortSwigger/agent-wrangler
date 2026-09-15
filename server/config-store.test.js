@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, extensionEnabled, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -163,3 +163,13 @@ test('checklistEnabled defaults to ON; only an explicit false disables', () => {
   assert.equal(checklistEnabled({ checklistEnabled: false }), false);
   assert.equal(checklistEnabled({ checklistEnabled: 'no' }), true, 'only a real boolean false opts out');
 });
+
+test('extensionEnabled: the manifest default applies until an explicit boolean overrides it', () => {
+  assert.equal(extensionEnabled('demo', true, {}), true);
+  assert.equal(extensionEnabled('demo', false, {}), false);
+  assert.equal(extensionEnabled('demo', true, { extensions: { demo: false } }), false);
+  assert.equal(extensionEnabled('demo', false, { extensions: { demo: true } }), true);
+  assert.equal(extensionEnabled('demo', true, { extensions: { demo: 'no' } }), true, 'a non-boolean is ignored, not coerced');
+  assert.equal(extensionEnabled('demo', true, { extensions: { other: false } }), true, "another extension's value is not this one's");
+});
+

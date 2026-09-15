@@ -6,6 +6,9 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { extractCaller, buildMcpServer, createMcpRequestHandler } from './server.js';
 import { activeTools } from './tools/index.js';
 import { mcpSeenAt } from '../mcp-activity.js';
+// No extension contributes a tool today; pinned rather than inherited so these
+// assert the core registry itself.
+const NO_EXT = { tools: [], allowedToolNames: [] };
 
 test('extractCaller reads X-AW-Session header', () => {
   assert.equal(extractCaller({ headers: { 'x-aw-session': 'CARD1' } }), 'CARD1');
@@ -44,23 +47,46 @@ async function connect(deps, caller, opts) {
   return { client, server };
 }
 
-// The tool set is feature-flag dependent (activeTools), so pin the flag rather
-// than inheriting whatever this developer's config.json says.
+// The tool set is feature-flag and extension dependent (activeTools), so pin both
+// rather than inheriting whatever this developer's config.json says.
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
-  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: true }) });
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: true, ext: NO_EXT }) });
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), ['add_checklist_item', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_info', 'list_checklist', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'remove_checklist_item', 'remove_links', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_checklist_item', 'workflow_phase']);
   await server.close();
 });
 
 test('checklistEnabled:false leaves the four checklist tools out of tools/list entirely', async () => {
-  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: false }) });
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: false, ext: NO_EXT }) });
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
   for (const n of ['add_checklist_item', 'update_checklist_item', 'remove_checklist_item', 'list_checklist']) {
     assert.ok(!names.includes(n), `${n} must not be advertised when the feature is off`);
   }
   assert.ok(names.includes('list_sessions'), 'everything else still is');
+  await server.close();
+});
+
+// The per-caller veto (deps.ext.hideTool, composed from the enabled manifests'
+// `hideTool` by createToolFilter). This is the one extension surface that shapes
+// tools an extension does not own, so both directions matter: it really does
+// remove the tool from the listing, and it is asked per caller.
+test('deps.ext.hideTool drops a tool from one caller\'s listing only', async () => {
+  const asked = [];
+  const deps = { ...fakeDeps(), ext: { hideTool: (caller, tool) => { asked.push([caller, tool]); return caller === 'JOB1' && tool === 'spawn_session'; } } };
+  const hidden = await connect(deps, 'JOB1');
+  assert.ok(!(await hidden.client.listTools()).tools.map((t) => t.name).includes('spawn_session'));
+  await hidden.server.close();
+  const shown = await connect(deps, 'CARD1');
+  assert.ok((await shown.client.listTools()).tools.map((t) => t.name).includes('spawn_session'));
+  await shown.server.close();
+  assert.ok(asked.some(([c, t]) => c === 'JOB1' && t === 'spawn_session'));
+});
+
+test('no hideTool at all leaves the tool list untouched by identity', async () => {
+  const tools = activeTools({ checklist: true, ext: NO_EXT });
+  const { client, server } = await connect({ ...fakeDeps(), ext: { hideTool: null } }, 'CARD1', { tools });
+  assert.equal((await client.listTools()).tools.length, tools.length);
   await server.close();
 });
 

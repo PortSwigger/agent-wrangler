@@ -87,6 +87,10 @@
         </div>
       </div>
     </section>
+    <!-- One host per extension-contributed top-level view (slots.js `view`),
+         created and torn down by app.js renderExtViews as extensions load and
+         the settings toggle flips. Empty in a stock install. -->
+    <div id="ext-views"></div>
     <!-- Conversation search (search.js). Static shell: only #search-results is
          re-rendered per query, so the input is never torn down mid-keystroke. -->
     <div id="search" class="hidden">
@@ -154,6 +158,13 @@
         </div>
         <div class="ck-list" id="ck-list"></div>
       </div>
+      <!-- Host for extension panel sections (the `panel.section` slot,
+           public/slots.js). A #panel sibling for the same reason the checklist
+           strip above is: each section is its own bordered strip, sized to its
+           content (never flex:1), so it can't compete with the terminal/chat
+           pane for height. display: contents, so the sections lay out as
+           #sidebar's own children. Empty in a stock install. -->
+      <div id="panel-sections"></div>
       <div id="term-wrap">
         <div id="term"></div>
       </div>
