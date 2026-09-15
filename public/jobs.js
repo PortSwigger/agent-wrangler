@@ -4,7 +4,8 @@ export const JOB_COLUMNS = [
   ['backlog', 'Backlog', 'Ideas ready to shape'],
   ['planning', 'Planning', 'Tickets, PRs and order'],
   ['jira', 'Jira tickets', 'Approved titles become tickets'],
-  ['implementation', 'Work & PR', 'One session: work, commit, push, open the PR'],
+  ['implementation', 'Work', 'One session in a dedicated worktree'],
+  ['review', 'Code review', 'Read the diff before anything is committed'],
   ['pr', 'PR', 'Checks, comments and merge'],
   ['deployment', 'Landing', 'Post-merge runs, then the check if there is one'],
   ['cleanup', 'Done', 'Worktree and merged branch removed'],
@@ -20,6 +21,11 @@ export const SESSION_COLUMNS = [
 ];
 export const isSessionSub = (sub) => sub?.kind === 'session';
 export const hasSessionSubs = (job) => job.subJobs.some(isSessionSub);
+// Mirrors server/jobs-schema.js reviewCode: a job from before the flag reviews.
+export const reviewCode = (job) => job.reviewCode ?? true;
+// The Code review column is only drawn for a job that reviews — or that still
+// holds a card there, so turning review off can never make a card vanish.
+export const jobColumns = (job) => JOB_COLUMNS.filter(([stage]) => stage !== 'review' || reviewCode(job) || job.subJobs.some((s) => !isSessionSub(s) && s.stage === 'review'));
 // A sub-job is one of exactly two kinds, and the same chip names it everywhere one
 // appears (board card, plan graph, detail heading) so the kinds are never told
 // apart by wording alone: a PR (blue, pull-request glyph) or an agent session on
@@ -59,7 +65,10 @@ export const redComments = (sub) => commentVerdict(sub)?.tone === 'red';
 export const deploymentStalled = (sub) => sub?.stage === 'deployment' && !!sub.deploymentStale;
 export const mergeHeldByComments = (job, sub) => sub?.stage === 'pr' && !job.reviewMerge && sub.pr?.checkStatus === 'passing' && redComments(sub) && sub.mergeApprovedHead !== sub.pr.head;
 export const sessionReviewLabel = (job) => (job.reviewSessions ?? true) ? 'Session review on' : 'Sessions auto-complete';
-export const reviewFlagsLabel = (job) => `${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`;
+export const reviewFlagsLabel = (job) => `${reviewCode(job) ? 'Code review' : 'No code review'} · ${job.reviewMerge ? 'Manual merge' : 'Automatic merge'}${hasSessionSubs(job) ? ` · ${sessionReviewLabel(job)}` : ''}`;
+// The uncommitted working tree awaits the human: nothing is committed and no
+// agent runs until approve-code (server/job-store.js) releases the publish session.
+export const codeAwaitingReview = (sub) => !isSessionSub(sub) && sub?.stage === 'review' && sub.state === 'verified';
 // What the merge inference found for this PR's head (server job-deploys.js), in
 // the words the human reads on the card and in the detail: "Deploys on merge · …"
 // or "Merge completes it · …". Absent until the PR exists.
@@ -81,6 +90,7 @@ export const moveById = (id) => MOVES.find((m) => m.id === id) || null;
 // not exist, so the copy follows the sub-job's stage.
 export function moveCopy(sub, move) {
   if (move.id !== 'fix-here' || (!isSessionSub(sub) && sub?.stage === 'pr')) return move;
+  if (sub?.stage === 'review') return { ...move, label: 'Request changes', blurb: 'Back to work in the same worktree, with your note.' };
   return { ...move, label: 'Retry with a note', blurb: isSessionSub(sub) ? 'Run this session again, with your note.' : 'Start the work again, with your note.' };
 }
 // Which "Mark position" claims this sub-job's stage can still accept — mirrors the
@@ -89,7 +99,7 @@ export function markOptions(sub) {
   if (!sub || sub.cancelledAt || ['cleanup', 'done'].includes(sub.stage)) return [];
   const pr = !isSessionSub(sub);
   return [
-    ...(pr && sub.stage === 'implementation' && !sub.pr ? [{ value: 'pr', label: 'A PR is already open for this work' }] : []),
+    ...(pr && ['implementation', 'review'].includes(sub.stage) && !sub.pr ? [{ value: 'pr', label: 'A PR is already open for this work' }] : []),
     ...(pr && sub.stage === 'pr' ? [{ value: 'merged', label: 'Merged by hand' }] : []),
     { value: 'done', label: 'Done: deployed, or already covered elsewhere' },
   ];
@@ -100,10 +110,10 @@ export function movesFor(job, sub) {
   if (!sub || sub.cancelledAt || ['cleanup', 'done'].includes(sub.stage)) return [];
   const pr = !isSessionSub(sub);
   const allowed = {
-    'fix-here': ['pr', 'implementation', 'session'].includes(sub.stage),
-    'split-out': pr && ['implementation', 'pr', 'deployment'].includes(sub.stage),
+    'fix-here': ['pr', 'implementation', 'review', 'session'].includes(sub.stage),
+    'split-out': pr && ['implementation', 'review', 'pr', 'deployment'].includes(sub.stage),
     'new-ticket': true,
-    reorder: ['implementation', 'pr', 'session'].includes(sub.stage),
+    reorder: ['implementation', 'review', 'pr', 'session'].includes(sub.stage),
     drop: true,
     mark: markOptions(sub).length > 0,
   };
@@ -141,6 +151,7 @@ export function jobNeedsReview(job, sub) {
   if (!sub) return !job.cancelledAt && job.stage === 'planning' && job.plan && !job.runs.some((r) => !r.stopped);
   if (!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length) return true;
   if (isSessionSub(sub)) return sub.stage === 'review';
+  if (codeAwaitingReview(sub)) return true;
   if (deploymentStalled(sub)) return true;
   return sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && job.reviewMerge && sub.mergeApprovedHead !== sub.pr.head;
 }
@@ -153,13 +164,15 @@ export function jobStatus(job, sub) {
   const run = liveRun(job, sub);
   if (run) {
     if (run.status === 'needs-you') return { tone: 'needs', text: 'Waiting on a prompt' };
-    return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: 'Working on the PR', repair: 'Fixing the PR', verify: 'Checking it landed', session: 'Working' }[run.phase] || 'Working') };
+    return { tone: 'working', text: run.report ? 'Saving receipt' : ({ planning: 'Planning', jira: 'Creating Jira tickets', implementation: reviewCode(job) ? 'Working' : 'Working on the PR', publish: 'Committing & opening the PR', repair: 'Fixing the PR', verify: 'Checking it landed', session: 'Working' }[run.phase] || 'Working') };
   }
   // A requested fix is a repair the runner picks up on its next tick, so it outranks
   // whatever the checks currently say.
   if (sub?.stage === 'pr' && sub.fixRequested) return { tone: 'working', text: 'Fix requested' };
   if (deploymentStalled(sub)) return { tone: 'needs', text: 'No deployment run' };
-  if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Needs you' : 'Plan ready to review' };
+  if (jobNeedsReview(job, sub)) return { tone: 'needs', text: sub ? isSessionSub(sub) || codeAwaitingReview(sub) ? 'Ready to review' : sub.stage === 'pr' ? mergeHeldByComments(job, sub) ? 'Comments block merging' : 'Ready to merge' : 'Needs you' : 'Plan ready to review' };
+  // Approved: the publish session starts on the runner's next tick.
+  if (sub?.stage === 'review' && !isSessionSub(sub)) return { tone: 'working', text: 'Approved · committing next' };
   if (!sub) return { tone: 'muted', text: job.stage === 'backlog' ? 'Ready when you are' : job.stage === 'done' ? 'Delivered' : job.stage === 'jira' ? 'Tickets queued' : 'Queued' };
   // A session prerequisite blocks the work from starting; a PR prerequisite only blocks its merge.
   const waiting = pendingDependencies(job, sub);

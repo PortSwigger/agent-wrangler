@@ -22,7 +22,7 @@ export const MOVE_ACTIONS = new Set(Object.keys(moveSchemas));
 // cannot land under a session that is working to the old one. Drop is allowed
 // live exactly as the cancel it renames was.
 const REFUSED_WHILE_LIVE = new Set(['split-out', 'new-ticket', 'reorder', 'mark']);
-const UNMERGED = ['implementation', 'pr', 'session'];
+const UNMERGED = ['implementation', 'review', 'pr', 'session'];
 const liveRun = (job, subId) => job.runs.some((r) => !r.stopped && r.subJobId === subId);
 const quoted = (title) => `“${title}”`;
 const both = (job, subId, fn) => {
@@ -100,6 +100,14 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
       sub.error = null; sub.blocked = null; sub.state = 'queued';
       return { detail: `Ran ${quoted(sub.title)} again` };
     }
+    // Under code review nothing is committed, so "fix" means back to work in
+    // the same worktree with the note; an approval already given is withdrawn.
+    if (sub.stage === 'review') {
+      if (liveRun(job, sub.id)) throw new Error('Wait for the session to stop');
+      sub.note = data.note || null; sub.ready = null;
+      sub.error = null; sub.blocked = null; sub.stage = 'implementation'; sub.state = 'queued';
+      return { detail: `Sent ${quoted(sub.title)} back to work` };
+    }
     // Merged: a new commit on this PR is no longer possible, and the fix is a
     // new PR — which is exactly Split out.
     throw new Error('This PR has merged; Split out a follow-up PR instead');
@@ -107,7 +115,7 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
 
   if (move === 'split-out') {
     if (isSessionSub(sub)) throw new Error('A session sub-job has no repository to open a PR in');
-    if (!['implementation', 'pr', 'deployment'].includes(sub.stage)) throw new Error('Nothing left to split out of this sub-job');
+    if (!['implementation', 'review', 'pr', 'deployment'].includes(sub.stage)) throw new Error('Nothing left to split out of this sub-job');
     const merged = sub.stage === 'deployment';
     // A merged sub-job cannot wait for anything, and the dependants already wait
     // on it, so the fix simply lands where it is: position has nothing to order.
@@ -154,7 +162,7 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
 
   if (move === 'mark') {
     if (data.position === 'pr') {
-      if (sub.pr || sub.stage !== 'implementation') throw new Error('This sub-job already has a PR');
+      if (sub.pr || !['implementation', 'review'].includes(sub.stage)) throw new Error('This sub-job already has a PR');
       if (!data.url) throw new Error('Give the PR url');
       sub.pr = { url: data.url, checkStatus: 'pending' }; sub.stage = 'pr'; sub.state = 'watching';
       sub.error = null; sub.blocked = null; sub.nextPollAt = now + COMMENT_SETTLE_MS;

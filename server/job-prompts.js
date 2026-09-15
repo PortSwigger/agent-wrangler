@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { reviewCode } from './jobs-schema.js';
 
 // The worktree starts on a placeholder branch (job-runtime.js). The session
 // working inside the repository is the one that can read its convention, so
@@ -19,9 +20,11 @@ const contextLine = (job) => job.plan?.context ? `Context: ${job.plan.context}` 
 const heading = (job, sub) => `${sub?.jiraKey ? `${sub.jiraKey} · ` : ''}${job.title}`;
 const noteLine = (sub) => sub?.note ? `Note from the human: ${sub.note}` : '';
 const passingWorkflows = (sub) => (sub?.deploymentResult?.runs || []).filter((r) => r.status === 'passing').map((r) => r.workflow).join(', ');
+const thisPr = (sub) => `This PR (${sub?.repo ? path.basename(sub.repo) : 'this repository'}): ${sub?.brief}`;
 
 export function jobPrompt(job, sub, run) {
   const report = (body, lead = '') => `${lead}job_report {runId:"${run.id}", ${body}}. ${blockedLine}`;
+  const publishLine = report('kind:"published", url:"<PR url>"', 'Commit, push, open the PR, then ');
   const prompts = {
     planning: lines(
       `Plan this job: ${job.title}`,
@@ -53,13 +56,27 @@ export function jobPrompt(job, sub, run) {
       '',
       contextLine(job),
       '',
-      `This PR (${sub?.repo ? path.basename(sub.repo) : 'this repository'}): ${sub?.brief}`,
+      thisPr(sub),
       sub?.check ? `Check after it lands: ${sub.check}` : '',
       afterLine(job, sub),
       noteLine(sub),
+      // With code review on, the human reads the working tree on the board
+      // before anything is committed; a later publish session commits and pushes,
+      // so the branch rename waits for it too.
+      reviewCode(job) ? 'Leave every change UNCOMMITTED: the human reviews the working tree before anything is committed, and a later step commits, pushes and opens the PR. Do not commit, push or open a PR.' : branchNaming(job, sub),
+      '',
+      reviewCode(job) ? report('kind:"ready", checks:["what you verified"]', 'When the working tree is ready to review, ') : publishLine,
+    ),
+    publish: lines(
+      heading(job, sub),
+      '',
+      contextLine(job),
+      '',
+      thisPr(sub),
+      'The human has reviewed the uncommitted changes in this worktree and approved them as they stand. Commit exactly that working tree (excluding secrets and unrelated or generated files), push, and open the PR. Do not change the code: if something stops it building or committing, report blocked instead.',
       branchNaming(job, sub),
       '',
-      report('kind:"published", url:"<PR url>"', 'Commit, push, open the PR, then '),
+      publishLine,
     ),
     repair: lines(
       heading(job, sub),
@@ -96,7 +113,5 @@ export function jobPrompt(job, sub, run) {
       report('kind:"completed", checks:["what you did and how you know"]'),
     ),
   };
-  // A version-1 `publish` run still live across the upgrade wants exactly what
-  // implementation now says: commit, push, open the PR, report the url.
   return prompts[run.phase] || prompts.implementation;
 }

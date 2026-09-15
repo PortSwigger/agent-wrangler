@@ -25,7 +25,7 @@ export function buildSubJob(plan, s) {
   const jiraKey = s.jiraKey || plan.stories.find((t) => t.id === s.storyId)?.key || null;
   return { ...s, stage: isSessionSub(s) ? 'session' : 'implementation', state: 'queued', jiraKey,
     repairs: [], sessions: [], pr: null, prComments: null, commentSummary: null, deploys: null,
-    deploymentResult: null, result: null, note: null, fixRequested: null, blocked: null };
+    deploymentResult: null, result: null, ready: null, note: null, fixRequested: null, blocked: null };
 }
 function activate(j) {
   j.subJobs = j.plan.subJobs.map((s) => buildSubJob(j.plan, s));
@@ -80,7 +80,9 @@ export function migrateJobs(raw) {
   data.version = CURRENT_VERSION;
   if (data.settings) drop(data.settings, 'maxRunMinutes');
   for (const job of data.jobs) {
-    drop(job, 'reviewCode', 'amendmentAuthority', 'amendments', 'recoveryOf');
+    // `reviewCode` is kept: a version-1 job's flag meant the same thing — the
+    // human reads the diff before it is committed — and the field is back.
+    drop(job, 'amendmentAuthority', 'amendments', 'recoveryOf');
     migratePlan(job.plan); migratePlan(job.previousPlan);
     for (const s of job.subJobs || []) migrateSub(s);
   }
@@ -140,7 +142,7 @@ export class JobStore {
   // rides through whole: a move's shape is job-moves.js's business, not a fixed
   // parameter list here.
   action(id, action, payload = {}) {
-    const { subJobId, revision, feedback, plan, head, sessionReceiptId } = payload;
+    const { subJobId, revision, feedback, plan, head, sessionReceiptId, readyReceiptId } = payload;
     if (action === 'approve-plan') return this.approvePlan(id, revision, plan);
     return this.update(id, (j) => {
       const s = subJobId ? j.subJobs.find((s) => s.id === subJobId) : null;
@@ -187,6 +189,14 @@ export class JobStore {
       if (action === 'approve-session') {
         if (!isSessionSub(s) || s.stage !== 'review' || !s.result || s.result.receiptId !== sessionReceiptId || s.error) throw new Error('The session result is not ready for review');
         s.sessionApprovedAt = Date.now(); s.stage = 'cleanup'; s.state = 'queued'; return;
+      }
+      // Pinned to the receipt the human read, like approve-session: a board that
+      // is a tick behind cannot approve a working tree a later run has changed.
+      // The runner's claim refuses a launch while the reporting run is still
+      // stopping, so no live-run check is needed here.
+      if (action === 'approve-code') {
+        if (!s || isSessionSub(s) || s.stage !== 'review' || s.state !== 'verified' || !s.ready || s.ready.receiptId !== readyReceiptId || s.error) throw new Error('The code is not ready to approve');
+        s.ready = { ...s.ready, approvedAt: Date.now() }; s.state = 'approved'; return;
       }
       if (action === 'approve-merge') {
         if (s?.stage !== 'pr' || s.pr?.checkStatus !== 'passing' || !head || head !== s.pr?.head || s.error) throw new Error('PR must have green checks first');
@@ -248,10 +258,12 @@ export class JobStore {
         throw new Error('This run already submitted a different report');
       }
       if (r.stopped) throw new Error('This run has stopped');
-      // `publish` is a version-1 phase: a run still live across the upgrade can
-      // land the receipt it was launched for.
-      const expected = { planning: 'plan', jira: 'jira', implementation: 'published', publish: 'published', repair: 'repaired', verify: 'deployed', session: 'completed' }[r.phase];
-      if (report.kind !== expected && report.kind !== 'blocked') throw new Error(`This run must submit ${expected}`);
+      // Implementation lands EITHER receipt: which one its prompt asked for
+      // depends on `reviewCode`, and a session launched before that flag flipped
+      // (or one that pushed anyway) must still be able to land what it did — a
+      // PR that exists is a PR, whatever the board expected.
+      const expected = { planning: ['plan'], jira: ['jira'], implementation: ['ready', 'published'], publish: ['published'], repair: ['repaired'], verify: ['deployed'], session: ['completed'] }[r.phase];
+      if (!expected.includes(report.kind) && report.kind !== 'blocked') throw new Error(`This run must submit ${expected.join(' or ')}`);
       const s = j.subJobs.find((s) => s.id === r.subJobId);
       r.report = report; r.reportedAt = Date.now();
       // A receipt racing a cancel is kept on the run for the record but never
@@ -290,6 +302,10 @@ export class JobStore {
     }
     // A fresh head (new PR or repair push) is first observed after the comment
     // settle, so reviewers posting seconds after it lands are in that first read.
+    // The working tree is the deliverable and nothing is committed: the card
+    // waits in Code review until the human approves it (approve-code), which
+    // is what releases the publish session.
+    if (report.kind === 'ready') { s.ready = { checks: report.checks, receiptId: r.id, at: Date.now() }; s.note = null; s.stage = 'review'; s.state = 'verified'; }
     if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
     if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.fixRequested = null; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
     // A session's receipt is the whole deliverable; with review on it waits for a

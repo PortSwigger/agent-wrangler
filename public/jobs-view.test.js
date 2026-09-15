@@ -23,23 +23,53 @@ function fixture(t) {
   return { window, view, data, sent, q, event, sessions, diffs, diffContexts, onBoard };
 }
 
-test('every job gets its own seven-column board and only boards with attention items survive Needs me', (t) => {
+test('every job gets its own eight-column board and only boards with attention items survive Needs me', (t) => {
   const f = fixture(t);
   f.data.jobs.push({ ...f.data.jobs[0], id: 'backlog', stage: 'backlog', plan: null }); f.view.update(f.data);
-  assert.equal(document.querySelectorAll('.job-board').length, 2); assert.equal(document.querySelectorAll('.job-column').length, 14);
+  assert.equal(document.querySelectorAll('.job-board').length, 2); assert.equal(document.querySelectorAll('.job-column').length, 16);
   assert.deepEqual([...document.querySelectorAll('.job-board')].map((b) => b.dataset.board), ['job1', 'backlog']);
   assert.equal(document.querySelectorAll('.job-card').length, 2);
   f.q('#jobs-needs').checked = true; f.q('#jobs-needs').dispatchEvent(f.event('change'));
-  assert.equal(document.querySelectorAll('.job-board').length, 1); assert.equal(document.querySelectorAll('.job-column').length, 7);
+  assert.equal(document.querySelectorAll('.job-board').length, 1); assert.equal(document.querySelectorAll('.job-column').length, 8);
   assert.equal(document.querySelectorAll('.job-card').length, 1); assert.equal(f.q('.job-card').dataset.job, 'job1');
 });
 
-test('the columns name the ladder every PR climbs: work, PR, landing, done', (t) => {
+test('the columns name the ladder every PR climbs: work, code review, PR, landing, done', (t) => {
   const f = fixture(t);
-  assert.deepEqual([...document.querySelectorAll('.job-column h2')].map((h) => h.textContent),
-    ['Backlog', 'Planning', 'Jira tickets', 'Work & PR', 'PR', 'Landing', 'Done']);
-  assert.match(f.q('.job-column[aria-label="Work & PR"] p').textContent, /One session: work, commit, push, open the PR/);
+  const titles = () => [...document.querySelectorAll('.job-column h2')].map((h) => h.textContent);
+  assert.deepEqual(titles(), ['Backlog', 'Planning', 'Jira tickets', 'Work', 'Code review', 'PR', 'Landing', 'Done']);
+  assert.match(f.q('.job-column[aria-label="Code review"] p').textContent, /Read the diff before anything is committed/);
   assert.match(f.q('.job-column[aria-label="Landing"] p').textContent, /Post-merge runs/);
+  assert.equal(f.q('.job-board-columns').style.getPropertyValue('--job-columns'), '8');
+  // A job that does not review has no such column — unless a card is already there.
+  const job = f.data.jobs[0]; job.reviewCode = false; f.view.update(f.data);
+  assert.deepEqual(titles(), ['Backlog', 'Planning', 'Jira tickets', 'Work', 'PR', 'Landing', 'Done']);
+  assert.equal(f.q('.job-board-columns').style.getPropertyValue('--job-columns'), '7');
+  job.stage = 'active'; job.subJobs = [{ ...sub('api'), stage: 'review', state: 'verified', ready: { checks: ['Tests pass'], receiptId: 'run_1' } }]; f.view.update(f.data);
+  assert.ok(titles().includes('Code review')); assert.equal(f.q('.job-column[aria-label="Code review"] .job-column-count').textContent, '1');
+});
+
+test('code review is a stop before anything is committed: the card asks for a read, approval is pinned to the receipt, and Request changes sends it back', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  job.subJobs = [{ ...sub('api'), stage: 'review', state: 'verified', worktree: { path: '/wt', branch: 'fix/AUTH-1' }, sessions: ['s1'], ready: { checks: ['Tests pass', 'Lint clean'], receiptId: 'run_1' } }];
+  f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'needs', text: 'Ready to review' });
+  assert.equal(jobNeedsReview(job, job.subJobs[0]), true);
+  assert.deepEqual(jobCards([job])[0].stage, 'review');
+  f.q('[data-sub="api"]').click();
+  assert.match(f.q('#job-dialog').textContent, /Ready for review/); assert.match(f.q('#job-dialog').textContent, /Nothing is committed yet/);
+  assert.deepEqual([...f.q('#job-dialog').querySelectorAll('.job-receipt li')].map((li) => li.textContent.trim()), ['✓ Tests pass', '✓ Lint clean']);
+  assert.ok(f.q('#job-diff'), 'the diff is the review surface');
+  assert.deepEqual(movesFor(job, job.subJobs[0]).map((m) => [m.id, m.label]).filter(([id]) => id === 'fix-here'), [['fix-here', 'Request changes']]);
+  f.q('[data-action="approve-code"]').click();
+  assert.equal(f.sent.at(-1).action, 'approve-code'); assert.equal(f.sent.at(-1).readyReceiptId, 'run_1');
+  job.subJobs[0].state = 'approved'; f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'working', text: 'Approved · committing next' });
+  assert.equal(jobNeedsReview(job, job.subJobs[0]), false);
+  assert.equal(f.q('[data-action="approve-code"]'), null);
+  job.runs = [{ id: 'r2', subJobId: 'api', phase: 'publish', stopped: false, status: 'working' }]; f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'working', text: 'Committing & opening the PR' });
+  f.q('#job-dialog').close();
 });
 
 test('sub-jobs of different jobs never share a column, and a delivered job only returns with Show delivered', (t) => {
@@ -84,7 +114,8 @@ test('a step waiting on a prompt is the human’s: it says so, and it counts und
   job.subJobs = [{ ...sub('api'), stage: 'implementation' }];
   job.runs = [{ id: 'r1', subJobId: 'api', phase: 'implementation', stopped: false, status: 'working' }];
   f.view.update(f.data);
-  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'working', text: 'Working on the PR' });
+  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'working', text: 'Working' });
+  assert.deepEqual(jobStatus({ ...job, reviewCode: false }, job.subJobs[0]), { tone: 'working', text: 'Working on the PR' });
   assert.equal(jobNeedsReview(job, job.subJobs[0]), false);
   job.runs[0].status = 'needs-you'; f.view.update(f.data);
   assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'needs', text: 'Waiting on a prompt' });
@@ -415,16 +446,16 @@ test('green and amber verdicts, a pending summary and no comments each read dist
   }
 });
 
-test('new-job form sends chosen model, repositories and review settings, and nothing about code review', (t) => {
+test('new-job form sends chosen model, repositories and the three review points', (t) => {
   const f = fixture(t); f.q('#job-new').click(); const form = f.q('#job-create-form');
-  assert.equal(form.elements.reviewCode, undefined, 'code review happens on the PR now');
+  assert.equal(form.elements.reviewCode.checked, true, 'the human reads each diff before it is committed, unless they opt out');
   assert.equal(form.elements.amendmentAuthority, undefined, 'agents never change the plan, so there is no authority to grant');
   form.elements.title.value = 'New value'; form.elements.intent.value = 'Deliver something useful';
   form.elements.repos.value = '/repo\n/repo\n/second';
   form.dispatchEvent(f.event('submit'));
   const msg = f.sent[0]; assert.equal(msg.type, 'job-create'); assert.deepEqual(msg.job.repos, ['/repo', '/second']);
-  assert.equal(msg.job.model, 'sonnet'); assert.equal(msg.job.reviewMerge, true); assert.equal(msg.job.reviewSessions, true);
-  assert.deepEqual(Object.keys(msg.job).filter((k) => /reviewCode|amendment/.test(k)), []);
+  assert.equal(msg.job.model, 'sonnet'); assert.equal(msg.job.reviewCode, true); assert.equal(msg.job.reviewMerge, true); assert.equal(msg.job.reviewSessions, true);
+  assert.deepEqual(Object.keys(msg.job).filter((k) => /amendment/.test(k)), []);
   assert.equal(f.q('#job-dialog').open, true);
 });
 

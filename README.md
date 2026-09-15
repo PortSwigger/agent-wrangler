@@ -342,12 +342,19 @@ those stories and reports their keys.
 
 ### A PR sub-job's life
 
-One session per PR. It gets a dedicated worktree cut from the fetched remote
-default branch on a placeholder branch, does the work, renames the branch in the
-repository's own convention via the `name_branch` tool, commits, pushes, opens
-the PR and reports the URL. That is the only agent run a healthy PR ever needs.
-A dependency on another PR still means **deploy after**: the worker builds now
-and the PR waits to merge. A dependency on a session sub-job gates the start.
+A session gets a dedicated worktree cut from the fetched remote default branch
+on a placeholder branch and does the work. With **Review each PR's code before
+anything is committed** (on by default) it stops there: nothing is committed, the
+card moves to **Code review**, and you read the diff with *Review code in
+Wrangler* — comments you leave there go straight back to that session, which
+fixes the working tree in place. **Request changes** sends it back to work with
+a one-line note. **Approve & open PR** launches a short second session into the
+same worktree that renames the branch in the repository's own convention via the
+`name_branch` tool, commits the tree as you approved it, pushes, opens the PR
+and reports the URL. With the review off, the one session does all of that
+itself. A dependency on another PR still means **deploy after**: the worker
+builds now and the PR waits to merge. A dependency on a session sub-job gates
+the start.
 
 From there Wrangler polls GitHub without an agent. Failed checks, merge
 conflicts and requested changes dispatch a repair session (at most two automatic
@@ -429,9 +436,9 @@ reviews and cleanup use no agent slots.
 Job sessions carry the `job-worker` skill, whose always-on nudge (the bounded
 step protocol: work, PR, report, stop) is injected only into automated-job
 sessions. Agents use two MCP tools: `get_job_context()` returns the caller's job
-and run, and `job_report({runId, report})` submits a plan, PR URL, repair
-summary, deployed check, a session's receipt, or a one-sentence blocker with an
-optional suggested move. Receipts allow 1–8 single-line checks of at most 180
+and run, and `job_report({runId, report})` submits a plan, a ready-for-review
+working tree, PR URL, repair summary, deployed check, a session's receipt, or a
+one-sentence blocker with an optional suggested move. Receipts allow 1–8 single-line checks of at most 180
 characters.
 
 Requirements: authenticated `gh` with access to the repositories and Actions,

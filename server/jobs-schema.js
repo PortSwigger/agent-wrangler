@@ -32,6 +32,12 @@ export const subJobSchema = z.object({
   brief: briefSchema, check: line.optional(),
 });
 export const isSessionSub = (sub) => sub?.kind === 'session';
+// With code review on, a PR sub-job's implementation session leaves the working
+// tree UNCOMMITTED and reports `ready`; the human reads the diff on the board
+// and approval launches a `publish` session that commits, pushes and opens the
+// PR. Off, one session does all of it. Read through this helper: a job created
+// before the flag existed has no field and reviews like a new one.
+export const reviewCode = (job) => job?.reviewCode ?? true;
 // A story either already exists in Jira (key) or is a proposal (no key, optional
 // project hint). Planning never writes to Jira: the human approves the titles and
 // their mapping to sub-jobs first, then the ticketing step creates the keyless ones.
@@ -75,7 +81,7 @@ export const jobInputSchema = z.object({
   repos: z.array(repoPath).max(30).default([]),
   agent: z.enum(['claude', 'codex']).default('claude'), model: z.string().max(150).default(''),
   planningPrompt: z.string().max(8000).default(''),
-  reviewMerge: z.boolean().default(true), reviewSessions: z.boolean().default(true),
+  reviewCode: z.boolean().default(true), reviewMerge: z.boolean().default(true), reviewSessions: z.boolean().default(true),
   updateMain: z.boolean().default(false), taskId: z.string().nullable().default(null),
 });
 export const settingsSchema = z.object({
@@ -97,6 +103,7 @@ const receipt = (shape) => z.object(shape).strict();
 export const reportSchema = z.discriminatedUnion('kind', [
   receipt({ kind: z.literal('plan'), plan: planSchema }),
   receipt({ kind: z.literal('jira'), stories: z.array(z.object({ id, key: jira })).min(1).max(30) }),
+  receipt({ kind: z.literal('ready'), checks: checksSchema }),
   receipt({ kind: z.literal('published'), url: prUrlSchema }),
   receipt({ kind: z.literal('repaired'), changes: checksSchema, checks: checksSchema }),
   receipt({ kind: z.literal('deployed'), checks: checksSchema }),
