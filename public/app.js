@@ -304,6 +304,11 @@ function barWord(s) {
   const phase = workflowPhaseLabel(s.workflow);
   if (phase) return phase;
   // needs-you (red) outranks a manual unread bookmark — a live block beats a cue.
+  // An api-error is retryable by sending another message — 'reply' would wrongly
+  // suggest the same "go answer a prompt in the terminal" affordance as a real
+  // permission prompt or OAuth screen (see workerStatusWord in cards.js, same
+  // vocabulary).
+  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
   if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
@@ -3818,7 +3823,7 @@ function renderSidebar(s) {
     // re-seeding here an already-working session shows no "Working — running X" line
     // until the next ~4s graph rebuild, while Stop — driven off the same status — is
     // already visible. The two must never disagree.
-    chatView.setStatus(displayStatus(s), s.waitingFor);
+    chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     // Same reasoning for the model: mount clears it so a session switch cannot
     // leave the previous session's model showing, which means it has to be
     // re-seeded here or the chip stays blank until the next graph rebuild.
@@ -4008,7 +4013,7 @@ function renderPanel(sessionId) {
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
-    chatView.setStatus(displayStatus(s), s.waitingFor);
+    chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
   }
