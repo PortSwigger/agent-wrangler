@@ -540,7 +540,11 @@ don't re-derive it.
   `panelSubagentShownOverrides` — but with **no server-side default to fall back
   to** (unlike `subagentsExpandedByDefault`): collapsed is the only default, and
   `parseChecklistOpen` fails towards collapsed for the same reason, since that's
-  the direction that costs no height. The chip renders even for an EMPTY
+  the direction that costs no height. Once open, the list hides completed items
+  by default; its `Open`/`All` filter is persisted per session in
+  `wrangler.checklistShowDone`. Reordering in `Open` mode preserves hidden done
+  items in their existing slots and still sends the store a complete order. The
+  chip renders even for an EMPTY
   checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
   while collapsed it's the only thing telling a human the feature exists on this
   session. Caps (`MAX_ITEMS` 100,
