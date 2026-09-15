@@ -242,6 +242,22 @@ test('with code review on the implementation leaves the tree uncommitted and rep
   assert.equal(f.sub().stage, 'pr'); assert.equal(f.sub().state, 'watching');
 });
 
+test('Retry after a blocked publish keeps the approval: the tree the human approved is unchanged, so publish runs again', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.report({ kind: 'ready', checks: ['Tests pass'] }); await f.tick();
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId }); await f.tick();
+  assert.equal(f.last().run.phase, 'publish');
+  f.report({ kind: 'blocked', summary: 'git add of config/example.env was denied', move: 'fix-here' }); await f.tick();
+  assert.deepEqual([f.sub().stage, f.sub().error, f.sub().blocked.phase], ['review', 'git add of config/example.env was denied', 'publish']);
+  f.store.action(f.job.id, 'retry', { subJobId: 'api' });
+  assert.deepEqual([f.sub().stage, f.sub().state, f.sub().error], ['review', 'approved', null]);
+  assert.ok(f.sub().ready.approvedAt, 'the approval survives the retry');
+  await f.tick();
+  assert.deepEqual([f.last().run.phase, f.last().sub.worktree.path], ['publish', '/worktree/api']);
+  f.report({ kind: 'published', url: PR_URL }); await f.tick();
+  assert.equal(f.sub().stage, 'pr');
+});
+
 test('Request changes under code review is Fix here: back to work in the same worktree with the note, receipt withdrawn', async (t) => {
   const f = fixture(t); await f.approve();
   f.report({ kind: 'ready', checks: ['Tests pass'] }); await f.tick();
