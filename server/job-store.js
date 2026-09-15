@@ -176,7 +176,14 @@ export class JobStore {
         if (!target.error) throw new Error('Nothing is blocked');
         if (j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null))) throw new Error('The previous session is still stopping');
         target.error = null; target.blocked = null;
-        if (s) { s.state = s.cancelledAt ? 'cancelled' : 'queued'; s.repairAllowance = (s.repairAllowance || 0) + 1; }
+        // Under review the only run that can have failed is publish, and the tree
+        // the human approved is unchanged: keep the approval so publish runs
+        // again. `queued` here would strand the card — the runner launches only
+        // on `approved`, and approve-code refuses anything but `verified`.
+        if (s) {
+          s.state = s.cancelledAt ? 'cancelled' : s.stage === 'review' ? (s.ready?.approvedAt ? 'approved' : 'verified') : 'queued';
+          s.repairAllowance = (s.repairAllowance || 0) + 1;
+        }
         return;
       }
       if (action === 'revise-session') {
