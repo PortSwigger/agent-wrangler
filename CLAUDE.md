@@ -1378,10 +1378,24 @@ don't re-derive it.
   re-inferred per head, and carried as `sub.deploys.summary` on the card. Don't
   reintroduce a plan field for it — the first design's planner guessed it wrong
   for every docs-only repo and each wrong guess cost a typed amendment.
-- **One session per PR** (`implementation` phase: work, commit, push, open the PR,
-  report `published`). There is no local receipt, publish step, code-approval gate
-  or dependency re-verification; code review happens on the PR. A PR dependency
-  gates the MERGE (deploy-after), a session dependency gates the LAUNCH.
+- **Code review happens BEFORE anything is committed, and it is the human's, not
+  an agent's.** With `reviewCode` (per job, default on) the `implementation`
+  session leaves the working tree uncommitted and reports `ready`; the sub-job
+  parks at stage `review` (the board's **Code review** column), the human reads
+  the diff through the existing session diff view (comments there resume the
+  implementation session as they always did), and `approve-code` — pinned to the
+  `ready` receipt id like `approve-session` — launches a `publish` session into
+  the same worktree that commits, pushes, opens the PR and reports `published`.
+  Off, one session does all of it. **An implementation run may land EITHER
+  receipt** (`job-store.js` `report`): a session launched before the flag flipped,
+  or one that pushed anyway, still has a real PR to record. `fix-here` from
+  `review` is "Request changes": back to `implementation` with the note, `ready`
+  withdrawn. There is no dependency re-verification; a PR dependency gates the
+  MERGE (deploy-after), a session dependency gates the LAUNCH. The v1 `reviewCode`
+  flag is deliberately NOT dropped by `migrateJobs` any more — it meant the same
+  thing — while v1's `local`/`codeApprovedAt` still are, which is why the new
+  fields are `sub.ready` and `ready.approvedAt`: `migrateJobs` runs on every load,
+  v2 files included, so a field name on its drop list can never be reused.
 - **Agents never change the plan; humans make MOVES.** The six moves (`fix-here`,
   `split-out`, `new-ticket`, `reorder`, `drop`, `mark`) are validated and applied
   by the pure `server/job-moves.js` and recorded in `job.moves`; a blocked receipt

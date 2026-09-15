@@ -152,6 +152,11 @@ export class JobRunner {
           // prerequisites gate the MERGE, not the start, so building can happen
           // in parallel; only a session prerequisite's output is an input.
           if (sub.jiraKey && sessionDependenciesDone(job, sub)) await this.launch(job, sub, 'implementation');
+        } else if (sub.stage === 'review') {
+          // The human's approval of the uncommitted working tree is what starts
+          // the session that commits, pushes and opens the PR; until then the
+          // card just sits here, using no agent.
+          if (sub.state === 'approved') await this.launch(job, sub, 'publish');
         } else if (sub.stage === 'pr') {
           if (sub.nextPollAt > this.now()) continue;
           const pr = await this.github.pr(sub);

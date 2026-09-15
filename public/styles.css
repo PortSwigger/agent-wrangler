@@ -2971,7 +2971,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    jitter as it ticks up on the ~4s graph. */
 .job-board-cost { font-size:15px; font-weight:650; color:var(--fg); letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
 .job-detail-cost { font-size:11px; color:var(--fg-muted); font-variant-numeric:tabular-nums; margin-left:12px; }
-.job-board-columns { display:grid; grid-template-columns:repeat(7,minmax(200px,1fr)); gap:12px; overflow-x:auto; }
+.job-board-columns { display:grid; grid-template-columns:repeat(var(--job-columns,8),minmax(200px,1fr)); gap:12px; overflow-x:auto; }
 .job-board-lane { font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--fg-subtle); margin:0 0 8px; }
 .job-board-columns+.job-board-lane { margin-top:16px; }
 .job-board-sessions { grid-template-columns:repeat(4,minmax(200px,1fr)); }

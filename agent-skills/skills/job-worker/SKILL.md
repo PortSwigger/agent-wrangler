@@ -44,6 +44,10 @@ the `runId` from your prompt and the receipt kind it names.
 
 ## Working in a worktree (PR steps)
 
+- **If your prompt says to leave the changes uncommitted, do exactly that.** The
+  human reads the working tree on the board before anything is committed, and a
+  later step commits, pushes and opens the PR. No commit, no push, no PR, no
+  branch rename: report `ready` with what you verified.
 - Your worktree branch is a **placeholder**. Before pushing, name it in *this
   repository's* convention: read its CLAUDE.md / AGENTS.md / CONTRIBUTING for a
   stated rule, and look at existing remote branches and recently merged PRs

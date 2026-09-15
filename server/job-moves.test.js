@@ -74,6 +74,14 @@ test('stage decides which moves still make sense', () => {
   assert.throws(() => move(at('pr', { cancelledAt: 5 }), 'api', 'fix-here'), /already finished/);
   assert.throws(() => move(at('pr'), 'api', 'mark', { position: 'pr', url: 'https://github.com/org/repo/pull/1' }), /already has a PR/);
   assert.throws(() => move(at('implementation'), 'api', 'mark', { position: 'merged' }), /Only an open PR/);
+  // Under code review nothing is committed, so the pre-PR moves all still apply.
+  const reviewed = at('review', { state: 'verified', ready: { checks: ['x'], receiptId: 'run_1' } });
+  move(reviewed, 'api', 'mark', { position: 'pr', url: 'https://github.com/org/repo/pull/1' });
+  assert.equal(reviewed.subJobs[0].stage, 'pr');
+  const split = at('review', { state: 'verified' });
+  move(split, 'api', 'split-out', { title: 'Docs', brief: 'Write them', position: 'after' });
+  assert.equal(split.subJobs.length, 2); assert.equal(split.subJobs[0].stage, 'review', 'a split-out changes the plan, not this working tree');
+  move(at('review', { state: 'approved' }), 'api', 'reorder', { after: [] });
 });
 
 test('a live run refuses the moves that rewrite the plan, and never Drop', () => {

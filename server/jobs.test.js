@@ -112,7 +112,8 @@ test('a version-1 file loads as version 2: after/brief replace dependsOn/instruc
   const job = store.get('job_old');
   assert.equal(store.snapshot().version, 2);
   assert.equal(store.snapshot().settings.maxRunMinutes, undefined);
-  for (const key of ['reviewCode', 'amendmentAuthority', 'amendments', 'recoveryOf']) assert.equal(job[key], undefined, key);
+  for (const key of ['amendmentAuthority', 'amendments', 'recoveryOf']) assert.equal(job[key], undefined, key);
+  assert.equal(job.reviewCode, true, 'the version-1 flag meant the same thing and is kept');
   assert.equal(job.plan.context, '', 'a legacy plan has no context; the schema only requires one of a new plan');
   assert.equal(job.plan.stories[0].value, undefined);
   const [api, web] = job.plan.subJobs;
@@ -209,7 +210,7 @@ test('reports require the assigned caller and the phase they were launched for',
   const w = f.last();
   assert.equal(w.run.phase, 'implementation');
   assert.throws(() => f.store.report('someone-else', w.run.id, { kind: 'published', url: PR_URL }), /assigned/);
-  assert.throws(() => f.report({ kind: 'deployed', checks: ['Works'] }), /must submit published/);
+  assert.throws(() => f.report({ kind: 'deployed', checks: ['Works'] }), /must submit ready or published/);
   assert.throws(() => f.report({ kind: 'published', url: 'https://example.com/pull/1' }));
   assert.throws(() => f.report({ kind: 'blocked', summary: 'x', amendment: { reason: 'r', ops: [] } }), /amendment/, 'the plan is the human\'s: no receipt may carry a change to it');
   assert.throws(() => f.report({ kind: 'blocked', summary: 'x', move: 'invent-a-move' }));
@@ -218,7 +219,59 @@ test('reports require the assigned caller and the phase they were launched for',
   assert.throws(() => f.report({ kind: 'published', url: 'https://github.com/org/repo/pull/2' }, w), /different report/);
 });
 
-// --- One session per PR ---
+// --- Code review, then one PR ---
+
+test('with code review on the implementation leaves the tree uncommitted and reports ready; approval of that receipt launches the publish session', async (t) => {
+  const f = fixture(t); await f.approve();
+  assert.equal(f.last().run.phase, 'implementation');
+  f.report({ kind: 'ready', checks: ['Tests pass', 'Lint clean'] }); await f.tick();
+  const sub = f.sub();
+  assert.equal(sub.stage, 'review'); assert.equal(sub.state, 'verified');
+  assert.deepEqual([sub.ready.checks, sub.ready.receiptId], [['Tests pass', 'Lint clean'], f.last().run.id]);
+  assert.equal(f.launched.length, 2, 'nothing runs while the human reads the diff');
+  assert.deepEqual(f.stopped, [f.launched[0].run.id, f.last().run.id], 'the implementation session is released like any finished step');
+  assert.throws(() => f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: 'run_stale' }), /not ready to approve/);
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: sub.ready.receiptId });
+  assert.equal(f.sub().state, 'approved'); assert.ok(f.sub().ready.approvedAt);
+  assert.throws(() => f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: sub.ready.receiptId }), /not ready/, 'approval is once');
+  await f.tick();
+  assert.deepEqual([f.last().sub.id, f.last().run.phase], ['api', 'publish']);
+  assert.equal(f.last().sub.worktree.path, '/worktree/api', 'the publish session adopts the reviewed worktree');
+  assert.throws(() => f.report({ kind: 'ready', checks: ['x'] }), /must submit published/);
+  f.report({ kind: 'published', url: PR_URL }); await f.tick();
+  assert.equal(f.sub().stage, 'pr'); assert.equal(f.sub().state, 'watching');
+});
+
+test('Request changes under code review is Fix here: back to work in the same worktree with the note, receipt withdrawn', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.report({ kind: 'ready', checks: ['Tests pass'] }); await f.tick();
+  f.store.action(f.job.id, 'fix-here', { subJobId: 'api', note: 'Use the existing retry helper' });
+  const sub = f.sub();
+  assert.deepEqual([sub.stage, sub.state, sub.ready, sub.note], ['implementation', 'queued', null, 'Use the existing retry helper']);
+  assert.match(f.store.get(f.job.id).moves.at(-1).detail, /back to work/);
+  await f.tick();
+  assert.deepEqual([f.last().run.phase, f.last().sub.note, f.last().sub.worktree.path], ['implementation', 'Use the existing retry helper', '/worktree/api']);
+  f.report({ kind: 'ready', checks: ['Helper reused'] }); await f.tick();
+  assert.equal(f.sub().stage, 'review'); assert.equal(f.sub().note, null);
+  // Approved but not yet launched: Request changes still withdraws it.
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId });
+  f.store.action(f.job.id, 'fix-here', { subJobId: 'api' });
+  assert.equal(f.sub().stage, 'implementation');
+  await f.tick(); f.report({ kind: 'ready', checks: ['Again'] }); await f.tick();
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId }); await f.tick();
+  assert.equal(f.last().run.phase, 'publish');
+  assert.throws(() => f.store.action(f.job.id, 'fix-here', { subJobId: 'api' }), /Wait for the session to stop/, 'not under the live publish session');
+});
+
+test('an implementation session that published anyway lands its PR whatever the review flag says, and with review off one session does it all', async (t) => {
+  const f = fixture(t); await f.approve();
+  f.report({ kind: 'published', url: PR_URL }); await f.tick();
+  assert.equal(f.sub().stage, 'pr');
+  const g = fixture(t, { ...input, reviewCode: false });
+  await g.approve();
+  g.report({ kind: 'ready', checks: ['x'] }); await g.tick();
+  assert.equal(g.sub().stage, 'review', 'a stray ready receipt still parks the card for a read rather than being lost');
+});
 
 test('one session works, commits, pushes and opens the PR: no publish phase, and a PR dependency gates the merge, not the launch', async (t) => {
   const f = fixture(t); f.store.update(f.job.id, (j) => { j.reviewMerge = false; });

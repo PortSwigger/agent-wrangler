@@ -173,10 +173,14 @@ test('runtime always branches on the placeholder; a plan-time branch name is ign
 });
 
 test('the implementer is told to name its placeholder branch in the repo\'s convention via name_branch, and to keep a name it already gave', () => {
-  const fresh = jobPrompt(job, { ...sub, worktree: { branch: 'job-12345678-api' } }, run);
+  // The rename happens where the branch reaches origin: the implementation
+  // session when it publishes itself, the publish session under code review.
+  const unreviewed = { ...job, reviewCode: false };
+  assert.doesNotMatch(jobPrompt(job, { ...sub, worktree: { branch: 'job-12345678-api' } }, run), /placeholder|name_branch/, 'a reviewed implementation neither pushes nor renames');
+  const fresh = jobPrompt(unreviewed, { ...sub, worktree: { branch: 'job-12345678-api' } }, run);
   assert.match(fresh, /job-12345678-api\) is a placeholder/); assert.match(fresh, /branch-naming convention/); assert.match(fresh, /Jira key is AUTH-1/);
   assert.match(fresh, /name_branch MCP tool \(never git branch -m\)/);
-  assert.match(jobPrompt(job, sub, run), /is a placeholder/, 'a sub-job whose worktree is not yet recorded is still told to rename');
+  assert.match(jobPrompt(unreviewed, sub, run), /is a placeholder/, 'a sub-job whose worktree is not yet recorded is still told to rename');
   const named = jobPrompt(job, { ...sub, worktree: { branch: 'fix/AUTH-1-deliver-api' } }, { ...run, phase: 'publish' });
   assert.match(named, /branch is fix\/AUTH-1-deliver-api; keep it/); assert.doesNotMatch(named, /is a placeholder/);
   assert.match(jobPrompt(job, { ...sub, worktree: { branch: 'job-12345678-api' } }, { ...run, phase: 'publish' }), /is a placeholder/, 'publish repeats it: that is where the name reaches origin');
@@ -271,7 +275,7 @@ const planned = {
 const briefed = { ...sub, title: 'Deliver api', brief: 'Retry the token exchange once', after: ['proto'], worktree: { branch: 'fix/AUTH-1-api' } };
 
 test('every phase ends with its own receipt call, naming this run and the blocked shape', () => {
-  for (const phase of ['planning', 'jira', 'implementation', 'repair', 'verify', 'session']) {
+  for (const phase of ['planning', 'jira', 'implementation', 'publish', 'repair', 'verify', 'session']) {
     const text = jobPrompt(planned, { ...briefed, pr: { url: 'https://github.com/org/repo/pull/1', mergeCommit: 'abc123' }, check: 'Sign-in works in dev' }, { ...run, phase });
     assert.match(text, /job_report \{runId:"run1"/, phase);
     assert.match(text, /Blocked: \{kind:"blocked", summary:"one sentence", move\?:"fix-here"/, phase);
@@ -286,7 +290,19 @@ test('the implementation prompt is one bounded step: context once, the brief, wh
   assert.match(text, /Check after it lands: Sign-in works in dev/);
   assert.match(text, /After: Sync the proto\./);
   assert.match(text, /Note from the human: Call the flag sign_in_v2/);
-  assert.match(text, /Commit, push, open the PR, then job_report \{runId:"run1", kind:"published", url:"<PR url>"\}/);
+  assert.match(text, /Leave every change UNCOMMITTED/);
+  assert.match(text, /When the working tree is ready to review, job_report \{runId:"run1", kind:"ready", checks:\["what you verified"\]\}/);
+  assert.doesNotMatch(text, /kind:"published"|Commit, push/, 'under code review nothing reaches origin from this session');
+  const unreviewed = jobPrompt({ ...planned, reviewCode: false }, { ...briefed, check: 'Sign-in works in dev' }, run);
+  assert.match(unreviewed, /Commit, push, open the PR, then job_report \{runId:"run1", kind:"published", url:"<PR url>"\}/);
+  assert.doesNotMatch(unreviewed, /UNCOMMITTED|kind:"ready"/);
+  const publish = jobPrompt(planned, briefed, { ...run, phase: 'publish' });
+  assert.match(publish, /^AUTH-1 · Sign-in$/m); assert.match(publish, /Context: The sign-in service is Java/);
+  assert.match(publish, /This PR \(repo\): Retry the token exchange once/);
+  assert.match(publish, /reviewed the uncommitted changes in this worktree and approved them as they stand/);
+  assert.match(publish, /Do not change the code/);
+  assert.match(publish, /branch is fix\/AUTH-1-api; keep it/);
+  assert.match(publish, /Commit, push, open the PR, then job_report \{runId:"run1", kind:"published", url:"<PR url>"\}/);
   const plainest = jobPrompt(planned, { ...briefed, after: [] }, run);
   assert.match(plainest, /After: none\./);
   assert.doesNotMatch(plainest, /Check after it lands|Note from the human/, 'nothing to say is nothing written');
