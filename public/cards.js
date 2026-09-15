@@ -294,6 +294,10 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
 // for a dormant one.
 export function workerStatusWord(s, ctx) {
   if (!s.managed && !s.restarting) return 'resume';
+  // An api-error needs-you is retryable by sending another message — the
+  // generic 'reply' word wrongly implies the same "go answer a prompt in the
+  // terminal" affordance as a permission prompt or OAuth screen.
+  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
   if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
   if (ctx.justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || s.status || '';

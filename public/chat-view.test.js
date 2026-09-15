@@ -802,6 +802,28 @@ test('a "Terminal →" button is offered and calls onGoTerminal for the mounted 
   assert.deepEqual(goTo, ['s1']);
 });
 
+test('setStatus(needs-you, waitingFor, "api-error") shows a non-blocking notice with no Terminal button', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, false);
+  assert.match(bar.children[0].textContent, /API error — connection closed mid-response/);
+  assert.match(bar.children[0].textContent, /retry/i);
+  assert.equal(bar.children.length, 1, 'no Terminal button for a retryable api error');
+  assert.equal(input.disabled, false, 'sending a new message is how you retry, so the composer stays live');
+  assert.doesNotMatch(bar.children[0].textContent, /this needs the terminal\.$/);
+});
+
+test('an api-error needs-you does not block Send once the composer has text', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
+  input.value = 'try again';
+  input.dispatchEvent({ type: 'input' });
+  assert.equal(byId.get('chat-send').disabled, false);
+});
+
 test('clearing needs-you re-enables the composer and hides the bar', async () => {
   const { view, byId, input } = await mountView();
   view.mount('s1');

@@ -208,6 +208,14 @@ test('workerStatusWord: dormant → resume; just-finished → done; else the sta
   assert.equal(workerStatusWord(sess({ status: 'working' }), ctx()), 'busy');
 });
 
+// An api-error needs-you is retryable by just sending another message, unlike
+// every other needs-you reason — 'reply' (the generic word) would wrongly
+// suggest the same "go answer a prompt" affordance the red dot already implies
+// for a permission prompt or OAuth screen.
+test('workerStatusWord: api-error needs-you reads "error", not the generic "reply"', () => {
+  assert.equal(workerStatusWord(sess({ status: 'needs-you', waitingReason: 'api-error' }), ctx()), 'error');
+});
+
 test('workerRowHtml: carries data-sid and the status word as the dot tooltip, not visible text', () => {
   const html = workerRowHtml(sess({ label: 'w', status: 'working' }), ctx());
   assert.match(html, /worker-row/);
