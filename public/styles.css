@@ -2807,12 +2807,21 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    the request asked for) and this is the only row down here, so it costs no
    vertical space to put it there. */
 .chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
-.chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
-/* Groups the context bar and the model chip so exactly ONE element carries
-   `margin-left: auto` — two flex items both set to auto would split the free
-   space between them (a visible gap opening up between the two), rather than
-   packing tightly together at the right edge. */
-.chat-foot-right { margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px; }
+/* flex:1, not margin-left:auto on the trailing chips — the context bar is
+   OFTEN absent (no fallback exists for it, unlike the model: a dormant Claude
+   card, no custom statusline, a Codex model missing from its cache, …), and a
+   `[hidden]` sibling drops out of flex layout entirely, taking its auto margin
+   with it. A margin-left:auto on the FIRST remaining trailing chip would still
+   push things right, but only ONE trailing chip may ever carry it (two auto
+   margins on separate siblings split the free space between them, opening a
+   visible gap) — which one that is changes with which chips are present. The
+   hint growing instead works unconditionally, for any number of trailing
+   chips, hidden or not: it also has to actually AFFORD to grow, or a long
+   paste note could stretch the row, hence the ellipsis/min-width guard. */
+.chat-hint {
+  font-size: 0.76em; color: var(--fg-subtle);
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* A transient paste note borrows the hint line, so it needs to read as a status
    rather than as the permanent keyboard hint it replaced. */
 .chat-hint[data-note="1"] { color: var(--fg-muted); }
