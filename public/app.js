@@ -33,6 +33,7 @@ import {
 } from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
+import { installedPanelEl, consentBodyEl, progressText, RESTART_NOTE as EXT_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -5416,6 +5417,80 @@ applyChatFontSize(chatFontSize());
 // modal's optimistic toggle honest until the rebuild echoes back). The appearance
 // bridge hands the Appearance section its theme rows + font-size row (bespoke
 // widgets owned by theme.js / this module — settings.js just composes them in).
+// Installed-extension panel state. All three are per-browser and in memory: the
+// update check is on-demand only, the progress line describes a run that cannot
+// outlive this tab's socket, and the mount point is rebuilt on every settings
+// open anyway.
+let extUpdateStatuses = {};
+let extInstallProgress = '';
+let extInstallBusy = false;
+// The mount point settings.js hands over, kept so a progress broadcast arriving
+// while the modal is open can re-render in place rather than wait for a reopen.
+let extPanelHost = null;
+
+function mountExtensionsPanel(host) {
+  extPanelHost = host;
+  if (!host) return;
+  host.textContent = '';
+  host.append(installedPanelEl({
+    entries: latestExtensions.filter((e) => e.external),
+    statuses: extUpdateStatuses,
+    progress: extInstallProgress,
+    busy: extInstallBusy,
+    onInstall: (url) => { extInstallBusy = true; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); mountExtensionsPanel(host); },
+    // An update IS an install against the recorded origin — same frame, same
+    // consent modal, same handler. There is deliberately no separate path.
+    onUpdate: (entry) => { extInstallBusy = true; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); mountExtensionsPanel(host); },
+    onUninstall: async (entry) => {
+      const answer = await confirmDialog({
+        title: `Uninstall ${entry.label || entry.id}?`,
+        body: `Its files go from ${entry.origin ? 'disk' : 'the extensions folder'}, but any data it stored is kept — reinstalling picks it back up. Its code keeps running until the wrangler restarts.`,
+        okLabel: 'Uninstall',
+        danger: true,
+      });
+      if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
+    },
+    onCheckUpdates: () => { extUpdateStatuses = {}; send({ type: 'ext-check-updates' }); },
+  }));
+}
+
+// The consent step. The modal is opened by the server's DISCLOSURE reply, never
+// by the click that asked for it: nothing may be approved before the wrangler
+// has actually read the manifest and lockfile it is describing.
+function openExtConsent(payload) {
+  const modal = document.getElementById('ext-consent-modal');
+  const body = document.getElementById('ext-consent-body');
+  document.getElementById('ext-consent-title').textContent = payload.update ? 'Update extension' : 'Install extension';
+  body.textContent = '';
+  body.append(consentBodyEl(payload));
+  const ok = document.getElementById('ext-consent-ok');
+  const cancel = document.getElementById('ext-consent-cancel');
+  // An update that widens `requires` needs a fresh yes; one that does not is
+  // still shown, because a human asked for it and the dependency diff is worth
+  // reading — but the button says which of the two this is.
+  ok.textContent = payload.reconsentNeeded ? 'Approve & install' : 'Install';
+  modal.classList.remove('hidden');
+  cancel.focus();
+  const done = (approve) => {
+    modal.classList.add('hidden');
+    ok.removeEventListener('click', onOk);
+    cancel.removeEventListener('click', onCancel);
+    modal.removeEventListener('keydown', onKey);
+    modal.removeEventListener('mousedown', onBackdrop);
+    send({ type: 'ext-consent', tempId: payload.tempId, approve });
+  };
+  const onOk = () => done(true);
+  const onCancel = () => done(false);
+  // No Enter-to-approve, unlike confirmDialog: this dialog grants a process
+  // full access to the machine, so approving must be a deliberate click.
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
+  const onBackdrop = (e) => { if (e.target === modal) done(false); };
+  ok.addEventListener('click', onOk);
+  cancel.addEventListener('click', onCancel);
+  modal.addEventListener('keydown', onKey);
+  modal.addEventListener('mousedown', onBackdrop);
+}
+
 initSettings({
   server: {
     get: (id) => {
@@ -5485,6 +5560,7 @@ initSettings({
     onFontSize: setTermFontSize,
     onChatFontSize: setChatFontSize,
   },
+  extensions: { mount: mountExtensionsPanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', submitDispatch);
@@ -5651,6 +5727,28 @@ function connect() {
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.
+    // The install/update flow. Progress is broadcast (so a second tab watching
+    // the same install follows it) and the terminal phases are ALSO replied, so
+    // the modal never depends on a broadcast it might have missed.
+    else if (msg.type === 'ext-install-progress') {
+      extInstallProgress = progressText(msg.phase, msg);
+      if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+    }
+    else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
+    else if (msg.type === 'ext-install-done') {
+      extInstallBusy = false;
+      if (msg.installed) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+    }
+    else if (msg.type === 'ext-uninstall-done') {
+      toast(`Uninstalled ${msg.id}. ${EXT_RESTART_NOTE}`);
+      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+    }
+    else if (msg.type === 'ext-updates') {
+      extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
+      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+    }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);

@@ -2960,3 +2960,59 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    is in the marker's OWN width, which only CSS knows — app.js anchors the right
    edge precisely because that width isn't measurable at position time. */
 .hint-marker.hint-left { transform: translate(50%, -50%); }
+
+/* Installed-extension rows and the install/update consent modal
+   (public/extensions-panel.js). Every colour is a semantic var so both themes
+   follow; nothing here hardcodes hex. */
+.ext-installed { margin-top: 14px; border-top: 1px solid var(--border-muted); padding-top: 12px; }
+.ext-installed-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ext-installed-head .setting-label { flex: 1; }
+.ext-row { display: flex; align-items: flex-start; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-muted); }
+.ext-row:last-child { border-bottom: 0; }
+.ext-row-copy { flex: 1; min-width: 0; }
+.ext-row-label { font-size: 13px; font-weight: 600; color: var(--fg); }
+.ext-row-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
+.ext-row-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font-size: 11px; color: var(--fg-subtle); }
+.ext-row-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ext-row-origin { color: var(--fg-subtle); word-break: break-all; }
+a.ext-row-origin { color: var(--blue-fg); }
+.ext-row-quarantine {
+  margin-top: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.5;
+  background: var(--danger-bg); border: 1px solid var(--danger-border);
+  border-radius: 5px; color: var(--danger-strong);
+}
+.ext-row-quarantine-help { color: var(--fg-muted); margin-top: 3px; }
+.ext-row-note { font-size: 12px; color: var(--accent); line-height: 1.5; margin-top: 5px; }
+.ext-row-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.ext-btn {
+  font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer;
+  background: var(--surface-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.ext-btn:hover { border-color: var(--fg-subtle); }
+.ext-btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.ext-btn-danger { color: var(--danger-strong); border-color: var(--danger-border); }
+.ext-install-progress { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 6px; }
+.ext-consent { display: flex; flex-direction: column; gap: 4px; }
+.ext-consent-trust {
+  padding: 9px 11px; border-radius: 6px; margin-bottom: 6px;
+  background: var(--hint); color: var(--hint-fg); border: 1px solid var(--hint-border);
+}
+.ext-consent-trust-lead { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.ext-consent-trust-body { font-size: 12px; line-height: 1.55; }
+.ext-consent-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--fg-subtle); }
+.ext-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-subtle); margin-top: 10px; }
+.ext-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ext-chip {
+  font-size: 11px; padding: 2px 6px; border-radius: 4px;
+  background: var(--surface-2); color: var(--fg-muted); border: 1px solid var(--border-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.ext-chip-add { color: var(--green-fg); border-color: var(--green); }
+.ext-chip-remove { color: var(--red-fg); border-color: var(--red); }
+.ext-consent-none, .ext-consent-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 4px; }
+.ext-install-url {
+  width: 100%; margin-top: 6px; padding: 5px 8px; font: inherit; font-size: 12px;
+  background: var(--field-bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
