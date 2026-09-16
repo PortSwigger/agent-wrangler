@@ -228,9 +228,13 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .context-menu-header { padding: 4px 9px 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-subtle); }
 
 #sidebar {
-  width: 46%;
+  /* Grows to fill whatever #grid's fixed width (below) leaves behind, so a
+     window resize changes the conversation pane rather than reflowing the
+     session columns. No explicit width: with #grid as the only other flexible
+     sibling pinned to a fixed size, flex-grow alone gives this the rest of
+     main's width regardless of flex-basis. */
+  flex: 1 1 auto;
   min-width: 280px;
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border-muted);
@@ -1053,9 +1057,16 @@ body.system-banner-open { padding-top: 30px; }
 /* ── Task Grid ─────────────────────────────────────────────────────────── */
 /* Columns/rows are set inline by renderGrid (they depend on the task count). */
 #grid {
+  /* Fills all of main by default (no #sidebar, or it's collapsed). */
   flex: 1; min-width: 0; display: grid;
   gap: 12px; padding: 14px; background: transparent; overflow: hidden;
 }
+/* With the conversation pane open, #grid becomes the FIXED side and #sidebar
+   (flex:1 1 auto above) absorbs a window resize instead — session columns keep
+   their width instead of stretching. width:54% is only the pre-drag default;
+   #drag-handle's initSidebarResize (app.js) persists an inline px width here
+   the same way it used to on #sidebar, which then wins over this rule. */
+main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
 #grid.hidden { display: none; }
 

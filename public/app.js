@@ -53,7 +53,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, getSetting } from './settings.js';
-import { sidebarWidthFromDrag } from './sidebar-side.js';
+import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
@@ -3795,12 +3795,21 @@ function applyTerminalSide(side = getSetting('terminalSide')) {
 }
 applyTerminalSide();
 
-// Drag-to-resize the sidebar (stretch the terminal wider than the grid).
+// Drag-to-resize the boundary between the grid and the sidebar. #grid (not
+// #sidebar) is the one whose width is pinned in px — see styles.css's
+// `main:has(#sidebar:not(.collapsed)) #grid` rule — so that a window resize
+// changes the conversation pane's width instead of reflowing the session
+// columns. sidebarWidthFromDrag still computes the pane's own intended width
+// from the mouse position (it already handles both #sidebar sides); this just
+// converts that into the complementary #grid width so the boundary tracks the
+// cursor exactly as before.
 (function initSidebarResize() {
   const handle = document.getElementById('drag-handle');
   const sidebar = document.getElementById('sidebar');
-  const saved = localStorage.getItem('cm-sidebar-w');
-  if (saved) sidebar.style.width = saved;
+  const grid = document.getElementById('grid');
+  const main = document.querySelector('main');
+  const saved = localStorage.getItem('cm-grid-w');
+  if (saved) grid.style.width = saved;
   let dragging = false;
   handle.addEventListener('mousedown', (e) => {
     dragging = true;
@@ -3813,20 +3822,25 @@ applyTerminalSide();
     // The clamp + which-edge-to-measure-from lives in the sidebar-side leaf so it
     // can be unit-tested from both sides; the side is read per-drag rather than
     // captured, so flipping the setting mid-session needs no re-wiring here.
-    const w = sidebarWidthFromDrag({
+    const sidebarW = sidebarWidthFromDrag({
       clientX: e.clientX,
       rect: sidebar.getBoundingClientRect(),
       viewportWidth: window.innerWidth,
       onLeft: getSetting('terminalSide') === 'left',
     });
-    sidebar.style.width = `${w}px`;
+    const gridW = gridWidthFromSidebarDrag({
+      mainWidth: main.getBoundingClientRect().width,
+      handleWidth: handle.getBoundingClientRect().width,
+      sidebarWidth: sidebarW,
+    });
+    grid.style.width = `${gridW}px`;
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('dragging');
     document.body.classList.remove('dragging');
-    localStorage.setItem('cm-sidebar-w', sidebar.style.width);
+    localStorage.setItem('cm-grid-w', grid.style.width);
     // On mouseup, not mousemove: a full re-render per mouse event would rebuild every
     // tile mid-drag.
     renderGridIfVisible();
