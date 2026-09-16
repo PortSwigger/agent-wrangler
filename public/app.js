@@ -406,6 +406,15 @@ function applyGraph(graph) {
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteHandlerTypes(latestExtensions);
   setExtensionDefs(latestExtensions);
+  // A quarantined BUILTIN is a repo bug, and without this it reads as a feature
+  // that quietly vanished — the settings row carries the reason, but nobody
+  // opens Settings to find out why something they never turned off is gone.
+  // Deliberately NO "dismiss for today": an installed extension's quarantine
+  // stays on its own row (and raises nothing here), so anything that reaches
+  // this banner is the wrangler's own fault and must stay visible until fixed.
+  // Boot-fixed, so re-asserting it on every graph is idempotent.
+  quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  syncQuarantineBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
   // mount or an unmount. After `latestGraph` is assigned, because the render it
@@ -5417,6 +5426,26 @@ applyChatFontSize(chatFontSize());
 // modal's optimistic toggle honest until the rebuild echoes back). The appearance
 // bridge hands the Appearance section its theme rows + font-size row (bespoke
 // widgets owned by theme.js / this module — settings.js just composes them in).
+// Quarantined BUILTIN extensions, from the graph. A repo bug that silently
+// contributed nothing reads as a feature that quietly vanished — the settings
+// row carries the reason, but nobody opens Settings to ask why something they
+// never turned off is missing. Deliberately with NO "dismiss for today": an
+// INSTALLED extension's quarantine stays on its own row and raises nothing
+// here, so anything reaching this banner is the wrangler's own fault and must
+// stay visible until it is fixed. That is also why it needs no dismiss-key
+// namespace of its own, though system-banner.js now has one for the producers
+// that do.
+let quarantinedBuiltins = [];
+// #system-banner is one slot and the fd watchdog is the more urgent producer, so
+// it wins while active and this line is re-asserted when it clears.
+let fdBannerActive = false;
+
+function syncQuarantineBanner() {
+  if (!quarantinedBuiltins.length || fdBannerActive) return;
+  const many = quarantinedBuiltins.length !== 1;
+  showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+}
+
 // Installed-extension panel state. All three are per-browser and in memory: the
 // update check is on-demand only, the progress line describes a run that cannot
 // outlive this tab's socket, and the mount point is rebuilt on every settings
@@ -5764,8 +5793,16 @@ function connect() {
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
     else if (msg.type === 'fd-warning') {
-      if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level });
-      else hideSystemBanner();
+      // #system-banner is one slot, so the two producers have to take turns: an
+      // fd leak is the more urgent of the two and wins while it is active, and
+      // clearing it re-asserts the quarantine line (which is boot-fixed and
+      // otherwise never redrawn) rather than leaving the slot blank.
+      fdBannerActive = Boolean(msg.active);
+      if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
+      else {
+        hideSystemBanner();
+        syncQuarantineBanner();
+      }
     }
     else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
     // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
