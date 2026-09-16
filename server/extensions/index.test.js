@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
-  createSkillGate, createToolFilter, quarantineExtension, primeExtensions, extensionsPrimed, _resetExtensionsForTests,
+  createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
+  primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
 import { TOOLS } from '../mcp/tools/index.js';
@@ -500,4 +501,123 @@ test('quarantineExtension unregisters a late failure by id, leaving its siblings
   // extension's skill must be actively suppressed, not merely unmentioned.
   assert.deepEqual(out.skillIds, ['other']);
   assert.deepEqual(out.disabledSkillIds, ['fake']);
+});
+
+// The LIVE REGISTRY half: register/unregister mutate an already-loaded object in
+// place, which is what makes an install or a settings flip take effect without a
+// restart. Every test here asserts the same object the consumers read.
+
+test('registerExtension stages a manifest into an already-loaded registry', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [] });
+  const entry = registerExtension(out, manifest({ client: 'public/index.js' }), { cfg: {} });
+  assert.equal(entry.id, 'fake');
+  assert.equal(entry.enabled, true);
+  assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool']);
+  assert.deepEqual(out.allowedToolNames, ['fake_tool']);
+  assert.deepEqual(out.handlers.map((h) => h.type), ['fake-do']);
+  assert.deepEqual(Object.keys(out.stores), ['fake']);
+  assert.deepEqual(out.skillIds, ['fake']);
+  assert.deepEqual(out.clientManifest.map((c) => c.id), ['fake']);
+  assert.deepEqual(Object.keys(out.dirs), ['fake']);
+  // The names are CLAIMED, not merely listed — a sibling may not take them.
+  assert.ok(out._reg.ids.has('fake'));
+  assert.ok(out._reg.toolNames.has('fake_tool'));
+  assert.ok(out._reg.handlerTypes.has('fake-do'));
+  assert.ok(out._reg.storeNames.has('fake'));
+});
+
+test('a live registration is visible through getExtensions() and its memoised consumers', async () => {
+  _resetExtensionsForTests();
+  const primedOut = await primeExtensions({ cfg: {}, builtin: [], discover: async () => [] });
+  registerExtension(getExtensions(), manifest(), { cfg: {} });
+  // Same object, mutated in place — which is the whole mechanism: every consumer
+  // reads the memo's fields at call time.
+  assert.equal(getExtensions(), primedOut);
+  assert.deepEqual(getExtensions().tools.map((t) => t.name), ['fake_tool']);
+  _resetExtensionsForTests();
+});
+
+test('registerExtension of a colliding tool name throws and leaves NOTHING registered', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  const before = { tools: [...out.tools], list: [...out.list] };
+  assert.throws(
+    () => registerExtension(out, manifest({
+      id: 'clash', label: 'Clash', dir: path.join(HERE, 'clash'), stores: {}, handlers: [],
+      tools: [{ name: 'clash_tool', handler() {} }, { name: 'fake_tool', handler() {} }],
+      skills: [], graph: null, session: {},
+    }), { cfg: {} }),
+    /tool name "fake_tool" is already registered/,
+  );
+  assert.deepEqual(out.tools, before.tools);
+  assert.deepEqual(out.list, before.list);
+  assert.equal(out._reg.toolNames.has('clash_tool'), false, 'the first tool must not survive the second one failing');
+  assert.equal(out._reg.ids.has('clash'), false);
+});
+
+test('unregisterExtension without remove keeps the row, drops every channel and releases the names', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', sweeps: [{ id: 's', everyMs: 1000, run() {} }], skillsFor: () => [], hideTool: () => false })] });
+  const entry = unregisterExtension(out, 'fake');
+  assert.equal(entry.enabled, false);
+  assert.equal(entry.quarantine, null, 'a disable is not a quarantine');
+  assert.deepEqual(out.list.map((e) => e.id), ['fake']);
+  assert.deepEqual(out.tools, []);
+  assert.deepEqual(out.allowedToolNames, []);
+  assert.deepEqual(out.handlers, []);
+  assert.deepEqual(out.stores, {});
+  assert.deepEqual(out.sweeps, []);
+  assert.deepEqual(out.graphContributors, []);
+  assert.deepEqual(out.skillGates, []);
+  assert.deepEqual(out.toolFilters, []);
+  assert.deepEqual(out.clientManifest, []);
+  assert.deepEqual(out.dirs, {});
+  assert.deepEqual(out.sessionHooks.onPurge, []);
+  assert.deepEqual(out.skillIds, []);
+  assert.deepEqual(out.disabledSkillIds, ['fake'], 'a switched-off extension\'s skill is actively suppressed');
+  assert.equal(out._reg.ids.has('fake'), false);
+  assert.equal(out._reg.toolNames.has('fake_tool'), false);
+  assert.equal(out._reg.handlerTypes.has('fake-do'), false);
+  assert.equal(out._reg.storeNames.has('fake'), false);
+});
+
+test('re-registering a released id REPLACES its row at the same index rather than duplicating it', () => {
+  const other = manifest({
+    id: 'other', label: 'Other', dir: path.join(HERE, 'other'),
+    tools: [{ name: 'other_tool', handler() {} }], handlers: [{ type: 'other-do', handler() {} }],
+    stores: { other: () => ({}) }, skills: [], graph: null, session: {},
+  });
+  const out = loadExtensions({ cfg: {}, builtin: [manifest(), other] });
+  unregisterExtension(out, 'fake');
+  registerExtension(out, manifest(), { cfg: {} });
+  assert.deepEqual(out.list.map((e) => e.id), ['fake', 'other'], 'the tab\'s ordering must not jump under a re-enable');
+  assert.equal(out.list[0].enabled, true);
+  assert.deepEqual(out.tools.map((t) => t.name), ['other_tool', 'fake_tool']);
+  assert.deepEqual(out.disabledSkillIds, [], 'a re-enabled extension\'s skill stops being suppressed');
+});
+
+test('unregisterExtension with remove drops the row and its manifest, and the id can be staged again', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  unregisterExtension(out, 'fake', { remove: true });
+  assert.deepEqual(out.list, []);
+  assert.equal(out._manifests.has('fake'), false);
+  // Neither nudged nor suppressed: there is no longer a feature to describe.
+  assert.deepEqual(out.disabledSkillIds, []);
+  const entry = registerExtension(out, manifest(), { cfg: {} });
+  assert.equal(entry.id, 'fake');
+  assert.deepEqual(out.list.map((e) => e.id), ['fake']);
+  assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool']);
+});
+
+test('_manifests holds a boot-DISABLED extension\'s manifest — the enable path\'s precondition', () => {
+  const out = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest()] });
+  assert.deepEqual(out.tools, [], 'it staged nothing');
+  assert.equal(out._manifests.get('fake').id, 'fake');
+  // Which is what a live enable re-stages from, once config says on.
+  unregisterExtension(out, 'fake');
+  registerExtension(out, out._manifests.get('fake'), { cfg: { extensions: { fake: true } } });
+  assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool']);
+});
+
+test('a duplicate id STILL fails while the registry holds it', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  assert.throws(() => registerExtension(out, manifest(), { cfg: {} }), /duplicate extension id/);
 });
