@@ -44,9 +44,12 @@ test('dispatch with no taskId binds memory to scratch and skips assign', async (
   assert.deepEqual(c.calls.assign, []);
 });
 
-test('dispatch with workflow wraps the issue, forces an auto worktree, forwards the marker', async () => {
+test('dispatch with workflow wraps the issue, forces an auto worktree, and forwards its PR automation choices', async () => {
   const c = ctx();
-  await dispatchHandler.handler({ type: 'dispatch', cwd: '/repo', intent: 'ENT-1234', workflow: true, taskId: 'T1' }, c);
+  await dispatchHandler.handler({
+    type: 'dispatch', cwd: '/repo', intent: 'ENT-1234', workflow: true,
+    autoRebaseLinkedPr: true, autoMergeOnPass: true, taskId: 'T1',
+  }, c);
   const opts = c.calls.dispatch[0];
   assert.match(opts.intent, /issue-to-pr skill/); // skill-naming wrapper, not bare prose
   assert.match(opts.intent, /Issue: ENT-1234/);
@@ -56,6 +59,8 @@ test('dispatch with workflow wraps the issue, forces an auto worktree, forwards 
   assert.equal(opts.workflow.issue, 'ENT-1234');
   assert.equal(opts.workflow.phase.label, 'starting');
   assert.equal(opts.workflow.phase.kind, 'active');
+  assert.equal(opts.autoRebaseLinkedPr, true);
+  assert.equal(opts.autoMergeOnPass, true);
   // The branch is seeded from the raw issue (a clean slug), not the wrapped prompt.
   assert.match(opts.worktreeBranch, /ent-1234/);
 });

@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff } from './pr-status.js';
+import { fetchPrStatus, mergePr, mergePrArgs, fetchUnresolvedThreadCount, fetchPrDiff } from './pr-status.js';
 
 // run(url) resolves { code, stdout } mimicking the gh invocation; stdout is the
 // `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>\t<headRefOid>` the in-gh jq
 // derivation produces. The final checkStatus is derived in JS from the rollup
 // word gated by mergeStateStatus (passing ONLY when CLEAN).
 const runner = (stdout, code = 0) => async () => ({ code, stdout });
+const HEAD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 test('mergeStateStatus CLEAN with an all-green rollup is passing', async () => {
   assert.deepEqual(await fetchPrStatus('u', runner('OPEN\tpassing\tCLEAN\tAPPROVED\t293558cba987\n')),
@@ -25,6 +26,18 @@ test('mergeStateStatus DIRTY sets dirty, independent of checkStatus (a DIRTY PR 
   const res = await fetchPrStatus('u', runner('OPEN\tpassing\tDIRTY\t\tsha\n'));
   assert.equal(res.dirty, true);
   assert.equal(res.checkStatus, 'pending');
+});
+
+test('PR status carries exact head and base commits independently of mergeStateStatus', async () => {
+  const res = await fetchPrStatus('https://github.com/base/project/pull/7', runner(
+    'OPEN\tpassing\tBLOCKED\tAPPROVED\tfeature\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tmain\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tfork/project\ttrue\n',
+  ));
+  assert.deepEqual(res.rebase, {
+    head: { repo: 'fork/project', ref: 'feature', oid: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    base: { repo: 'base/project', ref: 'main', oid: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+    crossRepository: true,
+  });
+  assert.equal(res.headSha, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 });
 
 test('any non-DIRTY mergeStateStatus reports dirty: false', async () => {
@@ -125,25 +138,35 @@ test('a runner that throws yields null, never propagates', async () => {
 const mergeRun = (code, stderr = '') => async () => ({ code, stderr });
 
 test('mergePr: a zero exit is a success', async () => {
-  assert.deepEqual(await mergePr('u', mergeRun(0, '')), { ok: true });
+  assert.deepEqual(await mergePr('u', { run: mergeRun(0, '') }), { ok: true });
 });
 
 test('mergePr: a non-zero exit reports the first stderr line', async () => {
-  const res = await mergePr('u', mergeRun(1, 'Pull request is not mergeable\nmore detail\n'));
+  const res = await mergePr('u', { run: mergeRun(1, 'Pull request is not mergeable\nmore detail\n') });
   assert.equal(res.ok, false);
   assert.equal(res.error, 'Pull request is not mergeable');
 });
 
 test('mergePr: a non-zero exit with empty stderr falls back to the exit code', async () => {
-  const res = await mergePr('u', mergeRun(2, ''));
+  const res = await mergePr('u', { run: mergeRun(2, '') });
   assert.equal(res.ok, false);
   assert.equal(res.error, 'gh pr merge exited 2');
 });
 
 test('mergePr: a runner that throws is caught, never propagates', async () => {
-  const res = await mergePr('u', async () => { throw new Error('spawn ENOENT'); });
+  const res = await mergePr('u', { run: async () => { throw new Error('spawn ENOENT'); } });
   assert.equal(res.ok, false);
   assert.equal(res.error, 'spawn ENOENT');
+});
+
+test('mergePr pins the merge to the observed head commit', async () => {
+  const calls = [];
+  const run = async (...args) => { calls.push(args); return { code: 0, stderr: '' }; };
+  assert.deepEqual(await mergePr('https://github.com/acme/widgets/pull/42', { headSha: HEAD, run }), { ok: true });
+  assert.deepEqual(calls, [['https://github.com/acme/widgets/pull/42', HEAD]]);
+  assert.deepEqual(mergePrArgs('https://github.com/acme/widgets/pull/42', HEAD), [
+    'pr', 'merge', 'https://github.com/acme/widgets/pull/42', '--squash', '--match-head-commit', HEAD,
+  ]);
 });
 
 // unresolvedRun(stdout, code) mimics the `gh api graphql -q` invocation: stdout

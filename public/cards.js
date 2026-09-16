@@ -302,6 +302,9 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const automerge = s.autoMergeOnPass
     ? `<span class="card-tag automerge" title="Automatically merges the PR when checks pass">${MERGE_ICON}auto-merge</span>`
     : '';
+  const autorebase = s.autoRebaseLinkedPr
+    ? `<span class="card-tag autorebase" title="Automatically rebases the linked PR while this session is safely idle">${MERGE_ICON}auto-rebase</span>`
+    : '';
   const runtimeChip = s.runtime === 'devcontainer' ? devcontainerChip(s) : '';
   const restarting = s.restarting
     ? '<span class="card-tag restarting" title="Tmux is being killed and relaunched">restarting</span>'
@@ -352,7 +355,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${compactPill}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
+    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${compactPill}${subAgentPill}${restarting}${autorebase}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }

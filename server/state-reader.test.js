@@ -353,6 +353,14 @@ test('buildGraph carries the mapping links onto the board node', async () => {
   assert.deepEqual(bare.links, [], 'an entry with no links defaults to an empty array');
 });
 
+test('buildGraph projects the linked-PR auto-rebase opt-in onto the board node', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'rebase-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', autoRebaseLinkedPr: true },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  assert.equal(graph.sessions.find((s) => s.sessionId === 'rebase-sid').autoRebaseLinkedPr, true);
+});
+
 // graph.history is deliberately NARROW: one record per archive ever taken, sent to
 // every client, so it carries only the six fields public/app.js actually reads.
 // Search builds its own archived rows server-side (search/board-rows.js) and never

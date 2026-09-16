@@ -14,6 +14,7 @@ import { snoozeSetHandler, snoozeClearHandler } from './snooze.js';
 import { autoFixPrChecksHandler } from './auto-fix-pr-checks.js';
 import { autoFixPrChecksDefaultHandler } from './auto-fix-pr-checks-default.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
+import { autoRebaseLinkedPrHandler } from './auto-rebase-linked-pr.js';
 import { taskMemoryEnabledHandler } from './task-memory-enabled.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
@@ -95,6 +96,7 @@ export const CONTROL_HANDLERS = [
   autoFixPrChecksHandler,
   autoFixPrChecksDefaultHandler,
   autoMergeOnPassHandler,
+  autoRebaseLinkedPrHandler,
   taskMemoryEnabledHandler,
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
