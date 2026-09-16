@@ -80,15 +80,14 @@ const cellValue = (cell) => cellValueOf(cell, state.metric);
 const selectedBucket = (bucket) => providerBucket(bucket, state.provider);
 const providerBuckets = () => (state.data?.buckets || []).map(selectedBucket);
 const dimensionMap = (bucket) => dimensionMapOf(selectedBucket(bucket), dimension());
-// For task/model, rank members by the ACTIVE metric before taking colour slots, so the
-// six coloured segments are the largest for what's shown (review nit: not always
-// $-ranked — cache-heavy work ranks differently in tokens vs $). Token type is a fixed
-// four that always all show, so it keeps its stable order/colour (Input is always the
-// same hue) instead of reshuffling on a metric toggle.
+// Task members rank by the active metric. The combined Model view reserves one top model
+// per provider, then fills the remaining slots by that same ranking. Token type is a
+// fixed four that always all show, so it keeps its stable order/colour instead of
+// reshuffling on a metric toggle.
 const rankedMembers = () => {
   if (dimension() === 'type') return members();
   if (dimension() === 'model' && !state.provider) {
-    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai'], 2);
+    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai']);
   }
   return rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0);
 };

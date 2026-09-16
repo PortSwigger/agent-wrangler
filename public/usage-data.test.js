@@ -43,7 +43,7 @@ test('rankMembers orders by the active metric, not always $', () => {
   assert.deepEqual(rankMembers(members, buckets, 'tokens', 'type').map((m) => m.key), ['cacheRead', 'input']);
 });
 
-test('rankProviderAwareModels reserves two visible slots for each provider', () => {
+test('rankProviderAwareModels reserves one visible slot for each provider', () => {
   const members = ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'gpt-a', 'gpt-b', 'gpt-c']
     .map((key) => ({ key, name: key }));
   const bucket = {
@@ -57,9 +57,9 @@ test('rankProviderAwareModels reserves two visible slots for each provider', () 
     },
   };
 
-  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai'], 2);
+  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai']);
 
-  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'claude-b', 'gpt-a', 'gpt-b', 'claude-c', 'claude-d']);
+  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'gpt-a', 'claude-b', 'claude-c', 'claude-d', 'gpt-b']);
 });
 
 test('displaySlots colours the first six members and folds the rest', () => {

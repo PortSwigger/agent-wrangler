@@ -74,7 +74,7 @@ export function rankMembers(members, buckets, metric, dimension) {
   }).sort((a, b) => b.value - a.value);
 }
 
-export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider) {
+export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider = 1) {
   const overall = rankMembers(members, buckets, metric, 'model').filter((m) => m.value > 0);
   const reserved = new Set();
   for (const provider of providers) {
