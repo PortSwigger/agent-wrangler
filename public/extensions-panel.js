@@ -71,20 +71,20 @@ function originNode(origin) {
   return a;
 }
 
-// The restart affordance every "takes effect at the next start" note now carries.
-// Absent — leaving just the sentence — when the server did not say it can restart
-// itself: under `npm start` an exit is a shutdown with nothing to bring the board
-// back, so there is nothing honest to offer.
-function restartNoteEl(text, { canRestart, restarting, onRestart } = {}) {
-  const wrap = noteEl('ext-row-note', '');
-  wrap.append(el('span', null, text));
-  if (!canRestart) return wrap;
-  const btn = el('button', 'ext-btn ext-btn-restart', restarting ? 'Restarting…' : 'Restart now');
+// The restart affordance, which lives ONCE in the panel head beside "Check for
+// updates" rather than on each row: a restart is a whole-wrangler action, not a
+// per-extension one, and several pending rows would otherwise each draw a button
+// that does exactly the same thing. The rows still SAY what is waiting on it.
+//
+// Absent — leaving the rows' sentences alone — when the server did not say it can
+// restart itself: under `npm start` an exit is a shutdown with nothing to bring
+// the board back, so there is nothing honest to offer.
+function restartButtonEl({ restarting, onRestart } = {}) {
+  const btn = el('button', 'ext-btn ext-btn-warn', restarting ? 'Restarting…' : 'Restart now');
   btn.type = 'button';
   btn.disabled = Boolean(restarting);
   btn.addEventListener('click', () => onRestart?.());
-  wrap.append(btn);
-  return wrap;
+  return btn;
 }
 
 // One row per extension, builtin or installed. What only an installed one has —
@@ -97,8 +97,7 @@ function restartNoteEl(text, { canRestart, restarting, onRestart } = {}) {
 // and where it came from). The commit still appears where it is a decision input,
 // on the consent modal.
 export function extensionRowEl(entry, {
-  status, pendingRemoval, canRestart, restarting,
-  onUninstall, onUpdate, onRestart,
+  status, pendingRemoval, onUninstall, onUpdate,
 } = {}) {
   const row = el('div', `setting-row ext-row${pendingRemoval ? ' ext-row-removed' : ''}`);
   row.dataset.id = `ext:${entry.id}`;
@@ -120,7 +119,7 @@ export function extensionRowEl(entry, {
     copy.append(note);
   }
   if (pendingRemoval) {
-    copy.append(restartNoteEl(`Uninstalled. ${RESTART_NOTE}`, { canRestart, restarting, onRestart }));
+    copy.append(noteEl('ext-row-note', `Uninstalled. ${RESTART_NOTE}`));
   } else if (status) {
     copy.append(noteEl('ext-row-note', updateStatusText(status)));
   }
@@ -173,6 +172,10 @@ export function extensionsPanelEl({
   const wrap = el('div');
   const head = el('div', 'ext-installed-head');
   head.append(el('div', 'setting-label', 'Extensions'));
+  // Beside the check button, and only while something is actually waiting on it.
+  if (canRestart && (pendingRemoval.length || pendingInstall)) {
+    head.append(restartButtonEl({ restarting, onRestart }));
+  }
   if (entries.some((e) => e.external && e.origin)) {
     const check = el('button', 'ext-btn', checking ? 'Checking…' : 'Check for updates');
     check.type = 'button';
@@ -190,11 +193,8 @@ export function extensionsPanelEl({
     wrap.append(extensionRowEl(entry, {
       status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
       pendingRemoval: removing.has(entry.id),
-      canRestart,
-      restarting,
       onUninstall,
       onUpdate,
-      onRestart,
     }));
   }
 
@@ -208,9 +208,10 @@ export function extensionsPanelEl({
   input.setAttribute('aria-label', 'Extension git URL');
   copy.append(input);
   // A finished install has no row of its own until the restart loads it, so its
-  // restart affordance rides the progress line instead.
+  // "restart to finish" line rides the progress line instead — the button it
+  // refers to is the one in the head.
   if (pendingInstall) {
-    copy.append(restartNoteEl(progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`, { canRestart, restarting, onRestart }));
+    copy.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
   } else if (progress) {
     copy.append(noteEl('ext-install-progress', progress));
   }

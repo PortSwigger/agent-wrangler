@@ -184,8 +184,12 @@ don't re-derive it.
   `enabled && !bootEnabled` case, and the copy reuses `extensionFlipNote`'s
   vocabulary rather than inventing a second way of saying "needs a restart";
   uninstall is symmetric, the code stays live until restart.
-- **"Restart the wrangler to finish" now comes with the button that does it, and the
-  button exists ONLY under a supervisor.** `AW_SUPERVISED=1` is exported by
+- **"Restart the wrangler to finish" now comes with the button that does it — ONE
+  button, in the panel head beside "Check for updates" (a restart is a
+  whole-wrangler action, so several pending rows must not each draw their own), in
+  the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the rows
+  and the install form still say what is waiting on it. The button exists ONLY
+  under a supervisor.** `AW_SUPERVISED=1` is exported by
   `scripts/wrangler-start.sh` — which is what both the launchd plist and the systemd
   unit exec, and both bring the process straight back — so the flag means "something
   will restart me", never "I am on macOS"; under `npm start` or bare `node

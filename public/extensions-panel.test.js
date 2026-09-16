@@ -142,28 +142,47 @@ test('Update appears only once a check found a newer commit; Uninstall is extern
   });
 });
 
-test('an uninstalled extension says so on its row, with the restart that finishes it', () => {
+test('an uninstalled extension says so on its own row, and draws no button of its own', () => {
   withDom(() => {
-    let restarts = 0;
-    const row = extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: true, onRestart: () => { restarts += 1; } });
+    const row = extensionRowEl(INSTALLED, { pendingRemoval: true });
     assert.ok(texts(row).some((t) => /Uninstalled/.test(t)));
     assert.ok(texts(row).some((t) => /Restart the wrangler to finish/.test(t)));
-    const btn = byClass(row, 'ext-btn-restart')[0];
-    btn.fire('click');
-    assert.equal(restarts, 1);
+    // The restart itself is one button in the panel head — a whole-wrangler
+    // action, not a per-extension one, and several pending rows would otherwise
+    // each draw the same button.
+    assert.equal(byClass(row, 'ext-btn').length, 0);
     // Nothing to toggle, update or uninstall on a row that is already gone.
     assert.equal(byClass(row, 'setting-toggle').length, 0);
-    assert.equal(byClass(row, 'ext-btn').length, 1);
-    // While it is going down the button says so rather than inviting a second press.
-    assert.equal(byClass(extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: true, restarting: true }), 'ext-btn-restart')[0].disabled, true);
   });
 });
 
-test('no restart button where the server cannot restart itself — just the sentence', () => {
+test('the restart button sits beside Check for updates, and only while something waits on it', () => {
   withDom(() => {
-    const row = extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: false });
-    assert.ok(texts(row).some((t) => /Restart the wrangler to finish/.test(t)));
-    assert.equal(byClass(row, 'ext-btn-restart').length, 0);
+    let restarts = 0;
+    const opts = { entries: [INSTALLED], canRestart: true, onRestart: () => { restarts += 1; } };
+    // Nothing pending: no button, however restartable the server is.
+    assert.equal(byClass(extensionsPanelEl(opts), 'ext-btn-warn').length, 0);
+    for (const pending of [{ pendingRemoval: ['notes'] }, { pendingInstall: 'other' }]) {
+      const panel = extensionsPanelEl({ ...opts, ...pending });
+      const head = byClass(panel, 'ext-installed-head')[0];
+      const btn = byClass(head, 'ext-btn-warn')[0];
+      assert.ok(btn, `${JSON.stringify(pending)} draws the button in the head`);
+      assert.equal(btn._text, 'Restart now');
+      btn.fire('click');
+    }
+    assert.equal(restarts, 2);
+    // While it is going down the button says so rather than inviting a second press.
+    const going = byClass(extensionsPanelEl({ ...opts, pendingRemoval: ['notes'], restarting: true }), 'ext-btn-warn')[0];
+    assert.equal(going._text, 'Restarting…');
+    assert.equal(going.disabled, true);
+  });
+});
+
+test('no restart button where the server cannot restart itself — just the row\'s sentence', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [INSTALLED], pendingRemoval: ['notes'], canRestart: false });
+    assert.ok(texts(panel).some((t) => /Restart the wrangler to finish/.test(t)));
+    assert.equal(byClass(panel, 'ext-btn-warn').length, 0);
   });
 });
 
@@ -190,15 +209,13 @@ test('checking for updates says so while it runs, on the button and on each row'
   });
 });
 
-test('a finished install carries its restart affordance on the install form', () => {
+test('a finished install says so on the install form — it has no row until the restart', () => {
   withDom(() => {
-    let restarts = 0;
     const panel = extensionsPanelEl({
       entries: [], pendingInstall: 'notes', progress: 'Installed notes. Restart the wrangler to finish.',
-      canRestart: true, onRestart: () => { restarts += 1; },
+      canRestart: true,
     });
-    byClass(panel, 'ext-btn-restart')[0].fire('click');
-    assert.equal(restarts, 1);
+    assert.ok(texts(panel).includes('Installed notes. Restart the wrangler to finish.'));
   });
 });
 

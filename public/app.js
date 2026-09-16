@@ -406,6 +406,21 @@ function applyGraph(graph) {
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteHandlerTypes(latestExtensions);
   setExtensionDefs(latestExtensions);
+  // An open panel follows the list, but ONLY when the list itself changed: this
+  // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
+  // git URL out of the install field. The signature is the serialised list for
+  // the same reason history-gate.js compares serialised history — anything
+  // narrower has to be kept in step with the server's record by hand.
+  //
+  // Load-bearing after a RESTART: `config` (which clears the pending-removal
+  // note) is the first frame of a reconnect and the fresh graph arrives after
+  // it, so without this the panel re-drew the just-uninstalled extension as an
+  // ordinary installed row and kept it there until a manual page refresh.
+  const extSignature = JSON.stringify(latestExtensions);
+  if (extSignature !== lastExtSignature) {
+    lastExtSignature = extSignature;
+    remountExtensions();
+  }
   // A quarantined BUILTIN is a repo bug, and without this it reads as a feature
   // that quietly vanished — the settings row carries the reason, but nobody
   // opens Settings to find out why something they never turned off is gone.
@@ -5470,6 +5485,9 @@ let canRestartServer = false;
 // The mount point settings.js hands over, kept so a progress broadcast arriving
 // while the modal is open can re-render in place rather than wait for a reopen.
 let extPanelHost = null;
+// The serialised extension list the open panel was last drawn from — see
+// applyGraph, which re-mounts only when this moves.
+let lastExtSignature = null;
 
 const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
 
