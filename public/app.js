@@ -32,6 +32,7 @@ import {
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
   visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
   parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
+  checklistHiddenDoneLabel,
 } from './checklist-dom.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -2357,9 +2358,14 @@ function renderChecklist(sessionId) {
   filter.setAttribute('aria-pressed', String(showDone));
   filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
   document.getElementById('ck-filter-label').textContent = showDone ? 'All' : 'Open';
+  const visibleItems = visibleChecklistItems(items, { showDone });
+  const empty = document.getElementById('ck-empty');
+  const emptyLabel = checklistHiddenDoneLabel(items, { showDone });
+  if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
+  empty.hidden = !emptyLabel;
   if (checklistDragActive || checklistEditing) return;
   const list = document.getElementById('ck-list');
-  checklistDom.patch(list, { sessionId, items: visibleChecklistItems(items, { showDone }) });
+  checklistDom.patch(list, { sessionId, items: visibleItems, focusFallback: filter });
   syncChecklistScrollHint(list);
 }
 

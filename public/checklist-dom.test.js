@@ -5,12 +5,14 @@ import {
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
   visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
   parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
+  checklistHiddenDoneLabel,
 } from './checklist-dom.js';
 
 // A DOM stub sufficient for the reconciliation assertions: no jsdom, matching how
 // the rest of public/ stays DOM-free. It tracks innerHTML writes so the
 // "never innerHTML" rule can be asserted rather than merely commented.
 function stubDocument() {
+  let document;
   const make = (tag) => {
     const el = {
       tagName: tag.toUpperCase(),
@@ -37,6 +39,8 @@ function stubDocument() {
         if (at >= 0) this.children.splice(at, 1);
         return node;
       },
+      contains(node) { return walk(el).includes(node); },
+      focus() { document.activeElement = el; },
       setAttribute(k, v) { this.attrs[k] = v; },
       getAttribute(k) { return this.attrs[k]; },
       querySelector(sel) {
@@ -51,7 +55,8 @@ function stubDocument() {
     };
     return el;
   };
-  return { createElement: make };
+  document = { activeElement: null, createElement: make };
+  return document;
 }
 
 const walk = (node, out = []) => {
@@ -124,6 +129,43 @@ test('patch adds, updates and removes without touching unrelated rows', () => {
   assert.equal(list.children[1].querySelector('.ck-check').getAttribute('aria-checked'), 'true');
 });
 
+test('removing the focused row moves focus to the next remaining checkbox', () => {
+  const document = stubDocument();
+  const d = createChecklistDom({ document });
+  const list = document.createElement('div');
+  const fallback = document.createElement('button');
+  d.patch(list, {
+    sessionId: 'CARD1',
+    items: [
+      { id: 'ck_1', text: 'a', done: false },
+      { id: 'ck_2', text: 'b', done: false },
+      { id: 'ck_3', text: 'c', done: false },
+    ],
+  });
+  list.children[1].querySelector('.ck-check').focus();
+
+  d.patch(list, {
+    sessionId: 'CARD1',
+    items: [{ id: 'ck_1', text: 'a', done: false }, { id: 'ck_3', text: 'c', done: false }],
+    focusFallback: fallback,
+  });
+
+  assert.equal(document.activeElement, list.children[1].querySelector('.ck-check'));
+});
+
+test('removing the final focused row moves focus to the supplied fallback', () => {
+  const document = stubDocument();
+  const d = createChecklistDom({ document });
+  const list = document.createElement('div');
+  const fallback = document.createElement('button');
+  d.patch(list, { sessionId: 'CARD1', items: [{ id: 'ck_1', text: 'a', done: false }] });
+  list.children[0].querySelector('.ck-check').focus();
+
+  d.patch(list, { sessionId: 'CARD1', items: [], focusFallback: fallback });
+
+  assert.equal(document.activeElement, fallback);
+});
+
 test('a reorder moves the existing elements rather than rebuilding them', () => {
   const d = dom();
   const list = listStub();
@@ -187,6 +229,14 @@ test('visibleChecklistItems hides done items by default and shows every item in 
   ];
   assert.deepEqual(visibleChecklistItems(items).map((item) => item.id), ['ck_1', 'ck_3']);
   assert.deepEqual(visibleChecklistItems(items, { showDone: true }), items);
+});
+
+test('checklistHiddenDoneLabel explains an Open view containing only completed items', () => {
+  assert.equal(checklistHiddenDoneLabel([]), '');
+  assert.equal(checklistHiddenDoneLabel([{ done: false }, { done: true }]), '');
+  assert.equal(checklistHiddenDoneLabel([{ done: true }]), '1 completed item hidden');
+  assert.equal(checklistHiddenDoneLabel([{ done: true }, { done: true }]), '2 completed items hidden');
+  assert.equal(checklistHiddenDoneLabel([{ done: true }], { showDone: true }), '');
 });
 
 test('the Show done filter defaults off and toggles independently per session', () => {

@@ -543,8 +543,10 @@ don't re-derive it.
   the direction that costs no height. Once open, the list hides completed items
   by default; its `Open`/`All` filter is persisted per session in
   `wrangler.checklistShowDone`. Reordering in `Open` mode preserves hidden done
-  items in their existing slots and still sends the store a complete order. The
-  chip renders even for an EMPTY
+  items in their existing slots and still sends the store a complete order.
+  When completing an item removes the focused row, focus advances to the next
+  checkbox (or the filter if none remain), and an all-done `Open` view names the
+  hidden completed items instead of looking empty. The chip renders even for an EMPTY
   checklist (`checklistPillLabel`'s `0/0`, unlike `checklistCountLabel`'s `''`) —
   while collapsed it's the only thing telling a human the feature exists on this
   session. Caps (`MAX_ITEMS` 100,

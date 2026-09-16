@@ -408,6 +408,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
 .ck-list:empty { display: none; }
+.ck-empty { padding: 8px 10px 9px; color: var(--fg-muted); font-size: 11px; }
+.ck-empty[hidden] { display: none; }
 /* "More below" cue for the capped list — without it the clipped last row reads
    as a rendering glitch. Short and low-opacity so it never obscures the row it
    overlays, and only present while there IS more below (see
