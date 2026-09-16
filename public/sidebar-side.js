@@ -21,3 +21,15 @@ export function sidebarWidthFromDrag({ clientX, rect, viewportWidth, onLeft }) {
   // overflowing pane beats one squeezed below its minimum.
   return Math.max(MIN_SIDEBAR_W, Math.min(viewportWidth - MIN_BOARD_W, raw));
 }
+
+// #grid, not #sidebar, is the side pinned to an inline px width (styles.css's
+// `main:has(#sidebar:not(.collapsed)) #grid` rule) — deliberately, so that a
+// window resize changes the conversation pane instead of reflowing the session
+// columns (see CLAUDE.md/the PR that introduced this). initSidebarResize
+// (app.js) still reads the drag with sidebarWidthFromDrag above — that maths
+// already covers both sidebar sides — and converts the result into the
+// complementary #grid width with this, so the boundary tracks the cursor
+// exactly as it did when #sidebar itself was the pinned side.
+export function gridWidthFromSidebarDrag({ mainWidth, handleWidth, sidebarWidth }) {
+  return mainWidth - handleWidth - sidebarWidth;
+}
