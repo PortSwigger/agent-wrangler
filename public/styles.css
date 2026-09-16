@@ -554,11 +554,18 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   color: var(--blue-fg);
 }
 
-#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal {
+/* An overlay dialog gets BOTH of these rules, and the pair is an explicit id
+   list that nothing generates — so a new modal added to index.html and left out
+   of it does not merely lose its backdrop, it renders inline in the page flow as
+   a permanently-visible panel whose buttons were never wired (the open function
+   is what attaches them). That is exactly how #ext-consent-modal shipped, which
+   is why modal-overlay.test.js now asserts the two selectors cover every
+   `class="hidden"` modal in index.html. */
+#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal {
   position: fixed; inset: 0; background: var(--overlay);
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
-#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden { display: none; }
+#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden { display: none; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
