@@ -45,7 +45,7 @@ import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession } from './shell-session.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { createTargets } from './control/targets.js';
-import { routeControlMessage } from './control/router.js';
+import { routeControlMessage, invalidateHandlerMap } from './control/router.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
@@ -120,8 +120,12 @@ for (const e of ext.list) {
   if (e.quarantine) log(`[agent-wrangler] extension ${e.id} quarantined (${e.external ? 'installed' : 'builtin'}): ${e.quarantine}`);
 }
 // One event line per quarantine (a state change a human would ask about
-// afterwards), then the entry's contributions are unregistered by id.
+// afterwards), then the entry's contributions are unregistered by id. The
+// deactivate first is what a LIVE quarantine (an enable that failed) needs:
+// activation may already have built a façade, a store or a sweep before the step
+// that threw, and none of those is the leaf's to take back.
 function quarantineFor(id, err) {
+  deactivateExtension(id);
   const reason = quarantineExtension(ext, id, err?.message || String(err));
   const entry = ext.list.find((e) => e.id === id);
   log(`[agent-wrangler] extension ${id} quarantined (${entry?.external ? 'installed' : 'builtin'}): ${reason}`);
@@ -141,44 +145,17 @@ const extCore = { sessionManager, taskStore, memoryStore };
 // is filled, and the alternative is re-ordering half this file around them.
 const hostApis = new Map();
 const hostApiFor = (id) => hostApis.get(id);
-// A store factory gets a deliberately MINIMAL bag, not a façade: it runs here,
-// before rebuild/broadcast/deliver exist at all, and a store's constructor has
-// no legitimate need for them. The capabilities are for the tools, handlers,
-// hooks and sweeps that USE the store, all of which run later.
-//
-// Built per EXTENSION rather than over one flat `ext.stores`, so a throwing
-// factory quarantines its own manifest instead of aborting every other
-// extension's stores with it.
+// name -> the instance an extension's store factory returned. Filled by
+// activateExtension below (and emptied by deactivateExtension), never here: an
+// extension can be activated at boot, at an install, or at a settings flip, and
+// one code path has to serve all three.
 const extStores = {};
-for (const e of [...ext.list]) {
-  if (!e.enabled) continue;
-  try {
-    for (const name of e.storeNames) extStores[name] = ext.stores[name]({ id: name, log });
-  } catch (err) {
-    for (const name of e.storeNames) delete extStores[name];
-    quarantineFor(e.id, err);
-  }
-}
 // Which store names belong to which manifest, so `host.stores` is narrowed to an
 // extension's OWN stores — the pre-façade `extStores` was one flat object every
 // manifest shared.
 const storesFor = (id) => Object.fromEntries(
   (ext.list.find((e) => e.id === id)?.storeNames || []).filter((n) => Object.hasOwn(extStores, n)).map((n) => [n, extStores[n]]),
 );
-// Extension session hooks (server/extensions/index.js `sessionHooks`), each
-// bound to ITS OWN extension's façade — the loader tags every hook with its
-// owner for exactly this. `stores` and `core` are gone from the payload.
-//
-// Bound BEFORE the façade loop below (which is where `deliver` finally exists),
-// so each bound hook has to re-check that its extension still has a façade: a
-// manifest quarantined down there — after this push — would otherwise keep a
-// live hook running with `host` undefined.
-for (const [name, hooks] of Object.entries(ext.sessionHooks)) {
-  sessionManager._extHooks[name].push(...hooks.map(({ extId, fn }) => (payload) => {
-    if (!hostApis.has(extId)) return undefined;
-    return fn({ ...payload, host: hostApiFor(extId) });
-  }));
-}
 // Per-launch skill gating (the _extLaunchSkills seam): consulted by
 // dispatch/resume/fork before the adapter builds the command, so an extension
 // can answer "not this session" for a skill its manifest declares.
@@ -259,37 +236,118 @@ const extWiring = {
 // What archiveCascade reads off its ctx — the same shape the board handler and
 // the archive_session tool hand it.
 const archiveCascadeCtx = { sessionManager, taskStore, sessionFromGraph, tmuxFor, socketFor, graph: () => lastGraph };
-// buildHostApi still THROWS as its contract (an unsatisfiable
-// engines.wranglerApi, an unknown capability) — what changed is that the throw
-// is caught per extension here and quarantines that one manifest.
-for (const e of [...ext.list]) {
-  if (!e.enabled) continue;
+// extId -> its running sweep timers, so a deactivate can stop them. A sweep is
+// the one extension contribution that keeps running with nothing asking it to,
+// so forgetting one leaves a disabled (or uninstalled) extension ticking against
+// a façade that no longer exists.
+const sweepHandles = new Map();
+
+// THE NON-LEAF HALF of registering an extension, and the mirror of
+// server/extensions/index.js's registerExtension/unregisterExtension: stores,
+// façade, graph-key check, session hooks and sweeps are all built from
+// singletons the leaf may not import, so they live here. One code path serves
+// boot, an install and a settings flip alike — a second one would drift.
+//
+// Throws, leaving NOTHING behind (the catch deactivates), so every caller gets
+// the same choice boot has always had: quarantine the entry, or refuse the
+// install outright.
+function activateExtension(id, { startSweeps = true } = {}) {
+  const e = ext.list.find((x) => x.id === id);
+  if (!e || !e.enabled || e.quarantine) throw new Error(`Extension ${id}: not registered as enabled`);
   try {
-    hostApis.set(e.id, buildHostApi({
-      id: e.id,
+    // A store factory gets a deliberately MINIMAL bag, not a façade: at boot it
+    // runs before rebuild/broadcast/deliver exist at all, and a store's
+    // constructor has no legitimate need for them. The capabilities are for the
+    // tools, handlers, hooks and sweeps that USE the store, all of which run
+    // later.
+    for (const name of e.storeNames) extStores[name] = ext.stores[name]({ id: name, log });
+    // buildHostApi still THROWS as its contract (an unsatisfiable
+    // engines.wranglerApi, an unknown capability) — what changed is that the
+    // throw is caught per extension and quarantines that one manifest.
+    hostApis.set(id, buildHostApi({
+      id,
       requires: e.requires,
       range: e.range,
-      stores: storesFor(e.id),
+      stores: storesFor(id),
       log: logError,
       // Per-EXTENSION now, so the resume log line names which extension woke a
       // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.
-      deliver: createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor }, { reason: `ext:${e.id}` }),
+      deliver: createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor }, { reason: `ext:${id}` }),
       ...extWiring,
     }));
+    // Graph contributors run every ~4s tick where nothing may log or throw, so
+    // their keys are checked ONCE here, against a real façade — and a
+    // contributor that claims a reserved key (or throws) is the caller's to
+    // quarantine rather than a boot failure.
+    for (const { id: gid, contribute } of ext.graphContributors) {
+      if (gid === id) assertGraphKeys(id, contribute({ host: hostApiFor(id), graph: {} }));
+    }
+    // Session hooks (server/extensions/index.js `sessionHooks`), each bound to
+    // ITS OWN extension's façade — the loader tags every hook with its owner for
+    // exactly this. The `.extId` tag on the WRAPPER is what deactivate filters
+    // on; the per-call `hostApis.has` re-check is what makes a hook inert the
+    // moment its extension is deactivated, whatever order the two run in.
+    for (const [name, hooks] of Object.entries(ext.sessionHooks)) {
+      for (const { extId, fn } of hooks) {
+        if (extId !== id) continue;
+        const bound = (payload) => (hostApis.has(extId) ? fn({ ...payload, host: hostApiFor(extId) }) : undefined);
+        bound.extId = extId;
+        sessionManager._extHooks[name].push(bound);
+      }
+    }
+    if (startSweeps) startSweepsFor(id);
   } catch (err) {
-    hostApis.delete(e.id);
-    quarantineFor(e.id, err);
+    deactivateExtension(id);
+    throw err;
   }
 }
-// Graph contributors run every ~4s tick where nothing may log or throw, so their
-// keys are checked ONCE here, against a real façade — and a contributor that
-// claims a reserved key (or throws) quarantines rather than failing boot.
-for (const { id, contribute } of [...ext.graphContributors]) {
+
+// Extension sweeps (server/extensions/index.js `sweeps`): the same fire-and-
+// forget, unref'd shape as every poll in main(). A throw is logged with the
+// extension and sweep ids — the only per-sweep line allowed, since a sweep that
+// throws every tick is a bug a human must see.
+//
+// At BOOT these are deferred until after the instance lock (main() runs them),
+// for the same reason sweepStaging is: a duplicate instance must not act on a
+// DATA_DIR it is about to be refused. A live activation is always post-lock, so
+// it starts them immediately.
+function startSweepsFor(id) {
+  const handles = sweepHandles.get(id) || [];
+  for (const sweep of ext.sweeps) {
+    if (sweep.extId !== id) continue;
+    const t = setInterval(() => {
+      Promise.resolve(sweep.run({ host: hostApiFor(id) })).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
+    }, sweep.everyMs);
+    t.unref();
+    handles.push(t);
+  }
+  sweepHandles.set(id, handles);
+}
+
+// Take back everything activateExtension built. Idempotent and safe for an id
+// that was never active — it is the catch inside activate as well as the
+// uninstall/disable path. What it CANNOT undo is the module import itself: Node
+// keeps an imported module forever, so an extension whose top-level code started
+// a timer of its own or added a global listener keeps it until a restart. That
+// is the whole of the "restart to reclaim" caveat.
+function deactivateExtension(id) {
+  for (const t of sweepHandles.get(id) || []) clearInterval(t);
+  sweepHandles.delete(id);
+  hostApis.delete(id);
+  for (const name of ext.list.find((e) => e.id === id)?.storeNames || []) delete extStores[name];
+  for (const name of Object.keys(sessionManager._extHooks)) {
+    sessionManager._extHooks[name] = sessionManager._extHooks[name].filter((fn) => fn.extId !== id);
+  }
+}
+
+// Boot activation. A copy of the list, because quarantineFor splices nothing but
+// does rewrite the entry underneath us.
+for (const e of [...ext.list]) {
+  if (!e.enabled || e.quarantine) continue;
   try {
-    assertGraphKeys(id, contribute({ host: hostApiFor(id), graph: {} }));
+    activateExtension(e.id, { startSweeps: false });
   } catch (err) {
-    quarantineFor(id, err);
-    hostApis.delete(id);
+    quarantineFor(e.id, err);
   }
 }
 // Every still-enabled extension has a façade, so a tagged tool/handler frame can
@@ -308,11 +366,29 @@ try {
 // read over every extension. Neither is a per-extension capability, so both stay
 // on the core bag rather than becoming a meta-capability — this is finished, not
 // a half-done migration. The per-extension stores/deliver/core are gone from it.
+//
+// The live-registry seams ride the same bag, and are CORE-owned for the same
+// reason: activating an extension binds singletons no façade may hand out, and
+// the callers are the install/enable/uninstall handlers, which are core.
+// `changed()` is the ONE thing every registry change must end with — it drops
+// the router's cached handler map and re-announces the client manifest, so a
+// freshly registered handler is routable and a new client asset loads without a
+// reload.
 const extBag = {
   list: ext.list,
   // Null unless some enabled manifest declares a `hideTool` veto, so the MCP
-  // listing keeps its unfiltered identity in the common case.
+  // listing keeps its unfiltered identity in the common case. Re-derived on
+  // every registry change, since a live install may add the first veto.
   hideTool: createToolFilter(ext, hostApiFor, logError),
+  manifests: ext._manifests,
+  activate: activateExtension,
+  deactivate: deactivateExtension,
+  quarantine: quarantineFor,
+  changed: () => {
+    extBag.hideTool = createToolFilter(ext, hostApiFor, logError);
+    invalidateHandlerMap();
+    broadcast({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
+  },
 };
 
 // Current fd-watchdog alert, or null when clear — sent to any client that
@@ -785,7 +861,8 @@ async function rebuildOnce() {
   // is re-read from config here, not taken from ext.list's boot snapshot: see
   // extensionsForGraph.
   graph.extensions = extensionsForGraph(ext.list);
-  // Boot-fixed (nothing quarantines after startup), but carried on the graph
+  // Rarely moves — a builtin quarantines at boot, or on a live enable that
+  // failed — but carried on the graph
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
@@ -1063,17 +1140,12 @@ async function main() {
   const mailRetentionPoll = setInterval(mailRetentionSweep, 24 * 60 * 60 * 1000);
   mailRetentionPoll.unref();
 
-  // Extension sweeps (server/extensions/index.js `sweeps`): the same fire-and-
-  // forget, unref'd shape as every poll above. A throw is logged with the
-  // extension and sweep ids — the only per-sweep line allowed, since a sweep
-  // that throws every tick is a bug a human must see. None ship today; this is
-  // the pattern for a later extension.
-  for (const s of ext.sweeps) {
-    const t = setInterval(() => {
-      Promise.resolve(s.run({ host: hostApiFor(s.extId) })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
-    }, s.everyMs);
-    t.unref();
-  }
+  // The sweeps of every extension activated at boot, deferred to here rather
+  // than started during activation: a duplicate instance must not sweep a
+  // DATA_DIR it is about to be refused, the same reason sweepStaging waits. An
+  // extension activated LIVE (an install, a settings flip) is always past this
+  // point, so activateExtension starts its sweeps itself.
+  for (const id of hostApis.keys()) startSweepsFor(id);
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle
