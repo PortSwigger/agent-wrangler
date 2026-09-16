@@ -47,6 +47,11 @@ export function dimensionMap(bucket, dimension) {
   return bucket.byTask || {};
 }
 
+export function providerBucket(bucket, provider) {
+  if (!provider) return bucket || {};
+  return bucket?.providers?.[provider] || {};
+}
+
 // The current metric's scalar from one {usd, tokens:{…}} cell (0 when the key had no
 // spend in that bucket). $ reads the dollar figure; Tokens sums all token types — for a
 // Token-type cell only its own slot is populated, so the sum is that type's count.

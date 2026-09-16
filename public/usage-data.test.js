@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellValue, dimensionMap, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
+import { cellValue, dimensionMap, providerBucket, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
 
 const CATS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const OTHER = 'cO';
@@ -21,6 +21,16 @@ test('dimensionMap selects the active slice map', () => {
   assert.deepEqual(dimensionMap(b, 'model'), { m: 2 });
   assert.deepEqual(dimensionMap(b, 'type'), { input: 3 });
   assert.deepEqual(dimensionMap(undefined, 'task'), {});
+});
+
+test('providerBucket selects one provider while All keeps the combined bucket', () => {
+  const all = { total: { usd: 3, tokens: {} }, providers: {
+    anthropic: { total: { usd: 1, tokens: {} }, byTask: { a: { usd: 1, tokens: {} } } },
+    openai: { total: { usd: 2, tokens: {} }, byTask: { o: { usd: 2, tokens: {} } } },
+  } };
+  assert.equal(providerBucket(all, null).total.usd, 3);
+  assert.equal(providerBucket(all, 'anthropic').byTask.a.usd, 1);
+  assert.equal(providerBucket(all, 'openai').byTask.o.usd, 2);
 });
 
 test('rankMembers orders by the active metric, not always $', () => {

@@ -8,7 +8,7 @@
 // textContent — no chart dependency, and task/model text (agent-generated) never
 // goes in via innerHTML (the CodeQL DOM gate).
 import { send } from './app.js';
-import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, rankMembers as rankMembersOf, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
+import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
 import {
   RANGE_PRESETS, DEFAULT_RANGE, resolvePreset, allowedGranularities, coerceGranularity,
   parseStoredRange, serialiseRange,
@@ -38,6 +38,11 @@ const SLICES = [
   { v: 'model', label: 'Model', dim: 'model' },
   { v: 'type', label: 'Token type', dim: 'type' },
 ];
+const PROVIDERS = [
+  { v: '', label: 'All providers' },
+  { v: 'anthropic', label: 'Anthropic' },
+  { v: 'openai', label: 'OpenAI' },
+];
 
 // Range and granularity are INDEPENDENT: rangeSel (a RANGE_PRESETS key) + from/to
 // (custom day keys, or null) resolve to the absolute {start, end} sent on the wire;
@@ -48,7 +53,7 @@ const SLICES = [
 // controls. Both range and granularity persist to localStorage independently (see
 // loadPrefs/persistRange*/persistGranularity below) since they're independent controls.
 const state = {
-  granularity: 'day', metric: 'usd', sliceBy: 'task', filter: null, data: null,
+  granularity: 'day', metric: 'usd', sliceBy: 'task', provider: '', filter: null, data: null,
   rangeSel: DEFAULT_RANGE, from: null, to: null, want: null,
 };
 let built = false;
@@ -56,8 +61,15 @@ let prefsLoaded = false;
 
 const RANGE_KEY = 'cm-usage-range';
 const GRANULARITY_KEY = 'cm-usage-granularity';
+const PROVIDER_KEY = 'cm-usage-provider';
 
 const el = (id) => document.getElementById(id);
+const addTokens = (dest, src = {}) => {
+  dest.input += src.input || 0;
+  dest.output += src.output || 0;
+  dest.cacheWrite += src.cacheWrite || 0;
+  dest.cacheRead += src.cacheRead || 0;
+};
 
 const metricDef = () => METRICS.find((m) => m.v === state.metric);
 const dimension = () => SLICES.find((s) => s.v === state.sliceBy).dim;
@@ -65,7 +77,9 @@ const members = () => state.data?.dimensions?.[dimension()] || [];
 // Thin wrappers binding the pure helpers to the current metric/slice/filter/palette.
 const fmtValue = (n) => fmtValueOf(n, state.metric);
 const cellValue = (cell) => cellValueOf(cell, state.metric);
-const dimensionMap = (bucket) => dimensionMapOf(bucket, dimension());
+const selectedBucket = (bucket) => providerBucket(bucket, state.provider);
+const providerBuckets = () => (state.data?.buckets || []).map(selectedBucket);
+const dimensionMap = (bucket) => dimensionMapOf(selectedBucket(bucket), dimension());
 // For task/model, rank members by the ACTIVE metric before taking colour slots, so the
 // six coloured segments are the largest for what's shown (review nit: not always
 // $-ranked — cache-heavy work ranks differently in tokens vs $). Token type is a fixed
@@ -73,7 +87,7 @@ const dimensionMap = (bucket) => dimensionMapOf(bucket, dimension());
 // same hue) instead of reshuffling on a metric toggle.
 const rankedMembers = () => (dimension() === 'type'
   ? members()
-  : rankMembersOf(members(), state.data?.buckets, state.metric, dimension()));
+  : rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0));
 const displaySlots = () => displaySlotsOf(rankedMembers(), CAT_VARS);
 const bucketSegments = (bucket, slots) => bucketSegmentsOf(bucket, slots, state.metric, state.filter, OTHER_VAR, dimension());
 
@@ -149,6 +163,9 @@ function persistRange() {
 function persistGranularity() {
   try { localStorage.setItem(GRANULARITY_KEY, state.granularity); } catch { /* best-effort */ }
 }
+function persistProvider() {
+  try { localStorage.setItem(PROVIDER_KEY, state.provider); } catch { /* best-effort */ }
+}
 
 // Seeded once, on first open, from localStorage — a stored PRESET re-resolves against
 // today (parseStoredRange only validates shape/known-ness, resolvedRange() above does
@@ -162,6 +179,9 @@ function loadPrefs() {
   let g = null;
   try { g = localStorage.getItem(GRANULARITY_KEY); } catch { /* ignore */ }
   state.granularity = ['day', 'week', 'month'].includes(g) ? g : 'day';
+  let provider = null;
+  try { provider = localStorage.getItem(PROVIDER_KEY); } catch { /* ignore */ }
+  state.provider = PROVIDERS.some((p) => p.v === provider) ? provider : '';
 }
 
 // Re-coerce the granularity against whatever the (possibly just-changed) range allows,
@@ -233,6 +253,20 @@ function renderControls() {
   rangeSelect.value = state.rangeSel;
   rangeSelect.onchange = () => onRangeSelectChange(rangeSelect.value);
 
+  const providerSelect = el('usage-provider-select');
+  providerSelect.replaceChildren(...PROVIDERS.map((o) => {
+    const opt = document.createElement('option');
+    opt.value = o.v; opt.textContent = o.label;
+    return opt;
+  }));
+  providerSelect.value = state.provider;
+  providerSelect.onchange = () => {
+    state.provider = providerSelect.value;
+    state.filter = null;
+    persistProvider();
+    renderAll();
+  };
+
   const customRow = el('usage-custom-row');
   customRow.classList.toggle('hidden', state.rangeSel !== 'custom');
   const fromInput = el('usage-date-from');
@@ -256,7 +290,10 @@ function renderSummary() {
   let total = 0;
   for (const b of d.buckets) {
     if (state.filter) total += cellValue(dimensionMap(b)[state.filter]);
-    else total += cellValue({ usd: b.total.usd, tokens: b.total.tokens });
+    else {
+      const selected = selectedBucket(b);
+      total += cellValue({ usd: selected.total?.usd, tokens: selected.total?.tokens });
+    }
   }
   const big = document.createElement('div');
   big.className = 'usage-total';
@@ -271,26 +308,35 @@ function renderSummary() {
   // token metrics the token counts are Codex-derived too (whole-lifetime, dumped on
   // createdAt), so note them estimated rather than implying parity with Claude's
   // line-stamped exact tokens.
-  if (d.estimatedIncluded && !state.filter) {
+  const selectedTotals = state.provider
+    ? d.buckets.reduce((out, b) => {
+      const t = selectedBucket(b).total || {};
+      out.estimatedUsd += t.estimatedUsd || 0;
+      out.advisorUsd += t.advisorUsd || 0;
+      addTokens(out.advisorTokens, t.advisorTokens);
+      return out;
+    }, { estimatedUsd: 0, advisorUsd: 0, advisorTokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } })
+    : d.totals;
+  if (selectedTotals.estimatedUsd > 0 && !state.filter) {
     const est = document.createElement('div');
     est.className = 'usage-est';
     est.textContent = state.metric === 'usd'
-      ? `includes ~${fmtUsd(d.totals.estimatedUsd)} estimated Codex spend`
+      ? `includes ~${fmtUsd(selectedTotals.estimatedUsd)} estimated Codex spend`
       : 'includes estimated Codex usage';
     box.appendChild(est);
   }
   // Advisor consults are already inside the total above (real spend, never
   // dropped) — this just breaks out how much of it was the native advisor tool,
   // the same "of which" framing as the sub-agent/estimated notes.
-  if (d.totals.advisorUsd > 0 && !state.filter) {
+  if (selectedTotals.advisorUsd > 0 && !state.filter) {
     const adv = document.createElement('div');
     adv.className = 'usage-est';
     // Real token counts either way — advisorTokens isn't an estimate the way Codex's
     // estimatedUsd note above is, so the Tokens branch gets an actual number too,
     // not the placeholder text the Codex note falls back to.
     adv.textContent = state.metric === 'usd'
-      ? `Includes ${fmtUsd(d.totals.advisorUsd)} spent on advisor consultations`
-      : `Includes ${fmtTokens(cellValueOf({ tokens: d.totals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;
+      ? `Includes ${fmtUsd(selectedTotals.advisorUsd)} spent on advisor consultations`
+      : `Includes ${fmtTokens(cellValueOf({ tokens: selectedTotals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;
     // Deliberately not disjoint from a sub-agent's own cost (a sub-agent that
     // itself consulted the advisor counts in both figures) — say so on hover
     // rather than lengthening the visible line.
@@ -337,7 +383,7 @@ function renderChart() {
   if (!d) { const p = document.createElement('div'); p.className = 'usage-empty'; p.textContent = 'Loading…'; host.appendChild(p); return; }
   const slots = displaySlots();
   const buckets = d.buckets;
-  const stacks = buckets.map((b) => bucketSegments(b, slots));
+  const stacks = buckets.map((b) => bucketSegments(selectedBucket(b), slots));
   const totals = stacks.map((segs) => segs.reduce((a, s) => a + s.value, 0));
   const max = Math.max(0, ...totals);
   if (max <= 0) { const p = document.createElement('div'); p.className = 'usage-empty'; p.textContent = 'No usage recorded in this period.'; host.appendChild(p); return; }
@@ -499,7 +545,7 @@ export function onUsage(msg) {
   if (!replyMatchesWindow(msg, state.want)) return;
   state.data = msg;
   // A filter can outlive its member (a range/granularity change drops it from the window).
-  if (state.filter && !members().some((m) => m.key === state.filter)) state.filter = null;
+  if (state.filter && !providerBuckets().some((b) => Object.hasOwn(dimensionMapOf(b, dimension()), state.filter))) state.filter = null;
   if (!el('usage-modal').classList.contains('hidden')) renderAll();
 }
 
