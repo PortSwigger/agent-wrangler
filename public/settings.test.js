@@ -91,35 +91,25 @@ test('settings card keeps its chrome fixed around a scrolling pane', () => {
   assert.match(css, /\.settings-tab\.active \{[^}]*background: transparent;[^}]*border-bottom-color: var\(--accent\);/s);
 });
 
-// The three outcomes of flipping an extension toggle. Only the third asks for
-// an action, but the other two still need saying: without them "the panel went
-// but my agent still has the tools" and "nothing happened" look identical.
-test('extensionFlipNote names a restart only when the extension was off at boot', () => {
-  assert.match(extensionFlipNote({ enabled: true, bootEnabled: false }), /Restart the wrangler/);
-  assert.doesNotMatch(extensionFlipNote({ enabled: true, bootEnabled: true }), /Restart/);
-  assert.doesNotMatch(extensionFlipNote({ enabled: false, bootEnabled: true }), /Restart/);
+// The two outcomes of flipping an extension toggle. Neither asks for an action
+// any more — the registry is live in both directions — but both still need
+// saying: without them "the panel went but my agent still has the tools" and
+// "nothing happened" look identical.
+test('extensionFlipNote names no restart in either direction', () => {
+  assert.doesNotMatch(extensionFlipNote({ enabled: true }), /[Rr]estart/);
+  assert.doesNotMatch(extensionFlipNote({ enabled: false }), /[Rr]estart/);
 });
 
 test('extensionFlipNote tells both directions what is still pending for running sessions', () => {
-  assert.match(extensionFlipNote({ enabled: false, bootEnabled: true }), /Gone from the board\./);
-  assert.match(extensionFlipNote({ enabled: false, bootEnabled: true }), /keep its tools until their next resume/);
-  assert.match(extensionFlipNote({ enabled: true, bootEnabled: true }), /Back on the board\./);
-  assert.match(extensionFlipNote({ enabled: true, bootEnabled: true }), /get its tools at their next resume/);
+  assert.match(extensionFlipNote({ enabled: false }), /^Off\./);
+  assert.match(extensionFlipNote({ enabled: false }), /keep its tools until their next resume/);
+  assert.match(extensionFlipNote({ enabled: true }), /^On\./);
+  assert.match(extensionFlipNote({ enabled: true }), /get its tools at their next resume/);
 });
 
 test('extensionFlipNote never throws on a missing pair', () => {
-  // An extension announced before bootEnabled existed reads as undefined; the
-  // off-branch is the safe fallback, since it promises nothing.
+  // The off-branch is the safe fallback for a call with nothing to read, since
+  // it promises nothing.
   assert.equal(typeof extensionFlipNote(), 'string');
   assert.equal(typeof extensionFlipNote({}), 'string');
-});
-
-test('setExtensionDefs snapshots bootEnabled, defaulting to on for a list that omits it', () => {
-  const defs = setExtensionDefs([
-    { id: 'live', label: 'Live', bootEnabled: true },
-    { id: 'pending', label: 'Pending', bootEnabled: false },
-    { id: 'legacy', label: 'Legacy' },
-  ]);
-  assert.deepEqual(defs.map((d) => d.bootEnabled), [true, false, true]);
-  setExtensionDefs([]);
 });

@@ -247,13 +247,15 @@ test('the install button is disabled while an install is running', () => {
 });
 
 test('the uninstall confirmation promises no data retention and only claims live code when it is live', () => {
-  const live = uninstallBodyText({ ...INSTALLED, enabled: true, bootEnabled: true });
+  // On and healthy is running RIGHT NOW — the registry is live, so there is no
+  // boot snapshot left to consult.
+  const live = uninstallBodyText({ ...INSTALLED, enabled: true });
   assert.match(live, /files are removed/);
   assert.match(live, /keeps running until the wrangler restarts/);
   assert.doesNotMatch(live, /reinstalling picks it back up/);
-  // Turned off, or quarantined, or never loaded this boot: there is no running
-  // code for a restart to clear, and saying there is was simply wrong.
-  for (const off of [{ enabled: false, bootEnabled: true }, { enabled: true, bootEnabled: false }, { enabled: true, bootEnabled: true, quarantine: 'bad manifest' }]) {
+  // Turned off or quarantined: there is no running code for a restart to clear,
+  // and saying there is was simply wrong.
+  for (const off of [{ enabled: false }, { enabled: true, quarantine: 'bad manifest' }]) {
     const text = uninstallBodyText({ ...INSTALLED, ...off });
     assert.doesNotMatch(text, /keeps running/, JSON.stringify(off));
     assert.match(text, /not running/);
@@ -332,16 +334,22 @@ test('progress never claims an install happened before consent ran', () => {
   for (const phase of ['cloning', 'resolving', 'installing']) {
     assert.doesNotMatch(progressText(phase), /Installed/, phase);
   }
-  assert.match(progressText('done', { id: 'notes' }), /Installed notes\. Restart the wrangler to finish\./);
+  // A live install is finished; only an update of an already-registered id
+  // still waits on a restart, and that is what carries `restartRequired`.
+  assert.match(progressText('done', { id: 'notes' }), /Installed notes and live\./);
+  assert.match(progressText('done', { id: 'notes' }), /pick up its tools when they next resume/);
+  assert.doesNotMatch(progressText('done', { id: 'notes' }), /Restart/);
+  assert.match(progressText('done', { id: 'notes', restartRequired: true }), /Installed notes\. Restart the wrangler to finish\./);
   assert.match(progressText('cancelled'), /Nothing was installed/);
   assert.match(progressText('failed', { message: 'no lockfile' }), /Failed: no lockfile/);
   assert.equal(progressText('disclosed'), '', 'the modal speaks for this phase');
 });
 
 test('a settled report fades, but anything still awaiting action does not', () => {
-  // "Cancelled." and "Failed." describe a moment that has passed; a finished
-  // install's line carries the restart button and must stay until the restart.
-  assert.deepEqual([...TRANSIENT_PROGRESS_PHASES].sort(), ['cancelled', 'failed']);
-  assert.equal(TRANSIENT_PROGRESS_PHASES.has('done'), false);
+  // "Cancelled." and "Failed." describe a moment that has passed — and so now
+  // does a finished install, in both paths: the update path's restart affordance
+  // rides `pendingInstall`, not this phase, so fading the line loses nothing.
+  assert.deepEqual([...TRANSIENT_PROGRESS_PHASES].sort(), ['cancelled', 'done', 'failed']);
+  assert.equal(TRANSIENT_PROGRESS_PHASES.has('done'), true);
   assert.equal(updateStatusText({ checking: true }), 'Checking…');
 });

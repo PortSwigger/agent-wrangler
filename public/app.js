@@ -206,6 +206,12 @@ function syncClientExtensions() {
   for (const { id } of extClientManifest) {
     if (!enabled.has(id) && clientExtensions.unload(id)) unmounted = true;
   }
+  // And anything still mounted that the manifest no longer lists at all — an
+  // uninstall drops the id from BOTH the announcement and the graph, so the
+  // loop above never sees it and its DOM would sit there until a reload.
+  for (const id of clientExtensions.loadedIds()) {
+    if (!extClientManifest.some((e) => e.id === id) && clientExtensions.unload(id)) unmounted = true;
+  }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
   if (unmounted) { extApi.requestPanelRender(); renderExtViews(); }
@@ -5841,7 +5847,17 @@ function connect() {
     else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
     else if (msg.type === 'ext-install-done') {
       extInstallBusy = false;
-      if (msg.installed) { extPendingInstall = msg.id; toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`); }
+      // An install is live now — the server registers and activates it in
+      // process, and re-announces, so its client half arrives on its own. Only
+      // an UPDATE of an already-registered id still needs the restart (two
+      // versions of one extension must never run at once), and only that case
+      // leaves a pending-install row with its restart button.
+      if (msg.installed) {
+        extPendingInstall = msg.restartRequired ? msg.id : '';
+        if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+        else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
+        else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
+      }
       remountExtensions();
     }
     else if (msg.type === 'ext-uninstall-done') {
