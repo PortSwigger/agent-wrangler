@@ -2806,6 +2806,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    vertical space to put it there. */
 .chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
 .chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
+/* Groups the context bar and the model chip so exactly ONE element carries
+   `margin-left: auto` — two flex items both set to auto would split the free
+   space between them (a visible gap opening up between the two), rather than
+   packing tightly together at the right edge. */
+.chat-foot-right { margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px; }
 /* A transient paste note borrows the hint line, so it needs to read as a status
    rather than as the permanent keyboard hint it replaced. */
 .chat-hint[data-note="1"] { color: var(--fg-muted); }
@@ -2852,7 +2857,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    records the model of one past turn. Deliberately a little stronger than that
    one: it is live state, not provenance. */
 .chat-current-model {
-  margin-left: auto; flex: none; max-width: 45%;
+  flex: none; max-width: 45%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
   color: var(--fg-muted); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
@@ -2873,6 +2878,30 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Buttons carry an absolute 12px from the global `button` rule, which would sit
    unchanged beside prose the size setting had scaled. */
 .chat-send, .chat-stop { font-size: 0.86em; }
+
+/* Context-window occupancy — informational only, unlike .chat-current-model,
+   so it is a plain div rather than a button: there is nothing to click through
+   to. Track/fill/label are built by chat-view.js (not static markup), same
+   reasoning as the live row in chat-dom.js. Hidden whenever the value cannot be
+   read at all (no fallback exists for this one, unlike the model) — see
+   server/control/handlers/chat.js. */
+.chat-context-bar {
+  display: flex; align-items: center; gap: 5px; flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  color: var(--fg-muted);
+}
+.chat-context-bar[hidden] { display: none; }
+.chat-context-bar-track {
+  flex: none; width: 38px; height: 5px; border-radius: 999px;
+  background: var(--border-muted); overflow: hidden;
+}
+/* Width is set inline per-render (the one thing that varies); colour comes from
+   the ancestor's `data-level`, matching the terminal statusline's own
+   50%/70% thresholds so the two never disagree about what "getting full" means. */
+.chat-context-bar-fill { height: 100%; background: var(--green); }
+.chat-context-bar[data-level="warn"] .chat-context-bar-fill { background: var(--snooze); }
+.chat-context-bar[data-level="danger"] .chat-context-bar-fill { background: var(--red); }
+.chat-context-bar-label { min-width: 2.6em; text-align: right; }
 
 /* The live row. It sits IN the stream as its last child (chat-view.js keeps it
    there) rather than above the composer, because what it answers is "the stream

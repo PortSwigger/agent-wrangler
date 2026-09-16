@@ -281,6 +281,39 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let graphModel = null;
   let graphSwitchable = false;
   let liveModel = null;
+  // Context-window occupancy has NO transcript-derived fallback (unlike the
+  // model) — see server/control/handlers/chat.js. So there is only ever one
+  // source, and it is null (chip hidden) whenever it cannot be read: a dormant
+  // Claude card, a Claude statusline without a context component, or (for
+  // Codex, whose value comes from the rollout+its own cached model metadata,
+  // never a pane) a model missing from that cache.
+  let liveContextPercent = null;
+  // Built here rather than as static markup in index.html, same reasoning as
+  // the live row in chat-dom.js: only the outer container needs a stable id,
+  // and building the track/fill/label once means the render function only
+  // ever touches a width, a text node and one data attribute.
+  const contextBarEl = document.getElementById('chat-context-bar');
+  const contextBarTrack = document.createElement('span');
+  contextBarTrack.className = 'chat-context-bar-track';
+  const contextBarFill = document.createElement('span');
+  contextBarFill.className = 'chat-context-bar-fill';
+  contextBarTrack.appendChild(contextBarFill);
+  const contextBarLabel = document.createElement('span');
+  contextBarLabel.className = 'chat-context-bar-label';
+  contextBarEl.appendChild(contextBarTrack);
+  contextBarEl.appendChild(contextBarLabel);
+
+  function renderContextBar() {
+    const pct = liveContextPercent;
+    contextBarEl.hidden = pct == null;
+    if (pct == null) return;
+    contextBarFill.style.width = `${pct}%`;
+    contextBarLabel.textContent = `${pct}%`;
+    // Same 50%/70% thresholds as the terminal statusline bar this mirrors, so
+    // the two surfaces never disagree about what "getting full" means.
+    contextBarEl.dataset.level = pct < 50 ? 'ok' : pct < 70 ? 'warn' : 'danger';
+    contextBarEl.setAttribute('title', `Context window ~${pct}% used`);
+  }
 
   function renderModel() {
     const label = liveModel || graphModel?.label;
@@ -845,6 +878,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
+      liveContextPercent = null;
       // The row is a child of the stream that was just cleared, so the handle is
       // dangling — dropping it here (rather than only in renderLive's not-working
       // branch) stops the next render re-appending a detached node and, worse,
@@ -857,6 +891,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
       renderModel();
+      renderContextBar();
       // Same reasoning as the model: this belongs to the session being left,
       // and the caller re-seeds it right after mount — otherwise a session
       // whose pane never died would flash the PREVIOUS one's exit output.
@@ -902,10 +937,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
+      liveContextPercent = null;
       live = null;
       renderLive();
       renderSuggestion();
       renderModel();
+      renderContextBar();
       renderExitNotice(null);
     },
     onChatReply(msg) {
@@ -942,7 +979,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (Number.isFinite(msg.lastTs)) lastTs = msg.lastTs;
       lastSuggestion = typeof msg.suggestion === 'string' && msg.suggestion ? msg.suggestion : null;
       liveModel = typeof msg.modelNow === 'string' && msg.modelNow ? msg.modelNow : null;
+      liveContextPercent = Number.isFinite(msg.contextPercent) ? msg.contextPercent : null;
       renderModel();
+      renderContextBar();
       renderLive();
       renderSuggestion();
       // Apply only forward progress. Two overlapping polls sent before either had

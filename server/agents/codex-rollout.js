@@ -5,6 +5,7 @@ import os from 'node:os';
 import { codexCostUsd, codexCostUsdByType } from '../pricing.js';
 
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
+const MODELS_CACHE_PATH = path.join(os.homedir(), '.codex', 'models_cache.json');
 
 function uuidFromName(name) {
   const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})\.jsonl$/);
@@ -255,6 +256,9 @@ function responseItemUserText(entry, p) {
 // Codex EventMsg payloads are a tagged union under `payload.type`. We read:
 //  - turn_context → the model id for pricing
 //  - token_count → usage accounting (nested under info.total_token_usage)
+//  - token_usage_record → a DIFFERENT top-level shape (both appear in the same
+//    real rollout) whose `usage` is this ONE call's actual size, not a running
+//    total — see codexContextPercent below, which is the one consumer.
 //  - user_message → first one becomes the summary (legacy shape; see above)
 function scanLine(line, state) {
   if (!line.trim()) return;
@@ -271,6 +275,10 @@ function scanLine(line, state) {
   }
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
+  // A DIFFERENT top-level shape from `token_count` above (both appear in the same
+  // real rollout) whose `usage` is this ONE call's actual size, not a running
+  // total — see codexContextWindow/analyzeRollout below, the one consumer.
+  if (kind === 'token_usage_record' && p.usage) state.lastCallUsage = p.usage;
   if (kind === 'task_started' && typeof entry.timestamp === 'string') {
     const timestamp = Date.parse(entry.timestamp) || null;
     if (state.startedAt == null) state.startedAt = timestamp;
@@ -318,8 +326,49 @@ function tokensFor(totals) {
   return tokens;
 }
 
-async function analyzeRollout(file, meta = null) {
-  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null };
+// Codex's OWN locally-cached model metadata (fetched from OpenAI, refreshed by
+// the CLI itself — never hand-copied here, unlike Claude's model list which
+// this codebase owns directly). Read is cheap and self-invalidating on the
+// file's mtime, so a Codex CLI update that changes a model's window is picked
+// up on the very next call with no restart.
+let modelsCacheState = null; // { path, mtimeMs, byModel }
+
+function loadCodexModelsCache(cachePath) {
+  let mtimeMs;
+  try { mtimeMs = fs.statSync(cachePath).mtimeMs; } catch { return null; }
+  if (modelsCacheState && modelsCacheState.path === cachePath && modelsCacheState.mtimeMs === mtimeMs) {
+    return modelsCacheState.byModel;
+  }
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')); } catch { return null; }
+  const byModel = new Map();
+  for (const m of Array.isArray(parsed?.models) ? parsed.models : []) {
+    if (m && typeof m.slug === 'string' && Number.isFinite(m.context_window)) byModel.set(m.slug, m.context_window);
+  }
+  modelsCacheState = { path: cachePath, mtimeMs, byModel };
+  return byModel;
+}
+
+// Read fresh (bypassing the mtime cache above) purely to fold into
+// analyzeCodex's own cache signature below — see the comment there for why.
+function modelsCacheMtime(cachePath) {
+  try { return fs.statSync(cachePath).mtimeMs; } catch { return 0; }
+}
+
+// The model's actual, CURRENTLY-enforced context window — deliberately
+// `context_window`, never the cache's separate (and much larger) `max_context_window`.
+// The latter only applies once the `context_management`/`token_budget` CLI
+// features are on, which this build ships disabled; verified empirically too —
+// every real auto-compaction on this machine fired at ~85-95% of `context_window`,
+// nowhere near `max_context_window`. A model absent from the cache (never
+// fetched) returns null rather than a guess.
+export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
+  if (!modelSlug) return null;
+  return loadCodexModelsCache(cachePath)?.get(modelSlug) ?? null;
+}
+
+async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH) {
+  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -331,6 +380,19 @@ async function analyzeRollout(file, meta = null) {
   }
   const model = state.model || 'gpt-5.5-codex';
   const totals = totalsFor(model, state.usage || {});
+  // Context occupancy — how full the window is RIGHT NOW — is deliberately NOT
+  // derived from the cumulative `usage`/`totals` above (that only ever grows and
+  // would read as ~100% almost immediately). `lastCallUsage.input_tokens` is the
+  // size of the single most recent call, the same quantity Claude's own
+  // statusline bar computes for the same purpose. This is THIS rollout's own
+  // occupancy — never merged across a sub-agent family (see analyzeCodexUncached):
+  // a sub-agent's context window is a wholly separate conversation.
+  const contextModel = state.currentModel || state.model;
+  const windowSize = codexContextWindow(contextModel, modelsCachePath);
+  const lastInput = state.lastCallUsage?.input_tokens;
+  const contextPercent = (windowSize && Number.isFinite(lastInput))
+    ? Math.min(100, Math.max(0, Math.round((lastInput / windowSize) * 100)))
+    : null;
   return {
     usd: codexCostUsd(totals),
     costByType: codexCostUsdByType(totals),
@@ -342,18 +404,19 @@ async function analyzeRollout(file, meta = null) {
     lastActivity,
     startedAt: state.startedAt,
     endedAt: state.endedAt && state.endedAt >= state.lastTaskStartedAt ? state.endedAt : null,
+    contextPercent,
   };
 }
 
-async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null } = {}) {
+async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null, modelsCachePath = MODELS_CACHE_PATH } = {}) {
   const family = index?.files ? index : index
     ? { files: index, metaById: new Map(), childrenByParent: new Map() }
     : await cachedFamilyIndex(sessionsDir);
   const files = family.files;
   const file = files?.get(sessionId) || null;
-  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
-  const own = await analyzeRollout(file, family.metaById?.get(sessionId));
-  if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null };
+  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
+  const own = await analyzeRollout(file, family.metaById?.get(sessionId), modelsCachePath);
+  if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
   const totals = {};
   mergeTotals(totals, own.totals);
   const subTotals = {};
@@ -386,6 +449,9 @@ async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, i
     subAgents,
     summary: own.summary,
     lastActivity: own.lastActivity,
+    // THIS session's own occupancy only — never merged across the sub-agent
+    // family above (a sub-agent's context window is a separate conversation).
+    contextPercent: own.contextPercent,
   };
 }
 
@@ -394,12 +460,18 @@ const analysisCache = new Map();
 export async function analyzeCodex(sessionId, opts = {}) {
   if (opts.index) return analyzeCodexUncached(sessionId, opts);
   const sessionsDir = opts.sessionsDir || CODEX_SESSIONS;
+  const modelsCachePath = opts.modelsCachePath || MODELS_CACHE_PATH;
   const family = await cachedFamilyIndex(sessionsDir);
-  const signature = familySignature(sessionId, family);
+  // Folds in the models-cache file's own mtime, not just the rollout family's —
+  // contextPercent's denominator lives there, and nothing about the rollout
+  // family changes when Codex refreshes a model's cached context_window. Without
+  // this, a stale contextPercent would sit in the cache indefinitely (until some
+  // unrelated rollout activity happened to bump the signature for other reasons).
+  const signature = familySignature(sessionId, family) + '\0' + modelsCacheMtime(modelsCachePath);
   const key = sessionsDir + '\0' + sessionId;
   const cached = analysisCache.get(key);
   if (cached?.signature === signature) return cached.result;
-  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, index: family });
+  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, modelsCachePath, index: family });
   if (result.usd != null) analysisCache.set(key, { signature, result });
   return result;
 }
