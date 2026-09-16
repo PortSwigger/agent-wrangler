@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -421,4 +421,54 @@ test('paneModelLabel takes the last status bar, which is the live one', () => {
 // A wrong label misreports live state, so an unrecognisable one is dropped.
 test('paneModelLabel rejects an implausibly long first segment', () => {
   assert.equal(paneModelLabel(`  ◆ ${'x'.repeat(60)} | █ 7% | y`), null);
+});
+
+// The statusline-builder plugin lets components be individually selected and
+// reordered (skills/setup/SKILL.md), so the model badge is not always first.
+test('paneModelLabel finds the model segment wherever it sits on the line', () => {
+  assert.equal(paneModelLabel('███░░ 7% | ◆ Sonnet 5 | 📁 dir'), 'Sonnet 5');
+  assert.equal(paneModelLabel('📁 dir | ⏱ $1.50 | ✦ Opus 5'), 'Opus 5');
+});
+
+// --- paneContextPercent: the context-window bar, which has no other source ---
+
+test('paneContextPercent reads the percentage out of the context bar', () => {
+  const E = '\x1b';
+  const pane = [
+    `${E}[39m❯ `,
+    `${E}[39m  ${E}[38;5;153m◆ Sonnet 5${E}[38;5;246m ${E}[38;5;248m|${E}[38;5;246m ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`,
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(paneContextPercent(pane), 7);
+});
+
+test('paneContextPercent is position-independent, like paneModelLabel', () => {
+  assert.equal(paneContextPercent('◆ Sonnet 5 | ⏱ $1.50 | ███░░░░░░░░░░░░ 20%'), 20);
+  assert.equal(paneContextPercent('███░░░░░░░░░░░░ 20% | ◆ Sonnet 5'), 20);
+});
+
+test('paneContextPercent works with no other component on the line', () => {
+  assert.equal(paneContextPercent('█████░░░░░░░░░░ 35%'), 35);
+});
+
+test('paneContextPercent handles the 0% and 100% edges', () => {
+  assert.equal(paneContextPercent('░░░░░░░░░░░░░░░ 0%'), 0);
+  assert.equal(paneContextPercent('███████████████ 100%'), 100);
+});
+
+test('paneContextPercent ignores lines that are not the status bar', () => {
+  assert.equal(paneContextPercent('we discussed a | b and 50 percent of it'), null);
+  assert.equal(paneContextPercent('just some output'), null);
+  assert.equal(paneContextPercent(''), null);
+  assert.equal(paneContextPercent(null), null);
+});
+
+test('paneContextPercent returns null when the context component is not selected', () => {
+  // Model-only statusline, no bar anywhere.
+  assert.equal(paneContextPercent('◆ Sonnet 5 | ⎇ main | 📁 dir'), null);
+});
+
+test('paneContextPercent takes the last status bar, which is the live one', () => {
+  const pane = ['█ 5%', 'chatter', '███ 40%'].join('\n');
+  assert.equal(paneContextPercent(pane), 40);
 });

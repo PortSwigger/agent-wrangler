@@ -1,8 +1,9 @@
 import fsp from 'node:fs/promises';
 import { findConversationFile as realFindConversationFile } from '../../conversation-file.js';
 import { createChatScanner } from '../../chat-events.js';
-import { capturePaneStyled, paneModelLabel } from '../../tmux-scraper.js';
+import { capturePaneStyled, paneModelLabel, paneContextPercent } from '../../tmux-scraper.js';
 import { parseGhostSuggestion } from '../../ghost-suggestion.js';
+import { adapterFor } from '../../agents/index.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
 // bounds the TAIL; without this bound, opening a months-old session parses and
@@ -167,10 +168,23 @@ export const chatHandler = {
     // the last assistant message's model — keeps naming the OLD model until the
     // next turn runs, and the chip ends up contradicting the pane beside it.
     const modelNow = pane ? paneModelLabel(pane) : null;
+    // Context-window occupancy. Unlike the model, this has no transcript-derived
+    // fallback at all — it is null (chip hidden) whenever it cannot be read, never
+    // a guess. Claude: scraped off the SAME pane capture above, when the user's
+    // own statusline renders a context bar. Codex: computed from the rollout's
+    // own per-call usage against Codex's own cached model metadata — no pane
+    // involved, so it works even for a dormant Codex card (see codex-rollout.js).
+    // ctx seam for tests only, like findConversationFile/capturePaneStyled above —
+    // production always calls the real Codex adapter, which reads the real rollout
+    // and the real ~/.codex/models_cache.json.
+    const analyzeCodex = ctx.analyzeCodex || ((id) => adapterFor('codex').analyze(id));
+    const contextPercent = agent === 'claude'
+      ? (pane ? paneContextPercent(pane) : null)
+      : (await analyzeCodex(convId).catch(() => null))?.contextPercent ?? null;
 
     const file = await findConversationFile(convId, agent);
     if (!file) {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
       return;
     }
 
@@ -178,7 +192,7 @@ export const chatHandler = {
     try {
       size = (await fsp.stat(file)).size;
     } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
       return;
     }
 
@@ -202,7 +216,7 @@ export const chatHandler = {
     } catch {
       // Deleted/unreadable between the stat above and this open — degrade the
       // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, epoch: epochFor(convId) });
+      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
       return;
     }
     try {
@@ -297,7 +311,7 @@ export const chatHandler = {
         // value: the client is told to rebuild in the same message that would
         // otherwise have appended events the rewind just killed.
         if (rewound) bumpEpoch(convId);
-        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion, modelNow, epoch: epochFor(convId) });
+        ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events, offset, more: windowed, pending: scanner ? scanner.pending() : null, lastTs: scanner ? scanner.lastTs() : null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
         return;
       }
     } finally {
