@@ -30,6 +30,8 @@ export function normalisePr(link) {
   if (typeof link.checkStatusFetchedAt === 'string') out.checkStatusFetchedAt = link.checkStatusFetchedAt;
   if (typeof link.dirty === 'boolean') out.dirty = link.dirty;
   if (typeof link.unresolvedCount === 'number') out.unresolvedCount = link.unresolvedCount;
+  if (typeof link.rebaseFailureKey === 'string' && link.rebaseFailureKey) out.rebaseFailureKey = link.rebaseFailureKey;
+  if (typeof link.rebaseBlockedKey === 'string' && link.rebaseBlockedKey) out.rebaseBlockedKey = link.rebaseBlockedKey;
   return out;
 }
 

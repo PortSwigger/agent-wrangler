@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
+import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prRebaseFailurePaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus }.
 const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1 } = {}) =>
@@ -258,6 +258,18 @@ test('prDirtyPaneNudge omits the (<repo>) segment entirely for an enterprise/mal
   const line = prDirtyPaneNudge({ number: 7, url });
   assert.equal(line, '[Agent Wrangler] PR #7: merge conflicts with the base branch — needs a rebase: ' + url);
   assert.doesNotMatch(line, /\(\)/);
+});
+
+test('prRebaseFailurePaneNudge distinguishes a conflict from a safety refusal', () => {
+  const ev = { number: 42, url: 'https://github.com/o/agent-wrangler/pull/42' };
+  assert.equal(prRebaseFailurePaneNudge(ev, { kind: 'conflict' }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): automatic rebase stopped on conflicts — resolve the rebase in this checkout: ' + ev.url);
+  assert.equal(prRebaseFailurePaneNudge(ev, { kind: 'failed', reason: 'dirty-worktree' }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): automatic rebase did not run — working tree is not clean: ' + ev.url);
+  assert.equal(prRebaseFailurePaneNudge(ev, { kind: 'failed', reason: 'unexpected-error' }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): automatic rebase did not run — an unexpected local Git error occurred: ' + ev.url);
+  assert.equal(prRebaseFailurePaneNudge(ev, { kind: 'failed', reason: 'push-failed-local-rewrite' }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): automatic rebase needs manual reconciliation — the push failed and the rewritten local branch could not be safely restored; reconcile it manually: ' + ev.url);
 });
 
 // prLabel/prPaneLine: the shared composition every PR pane line (checks, dirty,

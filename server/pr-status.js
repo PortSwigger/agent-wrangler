@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 
-// The jq derivation runs INSIDE gh (-q), so stdout is four tab-separated fields:
-// `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>`. The PR's own state
+// The jq derivation runs INSIDE gh (-q), so stdout starts with four tab-separated
+// status fields, followed by the immutable head/base identity used by auto-rebase.
 // (OPEN/MERGED/CLOSED), a *rollup word* derived from .statusCheckRollup, and the
 // two free fields that turn the rollup into an authoritative checkStatus.
 //
@@ -28,7 +28,7 @@ const JQ = `
       elif ($s|any(. as $x | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"]|index($x))) then "failing"
       elif ($s|any(. as $x | ["PENDING","IN_PROGRESS","QUEUED","EXPECTED"]|index($x))) then "pending"
       else "passing" end ) as $rollup
-  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")"`;
+  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")\\t\\(.headRefName // "")\\t\\(.headRefOid // "")\\t\\(.baseRefName // "")\\t\\(.baseRefOid // "")\\t\\(.headRepository.nameWithOwner // "")\\t\\(.isCrossRepository // false)"`;
 
 // The raw word the JQ derives from the rollup alone (validated on input). The
 // final checkStatus deriveCheckStatus emits is a wider vocabulary — it also
@@ -65,7 +65,7 @@ function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision) {
 // Default runner: run `gh pr view <url> --json <fields> -q <jq>`.
 function defaultRun(url) {
   return new Promise((resolve) => {
-    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision',
+    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision,headRefName,headRefOid,baseRefName,baseRefOid,headRepository,isCrossRepository',
       '-q', JQ], { timeout: 15000 },
       (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
   });
@@ -85,15 +85,30 @@ export async function fetchPrStatus(url, run = defaultRun) {
   try {
     const { code, stdout } = await run(url);
     if (code !== 0) return null;
-    // Strip only the trailing newline, not via trim(): reviewDecision (the last
-    // field) is empty when no review is required, and trim() would eat the tab.
+    // Strip only the trailing newline, not via trim(): any trailing optional
+    // field can be empty, and trim() would eat its tab separator.
     const parts = String(stdout).replace(/\r?\n$/, '').split('\t');
-    if (parts.length !== 4) return null;
-    const [state, rollup, mergeStateStatus, review] = parts;
+    if (parts.length !== 4 && parts.length !== 10) return null;
+    const [state, rollup, mergeStateStatus, review, headRef, headOid, baseRef, baseOid, headRepo, cross] = parts;
     if (!VALID_STATE.has(state) || !ROLLUP.has(rollup)) return null;
     const reviewDecision = VALID_REVIEW.has(review) ? review : '';
     const checkStatus = deriveCheckStatus(rollup, mergeStateStatus, reviewDecision);
-    return { state, checkStatus, reviewDecision, dirty: mergeStateStatus === 'DIRTY' };
+    const result = {
+      state,
+      checkStatus,
+      reviewDecision,
+      dirty: mergeStateStatus === 'DIRTY',
+    };
+    const baseRepo = /^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url)?.[1];
+    if (headRef && baseRef && headRepo && baseRepo
+        && /^[0-9a-f]{40}$/.test(headOid) && /^[0-9a-f]{40}$/.test(baseOid)) {
+      result.rebase = {
+        head: { repo: headRepo, ref: headRef, oid: headOid },
+        base: { repo: baseRepo, ref: baseRef, oid: baseOid },
+        crossRepository: cross === 'true',
+      };
+    }
+    return result;
   } catch {
     return null;
   }

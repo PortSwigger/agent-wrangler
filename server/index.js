@@ -26,10 +26,12 @@ import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
-import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
+import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prRebaseFailurePaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
+import { attemptLinkedPrRebase, linkedPrCheckoutKey } from './pr-rebase.js';
+import { applyFetchedStatusBeforeAutoRebase, createPrAutoRebaser, statusAfterAutoRebase } from './pr-auto-rebase.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
 import { listStyles } from './styles.js';
@@ -429,7 +431,8 @@ async function runPrStatusSweep(only) {
   // merged/closed line here, plus all three transition loops), so one tick can't
   // gate two of them on different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  for (const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } of links) {
+  for (const link of links) {
+    const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } = link;
     const res = await fetchPrStatus(url);
     if (res == null) continue;
     const store = scope === 'task' ? taskStore : sessionManager;
@@ -458,15 +461,24 @@ async function runPrStatusSweep(only) {
     // like every thread just got resolved.
     const unresolvedCount = (await fetchUnresolvedThreadCount(url)) ?? prevUnresolvedCount;
     const at = new Date().toISOString();
-    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount)) changed = true;
+    await applyFetchedStatusBeforeAutoRebase(
+      () => {
+        if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount)) changed = true;
+      },
+      () => prAutoRebaser.schedule({
+        link,
+        entry: sessionManager.entryFor(ownerId),
+        status: res,
+      }),
+    );
   }
+  const current = [
+    ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
+    ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
+  ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   // Detect check-status transitions only on the full sweep (the on-attach fast
   // path skips other links, so its baseline would be incomplete and re-fire).
   if (!only) {
-    const current = [
-      ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
-      ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
-    ];
     // Collected so the unresolved-comment loop below can skip its OWN pane
     // nudge for any link that just got a checkStatus nudge this same tick (see
     // that loop for why: a "Request changes" review with inline comments fires
@@ -475,7 +487,7 @@ async function runPrStatusSweep(only) {
     // branch already guards against for merge-vs-nudge).
     const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
-      checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
+      const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
                   url: ev.url, number: ev.number, status: ev.checkStatus });
       const entry = sessionManager.entryFor(ev.ownerId);
@@ -485,6 +497,7 @@ async function runPrStatusSweep(only) {
       // behaves like an idle-but-live one; the auto-merge confirmation line below
       // stays board-only when dormant (terminal/informational — not expanded here).
       const { merge: willMerge, nudge } = planCheckTransition(ev, entry, fixPrDefault);
+      if (willMerge || nudge) checkStatusKeys.add(key);
       if (nudge) {
         // A live session gets the nudge in its pane; a DORMANT one (entry, no tmux)
         // is woken and handed the SAME nudge as its resume intent — dormancy is only
@@ -518,9 +531,11 @@ async function runPrStatusSweep(only) {
     }
     // Detect dirty (merge-conflict) transitions — own diff/baseline from
     // diffCheckStatus (notifier.js) since dirty is orthogonal to checkStatus.
-    // Same board-toast-always / pane-nudge-gated shape as the checks transition
-    // above; there is no auto-merge branch (a DIRTY PR can't be merged).
+    // Same board-toast / pane-nudge shape as the checks transition above; there
+    // is no auto-merge branch (a DIRTY PR can't be merged). This transition is
+    // independent of auto-rebase admission, so a declined attempt cannot consume it.
     for (const ev of diffDirty(current)) {
+      const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       broadcast({ type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number });
       const entry = sessionManager.entryFor(ev.ownerId);
       if (planDirtyTransition(ev, entry, fixPrDefault)) {
@@ -894,6 +909,64 @@ async function rebuildOnce() {
 }
 
 const rebuild = createRebuildCoalescer(rebuildOnce);
+
+const prAutoRebaser = createPrAutoRebaser({
+  attempt: attemptLinkedPrRebase,
+  checkoutKey: linkedPrCheckoutKey,
+  checkoutIdleGuard: async ({ lockKey }) => {
+    return async () => {
+      const sessions = (lastGraph?.sessions || []).filter((session) => session.cwd);
+      const keys = await Promise.all(sessions.map(async (session) => ({
+        session,
+        key: await linkedPrCheckoutKey(session.cwd),
+      })));
+      return keys
+        .filter((item) => item.key === lockKey)
+        .every(({ session }) => !session.managed || (session.status === 'idle' && !session.hasBackgroundShell));
+    };
+  },
+  isEligible: (link) => {
+    const entry = sessionManager.entryFor(link.ownerId);
+    return Boolean(entry?.autoRebaseLinkedPr
+      && entry.links?.some((stored) => linkMatches(stored, { type: 'pr', url: link.url })));
+  },
+  sessionFor: sessionFromGraph,
+  rememberFailure: (sessionId, url, fingerprint) => {
+    sessionManager.rememberPrRebaseFailure(sessionId, url, fingerprint);
+  },
+  rememberBlocked: (sessionId, url, fingerprint) => {
+    sessionManager.rememberPrRebaseBlocked(sessionId, url, fingerprint);
+  },
+  notify: (link, result, entry) => {
+    broadcast({
+      type: 'pr-rebase-failed',
+      scope: link.scope,
+      sessionId: link.ownerId,
+      url: link.url,
+      number: link.number,
+      reason: result.reason,
+      conflict: result.kind === 'conflict',
+    });
+    deliverPrNudge(link, entry, {
+      message: prRebaseFailurePaneNudge(link, result), tmuxFor, socketFor, paneDeferral,
+      sessionManager, memoryStore, taskStore, onError: onPrWakeError,
+    }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+  },
+  onResult: ({ link, status }, result) => {
+    if (result?.kind !== 'rebased') return;
+    const storedStatus = statusAfterAutoRebase(status, result);
+    const current = sessionManager.prLinks().find((candidate) => candidate.ownerId === link.ownerId && candidate.url === link.url);
+    if (!current) return;
+    if (sessionManager.updateLinkStatus(
+      link.ownerId,
+      link.url,
+      storedStatus.checkStatus,
+      storedStatus.dirty,
+      new Date().toISOString(),
+      current.unresolvedCount,
+    )) rebuild().catch(() => {});
+  },
+});
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();

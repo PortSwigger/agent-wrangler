@@ -1991,6 +1991,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    A solid --green fill reads too low-contrast against --green-fg text (they're close in
    lightness, unlike --purple/--purple-fg on .wt); a tinted wash keeps it readable. */
 .card-tag.automerge { color: var(--green-fg); background: color-mix(in srgb, var(--green) 18%, var(--surface-2)); }
+.card-tag.autorebase { color: var(--purple-fg); background: color-mix(in srgb, var(--purple) 22%, var(--surface-2)); }
 .card-tag.runtime-dc { color: var(--rt-fg); background: color-mix(in srgb, var(--rt) 18%, var(--surface-2)); }
 /* The dc chip doubles as a bring-up indicator (see devcontainerChip in cards.js):
    'starting' keeps the dc cyan but reuses the card bar's brightness throb to read
