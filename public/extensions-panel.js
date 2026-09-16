@@ -38,6 +38,13 @@ export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full 
 // thing this panel did.
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
 
+// An uninstall gets its OWN note, because "to finish" would be a lie there: the
+// row, tools, handlers, stores, sweeps and client asset are all gone already and
+// the reader can see that. The only thing left is the module Node cannot unload
+// and whatever its top-level code started, so the note says exactly that rather
+// than implying the uninstall is half-done.
+export const UNINSTALL_RESTART_NOTE = 'Its code stays in memory until the wrangler restarts.';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -122,8 +129,12 @@ export function extensionRowEl(entry, {
     note.append(el('div', 'ext-row-quarantine-help', 'It is not running. Fix or reinstall it; a builtin needs a restart.'));
     copy.append(note);
   }
+  // Only ever the transitional frame: an uninstall deregisters the extension, so
+  // the row survives just the gap between the reply and the graph that drops it
+  // from `entries`. The durable affordance is the head's restart button, which
+  // outlives this row.
   if (pendingRemoval) {
-    copy.append(noteEl('ext-row-note', `Uninstalled. ${RESTART_NOTE}`));
+    copy.append(noteEl('ext-row-note', `Uninstalled. ${UNINSTALL_RESTART_NOTE}`));
   } else if (status) {
     copy.append(noteEl('ext-row-note', updateStatusText(status)));
   }

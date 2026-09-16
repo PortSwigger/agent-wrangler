@@ -146,7 +146,7 @@ test('an uninstalled extension says so on its own row, and draws no button of it
   withDom(() => {
     const row = extensionRowEl(INSTALLED, { pendingRemoval: true });
     assert.ok(texts(row).some((t) => /Uninstalled/.test(t)));
-    assert.ok(texts(row).some((t) => /Restart the wrangler to finish/.test(t)));
+    assert.ok(texts(row).some((t) => /stays in memory until the wrangler restarts/.test(t)));
     // The restart itself is one button in the panel head — a whole-wrangler
     // action, not a per-extension one, and several pending rows would otherwise
     // each draw the same button.
@@ -181,7 +181,7 @@ test('the restart button sits beside Check for updates, and only while something
 test('no restart button where the server cannot restart itself — just the row\'s sentence', () => {
   withDom(() => {
     const panel = extensionsPanelEl({ entries: [INSTALLED], pendingRemoval: ['notes'], canRestart: false });
-    assert.ok(texts(panel).some((t) => /Restart the wrangler to finish/.test(t)));
+    assert.ok(texts(panel).some((t) => /stays in memory until the wrangler restarts/.test(t)));
     assert.equal(byClass(panel, 'ext-btn-warn').length, 0);
   });
 });

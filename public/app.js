@@ -33,7 +33,7 @@ import {
 } from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { extensionsPanelEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -5854,6 +5854,12 @@ function connect() {
       // leaves a pending-install row with its restart button.
       if (msg.installed) {
         extPendingInstall = msg.restartRequired ? msg.id : '';
+        // Reinstalling an id uninstalled earlier in THIS process: only a `config`
+        // frame clears the removal set, so without this the freshly installed —
+        // and live — row comes back struck through under its own "Uninstalled"
+        // note, and keeps the head's restart button up for a removal that has
+        // been superseded.
+        extPendingRemoval.delete(msg.id);
         if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
@@ -5862,7 +5868,7 @@ function connect() {
     }
     else if (msg.type === 'ext-uninstall-done') {
       extPendingRemoval.add(msg.id);
-      toast(`Uninstalled ${msg.id}. ${EXT_RESTART_NOTE}`);
+      toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
       remountExtensions();
     }
     else if (msg.type === 'ext-updates') {
