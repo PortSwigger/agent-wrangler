@@ -87,7 +87,7 @@ const dimensionMap = (bucket) => dimensionMapOf(selectedBucket(bucket), dimensio
 const rankedMembers = () => {
   if (dimension() === 'type') return members();
   if (dimension() === 'model' && !state.provider) {
-    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai']);
+    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai'], 1, CAT_VARS.length);
   }
   return rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0);
 };

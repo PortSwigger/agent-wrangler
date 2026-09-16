@@ -44,22 +44,23 @@ test('rankMembers orders by the active metric, not always $', () => {
 });
 
 test('rankProviderAwareModels reserves one visible slot for each provider', () => {
-  const members = ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'gpt-a', 'gpt-b', 'gpt-c']
+  const members = ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'claude-e', 'claude-f', 'claude-g', 'claude-h', 'gpt-a', 'gpt-b']
     .map((key) => ({ key, name: key }));
   const bucket = {
     byModel: {
       'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70),
-      'gpt-a': cell(10), 'gpt-b': cell(5), 'gpt-c': cell(3),
+      'claude-e': cell(60), 'claude-f': cell(50), 'claude-g': cell(40), 'claude-h': cell(30),
+      'gpt-a': cell(10), 'gpt-b': cell(5),
     },
     providers: {
-      anthropic: { byModel: { 'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70) } },
-      openai: { byModel: { 'gpt-a': cell(10), 'gpt-b': cell(5), 'gpt-c': cell(3) } },
+      anthropic: { byModel: { 'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70), 'claude-e': cell(60), 'claude-f': cell(50), 'claude-g': cell(40), 'claude-h': cell(30) } },
+      openai: { byModel: { 'gpt-a': cell(10), 'gpt-b': cell(5) } },
     },
   };
 
-  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai']);
+  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai'], 1, CATS.length);
 
-  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'gpt-a', 'claude-b', 'claude-c', 'claude-d', 'gpt-b']);
+  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'claude-e', 'gpt-a']);
 });
 
 test('displaySlots colours the first six members and folds the rest', () => {

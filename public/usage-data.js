@@ -74,7 +74,7 @@ export function rankMembers(members, buckets, metric, dimension) {
   }).sort((a, b) => b.value - a.value);
 }
 
-export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider = 1) {
+export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider = 1, maxSlots = Infinity) {
   const overall = rankMembers(members, buckets, metric, 'model').filter((m) => m.value > 0);
   const reserved = new Set();
   for (const provider of providers) {
@@ -82,6 +82,10 @@ export function rankProviderAwareModels(members, buckets, metric, providers, slo
     for (const member of rankMembers(members, providerBuckets, metric, 'model').slice(0, slotsPerProvider)) {
       if (member.value > 0) reserved.add(member.key);
     }
+  }
+  for (const member of overall) {
+    if (reserved.size >= maxSlots) break;
+    reserved.add(member.key);
   }
   return [...overall.filter((m) => reserved.has(m.key)), ...overall.filter((m) => !reserved.has(m.key))];
 }
