@@ -419,11 +419,20 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.dir) out.dirs[ext.id] = ext.dir;
   // Omitted rather than nulled when absent, so the announcement a stock
   // install sends is byte-identical to the pre-styles one.
+  //
+  // An INSTALLED extension's asset URLs carry its pinned commit as `?v=`, which
+  // a builtin (no provenance) has nothing to add and so keeps the bare path.
+  // The browser caches an ES module per URL for the life of the page, so a
+  // reinstall or an update of the same id would otherwise re-announce a URL the
+  // tab has already resolved and silently re-register the OLD client half —
+  // the mirror of the `?t=` the server's own import is cache-busted with. The
+  // static route splits the query off before resolving, so it costs nothing.
+  const assetVersion = ext.provenance?.sha ? `?v=${ext.provenance.sha.slice(0, 12)}` : '';
   if (ext.client || ext.styles) {
     out.clientManifest.push({
       id: ext.id,
-      ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) } : {}),
-      ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) } : {}),
+      ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) + assetVersion } : {}),
+      ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) + assetVersion } : {}),
       // The control types this extension's BROWSER half may send, carried on
       // the connect announcement as well as on graph.extensions because the
       // announcement lands before the first graph — and slots.js fails closed

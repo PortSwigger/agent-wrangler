@@ -617,6 +617,28 @@ test('_manifests holds a boot-DISABLED extension\'s manifest — the enable path
   assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool']);
 });
 
+// The browser caches an ES module per URL for the life of the page, and the
+// announcement is now re-sent on every registry change — so a reinstall of the
+// same id would re-register the OLD client half unless the URL moves with the
+// commit. A builtin has no commit and keeps the bare path.
+test('an installed extension\'s asset URLs carry its pinned commit; a builtin\'s do not', () => {
+  const out = loadExtensions({
+    cfg: {},
+    builtin: [
+      manifest({ client: 'public/index.js', styles: 'public/x.css' }),
+      manifest({
+        id: 'bought', label: 'Bought', dir: path.join(HERE, 'bought'), client: 'public/index.js',
+        stores: {}, handlers: [], tools: [], skills: [], graph: null, session: {},
+        external: true, provenance: { id: 'bought', sha: 'abcdef0123456789abcdef' },
+      }),
+    ],
+  });
+  assert.deepEqual(out.clientManifest.map((c) => [c.id, c.client, c.styles || null]), [
+    ['fake', '/ext/fake/index.js', '/ext/fake/x.css'],
+    ['bought', '/ext/bought/index.js?v=abcdef012345', null],
+  ]);
+});
+
 test('a duplicate id STILL fails while the registry holds it', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
   assert.throws(() => registerExtension(out, manifest(), { cfg: {} }), /duplicate extension id/);

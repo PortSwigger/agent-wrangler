@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { validateManifest } from '../../extensions/index.js';
 import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord } from '../../extensions/provenance.js';
-import { unconsentedCapabilities } from '../../extensions/external.js';
+import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { log } from '../../log.js';
 
@@ -21,10 +21,16 @@ import { log } from '../../log.js';
 // server. Nothing here sandboxes anything, and no copy anywhere may imply it
 // does.
 //
-// Newly installed code loads at the NEXT SERVER START — the same restart
-// semantics the existing `enabled && !bootEnabled` case has, reusing
-// extensionFlipNote's vocabulary rather than inventing a second way of saying
-// it. Uninstall is symmetric: the code stays live until restart.
+// WHEN EACH OF THESE TAKES EFFECT, because the three differ and the copy has to
+// say so. A FRESH install registers and activates in this process: the row, its
+// tools, handlers, stores and client asset are all live before the reply lands.
+// An UPDATE — any id already carrying a row — deliberately keeps RESTART
+// semantics: Node cannot unload the old module, so activating the new one would
+// run two versions of one extension at once, which is worse than waiting.
+// UNINSTALL deactivates and deregisters immediately but still asks for a restart
+// to reclaim, for the same reason in reverse. The one lag common to all three is
+// an ALREADY-RUNNING agent's MCP tools, whose `--allowedTools` is baked into its
+// launch argv and only changes at its next resume.
 
 // ONE install at a time per instance, refused rather than queued: two clones
 // racing into the same staging root, or two `npm ci` runs against one tree, has
@@ -198,6 +204,46 @@ function assertManifestMatchesDeclaration(manifest, declared) {
   }
 }
 
+// The fresh-install half: import what was just placed on disk and bring it up in
+// this process. Deliberately re-runs the checks BOOT would have run rather than
+// trusting the staged manifest — `importViolation` before the import (a static
+// import of a server core module cycles the adapters through the server, and
+// after the import it is already too late) and `admitExternal` after it, so an
+// install can never admit something the next boot would quarantine.
+//
+// ROLLS BACK COMPLETELY on any failure: the registry, the directory and the
+// provenance record all go, so a manifest whose store factory throws leaves the
+// board exactly as it was. Rethrows into the caller's failure path, which
+// reports it and releases the lock.
+async function goLive(ctx, id, dest) {
+  let registered = false;
+  try {
+    const violation = importViolation(dest);
+    if (violation) throw new Error(`Refusing to load it: ${violation}`);
+    // Cache-busted: a reinstall of the same id AFTER an uninstall would
+    // otherwise get the module already in this process's ESM cache, which is
+    // the version that was just deleted from disk.
+    const mod = await import(`${pathToFileURL(path.join(dest, 'index.js')).href}?t=${Date.now()}`);
+    const admitted = admitExternal(mod?.default, { id, dir: dest, external: true, provenance: recordFor(id) });
+    if (!admitted.ok) throw new Error(admitted.quarantine);
+    const entry = ctx.ext.register(admitted.entry);
+    registered = true;
+    // An extension config says is OFF is registered and inactive — the same end
+    // state a restart would reach, and what the toggle then turns on.
+    if (entry.enabled) ctx.ext.activate(id);
+    ctx.ext.changed();
+    return entry;
+  } catch (err) {
+    if (registered) {
+      ctx.ext.unregister(id, { remove: true });
+      ctx.ext.changed();
+    }
+    rmQuiet(dest);
+    removeRecord(id);
+    throw err;
+  }
+}
+
 async function loadStagedManifest(dir) {
   // A cache-busting query is what makes a re-clone of the SAME path (an update,
   // or a second attempt after a failure) read the new file rather than the
@@ -302,10 +348,14 @@ export const extConsentHandler = {
       const manifest = await loadStagedManifest(dir);
       assertManifestMatchesDeclaration(manifest, declared);
       const dest = safeExtPath(manifest.id);
+      // Anything with a row already — an update, a reinstall over a live
+      // install, or a fix-by-reinstall of a QUARANTINED one — takes the restart
+      // path. Read BEFORE the rename, though nothing here can change it.
+      const registered = ctx.ext.list.some((e) => e.id === manifest.id);
       // Replacing an existing install (an update) is a remove-then-rename
       // rather than a merge: a stale file from the previous version left in
-      // place is a version nobody shipped. The live code keeps running from the
-      // process's module cache until restart regardless.
+      // place is a version nobody shipped. On the update path the live code
+      // keeps running from the process's module cache until restart regardless.
       rmQuiet(dest);
       fs.renameSync(dir, dest);
       putRecord({
@@ -321,8 +371,19 @@ export const extConsentHandler = {
         dependencies: deps.all,
       });
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url} at ${sha.slice(0, 8)}`);
+      if (registered) {
+        progress(ctx, 'done', { id: manifest.id, restartRequired: true });
+        ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, restartRequired: true });
+        await ctx.rebuild();
+        return;
+      }
+      const entry = await goLive(ctx, manifest.id, dest);
       progress(ctx, 'done', { id: manifest.id });
-      ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, restartRequired: true });
+      // `active: false` is the honest end state when config says this extension
+      // is off — `defaultEnabled` absent or false, or a stale `extensions.<id>`
+      // left behind by an earlier uninstall. It is registered and one toggle
+      // away, and saying "installed and live" there would be a lie.
+      ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, active: Boolean(entry.enabled) });
       await ctx.rebuild();
     } catch (err) {
       // On ANY failure at any point the staging dir goes — it is never left
@@ -344,8 +405,17 @@ export const extUninstallHandler = {
     if (!known) throw new Error(`Unknown extension: ${id}`);
     if (!known.external) throw new Error(`${id} ships with the wrangler and cannot be uninstalled — turn it off instead.`);
     const dest = safeExtPath(id);
+    // Deactivated and deregistered BEFORE the files go: its row, tools,
+    // handlers, stores, sweeps and client asset are gone on the next tick. What
+    // no uninstall can undo is the module import itself — Node keeps it forever
+    // — so the reply still asks for a restart to reclaim it, and anything the
+    // manifest's own top-level code started (a timer, a global listener) runs
+    // until then.
+    ctx.ext.deactivate(id);
+    ctx.ext.unregister(id, { remove: true });
     rmQuiet(dest);
     removeRecord(id);
+    ctx.ext.changed();
     // Whatever the extension persisted under DATA_DIR stays — not as retention,
     // but because a store's file is chosen by the extension's own factory and
     // there is nothing here that can enumerate it. An explicit purge is deferred;
