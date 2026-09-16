@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
-  createSkillGate, createToolFilter, _resetExtensionsForTests,
+  createSkillGate, createToolFilter, quarantineExtension, _resetExtensionsForTests,
 } from './index.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
@@ -30,11 +30,20 @@ function manifest(overrides = {}) {
   };
 }
 
+// A rejected manifest QUARANTINES rather than throwing (loadExtensions' failure
+// posture), so every expectation below is on the entry's reason rather than on a
+// thrown error. The `Extension <id>: ` prefix is reconstructed here because the
+// loader strips it for display on the settings row.
 function rejects(ext, re, opts) {
-  assert.throws(() => loadExtensions({ cfg: {}, builtin: [ext], ...opts }), re);
+  const out = loadExtensions({ cfg: {}, builtin: [ext], ...opts });
+  const entry = out.list.at(-1);
+  assert.ok(entry?.quarantine, `expected a quarantine reason, got ${JSON.stringify(entry)}`);
+  assert.match(`Extension ${entry.id}: ${entry.quarantine}`, re);
+  assert.equal(entry.enabled, false, 'a quarantined extension is never enabled');
+  return out;
 }
 
-test('validation failures throw with the extension id in the message', () => {
+test('validation failures quarantine the extension, naming it in the reason', () => {
   rejects(manifest({ id: undefined }), /Extension <no id>: id must match/);
   rejects(manifest({ id: 'Bad_Id' }), /Extension Bad_Id: id must match/);
   rejects(manifest({ tools: [{ handler() {} }] }), /Extension fake: tools\[0\] has no name/);
@@ -49,20 +58,28 @@ test('validation failures throw with the extension id in the message', () => {
   rejects(manifest({ label: '' }), /Extension fake: label/);
 });
 
-test('duplicate ids, tool names and handler types are refused — within extensions and against the core registries', () => {
-  assert.throws(() => loadExtensions({ cfg: {}, builtin: [manifest(), manifest()] }), /Extension fake: duplicate extension id/);
-  assert.throws(
-    () => loadExtensions({ cfg: {}, builtin: [manifest(), manifest({ id: 'other', handlers: [], stores: {} })] }),
-    /Extension other: tool name "fake_tool" is already registered/,
-  );
-  assert.throws(
-    () => loadExtensions({ cfg: {}, builtin: [manifest(), manifest({ id: 'other', tools: [], stores: {} })] }),
-    /Extension other: handler type "fake-do" is already registered/,
-  );
-  assert.throws(
-    () => loadExtensions({ cfg: {}, builtin: [manifest(), manifest({ id: 'other', tools: [], handlers: [] })] }),
-    /Extension other: store name "fake" is already registered/,
-  );
+// Collisions quarantine the SECOND claimant, which is how a builtin wins every
+// tie against an appended external one by construction (loadExtensions' order
+// comment) — so each case also asserts the first extension survived intact.
+test('duplicate ids, tool names and handler types quarantine the second claimant, never the first', () => {
+  function collides(second, re) {
+    const out = loadExtensions({ cfg: {}, builtin: [manifest(), second] });
+    assert.match(`Extension ${out.list[1].id}: ${out.list[1].quarantine}`, re);
+    assert.equal(out.list[0].quarantine, null, 'the first extension is untouched');
+    assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool']);
+    assert.deepEqual(out.handlers.map((h) => h.type), ['fake-do']);
+    assert.deepEqual(Object.keys(out.stores), ['fake']);
+  }
+  collides(manifest(), /Extension fake: duplicate extension id/);
+  collides(manifest({ id: 'other', handlers: [], stores: {} }), /Extension other: tool name "fake_tool" is already registered/);
+  collides(manifest({ id: 'other', tools: [], stores: {} }), /Extension other: handler type "fake-do" is already registered/);
+  collides(manifest({ id: 'other', tools: [], handlers: [] }), /Extension other: store name "fake" is already registered/);
+  // A manifest that collides only on its SECOND tool registers neither: the
+  // whole entry is staged before anything is committed.
+  const partial = loadExtensions({ cfg: {}, builtin: [manifest({ id: 'other', handlers: [], stores: {}, tools: [{ name: 'other_tool', handler() {} }, { name: 'list_sessions', handler() {} }] })], coreToolNames: TOOLS.map((t) => t.name) });
+  assert.match(partial.list[0].quarantine, /tool name "list_sessions"/);
+  assert.deepEqual(partial.tools, []);
+  assert.deepEqual(partial.allowedToolNames, []);
   rejects(manifest({ tools: [{ name: 'list_sessions', handler() {} }] }), /tool name "list_sessions" is already registered/, { coreToolNames: TOOLS.map((t) => t.name) });
   rejects(manifest({ handlers: [{ type: 'dispatch', handler() {} }] }), /handler type "dispatch" is already registered/, { coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
   // A DISABLED extension's names are not claimed — it registers nothing.
@@ -91,7 +108,9 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
   const out = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ client: 'public/index.js', sweeps: [{ id: 's', everyMs: 1000, run() {} }] })] });
   assert.deepEqual(out.list, [{
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
-    requires: [], range: null, storeNames: ['fake'], handlerTypes: [],
+    description: '', author: '', homepage: '',
+    requires: [], range: null, storeNames: ['fake'], skills: ['fake'], handlerTypes: [],
+    external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -398,4 +417,56 @@ test('extensionsForGraph carries each extension\'s own handler types', () => {
 test('a handler-less extension omits handlerTypes from its announcement entry', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
   assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
+});
+
+test('a bad BUILTIN quarantines too, and the good one beside it loads', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ id: 'broken', label: '', tools: [], handlers: [], stores: {} }), manifest()] });
+  assert.deepEqual(out.list.map((e) => [e.id, Boolean(e.quarantine), e.external]), [['broken', true, false], ['fake', false, false]]);
+  assert.deepEqual(out.tools.map((t) => t.name), ['fake_tool'], 'the healthy extension is unaffected');
+  assert.deepEqual(
+    extensionsForGraph(out.list, () => true).map((e) => [e.id, e.enabled, e.bootEnabled]),
+    [['broken', false, false], ['fake', true, true]],
+    'a quarantined entry reports disabled even when config says on',
+  );
+});
+
+test('an already-quarantined entry (discovery could not read it) becomes a row and nothing else', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [{ id: 'dud', external: true, quarantine: 'no index.js' }] });
+  assert.deepEqual(out.list, [{
+    id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
+    defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], skills: [],
+    handlerTypes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
+  }]);
+  assert.deepEqual(out.tools, []);
+});
+
+test('quarantineExtension unregisters a late failure by id, leaving its siblings alone', () => {
+  const other = manifest({
+    id: 'other', label: 'Other', dir: path.join(HERE, 'other'),
+    tools: [{ name: 'other_tool', handler() {} }], handlers: [{ type: 'other-do', handler() {} }],
+    stores: { other: () => ({}) }, skills: ['other'], graph: () => ({ others: 1 }), session: { onPurge() {} },
+  });
+  const out = loadExtensions({
+    cfg: {},
+    builtin: [manifest({ client: 'public/index.js', sweeps: [{ id: 's', everyMs: 1000, run() {} }], skillsFor: () => [], hideTool: () => false }), other],
+  });
+  assert.equal(quarantineExtension(out, 'fake', 'unsatisfiable engines.wranglerApi'), 'unsatisfiable engines.wranglerApi');
+  const entry = out.list.find((e) => e.id === 'fake');
+  assert.equal(entry.enabled, false);
+  assert.equal(entry.quarantine, 'unsatisfiable engines.wranglerApi');
+  assert.deepEqual(out.tools.map((t) => t.name), ['other_tool']);
+  assert.deepEqual(out.allowedToolNames, ['other_tool']);
+  assert.deepEqual(out.handlers.map((h) => h.type), ['other-do']);
+  assert.deepEqual(Object.keys(out.stores), ['other']);
+  assert.deepEqual(out.sweeps, []);
+  assert.deepEqual(out.graphContributors.map((g) => g.id), ['other']);
+  assert.deepEqual(out.skillGates, []);
+  assert.deepEqual(out.toolFilters, []);
+  assert.deepEqual(out.clientManifest, []);
+  assert.deepEqual(out.sessionHooks.onPurge.map((h) => h.extId), ['other']);
+  assert.deepEqual(Object.keys(out.dirs), ['other']);
+  // Its skill moves from the enabled list to the disabled one: a quarantined
+  // extension's skill must be actively suppressed, not merely unmentioned.
+  assert.deepEqual(out.skillIds, ['other']);
+  assert.deepEqual(out.disabledSkillIds, ['fake']);
 });
