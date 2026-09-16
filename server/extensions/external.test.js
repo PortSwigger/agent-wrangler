@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { discoverExternal, unconsentedCapabilities, FORBIDDEN_IMPORTS } from './external.js';
+import { discoverExternal, unconsentedCapabilities, admitExternal, FORBIDDEN_IMPORTS } from './external.js';
 import { loadExtensions } from './index.js';
 
 function tempRoot() {
@@ -117,4 +117,19 @@ test('unconsentedCapabilities gates nothing without a record — a hand-dropped 
   assert.deepEqual(unconsentedCapabilities(['sessions:kill'], null), []);
   assert.deepEqual(unconsentedCapabilities(['sessions:kill'], { id: 'x' }), []);
   assert.deepEqual(unconsentedCapabilities(['a', 'b', 'b'], { requires: ['a'] }), ['b']);
+});
+
+// The same checks the install handler runs after ITS import, which is the whole
+// reason they live in one function: an install that admitted a manifest boot
+// would quarantine reads as an install that silently did nothing.
+test('admitExternal applies the id-match and consent checks the install path shares with discovery', () => {
+  const base = { id: 'toy', dir: '/tmp/toy', external: true, provenance: { id: 'toy', requires: ['tasks:read'] } };
+  assert.deepEqual(admitExternal(null, base), { ok: false, quarantine: 'index.js has no default-exported manifest object' });
+  assert.match(admitExternal({ id: 'other' }, base).quarantine, /does not match its directory name "toy"/);
+  assert.match(admitExternal({ id: 'toy', requires: ['tasks:read', 'sessions:kill'] }, base).quarantine, /widened-and-unconsented requires \(sessions:kill\)/);
+  const ok = admitExternal({ id: 'toy', label: 'Toy', dir: '/its/own/idea', requires: ['tasks:read'] }, base);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.entry.label, 'Toy');
+  assert.equal(ok.entry.dir, '/tmp/toy', 'the discovered path wins over the manifest\'s own');
+  assert.equal(ok.entry.external, true);
 });

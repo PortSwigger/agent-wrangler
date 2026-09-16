@@ -61,7 +61,7 @@ function ownJsFiles(dir, out = []) {
   return out;
 }
 
-function importViolation(dir) {
+export function importViolation(dir) {
   for (const file of ownJsFiles(dir)) {
     let body;
     try {
@@ -94,6 +94,37 @@ export function unconsentedCapabilities(requires, record) {
   if (!record || !Array.isArray(record.requires)) return [];
   const consented = new Set(record.requires);
   return [...new Set(requires.filter((c) => !consented.has(c)))];
+}
+
+// Everything that decides whether an IMPORTED manifest may be admitted, shared
+// by boot discovery and the install handler so the two cannot drift: an install
+// that skipped one of these checks would land an extension boot would then
+// quarantine, which reads as an install that silently did nothing.
+//
+// `base` is `{id, dir, external, provenance}` — the id being the DIRECTORY name,
+// which is the authority the manifest is held to. Returns the entry to stage, or
+// the quarantine reason discovery would have carried; the caller decides which
+// of those it can live with (discovery quarantines, an install refuses).
+//
+// `importViolation` is deliberately NOT part of this: it runs BEFORE the import,
+// and both callers have to run it there rather than after the fact.
+export function admitExternal(manifest, base) {
+  if (!manifest || typeof manifest !== 'object') return { ok: false, quarantine: 'index.js has no default-exported manifest object' };
+  // EXTERNAL ONLY: the id and the directory name must agree, or the on-disk
+  // layout lies about what is installed — the provenance record, the /ext/<id>/
+  // asset route and the uninstall path are all keyed on one of the two, and a
+  // mismatch makes them disagree silently.
+  if (manifest.id !== base.id) {
+    return { ok: false, quarantine: `manifest id "${String(manifest.id)}" does not match its directory name "${base.id}"` };
+  }
+  const widened = unconsentedCapabilities([...(manifest.requires || [])], base.provenance);
+  if (widened.length) {
+    return { ok: false, quarantine: `widened-and-unconsented requires (${widened.join(', ')}) — reinstall to re-consent` };
+  }
+  // `dir` is overwritten AFTER the manifest spread: a manifest exports its own
+  // `dir` from import.meta.url, and for an installed one the discovered path is
+  // the authority (validateManifest resolves `client`/`styles` under it).
+  return { ok: true, entry: { ...manifest, ...base } };
 }
 
 // An interrupted install leaves nothing but a staging directory, which is the
@@ -134,36 +165,18 @@ export async function discoverExternal({ dir = externalDir(), provenance = readP
     if (violation) { out.push({ ...base, quarantine: violation }); continue; }
     let manifest;
     try {
-      // Cache-busted by nothing: this runs once per boot, and newly installed
-      // code deliberately only loads at the next server start (the same
-      // restart semantics an enabled-but-not-boot-enabled builtin has).
+      // Cache-busted by nothing: this runs once per boot, against modules this
+      // process has not seen. The INSTALL path does bust its import — a same-id
+      // reinstall in one process would otherwise get the old module back.
       const mod = await importer(pathToFileURL(path.join(extDir, 'index.js')).href);
       manifest = mod?.default;
     } catch (err) {
       out.push({ ...base, quarantine: `could not load index.js (${err?.message || err})` });
       continue;
     }
-    if (!manifest || typeof manifest !== 'object') {
-      out.push({ ...base, quarantine: 'index.js has no default-exported manifest object' });
-      continue;
-    }
-    // EXTERNAL ONLY: the id and the directory name must agree, or the on-disk
-    // layout lies about what is installed — the provenance record, the
-    // /ext/<id>/ asset route and the uninstall path are all keyed on one of the
-    // two, and a mismatch makes them disagree silently.
-    if (manifest.id !== name) {
-      out.push({ ...base, quarantine: `manifest id "${String(manifest.id)}" does not match its directory name "${name}"` });
-      continue;
-    }
-    const widened = unconsentedCapabilities([...(manifest.requires || [])], base.provenance);
-    if (widened.length) {
-      out.push({ ...base, quarantine: `widened-and-unconsented requires (${widened.join(', ')}) — reinstall to re-consent` });
-      continue;
-    }
-    // `dir` is overwritten AFTER the manifest spread: a manifest exports its own
-    // `dir` from import.meta.url, and for an installed one the discovered path
-    // is the authority (validateManifest resolves `client`/`styles` under it).
-    out.push({ ...manifest, ...base });
+    const admitted = admitExternal(manifest, base);
+    if (!admitted.ok) { out.push({ ...base, quarantine: admitted.quarantine }); continue; }
+    out.push(admitted.entry);
   }
   return out;
 }
