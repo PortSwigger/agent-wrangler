@@ -1810,6 +1810,56 @@ test('suspendable: an attached terminal is never suspended', () => {
     suspendableSessions([cand({ attached: true, lastActivity: 0 })], { idleMs: 1, now }), []);
 });
 
+// A RELAUNCH is activity. lastActivity is transcript/rollout-sourced, so a session
+// resumed but not yet prompted still reports the age of the conversation it reopened
+// — 17h in the live case this fixes, against a pane 46s old — and a booting pane
+// classifies idle, so the 60s sweep tore down every fresh resume. Agent-agnostic: a
+// manually resumed Claude card was observed killed 13s after its relaunch.
+test('suspendable: a freshly relaunched session is not suspended on the timer', () => {
+  const now = 20 * 60 * 60 * 1000;
+  const out = suspendableSessions(
+    [cand({ lastActivity: now - 17 * 60 * 60 * 1000, relaunchedAt: now - 46 * 1000 })],
+    { idleMs: 60 * 60 * 1000, now });
+  assert.deepEqual(out, []);
+});
+
+test('suspendable: a relaunched session qualifies again once the relaunch itself is stale', () => {
+  const now = 20 * 60 * 60 * 1000;
+  const out = suspendableSessions(
+    [cand({ lastActivity: now - 17 * 60 * 60 * 1000, relaunchedAt: now - 2 * 60 * 60 * 1000 })],
+    { idleMs: 60 * 60 * 1000, now });
+  assert.equal(out.length, 1);
+});
+
+// A fork's transcript REPLAYS its parent's history (same timestamps), so a
+// seconds-old fork inherits an ancient lastActivity. createdAt covers it — and
+// dispatch — without either constructor needing its own stamp.
+test('suspendable: a freshly created card is not suspended on an inherited lastActivity', () => {
+  const now = 20 * 60 * 60 * 1000;
+  const out = suspendableSessions(
+    [cand({ lastActivity: now - 17 * 60 * 60 * 1000, createdAt: now - 5 * 1000 })],
+    { idleMs: 60 * 60 * 1000, now });
+  assert.deepEqual(out, []);
+});
+
+// An explicit suspend is a human decision and must still fire immediately — the
+// floor above is only about the idle TIMER mistaking a relaunch for staleness.
+test('suspendPending: fires on a freshly relaunched session regardless of the floor', () => {
+  const now = 1000;
+  const out = suspendableSessions(
+    [cand({ suspendPending: true, relaunchedAt: now, lastActivity: now })],
+    { idleMs: null, now });
+  assert.equal(out.length, 1);
+});
+
+test('resumeEntry stamps relaunchedAt so the idle timer restarts at the relaunch', () => {
+  const e = resumeEntry({ intent: 'x', createdAt: 5 }, {
+    short: 'a', tmux: 'cc_a', cwd: '/tmp', agent: 'claude', resumeId: 'r', socket: 's', now: 4242,
+  });
+  assert.equal(e.relaunchedAt, 4242);
+  assert.equal(e.createdAt, 5, 'createdAt stays the card birth, not the relaunch');
+});
+
 test('suspendable: a dormant (no tmux) candidate is skipped', () => {
   const now = 99 * 60 * 60 * 1000;
   assert.deepEqual(

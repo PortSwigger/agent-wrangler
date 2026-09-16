@@ -126,22 +126,51 @@ export function suspendEnabled(config = {}) {
   return config.suspendEnabled !== false;
 }
 
+// When the idle TIMER should start counting from. `lastActivity` alone is wrong
+// and it cost us every freshly-resumed session: it is transcript/rollout-sourced,
+// and neither agent writes anything until a turn actually runs, so a session
+// resumed but not yet prompted reports the age of the CONVERSATION it reopened —
+// measured 17h against a pane 46 seconds old. A booting pane classifies idle, so
+// the 60s sweep tore the pane down within a minute of every single resume,
+// logging "idle 16h59m" one minute after the relaunch (that nonsense number in
+// the log is itself the tell). Agent-agnostic: a manually resumed Claude card was
+// observed killed 13s after its relaunch. Worse than a wasted relaunch — it also
+// destroyed a message the chat view had just pasted into the pane.
+//
+// A relaunch IS activity, so it restarts the timer: `relaunchedAt` (stamped by
+// resumeEntry) and `createdAt` join `lastActivity`, newest wins. createdAt is what
+// covers dispatch and — the one that matters — a FORK, whose transcript replays the
+// parent's history with the parent's own timestamps, so a seconds-old fork
+// otherwise inherits an ancient lastActivity. Deliberately the full idleMs rather
+// than a short grace period: the relaunch is real activity, and a session someone
+// resumed and has not typed into yet must not evaporate while they read it.
+// Deliberately NOT folded into the graph's own `lastActivity` — that field is the
+// conversation's age, which is what the board means by "idle 3h"; only the suspend
+// decision wants the relaunch counted.
+export function lastActiveAt(c) {
+  const stamps = [c?.lastActivity, c?.relaunchedAt, c?.createdAt].filter((t) => typeof t === 'number');
+  return stamps.length ? Math.max(...stamps) : null;
+}
+
 // Pure decision: which live (managed) sessions to tear down. A candidate is
 // { sessionId, managed, attached, status, hasBackgroundShell, suspendPending,
-// lastActivity }. Rules: only managed (has a live tmux to kill); never while a
-// client is attached; only when idle (never working/needs-you — killing those
-// loses work or the human's place); never with a live background shell (the
-// pane kill leaves no transcript trace of the kill, which is what produces the
-// "No completion record was found" noise on the next resume — automatic suspend
-// has no human present to choose "kill jobs first", so it just waits). Then
-// EITHER an explicit suspend is pending (fire as soon as idle), OR it has been
-// idle for >= idleMs (timer; skipped when idleMs is null).
+// lastActivity, relaunchedAt, createdAt }. Rules: only managed (has a live tmux to
+// kill); never while a client is attached; only when idle (never working/needs-you
+// — killing those loses work or the human's place); never with a live background
+// shell (the pane kill leaves no transcript trace of the kill, which is what
+// produces the "No completion record was found" noise on the next resume —
+// automatic suspend has no human present to choose "kill jobs first", so it just
+// waits). Then EITHER an explicit suspend is pending (fire as soon as idle — a
+// human's own decision, so lastActiveAt's floor deliberately does NOT gate it),
+// OR it has been idle for >= idleMs since lastActiveAt (timer; skipped when
+// idleMs is null).
 export function suspendableSessions(candidates, { idleMs, now }) {
   return candidates.filter((c) => {
     if (!c.managed || c.attached || c.status !== 'idle' || c.hasBackgroundShell) return false;
     if (c.suspendPending) return true;
-    if (idleMs == null || typeof c.lastActivity !== 'number') return false;
-    return (now - c.lastActivity) >= idleMs;
+    const since = lastActiveAt(c);
+    if (idleMs == null || since == null) return false;
+    return (now - since) >= idleMs;
   });
 }
 
@@ -248,6 +277,10 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     model: prev?.model ?? null,
     effort: prev?.effort ?? null,
     createdAt: prev?.createdAt ?? now,
+    // When THIS relaunch happened, as distinct from createdAt (the card's birth,
+    // preserved across every resume). Read only by the suspend timer — see
+    // lastActiveAt for why a relaunch has to restart it.
+    relaunchedAt: now,
     liveSessionId: resumeId,
     // Conversations this card owned before the agent abandoned them with `/clear`
     // (see noteLiveSessionId). Durable: their transcripts still hold real spend, and
@@ -1350,14 +1383,22 @@ export class SessionManager {
       hasBackgroundShell: Boolean(s.hasBackgroundShell),
       suspendPending: Boolean(this.map.get(s.sessionId)?.suspendPending),
       lastActivity: s.lastActivity,
+      // Manager-owned, read off the entry exactly as suspendPending is above — so
+      // the relaunch floor costs no graph/state-reader coupling.
+      relaunchedAt: this.map.get(s.sessionId)?.relaunchedAt,
+      createdAt: this.map.get(s.sessionId)?.createdAt,
       label: s.label,
     }));
     const now = Date.now();
     const toSuspend = suspendableSessions(candidates, { idleMs, now });
     for (const c of toSuspend) {
+      // The SAME clock the decision used, or the log reports the conversation's
+      // age instead of the span that actually triggered the teardown — which is
+      // how "idle 16h59m" came to be logged 46s after a relaunch.
+      const since = lastActiveAt(c);
       await this.suspend(c.sessionId, {
         label: c.label,
-        idleMs: typeof c.lastActivity === 'number' ? now - c.lastActivity : undefined,
+        idleMs: since == null ? undefined : now - since,
       });
     }
     return toSuspend.map((c) => c.sessionId);
