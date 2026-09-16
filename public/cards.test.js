@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
@@ -474,6 +475,11 @@ test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow
   assert.equal(visibleTaskLinkCount([30, 40, 50], 104, 20, 6), 2);
   assert.equal(visibleTaskLinkCount([30, 40, 50], 60, 20, 6), 1);
   assert.equal(visibleTaskLinkCount([30, 40, 50], 20, 20, 6), 0);
+});
+
+test('task header hides chips moved into link overflow', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.task-link-list \.link-chip\[hidden\] \{\s*display: none;\s*\}/);
 });
 
 test('tileHtml: task tile exposes every link as a candidate for inline display', () => {
