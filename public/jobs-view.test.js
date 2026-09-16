@@ -363,6 +363,7 @@ test('the plan under review shows the shared context, each brief and each check 
   f.view.update(f.data); f.q('[data-job="job1"]').click();
   const dialog = f.q('#job-dialog');
   assert.equal(dialog.querySelector('.job-context').textContent, 'Keys live in the vault; every service reads them at boot.');
+  assert.equal(dialog.querySelector('.job-context-more').open, false, 'context is folded until asked for; the landing order is the decision');
   assert.equal(dialog.querySelectorAll('.job-stories p').length, 0, 'a story is a title; its value is not the board’s business');
   assert.match(dialog.textContent, /Implement it and open the PR/);
   assert.match(dialog.textContent, /Check after it lands: helm list shows auth-api in dev and prod/);

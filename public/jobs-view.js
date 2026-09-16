@@ -153,7 +153,9 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     dialog.querySelector('[data-cancel-job]').onclick = () => send({ type: 'job-action', id: job.id, action: 'cancel-job' });
     dialog.querySelector('#job-move-back').onclick = () => renderDetail();
   }
-  const contextHtml = (plan) => plan?.context ? `<h3>Context</h3><p>${esc(plan.context)}</p>` : '';
+  // Folded by default: the landing order is what the reader is here to judge, and
+  // this block is a paragraph the planner wrote once for the agents, not for them.
+  const contextHtml = (plan) => plan?.context ? `<details class="job-more job-context-more"><summary>Context <small>Written once · every session working on this job gets it</small></summary><p class="job-context">${esc(plan.context)}</p></details>` : '';
   // One escaped line per move, newest first, with when it was made — the record of
   // every human intervention in a job, kept out of the way until asked for.
   function movesHistoryHtml(job) {
@@ -172,7 +174,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       const sessions = planDraft.subJobs.some(isSessionSub);
       const newStories = planDraft.stories.filter((s) => !s.key).length;
       body = `<h3>Stories <small>${newStories ? `${newStories} new Jira stor${newStories === 1 ? 'y' : 'ies'} · created only after you approve` : 'Existing Jira stories'}</small></h3><div class="job-stories">${planDraft.stories.map((s, i) => `<div><label><span class="job-story-key ${s.key ? '' : 'job-story-new'}">${esc(storyLabel(s))}</span><input aria-label="Story title ${i + 1}" data-story="${i}" maxlength="180" value="${esc(s.title)}"></label></div>`).join('')}</div>
-        ${planDraft.context ? `<h3>Context <small>Written once · every session working on this job gets it</small></h3><p class="job-context">${esc(planDraft.context)}</p>` : ''}
+        ${contextHtml(planDraft)}
         <h3>Landing order <small>${sessions ? 'Same wave can land independently · a PR deploys after its dependencies, a session starts after them' : 'Same wave can land independently'}</small></h3>${planGraphHtml(planDraft, { editable: true, openDeps })}
         <details class="job-more"><summary>What each sub-job is asked to do</summary>${planDraft.subJobs.map((s) => `<h4>${esc(s.title)}</h4><p>${esc(s.brief)}</p>${s.check ? `<p>Check after it lands: ${esc(s.check)}</p>` : ''}${isSessionSub(s) ? '<p>Runs as an agent session in a scratch workspace; no PR.</p>' : ''}`).join('')}</details>
         <p class="job-authority">${newStories ? `Approve creates the ${newStories === 1 ? 'new Jira story' : `${newStories} new Jira stories`} with these titles, then starts` : 'Approve starts'} work in dedicated worktrees. ${reviewCode(job) ? 'You review each PR’s code before it is committed. ' : ''}${job.reviewMerge ? 'You approve each merge.' : 'Green PRs merge automatically.'}${sessions ? ((job.reviewSessions ?? true) ? ' You approve each agent session’s result.' : ' Agent sessions count as done once they report.') : ''}</p>
