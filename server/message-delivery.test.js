@@ -19,7 +19,7 @@ function realDir() {
 function deps({
   live = {}, entries = {}, resumeThrows = false,
   resuming = false, resumeTmux = 'cc_joined', resumeReturnsPane = true,
-  readyResult = true,
+  readyResult = true, submitResult = true,
 } = {}) {
   const sent = [];
   const resumed = [];
@@ -50,8 +50,8 @@ function deps({
       return readyResult;
     },
     ensureSubmitted: async (name, socket, opts) => {
-      submitted.push({ name, socket, wasReady: opts?.wasReady });
-      return true;
+      submitted.push({ name, socket, text: opts?.text, agent: opts?.agent });
+      return submitResult;
     },
   };
 }
@@ -101,25 +101,42 @@ test('dormant Codex target: waits for the composer to paint BEFORE pasting', asy
   assert.equal(d.sent.length, 1);
 });
 
-test('dormant Codex target: confirms the send became a turn, and says whether the pane was confirmed', async () => {
+test('dormant Codex target: confirms the send became a turn, handing the repair our own text and agent', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
   const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken' });
   await deliverMessage('CARD1', 'wake up please', d);
-  assert.deepEqual(d.submitted, [{ name: 'cx_woken', socket: '/s/cx', wasReady: true }]);
+  // text/agent are what gate the bare-Enter repair on our own text still being
+  // in the composer — without them it degrades to the unsafe wasReady guard an
+  // adversarial review found could submit a ghost suggestion.
+  assert.deepEqual(d.submitted, [{ name: 'cx_woken', socket: '/s/cx', text: 'wake up please', agent: 'codex' }]);
+});
+
+// The headline of the whole change: an unconfirmed send must NOT be reported as
+// success. Claiming "submitted" after a readiness timeout is the original silent
+// loss, just slower.
+test('dormant Codex target: an unconfirmed send reports outcome unknown, not success', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
+  const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken', submitResult: false });
+  const result = await deliverMessage('CARD1', 'wake up please', d);
+  assert.equal(result.mode, 'dormant', 'the card IS live now, so the caller still rebuilds');
+  assert.equal(result.outcome, 'unknown');
+  assert.match(result.error, /could not confirm/);
 });
 
 // An unreadable/never-ready pane must still be delivered into — a late message
-// beats a lost one — but it must NOT earn the extra Enter, whose only safety
-// case is having seen a well-formed empty composer.
-test('dormant Codex target: an unconfirmed pane is still pasted into, with wasReady false', async () => {
+// beats a lost one — and it must STILL get the repair attempt, because a pane
+// whose composer marker we could not parse is exactly where a dropped CR is most
+// likely and the text check can still see our own prompt.
+test('dormant Codex target: a never-ready pane is still pasted into AND still repaired', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
   const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken', readyResult: false });
   const result = await deliverMessage('CARD1', 'wake up please', d);
   assert.deepEqual(result, { mode: 'dormant' });
   assert.deepEqual(d.sent, [{ name: 'cx_woken', text: 'wake up please', socket: '/s/cx' }]);
-  assert.deepEqual(d.submitted, [{ name: 'cx_woken', socket: '/s/cx', wasReady: false }]);
+  assert.equal(d.submitted.length, 1, 'readiness failure must not disable the repair');
 });
 
 // The live path is deliberately untouched: the pane is long past boot, and a

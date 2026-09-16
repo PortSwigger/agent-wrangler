@@ -1,4 +1,4 @@
-import { capturePane, capturePaneStyled, classify, sendKeys as defaultSendKeys } from './tmux-scraper.js';
+import { capturePaneStyled, classify, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
@@ -56,52 +56,94 @@ export async function waitForComposerReady(name, socket, agent, {
   }
 }
 
-// Confirm the send actually became a turn, and repair it with a bare Enter if not.
+// Confirm the send actually became a turn, and repair a dropped CR with a bare
+// Enter — but ONLY while our own text is provably still sitting in the composer.
 //
-// The repair is Enter-only and must stay that way. The failure this covers leaves
-// the text ALREADY in the composer, so re-pasting (what mailbox-delivery's
-// pasteAndVerify does, for a different failure where the bytes were discarded
-// outright) would fuse two copies into one mangled prompt. A bare Enter is a
-// no-op against a composer that has emptied because the text did submit, so the
-// retry cannot double-deliver either way — measured, not assumed, because the
-// alternative would be burning a real turn on an empty prompt: three bare Enters
-// into an idle, empty composer changed nothing at all on a live pane of EITHER
-// agent (Codex `› Ask Codex to do anything` and Claude `❯ ` both unmoved, no
-// turn started).
+// That condition, not "we saw an empty composer before sending", is what makes
+// the Enter safe, and the difference is not academic. An adversarial review
+// caught the earlier `wasReady` reasoning being false across the observation
+// window, and the repo's own code proves it: `paneComposerIsEmpty` deliberately
+// strips FAINT runs, so a Claude composer holding nothing but a ghost suggestion
+// reads as empty — while `parseGhostSuggestion`'s own note says "pressing Enter
+// on it does submit it". So a turn that finished fast enough to leave a
+// suggestion on screen would have had that suggestion submitted as an
+// unsolicited prompt, in text neither the human nor this server wrote. (Claude
+// reaches this path whenever the argv route is unavailable: a joined resume, or
+// an owned one carrying images or clearComposer.) The "three bare Enters are a
+// no-op" measurement behind the old comment was real but narrower than the claim
+// — it was taken on a pane with no ghost suggestion.
 //
-// `wasReady` is load-bearing: the ONLY thing making a second Enter safe is having
-// seen a well-formed empty composer moments earlier, which rules out a dialog
-// being on screen. Codex's self-update banner is a numbered menu that defaults to
-// "Update now" on a bare Enter and takes the session down with it (see classify),
-// so on a pane that was never confirmed this sends nothing at all and leaves the
-// caller with exactly its previous behaviour.
+// `composerHoldsText` closes that, and three other holes with it. A dialog
+// (Codex's self-update menu, whose bare-Enter default is "Update now" and takes
+// the session with it; or the `🔒 This conversation is open in another app`
+// lock screen `classify` does not recognise) does not render our text in a
+// composer, so it gets no Enter — and a `needs-you` classification stops the
+// loop outright. A competing paste from another path (pane-deferral's drain, a
+// mail announcement) leaves something that is not our text, so it gets no Enter
+// either. And it no longer matters whether the readiness gate succeeded: if the
+// text is demonstrably unsent we can repair it even when the composer marker
+// itself has changed shape, which is exactly the case a styled-string readiness
+// check is worst at.
 //
-// The signal is classify()'s working marker — the same one the board's own status
-// polling uses, and confirmed present on a real Codex pane as
-// `• Working (3s • esc to interrupt)`. Watch it live: that footer is redrawn in
-// place, so grepping capture-pane SCROLLBACK for it is a false negative.
+// "Stranded" is only judged AFTER the full observation window, never on first
+// sight — immediately post-`sendText` the text is legitimately in the composer
+// with the original Enter still in flight, and pressing again there is how you
+// would race the TUI into two turns of the same prompt.
+//
+// Returns true only on a CONFIRMED turn (classify()'s working marker, present on
+// a real Codex pane as `• Working (3s • esc to interrupt)` — watch it live, the
+// footer is redrawn in place so scrollback greps come back empty). An
+// empty composer is deliberately NOT treated as proof of submission: pre-paste
+// and post-submit look identical, so inferring success there would manufacture
+// exactly the false "delivered" this whole change exists to remove. Everything
+// else is false, and the caller reports that as an UNKNOWN outcome rather than
+// success.
 export async function ensureSubmitted(name, socket, {
+  text = '',
+  agent = 'claude',
   attempts = SUBMIT_ATTEMPTS,
   windowMs = SUBMIT_WINDOW_MS,
   pollMs = SUBMIT_POLL_MS,
-  capture = capturePane,
+  capture = capturePaneStyled,
   sendKeys = defaultSendKeys,
-  wasReady = false,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
-  if (!name || !wasReady) return false;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await sawWorkingWithin(name, socket, capture, windowMs, pollMs, sleep)) return true;
+  if (!name) return false;
+  for (let attempt = 0; ; attempt += 1) {
+    const seen = await watchPane(name, socket, capture, windowMs, pollMs, sleep);
+    if (seen === 'working') return true;
+    if (seen === 'blocked' || attempt >= attempts) return false;
+    if (!composerHoldsText(await capture(name, 8, socket), agent, text)) return false;
     await sendKeys(name, ['Enter'], socket);
   }
-  return sawWorkingWithin(name, socket, capture, windowMs, pollMs, sleep);
 }
 
-async function sawWorkingWithin(name, socket, capture, windowMs, pollMs, sleep) {
+// 'working' (a turn is running), 'blocked' (a dialog is up — hands off), or
+// 'idle' once the window closes with neither.
+async function watchPane(name, socket, capture, windowMs, pollMs, sleep) {
   const deadline = Date.now() + windowMs;
   for (;;) {
-    if (classify(await capture(name, 60, socket)).status === 'working') return true;
-    if (Date.now() >= deadline) return false;
+    const { status } = classify(await capture(name, 60, socket));
+    if (status === 'working') return 'working';
+    if (status === 'needs-you') return 'blocked';
+    if (Date.now() >= deadline) return 'idle';
     await sleep(pollMs);
   }
+}
+
+// Whether the composer still holds the text we pasted. Keyed on the agent's
+// prompt MARK rather than the whole styled empty-composer string, because the
+// mark is the stable part; and on the LAST marked line, because a submitted turn
+// is echoed back into the scrollback with the same mark (measured — the echo is
+// why "the text appears with a prompt mark" cannot be the test). A leading slice
+// of the first line is the probe: the composer wraps a long prompt, so only its
+// start is reliably on that line. Fails safe to false — a pane it cannot parse
+// earns no keystrokes.
+export function composerHoldsText(paneText, agent = 'claude', text = '') {
+  if (typeof paneText !== 'string' || !paneText) return false;
+  const probe = String(text).split('\n')[0].trim().slice(0, 40);
+  if (!probe) return false;
+  const mark = agent === 'codex' ? '\u203a' : '\u276f';
+  const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
+  return Boolean(line) && line.includes(probe);
 }

@@ -120,15 +120,28 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
       // rather than in sendText, whose other callers all target settled panes.
       // A timeout falls THROUGH to the paste (see waitForComposerReady): a late
       // message beats a lost one.
-      const wasReady = await waitForComposerReady(tmux, socket, fresh.agent);
+      await waitForComposerReady(tmux, socket, fresh.agent);
       await attach(tmux, socket);
       await sendText(tmux, text, socket);
       // Then confirm the send actually became a turn, repairing a dropped CR with a
       // bare Enter — never a re-paste, which would fuse a second copy onto the text
-      // already sitting in the composer. `wasReady` is what makes that extra Enter
-      // safe (a confirmed-empty composer rules out a dialog being on screen), so an
-      // unconfirmed pane deliberately gets no retry and behaves exactly as before.
-      await ensureSubmitted(tmux, socket, { wasReady });
+      // already sitting in the composer. The repair is gated on our own text still
+      // being visible in the composer, so it needs `text`/`agent` (see
+      // ensureSubmitted); the readiness result deliberately does NOT gate it, since
+      // a pane whose composer marker we failed to parse is exactly where the repair
+      // is most needed.
+      //
+      // An unconfirmed send is reported as UNKNOWN, not success. Falling through a
+      // readiness timeout and then claiming `submitted` would reinstate the silent
+      // loss this whole change exists to remove — precisely on the version/resize
+      // cases most likely to defeat the gate, where the message would be both late
+      // AND lost. Unknown keeps the composer's draft client-side (the chat view
+      // renders "Delivery status unknown" and does not clear it), so the human can
+      // look at the pane and resend; a duplicate they can see beats a message that
+      // vanished.
+      if (!await ensureSubmitted(tmux, socket, { text, agent: fresh.agent })) {
+        return { mode: 'dormant', outcome: 'unknown', error: 'Woke the session but could not confirm the message started a turn — check the terminal before sending again.' };
+      }
     }
   } catch (err) {
     return { mode: 'error', error: err?.message || String(err), outcome: 'unknown' };
