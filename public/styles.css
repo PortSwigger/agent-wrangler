@@ -1106,6 +1106,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   cursor: grab; user-select: none;
 }
 .task-name { font-weight: 700; color: var(--fg); font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-link-list { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.task-link-list .link-chip[hidden] { display: none; }
 .task-head .link-chip { font-size: 10px; }
 .task-head .link-chip .icon { width: 11px; height: 11px; }
 .task-new-sess { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }

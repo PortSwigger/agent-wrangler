@@ -41,7 +41,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
+import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
@@ -1317,6 +1317,7 @@ function wireGridEvents(el) {
 // keep in sync. One menu lives on <body> at a time; any dismissal (outside
 // mousedown, Escape, scroll, resize) tears it down along with its listeners.
 let overflowMenuEl = null;
+let taskLinkResizeObserver = null;
 function closeOverflowMenu() {
   if (!overflowMenuEl) return;
   overflowMenuEl.remove();
@@ -2220,7 +2221,42 @@ function beginTaskRename(cell) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+function fitTaskLinkLists(el) {
+  el.querySelectorAll('.task-link-list').forEach((list) => {
+    const chips = [...list.querySelectorAll('.link-chip')];
+    const overflow = list.querySelector('.link-overflow');
+    if (!overflow) return;
+    chips.forEach((chip) => { chip.hidden = false; });
+    overflow.hidden = true;
+    const availableWidth = list.clientWidth;
+    const widths = chips.map((chip) => chip.getBoundingClientRect().width);
+    const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
+    let visible = chips.length;
+    if (widths.reduce((sum, width) => sum + width, 0) + gap * (chips.length - 1) > availableWidth) {
+      overflow.hidden = false;
+      overflow.textContent = `+${chips.length}`;
+      visible = visibleTaskLinkCount(widths, availableWidth, overflow.getBoundingClientRect().width, gap);
+      while (visible < chips.length) {
+        overflow.textContent = `+${chips.length - visible}`;
+        const next = visibleTaskLinkCount(widths, availableWidth, overflow.getBoundingClientRect().width, gap);
+        if (next <= visible) break;
+        visible = next;
+      }
+      chips.slice(visible).forEach((chip) => { chip.hidden = true; });
+      overflow.textContent = `+${chips.length - visible}`;
+    }
+    const links = JSON.parse(list.dataset.taskLinks || '[]');
+    overflow.dataset.overflowLinks = JSON.stringify(links.slice(visible));
+  });
+}
+
 function wireTaskControls(el) {
+  taskLinkResizeObserver?.disconnect();
+  fitTaskLinkLists(el);
+  if (typeof ResizeObserver !== 'undefined') {
+    taskLinkResizeObserver = new ResizeObserver(() => fitTaskLinkLists(el));
+    el.querySelectorAll('.task-head').forEach((head) => taskLinkResizeObserver.observe(head));
+  }
   el.querySelectorAll('.link-overflow').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
