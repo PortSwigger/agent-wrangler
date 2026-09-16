@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { externalDir, readProvenance } from './provenance.js';
+import { externalDir, readProvenance, tmpDir } from './provenance.js';
 
 // Discovery of INSTALLED ("external") extensions: one immediate subdirectory of
 // <DATA_DIR>/extensions/ per extension, each with an index.js default-exporting
@@ -94,6 +94,19 @@ export function unconsentedCapabilities(requires, record) {
   if (!record || !Array.isArray(record.requires)) return [];
   const consented = new Set(record.requires);
   return [...new Set(requires.filter((c) => !consented.has(c)))];
+}
+
+// An interrupted install leaves nothing but a staging directory, which is the
+// whole reason the install lock can be in-memory (a restart cancels nothing
+// meaningful). Swept at boot rather than on a timer: there is exactly one moment
+// at which no install can be in flight, and this is it.
+export function sweepStaging(dir = tmpDir()) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // A staging dir that cannot be removed is a disk problem, not a reason to
+    // refuse to boot — the next install fails loudly on its own.
+  }
 }
 
 export async function discoverExternal({ dir = externalDir(), provenance = readProvenance(), importer = (url) => import(url) } = {}) {

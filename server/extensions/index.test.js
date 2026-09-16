@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
-  createSkillGate, createToolFilter, quarantineExtension, _resetExtensionsForTests,
+  createSkillGate, createToolFilter, quarantineExtension, primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
 import { TOOLS } from '../mcp/tools/index.js';
@@ -420,6 +420,34 @@ test('extensionsForGraph carries each extension\'s own handler types', () => {
 test('a handler-less extension omits handlerTypes from its announcement entry', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
   assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
+});
+
+test('primeExtensions throws if the memo is already set — the ordering guard', async () => {
+  _resetExtensionsForTests();
+  getExtensions({ cfg: {}, builtin: [] });
+  await assert.rejects(
+    () => primeExtensions({ cfg: {}, builtin: [], discover: async () => [] }),
+    /already loaded/,
+    'a consumer that got in first would otherwise pin a builtin-only board silently',
+  );
+  _resetExtensionsForTests();
+});
+
+test('getExtensions() after priming returns builtins AND externals', async () => {
+  _resetExtensionsForTests();
+  assert.equal(extensionsPrimed(), false);
+  const installed = { id: 'installed', label: 'Installed', external: true, dir: '/tmp/installed', provenance: { id: 'installed', originUrl: 'https://example.invalid/x.git', sha: 'abc123' } };
+  const primedOut = await primeExtensions({ cfg: {}, builtin: [manifest()], discover: async () => [installed] });
+  assert.equal(extensionsPrimed(), true);
+  assert.deepEqual(primedOut.list.map((e) => [e.id, e.external]), [['fake', false], ['installed', true]]);
+  // The whole point of the separate async door: the synchronous consumers the
+  // adapters use now see the installed extension too, with no signature change.
+  assert.equal(getExtensions(), primedOut);
+  const forGraph = extensionsForGraph(primedOut.list, () => true).find((e) => e.id === 'installed');
+  assert.equal(forGraph.origin, 'https://example.invalid/x.git');
+  assert.equal(forGraph.sha, 'abc123');
+  _resetExtensionsForTests();
+  assert.equal(extensionsPrimed(), false);
 });
 
 test('a bad BUILTIN quarantines too, and the good one beside it loads', () => {

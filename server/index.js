@@ -14,7 +14,7 @@ import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
-import { getExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension } from './extensions/index.js';
 import { buildHostApi } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -57,6 +57,7 @@ import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createExtDeliver } from './ext-deliver.js';
+import { sweepStaging } from './extensions/external.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 
@@ -75,11 +76,22 @@ const shutdownLog = installShutdownLog();
 
 ensurePtyHelperExecutable();
 
-// Load the extensions FIRST, before any store exists, through the memoised
-// getExtensions so the adapters (client-config.js / agent-skills.js default to
-// the same memo) read the very object composed below. The core registry names
-// go in here so a manifest colliding with a core tool/handler is caught at boot
-// rather than at the first frame.
+// Load the extensions FIRST — before any store exists and before ANYTHING that
+// can reach `getExtensions()`: the MCP registry, the control router's lazy
+// handler map, and any adapter import that pulls in client-config.js. That
+// ordering is the fragile part of installed-extension loading. The memo is
+// filled once and never rechecked, so a consumer that gets in first silently
+// pins a BUILTIN-ONLY board for the life of the process — installed extensions
+// simply absent, with no error anywhere. `primeExtensions` throws if the memo
+// is already set, which is what turns that silence into a loud boot failure.
+//
+// Top-level await, deliberately: discovery has to `await import()` each
+// installed manifest, and this module's remaining top-level work (stores,
+// façades, the graph builder) all depends on the result. Deferring it into
+// main() would put the whole of that below it instead.
+//
+// The core registry names go in here so a manifest colliding with a core
+// tool/handler is caught at boot rather than at the first frame.
 //
 // A bad manifest no longer FAILS boot: loadExtensions quarantines it (see its
 // failure-posture comment), and the three checks below that can only run out
@@ -89,7 +101,7 @@ ensurePtyHelperExecutable();
 // that remains is for a genuine LOADER bug, which is not something to limp past.
 let ext;
 try {
-  ext = getExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
+  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
 } catch (err) {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
@@ -886,6 +898,11 @@ async function main() {
   // installed at module load, so a stop arriving during this slow startup is still
   // recorded — and one handler means one path down.
   shutdownLog.onShutdown(() => instanceLock.release());
+  // An interrupted install leaves only a staging directory behind, so this is
+  // the whole of its recovery — and the reason the install lock can be purely
+  // in-memory. After the lock, so a duplicate instance never sweeps the running
+  // one's in-flight staging dir out from under it.
+  sweepStaging();
   await sessionManager.init();
   setTmuxBin(sessionManager.tmuxBin);
   // Repoint every active session's memory symlink before the first build, repairing

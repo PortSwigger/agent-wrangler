@@ -498,11 +498,52 @@ export function createToolFilter(ext, hostApiFor = () => undefined, onError = ()
 // names, so the server and the adapters read one and the same object. Every
 // consumer keeps an injectable `{ ext }` so tests never touch this memo.
 let memo = null;
+let primed = false;
 export function getExtensions(opts) {
   if (!memo) memo = loadExtensions(opts);
   return memo;
 }
 
+// The one ASYNC door into the memo, and the only one that includes INSTALLED
+// extensions: discovery has to `await import()` each one, and `getExtensions()`
+// must stay synchronous or every leaf consumer (client-config.js,
+// agent-skills.js, tools/index.js, control/router.js — and through them the
+// agent adapters) would have to become async for it. Keeping the async work in
+// a separate function is the whole reason there is no ripple.
+//
+// THROWS IF THE MEMO IS ALREADY SET, which is the ordering guard: anything that
+// reached `getExtensions()` before this ran silently memoised a BUILTIN-ONLY
+// board — installed extensions simply absent, no error anywhere, for the life of
+// the process. server/index.js awaits this before the MCP registry, the control
+// router's lazy map and any adapter import.
+//
+// `getExtensions()` deliberately does NOT also throw when called before priming.
+// It cannot: the adapters and the whole test suite legitimately call it with an
+// injected `{ builtin }`/`{ cfg }` and no priming at all, and there is no way
+// from this leaf to tell "the server booted in the wrong order" from either. The
+// throw here already fires on exactly the bad case — something got in first —
+// so a second guard would add a false-positive surface and no coverage.
+export async function primeExtensions({ discover, ...opts } = {}) {
+  if (memo) throw new Error('primeExtensions: extensions were already loaded — something read getExtensions() before priming, so installed extensions would be silently missing');
+  // Imported dynamically so the SYNCHRONOUS consumers above — which are what
+  // the agent adapters pull in — never load discovery (and through it
+  // atomic-json and the filesystem walk) just to read a memo that is already
+  // filled. It is also why the leaf-import scanner's `^\s*import` anchor does
+  // not need to think about this line.
+  const { discoverExternal } = await import('./external.js');
+  const external = await (discover || discoverExternal)();
+  // Builtins FIRST so every first-come name check resolves a tie in their
+  // favour and the EXTERNAL entry is the one quarantined.
+  memo = loadExtensions({ ...opts, builtin: [...(opts.builtin || BUILTIN), ...external] });
+  primed = true;
+  return memo;
+}
+
+export function extensionsPrimed() {
+  return primed;
+}
+
 export function _resetExtensionsForTests() {
   memo = null;
+  primed = false;
 }
