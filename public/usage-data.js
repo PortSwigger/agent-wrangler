@@ -74,6 +74,18 @@ export function rankMembers(members, buckets, metric, dimension) {
   }).sort((a, b) => b.value - a.value);
 }
 
+export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider) {
+  const overall = rankMembers(members, buckets, metric, 'model').filter((m) => m.value > 0);
+  const reserved = new Set();
+  for (const provider of providers) {
+    const providerBuckets = (buckets || []).map((bucket) => providerBucket(bucket, provider));
+    for (const member of rankMembers(members, providerBuckets, metric, 'model').slice(0, slotsPerProvider)) {
+      if (member.value > 0) reserved.add(member.key);
+    }
+  }
+  return [...overall.filter((m) => reserved.has(m.key)), ...overall.filter((m) => !reserved.has(m.key))];
+}
+
 // Top members (already ranked by the caller) get a colour slot; the remainder's keys
 // fold into "Other". A fixed dimension (Token type: 4 ≤ catVars) never folds.
 export function displaySlots(members, catVars) {

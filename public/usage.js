@@ -8,7 +8,7 @@
 // textContent — no chart dependency, and task/model text (agent-generated) never
 // goes in via innerHTML (the CodeQL DOM gate).
 import { send } from './app.js';
-import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
+import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, rankProviderAwareModels, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
 import {
   RANGE_PRESETS, DEFAULT_RANGE, resolvePreset, allowedGranularities, coerceGranularity,
   parseStoredRange, serialiseRange,
@@ -85,9 +85,13 @@ const dimensionMap = (bucket) => dimensionMapOf(selectedBucket(bucket), dimensio
 // $-ranked — cache-heavy work ranks differently in tokens vs $). Token type is a fixed
 // four that always all show, so it keeps its stable order/colour (Input is always the
 // same hue) instead of reshuffling on a metric toggle.
-const rankedMembers = () => (dimension() === 'type'
-  ? members()
-  : rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0));
+const rankedMembers = () => {
+  if (dimension() === 'type') return members();
+  if (dimension() === 'model' && !state.provider) {
+    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai'], 2);
+  }
+  return rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0);
+};
 const displaySlots = () => displaySlotsOf(rankedMembers(), CAT_VARS);
 const bucketSegments = (bucket, slots) => bucketSegmentsOf(bucket, slots, state.metric, state.filter, OTHER_VAR, dimension());
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellValue, dimensionMap, providerBucket, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
+import { cellValue, dimensionMap, providerBucket, rankMembers, rankProviderAwareModels, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
 
 const CATS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const OTHER = 'cO';
@@ -41,6 +41,25 @@ test('rankMembers orders by the active metric, not always $', () => {
   // In $ input dominates; in tokens cache-read dominates — ranking flips with the metric.
   assert.deepEqual(rankMembers(members, buckets, 'usd', 'type').map((m) => m.key), ['input', 'cacheRead']);
   assert.deepEqual(rankMembers(members, buckets, 'tokens', 'type').map((m) => m.key), ['cacheRead', 'input']);
+});
+
+test('rankProviderAwareModels reserves two visible slots for each provider', () => {
+  const members = ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'gpt-a', 'gpt-b', 'gpt-c']
+    .map((key) => ({ key, name: key }));
+  const bucket = {
+    byModel: {
+      'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70),
+      'gpt-a': cell(10), 'gpt-b': cell(5), 'gpt-c': cell(3),
+    },
+    providers: {
+      anthropic: { byModel: { 'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70) } },
+      openai: { byModel: { 'gpt-a': cell(10), 'gpt-b': cell(5), 'gpt-c': cell(3) } },
+    },
+  };
+
+  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai'], 2);
+
+  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'claude-b', 'gpt-a', 'gpt-b', 'claude-c', 'claude-d']);
 });
 
 test('displaySlots colours the first six members and folds the rest', () => {
