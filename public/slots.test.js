@@ -19,10 +19,10 @@ function stubDocument() {
   return { createElement: make, make };
 }
 
-function harness() {
+function harness(opts = {}) {
   const document = stubDocument();
   const errors = [];
-  const slots = createSlots({ document, storage: null, onError: (msg) => errors.push(String(msg)) });
+  const slots = createSlots({ document, storage: null, onError: (msg) => errors.push(String(msg)), ...opts });
   return { document, slots, errors };
 }
 
@@ -62,8 +62,9 @@ test('mountInto creates one child per contribution and mounts once per host elem
   slots.mountInto('panel.metaChip', host, { send: 'S' });
   assert.equal(mounts.length, 2);
   assert.equal(host.children.length, 2);
-  // The api carries the base plus a per-extension storage, stable by identity.
-  assert.equal(mounts[0][2].send, 'S');
+  // The api carries the base plus a per-extension storage, stable by identity —
+  // and its own `send`, wrapping the base one (see the bound-send tests below).
+  assert.equal(typeof mounts[0][2].send, 'function');
   assert.equal(typeof mounts[0][2].storage.get, 'function');
   assert.notEqual(mounts[0][2], mounts[1][2], 'each extension gets its own api object');
 });
@@ -279,4 +280,47 @@ test('an entry with no `only` still reaches every contribution (card.pill is unc
   const host = document.make();
   slots.syncHosts('card.pill', [{ host, session: { sessionId: 'CARD1' } }]);
   assert.equal(host.children.length, 2);
+});
+
+// ── The bound `send` (the browser mirror of the server façade's forced values) ──
+// An extension may only drive the control handlers IT registered: without this,
+// an extension's client half could send `dispatch` or another extension's frame,
+// which is exactly what the server-side façade stops it doing over MCP.
+function sendHarness(types) {
+  const sent = [];
+  const h = harness({ handlerTypesFor: () => types, version: '9.9.9' });
+  const api = { send: (f) => sent.push(f) };
+  let captured = null;
+  h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), api);
+  return { ...h, sent, api: captured };
+}
+
+test('send forwards a frame whose type the extension registered', () => {
+  const { api, sent, errors } = sendHarness(['fake-do']);
+  api.send({ type: 'fake-do', text: 'x' });
+  assert.deepEqual(sent, [{ type: 'fake-do', text: 'x' }]);
+  assert.deepEqual(errors, []);
+});
+
+test('send drops a frame whose type the extension did not register, and reports it', () => {
+  const { api, sent, errors } = sendHarness(['fake-do']);
+  api.send({ type: 'dispatch', cwd: '/' });
+  api.send({ type: 'other-ext-do' });
+  api.send('not a frame');
+  assert.deepEqual(sent, [], 'nothing reached the socket');
+  assert.equal(errors.length, 3);
+  assert.match(errors[0], /\[ext:fake\] send refused: "dispatch"/);
+  assert.match(errors[2], /send refused: "null"/);
+});
+
+test('an extension with no known handler types fails CLOSED', () => {
+  const { api, sent, errors } = sendHarness([]);
+  api.send({ type: 'fake-do' });
+  assert.deepEqual(sent, []);
+  assert.match(errors[0], /\(none\)/);
+});
+
+test('the api carries the host API version', () => {
+  assert.equal(sendHarness(['fake-do']).api.version, '9.9.9');
 });

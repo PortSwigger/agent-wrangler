@@ -1,8 +1,8 @@
 import { deliverMessage as defaultDeliverMessage } from './message-delivery.js';
 
-// The `deliver` hook on the extensions bag (`deps.ext.deliver` for an MCP tool,
-// `ctx.ext.deliver` for a control handler, `deliver` in a sweep's run args) — how
-// an extension gets text in front of a session's agent.
+// `host.deliver`, the `deliver` capability on an extension's façade
+// (server/host-api/) — how an extension gets text in front of a session's agent,
+// and only if its manifest declared `requires: ['deliver']`.
 //
 // It exists because an extension CANNOT reach the pane itself: everything under
 // server/extensions/** must stay leaf-compatible (no tmux-scraper, no
@@ -37,11 +37,13 @@ import { deliverMessage as defaultDeliverMessage } from './message-delivery.js';
 // typing. That gate is not wired into this hook: it belongs to the automated
 // callers, and nothing here can tell the two intents apart.
 //
-// The relaunch of a dormant target is logged with reason=extension rather than
-// message: the resume log line exists to name what woke a card, and 'message'
-// would read as a human pressing send. It is not per-extension because the bag is
-// one object shared by every manifest — the loader knows which extension a tool
-// belongs to, the shared deps object does not.
+// The relaunch of a dormant target is logged with reason=`ext:<id>` rather than
+// message: the resume log line exists to name WHAT woke a card, and 'message'
+// would read as a human pressing send. It is bound PER EXTENSION — index.js calls
+// this once per façade with the extension's own id — which is the whole gain over
+// the pre-façade shared bag, where one `reason: 'extension'` named nothing. The
+// `reason` is closed over here and is not a caller-passable argument, the same
+// forced-value rule the façade's broadcast type and mail `from` follow.
 export function createExtDeliver(deps, { deliverMessage = defaultDeliverMessage, reason = 'extension' } = {}) {
   return async function deliver(sessionId, text) {
     if (typeof sessionId !== 'string' || !sessionId) return { mode: 'error', error: 'deliver(sessionId, text): sessionId must be a card id.' };

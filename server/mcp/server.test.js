@@ -171,3 +171,27 @@ test('POST /mcp records a Codex caller from its bearer token too', async () => {
     assert.ok(mcpSeenAt('CARD-CX') > 0);
   });
 });
+
+// The facade branch: an extension's tool is tagged with its owner by the loader
+// and must be invoked with THAT extension's host facade and no `deps` at all —
+// the surface narrowing is worthless if the tool can still reach the core bag.
+// A core tool is untagged and keeps `deps` exactly as before.
+test('buildMcpServer invokes a tagged tool with its facade and an untagged one with deps', async () => {
+  const seen = [];
+  const host = { id: 'fake', rebuild() {} };
+  const deps = { ...fakeDeps(), hostApiFor: (id) => (id === 'fake' ? host : null) };
+  const tools = [
+    { name: 'ext_tool', extId: 'fake', description: 'x', inputSchema: {}, handler: (frame) => { seen.push(frame); return { content: [] }; } },
+    { name: 'core_tool', description: 'x', inputSchema: {}, handler: (frame) => { seen.push(frame); return { content: [] }; } },
+  ];
+  const { client, server } = await connect(deps, 'CARD1', { tools });
+  await client.callTool({ name: 'ext_tool', arguments: {} });
+  await client.callTool({ name: 'core_tool', arguments: {} });
+  await client.close();
+  await server.close();
+  assert.equal(seen[0].host, host);
+  assert.equal(seen[0].deps, undefined, 'an extension tool must not see the core deps bag');
+  assert.equal(seen[0].caller, 'CARD1');
+  assert.equal(seen[1].deps, deps);
+  assert.equal(seen[1].host, undefined);
+});

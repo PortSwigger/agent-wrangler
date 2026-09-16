@@ -19,17 +19,25 @@ export function _resetRouterForTests() {
 // malformed frame is dropped silently (matches the original inline loop); an
 // unknown type is a no-op; any handler throw is wrapped in the shared error
 // envelope so a single bad action never tears down the socket.
-export async function routeControlMessage(raw, ctx) {
+// `handlers` is injectable so a test can pin the set (including an extension's
+// tagged handler) without writing config.json — the same escape hatch
+// buildMcpServer's `tools` gives, and it bypasses the process-wide memo.
+export async function routeControlMessage(raw, ctx, { handlers = null } = {}) {
   let msg;
   try {
     msg = JSON.parse(raw.toString());
   } catch {
     return;
   }
-  const entry = lookup(msg.type);
+  const entry = handlers ? handlers.find((h) => h.type === msg.type) : lookup(msg.type);
   if (!entry) return;
   try {
-    await entry.handler(msg, ctx);
+    // An EXTENSION's handler (tagged by the loader) receives its own `host`
+    // façade in place of `ctx` — it may only reach what its manifest declared.
+    // A core handler is untagged and keeps `ctx`. The error envelope below is
+    // unchanged for both: an extension handler throwing must still reply
+    // {type:'error'} rather than tear down the socket.
+    await (entry.extId ? entry.handler(msg, ctx.hostApiFor?.(entry.extId)) : entry.handler(msg, ctx));
   } catch (err) {
     ctx.reply({ type: 'error', message: String(err.message || err) });
   }

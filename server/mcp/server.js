@@ -43,7 +43,13 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.inputSchema },
-      (args) => tool.handler({ deps, caller }, args),
+      // An EXTENSION's tool (tagged with its owner by the loader) is invoked
+      // with that extension's own `host` façade and never `deps` — the whole
+      // point of the façade is that an extension cannot reach a singleton it did
+      // not declare. A core tool is untagged and keeps `deps` unchanged.
+      (args) => (tool.extId
+        ? tool.handler({ host: deps?.hostApiFor?.(tool.extId), caller }, args)
+        : tool.handler({ deps, caller }, args)),
     );
   }
   return server;
