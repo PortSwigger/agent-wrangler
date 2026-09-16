@@ -289,8 +289,21 @@ const BACKGROUND_SHELL_PATTERNS = {
 // run of `█`/`░` block characters immediately before the percentage. Neither
 // marker is used by any other component (cost/git/dir/project/version/auth
 // all lead with their own distinct emoji), so this is unambiguous.
-const MODEL_GLYPHS = /^[⚠✦◆⬦]/;
-const CONTEXT_BAR = /^[█▓▒░]+\s*(\d{1,3})%$/;
+//
+// MODEL_SEGMENT requires the glyph AND the rest of the segment to look like an
+// actual model label (letters/digits/spaces/×/-, tightly bounded) — not just a
+// leading glyph. A leading-glyph-only check was tried and is unsafe: caught by
+// adversarial review, a real "⚠ Warning: rate limited, retrying in 5s..." tool/
+// assistant line matches a bare `/^[⚠✦◆⬦]/` and would be reported as the model.
+// Every real label this matches against ("Sonnet 5", "Claude Fable 5 2×opus",
+// …) is well within this shape; ordinary prose almost never is (colons,
+// ellipses, and sentence punctuation are exactly what this excludes). Only the
+// generator's own two block characters are accepted for the context bar too —
+// ▓/▒ were previously included for extra generality no real installation
+// produces, which only widened the same collision surface for no capability.
+const MODEL_GLYPH = /^[⚠✦◆⬦]/;
+const MODEL_SEGMENT = /^[⚠✦◆⬦]\s*[\p{L}\p{N}][\p{L}\p{N} ×-]{0,38}$/u;
+const CONTEXT_BAR = /^[█░]+\s*(\d{1,3})%$/;
 
 // Split the pane's last recognisable status-bar-shaped line into trimmed
 // segments — shared by paneModelLabel and paneContextPercent so the two can
@@ -305,7 +318,7 @@ function statusBarSegments(paneText) {
   const lines = stripAnsi(paneText).split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const segments = lines[i].split('|').map((s) => s.trim()).filter(Boolean);
-    if (segments.some((s) => MODEL_GLYPHS.test(s) || CONTEXT_BAR.test(s))) return segments;
+    if (segments.some((s) => MODEL_SEGMENT.test(s) || CONTEXT_BAR.test(s))) return segments;
   }
   return null;
 }
@@ -318,9 +331,9 @@ function statusBarSegments(paneText) {
 // the chat view's chip contradict the pane sitting next to it.
 export function paneModelLabel(paneText) {
   const segments = statusBarSegments(paneText);
-  const segment = segments?.find((s) => MODEL_GLYPHS.test(s));
+  const segment = segments?.find((s) => MODEL_SEGMENT.test(s));
   if (!segment) return null;
-  const label = segment.replace(MODEL_GLYPHS, '').trim();
+  const label = segment.replace(MODEL_GLYPH, '').trim();
   // Bounded, and rejected outright if it is not the shape of a model name — a
   // wrong label here would misreport live state, so no label beats a bad one.
   return label && label.length <= 40 ? label : null;

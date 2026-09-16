@@ -430,6 +430,34 @@ test('paneModelLabel finds the model segment wherever it sits on the line', () =
   assert.equal(paneModelLabel('📁 dir | ⏱ $1.50 | ✦ Opus 5'), 'Opus 5');
 });
 
+// Adversarial review (PR #148): a bare leading-glyph check is not enough — ⚠ is
+// also an ordinary warning glyph a tool or the assistant can legitimately print,
+// so a real "⚠ Warning: ..." line must NOT be mistaken for a model badge (and
+// must not poison the "which line is the status bar" scan either) when there is
+// no actual custom statusline anywhere in the captured pane.
+test('paneModelLabel does not mistake an ordinary ⚠ warning line for the model badge', () => {
+  const pane = [
+    'Some earlier assistant text',
+    '⚠ Warning: rate limited, retrying in 5s...',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(paneModelLabel(pane), null);
+});
+test('paneContextPercent also ignores that same warning line', () => {
+  const pane = [
+    'Some earlier assistant text',
+    '⚠ Warning: rate limited, retrying in 5s...',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(paneContextPercent(pane), null);
+});
+// A short, model-label-shaped ⚠ segment (the real Fable/Mythos "2×opus" alert
+// badge) must still be recognised — the fix tightens the SHAPE allowed after
+// the glyph, it does not exclude ⚠ altogether.
+test('paneModelLabel still recognises the real Fable "2×opus" alert badge', () => {
+  assert.equal(paneModelLabel('⚠ Claude Fable 5 2×opus | ███░░ 20% | 📁 dir'), 'Claude Fable 5 2×opus');
+});
+
 // --- paneContextPercent: the context-window bar, which has no other source ---
 
 test('paneContextPercent reads the percentage out of the context bar', () => {
