@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler,
-  _resetInstallLockForTests, _setInstallRunnersForTests,
+  _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
 import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
 import { discoverExternal } from '../../extensions/external.js';
@@ -41,11 +41,29 @@ function reply(c, type) {
 
 // Stands in for `git clone`: the handler's only contract with it is that the
 // destination directory holds the repo afterwards.
-function fakeClone({ id = 'notes', requires = [], lock = true } = {}) {
+// `declared`/`declaredRequires` default to the manifest's own id/requires, which
+// is the honest case; a test passes them separately to stage a repo whose
+// package.json disclosure and index.js manifest DISAGREE.
+function fakeClone({
+  id = 'notes', requires = [], lock = true, declaration = true,
+  declaredId = id, declaredRequires = requires, indexThrows = false,
+} = {}) {
   return async (_url, dest) => {
     fs.mkdirSync(dest, { recursive: true });
-    fs.writeFileSync(path.join(dest, 'index.js'), `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  requires: ${JSON.stringify(requires)},\n};\n`);
-    fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ name: 'notes', type: 'module', dependencies: { left: '^1.0.0' } }));
+    const body = indexThrows
+      ? "throw new Error('index.js executed at disclosure time');\n"
+      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  requires: ${JSON.stringify(requires)},\n};\n`;
+    fs.writeFileSync(path.join(dest, 'index.js'), body);
+    fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
+      name: 'notes',
+      type: 'module',
+      dependencies: { left: '^1.0.0' },
+      ...(declaration ? {
+        wranglerExtension: {
+          id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
+        },
+      } : {}),
+    }));
     if (lock) {
       fs.writeFileSync(path.join(dest, 'package-lock.json'), JSON.stringify({
         lockfileVersion: 3,
@@ -241,4 +259,81 @@ test('ext-check-updates asks once per installed extension, on demand, and skips 
   assert.deepEqual(asked, [URL_NOTES], 'one ls-remote per updatable extension, and none for a builtin');
   assert.deepEqual(extensions.map((e) => [e.id, e.updatable, e.behind ?? null]), [['notes', true, true], ['handdropped', false, null]]);
   reset();
+});
+
+test('disclosure NEVER imports the extension: an index.js that throws on import still discloses', async () => {
+  // The security half of the static-declaration rule. `npm ci` has not run at
+  // disclosure time either, so a manifest importing a dependency could not be
+  // imported even if we wanted to — this repo's index.js throws outright, which
+  // is the same thing from the handler's point of view.
+  reset();
+  const c = ctx();
+  const disclosure = await disclose(c, { indexThrows: true });
+  assert.equal(disclosure.id, 'notes');
+  assert.deepEqual(disclosure.capabilities, []);
+  // …and it is the CONSENT step that discovers the bad manifest, with nothing
+  // installed and the staging dir gone.
+  await assert.rejects(
+    extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c),
+    /index\.js executed at disclosure time/,
+  );
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+  assert.deepEqual(fs.readdirSync(tmpDir()), []);
+});
+
+test('a repo with no wranglerExtension block is refused, naming what it must declare', async () => {
+  reset();
+  const c = ctx();
+  await assert.rejects(
+    (async () => { useFakes({ declaration: false }); await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c); })(),
+    /wranglerExtension/,
+  );
+  assert.deepEqual(fs.readdirSync(tmpDir()), []);
+});
+
+test('a manifest requiring more than its package.json disclosed fails the install', async () => {
+  // The whole point of holding the manifest to the declaration: the human
+  // consented to a list, and the code may not quietly take more than that.
+  reset();
+  const c = ctx();
+  const disclosure = await disclose(c, { requires: ['tasks:read', 'sessions:kill'], declaredRequires: ['tasks:read'] });
+  assert.deepEqual(disclosure.capabilities, ['tasks:read']);
+  await assert.rejects(
+    extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c),
+    /sessions:kill.*did not disclose/s,
+  );
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+  assert.equal(readProvenance().notes, undefined);
+});
+
+test("a manifest whose id differs from the disclosed one fails the install", async () => {
+  reset();
+  const c = ctx();
+  const disclosure = await disclose(c, { id: 'other', declaredId: 'notes' });
+  assert.equal(disclosure.id, 'notes');
+  await assert.rejects(
+    extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c),
+    /does not match what was consented to/,
+  );
+  assert.equal(fs.existsSync(path.join(externalDir(), 'other')), false);
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+});
+
+test('an abandoned consent is reclaimed rather than wedging every later install', async () => {
+  // Closing the modal, reloading the board or losing the socket all end a
+  // disclosure with nobody to answer it, and the handler is told about none of
+  // them. Before this, one of those held the lock until a restart.
+  reset();
+  const c = ctx();
+  const abandoned = await disclose(c);
+  await assert.rejects(
+    extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, ctx()),
+    /already running/,
+  );
+  _agePendingConsentForTests();
+  const c2 = ctx();
+  const fresh = await disclose(c2);
+  assert.notEqual(fresh.tempId, abandoned.tempId);
+  // The abandoned staging dir went with the lock — only the live one is left.
+  assert.deepEqual(fs.readdirSync(tmpDir()), [fresh.tempId]);
 });

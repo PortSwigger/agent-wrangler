@@ -768,6 +768,49 @@ disclosed honestly, so there is nothing to consent to. Consent likewise precedes
 any registry fetch — nothing is downloaded from npm until a human has approved
 the disclosed list.
 
+### The disclosure is read statically, and the manifest is never imported before consent
+
+An external extension MUST carry a `wranglerExtension` block in its
+`package.json` — `{id, label, description?, author?, homepage?, requires?}` —
+and `readDeclaration` (`install.js`) reads the consent modal's contents out of
+**that**, never out of the manifest module. Two independent reasons, either of
+which alone forces it:
+
+- **Security.** Importing `index.js` *executes* third-party code, and the consent
+  modal exists precisely to precede that. Disclosing by import ran the code
+  before the human had agreed to anything — a worse hole than the documented
+  `--ignore-scripts` caveat, which at least only applies once the extension is
+  installed and loaded.
+- **Correctness.** `npm ci` runs only *after* consent, so at disclosure time the
+  clone has no `node_modules` and a manifest importing any dependency cannot be
+  imported at all. A lockfile is mandatory, so having dependencies is the
+  expected case — this made every non-trivial extension uninstallable.
+
+The block is therefore duplicated between `package.json` and the manifest by
+design. `ext-consent` closes that gap once running the code is consented to:
+after `npm ci` it imports the manifest, validates it, and holds it to the
+declaration (`assertManifestMatchesDeclaration`) — a different `id` would install
+into a directory the disclosure never named, and a **wider `requires`** would take
+capabilities that were never on screen. Either **fails the install** rather than
+quarantining after the fact, because nothing is on disk yet so refusing is free.
+The provenance record's consented `requires` is the **DISCLOSED** list, not the
+manifest's, because that is what the human approved.
+
+### An abandoned consent is reclaimable
+
+The install lock is held across the human's decision (the staging dir is what a
+second install would collide with), but "the human decided" is not the only way a
+disclosure ends: closing the modal, reloading the board or losing the socket all
+end one with nobody to answer, and the handler is told about none of them. A
+disclosure awaiting consent is therefore reclaimable after
+`PENDING_CONSENT_TTL_MS` (10 minutes) — the next install sweeps that staging dir
+and takes the lock. Without it one abandoned modal wedged **every** install on the
+instance until a restart, which is a real dead end rather than the "a restart
+cancels nothing meaningful" the in-memory lock is justified by. Reclaim is gated
+on *awaiting consent*, never on age alone: a clone or an `npm ci` is genuinely
+slow and already bounded by its own `execFile` timeout, so a running install keeps
+refusing however long it has taken.
+
 The staging dir is `<DATA_DIR>/extensions/.tmp/<tempId>/` — dot-prefixed so it
 lives on the same filesystem as the destination (the rename is atomic) without
 discovery mistaking it for an extension — and is removed on cancel and on any

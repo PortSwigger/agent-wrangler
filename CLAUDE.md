@@ -96,6 +96,35 @@ don't re-derive it.
   runners are a **module** seam, never an option on the incoming frame: a control
   frame is browser-supplied, so a `_clone` a client could set would be arbitrary
   code execution offered as an API.
+- **An install's disclosure is read STATICALLY from the clone's `package.json`
+  `wranglerExtension` block — the manifest module must NEVER be imported before
+  consent.** `readDeclaration` (`extensions/install.js`) is that read. Two
+  independent reasons and either alone forces it: importing `index.js` **executes
+  third-party code**, which is the exact thing the consent modal exists to precede
+  (a worse hole than the documented `--ignore-scripts` caveat, which at least only
+  applies to an already-consented install); and `npm ci` runs only AFTER consent, so
+  at disclosure time there is no `node_modules` and a manifest importing any
+  dependency **cannot be imported at all** — with a lockfile mandatory, having
+  dependencies is the expected case, so this made every non-trivial extension
+  uninstallable (found live, against a real toy extension depending on `ms`). The
+  block is duplicated between package.json and the manifest by design;
+  `assertManifestMatchesDeclaration` closes the gap after `npm ci`, **failing the
+  install** (nothing is on disk yet, so refusing is free) on a differing `id` or a
+  `requires` wider than was disclosed. The provenance record's consented `requires`
+  is therefore the **DISCLOSED** list, never the manifest's — that is what the human
+  approved.
+- **A disclosure awaiting consent is RECLAIMABLE after `PENDING_CONSENT_TTL_MS`
+  (10 min), and the gate is `awaitingConsent`, never age alone.** The install lock is
+  held across the human's decision because the staging dir is what a second install
+  would collide with — but closing the modal, reloading the board or losing the
+  socket all end a disclosure with nobody to answer it and the handler is told about
+  none of them. Before this, one abandoned modal wedged **every** install on the
+  instance until a restart, which is a real dead end and not the "a restart cancels
+  nothing meaningful" the in-memory lock is justified by. Reclaiming is removing that
+  staging dir and dropping the lock, and is deliberately silent (nobody wants that
+  install any more). A clone or `npm ci` in flight must keep refusing however long it
+  has taken — both are already bounded by their own `execFile` timeout — which is why
+  age alone is the wrong test.
 - **The external-manifest import scan is a CORRECTNESS rule, not a security one.**
   `FORBIDDEN_IMPORTS` (`extensions/external.js`, imported by `index.test.js` so the
   runtime scanner and the test cannot drift) is **trivially bypassed by

@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, lockDependencies, npmCi,
-  MissingLockfileError,
+  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, lockDependencies, npmCi, readDeclaration,
+  MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
 // Every runner is injected, so nothing below spawns a process or touches the
@@ -141,4 +141,36 @@ test('npmCi installs into the extension dir with scripts off and dev omitted', a
   assert.equal(npm.calls[0].opts.cwd, '/ext/clone');
   assert.ok(!('shell' in npm.calls[0].opts));
   assert.equal(out, path.join('/ext/clone', 'node_modules'));
+});
+
+test('readDeclaration reads the disclosure statically, without importing anything', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-decl-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // An index.js that would throw if it were ever imported — the whole point is
+  // that disclosing an install runs none of the extension's code.
+  fs.writeFileSync(path.join(dir, 'index.js'), "throw new Error('imported');\n");
+
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
+  assert.throws(() => readDeclaration(dir), (err) => err instanceof MissingDeclarationError && err.code === 'AW_NO_DECLARATION');
+
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'Bad Id', label: 'x' } }));
+  assert.throws(() => readDeclaration(dir), /wranglerExtension\.id must match/);
+
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes' } }));
+  assert.throws(() => readDeclaration(dir), /label must be a non-empty string/);
+
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', requires: 'tasks:read' } }));
+  assert.throws(() => readDeclaration(dir), /requires must be an array/);
+
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+    wranglerExtension: { id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'] },
+  }));
+  assert.deepEqual(readDeclaration(dir), {
+    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'],
+  });
+
+  // Absent prose normalises to '' rather than undefined: every consumer renders
+  // it through textContent, where undefined would print as "undefined".
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes' } }));
+  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [] });
 });

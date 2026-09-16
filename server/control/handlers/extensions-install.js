@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { validateManifest } from '../../extensions/index.js';
 import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord } from '../../extensions/provenance.js';
 import { unconsentedCapabilities } from '../../extensions/external.js';
-import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, MissingLockfileError } from '../../extensions/install.js';
+import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { log } from '../../log.js';
 
 // Installing an external extension, in two frames with a human decision between
@@ -32,6 +32,21 @@ import { log } from '../../log.js';
 // not silently made to wait. In-memory is right — a restart cancels nothing
 // meaningful, because an interrupted install leaves only a staging dir, which
 // boot sweeps (server/extensions/external.js sweepStaging).
+// `busy` is `{ url, since, tempId, awaitingConsent }` while an install is in
+// flight. The lock is HELD across the human's decision on purpose — the staging
+// dir is what a second install would collide with — but "the human decided" is
+// not the only way a disclosure ends: closing the modal, reloading the board or
+// losing the socket leaves nothing to answer with, and the handler never learns
+// about any of them. So a disclosure awaiting consent is RECLAIMABLE after
+// PENDING_CONSENT_TTL_MS: the next install sweeps that staging dir and takes the
+// lock. Without it one abandoned modal wedged every install on the instance
+// until a restart, which is a real dead end rather than the "a restart cancels
+// nothing meaningful" the in-memory lock is justified by.
+//
+// Reclaim is gated on `awaitingConsent`, never on age alone: a clone or an
+// `npm ci` is genuinely slow and is already bounded by its own execFile timeout,
+// so a running install must keep refusing however long it has taken.
+const PENDING_CONSENT_TTL_MS = 10 * 60 * 1000;
 let busy = null;
 // Staged clones this process has disclosed but not yet resolved, keyed on the
 // opaque tempId the client echoes back. In memory for the same reason as the
@@ -48,6 +63,14 @@ let runners = REAL_RUNNERS;
 
 export function _setInstallRunnersForTests(next = null) {
   runners = next ? { ...REAL_RUNNERS, ...next } : REAL_RUNNERS;
+}
+
+export const _PENDING_CONSENT_TTL_MS = PENDING_CONSENT_TTL_MS;
+
+// Backdates the pending disclosure past its TTL, so the reclaim path is tested
+// without a fake clock or a ten-minute wait.
+export function _agePendingConsentForTests() {
+  if (busy) busy.since = Date.now() - PENDING_CONSENT_TTL_MS - 1;
 }
 
 export function _resetInstallLockForTests() {
@@ -80,6 +103,21 @@ function rmQuiet(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* nothing left to do about it */ }
 }
 
+function reclaimable(lock) {
+  return Boolean(lock.awaitingConsent) && Date.now() - lock.since > PENDING_CONSENT_TTL_MS;
+}
+
+// Abandoning a disclosure leaves exactly one artefact — the staging dir — so
+// reclaiming is removing it and dropping the pending entry. Deliberately silent:
+// nobody asked for this install any more, and it is not a state change a human
+// would ask about afterwards (server/log.js is event-only).
+function reclaim(lock) {
+  const staged = lock.tempId ? pending.get(lock.tempId) : null;
+  if (staged) rmQuiet(staged.dir);
+  if (lock.tempId) pending.delete(lock.tempId);
+  busy = null;
+}
+
 // Progress is BROADCAST (the modal may be open in more than one tab, and the
 // board's own state changes underneath it) and the terminal phase is ALSO
 // replied, so the modal never depends solely on a broadcast it might have
@@ -89,16 +127,18 @@ function progress(ctx, phase, extra = {}) {
   ctx.broadcast?.({ type: 'ext-install-progress', phase, ...extra });
 }
 
-// Only what the consent modal shows. Deliberately NOT the whole manifest: it is
-// third-party data, and everything here is rendered via textContent.
-function discloseManifest(manifest) {
+// Only what the consent modal shows, and it comes from the clone's STATIC
+// declaration (readDeclaration) rather than an imported manifest — see that
+// function for why nothing here may execute the extension's code. Third-party
+// data throughout; every field is rendered via textContent.
+function discloseDeclared(declared) {
   return {
-    id: manifest.id,
-    label: manifest.label,
-    description: typeof manifest.description === 'string' ? manifest.description : '',
-    author: typeof manifest.author === 'string' ? manifest.author : '',
-    homepage: typeof manifest.homepage === 'string' ? manifest.homepage : '',
-    capabilities: [...(manifest.requires || [])],
+    id: declared.id,
+    label: declared.label,
+    description: declared.description,
+    author: declared.author,
+    homepage: declared.homepage,
+    capabilities: [...declared.requires],
   };
 }
 
@@ -111,11 +151,11 @@ function discloseManifest(manifest) {
 // or narrowed proceeds on the recorded consent, because nothing new is being
 // asked for. (external.js re-checks the same thing at every boot, which is what
 // catches a manifest that widens itself in place on disk after consent.)
-function updateDiff(record, manifest, deps) {
+function updateDiff(record, declared, deps) {
   const priorAll = new Set(record.dependencies || []);
   const nextAll = new Set(deps.all);
-  const addedCapabilities = unconsentedCapabilities([...(manifest.requires || [])], record);
-  const removedCapabilities = (record.requires || []).filter((c) => !(manifest.requires || []).includes(c));
+  const addedCapabilities = unconsentedCapabilities([...declared.requires], record);
+  const removedCapabilities = (record.requires || []).filter((c) => !declared.requires.includes(c));
   const addedDeps = deps.all.filter((d) => !priorAll.has(d));
   const removedDeps = (record.dependencies || []).filter((d) => !nextAll.has(d));
   const nameOf = (s) => s.slice(0, s.lastIndexOf('@'));
@@ -140,6 +180,24 @@ function updateDiff(record, manifest, deps) {
   };
 }
 
+// Loaded ONLY after consent and `npm ci`, which is the first moment the
+// manifest's own imports resolve and the first moment running its code is
+// something the human has agreed to. `declared` is what they agreed to, so the
+// manifest is held to it: a different id would install into a directory the
+// disclosure never named, and a wider `requires` would take capabilities that
+// were never on screen. Either fails the install rather than quarantining after
+// the fact — nothing is on disk yet, so refusing is free.
+function assertManifestMatchesDeclaration(manifest, declared) {
+  if (manifest.id !== declared.id) {
+    throw new Error(`The extension's index.js declares id "${manifest.id}" but its package.json disclosed "${declared.id}" — refusing to install a manifest that does not match what was consented to.`);
+  }
+  const consented = new Set(declared.requires);
+  const extra = [...new Set((manifest.requires || []).filter((c) => !consented.has(c)))];
+  if (extra.length) {
+    throw new Error(`The extension's index.js requires ${extra.join(', ')}, which its package.json did not disclose — refusing to install capabilities that were never consented to.`);
+  }
+}
+
 async function loadStagedManifest(dir) {
   // A cache-busting query is what makes a re-clone of the SAME path (an update,
   // or a second attempt after a failure) read the new file rather than the
@@ -161,17 +219,28 @@ async function loadStagedManifest(dir) {
 export const extInstallHandler = {
   type: 'ext-install',
   async handler(msg, ctx) {
-    if (busy) throw new Error(`An extension install is already running (${busy}). Wait for it to finish and try again.`);
+    if (busy && !reclaimable(busy)) {
+      throw new Error(`An extension install is already running (${busy.url}). Wait for it to finish and try again.`);
+    }
+    if (busy) reclaim(busy);
     const url = assertAllowedUrl(String(msg.url || '').trim());
-    busy = url;
+    busy = { url, since: Date.now(), tempId: null, awaitingConsent: false };
     const tempId = crypto.randomBytes(8).toString('hex');
+    busy.tempId = tempId;
     const dir = safeStagingPath(tempId);
     try {
       ensureDirs();
       progress(ctx, 'cloning', { url });
       await runners.clone(url, dir);
       progress(ctx, 'resolving');
-      const manifest = await loadStagedManifest(dir);
+      // Static read — the manifest module is NOT imported until after consent.
+      let declared;
+      try {
+        declared = readDeclaration(dir);
+      } catch (err) {
+        if (err instanceof MissingDeclarationError) throw new Error('This repository declares no "wranglerExtension" block in its package.json. An external extension must declare its id, label and requires there so they can be shown to you without running any of its code.');
+        throw err;
+      }
       const sha = await runners.head(dir);
       // Refused BEFORE consent and before any registry fetch: an extension
       // whose dependency set is unpinned cannot be disclosed honestly, so there
@@ -183,21 +252,23 @@ export const extInstallHandler = {
         if (err instanceof MissingLockfileError) throw new Error('This repository ships no package-lock.json. An extension without a lockfile is not installable — its dependency set would be unpinned and unreviewable.');
         throw err;
       }
-      const existing = recordFor(manifest.id);
+      const existing = recordFor(declared.id);
       const reply = {
         type: 'ext-install-disclosure',
         tempId,
         sha,
-        ...discloseManifest(manifest),
+        ...discloseDeclared(declared),
         dependencies: deps.direct,
         dependencyCount: deps.all.length,
-        ...(existing ? updateDiff(existing, manifest, deps) : { update: false, reconsentNeeded: true }),
+        ...(existing ? updateDiff(existing, declared, deps) : { update: false, reconsentNeeded: true }),
       };
-      pending.set(tempId, { url, sha, manifest, deps, dir });
+      pending.set(tempId, { url, sha, declared, deps, dir });
+      busy.awaitingConsent = true;
+      busy.since = Date.now();
       // The lock is HELD across the human's decision, deliberately: the staging
       // dir is what a second install would collide with, and it lives until
       // consent resolves. Released by ext-consent, or by the failure path here.
-      progress(ctx, 'disclosed', { id: manifest.id });
+      progress(ctx, 'disclosed', { id: declared.id });
       ctx.reply(reply);
     } catch (err) {
       rmQuiet(dir);
@@ -215,16 +286,21 @@ export const extConsentHandler = {
     const staged = pending.get(msg.tempId);
     if (!staged) throw new Error('That install is no longer pending — start it again.');
     pending.delete(msg.tempId);
-    const { url, sha, manifest, deps, dir } = staged;
+    const { url, sha, declared, deps, dir } = staged;
     try {
       if (!msg.approve) {
         rmQuiet(dir);
-        progress(ctx, 'cancelled', { id: manifest.id });
-        ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: false, cancelled: true });
+        progress(ctx, 'cancelled', { id: declared.id });
+        ctx.reply({ type: 'ext-install-done', id: declared.id, installed: false, cancelled: true });
         return;
       }
-      progress(ctx, 'installing', { id: manifest.id });
+      progress(ctx, 'installing', { id: declared.id });
       await runners.npm(dir);
+      // First point at which the manifest's imports resolve, and the first at
+      // which running its code is consented to — so this is where the real
+      // manifest is validated and held to what was disclosed.
+      const manifest = await loadStagedManifest(dir);
+      assertManifestMatchesDeclaration(manifest, declared);
       const dest = safeExtPath(manifest.id);
       // Replacing an existing install (an update) is a remove-then-rename
       // rather than a merge: a stale file from the previous version left in
@@ -237,9 +313,11 @@ export const extConsentHandler = {
         originUrl: url,
         sha,
         installedAt: new Date().toISOString(),
-        // The CONSENTED set, which is what a later update is diffed against and
-        // what external.js checks the on-disk manifest has not widened past.
-        requires: [...(manifest.requires || [])],
+        // The CONSENTED set — the DISCLOSED list, not the manifest's, because
+        // that is what the human saw and approved. The two are asserted equal
+        // or narrower above, and external.js re-checks the on-disk manifest
+        // against this record at every boot.
+        requires: [...declared.requires],
         dependencies: deps.all,
       });
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url} at ${sha.slice(0, 8)}`);
@@ -250,7 +328,7 @@ export const extConsentHandler = {
       // On ANY failure at any point the staging dir goes — it is never left
       // behind for a later boot to find half-installed.
       rmQuiet(dir);
-      progress(ctx, 'failed', { id: manifest.id, message: String(err?.message || err) });
+      progress(ctx, 'failed', { id: declared.id, message: String(err?.message || err) });
       throw err;
     } finally {
       busy = null;

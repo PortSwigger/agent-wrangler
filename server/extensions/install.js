@@ -168,6 +168,58 @@ function directDependencyNames(dir, lock) {
   }
 }
 
+// The disclosure an install is consented against, read STATICALLY out of the
+// clone's package.json — the manifest module is deliberately NOT imported here.
+// Two independent reasons, either of which alone forces this:
+//  - SECURITY: importing index.js EXECUTES third-party code, and the consent
+//    modal exists precisely to precede that. Disclosing by import meant the
+//    code ran before the human had agreed to anything, which is a worse hole
+//    than the documented `--ignore-scripts` caveat (that at least only runs the
+//    code once the extension is installed and loaded).
+//  - CORRECTNESS: `npm ci` runs only AFTER consent, so at disclosure time the
+//    clone has no node_modules and a manifest importing any dependency cannot
+//    be imported at all. A lockfile is mandatory, so having dependencies is the
+//    expected case, not an edge one.
+// The block is therefore duplicated between package.json and the manifest by
+// design; ext-consent asserts the two agree once the real manifest can safely
+// be loaded, so the duplication cannot drift into a lie.
+export class MissingDeclarationError extends Error {
+  constructor(file) {
+    super(`No "wranglerExtension" block in ${file} — an external extension must declare its id, label and requires in package.json so they can be disclosed without running its code.`);
+    this.name = 'MissingDeclarationError';
+    this.code = 'AW_NO_DECLARATION';
+    this.file = file;
+  }
+}
+
+export function readDeclaration(dir) {
+  const file = path.join(dir, 'package.json');
+  if (!fs.existsSync(file)) throw new MissingDeclarationError(file);
+  const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const d = pkg?.wranglerExtension;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) throw new MissingDeclarationError(file);
+  if (typeof d.id !== 'string' || !/^[a-z][a-z0-9-]*$/.test(d.id)) {
+    throw new Error(`wranglerExtension.id must match /^[a-z][a-z0-9-]*$/ (got ${JSON.stringify(d.id)})`);
+  }
+  if (typeof d.label !== 'string' || !d.label) throw new Error('wranglerExtension.label must be a non-empty string');
+  if (d.requires != null && (!Array.isArray(d.requires) || d.requires.some((c) => typeof c !== 'string' || !c))) {
+    throw new Error('wranglerExtension.requires must be an array of capability names');
+  }
+  // Prose only, and third-party: type-checked here, rendered via textContent
+  // everywhere downstream. Capability NAMES are not validated against
+  // CAPABILITIES here — this leaf cannot import the loader's vocabulary without
+  // a cycle, and an unknown one already quarantines at boot with its own reason.
+  const str = (v) => (typeof v === 'string' ? v : '');
+  return {
+    id: d.id,
+    label: d.label,
+    description: str(d.description),
+    author: str(d.author),
+    homepage: str(d.homepage),
+    requires: [...(d.requires || [])],
+  };
+}
+
 // Installs the clone's own dependencies into `<dir>/node_modules`. `cwd: dir` is
 // the whole isolation: the server's package.json, package-lock.json and
 // scripts/sync-deps.sh are untouched, and there is deliberately NO interaction
