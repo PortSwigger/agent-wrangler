@@ -2893,9 +2893,19 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   color: var(--fg-muted);
 }
 .chat-context-bar[hidden] { display: none; }
+/* --surface-2, not --border-muted: several custom styles (jurassic-park,
+   wrangler, dolphin, …) tint --border-muted the SAME hue family as their own
+   accent colours (it's derived from --border, meant for hairlines), so an
+   amber "warn" fill barely showed up against an amber-tinted track — caught
+   live against jurassic-park at 59%, where the two were nearly
+   indistinguishable. --surface-2 is a genuine panel-background tone in every
+   shipped style, not an accent tint, so it stays neutral under any fill
+   colour; the explicit border (using --border-muted for its INTENDED purpose,
+   a hairline) keeps the track's own extent visible regardless. */
 .chat-context-bar-track {
   flex: none; width: 38px; height: 5px; border-radius: 999px;
-  background: var(--border-muted); overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--border-muted);
+  overflow: hidden;
 }
 /* Width is set inline per-render (the one thing that varies); colour comes from
    the ancestor's `data-level`, matching the terminal statusline's own
