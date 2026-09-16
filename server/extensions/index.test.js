@@ -8,6 +8,7 @@ import {
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createToolFilter, quarantineExtension, _resetExtensionsForTests,
 } from './index.js';
+import { FORBIDDEN_IMPORTS } from './external.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
 
@@ -210,7 +211,9 @@ test('no module under server/extensions/** imports session-manager, state-reader
   // host-api/** is the NON-leaf half of the extensions API: a builder binds the
   // singletons this directory may not touch, so the import direction is one-way
   // and the loader can only ever REPORT `requires` for index.js to build from.
-  const forbidden = [/\/(session-manager|state-reader|tmux-scraper)\.js['"]/, /from\s+['"](\.\.\/)+index\.js['"]/, /\/host-api\//];
+  // The very array external.js's runtime scanner uses against an INSTALLED
+  // extension, imported rather than copied so the two cannot drift.
+  const forbidden = FORBIDDEN_IMPORTS;
   const offenders = [];
   for (const f of files) {
     for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
