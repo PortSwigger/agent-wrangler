@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MIN_SIDEBAR_W, MIN_BOARD_W, sidebarWidthFromDrag } from './sidebar-side.js';
+import { MIN_SIDEBAR_W, MIN_BOARD_W, sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 
 // A 1200px viewport with the sidebar taking the right 500px (the nav rail and
 // the board fill the rest). Dragging the handle left widens it, right narrows it.
@@ -40,4 +40,31 @@ test('a drag past the far edge clamps rather than going negative', () => {
 // yields a usable (if overflowing) pane rather than something below the minimum.
 test('on a viewport too narrow for both minimums the floor wins', () => {
   assert.equal(sidebarWidthFromDrag({ clientX: 300, rect: { left: 0, right: 400 }, viewportWidth: 400, onLeft: false }), MIN_SIDEBAR_W);
+});
+
+// gridWidthFromSidebarDrag is what makes #grid (not #sidebar) the side pinned
+// to a px width, so a window resize changes the conversation pane instead of
+// reflowing the session columns.
+test('grid takes whatever the drag did not give the sidebar', () => {
+  assert.equal(gridWidthFromSidebarDrag({ mainWidth: 1200, handleWidth: 6, sidebarWidth: 500 }), 694);
+});
+
+// The three widths must always sum back to mainWidth, whatever the sidebar's
+// width — that identity is the whole point: it's what keeps the grid pinned
+// and the sidebar the one absorbing a later window resize (the grid width
+// this returns becomes a persisted inline style, not recomputed on resize).
+test('grid + handle + sidebar always reconstructs mainWidth', () => {
+  for (const [mainWidth, handleWidth, sidebarWidth] of [[1200, 6, 500], [1600, 6, 705.171875], [800, 6, MIN_SIDEBAR_W]]) {
+    const gridWidth = gridWidthFromSidebarDrag({ mainWidth, handleWidth, sidebarWidth });
+    assert.equal(gridWidth + handleWidth + sidebarWidth, mainWidth);
+  }
+});
+
+// A wider sidebar (dragged toward the grid) must shrink the grid by exactly
+// as much, not merely "shrink it some" — this is the direction that used to
+// regress silently if the subtraction were ever inverted by mistake.
+test('a wider sidebar shrinks the grid by exactly the same amount', () => {
+  const base = gridWidthFromSidebarDrag({ mainWidth: 1200, handleWidth: 6, sidebarWidth: 500 });
+  const wider = gridWidthFromSidebarDrag({ mainWidth: 1200, handleWidth: 6, sidebarWidth: 560 });
+  assert.equal(base - wider, 60);
 });
