@@ -2919,7 +2919,16 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Width is set inline per-render (the one thing that varies); colour comes from
    the ancestor's `data-level`, matching the terminal statusline's own
    50%/70% thresholds so the two never disagree about what "getting full" means. */
-.chat-context-bar-fill { height: 100%; background: var(--green); }
+/* display:block is load-bearing, not decoration: this is a bare <span>
+   (chat-view.js), and a span is inline by default — an inline box ignores
+   `width` entirely. It "worked" in every hand-rolled test page used to
+   verify this feature because those used <div>s (block by default), never
+   the real DOM this class actually renders on — so the fill silently never
+   painted at ANY percentage, on the live board, until caught here. The
+   TRACK doesn't need this: it's a direct child of the flex container
+   `.chat-context-bar` and flex items are auto-blockified, but the fill is a
+   child of the (non-flex) track, one level too deep for that to reach. */
+.chat-context-bar-fill { display: block; height: 100%; background: var(--green); }
 .chat-context-bar[data-level="warn"] .chat-context-bar-fill { background: var(--snooze); }
 .chat-context-bar[data-level="danger"] .chat-context-bar-fill { background: var(--red); }
 .chat-context-bar-label { min-width: 2.6em; text-align: right; }
