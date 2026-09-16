@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
-  linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
+  linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
@@ -469,7 +469,14 @@ test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse
   assert.doesNotMatch(html, /data-todoid="t1"/);
 });
 
-test('tileHtml: task tile shows the escaped name, its first link and a +N overflow', () => {
+test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 132, 20, 6), 3);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 104, 20, 6), 2);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 60, 20, 6), 1);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 20, 20, 6), 0);
+});
+
+test('tileHtml: task tile exposes every link as a candidate for inline display', () => {
   const tile = {
     kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [],
     task: { id: 'T1', name: 'My <task>', links: [
@@ -481,7 +488,9 @@ test('tileHtml: task tile shows the escaped name, its first link and a +N overfl
   assert.match(html, /data-taskid="T1"/);
   assert.match(html, /My &lt;task&gt;/);
   assert.match(html, /ENT-1/);
-  assert.match(html, /link-overflow[^>]*>\+1/);
+  assert.match(html, /#2/);
+  assert.match(html, /task-link-list/);
+  assert.match(html, /link-overflow/);
 });
 
 test('tileHtml: carries the restored-task halo class only when this tile is the just-restored task', () => {

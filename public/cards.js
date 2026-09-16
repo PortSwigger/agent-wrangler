@@ -162,6 +162,19 @@ export function linkChipsHtml(links, ctx = {}) {
   }).join('');
 }
 
+export function visibleTaskLinkCount(linkWidths, availableWidth, overflowWidth, gap) {
+  if (!linkWidths.length) return 0;
+  const totalWidth = linkWidths.reduce((sum, width) => sum + width, 0) + gap * (linkWidths.length - 1);
+  if (totalWidth <= availableWidth) return linkWidths.length;
+  let usedWidth = 0;
+  for (let count = 0; count < linkWidths.length; count++) {
+    const nextWidth = usedWidth + linkWidths[count] + overflowWidth + gap * (count + 1);
+    if (nextWidth > availableWidth) return count;
+    usedWidth += linkWidths[count];
+  }
+  return linkWidths.length;
+}
+
 // The devcontainer chip doubles as a bring-up indicator. While the container is
 // still coming up, classify() (server-side) surfaces a transient hint as
 // `waitingFor`: 'starting container' rides a `working` status (a normal working
@@ -592,10 +605,9 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   }
   const taskLinks = tile.task.links || [];
   const linkBadge = taskLinks.length
-    ? linkChipsHtml([taskLinks[0]], ctx)
-      + (taskLinks.length > 1
-        ? `<button class="link-overflow" data-overflow-links="${esc(JSON.stringify(taskLinks.slice(1)))}">+${taskLinks.length - 1}</button>`
-        : '')
+    ? `<span class="task-link-list" data-task-links="${esc(JSON.stringify(taskLinks))}">`
+      + linkChipsHtml(taskLinks, ctx)
+      + `<button class="link-overflow" hidden></button></span>`
     : '';
   const restoredFlash = tile.task.id === ctx.restoredTaskId ? ' task-restored-flash' : '';
   return `<div class="task-cell${restoredFlash}" data-taskid="${esc(tile.task.id)}" style="${pos}">
