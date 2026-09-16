@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 // chat-dom/chat-group/chat-handoff, which is where the existing coverage stops.
 //
 // No jsdom, matching the rest of public/. Instead the handful of DOM calls the
-// module actually makes (10 getElementById, 5 createElement, one querySelector,
+// module actually makes (getElementById, createElement, one querySelector,
 // addEventListener, and window.markdownit) are stubbed, and the module is imported
 // dynamically AFTER the globals are installed — it reads `document` at call time
 // inside initChatView, but markdown-preview.js reads `window.markdownit` when the
@@ -99,7 +99,7 @@ function stubDom() {
   const byId = new Map();
   for (const id of [
     'chat-wrap', 'chat-stream', 'chat-input', 'chat-send', 'chat-stop',
-    'chat-hint', 'chat-suggestion', 'chat-current-model', 'chat-attachments',
+    'chat-hint', 'chat-suggestion', 'chat-current-model', 'chat-context-bar', 'chat-attachments',
     'chat-notice-bar', 'chat-jump-last', 'chat-exit-notice',
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
@@ -171,6 +171,52 @@ async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
     runTimers: () => { for (const t of timers) if (!t.cancelled) t.fn(); },
   };
 }
+
+// --- context-window percentage chip ------------------------------------------
+
+test('a chat reply with a contextPercent shows the bar, filled and labelled', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 42 });
+  const bar = byId.get('chat-context-bar');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.level, 'ok');
+  const [track, label] = bar.children;
+  assert.equal(track.children[0].style.width, '42%');
+  assert.equal(label.textContent, '42%');
+});
+
+test('contextPercent thresholds match the terminal statusline (50%/70%)', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  const bar = byId.get('chat-context-bar');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 10 });
+  assert.equal(bar.dataset.level, 'ok');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 55 });
+  assert.equal(bar.dataset.level, 'warn');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 85 });
+  assert.equal(bar.dataset.level, 'danger');
+});
+
+// No fallback exists for this value anywhere else — unlike the model chip — so
+// a reply without it must hide the bar rather than leave a stale percentage.
+test('a reply with no contextPercent hides the bar, even after a previous reply showed one', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 30 });
+  assert.equal(byId.get('chat-context-bar').hidden, false);
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [], contextPercent: null });
+  assert.equal(byId.get('chat-context-bar').hidden, true);
+});
+
+test('mounting a different session hides the previous one\'s context bar until its own reply arrives', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 30 });
+  assert.equal(byId.get('chat-context-bar').hidden, false);
+  view.mount('s2');
+  assert.equal(byId.get('chat-context-bar').hidden, true, 'must not carry s1\'s percentage into s2\'s chip');
+});
 
 // --- the cross-session composer leak -----------------------------------------
 
@@ -800,6 +846,28 @@ test('a "Terminal →" button is offered and calls onGoTerminal for the mounted 
   const bar = byId.get('chat-notice-bar');
   bar.children[1].dispatchEvent({ type: 'click' });
   assert.deepEqual(goTo, ['s1']);
+});
+
+test('setStatus(needs-you, waitingFor, "api-error") shows a non-blocking notice with no Terminal button', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, false);
+  assert.match(bar.children[0].textContent, /API error — connection closed mid-response/);
+  assert.match(bar.children[0].textContent, /retry/i);
+  assert.equal(bar.children.length, 1, 'no Terminal button for a retryable api error');
+  assert.equal(input.disabled, false, 'sending a new message is how you retry, so the composer stays live');
+  assert.doesNotMatch(bar.children[0].textContent, /this needs the terminal\.$/);
+});
+
+test('an api-error needs-you does not block Send once the composer has text', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
+  input.value = 'try again';
+  input.dispatchEvent({ type: 'input' });
+  assert.equal(byId.get('chat-send').disabled, false);
 });
 
 test('clearing needs-you re-enables the composer and hides the bar', async () => {

@@ -194,6 +194,99 @@ test('analyzeCodex keeps the latest completed turn model when a new turn is pend
   assert.equal(r.currentModel, 'gpt-5.5');
 });
 
+// A models_cache.json fixture, in the same shape Codex's own CLI writes under
+// ~/.codex/models_cache.json — analyzeCodex must never hand-copy these numbers.
+function fixtureModelsCache(models) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cxmc-'));
+  const file = path.join(dir, 'models_cache.json');
+  fs.writeFileSync(file, JSON.stringify({ models: models.map((m) => ({ slug: m.slug, context_window: m.contextWindow })) }));
+  return file;
+}
+
+test('analyzeCodex computes contextPercent from the latest per-call usage, not the cumulative total', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+    // Cumulative usage (token_count) is huge, so contextPercent would read as
+    // ~100% almost immediately if it were derived from this instead.
+    { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 20_000_000, output_tokens: 50_000 } } } },
+    { type: 'token_usage_record', payload: { usage: { input_tokens: 54_400, cached_input_tokens: 50_000, output_tokens: 200, total_tokens: 54_600 } } },
+  ]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-5.6-terra', contextWindow: 272_000 }]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(r.contextPercent, 20); // 54400 / 272000 = 20%
+});
+
+test('analyzeCodex clamps contextPercent at 100 rather than reporting over', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.6-sol' } },
+    { type: 'token_usage_record', payload: { usage: { input_tokens: 500_000 } } },
+  ]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-5.6-sol', contextWindow: 272_000 }]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(r.contextPercent, 100);
+});
+
+test('analyzeCodex reports contextPercent as null for a model absent from the cache, rather than guessing', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.4-mini' } },
+    { type: 'token_usage_record', payload: { usage: { input_tokens: 10_000 } } },
+  ]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-5.6-sol', contextWindow: 272_000 }]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(r.contextPercent, null);
+});
+
+test('analyzeCodex reports contextPercent as null when the models cache file does not exist', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+    { type: 'token_usage_record', payload: { usage: { input_tokens: 10_000 } } },
+  ]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath: path.join(os.tmpdir(), 'does-not-exist-models-cache.json') });
+  assert.equal(r.contextPercent, null);
+});
+
+test('analyzeCodex reports contextPercent as null before any per-call usage record has been seen', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+  ]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-5.6-terra', contextWindow: 272_000 }]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(r.contextPercent, null);
+});
+
+test('analyzeCodex returns contextPercent: null for an unknown id', async () => {
+  const { root } = fixtureSessions();
+  const r = await analyzeCodex('00000000-0000-0000-0000-000000000000', { sessionsDir: root });
+  assert.equal(r.contextPercent, null);
+});
+
+// Adversarial review (PR #148): analyzeCodex's own result cache is keyed on the
+// rollout FAMILY's signature (file sizes/mtimes), which does not change when
+// Codex CLI refreshes models_cache.json in place — so the fix that folds the
+// cache file's own mtime into that signature is load-bearing. Prove it here
+// rather than only asserting it by inspection: same session, same rollout
+// (nothing about it changes between the two calls), only the models cache
+// mutates — a stale cache would keep serving the FIRST contextPercent forever.
+test('analyzeCodex invalidates its own result cache when models_cache.json changes, even though no rollout file did', async () => {
+  const { root, uuid } = fixtureTimestamped([
+    { type: 'turn_context', payload: { model: 'gpt-5.6-terra' } },
+    { type: 'token_usage_record', payload: { usage: { input_tokens: 54_400 } } },
+  ]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-5.6-terra', contextWindow: 272_000 }]);
+  const first = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(first.contextPercent, 20); // 54400 / 272000
+
+  // Codex CLI refreshes its cache in place with a smaller window for the same
+  // model — nudge the mtime forward explicitly so this doesn't depend on the
+  // filesystem's clock resolution happening to tick between the two writes.
+  const bumpedMtime = (fs.statSync(modelsCachePath).mtimeMs + 60_000) / 1000;
+  fs.writeFileSync(modelsCachePath, JSON.stringify({ models: [{ slug: 'gpt-5.6-terra', context_window: 100_000 }] }));
+  fs.utimesSync(modelsCachePath, bumpedMtime, bumpedMtime);
+
+  const second = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(second.contextPercent, 54); // 54400 / 100000, rounded — NOT the stale 20
+});
+
 test('listResumableCodex surfaces sessions with cwd + summary, tagged codex', async () => {
   const { root, uuid } = fixtureSessions();
   const { candidates, total } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.parse('2026-06-10T10:00:00Z') });

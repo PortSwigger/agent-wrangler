@@ -154,9 +154,11 @@
         <div class="ck-head">
           <span class="ck-title">Checklist</span>
           <span class="ck-count" id="ck-count"></span>
+          <button type="button" class="card-tag checklist-filter" id="ck-filter" title="Show all items" aria-pressed="false"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg><span id="ck-filter-label">Open</span></button>
           <button type="button" class="ck-add" id="ck-add" title="Add a checklist item">+ Add</button>
         </div>
         <div class="ck-list" id="ck-list"></div>
+        <div class="ck-empty" id="ck-empty" role="status" hidden></div>
       </div>
       <!-- Host for extension panel sections (the `panel.section` slot,
            public/slots.js). A #panel sibling for the same reason the checklist
@@ -214,6 +216,9 @@
           </div>
           <div class="chat-foot">
             <div class="chat-hint" id="chat-hint"></div>
+            <!-- Built out with a track/fill/label by chat-view.js, not static
+                 markup here — see the comment above contextBarEl there. -->
+            <div class="chat-context-bar" id="chat-context-bar" hidden></div>
             <button type="button" class="chat-current-model" id="chat-current-model" hidden></button>
           </div>
         </div>

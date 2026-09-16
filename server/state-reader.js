@@ -243,6 +243,18 @@ function withForkMark(label, entry) {
   return `[FORK] ${label}`;
 }
 
+// Both live-session passes below (managed and discovered-tmux) derive the same
+// needs-you promotion from an agent-agnostic apiError flag (Claude's own
+// dropped-connection turn-end — see transcript-reader.js's apiError tracking).
+// Pulled out so the two duplicated call sites can't drift on the promoted
+// waitingFor text, and exported so it's unit-testable directly: readSessions()
+// reads a real ~/.claude/sessions file with no injection seam, so this can't be
+// reached via buildGraph without a live process on the test machine.
+export function apiErrorPromotion(status, apiError) {
+  if (!apiError || status === 'working' || status === 'needs-you') return null;
+  return { status: 'needs-you', waitingFor: 'API error — connection closed mid-response', waitingReason: 'api-error' };
+}
+
 // Build the folder + session graph from the raw state, enriched by the
 // session-manager (tmux ownership) and an optional cost/sub-agent provider.
 // `discover` is a test seam (defaults to the real tmux scan) so the pane→node
@@ -436,8 +448,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     // status file reports idle/unknown even though the response is incomplete —
     // surface it as needs-you instead of a silent "done" (see transcript-reader's
     // apiError tracking). Skipped when the file already says working/needs-you.
-    const apiErrorNeedsYou = Boolean(enrichment?.apiError) && status !== 'working' && status !== 'needs-you';
-    if (apiErrorNeedsYou) status = 'needs-you';
+    const apiError = apiErrorPromotion(status, enrichment?.apiError);
+    if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = tmux ? detectBackgroundShell(paneText, agentId) : false;
@@ -454,7 +466,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       status,
       hasBackgroundShell,
       rawStatus: s.status || null,
-      waitingFor: apiErrorNeedsYou ? 'API error — connection closed mid-response' : (s.waitingFor || null),
+      waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || null),
+      waitingReason: apiError ? apiError.waitingReason : null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
       branch: await branchFor(cwd),
@@ -582,8 +595,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     if (live?.rawStatus === 'shell' && classify(paneText).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
-    const apiErrorNeedsYou = Boolean(enr?.apiError) && status !== 'working' && status !== 'needs-you';
-    if (apiErrorNeedsYou) status = 'needs-you';
+    const apiError = apiErrorPromotion(status, enr?.apiError);
+    if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = detectBackgroundShell(paneText, agentId);
@@ -614,7 +627,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       status,
       hasBackgroundShell,
       rawStatus: null,
-      waitingFor: apiErrorNeedsYou ? 'API error — connection closed mid-response' : (live?.waitingFor || scrapeWaitingFor || null),
+      waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
+      waitingReason: apiError ? apiError.waitingReason : null,
       kind: 'tmux',
       cwd: fcwd,
       branch: await branchFor(fcwd),

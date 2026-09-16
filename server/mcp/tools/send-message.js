@@ -129,6 +129,9 @@ async function legacyPushFallback({ deps, caller, to, text, gate }) {
   const label = labelFor(deps, to);
   const result = await deliverMessage(to, compose(caller, deps, text), deps);
   if (result.mode === 'error') return errorResult(result.error);
+  // Woken but unconfirmed (see deliverMessage): the peer may never have received
+  // it, so don't tell the sender it was delivered.
+  if (result.outcome === 'unknown') return errorResult(result.error);
   gate?.commit?.();
   if (result.mode === 'dormant') await deps.rebuild?.();
 

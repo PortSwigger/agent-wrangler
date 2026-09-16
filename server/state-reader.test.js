@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion } from './state-reader.js';
 
 // A sessions/ dir like ~/.claude/sessions: <pid>.json written by the status hook.
 function makeSessionsDir() {
@@ -413,6 +413,33 @@ test('buildGraph prefers the runtime analyze hook for a devcontainer entry; loca
   assert.equal(loc.usd, 9.99);  // local: falls through to enrich (host)
 });
 
+// The chat view needs to tell an api-error needs-you (idle pane, nothing to
+// do but send another message) apart from every other needs-you reason (a
+// permission prompt, OAuth, a devcontainer failure — all genuinely terminal
+// matters). `waitingFor` alone is a free-text string a client would have to
+// pattern-match; `waitingReason` is the structured discriminator for that.
+//
+// Tested directly (not via buildGraph) because both call sites read a real
+// running session off readSessions()/~/.claude/sessions — no injection seam —
+// so the promotion logic is pulled out into its own exported function purely
+// to stay testable.
+test('apiErrorPromotion: promotes an idle/unknown status to needs-you with a structured waitingReason', () => {
+  assert.deepEqual(apiErrorPromotion('idle', true), {
+    status: 'needs-you',
+    waitingFor: 'API error — connection closed mid-response',
+    waitingReason: 'api-error',
+  });
+});
+
+test('apiErrorPromotion: no-op when there is no apiError', () => {
+  assert.equal(apiErrorPromotion('idle', false), null);
+});
+
+test('apiErrorPromotion: no-op when the file/pane already explains the state (working or needs-you)', () => {
+  assert.equal(apiErrorPromotion('working', true), null);
+  assert.equal(apiErrorPromotion('needs-you', true), null);
+});
+
 test('buildGraph carries runtime onto the board node (devcontainer set, local null)', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'dc-sid', agent: 'claude', runtime: 'devcontainer', cwd: '/nonexistent/c', intent: 'x' },
@@ -472,6 +499,21 @@ test('buildGraph: a discovered devcontainer session with a normal working pane h
   assert.ok(node, 'discovered devcontainer node present');
   assert.equal(node.status, 'working');
   assert.equal(node.waitingFor, null);
+});
+
+// Same discriminator, on the discovered-live-tmux path (the other of the two
+// near-identical apiErrorNeedsYou sites in state-reader.js).
+test('buildGraph: an apiError from a discovered live session carries a structured waitingReason', async () => {
+  const entry = { sessionId: 'err-disc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_errdisc');
+  const discover = async () => [{ tmuxName: 'cc_errdisc', socket: '', claudePid: 9999, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
+  const capture = async () => 'nothing interesting here';
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({ apiError: true }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'err-disc');
+  assert.ok(node, 'discovered node present');
+  assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingReason, 'api-error');
 });
 
 // `/clear` starts a fresh conversation (new id, new transcript) inside the same pane,

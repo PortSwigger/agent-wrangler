@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
+import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
@@ -41,6 +42,8 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   const sendText = deps.sendText ?? defaultSendText;
   const prefillPane = deps.prefillPane ?? defaultPrefillPane;
   const clearComposer = deps.clearComposer ?? defaultClearComposer;
+  const waitForComposerReady = deps.waitForComposerReady ?? defaultWaitForComposerReady;
+  const ensureSubmitted = deps.ensureSubmitted ?? defaultEnsureSubmitted;
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the
@@ -52,6 +55,10 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     for (const p of imagePaths) await prefillPane(tmux, p, socket);
   };
 
+  // A LIVE pane needs neither pane gate: it is long past its TUI boot, and a human
+  // pressing Send chose this moment (this path also owns its own clearComposer
+  // semantics for the interrupt-restore case). Only the post-resume path below,
+  // pasting into a pty spawned milliseconds ago, has the readiness problem.
   const target = tmuxFor(id);
   if (target) {
     await attach(target, socketFor(id));
@@ -105,8 +112,41 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';
-      if (tmux) { await attach(tmux, socket); await sendText(tmux, text, socket); }
-      else return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
+      if (!tmux) return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
+      // HOLD the paste until the woken TUI has painted its composer. resume() only
+      // guarantees the pty was spawned, and pasting into that window loses the
+      // message SILENTLY: the bracketed paste is buffered and lands in the composer,
+      // but the CR sendText sends 120ms behind it is dropped, so the text sits there
+      // unsubmitted while this function returns mode 'dormant' and the chat view
+      // reports "submitted". Measured on a real pane — stranded 3/3 at a 0ms gap,
+      // 1 of 2 at 150ms, clean by 400ms — and caught end-to-end on the live board
+      // twice. This is Codex's problem alone in practice, because Claude's
+      // resumeCarriesIntent never pastes at all, and it is why the fix sits here
+      // rather than in sendText, whose other callers all target settled panes.
+      // A timeout falls THROUGH to the paste (see waitForComposerReady): a late
+      // message beats a lost one.
+      await waitForComposerReady(tmux, socket, fresh.agent);
+      await attach(tmux, socket);
+      await sendText(tmux, text, socket);
+      // Then confirm the send actually became a turn, repairing a dropped CR with a
+      // bare Enter — never a re-paste, which would fuse a second copy onto the text
+      // already sitting in the composer. The repair is gated on our own text still
+      // being visible in the composer, so it needs `text`/`agent` (see
+      // ensureSubmitted); the readiness result deliberately does NOT gate it, since
+      // a pane whose composer marker we failed to parse is exactly where the repair
+      // is most needed.
+      //
+      // An unconfirmed send is reported as UNKNOWN, not success. Falling through a
+      // readiness timeout and then claiming `submitted` would reinstate the silent
+      // loss this whole change exists to remove — precisely on the version/resize
+      // cases most likely to defeat the gate, where the message would be both late
+      // AND lost. Unknown keeps the composer's draft client-side (the chat view
+      // renders "Delivery status unknown" and does not clear it), so the human can
+      // look at the pane and resend; a duplicate they can see beats a message that
+      // vanished.
+      if (!await ensureSubmitted(tmux, socket, { text, agent: fresh.agent })) {
+        return { mode: 'dormant', outcome: 'unknown', error: 'Woke the session but could not confirm the message started a turn — check the terminal before sending again.' };
+      }
     }
   } catch (err) {
     return { mode: 'error', error: err?.message || String(err), outcome: 'unknown' };
