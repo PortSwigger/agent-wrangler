@@ -1014,9 +1014,15 @@ test('job control routes validate input and return a concrete creation acknowled
   const f = fixture(t), sent = [];
   const ctx = { jobStore: f.store, rebuild: async () => {}, reply: (x) => sent.push(x) };
   await routeControlMessage(JSON.stringify({ type: 'job-create', job: input }), ctx);
-  assert.equal(sent[0].type, 'job-created');
+  assert.equal(sent[0].type, 'job-created'); assert.equal(sent[0].started, false);
+  assert.equal(f.store.get(sent[0].jobId).stage, 'backlog');
+  let ticks = 0;
+  await routeControlMessage(JSON.stringify({ type: 'job-create', start: true, job: input }), { ...ctx, runJobs: async () => { ticks++; } });
+  assert.equal(sent[1].type, 'job-created'); assert.equal(sent[1].started, true);
+  assert.equal(f.store.get(sent[1].jobId).stage, 'planning', 'the main action skips the backlog');
+  assert.equal(ticks, 1, 'the runner is kicked so planning launches without waiting for the next tick');
   await routeControlMessage(JSON.stringify({ type: 'job-settings', patch: { concurrency: 0 } }), ctx);
-  assert.equal(sent[1].type, 'error'); assert.equal(f.store.snapshot().settings.concurrency, 2);
+  assert.equal(sent[2].type, 'error'); assert.equal(f.store.snapshot().settings.concurrency, 2);
 });
 
 test('a move arrives as a job-action with its own fields and reaches the store whole', async (t) => {

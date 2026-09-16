@@ -2,8 +2,10 @@ export const jobCreateHandler = {
   type: 'job-create',
   async handler(msg, ctx) {
     const job = ctx.jobStore.create(msg.job);
+    if (msg.start) ctx.jobStore.action(job.id, 'start', {});
     await ctx.rebuild();
-    ctx.reply({ type: 'job-created', jobId: job.id });
+    ctx.reply({ type: 'job-created', jobId: job.id, started: Boolean(msg.start) });
+    if (msg.start) ctx.runJobs().catch((e) => ctx.reply({ type: 'error', message: e.message }));
   },
 };
 export const jobActionHandler = {

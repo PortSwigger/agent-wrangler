@@ -5513,7 +5513,7 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
     else if (msg.type === 'job-action-complete') { jobsView.created(); }
-    else if (msg.type === 'job-created') { jobsView.created(); toast('Job added to backlog'); }
+    else if (msg.type === 'job-created') { jobsView.created(); toast(msg.started ? 'Job started — planning' : 'Job added to backlog'); }
     else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's

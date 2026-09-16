@@ -491,6 +491,20 @@ test('new-job form sends chosen model, repositories and the three review points'
   assert.equal(f.q('#job-dialog').open, true);
 });
 
+test('the new-job primary action starts planning and the plain button parks it in the backlog', (t) => {
+  const f = fixture(t); f.q('#job-new').click(); const form = f.q('#job-create-form');
+  const [primary, backlog] = form.querySelectorAll('.job-actions button');
+  assert.equal(primary.className, 'primary'); assert.equal(primary.textContent, 'Start planning');
+  assert.equal(backlog.className, ''); assert.equal(backlog.textContent, 'Add to backlog');
+  form.elements.title.value = 'Value'; form.elements.intent.value = 'Deliver it';
+  form.dispatchEvent(f.event('submit'));
+  assert.equal(f.sent[0].start, true, 'Enter is the main action');
+  form.dispatchEvent(new f.window.SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: primary }));
+  assert.equal(f.sent[1].start, true);
+  form.dispatchEvent(new f.window.SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: backlog }));
+  assert.equal(f.sent[2].start, false);
+});
+
 test('new jobs need only an outcome while repository hints stay optional', (t) => {
   const f = fixture(t); f.q('#job-new').click(); const form = f.q('#job-create-form');
   form.elements.title.value = 'Reliable sign-in'; form.elements.intent.value = 'Customers can access their accounts';
