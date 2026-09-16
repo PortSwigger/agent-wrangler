@@ -137,7 +137,7 @@ test('the event box names what happened and the move the agent suggested, and th
   assert.deepEqual([...dialog.querySelectorAll('.job-move.hot')].map((b) => b.dataset.move), ['split-out'], 'suggested, not chosen');
   // Fix here on a sub-job with no PR promises a rerun, not a commit that cannot exist.
   assert.equal(dialog.querySelector('[data-move="fix-here"] b').textContent, 'Retry with a note');
-  assert.ok(dialog.querySelector('[data-action="retry"]'), 'the plain retry is still there for a transient failure');
+  assert.ok(dialog.querySelector('#job-retry'), 'the plain retry is still there for a transient failure');
 });
 
 test('a finished, dropped or cleaning-up sub-job offers no moves at all', (t) => {
@@ -506,7 +506,7 @@ test('cleanup failures stay discoverable even after every sub-job is delivered',
   const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active'; job.error = 'Planning worktree has local changes'; job.subJobs = [{ ...sub('api'), stage: 'done' }];
   f.view.update(f.data); assert.equal(jobCards([job]).length, 2);
   assert.equal(document.querySelectorAll('.job-card').length, 1); f.q('[data-job="job1"]').click();
-  assert.match(f.q('#job-dialog').textContent, /Planning worktree has local changes/); assert.ok(f.q('[data-action="retry"]'));
+  assert.match(f.q('#job-dialog').textContent, /Planning worktree has local changes/); assert.ok(f.q('#job-retry'));
 });
 
 test('retry targets the job when a sub-job displays an inherited coordinator error', (t) => {
@@ -514,15 +514,22 @@ test('retry targets the job when a sub-job displays an inherited coordinator err
   job.error = 'Could not observe a stopped worker';
   job.subJobs = [{ ...sub('api'), stage: 'implementation' }];
   f.view.update(f.data); f.q('[data-sub="api"]').click();
-  f.q('[data-action="retry"]').click();
+  f.q('#job-retry').click();
+  assert.equal(f.q('#job-retry-form [name="note"]'), null, 'a coordinator retry has no session to leave a note for');
+  f.q('#job-retry-form').dispatchEvent(new f.window.Event('submit', { cancelable: true }));
   assert.equal(f.sent.at(-1).action, 'retry');
   assert.equal(f.sent.at(-1).id, job.id);
   assert.equal(f.sent.at(-1).subJobId, undefined);
+  assert.equal('note' in f.sent.at(-1), false);
 
   job.subJobs[0].error = 'Restore repository access';
-  f.view.update(f.data);
-  f.q('[data-action="retry"]').click();
+  f.view.update(f.data); f.q('[data-sub="api"]').click();
+  f.q('#job-retry').click();
+  assert.match(f.q('#job-dialog').textContent, /Restore repository access/, 'the error is in front of the human while they write the note');
+  f.q('#job-retry-form [name="note"]').value = 'Access restored, go again';
+  f.q('#job-retry-form').dispatchEvent(new f.window.Event('submit', { cancelable: true }));
   assert.equal(f.sent.at(-1).subJobId, 'api');
+  assert.equal(f.sent.at(-1).note, 'Access restored, go again');
 });
 
 const sessionSub = (id, after = []) => ({ id, kind: 'session', title: `Run ${id}`, storyId: 'story', jiraKey: 'AUTH-1', after, brief: 'Do it here', sessions: ['s1'], repairs: [] });

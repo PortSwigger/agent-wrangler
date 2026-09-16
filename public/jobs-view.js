@@ -187,7 +187,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.result ? `<h3>Reported</h3>${receiptHtml(sub.result.checks)}` : ''}
         ${noteFor(sub)}
         ${sub.stage === 'review' ? '<p class="job-authority">Approving marks the session done and lets the work depending on it start.</p>' : ''}
-        <div class="job-actions">${sub.stage === 'review' && !sub.error ? '<button class="primary" data-action="approve-session">Approve</button><button id="job-revise-session">Request changes</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button data-action="retry">Retry</button>' : ''}</div>
+        <div class="job-actions">${sub.stage === 'review' && !sub.error ? '<button class="primary" data-action="approve-session">Approve</button><button id="job-revise-session">Request changes</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button id="job-retry">Retry</button>' : ''}</div>
         <details class="job-more"><summary>Brief</summary><p>${esc(sub.brief)}</p></details>`;
     } else if (sub) {
       const deps = sub.after.map((id) => job.subJobs.find((s) => s.id === id));
@@ -211,7 +211,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.fixRequested ? `<p class="job-note">Fix requested${sub.fixRequested.note ? `: ${esc(sub.fixRequested.note)}` : ''}. A repair session starts on the next tick.</p>` : ''}
         ${noteFor(sub)}
         ${sub.observationError ? `<p class="job-error">${esc(sub.observationError)} · Retrying automatically</p>` : ''}
-        <div class="job-actions">${codeAwaitingReview(sub) && !sub.error ? '<button class="primary" data-action="approve-code">Approve &amp; open PR</button>' : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button data-action="retry">Retry</button>' : ''}</div>
+        <div class="job-actions">${codeAwaitingReview(sub) && !sub.error ? '<button class="primary" data-action="approve-code">Approve &amp; open PR</button>' : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button id="job-retry">Retry</button>' : ''}</div>
         <details class="job-more"><summary>Worktree & brief</summary><code>${esc(sub.worktree?.path || 'Worktree created on dispatch')}</code><p>${esc(sub.brief)}</p>${sub.check ? `<p>Check after it lands: ${esc(sub.check)}</p>` : ''}</details>`;
     } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${cancelledHtml(job)}${job.cancelledAt && !job.subJobs.length ? '' : job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or work begins.</p><button class="primary" data-action="start">Start planning</button>` : job.stage === 'jira' ? `${contextHtml(job.plan)}<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Work starts once every story has a key.</p><h3>Approved work</h3>${planGraphHtml(job.plan)}` : job.stage === 'active' || job.stage === 'done' ? `${contextHtml(job.plan)}${job.plan?.stories?.length ? `<h3>Stories <small>${job.plan.stories.length}</small></h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div>` : ''}<h3>Sub-jobs <small>${esc(kindCountLabel(job.subJobs))}</small></h3>${planGraphHtml({ subJobs: job.subJobs, stories: job.plan?.stories }, { statusOf: (s) => jobStatus(job, s) })}${movesHistoryHtml(job)}` : job.cancelledAt ? '' : '<p>Wrangler will bring the plan here for review.</p>'}`;
     // The board's number, restated where the decision is actually taken — and on a
@@ -221,13 +221,12 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     const costs = [subCost ? `<span class="job-detail-cost" title="${esc(SUB_COST_TITLE)}">${esc(subCost)} this sub-job</span>` : '',
       jobCost ? `<span class="job-detail-cost" title="${esc(JOB_COST_TITLE)}">${esc(jobCost)} job total</span>` : ''].filter(Boolean).join('');
     show(`<span class="jobs-kicker">${esc(sub ? job.title : 'JOB')}</span><h2>${esc(sub?.title || job.title)}</h2><span class="job-status ${status.tone}"><i></i>${esc(status.text)}</span>${costs}
-      ${job.error && !sub ? `<p class="job-error">${esc(job.error)}</p><button data-action="retry">Retry</button>` : ''}${body}
+      ${job.error && !sub ? `<p class="job-error">${esc(job.error)}</p><button id="job-retry">Retry</button>` : ''}${body}
       <footer class="job-detail-footer"><span class="job-footer-actions">${job.cancelledAt || job.stage === 'done' ? '' : `<button data-action="${job.paused ? 'resume' : 'pause'}">${job.paused ? 'Resume job' : 'Pause new work for this job'}</button><button class="danger" id="job-cancel">Cancel job</button>`}</span><span>${esc(reviewFlagsLabel(job))}</span></footer>`);
     dialog.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => {
       const name = b.dataset.action;
       action(name, name === 'approve-plan' ? { plan: planDraft, revision }
-        : name === 'retry' ? { subJobId: sub?.error ? sub.id : undefined }
-          : { head: sub?.pr?.head, sessionReceiptId: sub?.result?.receiptId, ...(sub?.ready ? { readyReceiptId: sub.ready.receiptId } : {}) });
+        : { head: sub?.pr?.head, sessionReceiptId: sub?.result?.receiptId, ...(sub?.ready ? { readyReceiptId: sub.ready.receiptId } : {}) });
     });
     dialog.querySelectorAll('[data-comment-toggle]').forEach((b) => b.onclick = () => {
       const key = b.dataset.commentToggle;
@@ -248,6 +247,16 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
     bind('#job-revise-session', () => {
       show('<h2>Request changes</h2><form><label>What should change?<textarea name="feedback" required rows="4" maxlength="8000"></textarea></label><button class="primary">Send to a new session</button></form>');
       dialog.querySelector('form').onsubmit = (e) => { e.preventDefault(); action('revise-session', { feedback: new FormData(e.target).get('feedback') }); };
+    });
+    // The note is what the retried session reads as the last line of its
+    // history (server/job-prompts.js): a blocked step usually needs one sentence
+    // from the human ("that file is a template, stage it"), and Retry was the one
+    // button with nowhere to type it.
+    bind('#job-retry', () => {
+      const target = sub?.error ? sub : null;
+      show(`<h2>Retry ${esc(target ? target.title : job.title)}</h2>${target?.error ? `<p class="job-error">${esc(target.error)}</p>` : job.error ? `<p class="job-error">${esc(job.error)}</p>` : ''}<form id="job-retry-form">${target ? noteField('Note for the retried session') : ''}<div class="job-actions"><button class="primary">Retry</button><button type="button" id="job-move-back">Back</button></div></form>`);
+      dialog.querySelector('#job-move-back').onclick = () => renderDetail();
+      dialog.querySelector('form').onsubmit = (e) => { e.preventDefault(); action('retry', { subJobId: target?.id, ...only({ note: trimmed(new FormData(e.target), 'note') }) }); };
     });
     bind('#job-cancel', () => openCancel(job));
     bind('#job-session', () => { dialog.close(); onSession(sub.sessions.at(-1)); });

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { reviewCode } from './jobs-schema.js';
+import { adapterFor } from './agents/index.js';
 
 // The worktree starts on a placeholder branch (job-runtime.js). The session
 // working inside the repository is the one that can read its convention, so
@@ -18,7 +19,53 @@ const lines = (...parts) => parts.filter(Boolean).join('\n');
 const afterLine = (job, sub) => `After: ${(sub?.after || []).map((id) => (job.subJobs || []).find((s) => s.id === id)?.title || id).join(' · ') || 'none'}.`;
 const contextLine = (job) => job.plan?.context ? `Context: ${job.plan.context}` : '';
 const heading = (job, sub) => `${sub?.jiraKey ? `${sub.jiraKey} · ` : ''}${job.title}`;
-const noteLine = (sub) => sub?.note ? `Note from the human: ${sub.note}` : '';
+// What already happened on this sub-job, one line per event, oldest first: every
+// earlier run (phase, model, and its receipt or how it died) and every human
+// intervention (job-store.js `moves`, note verbatim). A relaunched step used to
+// inherit one 180-char note and nothing else, so a session dispatched after a
+// blocked publish re-verified a tree the previous receipt had already vouched
+// for. The block is the whole memory a fresh session gets; it stays sub-job
+// scoped (a sibling PR's history is noise here) and capped, oldest dropped.
+export const HISTORY_MAX_LINES = 10;
+const HUMAN_VERBS = { 'fix-here': 'requested changes', retry: 'retried', 'approve-code': 'approved the working tree', 'approve-session': 'approved the result', 'revise-session': 'requested changes' };
+const modelLabel = (job, run) => run.model ? (adapterFor(job.agent).models.find((m) => m.value === run.model)?.label.split(' · ')[0] || run.model) : '';
+const joinChecks = (list) => (list || []).join(' · ');
+const outcome = (r) => {
+  const p = r.report;
+  if (!p) return r.error || 'stopped without a receipt';
+  if (p.kind === 'blocked') return `blocked: ${p.summary}`;
+  if (p.kind === 'published') return `published: ${p.url}`;
+  if (p.kind === 'repaired') return `repaired: ${joinChecks(p.changes)}`;
+  return `${p.kind}: ${joinChecks(p.checks)}`;
+};
+const humanLine = (m) => `human ${HUMAN_VERBS[m.move] || (m.detail ? m.detail[0].toLowerCase() + m.detail.slice(1) : m.move)}${m.note ? `: "${m.note}"` : ''}`;
+const timeOf = (at, withDate) => {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return withDate ? `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${time}` : time;
+};
+export function historyLines(job, sub, run, now = Date.now()) {
+  if (!sub) return [];
+  const runs = (job.runs || []).filter((r) => r.subJobId === sub.id && r.id !== run?.id && (r.report || r.stopped));
+  const events = [
+    ...runs.map((r) => ({ at: r.startedAt, human: 0, text: `${r.phase}${modelLabel(job, r) ? ` · ${modelLabel(job, r)}` : ''} → ${outcome(r)}` })),
+    ...(job.moves || []).filter((m) => m.subJobId === sub.id).map((m) => ({ at: m.at, human: 1, text: humanLine(m) })),
+  ].sort((a, b) => a.at - b.at || b.human - a.human);
+  if (!events.length) return [];
+  const withDate = new Set([...events.map((e) => new Date(e.at).toDateString()), new Date(now).toDateString()]).size > 1;
+  const shown = events.slice(-HISTORY_MAX_LINES);
+  return [...(events.length > shown.length ? [`- … ${events.length - shown.length} earlier`] : []),
+    ...shown.map((e) => `- ${timeOf(e.at, withDate)} ${e.text}`)];
+}
+const historyBlock = (job, sub, run) => {
+  const body = historyLines(job, sub, run);
+  if (!body.length) return '';
+  const ran = (job.runs || []).some((r) => r.subJobId === sub.id && r.id !== run?.id && (r.report || r.stopped));
+  const tail = !ran ? '' : sub.worktree
+    ? 'The worktree already holds the work above. Pick up from the last line; do not redo or re-verify what an earlier session reported.'
+    : 'Pick up from the last line; do not redo what an earlier session reported.';
+  return lines('History of this sub-job, oldest first:', ...body, tail);
+};
 const passingWorkflows = (sub) => (sub?.deploymentResult?.runs || []).filter((r) => r.status === 'passing').map((r) => r.workflow).join(', ');
 const thisPr = (sub) => `This PR (${sub?.repo ? path.basename(sub.repo) : 'this repository'}): ${sub?.brief}`;
 
@@ -59,7 +106,7 @@ export function jobPrompt(job, sub, run) {
       thisPr(sub),
       sub?.check ? `Check after it lands: ${sub.check}` : '',
       afterLine(job, sub),
-      noteLine(sub),
+      historyBlock(job, sub, run),
       // With code review on, the human reads the working tree on the board
       // before anything is committed; a later publish session commits and pushes,
       // so the branch rename waits for it too.
@@ -73,6 +120,7 @@ export function jobPrompt(job, sub, run) {
       contextLine(job),
       '',
       thisPr(sub),
+      historyBlock(job, sub, run),
       'The human has reviewed the uncommitted changes in this worktree and approved them as they stand. Commit exactly that working tree (excluding secrets and unrelated or generated files), push, and open the PR. Do not change the code: if something stops it building or committing, report blocked instead.',
       branchNaming(job, sub),
       '',
@@ -83,6 +131,7 @@ export function jobPrompt(job, sub, run) {
       '',
       `Fix PR ${sub?.pr?.url} on this worktree branch: ${sub?.fixRequested ? `the human asks: ${sub.fixRequested.note || 'take another pass at it'}` : 'failing checks, merge conflicts or requested changes'}.`,
       contextLine(job),
+      historyBlock(job, sub, run),
       '',
       'Read the failed logs and review comments, fix the cause, rerun what is relevant, commit and push. Never weaken checks; never merge.',
       '',
@@ -93,6 +142,7 @@ export function jobPrompt(job, sub, run) {
       '',
       `PR ${sub?.pr?.url} merged as ${sub?.pr?.mergeCommit}; post-merge runs passed${passingWorkflows(sub) ? ` (${passingWorkflows(sub)})` : ''}.`,
       `Confirm: ${sub?.check}`,
+      historyBlock(job, sub, run),
       '',
       'Read-only against production; use a playground or dev where behaviour must be exercised, and confirm that environment runs the merged version. Do not change the deployment. Never modify production data — report blocked instead.',
       '',
@@ -105,8 +155,7 @@ export function jobPrompt(job, sub, run) {
       '',
       `This session: ${sub?.brief}`,
       afterLine(job, sub),
-      noteLine(sub),
-      sub?.feedback ? `Feedback on your previous attempt: ${sub.feedback}` : '',
+      historyBlock(job, sub, run),
       '',
       'Do it on this machine in this scratch workspace; no repository changes (report blocked if one is needed); checkouts under ~/IdeaProjects are read-only reference. Never modify production data. Record findings later work needs in task memory.',
       '',

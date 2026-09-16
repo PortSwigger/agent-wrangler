@@ -66,7 +66,9 @@ export class JobRunner {
           const r = j.runs.find((r) => r.id === run.id);
           r.stopped = true; r.stoppedAt = this.now();
           const s = j.subJobs.find((s) => s.id === r.subJobId);
-          if (error) (s || j).error = error;
+          // On the run as well as the card: retry clears the card's, and the
+          // history a later session reads (job-prompts.js) needs the run's.
+          if (error) { r.error = error; (s || j).error = error; }
         });
       } catch (e) {
         this.store.update(id, (j) => { j.error = shortError(e); });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { JobRuntime } from './job-runtime.js';
 import { JobStore } from './job-store.js';
 import { JobRunner } from './job-runner.js';
-import { jobPrompt } from './job-prompts.js';
+import { jobPrompt, historyLines, HISTORY_MAX_LINES } from './job-prompts.js';
 import { SessionManager, resumeEntry, SESSIONS_DIR } from './session-manager.js';
 import { DATA_DIR } from './data-dir.js';
 import fs from 'node:fs';
@@ -282,14 +282,16 @@ test('every phase ends with its own receipt call, naming this run and the blocke
   }
 });
 
-test('the implementation prompt is one bounded step: context once, the brief, what it lands after, and the human\'s note', () => {
-  const text = jobPrompt(planned, { ...briefed, check: 'Sign-in works in dev', note: 'Call the flag sign_in_v2' }, run);
+test('the implementation prompt is one bounded step: context once, the brief, what it lands after, and the sub-job\'s history', () => {
+  const withNote = { ...planned, moves: [{ id: 'mv1', at: Date.now(), subJobId: 'api', move: 'fix-here', note: 'Call the flag sign_in_v2', detail: 'Sent “Deliver api” back to work' }] };
+  const text = jobPrompt(withNote, { ...briefed, check: 'Sign-in works in dev', note: 'Call the flag sign_in_v2' }, run);
   assert.match(text, /^AUTH-1 · Sign-in$/m);
   assert.match(text, /Context: The sign-in service is Java/);
   assert.match(text, /This PR \(repo\): Retry the token exchange once/);
   assert.match(text, /Check after it lands: Sign-in works in dev/);
   assert.match(text, /After: Sync the proto\./);
-  assert.match(text, /Note from the human: Call the flag sign_in_v2/);
+  assert.match(text, /History of this sub-job, oldest first:\n- \d\d:\d\d human requested changes: "Call the flag sign_in_v2"/);
+  assert.doesNotMatch(text, /worktree already holds the work/, 'a note with no earlier run promises nothing about the tree');
   assert.match(text, /Leave every change UNCOMMITTED/);
   assert.match(text, /When the working tree is ready to review, job_report \{runId:"run1", kind:"ready", checks:\["what you verified"\]\}/);
   assert.doesNotMatch(text, /kind:"published"|Commit, push/, 'under code review nothing reaches origin from this session');
@@ -305,7 +307,51 @@ test('the implementation prompt is one bounded step: context once, the brief, wh
   assert.match(publish, /Commit, push, open the PR, then job_report \{runId:"run1", kind:"published", url:"<PR url>"\}/);
   const plainest = jobPrompt(planned, { ...briefed, after: [] }, run);
   assert.match(plainest, /After: none\./);
-  assert.doesNotMatch(plainest, /Check after it lands|Note from the human/, 'nothing to say is nothing written');
+  assert.doesNotMatch(plainest, /Check after it lands|History of this sub-job/, 'nothing to say is nothing written');
+});
+
+test('a relaunched step reads what already happened: every earlier run with its model and receipt, every human intervention with its note, oldest first', () => {
+  const t0 = new Date('2026-09-15T17:02:00').getTime();
+  const at = (min) => t0 + min * 60000;
+  const job = { ...planned, agent: 'claude', runs: [
+    { id: 'r1', subJobId: 'api', phase: 'implementation', model: 'opus', startedAt: at(0), stopped: true, report: { kind: 'ready', checks: ['Tests pass', 'Lint clean'] } },
+    { id: 'r2', subJobId: 'api', phase: 'publish', model: 'opus', startedAt: at(19), stopped: true, report: { kind: 'blocked', summary: 'git add of config/example.env was denied', move: 'fix-here' } },
+    { id: 'r3', subJobId: 'api', phase: 'publish', model: 'sonnet', startedAt: at(30), stopped: true, error: 'Session stopped without a receipt. Open it to see why, then retry.' },
+    { id: 'r4', subJobId: 'api', phase: 'publish', startedAt: at(40), stopped: false, report: null },
+    { id: 'other', subJobId: 'web', phase: 'implementation', model: 'opus', startedAt: at(1), stopped: true, report: { kind: 'ready', checks: ['Built'] } },
+  ], moves: [
+    { id: 'm1', at: at(18), subJobId: 'api', move: 'approve-code', note: null, detail: 'Approved the working tree of “Deliver api”' },
+    { id: 'm2', at: at(23), subJobId: 'api', move: 'retry', note: 'example.env is a template, stage it', detail: 'Retried “Deliver api”' },
+    { id: 'm3', at: at(35), subJobId: 'api', move: 'reorder', note: null, detail: 'Now lands after “Sync the proto”' },
+    { id: 'm4', at: at(2), subJobId: 'web', move: 'retry', note: 'not mine', detail: 'Retried “Deliver web”' },
+  ] };
+  const body = historyLines(job, briefed, { id: 'r4', phase: 'publish' }, at(41));
+  assert.deepEqual(body, [
+    '- 17:02 implementation · Opus 5 → ready: Tests pass · Lint clean',
+    '- 17:20 human approved the working tree',
+    '- 17:21 publish · Opus 5 → blocked: git add of config/example.env was denied',
+    '- 17:25 human retried: "example.env is a template, stage it"',
+    '- 17:32 publish · Sonnet 5 → Session stopped without a receipt. Open it to see why, then retry.',
+    '- 17:37 human now lands after “Sync the proto”',
+  ]);
+  const text = jobPrompt(job, briefed, { ...run, id: 'r4', phase: 'publish' });
+  assert.match(text, /History of this sub-job, oldest first:\n- \d\d:\d\d implementation · Opus 5 → ready: Tests pass · Lint clean\n/);
+  assert.match(text, /The worktree already holds the work above\. Pick up from the last line; do not redo or re-verify/);
+  assert.doesNotMatch(text, /Built|not mine/, 'a sibling sub-job\'s history is not this worker\'s');
+  for (const phase of ['implementation', 'repair', 'verify']) {
+    assert.match(jobPrompt(job, { ...briefed, pr: { url: 'https://github.com/org/repo/pull/1', mergeCommit: 'abc' }, check: 'x' }, { ...run, id: 'r4', phase }), /History of this sub-job/, phase);
+  }
+  // Legacy runs carry no model; a model an adapter no longer lists is shown raw.
+  const legacy = historyLines({ ...job, runs: [{ id: 'r0', subJobId: 'api', phase: 'implementation', startedAt: at(0), stopped: true, report: { kind: 'ready', checks: ['x'] } },
+    { id: 'r5', subJobId: 'api', phase: 'publish', model: 'retired-model', startedAt: at(1), stopped: true, report: { kind: 'published', url: 'https://github.com/org/repo/pull/9' } }], moves: [] }, briefed, run, at(2));
+  assert.deepEqual(legacy, ['- 17:02 implementation → ready: x', '- 17:03 publish · retired-model → published: https://github.com/org/repo/pull/9']);
+  // Long histories keep the newest lines; one spanning days says which day.
+  const many = { ...job, moves: [], runs: Array.from({ length: 13 }, (_, i) => ({ id: `x${i}`, subJobId: 'api', phase: 'implementation', startedAt: at(i), stopped: true, report: { kind: 'blocked', summary: `attempt ${i}` } })) };
+  const capped = historyLines(many, briefed, run, at(20));
+  assert.equal(capped.length, HISTORY_MAX_LINES + 1);
+  assert.equal(capped[0], '- … 3 earlier'); assert.match(capped.at(-1), /attempt 12$/);
+  const spanning = historyLines({ ...job, moves: [], runs: [job.runs[0]] }, briefed, run, at(24 * 60));
+  assert.match(spanning[0], /^- 15 Sept? 17:02 implementation/);
 });
 
 test('a repair carries the human\'s note when there is one, and the checks otherwise', () => {
@@ -378,10 +424,17 @@ test('the session prompt keeps its step out of every repository and carries a re
   const text = jobPrompt({ ...planned, subJobs: [{ id: 'spike', kind: 'session', title: 'Spike the schema' }] },
     { id: 'backfill', kind: 'session', jiraKey: 'AUTH-1', brief: 'Backfill the audit rows', after: ['spike'], feedback: 'Also check staging' },
     { ...run, phase: 'session' });
+  const revised = jobPrompt({ ...planned, subJobs: [{ id: 'spike', kind: 'session', title: 'Spike the schema' }],
+    runs: [{ id: 'r0', subJobId: 'backfill', phase: 'session', model: 'opus', startedAt: Date.now() - 60000, stopped: true, report: { kind: 'completed', checks: ['Rows backfilled in dev'] } }],
+    moves: [{ id: 'mv1', at: Date.now(), subJobId: 'backfill', move: 'revise-session', note: 'Also check staging', detail: 'Requested changes on “Backfill”' }] },
+  { id: 'backfill', kind: 'session', jiraKey: 'AUTH-1', brief: 'Backfill the audit rows', after: ['spike'], feedback: 'Also check staging' },
+  { ...run, phase: 'session' });
   assert.match(text, /This session: Backfill the audit rows/);
   assert.match(text, /After: Spike the schema\./);
   assert.match(text, /no repository changes \(report blocked if one is needed\)/);
-  assert.match(text, /Feedback on your previous attempt: Also check staging/);
+  assert.doesNotMatch(text, /History of this sub-job/, 'a first attempt has no history');
+  assert.match(revised, /session · Opus 5 → completed: Rows backfilled in dev\n- \d\d:\d\d human requested changes: "Also check staging"\nPick up from the last line; do not redo what an earlier session reported\./);
+  assert.doesNotMatch(revised, /worktree/, 'a session sub-job has no worktree to speak of');
   assert.match(text, /kind:"completed"/);
 });
 

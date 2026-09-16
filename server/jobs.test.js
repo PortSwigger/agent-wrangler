@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { JobStore, migrateJobs, MERGE_IS_DELIVERY } from './job-store.js';
 import { JobRunner, IDLE_RECEIPT_GRACE_MS } from './job-runner.js';
+import { jobPrompt } from './job-prompts.js';
 import { JobGithub, prSummary } from './job-github.js';
 import { normaliseComments, commentsBlockMerge } from './job-comments.js';
 import { jobReportTool, getJobContextTool } from './mcp/tools/job-report.js';
@@ -244,16 +245,23 @@ test('with code review on the implementation leaves the tree uncommitted and rep
 
 test('Retry after a blocked publish keeps the approval: the tree the human approved is unchanged, so publish runs again', async (t) => {
   const f = fixture(t); await f.approve();
-  f.report({ kind: 'ready', checks: ['Tests pass'] }); await f.tick();
-  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId }); await f.tick();
+  // Runs and moves are stamped by the wall clock; a millisecond apart is enough
+  // for the history to read in the order it happened.
+  const later = () => new Promise((r) => setTimeout(r, 2));
+  f.report({ kind: 'ready', checks: ['Tests pass'] }); await f.tick(); await later();
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId }); await later(); await f.tick();
   assert.equal(f.last().run.phase, 'publish');
-  f.report({ kind: 'blocked', summary: 'git add of config/example.env was denied', move: 'fix-here' }); await f.tick();
+  f.report({ kind: 'blocked', summary: 'git add of config/example.env was denied', move: 'fix-here' }); await f.tick(); await later();
   assert.deepEqual([f.sub().stage, f.sub().error, f.sub().blocked.phase], ['review', 'git add of config/example.env was denied', 'publish']);
-  f.store.action(f.job.id, 'retry', { subJobId: 'api' });
-  assert.deepEqual([f.sub().stage, f.sub().state, f.sub().error], ['review', 'approved', null]);
+  f.store.action(f.job.id, 'retry', { subJobId: 'api', note: 'example.env is a template, stage it' });
+  assert.deepEqual([f.sub().stage, f.sub().state, f.sub().error, f.sub().note], ['review', 'approved', null, 'example.env is a template, stage it']);
   assert.ok(f.sub().ready.approvedAt, 'the approval survives the retry');
   await f.tick();
   assert.deepEqual([f.last().run.phase, f.last().sub.worktree.path], ['publish', '/worktree/api']);
+  // The relaunched session is told the whole story, from the store's own records.
+  const text = jobPrompt(f.store.get(f.job.id), f.last().sub, f.last().run);
+  assert.match(text, /History of this sub-job, oldest first:\n- \d\d:\d\d implementation → ready: Tests pass\n- \d\d:\d\d human approved the working tree\n- \d\d:\d\d publish → blocked: git add of config\/example.env was denied\n- \d\d:\d\d human retried: "example.env is a template, stage it"\nThe worktree already holds the work above\./);
+  assert.deepEqual(f.store.get(f.job.id).moves.map((m) => [m.move, m.note]), [['approve-code', null], ['retry', 'example.env is a template, stage it']]);
   f.report({ kind: 'published', url: PR_URL }); await f.tick();
   assert.equal(f.sub().stage, 'pr');
 });
@@ -685,6 +693,14 @@ test('a long step is never killed by a clock, but one that stops working without
   await f.tick();
   assert.match(f.sub().error, /finished without a receipt/);
   assert.equal(f.store.get(f.job.id).runs[1].stopped, true);
+  assert.match(f.store.get(f.job.id).runs[1].error, /finished without a receipt/, 'kept on the run: retry clears the card\'s copy, the next session\'s history reads this one');
+});
+
+test('a run records the model it was claimed on, and none when the job leaves it to the agent', async (t) => {
+  const f = fixture(t, { ...input, model: 'sonnet' }); await f.approve();
+  assert.ok(f.store.get(f.job.id).runs.every((r) => r.model === 'sonnet'));
+  const g = fixture(t); await g.approve();
+  assert.ok(g.store.get(g.job.id).runs.every((r) => r.model === null), 'not guessed: Claude reads its default from settings.json at launch');
 });
 
 test('crashed and uncertain launches are blocked, not silently duplicated on restart', async (t) => {
@@ -886,6 +902,9 @@ test('with session review off a completed session goes straight to done; request
   assert.equal(g.last().run.phase, 'session'); assert.equal(g.last().sub.feedback, 'Also check staging');
   g.report({ kind: 'completed', checks: ['Staging checked'] }); await g.tick();
   assert.equal(g.sub().stage, 'review'); assert.equal(g.sub().feedback, null);
+  g.store.action(g.job.id, 'approve-session', { subJobId: 'spike', sessionReceiptId: g.sub().result.receiptId });
+  assert.deepEqual(g.store.get(g.job.id).moves.map((m) => [m.subJobId, m.move, m.note]),
+    [['spike', 'revise-session', 'Also check staging'], ['spike', 'approve-session', null]], 'approvals and requests are on the same timeline as the plan moves');
 });
 
 // --- MCP and control ---

@@ -8,6 +8,16 @@ import { applyMove, dropSub, MOVE_ACTIONS } from './job-moves.js';
 
 const activeForSub = (job, sub) => job.runs.some((r) => !r.stopped && r.subJobId === sub.id);
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
+// Stamped on the run at claim so the history a later session reads (job-prompts.js)
+// names what ran. Null is "the agent's own default", which for Claude is whatever
+// ~/.claude/settings.json says at launch — not knowable here, so not guessed.
+const launchModel = (job) => job.model || null;
+const quoted = (title) => `“${title}”`;
+// Every human intervention lands in `moves`, plan moves and approvals alike: it
+// is the one timeline the next session's prompt (job-prompts.js history) and
+// the detail view's Moves panel both read, so an approve or retry recorded
+// anywhere else would be invisible to the agent it most concerns.
+const record = (j, s, move, note, detail) => (j.moves ||= []).push({ id: uid('mv'), at: Date.now(), subJobId: s?.id || null, move, note: note || null, detail });
 export const runnable = (run) => run && !run.stopped;
 // A PR dependency is satisfied once deployed; a session dependency once its
 // receipt was accepted through to done (a cancelled one never satisfies).
@@ -143,6 +153,7 @@ export class JobStore {
   // parameter list here.
   action(id, action, payload = {}) {
     const { subJobId, revision, feedback, plan, head, sessionReceiptId, readyReceiptId } = payload;
+    const note = String(payload.note || '').trim().slice(0, 180) || null;
     if (action === 'approve-plan') return this.approvePlan(id, revision, plan);
     return this.update(id, (j) => {
       const s = subJobId ? j.subJobs.find((s) => s.id === subJobId) : null;
@@ -156,7 +167,7 @@ export class JobStore {
       if (MOVE_ACTIONS.has(move)) {
         const { detail } = applyMove(j, s, move, payload, { now: Date.now(), buildSubJob });
         if (j.plan) j.repos = planRepos(j.plan);
-        (j.moves ||= []).push({ id: uid('mv'), at: Date.now(), subJobId: s.id, move, note: payload.note || null, detail });
+        record(j, s, move, payload.note, detail);
         return;
       }
       if (action === 'pause') { j.paused = true; return; }
@@ -183,7 +194,9 @@ export class JobStore {
         if (s) {
           s.state = s.cancelledAt ? 'cancelled' : s.stage === 'review' ? (s.ready?.approvedAt ? 'approved' : 'verified') : 'queued';
           s.repairAllowance = (s.repairAllowance || 0) + 1;
+          if (note) s.note = note;
         }
+        record(j, s, 'retry', note, s ? `Retried ${quoted(s.title)}` : 'Retried the job');
         return;
       }
       if (action === 'revise-session') {
@@ -191,11 +204,13 @@ export class JobStore {
         s.feedback = String(feedback || '').trim().slice(0, 8000);
         if (!s.feedback) throw new Error('Explain the requested change');
         s.result = null; s.error = null; s.blocked = null; s.stage = 'session'; s.state = 'queued';
+        record(j, s, 'revise-session', s.feedback, `Requested changes on ${quoted(s.title)}`);
         return;
       }
       if (action === 'approve-session') {
         if (!isSessionSub(s) || s.stage !== 'review' || !s.result || s.result.receiptId !== sessionReceiptId || s.error) throw new Error('The session result is not ready for review');
-        s.sessionApprovedAt = Date.now(); s.stage = 'cleanup'; s.state = 'queued'; return;
+        s.sessionApprovedAt = Date.now(); s.stage = 'cleanup'; s.state = 'queued';
+        record(j, s, 'approve-session', null, `Approved the result of ${quoted(s.title)}`); return;
       }
       // Pinned to the receipt the human read, like approve-session: a board that
       // is a tick behind cannot approve a working tree a later run has changed.
@@ -203,7 +218,8 @@ export class JobStore {
       // stopping, so no live-run check is needed here.
       if (action === 'approve-code') {
         if (!s || isSessionSub(s) || s.stage !== 'review' || s.state !== 'verified' || !s.ready || s.ready.receiptId !== readyReceiptId || s.error) throw new Error('The code is not ready to approve');
-        s.ready = { ...s.ready, approvedAt: Date.now() }; s.state = 'approved'; return;
+        s.ready = { ...s.ready, approvedAt: Date.now() }; s.state = 'approved';
+        record(j, s, 'approve-code', null, `Approved the working tree of ${quoted(s.title)}`); return;
       }
       if (action === 'approve-merge') {
         if (s?.stage !== 'pr' || s.pr?.checkStatus !== 'passing' || !head || head !== s.pr?.head || s.error) throw new Error('PR must have green checks first');
@@ -223,7 +239,7 @@ export class JobStore {
       const active = d.jobs.flatMap((j) => j.runs).filter(runnable);
       if (!j || j.paused || j.cancelledAt || d.settings.paused || active.length >= d.settings.concurrency) return null;
       if (j.runs.some((r) => runnable(r) && r.subJobId === subJobId)) return null;
-      const run = { id: uid('run'), subJobId, phase, startedAt: Date.now(), sessionId: null, stopped: false, report: null };
+      const run = { id: uid('run'), subJobId, phase, model: launchModel(j), startedAt: Date.now(), sessionId: null, stopped: false, report: null };
       j.runs.push(run); j.revision++;
       return run;
     });
