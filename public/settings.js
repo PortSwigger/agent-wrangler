@@ -184,7 +184,12 @@ export function setExtensionDefs(list) {
   }));
   for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
   for (const d of defs) byId.set(d.id, d);
-  SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds = defs.map((d) => d.id);
+  // Registered in the id index but NOT in the tab's settingIds: the Extensions
+  // tab renders no rowHtml rows of its own any more. extensions-panel.js builds
+  // one row per extension — the toggle and the origin/Update/Uninstall half in
+  // the same row, rather than the same extension appearing in two lists — and
+  // those rows carry this def's id, so the delegated flip handler below still
+  // finds them here.
   return defs;
 }
 
@@ -324,12 +329,12 @@ function tabPanelHtml(tab, selected) {
   } else if (tab.id === 'shortcuts') {
     inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
   } else if (tab.id === 'extensions') {
-    // Installed extensions get their own mount point rather than more rows
-    // here: their content is third-party (label, author, origin, quarantine
-    // reason) and this function is innerHTML+esc(), so extensions-panel.js
-    // builds those nodes with textContent instead. The toggles above are still
-    // built by rowHtml for builtins and installed alike — the two halves answer
-    // different questions ("is it on" vs "where did it come from").
+    // The WHOLE tab is a mount point: extension content is third-party (label,
+    // description, origin, quarantine reason) and this function is
+    // innerHTML+esc(), so extensions-panel.js builds every one of those rows
+    // with textContent instead — including the toggle, which keeps builtin and
+    // installed extensions in one list instead of the two that repeated each
+    // other's name and description.
     inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"

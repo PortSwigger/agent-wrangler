@@ -33,7 +33,7 @@ import {
 } from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { installedPanelEl, consentBodyEl, progressText, RESTART_NOTE as EXT_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -5446,40 +5446,82 @@ function syncQuarantineBanner() {
   showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
 }
 
-// Installed-extension panel state. All three are per-browser and in memory: the
-// update check is on-demand only, the progress line describes a run that cannot
-// outlive this tab's socket, and the mount point is rebuilt on every settings
-// open anyway.
+// Extensions panel state. All of it is per-browser and in memory: the update
+// check is on-demand only, the progress line describes a run that cannot outlive
+// this tab's socket, and the mount point is rebuilt on every settings open.
 let extUpdateStatuses = {};
+let extChecking = false;
 let extInstallProgress = '';
+let extInstallPhase = '';
 let extInstallBusy = false;
+let extRestarting = false;
+// Ids uninstalled in THIS process. The server's extension list is a boot
+// snapshot, so an uninstalled extension keeps appearing until the restart
+// actually drops it — without this the row simply sat there unchanged and the
+// uninstall looked like it had done nothing at all.
+const extPendingRemoval = new Set();
+// The id of an extension installed in this process, which has the mirror-image
+// problem: it is in no list until the restart loads it, so its restart
+// affordance has to ride the install form.
+let extPendingInstall = '';
+// Whether the server can restart itself (it is under launchd/systemd). Off for a
+// bare `node server/index.js`, where an exit would just kill the board.
+let canRestartServer = false;
 // The mount point settings.js hands over, kept so a progress broadcast arriving
 // while the modal is open can re-render in place rather than wait for a reopen.
 let extPanelHost = null;
+
+const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
+
+// A settled report — "Up to date.", "Cancelled. Nothing was installed." — is
+// about a moment, not a state, and left on screen it reads as a standing
+// property of the extension. Cleared a few seconds later; anything the reader
+// still has to act on (a newer commit, a failed fetch on a row, a pending
+// restart) is deliberately not on this timer.
+const EXT_TRANSIENT_MS = 6000;
+let extTransientTimer = null;
+function clearExtTransientLater() {
+  clearTimeout(extTransientTimer);
+  extTransientTimer = setTimeout(() => {
+    for (const [id, status] of Object.entries(extUpdateStatuses)) {
+      if (!status?.behind && !status?.error) delete extUpdateStatuses[id];
+    }
+    if (TRANSIENT_PROGRESS_PHASES.has(extInstallPhase)) { extInstallProgress = ''; extInstallPhase = ''; }
+    remountExtensions();
+  }, EXT_TRANSIENT_MS);
+}
 
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
   host.textContent = '';
-  host.append(installedPanelEl({
-    entries: latestExtensions.filter((e) => e.external),
+  host.append(extensionsPanelEl({
+    // Builtin and installed alike, one list — the toggle and the provenance are
+    // two halves of the same row now, not two lists repeating each other.
+    entries: latestExtensions,
     statuses: extUpdateStatuses,
+    checking: extChecking,
     progress: extInstallProgress,
     busy: extInstallBusy,
-    onInstall: (url) => { extInstallBusy = true; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); mountExtensionsPanel(host); },
+    pendingRemoval: [...extPendingRemoval],
+    pendingInstall: extPendingInstall,
+    canRestart: canRestartServer,
+    restarting: extRestarting,
+    onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
-    onUpdate: (entry) => { extInstallBusy = true; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); mountExtensionsPanel(host); },
+    onUpdate: (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); },
     onUninstall: async (entry) => {
       const answer = await confirmDialog({
         title: `Uninstall ${entry.label || entry.id}?`,
-        body: `Its files go from ${entry.origin ? 'disk' : 'the extensions folder'}, but any data it stored is kept — reinstalling picks it back up. Its code keeps running until the wrangler restarts.`,
+        body: uninstallBodyText(entry),
         okLabel: 'Uninstall',
         danger: true,
       });
       if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
     },
-    onCheckUpdates: () => { extUpdateStatuses = {}; send({ type: 'ext-check-updates' }); },
+    onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
+    onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
   }));
 }
 
@@ -5746,7 +5788,19 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
-    else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // A `config` is the first frame of every connect, so it is also how the board
+    // learns a restart finished: the pending install/removal notes describe a
+    // boot snapshot that has just been replaced, and the process holding them is
+    // gone either way.
+    else if (msg.type === 'config') {
+      sessionsDir = msg.sessionsDir || '';
+      homeDir = msg.homeDir || '';
+      canRestartServer = Boolean(msg.canRestart);
+      extRestarting = false;
+      extPendingRemoval.clear();
+      extPendingInstall = '';
+      remountExtensions();
+    }
     // Sent on EVERY connect (before the first graph); the loader is idempotent
     // per id, so a reconnect registers nothing twice. Not awaited — an
     // extension that fails to load is logged and dropped, never the board's
@@ -5761,23 +5815,31 @@ function connect() {
     // the modal never depends on a broadcast it might have missed.
     else if (msg.type === 'ext-install-progress') {
       extInstallProgress = progressText(msg.phase, msg);
+      extInstallPhase = msg.phase;
       if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
-      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
+      remountExtensions();
     }
     else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
     else if (msg.type === 'ext-install-done') {
       extInstallBusy = false;
-      if (msg.installed) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
-      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+      if (msg.installed) { extPendingInstall = msg.id; toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`); }
+      remountExtensions();
     }
     else if (msg.type === 'ext-uninstall-done') {
+      extPendingRemoval.add(msg.id);
       toast(`Uninstalled ${msg.id}. ${EXT_RESTART_NOTE}`);
-      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+      remountExtensions();
     }
     else if (msg.type === 'ext-updates') {
       extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
-      if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+      extChecking = false;
+      clearExtTransientLater();
+      remountExtensions();
     }
+    // The board is about to lose this socket; ws.onclose already retries every
+    // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
+    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);

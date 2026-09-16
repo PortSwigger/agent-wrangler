@@ -346,10 +346,11 @@ export const extUninstallHandler = {
     const dest = safeExtPath(id);
     rmQuiet(dest);
     removeRecord(id);
-    // DATA_DIR-persisted store data deliberately STAYS, and a reinstall picks it
-    // up — the same "set aside, not destroyed" posture archive has. An explicit
-    // purge is deferred; see the spec's Deferred section.
-    log(`[agent-wrangler] extension ${id} uninstalled (store data kept)`);
+    // Whatever the extension persisted under DATA_DIR stays — not as retention,
+    // but because a store's file is chosen by the extension's own factory and
+    // there is nothing here that can enumerate it. An explicit purge is deferred;
+    // see the spec's Deferred section, and uninstallBodyText, which says so.
+    log(`[agent-wrangler] extension ${id} uninstalled (its own saved data, wherever it put it, is left)`);
     ctx.reply({ type: 'ext-uninstall-done', id, restartRequired: true });
     await ctx.rebuild();
   },

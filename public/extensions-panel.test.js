@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { externalRowEl, installedPanelEl, consentBodyEl, updateStatusText, progressText, TRUST_STATEMENT } from './extensions-panel.js';
+import {
+  extensionRowEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
+  uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
+} from './extensions-panel.js';
 
 // A DOM stub rather than jsdom, matching how the rest of public/ stays DOM-free
 // (checklist-dom.test.js's). It records innerHTML writes so the "third-party
@@ -61,22 +64,35 @@ const INSTALLED = {
   origin: 'https://example.invalid/notes.git', sha: 'abcdef0123456789',
 };
 
-test('a settings row renders origin, short SHA, author and description', () => {
+test('a settings row renders name, description and origin — and nothing else machine-facing', () => {
   withDom(() => {
-    const row = externalRowEl(INSTALLED);
+    const row = extensionRowEl(INSTALLED);
     const all = texts(row);
     assert.ok(all.includes('Session notes'));
-    assert.ok(all.includes('A Colleague'));
-    assert.ok(all.includes('https://example.invalid/notes.git'));
-    assert.ok(all.includes('abcdef01'), 'the SHA is shortened');
-    assert.ok(!all.includes('abcdef0123456789'));
     assert.ok(all.includes('Keeps notes beside a card.'));
+    assert.ok(all.includes('https://example.invalid/notes.git'));
+    // The commit, the author and any local path were unactionable clutter on a
+    // row; the commit survives on the consent modal, where it is a decision.
+    assert.equal(all.includes('abcdef01'), false, 'no SHA on the row');
+    assert.equal(all.includes('abcdef0123456789'), false);
+    assert.equal(all.includes('A Colleague'), false, 'no author on the row');
+  });
+});
+
+test('every extension is ONE row: the toggle lives with the origin and the actions', () => {
+  withDom(() => {
+    const row = extensionRowEl({ ...INSTALLED, enabled: true });
+    assert.equal(row.dataset.id, 'ext:notes', 'settings.js\'s delegated flip handler finds the def by this id');
+    const toggle = byClass(row, 'setting-toggle')[0];
+    assert.ok(toggle, 'the row carries the same toggle markup rowHtml builds');
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    assert.equal(byClass(extensionRowEl({ ...INSTALLED, enabled: false }), 'setting-toggle')[0].getAttribute('aria-checked'), 'false');
   });
 });
 
 test('a settings row renders the quarantine reason plainly, and only via textContent', () => {
   withDom(() => {
-    const row = externalRowEl({ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' });
+    const row = extensionRowEl({ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' });
     assert.ok(texts(row).includes('tool name "list_sessions" is already registered'));
     assert.equal(byClass(row, 'ext-row-quarantine')[0].getAttribute('role'), 'status');
     // Every third-party string on this row came off a git URL, so nothing in the
@@ -88,56 +104,108 @@ test('a settings row renders the quarantine reason plainly, and only via textCon
 test('hostile third-party strings are inert text, not markup', () => {
   withDom(() => {
     const evil = '<img src=x onerror=alert(1)>';
-    const row = externalRowEl({ id: 'x', label: evil, description: evil, author: evil, quarantine: evil });
+    const row = extensionRowEl({ id: 'x', label: evil, description: evil, origin: evil, quarantine: evil });
     assert.ok(texts(row).includes(evil));
     for (const node of walk(row)) assert.equal(node._html, null);
   });
 });
 
-test('a homepage is a link only when it is https://, otherwise plain text', () => {
+test('an origin is a link only when it is https://, otherwise plain text', () => {
   withDom(() => {
-    const secure = byClass(externalRowEl({ ...INSTALLED, homepage: 'https://example.invalid/docs' }), 'ext-row-origin');
-    assert.ok(secure.some((n) => n.tagName === 'A' && n.href === 'https://example.invalid/docs'));
-    for (const bad of ['http://example.invalid', 'javascript:alert(1)', 'data:text/html,x']) {
-      const nodes = byClass(externalRowEl({ id: 'x', label: 'X', homepage: bad }), 'ext-row-origin');
+    const secure = byClass(extensionRowEl({ id: 'x', label: 'X', external: true, origin: 'https://example.invalid/x.git' }), 'ext-row-origin');
+    assert.ok(secure.some((n) => n.tagName === 'A' && n.href === 'https://example.invalid/x.git'));
+    for (const bad of ['http://example.invalid', 'ssh://git@example.invalid/x.git', 'javascript:alert(1)']) {
+      const nodes = byClass(extensionRowEl({ id: 'x', label: 'X', external: true, origin: bad }), 'ext-row-origin');
       assert.equal(nodes.some((n) => n.tagName === 'A'), false, bad);
       assert.ok(nodes.some((n) => n._text === bad), bad);
     }
   });
 });
 
-test('Uninstall and Update are wired per row; Update is offered only with a recorded origin', () => {
+test('Update appears only once a check found a newer commit; Uninstall is external-only', () => {
   withDom(() => {
     const seen = [];
-    const withOrigin = externalRowEl(INSTALLED, { onUninstall: (e) => seen.push(['uninstall', e.id]), onUpdate: (e) => seen.push(['update', e.id]) });
-    const buttons = byClass(withOrigin, 'ext-btn');
+    const opts = { onUninstall: (e) => seen.push(['uninstall', e.id]), onUpdate: (e) => seen.push(['update', e.id]) };
+    // No check yet: a standing "Update…" would claim there is one to take.
+    assert.deepEqual(byClass(extensionRowEl(INSTALLED, opts), 'ext-btn').map((b) => b._text), ['Uninstall']);
+    assert.deepEqual(byClass(extensionRowEl(INSTALLED, { ...opts, status: { updatable: true, sha: 'a', remoteSha: 'b', behind: false } }), 'ext-btn').map((b) => b._text), ['Uninstall']);
+    const behind = extensionRowEl(INSTALLED, { ...opts, status: { updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40), behind: true } });
+    const buttons = byClass(behind, 'ext-btn');
     assert.deepEqual(buttons.map((b) => b._text), ['Update…', 'Uninstall']);
     buttons[0].fire('click');
     buttons[1].fire('click');
     assert.deepEqual(seen, [['update', 'notes'], ['uninstall', 'notes']]);
-    // A hand-dropped extension has no origin to re-clone from, so no Update.
-    const handDropped = externalRowEl({ id: 'hand', label: 'Hand dropped' });
-    assert.deepEqual(byClass(handDropped, 'ext-btn').map((b) => b._text), ['Uninstall']);
+    // A builtin cannot be uninstalled or updated — only turned off.
+    const builtin = extensionRowEl({ id: 'core', label: 'Core', external: false }, opts);
+    assert.deepEqual(byClass(builtin, 'ext-btn').map((b) => b._text), []);
+    assert.ok(byClass(builtin, 'setting-toggle')[0]);
   });
 });
 
-test('the panel lists only installed extensions and explains an empty list', () => {
+test('an uninstalled extension says so on its row, with the restart that finishes it', () => {
   withDom(() => {
-    const empty = installedPanelEl({ entries: [] });
-    assert.ok(texts(empty).some((t) => /None yet/.test(t)));
+    let restarts = 0;
+    const row = extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: true, onRestart: () => { restarts += 1; } });
+    assert.ok(texts(row).some((t) => /Uninstalled/.test(t)));
+    assert.ok(texts(row).some((t) => /Restart the wrangler to finish/.test(t)));
+    const btn = byClass(row, 'ext-btn-restart')[0];
+    btn.fire('click');
+    assert.equal(restarts, 1);
+    // Nothing to toggle, update or uninstall on a row that is already gone.
+    assert.equal(byClass(row, 'setting-toggle').length, 0);
+    assert.equal(byClass(row, 'ext-btn').length, 1);
+    // While it is going down the button says so rather than inviting a second press.
+    assert.equal(byClass(extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: true, restarting: true }), 'ext-btn-restart')[0].disabled, true);
+  });
+});
+
+test('no restart button where the server cannot restart itself — just the sentence', () => {
+  withDom(() => {
+    const row = extensionRowEl(INSTALLED, { pendingRemoval: true, canRestart: false });
+    assert.ok(texts(row).some((t) => /Restart the wrangler to finish/.test(t)));
+    assert.equal(byClass(row, 'ext-btn-restart').length, 0);
+  });
+});
+
+test('the panel is ONE list of builtins and installed extensions alike', () => {
+  withDom(() => {
+    const empty = extensionsPanelEl({ entries: [] });
     assert.equal(byClass(empty, 'ext-row').length, 1, 'just the install field');
-    // No "Check for updates" with nothing to check.
+    // Nothing to check against with no recorded origin anywhere.
     assert.equal(texts(empty).includes('Check for updates'), false);
-    const full = installedPanelEl({ entries: [INSTALLED] });
+    const full = extensionsPanelEl({ entries: [{ id: 'core', label: 'Core', external: false }, INSTALLED] });
     assert.ok(texts(full).includes('Check for updates'));
-    assert.equal(byClass(full, 'ext-row').length, 2, 'one row plus the install field');
+    assert.equal(byClass(full, 'ext-row').length, 3, 'a builtin, an installed one, and the install field');
+    assert.equal(byClass(full, 'setting-toggle').length, 2, 'both halves of the list carry their own toggle');
+  });
+});
+
+test('checking for updates says so while it runs, on the button and on each row', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [INSTALLED], checking: true });
+    const check = byClass(panel, 'ext-btn').find((b) => /Check/.test(b._text));
+    assert.equal(check._text, 'Checking…');
+    assert.equal(check.disabled, true);
+    assert.ok(texts(panel).includes('Checking…'));
+  });
+});
+
+test('a finished install carries its restart affordance on the install form', () => {
+  withDom(() => {
+    let restarts = 0;
+    const panel = extensionsPanelEl({
+      entries: [], pendingInstall: 'notes', progress: 'Installed notes. Restart the wrangler to finish.',
+      canRestart: true, onRestart: () => { restarts += 1; },
+    });
+    byClass(panel, 'ext-btn-restart')[0].fire('click');
+    assert.equal(restarts, 1);
   });
 });
 
 test('the install field submits a trimmed URL on click and on Enter, and never an empty one', () => {
   withDom(() => {
     const urls = [];
-    const panel = installedPanelEl({ entries: [], onInstall: (u) => urls.push(u) });
+    const panel = extensionsPanelEl({ entries: [], onInstall: (u) => urls.push(u) });
     const input = byClass(panel, 'ext-install-url')[0];
     const go = byClass(panel, 'ext-btn-primary')[0];
     go.fire('click');
@@ -156,9 +224,23 @@ test('the install field submits a trimmed URL on click and on Enter, and never a
 
 test('the install button is disabled while an install is running', () => {
   withDom(() => {
-    assert.equal(byClass(installedPanelEl({ busy: true }), 'ext-btn-primary')[0].disabled, true);
-    assert.equal(byClass(installedPanelEl({ busy: false }), 'ext-btn-primary')[0].disabled, false);
+    assert.equal(byClass(extensionsPanelEl({ busy: true }), 'ext-btn-primary')[0].disabled, true);
+    assert.equal(byClass(extensionsPanelEl({ busy: false }), 'ext-btn-primary')[0].disabled, false);
   });
+});
+
+test('the uninstall confirmation promises no data retention and only claims live code when it is live', () => {
+  const live = uninstallBodyText({ ...INSTALLED, enabled: true, bootEnabled: true });
+  assert.match(live, /files are removed/);
+  assert.match(live, /keeps running until the wrangler restarts/);
+  assert.doesNotMatch(live, /reinstalling picks it back up/);
+  // Turned off, or quarantined, or never loaded this boot: there is no running
+  // code for a restart to clear, and saying there is was simply wrong.
+  for (const off of [{ enabled: false, bootEnabled: true }, { enabled: true, bootEnabled: false }, { enabled: true, bootEnabled: true, quarantine: 'bad manifest' }]) {
+    const text = uninstallBodyText({ ...INSTALLED, ...off });
+    assert.doesNotMatch(text, /keeps running/, JSON.stringify(off));
+    assert.match(text, /not running/);
+  }
 });
 
 test('the consent modal leads with the trust statement, then capabilities, then dependencies', () => {
@@ -237,4 +319,12 @@ test('progress never claims an install happened before consent ran', () => {
   assert.match(progressText('cancelled'), /Nothing was installed/);
   assert.match(progressText('failed', { message: 'no lockfile' }), /Failed: no lockfile/);
   assert.equal(progressText('disclosed'), '', 'the modal speaks for this phase');
+});
+
+test('a settled report fades, but anything still awaiting action does not', () => {
+  // "Cancelled." and "Failed." describe a moment that has passed; a finished
+  // install's line carries the restart button and must stay until the restart.
+  assert.deepEqual([...TRANSIENT_PROGRESS_PHASES].sort(), ['cancelled', 'failed']);
+  assert.equal(TRANSIENT_PROGRESS_PHASES.has('done'), false);
+  assert.equal(updateStatusText({ checking: true }), 'Checking…');
 });

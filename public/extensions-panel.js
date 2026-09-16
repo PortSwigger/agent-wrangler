@@ -1,13 +1,21 @@
-// The Extensions settings tab's INSTALLED half and the install/update consent
-// modal. Pure DOM builders with no app state, like toast.js and
-// system-banner.js: settings.js mounts what these return.
+// The Extensions settings tab and the install/update consent modal. Pure DOM
+// builders with no app state, like toast.js and system-banner.js: settings.js
+// mounts what these return.
 //
-// EVERY third-party string here — label, description, author, homepage,
-// capability names, dependency names, quarantine reasons — goes in via
-// textContent, never innerHTML. Same rule as diff-dom.js and checklist-dom.js,
-// and for a sharper reason: this content came off a git URL a colleague pasted.
-// settings.js's own rows are innerHTML+esc(); this module exists partly so that
-// path never has to carry installed-extension data at all.
+// ONE LIST, not two. Builtin and installed extensions used to be rendered by two
+// different code paths — settings.js's innerHTML toggle rows above, this module's
+// installed rows below — which showed the same extension's name and description
+// twice and made "is it on" and "where did it come from" look like questions
+// about different things. Every row here is now a `.setting-row` carrying
+// `data-id="ext:<id>"` and a `.setting-toggle`, which is exactly what settings.js's
+// own delegated click handler already drives, so unifying the list cost no second
+// flip path and no second flip note.
+//
+// EVERY third-party string here — label, description, origin, capability names,
+// dependency names, quarantine reasons — goes in via textContent, never
+// innerHTML. Same rule as diff-dom.js and checklist-dom.js, and for a sharper
+// reason: this content came off a git URL a colleague pasted. That is also why
+// these rows are built here rather than by settings.js's innerHTML+esc() rowHtml.
 //
 // The trust statement is the FIRST thing the consent modal renders, and its
 // wording is deliberate and must not be softened: an extension runs in-process
@@ -20,7 +28,10 @@ export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full 
 
 // Newly installed or uninstalled code loads (or goes) at the next server start.
 // Same vocabulary as settings.js's extensionFlipNote, deliberately: there must
-// not be a second way of saying "needs a restart".
+// not be a second way of saying "needs a restart". Where the server says it can
+// restart itself (`canRestart`, only under a supervisor) the note is accompanied
+// by the button that does it — an uninstall that visibly changes nothing until
+// some unexplained later restart is the single worst thing this panel did.
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
 
 function el(tag, className, text) {
@@ -41,114 +52,167 @@ function section(parent, title, body) {
   if (body) parent.append(body);
 }
 
-// A homepage is displayed as TEXT unless it is https://. A third-party-supplied
-// href is not worth the navigation surface for a decoration, and http:// buys
-// nothing that the plain string does not.
-function homepageNode(homepage) {
-  if (!homepage) return null;
-  if (!/^https:\/\//.test(homepage)) return el('span', 'ext-row-origin', homepage);
-  const a = el('a', 'ext-row-origin', homepage);
-  a.href = homepage;
+function noteEl(className, text) {
+  const note = el('div', className, text);
+  note.setAttribute('role', 'status');
+  return note;
+}
+
+// An origin is displayed as a link only when it is https://. A third-party
+// supplied href is not worth the navigation surface for a decoration, and ssh://
+// is not navigable at all.
+function originNode(origin) {
+  if (!origin) return null;
+  if (!/^https:\/\//.test(origin)) return el('span', 'ext-row-origin', origin);
+  const a = el('a', 'ext-row-origin', origin);
+  a.href = origin;
   a.target = '_blank';
   a.rel = 'noreferrer noopener';
   return a;
 }
 
-// One row per INSTALLED extension, rendered beneath the enable/disable toggles
-// (which settings.js builds for builtins and installed alike). This row carries
-// what only an installed one has: where it came from, the pinned SHA, who wrote
-// it, and Uninstall — plus the quarantine reason when it has one, which is the
-// whole point of the quarantine posture being visible rather than silent.
-export function externalRowEl(entry, { onUninstall, onUpdate } = {}) {
-  const row = el('div', 'ext-row');
-  row.dataset.id = entry.id;
-  const copy = el('div', 'ext-row-copy');
-  copy.append(el('div', 'ext-row-label', entry.label || entry.id));
-  if (entry.description) copy.append(el('div', 'ext-row-desc', entry.description));
-  const meta = el('div', 'ext-row-meta');
-  if (entry.author) meta.append(el('span', 'ext-row-author', entry.author));
-  if (entry.origin) meta.append(el('span', 'ext-row-origin', entry.origin));
-  // Short SHA: the full 40 characters say nothing extra to a human and crowd
-  // out the origin, which is the field that actually identifies the code.
-  if (entry.sha) meta.append(el('span', 'ext-row-sha', entry.sha.slice(0, 8)));
-  const home = homepageNode(entry.homepage);
-  if (home) meta.append(home);
-  if (meta.childNodes.length) copy.append(meta);
-  if (entry.quarantine) {
-    const note = el('div', 'ext-row-quarantine');
-    note.setAttribute('role', 'status');
+// The restart affordance every "takes effect at the next start" note now carries.
+// Absent — leaving just the sentence — when the server did not say it can restart
+// itself: under `npm start` an exit is a shutdown with nothing to bring the board
+// back, so there is nothing honest to offer.
+function restartNoteEl(text, { canRestart, restarting, onRestart } = {}) {
+  const wrap = noteEl('ext-row-note', '');
+  wrap.append(el('span', null, text));
+  if (!canRestart) return wrap;
+  const btn = el('button', 'ext-btn ext-btn-restart', restarting ? 'Restarting…' : 'Restart now');
+  btn.type = 'button';
+  btn.disabled = Boolean(restarting);
+  btn.addEventListener('click', () => onRestart?.());
+  wrap.append(btn);
+  return wrap;
+}
+
+// One row per extension, builtin or installed. What only an installed one has —
+// where it came from, Uninstall, and Update when a check found one — is added on
+// top of the shared name/description/toggle.
+//
+// The row deliberately shows the origin URL and NOTHING else machine-facing: the
+// pinned commit, the author string and the local path told a reader nothing they
+// could act on and crowded out the two fields that identify the thing (its name
+// and where it came from). The commit still appears where it is a decision input,
+// on the consent modal.
+export function extensionRowEl(entry, {
+  status, pendingRemoval, canRestart, restarting,
+  onUninstall, onUpdate, onRestart,
+} = {}) {
+  const row = el('div', `setting-row ext-row${pendingRemoval ? ' ext-row-removed' : ''}`);
+  row.dataset.id = `ext:${entry.id}`;
+  const copy = el('div', 'setting-copy');
+  copy.append(el('div', 'setting-label', entry.label || entry.id));
+  const blurb = entry.description || entry.help;
+  if (blurb) copy.append(el('div', 'setting-help', blurb));
+  const origin = originNode(entry.origin);
+  if (origin) {
+    const meta = el('div', 'ext-row-meta');
+    meta.append(origin);
+    copy.append(meta);
+  }
+  if (entry.quarantine && !pendingRemoval) {
+    const note = noteEl('ext-row-quarantine', '');
     note.append(el('strong', null, 'Quarantined: '));
     note.append(document.createTextNode(entry.quarantine));
     note.append(el('div', 'ext-row-quarantine-help', 'It contributed nothing this boot. Fix or reinstall it, then restart the wrangler.'));
     copy.append(note);
   }
-  row.append(copy);
-  const actions = el('div', 'ext-row-actions');
-  if (entry.origin) {
-    const update = el('button', 'ext-btn', 'Update…');
-    update.type = 'button';
-    update.addEventListener('click', () => onUpdate?.(entry));
-    actions.append(update);
+  if (pendingRemoval) {
+    copy.append(restartNoteEl(`Uninstalled. ${RESTART_NOTE}`, { canRestart, restarting, onRestart }));
+  } else if (status) {
+    copy.append(noteEl('ext-row-note', updateStatusText(status)));
   }
-  const remove = el('button', 'ext-btn ext-btn-danger', 'Uninstall');
-  remove.type = 'button';
-  remove.addEventListener('click', () => onUninstall?.(entry));
-  actions.append(remove);
+  row.append(copy);
+
+  const actions = el('div', 'ext-row-actions');
+  if (!pendingRemoval) {
+    // Update is offered only when a check actually found a newer commit. A
+    // permanently present "Update…" button says nothing about whether there is
+    // one, and pressing it re-clones and re-consents for no reason.
+    if (entry.external && entry.origin && status?.behind) {
+      const update = el('button', 'ext-btn', 'Update…');
+      update.type = 'button';
+      update.addEventListener('click', () => onUpdate?.(entry));
+      actions.append(update);
+    }
+    if (entry.external) {
+      const remove = el('button', 'ext-btn ext-btn-danger', 'Uninstall');
+      remove.type = 'button';
+      remove.addEventListener('click', () => onUninstall?.(entry));
+      actions.append(remove);
+    }
+    // The toggle settings.js's delegated handler drives — same markup as its own
+    // rowHtml, because it is the same control.
+    const toggle = el('button', `setting-toggle${entry.enabled ? ' on' : ''}`);
+    toggle.type = 'button';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', entry.enabled ? 'true' : 'false');
+    toggle.setAttribute('aria-label', entry.label || entry.id);
+    toggle.append(el('span', 'setting-knob'));
+    actions.append(toggle);
+  }
   row.append(actions);
   return row;
 }
 
-// The whole installed half of the Extensions tab: the rows, the on-demand
-// "Check for updates" button, the install field and the progress line. Built as
-// one element per modal open (settings.js's `extensionsBridge.mount`) rather
-// than patched in place — this panel is behind a modal nobody watches while an
-// install runs, so there is no scroll or drag state a re-render could eat, and
-// the checklist panel's patching machinery would be dead weight here.
+// The whole Extensions tab: every extension as one row, the on-demand "Check for
+// updates" button, the install field and the progress line. Built as one element
+// per modal open (settings.js's `extensionsBridge.mount`) rather than patched in
+// place — this panel is behind a modal nobody watches while an install runs, so
+// there is no scroll or drag state a re-render could eat.
 //
 // The install "prompt" is an inline field rather than a second modal: it lives
 // inside the settings modal that already has focus, and a URL is one line.
-export function installedPanelEl({
-  entries = [], statuses = {}, progress = '', busy = false,
-  onInstall, onUninstall, onUpdate, onCheckUpdates,
+export function extensionsPanelEl({
+  entries = [], statuses = {}, checking = false, progress = '', busy = false,
+  pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
+  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart,
 } = {}) {
   const wrap = el('div');
   const head = el('div', 'ext-installed-head');
-  head.append(el('div', 'setting-label', 'Installed extensions'));
-  if (entries.length) {
-    const check = el('button', 'ext-btn', 'Check for updates');
+  head.append(el('div', 'setting-label', 'Extensions'));
+  if (entries.some((e) => e.external && e.origin)) {
+    const check = el('button', 'ext-btn', checking ? 'Checking…' : 'Check for updates');
     check.type = 'button';
+    // Feedback while the ls-remote round trip runs: without it the button looked
+    // inert until an "Up to date." appeared some seconds later, which reads as
+    // nothing having happened.
+    check.disabled = checking;
     check.addEventListener('click', () => onCheckUpdates?.());
     head.append(check);
   }
   wrap.append(head);
 
-  if (!entries.length) {
-    wrap.append(el('div', 'setting-help', 'None yet. Extensions you install from a git URL appear here; the ones above ship with the wrangler.'));
-  }
+  const removing = new Set(pendingRemoval);
   for (const entry of entries) {
-    const row = externalRowEl(entry, { onUninstall, onUpdate });
-    const status = statuses[entry.id];
-    if (status) {
-      const note = el('div', 'ext-row-note', updateStatusText(status));
-      note.setAttribute('role', 'status');
-      row.querySelector('.ext-row-copy').append(note);
-    }
-    wrap.append(row);
+    wrap.append(extensionRowEl(entry, {
+      status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
+      pendingRemoval: removing.has(entry.id),
+      canRestart,
+      restarting,
+      onUninstall,
+      onUpdate,
+      onRestart,
+    }));
   }
 
-  const form = el('div', 'ext-row');
-  const copy = el('div', 'ext-row-copy');
-  copy.append(el('div', 'ext-row-label', 'Install an extension'));
+  const form = el('div', 'setting-row ext-row');
+  const copy = el('div', 'setting-copy');
+  copy.append(el('div', 'setting-label', 'Install an extension'));
   copy.append(el('div', 'setting-help', 'Paste an https:// or ssh:// git URL. The wrangler fetches it and shows you what it asks for before anything is installed.'));
   const input = el('input', 'ext-install-url');
   input.type = 'text';
   input.placeholder = 'https://github.com/…';
   input.setAttribute('aria-label', 'Extension git URL');
   copy.append(input);
-  if (progress) {
-    const note = el('div', 'ext-install-progress', progress);
-    note.setAttribute('role', 'status');
-    copy.append(note);
+  // A finished install has no row of its own until the restart loads it, so its
+  // restart affordance rides the progress line instead.
+  if (pendingInstall) {
+    copy.append(restartNoteEl(progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`, { canRestart, restarting, onRestart }));
+  } else if (progress) {
+    copy.append(noteEl('ext-install-progress', progress));
   }
   form.append(copy);
   const go = el('button', 'ext-btn ext-btn-primary', 'Install…');
@@ -167,12 +231,14 @@ export function installedPanelEl({
   return wrap;
 }
 
-// The "n behind" / "up to date" line an ext-check-updates reply adds to a row.
-// Nothing is fetched on a schedule, so this only ever appears after a human
-// pressed the button — which is why it is a per-row note rather than a badge
-// the row is built with.
+// The line an ext-check-updates reply (or the wait for one) adds to a row.
+// Nothing is fetched on a schedule, so this only ever appears around a press of
+// the button — which is why it is a per-row note rather than a badge the row is
+// built with, and why app.js clears the settled ones again after a few seconds:
+// "Up to date." describes a check that happened, not a standing property.
 export function updateStatusText(status) {
   if (!status) return '';
+  if (status.checking) return 'Checking…';
   if (!status.updatable) return 'No origin recorded — this one was placed here by hand, so there is nothing to check.';
   if (status.error) return `Could not reach the origin: ${status.error}`;
   if (!status.sha) return 'No installed commit recorded.';
@@ -193,11 +259,14 @@ export function consentBodyEl(payload) {
   trust.append(el('div', 'ext-consent-trust-body', TRUST_STATEMENT));
   wrap.append(trust);
 
+  // The commit and author are dropped from the installed row but kept HERE: on
+  // the row they were unactionable clutter, while this is the one screen where
+  // "which code exactly, and whose" is the decision being made.
   const id = el('div', 'ext-consent-meta');
   if (payload.author) id.append(el('span', 'ext-row-author', payload.author));
   if (payload.sha) id.append(el('span', 'ext-row-sha', payload.sha.slice(0, 8)));
   if (payload.update && payload.priorSha) id.append(el('span', 'ext-row-sha', `was ${payload.priorSha.slice(0, 8)}`));
-  const home = homepageNode(payload.homepage);
+  const home = originNode(payload.homepage);
   if (home) id.append(home);
   if (id.childNodes.length) wrap.append(id);
   if (payload.description) wrap.append(el('div', 'ext-row-desc', payload.description));
@@ -257,6 +326,23 @@ function dependencyDiffEl(payload) {
   return wrap;
 }
 
+// What an uninstall actually does, as the confirm dialog says it. It no longer
+// advertises data retention as a feature: the wrangler removes the extension's
+// own directory and its provenance record, and cannot remove whatever the
+// extension itself wrote elsewhere because only the extension knows where that
+// is (a store's file is chosen by its own factory). An explicit purge is
+// deferred; until it exists this sentence must describe the gap, not dress it up.
+export function uninstallBodyText(entry) {
+  const live = entry.enabled && entry.bootEnabled && !entry.quarantine;
+  return [
+    'Its files are removed from the extensions folder.',
+    'Anything it saved elsewhere in the wrangler\'s data folder stays — the wrangler does not know where an extension keeps its own data.',
+    live
+      ? 'Its code keeps running until the wrangler restarts; you can restart from here once it is gone.'
+      : 'It is not running, so nothing changes on the board.',
+  ].join(' ');
+}
+
 // The install progress line. Short, phase-keyed, and it never claims anything is
 // installed before ext-consent has run — `cloning` and `resolving` happen before
 // any decision has been made.
@@ -272,3 +358,9 @@ export function progressText(phase, extra = {}) {
     default: return '';
   }
 }
+
+// Which progress lines are a REPORT of something that has finished and must fade,
+// rather than state the reader still has to act on. "Cancelled. Nothing was
+// installed." sat there forever describing a decision made minutes ago; a
+// finished install's line carries the restart button and stays until the restart.
+export const TRANSIENT_PROGRESS_PHASES = new Set(['cancelled', 'failed']);

@@ -864,7 +864,29 @@ existing `enabled && !bootEnabled` case, and the copy reuses
 `extensionFlipNote`'s vocabulary (`RESTART_NOTE`,
 `public/extensions-panel.js`) rather than inventing a second way of saying "needs
 a restart". Uninstall is symmetric: the directory and the record go immediately,
-and the code stays live out of the process's module cache until restart.
+and the code stays live out of the process's module cache until restart — but only
+where it was running to begin with, so the confirm copy drops that sentence for an
+extension that is turned off or quarantined.
+
+Every one of those notes now carries the **restart button** that finishes the job,
+because an uninstall that visibly changes nothing until some later unexplained
+restart reads as an uninstall that did nothing. It is offered only where the server
+says it can come back: `AW_SUPERVISED=1`, exported by `scripts/wrangler-start.sh`
+(what both the launchd plist and the systemd unit exec), surfaced to the client as
+`config.canRestart` and enforced by `control/handlers/restart.js`, which refuses
+otherwise. Since the server's extension list is a boot snapshot, the client holds
+the uninstalled id (and a freshly installed one, which is in no list at all yet) as
+pending state and clears it on the next `config` frame — the first frame of every
+reconnect, and the only reliable signal that the restart actually happened.
+
+The tab itself is **one list**: builtin and installed extensions render through the
+same row, with the toggle, the origin and the actions together, instead of the two
+lists that repeated each other's name and description. A row carries name,
+description and origin only; the commit and author moved to the consent modal, which
+is the screen where they are a decision rather than clutter. `Update…` appears only
+once a check has actually found a newer commit, the check says `Checking…` while it
+runs, and a settled report ("Up to date.", "Cancelled. Nothing was installed.")
+clears itself after a few seconds — it describes a moment, not a state.
 
 **All third-party strings** — label, description, author, homepage, capability
 and dependency names, quarantine reasons — go into the DOM via `textContent`
@@ -916,10 +938,13 @@ may make.
   a session's launch argv regardless, so a running session can never gain or
   lose tools without a relaunch.
 - An explicit store-data purge on uninstall. Uninstall removes the installed
-  directory and its provenance record, but anything the extension persisted
-  under `DATA_DIR` stays, and a reinstall picks it up again — the same "set
-  aside, not destroyed" posture archive has. A real purge needs a separate,
-  clearly destructive gesture and a way to enumerate what an extension owns.
+  directory and its provenance record; anything the extension persisted under
+  `DATA_DIR` stays, not as a retention feature but because the wrangler cannot
+  find it — a store's file is chosen by the extension's own factory and there is
+  no wrangler-owned per-extension data dir to sweep. A real purge needs a way to
+  enumerate what an extension owns (most likely a declared data directory the
+  host hands out, which would make removal trivial), and the confirm copy says
+  plainly that the gap exists until then.
 - Signature or publisher verification of an installed extension, any registry or
   discovery mechanism, per-extension resource limits, and sandboxing of any
   kind. All four remain out of scope: per the trust framing there is no boundary

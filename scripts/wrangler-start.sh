@@ -65,4 +65,11 @@ export PATH="$PATH:$PWD/node_modules/.bin"
 # npm's prestart hook so the launchd and `npm start` paths behave identically.
 bash scripts/sync-deps.sh || exit 1
 
+# Both supervisors above (launchd KeepAlive, systemd Restart=always) bring the
+# process straight back, which is what makes the board's "Restart the wrangler"
+# button — the one that finishes an extension install or uninstall — safe to
+# offer. Nothing exports this on the `npm start` or bare-node paths, so there the
+# button is simply absent rather than a way to kill the board.
+export AW_SUPERVISED=1
+
 exec node server/index.js

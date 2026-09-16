@@ -24,6 +24,7 @@ import { chatViewDefaultHandler } from './chat-view-default.js';
 import { checklistEnabledHandler } from './checklist-enabled.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
+import { restartHandler } from './restart.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
@@ -106,6 +107,7 @@ export const CONTROL_HANDLERS = [
   extConsentHandler,
   extUninstallHandler,
   extCheckUpdatesHandler,
+  restartHandler,
   setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,

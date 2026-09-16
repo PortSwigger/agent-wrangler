@@ -172,13 +172,51 @@ don't re-derive it.
   restart cancels nothing meaningful. The lock is held across the human's decision
   and released on every failure path, or one bad repository would wedge every later
   install for the life of the process.
-- **Uninstall removes the directory and the provenance entry and KEEPS the store
-  data** — the same "set aside, not destroyed" posture archive has, so a reinstall
-  picks it up. An explicit purge is deferred. Newly installed code loads at the
-  **next server start**, exactly like the existing `enabled && !bootEnabled` case,
-  and the copy reuses `extensionFlipNote`'s vocabulary rather than inventing a second
-  way of saying "needs a restart"; uninstall is symmetric, the code stays live until
-  restart.
+- **Uninstall removes the directory and the provenance entry; whatever the extension
+  wrote elsewhere survives because the wrangler does not know where it is** — a
+  store's file is chosen by the extension's own factory, and there is no
+  wrangler-owned per-extension data dir to sweep. An explicit purge is deferred, so
+  the confirm copy (`uninstallBodyText`) states the gap rather than selling retention
+  as a feature; it also only claims live code is still running when the extension
+  actually loaded this boot (`enabled && bootEnabled && !quarantine`) — a
+  turned-off or quarantined one contributed nothing for a restart to clear.
+  Newly installed code loads at the **next server start**, exactly like the existing
+  `enabled && !bootEnabled` case, and the copy reuses `extensionFlipNote`'s
+  vocabulary rather than inventing a second way of saying "needs a restart";
+  uninstall is symmetric, the code stays live until restart.
+- **"Restart the wrangler to finish" now comes with the button that does it, and the
+  button exists ONLY under a supervisor.** `AW_SUPERVISED=1` is exported by
+  `scripts/wrangler-start.sh` — which is what both the launchd plist and the systemd
+  unit exec, and both bring the process straight back — so the flag means "something
+  will restart me", never "I am on macOS"; under `npm start` or bare `node
+  server/index.js` an exit is a shutdown with nothing to return the board, so
+  `restart-server` refuses and the client (`config.canRestart`) never draws the
+  button. The handler (`control/handlers/restart.js`) acks BEFORE the exit is armed
+  (the socket dies with the process) and the exit itself lives in `index.js`'s
+  `ctx.restart`, which calls `shutdownLog.noteReason` first — a self-inflicted exit
+  with no reason logs exactly like the hard kill an absent reason is supposed to
+  mean. The board's own pending notes (an uninstalled row, a finished install) are
+  cleared by the next `config` frame, which is the first frame of every reconnect
+  and therefore the only reliable "the restart happened" signal a client gets.
+- **The Extensions tab is ONE list, and every row is a `.setting-row` carrying
+  `data-id="ext:<id>"`.** Builtin and installed extensions used to render through two
+  paths — `settings.js`'s `rowHtml` toggles above, the panel's installed rows below —
+  which printed the same name and description twice. `setExtensionDefs` therefore
+  registers its defs in `byId` but leaves the tab's `settingIds` **empty**: the defs
+  still exist so settings.js's delegated flip handler and `getSetting` work, while
+  `extensions-panel.js` draws the rows (toggle included, via the same markup
+  `rowHtml` emits) so third-party strings stay on the `textContent` path. Putting an
+  id back into `settingIds` renders that extension twice.
+- **A row shows name, description and origin only — no commit, author or local
+  path** (they were unactionable there); the commit and author stay on the consent
+  modal, which is where "which code exactly, and whose" is the decision. **Update is
+  drawn only when a check actually found a newer commit** (`status.behind`), so the
+  button never implies an update that does not exist, and the check itself reports
+  `Checking…` on the button and each row. Settled reports — `Up to date.`,
+  `Cancelled. Nothing was installed.` — are cleared after `EXT_TRANSIENT_MS`
+  (`TRANSIENT_PROGRESS_PHASES`, `public/app.js`): they describe a moment, not a
+  state. Anything still awaiting action (a newer commit, an unreachable origin, a
+  pending restart) is deliberately NOT on that timer.
 - **Every third-party extension string goes into the DOM via `textContent`.** Label,
   description, author, homepage, capability and dependency names, quarantine reasons
   — same rule as `diff-dom.js`/`checklist-dom.js`, which is why

@@ -60,6 +60,7 @@ import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
+import { restartSupported } from './control/handlers/restart.js';
 
 const open = openModule.default || openModule;
 
@@ -814,7 +815,10 @@ const rebuild = createRebuildCoalescer(rebuildOnce);
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir() }));
+  // `canRestart` gates the board's own "Restart the wrangler" button: a restart
+  // is an exit that only comes back under a supervisor (see control/handlers/
+  // restart.js), so the client must never offer it otherwise.
+  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported() }));
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -855,6 +859,14 @@ controlWss.on('connection', (ws) => {
     broadcast,
     terminalRegistry,
     createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
+    // The exit itself lives here, not in the handler leaf: only this module owns
+    // the shutdown log, and a self-inflicted exit must record WHY or its line
+    // reads exactly like the hard kill a missing reason is supposed to mean. The
+    // small delay lets the ack reach the browser before the socket dies with us.
+    restart: () => {
+      shutdownLog.noteReason('restart requested from the board');
+      setTimeout(() => process.exit(0), 250).unref();
+    },
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
 });

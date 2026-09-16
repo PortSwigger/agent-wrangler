@@ -52,13 +52,15 @@ test('setExtensionDefs builds one server toggle per extension and replaces the p
   assert.equal(defs[0].help, 'A note.');
   assert.equal(defs[1].help, 'Something.');
   assert.equal(defs[2].help, '');
-  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds, defs.map((d) => d.id));
+  // Registered in the id index but NOT as tab rows: extensions-panel.js draws
+  // every extension as ONE row (toggle, origin and actions together), so a
+  // settingIds entry here would render the same extension twice.
+  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds, []);
   // Registered: readable through the ordinary getSetting path, falling back to
   // the manifest default when the server bridge has nothing for it.
   assert.equal(getSetting(`${EXT_SETTING_PREFIX}notes`), true);
   assert.equal(getSetting(`${EXT_SETTING_PREFIX}other`), false);
   setExtensionDefs([{ id: 'solo', label: 'Solo' }]);
-  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds, [`${EXT_SETTING_PREFIX}solo`]);
   assert.equal(getSetting(`${EXT_SETTING_PREFIX}notes`), undefined, 'a dropped extension is unregistered');
   setExtensionDefs([]);
 });
