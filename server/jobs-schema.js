@@ -94,7 +94,7 @@ export const settingsSchema = z.object({
 });
 // A worker never changes the plan: `move` is a SUGGESTION on a blocked receipt,
 // which the board offers the human as the pre-selected button (job-moves.js).
-export const MOVE_NAMES = ['fix-here', 'split-out', 'new-ticket', 'reorder', 'drop', 'mark'];
+export const MOVE_NAMES = ['fix-here', 'split-out', 'new-ticket', 'reorder', 'drop', 'mark', 'accept-red'];
 // Strict, so a receipt carrying a field this system no longer has (an
 // `amendment`, a `commitMessage`) fails loudly with the offending key rather
 // than being silently stripped — the agent can then correct and retry, exactly

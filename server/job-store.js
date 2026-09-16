@@ -329,7 +329,7 @@ export class JobStore {
     // waits in Code review until the human approves it (approve-code), which
     // is what releases the publish session.
     if (report.kind === 'ready') { s.ready = { checks: report.checks, receiptId: r.id, at: Date.now() }; s.note = null; s.stage = 'review'; s.state = 'verified'; }
-    if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
+    if (report.kind === 'published') { s.pr = { url: report.url, checkStatus: 'pending' }; s.stage = 'pr'; s.state = 'watching'; s.mergeApprovedHead = null; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
     if (report.kind === 'repaired') { s.repairs.push({ ...report, at: Date.now() }); s.state = 'watching'; s.mergeApprovedHead = null; s.pr.checkStatus = 'pending'; s.fixRequested = null; s.note = null; s.nextPollAt = Date.now() + COMMENT_SETTLE_MS; }
     // A session's receipt is the whole deliverable; with review on it waits for a
     // human, otherwise cleanup (archive its session) takes it straight to done.

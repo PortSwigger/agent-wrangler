@@ -34,7 +34,7 @@ the `runId` from your prompt and the receipt kind it names.
   blocked receipt, not an optimistic bullet.
 - **Blocked is one sentence**: `{kind:"blocked", summary:"…"}`. If you can see
   which move the human should make, name it —
-  `move:"fix-here"|"split-out"|"new-ticket"|"reorder"|"drop"|"mark"`. It is a
+  `move:"fix-here"|"split-out"|"new-ticket"|"reorder"|"drop"|"mark"|"accept-red"`. It is a
   suggestion; the human decides.
 - Save your files before reporting: a successful report ends the run.
 - A report that failed on a connection error is **safe to retry identically**.

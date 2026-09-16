@@ -3142,7 +3142,7 @@ button.job-node:focus-visible { outline:2px solid var(--blue); outline-offset:2p
 .job-event b { color:var(--red-fg); }
 .job-event p { margin:6px 0 0; color:var(--fg); }
 .job-event-move { display:inline-block; margin-top:9px; font-size:11px; color:var(--fg-muted); }
-/* The six moves as one grid of equal choices: the human picks, so no move is
+/* The moves as one grid of equal choices: the human picks, so no move is
    pre-selected — the one the agent suggested is merely outlined. */
 .job-moves { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:8px 0 4px; }
 .job-move { display:flex; flex-direction:column; align-items:flex-start; gap:5px; width:100%; box-sizing:border-box; padding:11px 12px; text-align:left; background:var(--bg); border:1px solid var(--border-muted); border-radius:8px; color:var(--fg); font:inherit; font-size:12px; cursor:pointer; }

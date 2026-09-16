@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { line, id, jira, jiraProject, briefSchema, prUrlSchema, planSchema, isSessionSub } from './jobs-schema.js';
+import { line, id, jira, jiraProject, briefSchema, prUrlSchema, planSchema, isSessionSub, reviewCode } from './jobs-schema.js';
 import { COMMENT_SETTLE_MS } from './job-comments.js';
 
-// The six moves a human would make by hand when a job goes wrong. Agents never
+// The seven moves a human would make by hand when a job goes wrong. Agents never
 // change a plan: a worker's blocked receipt may NAME a move, and this module is
 // what a human's click then runs. Pure over the job draft job-store.js is about
 // to persist — it validates and mutates that copy, and never touches disk.
@@ -16,12 +16,13 @@ export const moveSchemas = {
   reorder: z.object({ after: z.array(id).max(30) }),
   drop: z.object({}),
   mark: z.object({ position: z.enum(['pr', 'merged', 'done']), url: prUrlSchema.optional(), note }),
+  'accept-red': z.object({ note }),
 };
 export const MOVE_ACTIONS = new Set(Object.keys(moveSchemas));
 // Everything but Fix here and Drop rewrites the plan around a sub-job, so it
 // cannot land under a session that is working to the old one. Drop is allowed
 // live exactly as the cancel it renames was.
-const REFUSED_WHILE_LIVE = new Set(['split-out', 'new-ticket', 'reorder', 'mark']);
+const REFUSED_WHILE_LIVE = new Set(['split-out', 'new-ticket', 'reorder', 'mark', 'accept-red']);
 const UNMERGED = ['implementation', 'review', 'pr', 'session'];
 const liveRun = (job, subId) => job.runs.some((r) => !r.stopped && r.subJobId === subId);
 const quoted = (title) => `“${title}”`;
@@ -88,6 +89,16 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
   if (move === 'fix-here') {
     if (sub.stage === 'pr') {
       if (liveRun(job, sub.id)) throw new Error('Wait for the session to stop');
+      // Under code review a fix is the same road as the first cut: back to work
+      // in the PR's worktree, the human reads the uncommitted diff, and approval
+      // releases the publish session that pushes it to the open PR. A repair
+      // that commits straight to the branch would skip the very review the
+      // flag exists for.
+      if (reviewCode(job)) {
+        sub.note = data.note || null; sub.ready = null; sub.fixRequested = null;
+        sub.error = null; sub.blocked = null; sub.stage = 'implementation'; sub.state = 'queued';
+        return { detail: `Sent ${quoted(sub.title)} back to work on its PR` };
+      }
       // Deliberately independent of checkStatus: the human has seen something
       // green checks do not cover, so the next tick launches a repair anyway.
       sub.fixRequested = { note: data.note || null, at: now };
@@ -182,6 +193,32 @@ export function applyMove(job, sub, move, payload, { now = Date.now(), buildSubJ
     else sub.deployed = { at: now, checks, commit: sub.pr?.mergeCommit || null };
     sub.error = null; sub.blocked = null; sub.stage = 'cleanup'; sub.state = 'queued';
     return { detail: `Marked done: ${checks[0]}` };
+  }
+
+  // The pipeline is red and the human has decided that is fine: a flaky check,
+  // an unrelated workflow on the same commit. Pinned to the exact head or merge
+  // commit it was accepted at, so a later push or a different merge is judged
+  // afresh — the acceptance never outlives the diff it was given for.
+  if (move === 'accept-red') {
+    if (isSessionSub(sub)) throw new Error('A session sub-job has no pipeline to accept');
+    if (sub.stage === 'pr') {
+      if (sub.pr?.checkStatus !== 'failing') throw new Error('The checks on this PR are not red');
+      if (sub.pr.dirty) throw new Error('This PR has merge conflicts, which no override can merge through');
+      // Accepting red IS the merge approval for this head: the human just said
+      // "merge it as it stands", and asking again would be the same question.
+      sub.acceptedRed = { ref: sub.pr.head, note: data.note || null, at: now };
+      sub.mergeApprovedHead = sub.pr.head;
+      sub.error = null; sub.blocked = null; sub.state = 'watching'; sub.nextPollAt = 0;
+      return { detail: `Accepted the red checks on ${quoted(sub.title)}; merging as it stands` };
+    }
+    if (sub.stage === 'deployment') {
+      if (sub.recoveredBy) throw new Error('This sub-job is waiting on its fix, not on a pipeline');
+      if (sub.deploymentResult?.status !== 'failing') throw new Error('No post-merge run has failed');
+      sub.acceptedRed = { ref: sub.pr?.mergeCommit || null, note: data.note || null, at: now };
+      sub.error = null; sub.blocked = null; sub.state = 'watching'; sub.nextPollAt = 0;
+      return { detail: `Accepted the red post-merge run on ${quoted(sub.title)}` };
+    }
+    throw new Error('Nothing red to accept at this stage');
   }
   throw new Error('Unknown job action');
 }

@@ -387,6 +387,57 @@ test('a failing post-merge run names the workflow and creates no second job', as
   assert.equal(f.sub().deployed, undefined);
 });
 
+test('Accept red on an open PR merges the pinned head instead of repairing it; a new push is judged afresh', async (t) => {
+  const f = fixture(t); f.store.settings({ maxRepairs: 0 }); await atPr(f);
+  f.setPr({ checkStatus: 'failing', checks: [{ name: 'e2e', state: 'FAILURE' }] }); await f.tick();
+  assert.match(f.sub().error, /repair limit/);
+  f.store.action(f.job.id, 'accept-red', { subJobId: 'api', note: 'e2e is flaky this week' });
+  assert.equal(f.sub().error, null); assert.deepEqual(f.sub().acceptedRed, { ref: 'head1', note: 'e2e is flaky this week', at: f.sub().acceptedRed.at });
+  await f.tick();
+  assert.deepEqual(f.merged, ['head1']); assert.equal(f.sub().mergeRequestedHead, 'head1');
+  assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 0, 'an accepted head is never repaired');
+  assert.deepEqual(f.store.get(f.job.id).moves.map((m) => [m.move, m.note]), [['accept-red', 'e2e is flaky this week']]);
+  // The acceptance was for head1: a push that lands red is back on the repair road.
+  const g = fixture(t); g.store.settings({ maxRepairs: 0 }); await atPr(g);
+  g.setPr({ checkStatus: 'failing' }); await g.tick();
+  g.store.action(g.job.id, 'accept-red', { subJobId: 'api' });
+  g.setPr({ head: 'head2' }); await g.tick();
+  assert.deepEqual(g.merged, []); assert.match(g.sub().error, /repair limit/);
+  assert.equal(g.sub().mergeApprovedHead, 'head1', 'the approval it carried stays pinned to the head that was accepted');
+});
+
+test('with manual merge on, Accept red needs no second Approve merge click: the acceptance is the approval', async (t) => {
+  const f = fixture(t); f.store.settings({ maxRepairs: 0 }); await f.approve(); f.report({ kind: 'published', url: PR_URL });
+  f.setPr({ checkStatus: 'failing' }); await f.tick();
+  assert.match(f.sub().error, /repair limit/);
+  f.store.action(f.job.id, 'accept-red', { subJobId: 'api' }); await f.tick();
+  assert.deepEqual(f.merged, ['head1'], 'reviewMerge on, yet no second Approve merge click is asked for');
+});
+
+test('Accept red on a failing post-merge run climbs the rest of the ladder, receipt line saying which colour it was', async (t) => {
+  const f = fixture(t); await atPr(f);
+  f.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await f.tick();
+  f.setDeployment({ status: 'failing', runs: [{ workflow: 'Deploy to prod', status: 'failing' }], commit: 'merge1' }); await f.tick();
+  assert.match(f.sub().error, /Post-merge run failed/);
+  f.store.action(f.job.id, 'accept-red', { subJobId: 'api', note: 'Prod deploy is red for the unrelated smoke test' });
+  assert.equal(f.sub().error, null);
+  await f.tick();
+  assert.deepEqual(f.sub().deployed.checks, ['Post-merge run accepted red: Prod deploy is red for the unrelated smoke test']);
+  assert.equal(f.sub().deployed.commit, 'merge1');
+  await f.tick(); assert.equal(f.sub().stage, 'done'); assert.deepEqual(f.cleaned, ['api']);
+  // With a check in the plan, verify still runs — and is told the truth about the runs.
+  const g = fixture(t); await atPr(g, plan([spec('api', [], { check: 'helm list shows auth in prod' })]));
+  g.setPr({ state: 'MERGED', mergeCommit: 'merge1' }); await g.tick();
+  g.setDeployment({ status: 'failing', runs: [{ workflow: 'Deploy to prod', status: 'failing' }], commit: 'merge1' }); await g.tick();
+  g.store.action(g.job.id, 'accept-red', { subJobId: 'api', note: 'smoke test is unrelated' }); await g.tick();
+  assert.equal(g.last().run.phase, 'verify');
+  const prompt = jobPrompt(g.store.get(g.job.id), g.sub(), g.last().run);
+  assert.match(prompt, /post-merge runs FAILED \(Deploy to prod\) and the human accepted that — "smoke test is unrelated"/);
+  assert.doesNotMatch(prompt, /runs passed/);
+  g.report({ kind: 'deployed', checks: ['helm shows auth 1.4.0'] }); await g.tick();
+  assert.equal(g.sub().stage, 'done');
+});
+
 test('a closed PR blocks the sub-job', async (t) => {
   const f = fixture(t); await atPr(f);
   f.setPr({ state: 'CLOSED' }); await f.tick();
@@ -421,8 +472,36 @@ test('a merged sub-job with nothing deployed past the stale window is flagged; a
 
 const movesOf = (f) => f.store.get(f.job.id).moves;
 
-test('Fix here on an open PR launches a repair whatever colour the checks are, and the repaired receipt clears it', async (t) => {
+test('Fix here on an open PR under code review goes back to work in the PR worktree, through review, and the approved tree is pushed to the same PR', async (t) => {
   const f = fixture(t); await f.approve();
+  f.report({ kind: 'published', url: PR_URL }); await f.tick();
+  f.setPr({ checkStatus: 'passing' }); await f.tick();
+  f.store.action(f.job.id, 'approve-merge', { subJobId: 'api', head: 'head1' });
+  assert.equal(f.sub().mergeApprovedHead, 'head1');
+  f.store.action(f.job.id, 'fix-here', { subJobId: 'api', note: 'Rename the flag to sign_in_v2' });
+  const sent = f.sub();
+  assert.deepEqual([sent.stage, sent.state, sent.fixRequested, sent.note, sent.pr.url], ['implementation', 'queued', null, 'Rename the flag to sign_in_v2', PR_URL], 'the PR stays on the card; nothing is committed to it yet');
+  assert.match(movesOf(f).at(-1).detail, /back to work on its PR/);
+  await f.tick();
+  assert.deepEqual([f.last().run.phase, f.last().sub.worktree.path], ['implementation', '/worktree/api'], 'the same worktree, whose branch is the PR');
+  assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 0, 'no repair commits behind the human’s back');
+  const work = jobPrompt(f.store.get(f.job.id), f.last().sub, f.last().run);
+  assert.match(work, /PR https:\/\/github.com\/org\/repo\/pull\/1 is already open from this worktree's branch/);
+  assert.match(work, /Leave every change UNCOMMITTED.*pushes it to the open PR/);
+  assert.match(work, /human requested changes: "Rename the flag to sign_in_v2"/);
+  f.report({ kind: 'ready', checks: ['Flag renamed', 'Tests pass'] }); await f.tick();
+  assert.deepEqual([f.sub().stage, f.sub().state], ['review', 'verified'], 'the human reads the diff before it reaches the PR');
+  f.store.action(f.job.id, 'approve-code', { subJobId: 'api', readyReceiptId: f.sub().ready.receiptId }); await f.tick();
+  assert.equal(f.last().run.phase, 'publish');
+  const publish = jobPrompt(f.store.get(f.job.id), f.last().sub, f.last().run);
+  assert.match(publish, /push to the open PR; do not open another/);
+  assert.match(publish, /Commit, push to the open PR, then job_report \{runId:"run_\w+", kind:"published", url:"https:\/\/github.com\/org\/repo\/pull\/1"\}/);
+  f.report({ kind: 'published', url: PR_URL }); await f.tick();
+  assert.deepEqual([f.sub().stage, f.sub().state, f.sub().mergeApprovedHead], ['pr', 'watching', null], 'a new head: the old merge approval is spent');
+});
+
+test('Fix here on an open PR with code review off launches a repair whatever colour the checks are, and the repaired receipt clears it', async (t) => {
+  const f = fixture(t, { ...input, reviewCode: false }); await f.approve();
   f.report({ kind: 'published', url: PR_URL }); await f.tick();
   f.setPr({ checkStatus: 'passing' }); await f.tick();
   assert.equal(f.launched.filter((w) => w.run.phase === 'repair').length, 0, 'green checks start nothing on their own');
@@ -590,7 +669,7 @@ test('a move that rewrites the plan waits for the session working to it; Drop ne
 test('every move is refused on a finished or dropped sub-job', async (t) => {
   const f = fixture(t); await f.approve(); f.alive.clear(); await f.tick();
   f.store.action(f.job.id, 'drop', { subJobId: 'api' });
-  for (const action of ['fix-here', 'split-out', 'new-ticket', 'reorder', 'drop', 'mark']) {
+  for (const action of ['fix-here', 'split-out', 'new-ticket', 'reorder', 'drop', 'mark', 'accept-red']) {
     assert.throws(() => f.store.action(f.job.id, action, { subJobId: 'api', title: 't', brief: 'b', storyTitle: 's', after: [], position: 'done' }), /already finished/, action);
   }
 });
@@ -1032,6 +1111,28 @@ test('admin merge re-observes readiness, pins the head, and drops admin when rev
     await assert.rejects(gh.merge(sub), /PR changed or checks are no longer green/);
     assert.ok(!calls.some(args => args[1] === 'merge'));
   }
+});
+
+test('an accepted-red merge re-observes the head and uses admin only where GitHub would otherwise refuse', async () => {
+  const redPr = { ...rawPr, statusCheckRollup: [{ name: 'e2e', conclusion: 'FAILURE' }] };
+  for (const [mergeStateStatus, admin] of [['BLOCKED', true], ['UNSTABLE', false], ['CLEAN', false], ['BEHIND', true]]) {
+    const { gh, sub, calls } = reviewGithub({ ...redPr, mergeStateStatus });
+    sub.pr.mergeWithAdmin = false; sub.acceptedRed = { ref: 'head1', note: null, at: 1 };
+    await gh.merge(sub);
+    assert.equal(calls[0][1], 'view');
+    assert.deepEqual(calls.at(-1), ['pr', 'merge', rawPr.url, '--squash', ...(admin ? ['--admin'] : []), '--match-head-commit', 'head1'], mergeStateStatus);
+  }
+  for (const [patch, message] of [[{ headRefOid: 'head2' }, /PR changed/], [{ state: 'MERGED' }, /PR changed/], [{ mergeStateStatus: 'DIRTY' }, /merge conflicts/]]) {
+    const { gh, sub, calls } = reviewGithub({ ...redPr, ...patch });
+    sub.pr.mergeWithAdmin = false; sub.acceptedRed = { ref: 'head1', note: null, at: 1 };
+    await assert.rejects(gh.merge(sub), message);
+    assert.ok(!calls.some(args => args[1] === 'merge'));
+  }
+  // Accepted at an older head: the ordinary path, no override.
+  const { gh, sub, calls } = reviewGithub({ ...rawPr, reviewDecision: 'APPROVED' });
+  sub.pr.mergeWithAdmin = false; sub.acceptedRed = { ref: 'head0', note: null, at: 1 };
+  await gh.merge(sub);
+  assert.deepEqual(calls, [['pr', 'merge', rawPr.url, '--squash', '--match-head-commit', 'head1']]);
 });
 
 test('failure to observe required checks never permits an admin merge', async () => {

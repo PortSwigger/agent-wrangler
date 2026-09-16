@@ -12,6 +12,7 @@ export async function runFile(bin, args, cwd) {
 }
 const bad = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const good = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
+const MERGEABLE_AS_IS = new Set(['CLEAN', 'UNSTABLE']);
 export function prSummary(pr) {
   const checks = (pr.statusCheckRollup || []).map((c) => ({ name: c.name || c.context || 'Check',
     state: c.status && c.status !== 'COMPLETED' ? c.status : c.conclusion || c.state || 'PENDING' }));
@@ -26,7 +27,7 @@ export function prSummary(pr) {
   else if (allGreen && pr.reviewDecision === 'REVIEW_REQUIRED') checkStatus = 'awaiting-review';
   return { url: pr.url, state: pr.state, head: pr.headRefOid, branch: pr.headRefName,
     base: pr.baseRefName, mergeCommit: pr.mergeCommit?.oid || null,
-    checkStatus, checks, mergeWithAdmin, dirty: pr.mergeStateStatus === 'DIRTY', reviewDecision: pr.reviewDecision };
+    checkStatus, checks, mergeWithAdmin, dirty: pr.mergeStateStatus === 'DIRTY', mergeState: pr.mergeStateStatus || null, reviewDecision: pr.reviewDecision };
 }
 export class JobGithub {
   constructor(run = runFile) { this.run = run; }
@@ -103,7 +104,17 @@ export class JobGithub {
     // Admin bypasses GitHub's CI enforcement too. Recheck before using it and
     // retain match-head so a push cannot silently replace the approved change.
     let admin = false;
-    if (sub.pr.mergeWithAdmin) {
+    if (sub.acceptedRed?.ref === sub.pr.head) {
+      // The human accepted this head red (job-moves.js), so green is not the
+      // test — only that GitHub can still merge it. Admin is what gets a
+      // BLOCKED merge past the check enforcement the red checks trip; an
+      // UNSTABLE one (red but optional checks) needs no override, and a merge
+      // conflict is beyond any.
+      const current = await this.pr(sub);
+      if (current.state !== 'OPEN' || current.head !== sub.pr.head) throw new Error('PR changed; waiting for a fresh observation');
+      if (current.dirty) throw new Error('PR has merge conflicts, which no override can merge through');
+      admin = !MERGEABLE_AS_IS.has(current.mergeState);
+    } else if (sub.pr.mergeWithAdmin) {
       const current = await this.pr(sub);
       if (current.state !== 'OPEN' || current.head !== sub.pr.head || current.checkStatus !== 'passing') {
         throw new Error('PR changed or checks are no longer green; waiting for a fresh observation');

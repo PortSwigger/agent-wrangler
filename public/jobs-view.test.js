@@ -151,6 +151,38 @@ test('a finished, dropped or cleaning-up sub-job offers no moves at all', (t) =>
   assert.deepEqual(movesFor(job, { ...sub('api'), kind: 'session', stage: 'session' }).map((m) => m.id), ['fix-here', 'new-ticket', 'reorder', 'drop', 'mark']);
 });
 
+test('Accept red appears only beside a red pipeline, says which side of the merge it acts on, and sends just the note', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  const redPr = { url: 'https://github.com/org/repo/pull/1', head: 'h1', checkStatus: 'failing', checks: [{ name: 'e2e', state: 'FAILURE' }, { name: 'lint', state: 'SUCCESS' }] };
+  assert.equal(movesFor(job, { ...sub('api'), stage: 'pr', pr: { ...redPr, checkStatus: 'pending' } }).find((m) => m.id === 'accept-red'), undefined);
+  assert.equal(movesFor(job, { ...sub('api'), stage: 'pr', pr: { ...redPr, dirty: true } }).find((m) => m.id === 'accept-red'), undefined, 'a conflict cannot be waved through');
+  assert.equal(movesFor(job, { ...sub('api'), stage: 'pr', pr: redPr, acceptedRed: { ref: 'h1' } }).find((m) => m.id === 'accept-red'), undefined, 'already accepted at this head');
+  assert.equal(movesFor(job, { ...sub('api'), stage: 'pr', pr: redPr }).find((m) => m.id === 'accept-red').blurb, 'Merge this PR as it stands, red checks and all.');
+  const landing = { ...sub('api'), stage: 'deployment', pr: { ...redPr, checkStatus: 'passing', mergeCommit: 'abc' }, deploymentResult: { status: 'failing', runs: [{ workflow: 'Deploy', status: 'failing', url: 'https://github.com/org/repo/actions/runs/1' }], commit: 'abc' } };
+  assert.deepEqual(movesFor(job, landing).map((m) => m.id), ['split-out', 'new-ticket', 'drop', 'mark', 'accept-red']);
+  assert.equal(movesFor(job, landing).at(-1).blurb, 'Count the merge as landed despite the failing post-merge run.');
+  assert.equal(movesFor(job, { ...landing, recoveredBy: 'api-2' }).find((m) => m.id === 'accept-red'), undefined, 'awaiting its fix, not a pipeline');
+  assert.deepEqual(jobStatus(job, { ...landing, acceptedRed: { ref: 'abc' }, error: null }), { tone: 'working', text: 'Red run accepted · landing' });
+  assert.deepEqual(jobStatus(job, { ...sub('api'), stage: 'pr', pr: redPr, acceptedRed: { ref: 'h1' } }), { tone: 'working', text: 'Merging with red checks' });
+
+  job.subJobs = [{ ...sub('api'), stage: 'pr', pr: redPr, error: 'Automatic repair limit reached. Review changes, then retry if needed.' }];
+  f.view.update(f.data);
+  const form = openMove(f, 'api', 'accept-red');
+  assert.deepEqual([...form.querySelectorAll('.job-checks li')].map((li) => li.textContent.trim()), ['× e2e'], 'only the red checks are listed');
+  assert.match(form.textContent, /Merges head h1 with the checks as they are/);
+  assert.equal(form.querySelector('button.primary').textContent, 'Merge anyway');
+  form.elements.note.value = ' e2e is flaky ';
+  form.dispatchEvent(f.event('submit'));
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', subJobId: 'api', action: 'accept-red', note: 'e2e is flaky' });
+  job.subJobs = [{ ...landing, check: 'helm shows it', error: 'Post-merge run failed: Deploy' }];
+  f.view.update(f.data);
+  const landingForm = openMove(f, 'api', 'accept-red');
+  assert.match(landingForm.textContent, /Counts merge commit abc as landed, then runs the plan’s check/);
+  assert.equal(landingForm.querySelector('button.primary').textContent, 'Count it as landed');
+  landingForm.dispatchEvent(f.event('submit'));
+  assert.deepEqual(f.sent.at(-1), { type: 'job-action', id: 'job1', subJobId: 'api', action: 'accept-red' });
+});
+
 const openMove = (f, subId, move) => { f.q(`[data-sub="${subId}"]`).click(); f.q(`.job-move[data-move="${move}"]`).click(); return f.q('#job-move-form'); };
 
 test('Fix here hands the next session a note and nothing else', (t) => {
@@ -706,8 +738,24 @@ test('the stale window is an explicit automation setting', (t) => {
   assert.equal(f.sent.at(-1).patch.deploymentStaleMinutes, 90);
 });
 
-test('a requested fix reads as work about to happen, and the note rides on the card until the next receipt', (t) => {
+test('Fix here on an open PR under code review reads as a fix queued in Work, and review copy says push rather than open', (t) => {
   const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active';
+  const pr = { url: 'https://github.com/org/repo/pull/1', head: 'h1', checkStatus: 'passing', checks: [] };
+  job.subJobs = [{ ...sub('api'), stage: 'pr', pr }];
+  assert.deepEqual(movesFor(job, job.subJobs[0]).find((m) => m.id === 'fix-here').blurb, 'Back to work on this PR. You review the diff before it is pushed.');
+  assert.equal(movesFor({ ...job, reviewCode: false }, job.subJobs[0]).find((m) => m.id === 'fix-here').blurb, 'New commit on this PR, with your note.');
+  job.subJobs = [{ ...sub('api'), stage: 'implementation', state: 'queued', pr, note: 'Pin the client to v3' }];
+  f.view.update(f.data);
+  assert.deepEqual(jobStatus(job, job.subJobs[0]), { tone: 'working', text: 'Fix queued' });
+  assert.equal(jobCards([job])[0].stage, 'implementation', 'the card sits in Work, not PR');
+  job.subJobs = [{ ...sub('api'), stage: 'review', state: 'verified', pr, ready: { checks: ['Pinned'], receiptId: 'run_2' } }];
+  f.view.update(f.data); f.q('[data-sub="api"]').click();
+  assert.match(f.q('#job-dialog').textContent, /pushes it to the open PR/);
+  assert.equal(f.q('#job-dialog [data-action="approve-code"]').textContent, 'Approve & push');
+});
+
+test('a requested fix reads as work about to happen, and the note rides on the card until the next receipt', (t) => {
+  const f = fixture(t); const job = f.data.jobs[0]; job.stage = 'active'; job.reviewCode = false;
   job.subJobs = [{ ...sub('api'), stage: 'pr', fixRequested: { note: 'Pin the client to v3', at: 1 }, note: 'Pin the client to v3',
     pr: { url: 'https://github.com/org/repo/pull/1', head: 'h1', checkStatus: 'passing', checks: [] } }];
   f.view.update(f.data);

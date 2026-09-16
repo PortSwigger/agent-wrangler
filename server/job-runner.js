@@ -2,6 +2,7 @@ import { runnable, dependencySatisfied, dependenciesSatisfied, sessionDependenci
 import { summariseComments, commentsBlockMerge } from './job-comments.js';
 import { logWarn } from './log.js';
 const shortError = (e) => String(e?.message || e).split('\n')[0].slice(0, 240);
+export const acceptedRedLine = (sub) => `Post-merge run accepted red${sub.acceptedRed?.note ? `: ${sub.acceptedRed.note}` : ''}`;
 const activeFor = (j, s) => j.runs.some((r) => runnable(r) && r.subJobId === (s?.id || null));
 // A worker that stopped WORKING without reporting has finished in the only sense
 // this runner can observe. The grace is long because "idle" is also what a
@@ -185,12 +186,14 @@ export class JobRunner {
             // The human saw something the checks do not cover; the repair runs
             // whatever colour they are.
             await this.launch(job, sub, 'repair');
-          } else if (pr.checkStatus === 'failing') {
+          } else if (pr.checkStatus === 'failing' && sub.acceptedRed?.ref !== pr.head) {
             const attempts = job.runs.filter((r) => r.subJobId === sub.id && r.phase === 'repair').length;
             const limit = this.store.snapshot().settings.maxRepairs + (sub.repairAllowance || 0);
             if (attempts >= limit) this.patchSub(id, sub.id, (s) => { s.error = 'Automatic repair limit reached. Review changes, then retry if needed.'; });
             else await this.launch(job, sub, 'repair');
-          } else if (pr.checkStatus === 'passing' && dependenciesSatisfied(job, sub) && (sub.mergeApprovedHead === pr.head || (!job.reviewMerge && !commentsBlockMerge(sub)))) {
+          } else if ((pr.checkStatus === 'passing' || sub.acceptedRed?.ref === pr.head) && dependenciesSatisfied(job, sub) && (sub.mergeApprovedHead === pr.head || (!job.reviewMerge && !commentsBlockMerge(sub)))) {
+            // An accepted-red head merges whatever its checks say — the move
+            // pinned both the acceptance and the merge approval to this head.
             // Match-head on GitHub closes the push-vs-merge race; re-poll after
             // success instead of pretending an accepted merge-queue entry merged.
             if (sub.mergeRequestedHead !== pr.head) {
@@ -225,9 +228,13 @@ export class JobRunner {
           job = this.store.get(id); sub = job.subJobs.find((s) => s.id === sub.id);
           // The ladder ends here unless the plan named a check no pipeline can
           // perform; that one line is the only thing a verify session exists for.
-          if (result.status === 'passing') {
+          // A red run the human accepted (job-moves.js) climbs the same rungs as
+          // a green one, the plan's own check included; only the receipt line
+          // says which colour it was.
+          const accepted = result.status === 'failing' && !!sub.acceptedRed && sub.acceptedRed.ref === sub.pr?.mergeCommit;
+          if (result.status === 'passing' || accepted) {
             if (sub.check) await this.launch(job, sub, 'verify');
-            else this.patchSub(id, sub.id, (s) => { s.deployed = { at: this.now(), checks: ['Post-merge runs passed'], commit: s.pr?.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; });
+            else this.patchSub(id, sub.id, (s) => { s.deployed = { at: this.now(), checks: [accepted ? acceptedRedLine(s) : 'Post-merge runs passed'], commit: s.pr?.mergeCommit }; s.stage = 'cleanup'; s.state = 'queued'; });
           } else if (result.status === 'failing') {
             const failed = result.runs.filter((r) => r.status === 'failing').map((r) => r.workflow).join(', ');
             this.patchSub(id, sub.id, (s) => { s.error = `Post-merge run failed: ${failed || 'unknown workflow'}`; });

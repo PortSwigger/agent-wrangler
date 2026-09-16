@@ -314,7 +314,7 @@ from different jobs are never mixed in a column:
 
 The plan is tickets, PRs and order. Verification is the same ladder for every
 PR, so nobody writes it into the plan. When something happens, the card shows
-what happened and the six moves you would make by hand. There is nothing else to
+what happened and the moves you would make by hand. There is nothing else to
 configure.
 
 ### The plan

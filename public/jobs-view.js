@@ -40,7 +40,7 @@ function eventHtml(job, sub) {
   // A suggestion is agent-written, so a name that is not one of the six is simply
   // not named rather than rendered as an unknown move.
   const suggested = ev.suggested && moveById(ev.suggested);
-  const move = suggested ? moveCopy(sub, suggested) : null;
+  const move = suggested ? moveCopy(job, sub, suggested) : null;
   return `<div class="job-event"><i aria-hidden="true"></i><div><b>${esc(ev.title)}</b><p>${esc(ev.detail)}</p>${move ? `<span class="job-event-move">Suggests ${esc(move.label)}</span>` : ''}</div></div>`;
 }
 // The six moves, minus the ones this stage would refuse. The suggested one is
@@ -198,7 +198,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${!sub.cancelledAt && sub.stage !== 'done' && cancelledDependencies(job, sub).length ? '<p class="job-authority">A prerequisite was dropped, so this sub-job can never land. Drop it too, or add the remaining work with New ticket.</p>' : ''}
         ${job.error && !sub.error ? `<p class="job-error">${esc(job.error)}</p>` : ''}${eventHtml(job, sub)}${movesGridHtml(job, sub)}
         ${sub.stage === 'review' && sub.ready ? `<h3>Ready for review</h3>${receiptHtml(sub.ready.checks)}` : ''}
-        ${codeAwaitingReview(sub) ? '<p class="job-authority">Nothing is committed yet. Read the diff with Review code in Wrangler — comments there go straight to the session — then approve: a short session commits the working tree as it stands, pushes and opens the PR.</p>' : sub.stage === 'review' && !sub.error ? '<p class="job-authority">Approved. A session commits, pushes and opens the PR next.</p>' : ''}
+        ${codeAwaitingReview(sub) ? `<p class="job-authority">Nothing is committed yet. Read the diff with Review code in Wrangler — comments there go straight to the session — then approve: a short session commits the working tree as it stands and ${sub.pr ? 'pushes it to the open PR' : 'pushes and opens the PR'}.</p>` : sub.stage === 'review' && !sub.error ? `<p class="job-authority">Approved. A session commits and ${sub.pr ? 'pushes to the open PR' : 'pushes and opens the PR'} next.</p>` : ''}
         ${sub.pr ? `<h3>${link(sub.pr.url, 'Pull request')}</h3><div class="job-pipeline-status ${checkTone(sub.pr.checkStatus)}">${esc(sub.pr.checkStatus)}${sub.pr.head ? ` · ${esc(sub.pr.head.slice(0, 8))}` : ''}</div>${deploys ? `<p class="job-deploys">${esc(deploys)}</p>` : ''}${workflows.length ? `<details class="job-more"><summary>What runs on merge <small>${workflows.filter((w) => w.triggers).length} of ${workflows.length}</small></summary><ul class="job-checks">${workflows.map((w) => `<li class="${w.triggers ? 'passed' : ''}">${w.triggers ? '✓' : '○'} ${esc(w.name)} <small>${esc(w.reason)}</small></li>`).join('')}</ul></details>` : ''}${sub.pr.checks?.length ? `<ul class="job-checks">${sub.pr.checks.map((c) => `<li class="${checkTone(c.state)}">${checkMark(c.state)} ${esc(c.name)} <small>${esc(c.state.toLowerCase())}</small></li>`).join('')}</ul>` : ''}` : ''}
         ${sub.pr ? commentsHtml(sub, commentsShown) : ''}
         ${mergeHeldByComments(job, sub) ? '<p class="job-authority">Comments read as blocking, so the automatic merge is on hold. Approve merge to override for this head.</p>' : ''}
@@ -211,7 +211,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
         ${sub.fixRequested ? `<p class="job-note">Fix requested${sub.fixRequested.note ? `: ${esc(sub.fixRequested.note)}` : ''}. A repair session starts on the next tick.</p>` : ''}
         ${noteFor(sub)}
         ${sub.observationError ? `<p class="job-error">${esc(sub.observationError)} · Retrying automatically</p>` : ''}
-        <div class="job-actions">${codeAwaitingReview(sub) && !sub.error ? '<button class="primary" data-action="approve-code">Approve &amp; open PR</button>' : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button id="job-retry">Retry</button>' : ''}</div>
+        <div class="job-actions">${codeAwaitingReview(sub) && !sub.error ? `<button class="primary" data-action="approve-code">Approve &amp; ${sub.pr ? 'push' : 'open PR'}</button>` : ''}${sub.stage === 'pr' && sub.pr?.checkStatus === 'passing' && (job.reviewMerge || redComments(sub)) && sub.mergeApprovedHead !== sub.pr.head ? '<button class="primary" data-action="approve-merge">Approve merge</button>' : ''}${sub.worktree && sub.stage !== 'done' ? '<button id="job-diff">Review code in Wrangler</button>' : ''}${sub.sessions.length ? `<button id="job-session">${onBoard(sub.sessions.at(-1)) ? 'Open session' : 'Restore session'}</button>` : ''}${sub.error || job.error ? '<button id="job-retry">Retry</button>' : ''}</div>
         <details class="job-more"><summary>Worktree & brief</summary><code>${esc(sub.worktree?.path || 'Worktree created on dispatch')}</code><p>${esc(sub.brief)}</p>${sub.check ? `<p>Check after it lands: ${esc(sub.check)}</p>` : ''}</details>`;
     } else body = `<p class="job-intent">${esc(job.intent)}</p><p>${job.repos.length ? job.repos.map((r) => esc(tildify(r))).join('<br>') : 'Wrangler will discover the repositories needed during planning.'}</p>${cancelledHtml(job)}${job.cancelledAt && !job.subJobs.length ? '' : job.stage === 'backlog' ? `<p class="job-authority">Planning proposes Jira story titles without touching Jira. You review the plan before tickets are created or work begins.</p><button class="primary" data-action="start">Start planning</button>` : job.stage === 'jira' ? `${contextHtml(job.plan)}<h3>Approved stories</h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div><p class="job-authority">Creating the approved Jira stories. Work starts once every story has a key.</p><h3>Approved work</h3>${planGraphHtml(job.plan)}` : job.stage === 'active' || job.stage === 'done' ? `${contextHtml(job.plan)}${job.plan?.stories?.length ? `<h3>Stories <small>${job.plan.stories.length}</small></h3><div class="job-stories">${job.plan.stories.map((s) => `<div><b>${esc(storyLabel(s))} · ${esc(s.title)}</b></div>`).join('')}</div>` : ''}<h3>Sub-jobs <small>${esc(kindCountLabel(job.subJobs))}</small></h3>${planGraphHtml({ subJobs: job.subJobs, stories: job.plan?.stories }, { statusOf: (s) => jobStatus(job, s) })}${movesHistoryHtml(job)}` : job.cancelledAt ? '' : '<p>Wrangler will bring the plan here for review.</p>'}`;
     // The board's number, restated where the decision is actually taken — and on a
@@ -281,7 +281,7 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
   // still sends 'after' so the payload matches the schema either way.
   const positionField = ({ optional = false } = {}) => `<fieldset><legend>Where it lands</legend>${optional ? '<label><input type="radio" name="position" value="" checked> Independent of this one</label>' : ''}<label><input type="radio" name="position" value="before"> Before this one</label><label><input type="radio" name="position" value="after" ${optional ? '' : 'checked'}> After this one</label></fieldset>`;
   function moveForm(job, sub, id, inner, submitLabel) {
-    const m = moveCopy(sub, moveById(id));
+    const m = moveCopy(job, sub, moveById(id));
     show(`<span class="jobs-kicker">${esc(job.title)}</span><h2>${esc(m.label)}</h2><p>${esc(m.blurb)}</p><form id="job-move-form" data-move-form="${esc(id)}">${inner}<p class="job-error" id="job-move-error" hidden></p><div class="job-actions"><button class="primary">${esc(submitLabel)}</button><button type="button" id="job-move-back">Back</button></div></form>`);
     dialog.querySelector('#job-move-back').onclick = () => renderDetail();
     return dialog.querySelector('#job-move-form');
@@ -316,6 +316,15 @@ export function initJobsView({ send, getAgents, onSession, onDiff, onBoard }) {
       const others = job.subJobs.filter((d) => d.id !== sub.id && !d.cancelledAt);
       const form = moveForm(job, sub, id, `<fieldset class="job-move-deps"><legend>${isSessionSub(sub) ? 'Starts after' : 'Deploys after'}</legend>${dependencyEditorHtml(sub, others, sub.id)}</fieldset><p class="job-authority">A prerequisite that is already merged or done stays ticked and simply counts as satisfied.</p>`, 'Save the order');
       return submit(form, () => action('reorder', { after: [...form.querySelectorAll('[data-dep]')].filter((c) => c.checked).map((c) => c.value) }));
+    }
+    if (id === 'accept-red') {
+      const checks = sub.stage === 'pr';
+      const red = checks ? (sub.pr?.checks || []).filter((c) => checkTone(c.state) === 'failed').map((c) => c.name)
+        : (sub.deploymentResult?.runs || []).filter((r) => r.status === 'failing').map((r) => r.workflow);
+      const form = moveForm(job, sub, id, `${red.length ? `<ul class="job-checks">${red.map((n) => `<li class="failed">${checkMark('failing')} ${esc(n)}</li>`).join('')}</ul>` : ''}
+        <p class="job-authority">${checks ? `Merges head ${esc((sub.pr?.head || '').slice(0, 8))} with the checks as they are — with an admin override if branch protection would otherwise refuse it. A later push is judged afresh.` : `Counts merge commit ${esc((sub.pr?.mergeCommit || '').slice(0, 8))} as landed${sub.check ? ', then runs the plan’s check against it' : ''}, and releases whatever waits on it.`}</p>
+        <label>Why is red fine here? <small>Optional · recorded with the move${checks ? '' : ', and as the receipt line'}</small><input name="note" maxlength="180"></label>`, checks ? 'Merge anyway' : 'Count it as landed');
+      return submit(form, (f) => action('accept-red', only({ note: trimmed(f, 'note') })));
     }
     if (id === 'mark') {
       const options = markOptions(sub);

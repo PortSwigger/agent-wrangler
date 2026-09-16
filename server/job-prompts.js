@@ -14,7 +14,7 @@ const branchNaming = (job, sub) => (!sub?.worktree?.branch || sub.worktree.branc
 // The receipt is the only thing that advances a job, so every prompt ends with
 // the exact call. `move` is a suggestion the human sees as a pre-selected
 // button on the card; nothing an agent reports ever changes the plan itself.
-const blockedLine = 'Blocked: {kind:"blocked", summary:"one sentence", move?:"fix-here"|"split-out"|"new-ticket"|"reorder"|"drop"|"mark"}.';
+const blockedLine = 'Blocked: {kind:"blocked", summary:"one sentence", move?:"fix-here"|"split-out"|"new-ticket"|"reorder"|"drop"|"mark"|"accept-red"}.';
 const lines = (...parts) => parts.filter(Boolean).join('\n');
 const afterLine = (job, sub) => `After: ${(sub?.after || []).map((id) => (job.subJobs || []).find((s) => s.id === id)?.title || id).join(' · ') || 'none'}.`;
 const contextLine = (job) => job.plan?.context ? `Context: ${job.plan.context}` : '';
@@ -66,12 +66,21 @@ const historyBlock = (job, sub, run) => {
     : 'Pick up from the last line; do not redo what an earlier session reported.';
   return lines('History of this sub-job, oldest first:', ...body, tail);
 };
-const passingWorkflows = (sub) => (sub?.deploymentResult?.runs || []).filter((r) => r.status === 'passing').map((r) => r.workflow).join(', ');
+const workflowsWith = (sub, status) => (sub?.deploymentResult?.runs || []).filter((r) => r.status === status).map((r) => r.workflow).join(', ');
+const passingWorkflows = (sub) => workflowsWith(sub, 'passing');
+// A verify session after an accepted red run must not be told the runs passed:
+// what it confirms may be exactly what that run would have caught.
+const postMergeLine = (sub) => sub?.acceptedRed && sub.acceptedRed.ref === sub.pr?.mergeCommit && sub.deploymentResult?.status === 'failing'
+  ? `post-merge runs FAILED (${workflowsWith(sub, 'failing') || 'unknown workflow'}) and the human accepted that${sub.acceptedRed.note ? ` — "${sub.acceptedRed.note}"` : ''}`
+  : `post-merge runs passed${passingWorkflows(sub) ? ` (${passingWorkflows(sub)})` : ''}`;
 const thisPr = (sub) => `This PR (${sub?.repo ? path.basename(sub.repo) : 'this repository'}): ${sub?.brief}`;
+// Fix here on an open PR under code review: the worktree IS that PR's branch, so
+// the work is a change to it, and the push goes to the PR that already exists.
+const openPrLine = (sub) => sub?.pr?.url ? `PR ${sub.pr.url} is already open from this worktree's branch; this is a fix to it, requested by the human (see the history below).` : '';
 
 export function jobPrompt(job, sub, run) {
   const report = (body, lead = '') => `${lead}job_report {runId:"${run.id}", ${body}}. ${blockedLine}`;
-  const publishLine = report('kind:"published", url:"<PR url>"', 'Commit, push, open the PR, then ');
+  const publishLine = sub?.pr?.url ? report(`kind:"published", url:"${sub.pr.url}"`, 'Commit, push to the open PR, then ') : report('kind:"published", url:"<PR url>"', 'Commit, push, open the PR, then ');
   const prompts = {
     planning: lines(
       `Plan this job: ${job.title}`,
@@ -104,13 +113,14 @@ export function jobPrompt(job, sub, run) {
       contextLine(job),
       '',
       thisPr(sub),
+      openPrLine(sub),
       sub?.check ? `Check after it lands: ${sub.check}` : '',
       afterLine(job, sub),
       historyBlock(job, sub, run),
       // With code review on, the human reads the working tree on the board
       // before anything is committed; a later publish session commits and pushes,
       // so the branch rename waits for it too.
-      reviewCode(job) ? 'Leave every change UNCOMMITTED: the human reviews the working tree before anything is committed, and a later step commits, pushes and opens the PR. Do not commit, push or open a PR.' : branchNaming(job, sub),
+      reviewCode(job) ? `Leave every change UNCOMMITTED: the human reviews the working tree before anything is committed, and a later step commits and pushes it${sub?.pr ? ' to the open PR' : ' and opens the PR'}. Do not commit, push or open a PR.` : branchNaming(job, sub),
       '',
       reviewCode(job) ? report('kind:"ready", checks:["what you verified"]', 'When the working tree is ready to review, ') : publishLine,
     ),
@@ -120,8 +130,9 @@ export function jobPrompt(job, sub, run) {
       contextLine(job),
       '',
       thisPr(sub),
+      openPrLine(sub),
       historyBlock(job, sub, run),
-      'The human has reviewed the uncommitted changes in this worktree and approved them as they stand. Commit exactly that working tree (excluding secrets and unrelated or generated files), push, and open the PR. Do not change the code: if something stops it building or committing, report blocked instead.',
+      `The human has reviewed the uncommitted changes in this worktree and approved them as they stand. Commit exactly that working tree (excluding secrets and unrelated or generated files), then push${sub?.pr ? ' to the open PR; do not open another' : ' and open the PR'}. Do not change the code: if something stops it building or committing, report blocked instead.`,
       branchNaming(job, sub),
       '',
       publishLine,
@@ -140,7 +151,7 @@ export function jobPrompt(job, sub, run) {
     verify: lines(
       heading(job, sub),
       '',
-      `PR ${sub?.pr?.url} merged as ${sub?.pr?.mergeCommit}; post-merge runs passed${passingWorkflows(sub) ? ` (${passingWorkflows(sub)})` : ''}.`,
+      `PR ${sub?.pr?.url} merged as ${sub?.pr?.mergeCommit}; ${postMergeLine(sub)}.`,
       `Confirm: ${sub?.check}`,
       historyBlock(job, sub, run),
       '',

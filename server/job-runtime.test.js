@@ -335,7 +335,7 @@ test('a relaunched step reads what already happened: every earlier run with its 
     '- 17:37 human now lands after “Sync the proto”',
   ]);
   const text = jobPrompt(job, briefed, { ...run, id: 'r4', phase: 'publish' });
-  assert.match(text, /History of this sub-job, oldest first:\n- \d\d:\d\d implementation · Opus 5 → ready: Tests pass · Lint clean\n/);
+  assert.match(text, /History of this sub-job, oldest first:\n- (?:\d{1,2} \w+ )?\d\d:\d\d implementation · Opus 5 → ready: Tests pass · Lint clean\n/);
   assert.match(text, /The worktree already holds the work above\. Pick up from the last line; do not redo or re-verify/);
   assert.doesNotMatch(text, /Built|not mine/, 'a sibling sub-job\'s history is not this worker\'s');
   for (const phase of ['implementation', 'repair', 'verify']) {

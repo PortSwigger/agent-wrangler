@@ -74,7 +74,7 @@ export const codeAwaitingReview = (sub) => !isSessionSub(sub) && sub?.stage === 
 // or "Merge completes it · …". Absent until the PR exists.
 export const deploysLine = (sub) => sub?.deploys?.summary || '';
 
-// The six moves a human makes by hand when something goes wrong. Agents never
+// The seven moves a human makes by hand when something goes wrong. Agents never
 // apply plan changes: a blocked receipt may only NAME one of these.
 export const MOVES = [
   { id: 'fix-here', label: 'Fix here', blurb: 'New commit on this PR, with your note.' },
@@ -83,13 +83,24 @@ export const MOVES = [
   { id: 'reorder', label: 'Reorder', blurb: 'Change what this lands after.' },
   { id: 'drop', label: 'Drop', blurb: 'Cancel this sub-job.' },
   { id: 'mark', label: 'Mark position', blurb: 'Merged by hand. Deploy confirmed. Already covered elsewhere.' },
+  { id: 'accept-red', label: 'Accept red', blurb: 'The failing pipeline is noise. Carry on as if it were green.' },
 ];
 export const moveById = (id) => MOVES.find((m) => m.id === id) || null;
 // Fix here on a sub-job with no PR yet is the same server move (note, then run it
 // again) but promising "a new commit on this PR" would name something that does
 // not exist, so the copy follows the sub-job's stage.
-export function moveCopy(sub, move) {
-  if (move.id !== 'fix-here' || (!isSessionSub(sub) && sub?.stage === 'pr')) return move;
+export function moveCopy(job, sub, move) {
+  // Accept red does a different thing on each side of the merge, and the button
+  // must say which one it is about to do.
+  if (move.id === 'accept-red') {
+    if (sub?.stage === 'pr') return { ...move, blurb: 'Merge this PR as it stands, red checks and all.' };
+    if (sub?.stage === 'deployment') return { ...move, blurb: 'Count the merge as landed despite the failing post-merge run.' };
+    return move;
+  }
+  if (move.id !== 'fix-here') return move;
+  // An open PR under code review: the fix takes the same road as the first cut,
+  // so the copy must not promise a commit the human has not yet reviewed.
+  if (!isSessionSub(sub) && sub?.stage === 'pr') return reviewCode(job) ? { ...move, blurb: 'Back to work on this PR. You review the diff before it is pushed.' } : move;
   if (sub?.stage === 'review') return { ...move, label: 'Request changes', blurb: 'Back to work in the same worktree, with your note.' };
   return { ...move, label: 'Retry with a note', blurb: isSessionSub(sub) ? 'Run this session again, with your note.' : 'Start the work again, with your note.' };
 }
@@ -104,6 +115,17 @@ export function markOptions(sub) {
     { value: 'done', label: 'Done: deployed, or already covered elsewhere' },
   ];
 }
+// Which red pipeline Accept red would wave through, if any — the failing checks on
+// an open PR, or the failing post-merge run of a merged one — mirroring the
+// server's gates (job-moves.js). Already accepted at this exact head or merge
+// commit means there is nothing left to accept.
+export function redPipeline(sub) {
+  if (!sub || isSessionSub(sub)) return null;
+  if (sub.stage === 'pr' && sub.pr?.checkStatus === 'failing' && !sub.pr.dirty && sub.acceptedRed?.ref !== sub.pr.head) return 'checks';
+  if (sub.stage === 'deployment' && !sub.recoveredBy && sub.deploymentResult?.status === 'failing' && sub.acceptedRed?.ref !== sub.pr?.mergeCommit) return 'post-merge';
+  return null;
+}
+export const redAccepted = (sub) => !!sub?.acceptedRed && sub.acceptedRed.ref === (sub.stage === 'pr' ? sub.pr?.head : sub.stage === 'deployment' ? sub.pr?.mergeCommit : undefined);
 // Mirrors server/job-moves.js: a move the server would refuse is never drawn.
 // Nothing at all once the sub-job is finished, dropped, or already cleaning up.
 export function movesFor(job, sub) {
@@ -116,8 +138,9 @@ export function movesFor(job, sub) {
     reorder: ['implementation', 'review', 'pr', 'session'].includes(sub.stage),
     drop: true,
     mark: markOptions(sub).length > 0,
+    'accept-red': pr && redPipeline(sub),
   };
-  return MOVES.filter((m) => allowed[m.id]).map((m) => moveCopy(sub, m));
+  return MOVES.filter((m) => allowed[m.id]).map((m) => moveCopy(job, sub, m));
 }
 // The runner writes these error strings itself, so the short title is derived
 // from them; anything it does not recognise keeps the neutral heading and lets
@@ -181,8 +204,12 @@ export function jobStatus(job, sub) {
   // A story added by New ticket has no key until the jira phase runs, and nothing starts without one.
   if (sub.stage === 'implementation' && !sub.jiraKey) return { tone: 'muted', text: 'Waiting for a Jira ticket' };
   if (sub.observationError) return { tone: 'needs', text: 'Pipeline polling will retry' };
+  // Accepted red: the runner merges, or finishes the landing, on its next tick.
+  if (redAccepted(sub)) return { tone: 'working', text: sub.stage === 'pr' ? (sub.mergeRequestedHead ? 'Merge requested' : 'Merging with red checks') : 'Red run accepted · landing' };
   if (sub.stage === 'pr') return { tone: sub.pr?.checkStatus === 'passing' ? 'working' : 'muted', text: sub.mergeRequestedHead ? 'Merge requested' : sub.pr?.checkStatus === 'awaiting-review' ? 'GitHub review required' : 'Watching checks' };
   if (sub.stage === 'deployment') return sub.recoveredBy ? { tone: 'muted', text: 'Awaiting fix' } : { tone: 'muted', text: 'Watching post-merge runs' };
+  // Fix here on an open PR under code review: the work restarts on the next tick.
+  if (sub.stage === 'implementation' && sub.pr) return { tone: 'working', text: 'Fix queued' };
   if (sub.stage === 'done') return { tone: 'done', text: isSessionSub(sub) ? 'Completed' : 'Delivered' };
   return { tone: 'muted', text: 'Queued' };
 }

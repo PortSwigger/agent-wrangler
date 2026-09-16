@@ -1402,8 +1402,8 @@ don't re-derive it.
   thing — while v1's `local`/`codeApprovedAt` still are, which is why the new
   fields are `sub.ready` and `ready.approvedAt`: `migrateJobs` runs on every load,
   v2 files included, so a field name on its drop list can never be reused.
-- **Agents never change the plan; humans make MOVES.** The six moves (`fix-here`,
-  `split-out`, `new-ticket`, `reorder`, `drop`, `mark`) are validated and applied
+- **Agents never change the plan; humans make MOVES.** The seven moves (`fix-here`,
+  `split-out`, `new-ticket`, `reorder`, `drop`, `mark`, `accept-red`) are validated and applied
   by the pure `server/job-moves.js` and recorded in `job.moves`; a blocked receipt
   may carry a one-word `move` hint, which is shown as a suggestion and never
   applied. `split-out` from a MERGED sub-job sets `recoveredBy` (the fix must
