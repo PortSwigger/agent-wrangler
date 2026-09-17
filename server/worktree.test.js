@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -86,8 +86,14 @@ test('gitRepoRoot: returns null for a non-git directory', async () => {
   assert.equal(await gitRepoRoot(dir), null);
 });
 
-test('worktreeDirName: <repo>-worktree-<branch>', () => {
+test('worktreeDirName: <repo>-worktree-<branch>, a slashed branch folded into one dir name', () => {
   assert.equal(worktreeDirName('/a/b/myproj', 'fix-auth'), 'myproj-worktree-fix-auth');
+  assert.equal(worktreeDirName('/a/b/myproj', 'fix/AUTH-12-auth'), 'myproj-worktree-fix-AUTH-12-auth');
+});
+
+test('isValidBranchName: accepts what git check-ref-format --branch accepts, refuses the rest, never reshapes', () => {
+  for (const ok of ['fix/AUTH-12-foo', 'AUTH-583-correct-vet-gate-comments', 'feat/x.y', 'a-b_c', 'release/1.2']) assert.equal(isValidBranchName(ok), true, ok);
+  for (const bad of ['', '-x', '/x', 'x/', 'x..y', 'x//y', 'x.lock', 'a/.b', 'x.', '@', 'a b', 'a~b', 'a@{b', 'a\\b', 'a:b', 'a?b', 'a*b', 'a[b', 'a^b', 'x'.repeat(201), null, 42]) assert.equal(isValidBranchName(bad), false, String(bad));
 });
 
 test('gitRepoRoot: returns the MAIN repo root when cwd is a linked worktree', async () => {
@@ -174,6 +180,22 @@ test('renameBranch: same name is a no-op (no rename, marked unchanged)', async (
   const res = await renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: 'keep-me', currentBranch: 'keep-me' });
   assert.equal(res.branch, 'keep-me');
   assert.equal(res.unchanged, true);
+});
+
+test('renameBranch verbatim: keeps case and slashes, refuses an invalid ref, still suffixes a taken name', async () => {
+  const { repo } = tempRepo();
+  makeBranch(repo, 'fix/AUTH-9-taken');
+  const wt = await createWorktree({ cwd: repo, branch: 'placeholder-api', auto: false });
+  await assert.rejects(
+    () => renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: 'fix/AUTH-9 bad', currentBranch: 'placeholder-api', verbatim: true }),
+    (e) => e instanceof WorktreeError && /not a valid git branch name/.test(e.message),
+  );
+  const res = await renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: ' fix/AUTH-9-Reliable_SignIn ', currentBranch: 'placeholder-api', verbatim: true });
+  assert.equal(res.branch, 'fix/AUTH-9-Reliable_SignIn', 'sanitizeBranch would have made this fix-auth-9-reliable-signin');
+  assert.equal(await branchExists(repo, 'fix/AUTH-9-Reliable_SignIn'), true);
+  assert.equal(await branchExists(repo, 'placeholder-api'), false);
+  const taken = await renameBranch({ worktreePath: wt.path, repoRoot: wt.repoRoot, desired: 'fix/AUTH-9-taken', currentBranch: 'fix/AUTH-9-Reliable_SignIn', verbatim: true });
+  assert.equal(taken.branch, 'fix/AUTH-9-taken-2');
 });
 
 test('renameBranch: rejects a name with no alphanumerics', async () => {
@@ -466,4 +488,20 @@ test('worktreeStatus: reports dir + branch existence; null for non-worktree', as
   const removed = await worktreeStatus({ path: wt.path, branch: 'status', repoRoot: repo });
   assert.deepEqual(removed, { path: wt.path, branch: 'status', dirExists: false, branchExists: true });
   assert.equal(await worktreeStatus(null), null);
+});
+
+test('createWorktree: an explicit fetched base is used instead of the main checkout HEAD', async () => {
+  const { root, repo } = tempRepo();
+  try {
+    const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    const base = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', base);
+    fs.writeFileSync(path.join(repo, 'local-only.txt'), 'Local main work must not leak into the new worktree');
+    git('add', 'local-only.txt');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'local only');
+    const wt = await createWorktree({ cwd: repo, branch: 'from-origin-main', auto: true, baseRef: 'refs/remotes/origin/main' });
+    assert.equal(execFileSync('git', ['-C', wt.path, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), base);
+    assert.equal(fs.existsSync(path.join(wt.path, 'local-only.txt')), false);
+    assert.throws(() => git('config', '--get', 'branch.from-origin-main.merge'), 'the new branch must not track origin/main');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

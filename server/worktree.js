@@ -103,7 +103,28 @@ export async function isLinkedWorktree(cwd) {
 }
 
 export function worktreeDirName(repoRoot, branch) {
-  return `${path.basename(repoRoot)}-worktree-${branch}`;
+  return `${path.basename(repoRoot)}-worktree-${flatBranch(branch)}`;
+}
+
+// A branch may carry `/` (fix/…, feat/…); the worktree is one directory, never
+// a nested path, so the slash is folded into the dir name only. The branch
+// itself is untouched — the whole point of a convention-shaped name is that it
+// reaches GitHub verbatim.
+const flatBranch = (branch) => String(branch).replaceAll('/', '-');
+
+// Whether `name` is a branch name git itself would accept (the rules of
+// `git check-ref-format --branch`, without a subprocess): no control/space/
+// `~^:?*[\` bytes, no `..` or `@{`, no component starting `.` or ending
+// `.lock`, no leading `-` or `/`, no trailing `.` or `/`, no `//`, not `@`.
+// Deliberately NOT a sanitiser: a caller that has already committed to a
+// convention-shaped name must get exactly that name or an error, never a
+// silently different one, so a name that fails here is refused, not reshaped.
+export function isValidBranchName(name) {
+  if (typeof name !== 'string' || !name || name.length > 200 || name === '@') return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x20\x7f~^:?*[\\]/.test(name) || name.includes('..') || name.includes('@{') || name.includes('//')) return false;
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/') || name.endsWith('.')) return false;
+  return name.split('/').every((c) => c && !c.startsWith('.') && !c.endsWith('.lock'));
 }
 
 // The absolute COMMON git-dir (the main checkout's own `.git`) for a cwd that
@@ -200,7 +221,7 @@ export async function classifyWorktreeTarget({ repoRoot, folder, branch }) {
 // existing worktree on the branch is adopted as-is (dirty tree tolerated), and a
 // genuinely impossible target (branch busy elsewhere, folder occupied) throws
 // WorktreeError. Always returns { path, branch, repoRoot }.
-export async function createWorktree({ cwd, branch, folderName = '', auto = false }) {
+export async function createWorktree({ cwd, branch, folderName = '', auto = false, baseRef = '' }) {
   const repoRoot = await gitRepoRoot(cwd);
   if (!repoRoot) throw new WorktreeError('Not a git repository');
   const parent = path.dirname(repoRoot);
@@ -235,7 +256,8 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
   // `existing-branch` checks the branch out (no -b); everything else makes a new branch.
   const addArgs = status === 'existing-branch'
     ? ['-C', repoRoot, 'worktree', 'add', f, b]
-    : ['-C', repoRoot, 'worktree', 'add', '-b', b, f];
+    : ['-C', repoRoot, 'worktree', 'add', ...(baseRef ? ['--no-track'] : []), '-b', b, f];
+  if (status === 'new' && baseRef) addArgs.push(baseRef);
   try {
     await exec('git', addArgs);
   } catch (e) {
@@ -263,7 +285,7 @@ export async function repoRootForWorktree({ path: wtPath, branch, repoRoot } = {
     if (r) return r;
   }
   if (wtPath && branch) {
-    const suffix = `-worktree-${branch}`;
+    const suffix = `-worktree-${flatBranch(branch)}`;
     const base = path.basename(wtPath);
     if (base.endsWith(suffix)) return path.join(path.dirname(wtPath), base.slice(0, -suffix.length));
   }
@@ -335,11 +357,15 @@ export async function deleteBranch({ repoRoot, branch, force = false }) {
 // dir). The board's branch badge reads HEAD live, so the rename shows at once;
 // the caller syncs `entry.worktree.branch` for cleanup/status. Returns the final
 // branch name; throws WorktreeError on a detached HEAD or git failure.
-export async function renameBranch({ worktreePath, repoRoot = '', desired, currentBranch = '' }) {
+// `verbatim` keeps the name as given (only checked as a git ref) — for a caller
+// that has already chosen a name in the repository's own convention, where
+// `sanitizeBranch` would flatten `fix/AUTH-123-x` into `fix-auth-123-x`.
+export async function renameBranch({ worktreePath, repoRoot = '', desired, currentBranch = '', verbatim = false }) {
   if (!worktreePath) throw new WorktreeError('No worktree path');
   const root = repoRoot || (await gitRepoRoot(worktreePath));
   if (!root) throw new WorktreeError('Could not resolve the repository for this worktree');
-  const base = sanitizeBranch(desired);
+  const base = verbatim ? String(desired || '').trim() : sanitizeBranch(desired);
+  if (verbatim && !isValidBranchName(base)) throw new WorktreeError(`"${base}" is not a valid git branch name.`);
   if (!base) throw new WorktreeError('A branch name must contain at least one letter or digit.');
   if (base === currentBranch) return { branch: currentBranch, repoRoot: root, unchanged: true };
   let name = base;
