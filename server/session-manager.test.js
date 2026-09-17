@@ -1577,6 +1577,30 @@ test('a blip does not forget a corpse already reported, so it is not re-logged',
   assert.deepEqual(lines, []);
 });
 
+// Liveness is read while a refresh is in flight (the 4s rebuild, an MCP tool, a
+// lifecycle decision), and a half-built snapshot reads as "every pane is dead" —
+// so the new sets are published only once tmux has answered for every socket.
+test('refreshAlive holds the previous snapshot until the whole scan is published', async () => {
+  const sm = new SessionManager();
+  sm.scanSockets = () => [''];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  sm._tmux = async () => {
+    if (++calls === 2) await gate; // the second scan parks inside tmux
+    return { stdout: 'cc_a\x1f0\x1f\ncc_b\x1f1\x1f1' };
+  };
+  await sm.refreshAlive();
+  const inFlight = sm.refreshAlive();
+  assert.deepEqual([...sm.alive], ['cc_a']);
+  assert.deepEqual([...sm.dead], ['cc_b']);
+  assert.equal(sm.deadStatus.get('cc_b'), 1);
+  assert.equal(sm.socketOf('cc_a'), '');
+  release();
+  await inFlight;
+  assert.deepEqual([...sm.alive], ['cc_a']);
+});
+
 // The log must never assert a teardown that did not happen: killForSession adds
 // the RECORDED tmux name to its targets unconditionally, so a dormant card whose
 // tmux died in a reboot has a target nothing can kill.
