@@ -257,7 +257,9 @@ export function shouldReloadWorkflowSkill(workflow) {
 // returns to the board) while preserving the durable bits of the prior entry. Split
 // out so the carry-forward set is unit-testable — provenance (forkedFrom, spawnedBy,
 // nameInherited — the [FORK] marker must survive an idle-suspend on a still-unnamed
-// fork), the worktree it lives in, the autopilot `workflow` marker (a multi-hour run
+// fork), the worktree it lives in, the extra `--add-dir` grants it launched with (a
+// sandboxed agent that loses them mid-run can no longer reach the paths its work
+// depends on), the autopilot `workflow` marker (a multi-hour run
 // that hits the idle-suspend would otherwise lose its phase chip on resume), any
 // attached links (a PR/Jira link attached before an idle-suspend must survive the
 // resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
@@ -291,6 +293,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
     worktree: prev?.worktree,
+    addDirs: prev?.addDirs,
     workflow: prev?.workflow,
     parentSession: prev?.parentSession,
     runtime: prev?.runtime,
@@ -972,7 +975,7 @@ export class SessionManager {
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
-    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, []);
+    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
       addDirs,
@@ -1505,6 +1508,10 @@ export class SessionManager {
     // resolved real task/scratch directory returned by the binder. dispatch mints
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    // Keep the grants the dispatch ASKED for, before the codex worktree git-dir is
+    // folded in: that one is derived from the worktree on every launch, so storing
+    // it would only let resume grant the same path twice.
+    const grantedDirs = addDirs;
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
     const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
@@ -1526,7 +1533,7 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this.refreshAlive();

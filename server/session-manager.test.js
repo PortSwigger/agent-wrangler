@@ -293,6 +293,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     intent: 'fix', name: 'My run', model: 'sonnet', createdAt: 100,
     forkedFrom: 'P', spawnedBy: 'SPAWNER1',
     worktree: { path: '/w', branch: 'b', repoRoot: '/r' },
+    addDirs: ['/r/.git'],
     workflow: { issue: 'ENT-1', phase: { label: 'verifying', kind: 'warning', at: 9 }, startedAt: 2 },
     parentSession: 'ORCH1',
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1', number: 1 }],
@@ -308,6 +309,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.deepEqual(e.priorLiveSessionIds, ['CLEARED1']);
   assert.deepEqual(e.workflow, prev.workflow); // the autopilot chip survives resume (8h-suspend recovery)
   assert.deepEqual(e.worktree, prev.worktree);
+  assert.deepEqual(e.addDirs, prev.addDirs); // the paths a sandboxed agent was granted outside its cwd
   assert.equal(e.forkedFrom, 'P');
   assert.equal(e.spawnedBy, 'SPAWNER1');
   assert.equal(e.parentSession, 'ORCH1'); // the nesting link is a stable card id — survives resume too
@@ -1013,6 +1015,20 @@ test('resume() re-threads the persisted entry.effort into buildResume (effort is
   assert.match(captured, /'model_reasoning_effort=medium'/);
 });
 
+// End to end for the grants: a sandboxed agent given reach outside its cwd must
+// still have it after an idle-suspend + resume, or the resumed session silently
+// loses access to paths its work depends on.
+test('resume() re-grants the persisted entry.addDirs, and keeps them on the rebuilt entry', async () => {
+  const sm = resumableCodex('card-git-access');
+  sm.map.get('card-git-access').addDirs = ['/projects/main/.git'];
+  let captured = '';
+  sm.killForSession = async () => [];
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-git-access', os.tmpdir());
+  assert.ok(captured.includes("'--add-dir' '/projects/main/.git'"));
+  assert.deepEqual(sm.map.get('card-git-access').addDirs, ['/projects/main/.git']);
+});
+
 // Trust is no longer part of the launch command (verified against the real
 // Codex binary that a `-c projects.<path>.trust_level` override is silently
 // ignored by its interactive trust dialog) — resume() instead calls
@@ -1300,6 +1316,17 @@ function smForDispatch() {
   sm.refreshAlive = async () => {};
   return sm;
 }
+
+// Nothing else records the grants, so an unstamped entry is a resume that cannot
+// re-grant them. Only what the caller asked for is stored: the codex worktree
+// git-dir is re-derived per launch, and persisting it would double the flag.
+test('dispatch stamps the addDirs it was asked for onto the entry, and nothing else', async () => {
+  const sm = smForDispatch();
+  const granted = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', addDirs: ['/projects/main/.git'] });
+  assert.deepEqual(sm.map.get(granted.sessionId).addDirs, ['/projects/main/.git']);
+  const none = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.equal(sm.map.get(none.sessionId).addDirs, undefined);
+});
 
 test('dispatch stamps entry.workflow from the workflow opt', async () => {
   const sm = smForDispatch();
