@@ -7,3 +7,7 @@ export function autoCompactPresetTokens(agent) {
 export function normalizeAutoCompactPreset(tokens, agent) {
   return autoCompactPresetTokens(agent).includes(tokens) ? tokens : undefined;
 }
+
+export function normalizeAutoCompactPresetForAgentChange(tokens, previousAgent, nextAgent) {
+  return previousAgent === nextAgent ? tokens : normalizeAutoCompactPreset(tokens, nextAgent);
+}

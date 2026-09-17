@@ -16,7 +16,7 @@ Claude receives `--autocompact <tokens>` on launch, resume, and fork. Codex rece
 
 ## Entry points
 
-The dispatch dialog exposes the setting in Advanced options as preset buttons: 100k/250k/500k/1m for Claude and 50k/100k/250k for Codex, plus Default to leave it unset. Changing providers clears a value not represented by that provider's presets. The WebSocket dispatch path, scheduling path, and `spawn_session` MCP tool share server validation. `spawn_session` accepts `auto_compact_tokens`; it is intentionally the future persona/extension integration point.
+The dispatch dialog exposes the setting in Advanced options as preset buttons: 100k/250k/500k/1m for Claude and 50k/100k/250k for Codex, plus Default to leave it unset. Changing providers clears a value not represented by that provider's presets, while editing an API-created non-preset value without changing provider preserves it. The WebSocket dispatch path, scheduling path, and `spawn_session` MCP tool share server validation. `spawn_session` accepts `auto_compact_tokens`; it is intentionally the future persona/extension integration point.
 
 Fork has no override control and inherits the source session. No command/API changes an existing session's threshold after creation.
 

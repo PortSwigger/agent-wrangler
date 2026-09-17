@@ -61,7 +61,7 @@ import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
-import { autoCompactPresetTokens, normalizeAutoCompactPreset } from './auto-compact-presets.js';
+import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 
 let currentView = 'grid';
 
@@ -229,6 +229,7 @@ let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open 
 let dispatchMode = 'standard'; // 'standard' | 'workflow' — the dispatch modal's selected mode card
 let modalMode = 'launch';  // 'launch' | 'schedule-create' | 'schedule-edit' | 'subagent' — #modal is reused for all
 let autoCompactTokens;
+let autoCompactAgent = 'claude';
 let editingScheduleId = null; // the schedule being edited in 'schedule-edit' mode
 let subagentModalReq = null; // { sessionId, subagentId } — the in-flight fetch, to correlate its async reply
 let scheduleAction = 'dispatch'; // 'dispatch' | 'session' — a schedule's action kind
@@ -294,7 +295,6 @@ function syncAutoCompactPresets() {
   const modelSel = document.getElementById('m-model');
   const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
   const available = new Set(autoCompactPresetTokens(agent));
-  autoCompactTokens = normalizeAutoCompactPreset(autoCompactTokens, agent);
   document.querySelectorAll('.auto-compact-preset').forEach((button) => {
     const tokens = button.dataset.autoCompactTokens;
     const visible = tokens === '' || available.has(Number(tokens));
@@ -5379,6 +5379,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   document.getElementById('m-intent').value = d.intent || '';
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
+  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
@@ -5795,11 +5796,22 @@ function wtSanitize(el, re) {
 }
 document.getElementById('m-wt-branch').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9-]/g); wtBranchEdited = true; refreshWorktreeDefaults(); validateWorktree(); });
 document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9/._~-]/g); wtFolderEdited = true; });
-document.getElementById('m-model').addEventListener('change', () => { modelEdited = true; populateEffortSelect(); syncRuntimeToggle(); syncAutoCompactPresets(); });
+document.getElementById('m-model').addEventListener('change', () => {
+  modelEdited = true;
+  const sel = document.getElementById('m-model');
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  autoCompactTokens = normalizeAutoCompactPresetForAgentChange(autoCompactTokens, autoCompactAgent, agent);
+  autoCompactAgent = agent;
+  populateEffortSelect();
+  syncRuntimeToggle();
+  syncAutoCompactPresets();
+});
 document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
   const button = e.target.closest('.auto-compact-preset');
   if (!button) return;
   autoCompactTokens = button.dataset.autoCompactTokens === '' ? undefined : Number(button.dataset.autoCompactTokens);
+  const sel = document.getElementById('m-model');
+  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   syncAutoCompactPresets();
 });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
