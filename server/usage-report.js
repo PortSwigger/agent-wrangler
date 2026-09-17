@@ -374,6 +374,7 @@ function normalizeClaudeDays(scan) {
   const out = {};
   for (const [day, totals] of Object.entries(byDay)) {
     out[day] = {
+      provider: 'anthropic',
       usd: costUsd(totals),
       estimatedUsd: 0,
       subAgentUsd: costUsd(subByDay[day] || {}),
@@ -651,7 +652,7 @@ async function analyzeCodexCached(analyzeCodex, sessionKey, file, codexSessionsD
   const signature = codexFamilySignature(sessionKey, index);
   if (!signature) return run();
   const cached = codexFileCache.get(file);
-  if (cached && cached.signature === signature && cached.result?.subAgentUsd != null) {
+  if (cached && cached.signature === signature && cached.result?.subAgentUsd != null && cached.result?.costByType) {
     usageFileCacheStats.hits += 1;
     return cached.result;
   }
@@ -755,6 +756,7 @@ export async function scanAllDaily({
       raw.push({
         file: null, owner: true, task,
         days: { [dayKeyOf(created)]: {
+          provider: 'openai',
           usd: a.usd, estimatedUsd: a.usd, subAgentUsd: a.subAgentUsd || 0, advisorUsd: 0, advisorTokens: blankTokens(),
           tokens: codexTokens,
           // Codex $ is estimated, so its per-model and per-type breakdowns are too.
@@ -835,16 +837,16 @@ export function rollup(scan, opts = {}) {
   }
   const { start, end, buckets, clamped } = win;
   const blankByType = () => Object.fromEntries(TYPES.map((t) => [t, { usd: 0, tokens: blankTokens() }]));
-  const bucketByKey = new Map(buckets.map((b) => [b.key, {
-    key: b.key, start: b.start, end: b.end,
-    total: { usd: 0, estimatedUsd: 0, tokens: blankTokens() },
-    // Each bucket carries all three slice dimensions; the frontend renders whichever is
-    // active. byTask/byModel: key -> {usd, estimatedUsd, tokens}. byType: the fixed four
-    // segments, each {usd (the $ share), tokens (only its own slot filled)} so one
-    // cellValue reads both metrics off the same shape.
+  const blankUsageBucket = () => ({
+    total: { usd: 0, estimatedUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() },
     byTask: {},
     byModel: {},
     byType: blankByType(),
+  });
+  const bucketByKey = new Map(buckets.map((b) => [b.key, {
+    key: b.key, start: b.start, end: b.end,
+    ...blankUsageBucket(),
+    providers: { anthropic: blankUsageBucket(), openai: blankUsageBucket() },
   }]));
 
   const taskNames = new Map();
@@ -853,6 +855,23 @@ export function rollup(scan, opts = {}) {
   const modelSpend = new Map();
   const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() };
   let estimatedIncluded = false;
+
+  const addBag = (target, task, bag) => {
+    const cell = (target.byTask[task.key] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
+    cell.usd += bag.usd; cell.estimatedUsd += bag.estimatedUsd; addTokens(cell.tokens, bag.tokens);
+    for (const [model, mb] of Object.entries(bag.byModel || {})) {
+      const mcell = (target.byModel[model] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
+      mcell.usd += mb.usd; mcell.estimatedUsd += mb.estimatedUsd; addTokens(mcell.tokens, mb.tokens);
+    }
+    const cbt = bag.costByType || {};
+    for (const t of TYPES) {
+      target.byType[t].usd += cbt[t] || 0;
+      target.byType[t].tokens[t] += bag.tokens[t] || 0;
+    }
+    target.total.usd += bag.usd; target.total.estimatedUsd += bag.estimatedUsd; addTokens(target.total.tokens, bag.tokens);
+    target.total.advisorUsd += bag.advisorUsd || 0;
+    addTokens(target.total.advisorTokens, bag.advisorTokens || blankTokens());
+  };
 
   for (const s of scan.sessions) {
     for (const [dayKey, bag] of Object.entries(s.days)) {
@@ -863,23 +882,12 @@ export function rollup(scan, opts = {}) {
 
       taskNames.set(s.task.key, s.task.name);
       taskSpend.set(s.task.key, (taskSpend.get(s.task.key) || 0) + bag.usd);
-      const cell = (bkt.byTask[s.task.key] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
-      cell.usd += bag.usd; cell.estimatedUsd += bag.estimatedUsd; addTokens(cell.tokens, bag.tokens);
-
       for (const [model, mb] of Object.entries(bag.byModel || {})) {
         modelNames.set(model, modelLabel(model));
         modelSpend.set(model, (modelSpend.get(model) || 0) + mb.usd);
-        const mcell = (bkt.byModel[model] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
-        mcell.usd += mb.usd; mcell.estimatedUsd += mb.estimatedUsd; addTokens(mcell.tokens, mb.tokens);
       }
-
-      const cbt = bag.costByType || {};
-      for (const t of TYPES) {
-        bkt.byType[t].usd += cbt[t] || 0;
-        bkt.byType[t].tokens[t] += bag.tokens[t] || 0; // only this type's own token slot
-      }
-
-      bkt.total.usd += bag.usd; bkt.total.estimatedUsd += bag.estimatedUsd; addTokens(bkt.total.tokens, bag.tokens);
+      addBag(bkt, s.task, bag);
+      addBag(bkt.providers[bag.provider || 'anthropic'], s.task, bag);
       totals.usd += bag.usd; totals.estimatedUsd += bag.estimatedUsd;
       totals.subAgentUsd += bag.subAgentUsd;
       // `|| 0`: a bag built before advisorUsd existed (an unmigrated fixture/cache
