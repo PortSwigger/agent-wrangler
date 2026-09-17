@@ -1275,10 +1275,11 @@ export class SessionManager {
   // trap a session on a corpse and never re-offer Resume. So we classify per pane:
   // a session is alive if any of its panes is not dead, otherwise it's dead.
   async refreshAlive() {
-    this.alive = new Set();
-    this.dead = new Set();
-    this.deadStatus = new Map();
-    this.socketByName = new Map();
+    // Readers keep the last complete snapshot while tmux is being queried.
+    // Publishing empty/partial sets here meant a concurrent liveness reader
+    // during the tmux query saw every pane as dead.
+    const alive = new Set(), dead = new Set();
+    const deadStatusByName = new Map(), socketByName = new Map();
     // Scan this install's socket plus the default socket while legacy sessions
     // remain there. Each socket is a separate tmux server, so we query each and
     // remember which socket every session was found on (for attach/kill/capture).
@@ -1297,12 +1298,16 @@ export class SessionManager {
         const [name, dead, deadStatus] = line.split('\x1f');
         if (!name) continue;
         seen.add(name);
-        this.socketByName.set(name, socket);
-        if ((dead || '').trim() !== '1') this.alive.add(name);
-        else if (deadStatus !== undefined && deadStatus.trim() !== '') this.deadStatus.set(name, Number(deadStatus));
+        socketByName.set(name, socket);
+        if ((dead || '').trim() !== '1') alive.add(name);
+        else if (deadStatus !== undefined && deadStatus.trim() !== '') deadStatusByName.set(name, Number(deadStatus));
       }
-      for (const name of seen) if (!this.alive.has(name)) this.dead.add(name);
+      for (const name of seen) if (!alive.has(name)) dead.add(name);
     }
+    this.alive = alive;
+    this.dead = dead;
+    this.deadStatus = deadStatusByName;
+    this.socketByName = socketByName;
     // An agent exiting on its own is the event nothing recorded before this: a
     // claude that launched and died 19s later left no trace of either end. A
     // deliberate kill removes the tmux outright rather than leaving a dead pane,
