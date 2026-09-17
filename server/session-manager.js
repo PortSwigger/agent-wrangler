@@ -32,6 +32,14 @@ const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
 // (the "branch bleeding between sessions" bug). DATA_DIR isn't a git repo.
 export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
+export function autoCompactTokensError(value, agent = 'claude') {
+  if (value == null || value === '') return null;
+  if (!Number.isInteger(value)) return 'Auto-compaction threshold must be a whole number of tokens.';
+  const min = agent === 'codex' ? 50000 : 100000;
+  if (value < min || value > 1000000) return `Auto-compaction threshold must be between ${min} and 1000000 tokens.`;
+  return null;
+}
+
 // Env for a `tmux attach` child. Strips TMUX/TMUX_PANE so the client is never
 // seen as nested — if the server itself was launched from inside a tmux those
 // are inherited, and tmux then refuses with "sessions should be nested with
@@ -188,6 +196,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     intent: parentEntry?.intent || '(forked)',
     name: explicit ? name.trim() : (parentEntry?.name || undefined),
     model: parentEntry?.model ?? null,
+    ...(parentEntry?.autoCompactTokens === undefined ? {} : { autoCompactTokens: parentEntry.autoCompactTokens }),
     createdAt,
     forkedFrom: parentId,
     liveSessionId: undefined,
@@ -278,6 +287,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     nameInherited: prev?.nameInherited,
     model: prev?.model ?? null,
     effort: prev?.effort ?? null,
+    ...(prev?.autoCompactTokens === undefined ? {} : { autoCompactTokens: prev.autoCompactTokens }),
     createdAt: prev?.createdAt ?? now,
     // When THIS relaunch happened, as distinct from createdAt (the card's birth,
     // preserved across every resume). Read only by the suspend timer — see
@@ -1004,7 +1014,7 @@ export class SessionManager {
     const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const inner = adapter.buildResume({
-      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
+      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
       addDirs,
       ...memory,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
@@ -1070,7 +1080,7 @@ export class SessionManager {
     // the only thing that exists to gate on at this point.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
       ...memory,
       disabledSkills,
@@ -1488,9 +1498,12 @@ export class SessionManager {
     return dir;
   }
 
-  async dispatch({ cwd, intent = '', model, effort, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
+  async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
+    const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
+    if (autoCompactError) throw new Error(autoCompactError);
+    const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
@@ -1559,11 +1572,11 @@ export class SessionManager {
     // it gets the dispatch's own shape, and the gate below can then read back
     // whatever it just wrote. A throwing hook never aborts the dispatch.
     await this._fireExtHooks('onBeforeDispatch', {
-      sessionId, cwd, agent, intent, model: model || null, effort: effort || null,
+      sessionId, cwd, agent, intent, model: model || null, effort: effort || null, autoCompactTokens: normalizedAutoCompactTokens || null,
       worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
     });
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
@@ -1583,7 +1596,7 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

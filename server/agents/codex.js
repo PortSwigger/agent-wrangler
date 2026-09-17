@@ -118,30 +118,33 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
     args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
     args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
     args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { expandTilde } from '../../session-manager.js';
+import { autoCompactTokensError, expandTilde } from '../../session-manager.js';
 import { launchTargetError } from '../../agents/index.js';
 
 // Shared plumbing for the spawn_* tools (spawn_session, spawn_workflow). Both
@@ -29,6 +29,8 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // never supplied would break the inheritance this tool is meant to provide.
   const badTarget = launchTargetError(agent, args.model);
   if (badTarget) return errorResult(badTarget);
+  const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
+  if (autoCompactError) return errorResult(autoCompactError);
 
   // Default the new session's model to the CALLER's model when none was given,
   // so work spun off inherits the model it was launched from. Only when the new
@@ -55,6 +57,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       model,
       agent,
       addDirs,
+      autoCompactTokens: args.auto_compact_tokens,
       ...buildDispatch({ caller, callerEntry }),
       spawnedBy: caller || undefined,
       // Bind memory to the resolved task BEFORE launch. Claude uses the stable

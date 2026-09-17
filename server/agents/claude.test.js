@@ -44,6 +44,21 @@ test('claude omits --effort entirely when no effort is given', () => {
   assert.doesNotMatch(claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC' }), /--effort/);
 });
 
+test('claude maps an auto-compaction threshold on launch, resume, and fork', () => {
+  const launch = claude.buildLaunch({ sessionId: 'SID', autoCompactTokens: 200000 });
+  const resume = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', autoCompactTokens: 300000 });
+  const fork = claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', autoCompactTokens: 400000 });
+  assert.match(launch, /'--autocompact' '200000'/);
+  assert.match(resume, /'--autocompact' '300000'/);
+  assert.match(fork, /'--autocompact' '400000'/);
+});
+
+test('claude leaves auto-compaction unset when a session has no threshold', () => {
+  assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--autocompact/);
+  assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--autocompact/);
+  assert.doesNotMatch(claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC' }), /--autocompact/);
+});
+
 test('every Claude launch/resume/fork loads the wrangler-meta skills plugin', () => {
   const launch = claude.buildLaunch({ sessionId: 'SID' });
   const resume = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' });

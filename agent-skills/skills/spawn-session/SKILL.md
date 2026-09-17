@@ -51,6 +51,15 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 
 <!-- END GENERATED MODELS -->
 
+## Optional working-context budget
+
+Pass `auto_compact_tokens` to opt the new session into an immutable auto-compaction
+threshold. Use a whole-token value from 100000 through 1000000 for Claude, or from
+50000 through 1000000 for Codex, for example `auto_compact_tokens: 200000`. Omit it to preserve the provider default. The threshold
+is retained if the session is resumed and inherited if it is forked; there is no API to
+change it later. Claude honours the full range. Under Codex's default scope, the effective
+threshold is capped at 90% of the model context window; the threshold does not expand it.
+
 ## Placement
 
 The new session joins your current task by default — to keep it there, just omit

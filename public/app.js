@@ -61,6 +61,7 @@ import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
+import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 
 let currentView = 'grid';
 
@@ -227,6 +228,8 @@ let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open 
 
 let dispatchMode = 'standard'; // 'standard' | 'workflow' — the dispatch modal's selected mode card
 let modalMode = 'launch';  // 'launch' | 'schedule-create' | 'schedule-edit' | 'subagent' — #modal is reused for all
+let autoCompactTokens;
+let autoCompactAgent = 'claude';
 let editingScheduleId = null; // the schedule being edited in 'schedule-edit' mode
 let subagentModalReq = null; // { sessionId, subagentId } — the in-flight fetch, to correlate its async reply
 let scheduleAction = 'dispatch'; // 'dispatch' | 'session' — a schedule's action kind
@@ -285,6 +288,21 @@ function populateModelSelect() {
   if (modelEdited && prev) sel.value = prev;
   syncQuickLaunch();
   populateEffortSelect();
+  syncAutoCompactPresets();
+}
+
+function syncAutoCompactPresets() {
+  const modelSel = document.getElementById('m-model');
+  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
+  const available = new Set(autoCompactPresetTokens(agent));
+  document.querySelectorAll('.auto-compact-preset').forEach((button) => {
+    const tokens = button.dataset.autoCompactTokens;
+    const visible = tokens === '' || available.has(Number(tokens));
+    button.classList.toggle('hidden', !visible);
+    const selected = tokens === '' ? autoCompactTokens == null : Number(tokens) === autoCompactTokens;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
 }
 
 // The effort levels depend on the agent that owns the selected model (agent is
@@ -5307,6 +5325,7 @@ function readDispatchFields() {
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
+    autoCompactTokens,
     agent,
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
@@ -5358,7 +5377,9 @@ function openModal({ mode, taskId = null, schedule = null }) {
     : (selected ? cwdForTask(selected) : '');
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   document.getElementById('m-intent').value = d.intent || '';
+  autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
+  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
@@ -5375,6 +5396,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   fillPicker(schedule ? parseWhen(schedule.when) : defaultPicker());
   syncModalChrome();
   syncWorkflow();
+  syncAutoCompactPresets();
   setDispatchPending(false);
   syncWorktreeFields();
   requestFolderBrowse();
@@ -5774,7 +5796,24 @@ function wtSanitize(el, re) {
 }
 document.getElementById('m-wt-branch').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9-]/g); wtBranchEdited = true; refreshWorktreeDefaults(); validateWorktree(); });
 document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9/._~-]/g); wtFolderEdited = true; });
-document.getElementById('m-model').addEventListener('change', () => { modelEdited = true; populateEffortSelect(); syncRuntimeToggle(); });
+document.getElementById('m-model').addEventListener('change', () => {
+  modelEdited = true;
+  const sel = document.getElementById('m-model');
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  autoCompactTokens = normalizeAutoCompactPresetForAgentChange(autoCompactTokens, autoCompactAgent, agent);
+  autoCompactAgent = agent;
+  populateEffortSelect();
+  syncRuntimeToggle();
+  syncAutoCompactPresets();
+});
+document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
+  const button = e.target.closest('.auto-compact-preset');
+  if (!button) return;
+  autoCompactTokens = button.dataset.autoCompactTokens === '' ? undefined : Number(button.dataset.autoCompactTokens);
+  const sel = document.getElementById('m-model');
+  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  syncAutoCompactPresets();
+});
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }

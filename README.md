@@ -33,6 +33,9 @@ otherwise it behaves exactly as a Claude-only board.
   wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
+- **Optional working-context budget** — set an auto-compaction threshold per session in Advanced
+  preset buttons (Claude: 100k/250k/500k/1m; Codex: 50k/100k/250k). The MCP API accepts 50k–1M for Codex and 100k–1M for Claude; Codex's default scope caps the effective value at 90% of its model context window. It is unset by default,
+  retained across resumes, and inherited by forks.
 - **Chat and Terminal views** — chat reads dormant and exited sessions via transcript, while
   terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
   events — enough that a typical session is visible whole — but history older than that window

@@ -111,6 +111,12 @@ test('effort passes through to sessionManager.dispatch', async () => {
   assert.equal(d.calls.dispatch[0].effort, 'high');
 });
 
+test('auto-compaction threshold passes through to sessionManager.dispatch', async () => {
+  const d = deps();
+  await runDispatch({ cwd: '/repo', intent: 'x', autoCompactTokens: 200000 }, d);
+  assert.equal(d.calls.dispatch[0].autoCompactTokens, 200000);
+});
+
 test('a launch failure propagates (callers own the error envelope)', async () => {
   const d = deps({ sessionManager: { dispatch: async () => { throw new Error('Branch feat already exists'); } } });
   await assert.rejects(() => runDispatch({ intent: 'x', worktree: true }, d), /Branch feat already exists/);

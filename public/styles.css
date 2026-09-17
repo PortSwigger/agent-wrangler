@@ -738,6 +738,11 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .advanced-options { margin-top: 12px; }
 .advanced-options summary { color: var(--fg-muted); cursor: pointer; font-size: 12px; }
 .advanced-options-body { padding-top: 1px; }
+.auto-compact-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.auto-compact-preset { padding: 4px 8px; font-size: 12px; background: var(--surface-2); color: var(--fg-muted); }
+.auto-compact-preset:hover { color: var(--fg); border-color: var(--border-muted); }
+.auto-compact-preset.on, .auto-compact-preset.on:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.auto-compact-preset.hidden { display: none; }
 /* Workflow mode: the manual worktree box is hidden and this confirms the auto one. */
 .wf-worktree-note { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); margin-top: 14px; }
 .wf-worktree-note.hidden { display: none; }

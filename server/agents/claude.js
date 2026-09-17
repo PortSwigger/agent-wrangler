@@ -177,18 +177,19 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, addDirs = [], worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
     const args = ['--session-id', liveSessionId || sessionId, '--permission-mode', 'auto'];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
+    if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, taskMemory, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, effort, workflow = false, intent = '', spawnedBy, taskMemory, disabledSkills }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, taskMemory, disabledSkills }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -197,10 +198,11 @@ export const claude = {
     // effort is re-threaded here because it is NOT transcript-restored on resume.
     const args = ['--resume', resumeId, '--permission-mode', 'auto'];
     if (effort) args.push('--effort', effort);
+    if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, taskMemory, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, model, effort, intent = '', taskMemory, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, model, effort, autoCompactTokens, intent = '', taskMemory, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
@@ -209,6 +211,7 @@ export const claude = {
     args.push('--permission-mode', 'auto');
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
+    if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, taskMemory, disabledSkills }));
   },
 

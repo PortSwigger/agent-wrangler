@@ -36,6 +36,7 @@ export const spawnSessionTool = {
     ),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the new session (--add-dir).'),
+    auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only). Immutable for the session and inherited by forks.'),
     into: z.string().optional().describe(
       'Task id to put the new session on, sourced from list_tasks. An id not sourced from '
       + 'list_tasks silently lands the session in Unassigned instead of erroring. Defaults to '
