@@ -5,9 +5,10 @@
 **Scope:** an in-repo extensions API that lets an optional feature be declared as
 one manifest and gated as a unit, instead of growing its own flag and fanning it
 out by hand. No feature is migrated onto it yet — this lands the API, its seams
-and its tests; the first manifest is the proof. No external loader, no
-third-party extensions: every manifest is a static import in
-`server/extensions/index.js`.
+and its tests; the first manifest is the proof. An in-repo manifest is a static
+import in `server/extensions/index.js`; installed third-party extensions are
+discovered under `<DATA_DIR>/extensions/` and appended to the same list (see
+Installed extensions below).
 
 The per-session checklist is the WORKED EXAMPLE throughout — it is the feature
 whose fan-out motivated this and the intended first migration — but it is still
@@ -33,6 +34,36 @@ Codex catalog (`agent-skills.js`'s `DISABLEABLE` map) and the client panel
 (`graph.checklistEnabled`). Each new feature would repeat that fan-out, plus a
 `set-<feature>-enabled` control handler, a settings def and a fresh rung in
 `app.js`'s `if (id === ...)` settings ladder.
+
+## Trust framing
+
+**An extension runs IN-PROCESS WITH FULL ACCESS TO THE USER'S MACHINE** — the
+files, the repositories and the agent sessions the wrangler itself can reach.
+This is the frame every other decision in this document sits inside, and nothing
+in the product or in these docs may imply otherwise.
+
+The `requires` capability list is **disclosure and accident-containment, never a
+security boundary.** It says what an extension asked the wrangler for, and it is
+what makes an honest mistake land as a structurally absent key rather than a
+silent poke at a singleton. It stops nothing: the extension's own code, and every
+line of every dependency it pulls in, runs with the server's privileges whether
+or not a capability was declared.
+
+The client half is trusted at **exactly the same level** as the server half.
+There is no iframe, no sandbox and no origin separation for an extension's
+browser module — it is an ES module imported into the board's own page, and it
+already owns a whole top-level view.
+
+`npm ci --ignore-scripts` (`install.js`) is a **MITIGATION, not a boundary.** It
+stops install-time lifecycle hooks only; every dependency's code runs in-process
+the moment the extension is imported. **Installing an extension is exactly as
+much trust as `npm install`-ing a package into the server**, and the consent
+modal says so in those words (`TRUST_STATEMENT`, `public/extensions-panel.js`).
+
+The audience is colleagues sharing extensions internally. A public ecosystem —
+untrusted authors, drive-by installs, code that has to be safe to run because it
+was found rather than vouched for — is explicitly **NOT** what this is designed
+for, and no amount of validation here would make it so.
 
 ## Manifest
 
@@ -90,8 +121,23 @@ range, an unknown `session` hook name (the known set is `SESSION_HOOKS`:
 `onBeforeDispatch`, `onArchive`, `onFork`, `onPurge`, `onDispatch`,
 `onResume`), a sweep without a positive finite `everyMs`, and a `client` or
 `styles` path that does not resolve inside the manifest's own `public/`.
-`server/index.js` catches any loader error, logs it and exits 1, the same posture
-as the instance lock.
+`loadExtensions` catches every one of those per extension and quarantines that
+manifest rather than letting the throw out — see Quarantine below, which
+replaced this document's earlier exit-1 posture.
+
+## Manifest additions
+
+Three optional prose fields — `description`, `author` and `homepage` — are what
+the consent modal and the installed-extension settings row have to show about
+code that did not come from this repo. All three are validated as strings when
+present and checked for nothing else; they are third-party data and every
+consumer renders them via `textContent`.
+
+For an EXTERNAL extension the manifest `id` **must equal its directory name**
+(checked by `discoverExternal`, not by `validateManifest` — an in-repo manifest's
+directory is the repo's own business). A mismatch is not cosmetic: the provenance
+record, the `/ext/<id>/` asset route and the uninstall path are each keyed on one
+of the two names, so they would silently disagree about what is installed.
 
 ## Loader outputs
 
@@ -179,6 +225,30 @@ this caller is `reason`, threaded into `resume()`: an extension's wake logs as
 woke a card. It is bound PER EXTENSION (one `createExtDeliver` per façade), which
 is the gain over the pre-façade shared bag's one `reason: 'extension'`.
 
+## The leaf-import scan
+
+`discoverExternal` refuses to load an installed extension whose own `.js` files
+statically import a forbidden module (`FORBIDDEN_IMPORTS`, `external.js` —
+session-manager, state-reader, tmux-scraper, the server entry, `host-api/`).
+
+**This is a CORRECTNESS rule, not a security one**, and it is trivially bypassed
+by `await import(...)` at run time. It is not trying to stop hostile code; per
+the trust framing there is no boundary here to enforce. It catches the honest
+mistake, and it earns its place because of the blast radius: `server/extensions/**`
+is imported by `client-config.js` and `agent-skills.js`, which the agent adapters
+import, so a static import of session-manager closes a real module cycle and
+**nothing comes up at all** — far worse than one broken extension, which is the
+failure this whole posture is built to contain.
+
+The scan reads only the extension's OWN files: `node_modules` is skipped (a
+dependency is third-party code that legitimately contains anything, and it cannot
+be static-imported into the server's graph except through the manifest) and each
+file is size-bounded, since this runs at boot for every installed extension.
+
+`FORBIDDEN_IMPORTS` is **exported from `external.js` and imported by
+`index.test.js`**, which asserts the same list over the in-repo manifests — one
+array, so the runtime scanner and the test cannot drift.
+
 ## Host API
 
 `buildHostApi({ id, requires, range, ...wiring })` (`server/host-api/index.js`)
@@ -254,10 +324,12 @@ tag.
 
 **Failure posture**, three tiers:
 
-1. **Boot failure** — a bad `requires`, an unknown capability, or an invalid or
-   unsatisfied range: logged naming the extension, `process.exit(1)`, the same
-   posture as a colliding tool name. A manifest declaring a capability this
-   server does not serve is a mistake, not a degradation to run around.
+1. **Quarantine** — a bad `requires`, an unknown capability, or an invalid or
+   unsatisfied range: logged naming the extension, and that extension alone is
+   disabled for the boot. `buildHostApi` still THROWS as its contract; what
+   changed is that `server/index.js` catches per extension instead of exiting.
+   This tier originally read `process.exit(1)`; see Quarantine below for why
+   third-party manifests made that untenable.
 2. **Runtime throw from a façade method** — propagates normally: an MCP tool
    returns an error result, a control handler hits the router's error envelope.
    No swallowing, no per-method try/catch in the façade.
@@ -271,6 +343,47 @@ over every extension) and `hideTool` (a core-owned filter over ALL tools,
 including ones no extension owns). Neither is a per-extension capability, so both
 stay on the core bag rather than becoming a meta-capability — this is finished,
 not a half-done migration.
+
+## Quarantine
+
+**The failure posture, and it OVERRIDES this design's earlier `process.exit(1)`
+tier for a bad manifest.** With third-party manifests in the loaded list, one bad
+directory must not take the whole board down. So on any failure the entry still
+lands in `out.list` as `{ enabled: false, quarantine: '<reason>' }` and
+contributes **nothing** — no tools, handlers, stores, graph keys, hooks, sweeps or
+client asset. `extensionsForGraph` short-circuits `enabled` in both directions
+off it, because config saying "on" over a manifest that contributed nothing would
+draw a live-looking toggle over a feature that is not there.
+
+The reasons: a bad manifest (anything `validateManifest` refuses), a duplicate
+id, a tool-name, handler-type or store-name collision, an unsatisfiable
+`engines.wranglerApi`, an unknown capability, a `requires` widened past its
+recorded consent, a failed install, a leaf-rule import violation, a manifest id
+that disagrees with its directory name, and an unreadable `index.js`. The ones
+detected inside the loader decline to register at all; the ones only the non-leaf
+half of boot can see (a store factory that threw, `buildHostApi`'s range check, a
+graph contributor claiming a reserved key) go through `quarantineExtension`,
+which unregisters by id what `loadExtensions` had already staged.
+
+**Collision order is load-bearing.** Builtins come first and installed extensions
+are appended (`primeExtensions`), and every name check is first-come — so a
+builtin wins every tie by construction and the EXTERNAL entry is the one
+quarantined. Nothing has to arbitrate; the order is the rule.
+
+A quarantined **BUILTIN** additionally raises a persistent board banner with no
+"dismiss for today" (`graph.quarantinedBuiltins`, `app.js`): a repo bug that
+silently contributed nothing would read as a feature that quietly vanished, which
+is the one failure this posture must not produce. Installed extensions are
+excluded — their reason belongs on their own settings row, where the Uninstall
+and Update buttons are. Adding that producer is why `system-banner.js`'s dismiss
+key is now **namespaced by producer**: fd levels are descriptor counts and heap
+levels are percentages, and sharing one bare number meant dismissing an fd banner
+silently suppressed a 90%-heap one. A legacy bare `{level, until}` is read as the
+fd entry it was.
+
+Each quarantine is **one event log line at boot** and nothing per-tick — the
+loader's own from `index.js` (which can import `log.js`; the leaf cannot), the
+later ones from `quarantineFor`.
 
 ## Gating model
 
@@ -333,10 +446,12 @@ there is no migration table; the first migration adds one.
 3. Once `rebuild`, `broadcast` and the target resolvers exist, build one façade
    per ENABLED extension with `buildHostApi`, each with its own
    `createExtDeliver(deps, { reason: \`ext:${id}\` })` and its own
-   `host.stores`. Wrapped in the boot try/catch: a bad `requires`, capability or
-   range logs naming the extension and exits 1. Asserted in the same block: every
-   tagged tool and handler has a façade (a boot-time invariant, not a per-frame
-   guard).
+   `host.stores`. Caught PER EXTENSION: a bad `requires`, capability or range
+   logs naming the extension and quarantines it (`quarantineExtension`
+   unregisters what the loader already registered for it). Asserted after the
+   loop: every still-enabled tagged tool and handler has a façade — a boot-time
+   invariant, not a per-frame guard, and a miss there means the quarantine
+   bookkeeping left something registered, which IS a core bug and still exits 1.
 4. `assertGraphKeys` on each contributor's output — called with
    `{ host, graph: {} }` — against `RESERVED_GRAPH_KEYS` (every key `rebuildOnce`
    sets itself). Checked once here because the rebuild is a ~4 s tick where
@@ -351,6 +466,30 @@ there is no migration table; the first migration adds one.
    right after `config`, before the first graph.
 8. `main()` starts one unref'd interval per sweep, each run as
    `s.run({ host })`, errors logged with `[ext:<extId>:<sweepId>]`.
+
+## Boot ordering and `primeExtensions`
+
+`primeExtensions()` is the one **async** door into the loader memo, and the only
+one that includes installed extensions — discovery has to `await import()` each
+manifest to read it. `getExtensions()` stays synchronous and unchanged, which is
+the whole reason the async work is a separate function: otherwise every leaf
+consumer (`client-config.js`, `agent-skills.js`, `mcp/tools/index.js`,
+`control/router.js`) and, through them, the agent adapters would have to become
+async to read a memo that is already filled.
+
+**`primeExtensions` THROWS if the memo is already set.** That is the ordering
+guard, and it is the fragile part of the feature: anything that reaches
+`getExtensions()` first silently pins a BUILTIN-ONLY board for the life of the
+process — installed extensions simply absent, no error anywhere. So
+`server/index.js` awaits it at the top of the module, before the MCP registry,
+before the control router's lazy handler map, and before any adapter import.
+
+`getExtensions()` deliberately does **not** also throw when called before
+priming — a resolved decision, not an omission. It cannot tell a mis-ordered boot
+apart from the adapters and the whole test suite legitimately calling it with an
+injected `{ builtin }`/`{ cfg }` and no priming at all. The throw above already
+fires on exactly the bad case (something got in first), so a second guard would
+add a false-positive surface and no coverage.
 
 ## Session lifecycle hooks
 
@@ -565,6 +704,204 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
 `ext:` prefix generically (read back from `graph.extensions`, write via
 `extension-enabled`), so a new extension needs no settings edit and no new rung.
 
+## Installed extensions: layout and provenance
+
+An installed extension is one immediate subdirectory of
+`<DATA_DIR>/extensions/<id>/` whose `index.js` default-exports a manifest.
+**DATA_DIR-relative on purpose**: a `run-dev` isolated instance (a fresh
+`AW_DATA_DIR`) starts with no installed extensions the same way it starts with no
+sessions, and `server/test-setup.js`'s redirect gives the tests that isolation
+for free rather than by a path injection nothing else needs.
+
+`<DATA_DIR>/extensions.json` (`provenance.js`) holds one record per installed
+extension, `{ id, originUrl, sha, installedAt, requires, dependencies }`. It is
+**deliberately separate from `config.json`**, which keeps the `extensions.<id>`
+enable flags unchanged: config.json is hand-edited, and putting it in the path of
+an atomic whole-file rewrite on every install buys nothing.
+
+The last two fields are why anything is persisted at all. `requires` on the
+record is the **CONSENTED** set — the thing a later version's `requires` is
+diffed against, and what discovery re-checks the on-disk manifest has not widened
+past. `dependencies` is the flattened `name@version` list taken from the clone's
+`package-lock.json` at consent time. Neither is recoverable from the installed
+tree, because the tree is always whatever the new version ships: without the
+record an update has nothing to diff against.
+
+An extension with **no record** — a hand-dropped directory, which is a legitimate
+dev workflow — still loads, and is not gated on consent (placing it there by hand
+is its own consent). It is simply not updatable: there is no `originUrl` to
+re-clone or `ls-remote` against, and the update check skips it.
+
+## Install flow
+
+Clone → disclose → consent → `npm ci` → move into place → restart. Two control
+frames with a human decision between them (`ext-install`, then `ext-consent`),
+plus `ext-uninstall` and `ext-check-updates`
+(`server/control/handlers/extensions-install.js`).
+
+**All git and npm shelling is confined to `server/extensions/install.js`**, the
+way `pr-status.js` confines `gh`: everything the install needs from a subprocess
+lives behind injectable runners there, so nothing else may spawn either binary
+and a test drives the whole path with no process and no network. The runners are
+a MODULE seam and never an option on the incoming frame — a control frame is
+browser-supplied, so a `_clone` a client could set would be arbitrary code
+execution offered as an API.
+
+The URL goes through a **scheme allow-list checked BEFORE git runs**
+(`assertAllowedUrl`): `https://`, `ssh://` and the scp-like `git@host:path`, the
+last anchored and character-restricted rather than "has an @ and a colon".
+`ext::` is refused because git's ext transport **runs an arbitrary command** as
+its transport helper — a real RCE vector, and the URL is the one thing an
+installing human supplies. `file://` and bare local paths are refused because
+they sidestep provenance entirely: there is no remote to verify or update
+against. Anything with whitespace or a shell metacharacter is refused outright
+even though the URL never reaches a shell, so no future caller can reintroduce
+the hazard by interpolating a stored URL into a command string. The clone then
+**disables both protocols in git itself** (`protocol.ext.allow=never`,
+`protocol.file.allow=never`, plus `--no-local`), because a clone can follow a
+submodule URL or a redirect to a URL this process never screened, and passes the
+URL after `--` as its own argv element with no shell.
+
+**`package-lock.json` is MANDATORY**, and its absence refuses the install *before
+the disclosure* (`MissingLockfileError`): an unpinned dependency set cannot be
+disclosed honestly, so there is nothing to consent to. Consent likewise precedes
+any registry fetch — nothing is downloaded from npm until a human has approved
+the disclosed list.
+
+### The disclosure is read statically, and the manifest is never imported before consent
+
+An external extension MUST carry a `wranglerExtension` block in its
+`package.json` — `{id, label, description?, author?, homepage?, requires?}` —
+and `readDeclaration` (`install.js`) reads the consent modal's contents out of
+**that**, never out of the manifest module. Two independent reasons, either of
+which alone forces it:
+
+- **Security.** Importing `index.js` *executes* third-party code, and the consent
+  modal exists precisely to precede that. Disclosing by import ran the code
+  before the human had agreed to anything — a worse hole than the documented
+  `--ignore-scripts` caveat, which at least only applies once the extension is
+  installed and loaded.
+- **Correctness.** `npm ci` runs only *after* consent, so at disclosure time the
+  clone has no `node_modules` and a manifest importing any dependency cannot be
+  imported at all. A lockfile is mandatory, so having dependencies is the
+  expected case — this made every non-trivial extension uninstallable.
+
+The block is therefore duplicated between `package.json` and the manifest by
+design. `ext-consent` closes that gap once running the code is consented to:
+after `npm ci` it imports the manifest, validates it, and holds it to the
+declaration (`assertManifestMatchesDeclaration`) — a different `id` would install
+into a directory the disclosure never named, and a **wider `requires`** would take
+capabilities that were never on screen. Either **fails the install** rather than
+quarantining after the fact, because nothing is on disk yet so refusing is free.
+The provenance record's consented `requires` is the **DISCLOSED** list, not the
+manifest's, because that is what the human approved.
+
+### An abandoned consent is reclaimable
+
+The install lock is held across the human's decision (the staging dir is what a
+second install would collide with), but "the human decided" is not the only way a
+disclosure ends: closing the modal, reloading the board or losing the socket all
+end one with nobody to answer, and the handler is told about none of them. A
+disclosure awaiting consent is therefore reclaimable after
+`PENDING_CONSENT_TTL_MS` (10 minutes) — the next install sweeps that staging dir
+and takes the lock. Without it one abandoned modal wedged **every** install on the
+instance until a restart, which is a real dead end rather than the "a restart
+cancels nothing meaningful" the in-memory lock is justified by. Reclaim is gated
+on *awaiting consent*, never on age alone: a clone or an `npm ci` is genuinely
+slow and already bounded by its own `execFile` timeout, so a running install keeps
+refusing however long it has taken.
+
+The staging dir is `<DATA_DIR>/extensions/.tmp/<tempId>/` — dot-prefixed so it
+lives on the same filesystem as the destination (the rename is atomic) without
+discovery mistaking it for an extension — and is removed on cancel and on any
+failure at any point, so a half-populated `extensions/<id>/` is never left for
+the boot loader to find. **Boot sweeping it (`sweepStaging`) is the only recovery
+an interrupted install needs**, which is exactly what lets the
+one-install-at-a-time lock be purely in-memory; a restart cancels nothing
+meaningful. A second concurrent attempt is **REFUSED, not queued**: two clones
+racing into one staging root has no sensible outcome, and a human who pressed the
+button twice wants to be told rather than silently made to wait.
+
+Every computed path is resolved and asserted to stay **directly under
+`<DATA_DIR>/extensions/`** before any write or delete (`safeExtPath`,
+`safeStagingPath`), because the id comes from a third-party manifest.
+`isValidExtensionId` already rejects a separator outright; this is the second,
+structural check, since one missed id validation on a delete path is a wipe of an
+arbitrary directory.
+
+## Update
+
+**An update IS `ext-install` against the recorded `originUrl`** — same clone,
+same consent modal, same handler, no second code path. The only difference is
+what the modal renders.
+
+It shows **CHANGED** capabilities and **CHANGED** dependencies, not full lists:
+on an update the diff is the decision, and a transitive tree can churn by
+hundreds of entries that hide it. Direct-dependency changes are listed and the
+transitive remainder is a count. Removals can only be filtered to "the package
+NAME left the tree entirely" — the provenance record stores a flat list with no
+direct/transitive mark, and adding one would help only installs made from then
+on — so a removal that is merely the old half of a version bump is left to the
+added side to show.
+
+**Re-consent is required ONLY when `requires` widens.** Unchanged or narrowed
+proceeds on the recorded consent, because nothing new is being asked for. A
+manifest that widens itself in place on disk *after* consent is caught at the
+next discovery and quarantined (`unconsentedCapabilities`), which is why that
+check lives at boot as well as at install time — editing the file is all it would
+take.
+
+"Check for updates" is **one `git ls-remote` per installed extension, on demand
+only** — no sweep, no background network, nothing logged. A periodic check would
+be per-tick log noise and unasked-for traffic to whatever host an extension came
+from. An extension with no provenance record is skipped rather than reported as
+up to date.
+
+## Restart semantics and the client half
+
+Newly installed code loads at the **next server start**, exactly like the
+existing `enabled && !bootEnabled` case, and the copy reuses
+`extensionFlipNote`'s vocabulary (`RESTART_NOTE`,
+`public/extensions-panel.js`) rather than inventing a second way of saying "needs
+a restart". Uninstall is symmetric: the directory and the record go immediately,
+and the code stays live out of the process's module cache until restart — but only
+where it was running to begin with, so the confirm copy drops that sentence for an
+extension that is turned off or quarantined.
+
+Every one of those notes now carries the **restart button** that finishes the job,
+because an uninstall that visibly changes nothing until some later unexplained
+restart reads as an uninstall that did nothing. It is offered only where the server
+says it can come back: `AW_SUPERVISED=1`, exported by `scripts/wrangler-start.sh`
+(what both the launchd plist and the systemd unit exec), surfaced to the client as
+`config.canRestart` and enforced by `control/handlers/restart.js`, which refuses
+otherwise. Since the server's extension list is a boot snapshot, the client holds
+the uninstalled id (and a freshly installed one, which is in no list at all yet) as
+pending state and clears it on the next `config` frame — the first frame of every
+reconnect, and the only reliable signal that the restart actually happened.
+
+The tab itself is **one list**: builtin and installed extensions render through the
+same row, with the toggle, the origin and the actions together, instead of the two
+lists that repeated each other's name and description. A row carries name,
+description and origin only; the commit and author moved to the consent modal, which
+is the screen where they are a decision rather than clutter. `Update…` appears only
+once a check has actually found a newer commit, the check says `Checking…` while it
+runs, and a settled report ("Up to date.", "Cancelled. Nothing was installed.")
+clears itself after a few seconds — it describes a moment, not a state.
+
+**All third-party strings** — label, description, author, homepage, capability
+and dependency names, quarantine reasons — go into the DOM via `textContent`
+only. That is why `public/extensions-panel.js` exists as a separate module rather
+than more rows in `settings.js`, whose own rows are innerHTML plus `esc()`: this
+path never has to carry installed-extension data at all.
+
+`homepage` is rendered as a link only when it is `https://`, and as plain text
+otherwise — a third-party-supplied href is not worth the navigation surface for a
+decoration.
+
+The consent modal has **no Enter-to-approve**, unlike `confirmDialog`. It grants
+a process full access to the machine, and that is not a decision a stray keypress
+may make.
+
 ## Adding the first (or next) extension
 
 1. Create `server/extensions/<id>/index.js` exporting `dir` and the manifest;
@@ -584,11 +921,6 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
   (`pane-deferral.js`). `deliver` is the addressed primitive and cannot tell the
   two intents apart, so that gate belongs to a second hook or an explicit
   opt-in, not to this one.
-- **External / third-party manifest loading, install-and-trust prompts, and a
-  settings UI for reviewing or revoking capabilities.** `requires` is declared,
-  validated and enforced at boot for IN-REPO manifests only; nothing here loads
-  a manifest the repo does not ship, and there is no runtime (as opposed to
-  boot-time) capability revocation. Those need their own design.
 - Migrating the first feature. The checklist is the intended one — its store,
   handlers, four MCP tools, skill, graph snapshot and client panel map onto the
   manifest one for one — followed by task-memory and archive-review. Each keeps
@@ -605,3 +937,16 @@ per extension, `scope: 'server'`. `app.js`'s server get/set bridge handles the
   back on within the same boot, both work today.) `--allowedTools` is baked into
   a session's launch argv regardless, so a running session can never gain or
   lose tools without a relaunch.
+- An explicit store-data purge on uninstall. Uninstall removes the installed
+  directory and its provenance record; anything the extension persisted under
+  `DATA_DIR` stays, not as a retention feature but because the wrangler cannot
+  find it — a store's file is chosen by the extension's own factory and there is
+  no wrangler-owned per-extension data dir to sweep. A real purge needs a way to
+  enumerate what an extension owns (most likely a declared data directory the
+  host hands out, which would make removal trivial), and the confirm copy says
+  plainly that the gap exists until then.
+- Signature or publisher verification of an installed extension, any registry or
+  discovery mechanism, per-extension resource limits, and sandboxing of any
+  kind. All four remain out of scope: per the trust framing there is no boundary
+  here to harden, and adding a partial one would be worse than none, because it
+  would read as a guarantee.

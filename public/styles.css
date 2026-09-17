@@ -48,6 +48,10 @@
      pattern as --just-finished/--wf/--rt each getting their own name even
      where they currently share a value with something else. */
   --mail:#d29922; --mail-fg:#e3b341;
+  /* Warning hue — an action the reader should notice but that is not destructive
+     (today: the pending "Restart now"). Its own role beside --snooze/--mail even
+     though the three share values now, same reason those two are separate. */
+  --warn:#d29922; --warn-fg:#e3b341;
   /* Hint-label hue (⌃⌘A jump-to-session). Its own role, and the same
      values in both themes: the markers sit ON the board's cards rather than in
      the page's own chrome, so they need to read as an overlay in either. */
@@ -98,6 +102,7 @@ body.light {
   --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
   --snooze:#9a6700; --snooze-fg:#7d4e00;
   --mail:#9a6700; --mail-fg:#7d4e00;
+  --warn:#9a6700; --warn-fg:#7d4e00;
   --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
@@ -561,11 +566,18 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   color: var(--blue-fg);
 }
 
-#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal {
+/* An overlay dialog gets BOTH of these rules, and the pair is an explicit id
+   list that nothing generates — so a new modal added to index.html and left out
+   of it does not merely lose its backdrop, it renders inline in the page flow as
+   a permanently-visible panel whose buttons were never wired (the open function
+   is what attaches them). That is exactly how #ext-consent-modal shipped, which
+   is why modal-overlay.test.js now asserts the two selectors cover every
+   `class="hidden"` modal in index.html. */
+#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal {
   position: fixed; inset: 0; background: var(--overlay);
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
-#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden { display: none; }
+#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden { display: none; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
@@ -2773,7 +2785,8 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: color-mix(in srgb, var(--red) 8%, transparent); padding: 9px 14px; }
 .chat-exit-notice[hidden] { display: none; }
 .chat-exit-notice-head { margin: 0 0 6px; font-size: 0.83em; font-weight: 600; color: var(--red-fg); }
-/* --warn/--text (brief names, aspirational) map to this file's real vars: --red is
+/* A spec's aspirational "--warn/--text" maps here to --red, NOT to the real
+   --warn var added above (which is the amber notice hue): --red is
    the documented needs-you identity (see the --snooze comment above, which spells
    out --red/--snooze/--just-finished as separate alarm roles) — --snooze reads as
    "snoozed" everywhere else on the board, so using it here would send the wrong
@@ -3039,3 +3052,76 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    is in the marker's OWN width, which only CSS knows — app.js anchors the right
    edge precisely because that width isn't measurable at position time. */
 .hint-marker.hint-left { transform: translate(50%, -50%); }
+
+/* Installed-extension rows and the install/update consent modal
+   (public/extensions-panel.js). Every colour is a semantic var so both themes
+   follow; nothing here hardcodes hex. */
+/* The Extensions tab is nothing BUT this mount point now, so it has no list
+   above it to be separated from. */
+.ext-installed { margin-top: 2px; }
+.ext-installed-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ext-installed-head .setting-label { flex: 1; }
+/* An extension row IS a .setting-row — one list, the toggle and the provenance
+   in the same row — so padding, border and the toggle come from there; this only
+   top-aligns it, because these rows are several lines tall. */
+.ext-row { align-items: flex-start; }
+.ext-row .setting-copy { flex: 1; }
+.ext-row-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
+.ext-row-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font-size: 11px; color: var(--fg-subtle); }
+.ext-row-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ext-row-origin { color: var(--fg-subtle); word-break: break-all; }
+a.ext-row-origin { color: var(--blue-fg); }
+.ext-row-quarantine {
+  margin-top: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.5;
+  background: var(--danger-bg); border: 1px solid var(--danger-border);
+  border-radius: 5px; color: var(--danger-strong);
+}
+.ext-row-quarantine-help { color: var(--fg-muted); margin-top: 3px; }
+/* A per-row note (an update check's result, or a pending restart with its
+   button beside it). Accent for the same reason .setting-flip-note is. */
+.ext-row-note {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; color: var(--accent); line-height: 1.5; margin-top: 5px;
+}
+.ext-row-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* Uninstalled but still loaded until the restart: visibly spent, but still
+   legible — the row is the only thing telling a reader what that restart is
+   waiting to finish. */
+.ext-row-removed .setting-copy { opacity: 0.55; }
+.ext-btn:disabled { opacity: 0.6; cursor: default; }
+/* A pending restart is something to notice, not something destructive: amber,
+   not the danger red Uninstall uses. */
+.ext-btn-warn { color: var(--warn-fg); border-color: var(--warn); }
+.ext-btn-warn:hover:not(:disabled) { border-color: var(--warn-fg); }
+.ext-btn {
+  font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer;
+  background: var(--surface-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.ext-btn:hover { border-color: var(--fg-subtle); }
+.ext-btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.ext-btn-danger { color: var(--danger-strong); border-color: var(--danger-border); }
+.ext-install-progress { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 6px; }
+.ext-consent { display: flex; flex-direction: column; gap: 4px; }
+.ext-consent-trust {
+  padding: 9px 11px; border-radius: 6px; margin-bottom: 6px;
+  background: var(--hint); color: var(--hint-fg); border: 1px solid var(--hint-border);
+}
+.ext-consent-trust-lead { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.ext-consent-trust-body { font-size: 12px; line-height: 1.55; }
+.ext-consent-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--fg-subtle); }
+.ext-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-subtle); margin-top: 10px; }
+.ext-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ext-chip {
+  font-size: 11px; padding: 2px 6px; border-radius: 4px;
+  background: var(--surface-2); color: var(--fg-muted); border: 1px solid var(--border-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.ext-chip-add { color: var(--green-fg); border-color: var(--green); }
+.ext-chip-remove { color: var(--red-fg); border-color: var(--red); }
+.ext-consent-none, .ext-consent-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 4px; }
+.ext-install-url {
+  width: 100%; margin-top: 6px; padding: 5px 8px; font: inherit; font-size: 12px;
+  background: var(--field-bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}

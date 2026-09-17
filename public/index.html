@@ -492,6 +492,20 @@
     </div>
   </div>
 
+  <!-- Install/update consent. Its body is built by public/extensions-panel.js
+       (textContent only — the content is third-party), so there is nothing to
+       fill in here. -->
+  <div id="ext-consent-modal" class="hidden">
+    <div class="modal-card settings-card">
+      <h3 id="ext-consent-title">Install extension</h3>
+      <div id="ext-consent-body" class="settings-body"></div>
+      <div class="modal-actions">
+        <button id="ext-consent-cancel" class="ghost">Cancel</button>
+        <button id="ext-consent-ok" class="primary">Approve</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="hidden"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>

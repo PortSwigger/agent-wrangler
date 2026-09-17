@@ -184,7 +184,12 @@ export function setExtensionDefs(list) {
   }));
   for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
   for (const d of defs) byId.set(d.id, d);
-  SETTINGS_TABS.find((t) => t.id === 'extensions').settingIds = defs.map((d) => d.id);
+  // Registered in the id index but NOT in the tab's settingIds: the Extensions
+  // tab renders no rowHtml rows of its own any more. extensions-panel.js builds
+  // one row per extension — the toggle and the origin/Update/Uninstall half in
+  // the same row, rather than the same extension appearing in two lists — and
+  // those rows carry this def's id, so the delegated flip handler below still
+  // finds them here.
   return defs;
 }
 
@@ -224,6 +229,11 @@ let appearanceBridge = {
 };
 // (id, value) after every write, either scope — see initSettings' `onChange`.
 let changeBridge = () => {};
+// Fills the Extensions tab's installed-extension mount point. Supplied by
+// app.js, which owns the live graph and the control socket; called on every
+// modal open so a row's quarantine reason and SHA are current. A no-op default
+// keeps every settings test free of the extensions panel.
+let extensionsBridge = { mount: () => {} };
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -318,6 +328,14 @@ function tabPanelHtml(tab, selected) {
     ].join('');
   } else if (tab.id === 'shortcuts') {
     inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
+  } else if (tab.id === 'extensions') {
+    // The WHOLE tab is a mount point: extension content is third-party (label,
+    // description, origin, quarantine reason) and this function is
+    // innerHTML+esc(), so extensions-panel.js builds every one of those rows
+    // with textContent instead — including the toggle, which keeps builtin and
+    // installed extensions in one list instead of the two that repeated each
+    // other's name and description.
+    inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
       role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
@@ -353,10 +371,11 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange } = {}) {
+export function initSettings({ server, appearance, onChange, extensions } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
+  if (extensions) extensionsBridge = extensions;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -366,7 +385,15 @@ export function initSettings({ server, appearance, onChange } = {}) {
   // Land focus on Done so the modal-scoped Escape handler below fires on a fresh
   // open (a click-opened modal otherwise leaves focus on <body>) — same trick the
   // file-preview / schedule modals use.
-  const open = () => { render(body); modal.classList.remove('hidden'); closeBtn?.focus(); };
+  const open = () => {
+    render(body);
+    // After render, because the mount point only exists once the panels are in
+    // the DOM. Every open rebuilds it, so a quarantine reason or a SHA that
+    // changed since the last open is current without any subscription here.
+    extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
+    modal.classList.remove('hidden');
+    closeBtn?.focus();
+  };
   const close = () => modal.classList.add('hidden');
 
   if (btn) btn.addEventListener('click', open);
