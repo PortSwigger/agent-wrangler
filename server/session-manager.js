@@ -1502,7 +1502,7 @@ export class SessionManager {
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
     const autoCompactError = autoCompactTokensError(autoCompactTokens);
     if (autoCompactError) throw new Error(autoCompactError);
-    const normalizedAutoCompactTokens = autoCompactTokens == null ? undefined : autoCompactTokens;
+    const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray

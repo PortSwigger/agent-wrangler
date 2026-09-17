@@ -332,12 +332,20 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
 
 test('autoCompactTokensError accepts the documented range and rejects invalid values', () => {
   assert.equal(autoCompactTokensError(undefined), null);
+  assert.equal(autoCompactTokensError(null), null);
+  assert.equal(autoCompactTokensError(''), null);
   assert.equal(autoCompactTokensError(100000), null);
   assert.equal(autoCompactTokensError(1000000), null);
   assert.match(autoCompactTokensError(99999), /100000/);
   assert.match(autoCompactTokensError(1000001), /1000000/);
   assert.match(autoCompactTokensError(200000.5), /whole number/);
   assert.match(autoCompactTokensError('200000'), /whole number/);
+});
+
+test('dispatch omits a blank auto-compaction threshold from the persisted entry', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', autoCompactTokens: '' });
+  assert.equal(Object.hasOwn(sm.map.get(sessionId), 'autoCompactTokens'), false);
 });
 
 test('resumeEntry drops archivedAt, snooze, suspendedAt, and suspendPending — resume returns to the board live and un-suspended', () => {
