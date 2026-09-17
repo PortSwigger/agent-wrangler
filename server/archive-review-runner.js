@@ -1,8 +1,5 @@
-import os from 'node:os';
-import crypto from 'node:crypto';
-import { execFile as defaultExecFile } from 'node:child_process';
 import { findTranscript, readLines, textOf, usageSince } from './transcript-reader.js';
-import { cleanClaudeEnv } from './agents/claude.js';
+import { runHeadlessClaude } from './headless-claude.js';
 import { archiveReviewEnabled } from './config-store.js';
 
 // Best-effort, background enrichment of a task's memory.md, triggered from
@@ -113,47 +110,12 @@ HARD RULES:
 - Most sessions teach nothing durable. If there is nothing durable worth recording, output exactly: NONE — this is the expected, common outcome, not a failure.
 - Output the bullets only. No preamble, no heading, no closing summary.`;
 
-const DISALLOWED_TOOLS = [
-  'Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch',
-  'WebSearch', 'Task', 'Agent', 'TodoWrite', 'BashOutput', 'KillShell', 'Skill',
-  'SlashCommand',
-];
-
-// Spawn the headless Haiku reviewer. Returns { text, liveSessionId, error }.
-// `liveSessionId` (a fresh uuid, never `--no-session-persistence`) is what lets
-// this review's spend land in `entry.priorLiveSessionIds` — the existing cost
-// scanners (usage-report.js, cost-report.mjs) already walk that field, so the
-// spend is visible for free, and the transcript survives for debugging what
-// Haiku actually saw. `execFile` (not shell) with the excerpt on stdin, so
-// there's no argv length limit and no shell-quoting surface.
-export async function reviewExcerpt(excerpt, {
-  execFile = defaultExecFile,
-  timeoutMs = 120000,
-} = {}) {
-  const liveSessionId = crypto.randomUUID();
-  const args = [
-    '-p', '--model', 'haiku',
-    '--strict-mcp-config',
-    '--setting-sources', '',
-    '--disallowed-tools', DISALLOWED_TOOLS.join(' '),
-    '--session-id', liveSessionId,
-    '--output-format', 'json',
-    EXTRACTION_PROMPT,
-  ];
-  return new Promise((resolve) => {
-    const child = execFile('claude', args, {
-      cwd: os.tmpdir(),
-      env: cleanClaudeEnv(),
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-    }, (err, stdout) => {
-      if (err) { resolve({ text: null, liveSessionId, error: err }); return; }
-      let parsed;
-      try { parsed = JSON.parse(stdout); } catch (e) { resolve({ text: null, liveSessionId, error: e }); return; }
-      resolve({ text: typeof parsed.result === 'string' ? parsed.result.trim() : null, liveSessionId, error: null });
-    });
-    child.stdin.end(excerpt);
-  });
+// Spawn the headless Haiku reviewer (see headless-claude.js for why it uses
+// `--session-id <fresh uuid>`, whose id lands in `entry.priorLiveSessionIds`
+// so the review's spend is costed with the session it reviewed). Returns
+// { text, liveSessionId, error }.
+export function reviewExcerpt(excerpt, opts = {}) {
+  return runHeadlessClaude(EXTRACTION_PROMPT, excerpt, opts);
 }
 
 function sectionFor(text, label) {
