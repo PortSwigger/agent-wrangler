@@ -257,7 +257,9 @@ export function shouldReloadWorkflowSkill(workflow) {
 // returns to the board) while preserving the durable bits of the prior entry. Split
 // out so the carry-forward set is unit-testable — provenance (forkedFrom, spawnedBy,
 // nameInherited — the [FORK] marker must survive an idle-suspend on a still-unnamed
-// fork), the worktree it lives in, the autopilot `workflow` marker (a multi-hour run
+// fork), the worktree it lives in, the extra `--add-dir` grants it launched with (a
+// sandboxed agent that loses them mid-run can no longer reach the paths its work
+// depends on), the autopilot `workflow` marker (a multi-hour run
 // that hits the idle-suspend would otherwise lose its phase chip on resume), any
 // attached links (a PR/Jira link attached before an idle-suspend must survive the
 // resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
@@ -291,6 +293,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
     worktree: prev?.worktree,
+    addDirs: prev?.addDirs,
     workflow: prev?.workflow,
     parentSession: prev?.parentSession,
     runtime: prev?.runtime,
@@ -998,7 +1001,7 @@ export class SessionManager {
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
-    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, []);
+    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
@@ -1313,10 +1316,11 @@ export class SessionManager {
   // trap a session on a corpse and never re-offer Resume. So we classify per pane:
   // a session is alive if any of its panes is not dead, otherwise it's dead.
   async refreshAlive() {
-    this.alive = new Set();
-    this.dead = new Set();
-    this.deadStatus = new Map();
-    this.socketByName = new Map();
+    // Readers keep the last complete snapshot while tmux is being queried.
+    // Publishing empty/partial sets here meant a concurrent liveness reader
+    // during the tmux query saw every pane as dead.
+    const alive = new Set(), dead = new Set();
+    const deadStatusByName = new Map(), socketByName = new Map();
     // Scan this install's socket plus the default socket while legacy sessions
     // remain there. Each socket is a separate tmux server, so we query each and
     // remember which socket every session was found on (for attach/kill/capture).
@@ -1335,12 +1339,16 @@ export class SessionManager {
         const [name, dead, deadStatus] = line.split('\x1f');
         if (!name) continue;
         seen.add(name);
-        this.socketByName.set(name, socket);
-        if ((dead || '').trim() !== '1') this.alive.add(name);
-        else if (deadStatus !== undefined && deadStatus.trim() !== '') this.deadStatus.set(name, Number(deadStatus));
+        socketByName.set(name, socket);
+        if ((dead || '').trim() !== '1') alive.add(name);
+        else if (deadStatus !== undefined && deadStatus.trim() !== '') deadStatusByName.set(name, Number(deadStatus));
       }
-      for (const name of seen) if (!this.alive.has(name)) this.dead.add(name);
+      for (const name of seen) if (!alive.has(name)) dead.add(name);
     }
+    this.alive = alive;
+    this.dead = dead;
+    this.deadStatus = deadStatusByName;
+    this.socketByName = socketByName;
     // An agent exiting on its own is the event nothing recorded before this: a
     // claude that launched and died 19s later left no trace of either end. A
     // deliberate kill removes the tmux outright rather than leaving a dead pane,
@@ -1538,6 +1546,10 @@ export class SessionManager {
     // resolved real task/scratch directory returned by the binder. dispatch mints
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    // Keep the grants the dispatch ASKED for, before the codex worktree git-dir is
+    // folded in: that one is derived from the worktree on every launch, so storing
+    // it would only let resume grant the same path twice.
+    const grantedDirs = addDirs;
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
     // Awaited, and deliberately ahead of both the skill gate and the launch: the
     // card id, cwd and worktree are settled but nothing has started, so this is
@@ -1571,7 +1583,7 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
