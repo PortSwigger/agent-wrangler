@@ -57,8 +57,7 @@ Pass `auto_compact_tokens` to opt the new session into an immutable auto-compact
 threshold. Use a whole-token value from 100000 through 1000000, for example
 `auto_compact_tokens: 200000`. Omit it to preserve the provider default. The threshold
 is retained if the session is resumed and inherited if it is forked; there is no API to
-change it later. Claude accepts the full range; Codex applies the model's own effective
-context ceiling, so a high value can be clamped by Codex rather than expanding its context window.
+change it later. The threshold does not expand the model's actual context window.
 
 ## Placement
 

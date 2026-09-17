@@ -34,7 +34,7 @@ otherwise it behaves exactly as a Claude-only board.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
 - **Optional working-context budget** — set an auto-compaction threshold per session in Advanced
-  options (100k–1M tokens for Claude; Codex applies its model-specific ceiling). It is unset by default,
+  options (100k–1M tokens). It is unset by default,
   retained across resumes, and inherited by forks.
 - **Chat and Terminal views** — chat reads dormant and exited sessions via transcript, while
   terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
