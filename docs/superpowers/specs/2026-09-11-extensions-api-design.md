@@ -510,7 +510,7 @@ persists something the agent's very first tool call depends on (a receipt that
 needs an owner before the agent can file against it) cannot use `onDispatch`,
 which fires after the entry is saved and therefore after the process is already
 running. It gets the dispatch's own shape — `{sessionId, cwd, agent, intent,
-model, effort, worktree, workflow, spawnedBy, parentSession}` — because there is
+model, effort, autoCompactTokens, worktree, workflow, spawnedBy, parentSession}` — because there is
 no entry to hand it. A throw is logged and the dispatch continues.
 
 A manifest declares only the hooks it needs. The checklist, as and when it

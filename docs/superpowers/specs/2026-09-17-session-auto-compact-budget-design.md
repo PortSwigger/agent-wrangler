@@ -26,4 +26,4 @@ Legacy mappings lacking the property remain valid. Unset dispatches produce the 
 
 ## Extensions API
 
-The extensions API currently lives on an unmerged branch, not `main`, so this change does not depend on it or modify it. Once merged, an extension can use the documented `spawn_session.auto_compact_tokens` opt-in surface.
+Extensions can use the documented `spawn_session.auto_compact_tokens` opt-in surface. The `onBeforeDispatch` payload also exposes the selected `autoCompactTokens` value (or `null` when unset), alongside the other launch settings; it is informational and cannot alter the launch or persisted threshold.
