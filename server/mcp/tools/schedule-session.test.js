@@ -113,6 +113,14 @@ test('a dispatch schedule refuses a model the chosen agent does not offer', asyn
   assert.equal(d.calls.rebuild, 0);
 });
 
+test('a dispatch schedule persists its auto-compaction threshold', async () => {
+  const d = deps();
+  await scheduleSessionTool.handler(
+    { deps: d, caller: 'CARD_T' },
+    { at: '2026-06-25T15:00:00Z', intent: 'do the thing', auto_compact_tokens: 200000 });
+  assert.equal(d.calls.create[0].payload.action.dispatch.autoCompactTokens, 200000);
+});
+
 test('a dispatch schedule refuses an unknown agent', async () => {
   const d = deps();
   const out = await scheduleSessionTool.handler(

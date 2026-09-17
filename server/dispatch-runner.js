@@ -1,4 +1,5 @@
 import { launchTargetError } from './agents/index.js';
+import { autoCompactTokensError } from './session-manager.js';
 import { workflowLaunchPrompt } from './workflow.js';
 import { slugFromIntent } from './worktree.js';
 
@@ -47,6 +48,8 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
   // reaches here and keeps working (see performSpawn's own comment).
   const badTarget = launchTargetError(opts.agent || 'claude', opts.model);
   if (badTarget) throw new Error(badTarget);
+  const autoCompactError = autoCompactTokensError(opts.autoCompactTokens);
+  if (autoCompactError) throw new Error(autoCompactError);
   // Autopilot (issue→PR) mode: wrap the raw issue into a skill-naming imperative
   // (so the run goes through the tracked procedure, not freelance prose) and force
   // a fresh auto worktree on — a fleet of runs must never share a checkout. We pass
@@ -61,6 +64,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
     intent,
     model: opts.model,
     effort: opts.effort,
+    autoCompactTokens: opts.autoCompactTokens,
     agent: opts.agent || 'claude',
     runtime: opts.runtime || 'local',
     addDirs: opts.addDirs || [],

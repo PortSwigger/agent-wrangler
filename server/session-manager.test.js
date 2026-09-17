@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   archivableExits, forkEntry, buildInnerCommand, SESSIONS_DIR, resolveWorktree, SessionManager, resumePlan,
-  resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions,
+  resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions, autoCompactTokensError,
   shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf,
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
@@ -130,6 +130,11 @@ test('forkEntry: inherits parent intent/model, records provenance, no custom nam
     createdAt: 123, forkedFrom: 'parent-O', liveSessionId: undefined, runtime: undefined,
     mailCapable: true,
   });
+});
+
+test('forkEntry inherits the parent auto-compaction threshold', () => {
+  const entry = forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: { autoCompactTokens: 250000 }, parentId: 'p', createdAt: 1 });
+  assert.equal(entry.autoCompactTokens, 250000);
 });
 
 test('forkEntry: a provided title sets a trimmed custom name', () => {
@@ -300,6 +305,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     autoFixPrChecks: false,
     autoMergeOnPass: true,
     childFullView: true,
+    autoCompactTokens: 250000,
     nameInherited: true,
     priorLiveSessionIds: ['CLEARED1'],
   };
@@ -317,10 +323,21 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.equal(e.autoFixPrChecks, false); // an explicit opt-out must not silently revert to the on-default
   assert.equal(e.autoMergeOnPass, true); // ditto for an explicit opt-in surviving a workflow run's idle-suspend
   assert.equal(e.childFullView, true); // ditto for a child's full-view override
+  assert.equal(e.autoCompactTokens, 250000);
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
   assert.equal(e.liveSessionId, 'L');
   assert.equal(e.intent, 'fix');
   assert.equal(e.createdAt, 100);
+});
+
+test('autoCompactTokensError accepts the documented range and rejects invalid values', () => {
+  assert.equal(autoCompactTokensError(undefined), null);
+  assert.equal(autoCompactTokensError(100000), null);
+  assert.equal(autoCompactTokensError(1000000), null);
+  assert.match(autoCompactTokensError(99999), /100000/);
+  assert.match(autoCompactTokensError(1000001), /1000000/);
+  assert.match(autoCompactTokensError(200000.5), /whole number/);
+  assert.match(autoCompactTokensError('200000'), /whole number/);
 });
 
 test('resumeEntry drops archivedAt, snooze, suspendedAt, and suspendPending — resume returns to the board live and un-suspended', () => {
@@ -564,6 +581,21 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
     cwd: os.tmpdir(),
   });
   assert.match(captured, /'--effort' 'low'/);
+});
+
+test('fork() re-threads the parent auto-compaction threshold into buildFork', async () => {
+  const sm = new SessionManager();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  const { sessionId } = await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'claude', cwd: os.tmpdir(), autoCompactTokens: 300000 },
+    cwd: os.tmpdir(),
+  });
+  assert.match(captured, /'--autocompact' '300000'/);
+  assert.equal(sm.map.get(sessionId).autoCompactTokens, 300000);
 });
 
 // Trust is no longer part of the launch command (verified against the real
@@ -1029,6 +1061,17 @@ test('resume() re-grants the persisted entry.addDirs, and keeps them on the rebu
   assert.deepEqual(sm.map.get('card-git-access').addDirs, ['/projects/main/.git']);
 });
 
+test('resume() re-threads the persisted auto-compaction threshold into buildResume', async () => {
+  const sm = resumableCodex('card-compact');
+  sm.map.get('card-compact').autoCompactTokens = 400000;
+  let captured = '';
+  sm.killForSession = async () => [];
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-compact', os.tmpdir());
+  assert.match(captured, /'model_auto_compact_token_limit=400000'/);
+  assert.equal(sm.map.get('card-compact').autoCompactTokens, 400000);
+});
+
 // Trust is no longer part of the launch command (verified against the real
 // Codex binary that a `-c projects.<path>.trust_level` override is silently
 // ignored by its interactive trust dialog) — resume() instead calls
@@ -1417,6 +1460,23 @@ test('dispatch persists entry.effort and passes it to buildLaunch', async () => 
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', effort: 'high' });
   assert.equal(sm.map.get(sessionId).effort, 'high');
   assert.match(captured, /--effort' 'high'/);
+});
+
+test('dispatch persists auto-compaction threshold and passes it to buildLaunch', async () => {
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', autoCompactTokens: 200000 });
+  assert.equal(sm.map.get(sessionId).autoCompactTokens, 200000);
+  assert.match(captured, /'--autocompact' '200000'/);
+});
+
+test('dispatch rejects an invalid auto-compaction threshold before launching', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  sm._newSession = async () => { launched = true; };
+  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), intent: 'x', autoCompactTokens: 90000 }), /100000/);
+  assert.equal(launched, false);
 });
 
 test('dispatch passes Codex the real task memory root, never the by-session symlink', async () => {

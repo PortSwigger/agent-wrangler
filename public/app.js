@@ -5293,6 +5293,7 @@ function fillPicker(p) {
 function readDispatchFields() {
   const sel = document.getElementById('m-model');
   const model = sel.value.trim();
+  const autoCompactTokens = document.getElementById('m-auto-compact-tokens').value.trim();
   const wfOn = dispatchMode === 'workflow';
   const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   // !reviewMode makes the "a review never creates a worktree" invariant explicit
@@ -5307,6 +5308,7 @@ function readDispatchFields() {
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
+    autoCompactTokens: autoCompactTokens === '' ? undefined : Number(autoCompactTokens),
     agent,
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
@@ -5358,6 +5360,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
     : (selected ? cwdForTask(selected) : '');
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   document.getElementById('m-intent').value = d.intent || '';
+  document.getElementById('m-auto-compact-tokens').value = d.autoCompactTokens || '';
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;

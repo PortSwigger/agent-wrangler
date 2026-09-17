@@ -327,6 +327,8 @@
         <div class="advanced-options-body">
           <label>Effort</label>
           <select id="m-effort"></select>
+          <label for="m-auto-compact-tokens">Auto-compaction threshold (tokens)</label>
+          <input id="m-auto-compact-tokens" type="number" min="100000" max="1000000" step="1000" placeholder="Optional; 100k–1M working context budget" />
           <label>Runtime</label>
           <select id="m-runtime">
             <option value="local">Local (host)</option>

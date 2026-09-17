@@ -21,7 +21,7 @@ test('dispatch modal keeps the primary form compact and puts optional controls i
   assert.match(dispatch, /<details class="advanced-options" id="m-advanced-options">/);
 
   const advancedMarkup = dispatch.slice(advanced);
-  for (const id of ['m-effort', 'm-runtime', 'm-wf-auto-merge']) {
+  for (const id of ['m-effort', 'm-runtime', 'm-auto-compact-tokens', 'm-wf-auto-merge']) {
     assert.match(advancedMarkup, new RegExp(`id="${id}"`));
   }
 });
