@@ -48,7 +48,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
   // reaches here and keeps working (see performSpawn's own comment).
   const badTarget = launchTargetError(opts.agent || 'claude', opts.model);
   if (badTarget) throw new Error(badTarget);
-  const autoCompactError = autoCompactTokensError(opts.autoCompactTokens);
+  const autoCompactError = autoCompactTokensError(opts.autoCompactTokens, opts.agent || 'claude');
   if (autoCompactError) throw new Error(autoCompactError);
   // Autopilot (issue→PR) mode: wrap the raw issue into a skill-naming imperative
   // (so the run goes through the tracked procedure, not freelance prose) and force

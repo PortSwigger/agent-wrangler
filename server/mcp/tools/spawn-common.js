@@ -29,7 +29,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // never supplied would break the inheritance this tool is meant to provide.
   const badTarget = launchTargetError(agent, args.model);
   if (badTarget) return errorResult(badTarget);
-  const autoCompactError = autoCompactTokensError(args.auto_compact_tokens);
+  const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
   if (autoCompactError) return errorResult(autoCompactError);
 
   // Default the new session's model to the CALLER's model when none was given,

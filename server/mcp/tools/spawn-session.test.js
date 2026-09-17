@@ -113,6 +113,12 @@ test('spawn_session passes auto_compact_tokens through as the session threshold'
   assert.equal(d.calls.dispatch[0].autoCompactTokens, 200000);
 });
 
+test('spawn_session accepts Codex’s 50k auto-compaction threshold', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', auto_compact_tokens: 50000 });
+  assert.equal(d.calls.dispatch[0].autoCompactTokens, 50000);
+});
+
 test('spawn_session rejects an out-of-range auto_compact_tokens value before dispatch', async () => {
   const d = deps();
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', auto_compact_tokens: 99999 });

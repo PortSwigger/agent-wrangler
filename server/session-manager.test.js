@@ -330,12 +330,14 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.equal(e.createdAt, 100);
 });
 
-test('autoCompactTokensError accepts the documented range and rejects invalid values', () => {
+test('autoCompactTokensError accepts Codex 50k and keeps Claude at its documented minimum', () => {
   assert.equal(autoCompactTokensError(undefined), null);
   assert.equal(autoCompactTokensError(null), null);
   assert.equal(autoCompactTokensError(''), null);
   assert.equal(autoCompactTokensError(100000), null);
   assert.equal(autoCompactTokensError(1000000), null);
+  assert.equal(autoCompactTokensError(50000, 'codex'), null);
+  assert.match(autoCompactTokensError(50000, 'claude'), /100000/);
   assert.match(autoCompactTokensError(99999), /100000/);
   assert.match(autoCompactTokensError(1000001), /1000000/);
   assert.match(autoCompactTokensError(200000.5), /whole number/);

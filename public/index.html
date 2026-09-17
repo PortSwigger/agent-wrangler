@@ -327,8 +327,15 @@
         <div class="advanced-options-body">
           <label>Effort</label>
           <select id="m-effort"></select>
-          <label for="m-auto-compact-tokens">Auto-compaction threshold (tokens)</label>
-          <input id="m-auto-compact-tokens" type="number" min="100000" max="1000000" step="1" placeholder="Optional; Claude 100k–1M; Codex default scope caps lower" />
+          <label>Auto-compaction threshold</label>
+          <div class="auto-compact-presets" id="m-auto-compact-presets" role="group" aria-label="Auto-compaction threshold">
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="">Default</button>
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="50000">50k</button>
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="100000">100k</button>
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="250000">250k</button>
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="500000">500k</button>
+            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="1000000">1m</button>
+          </div>
           <label>Runtime</label>
           <select id="m-runtime">
             <option value="local">Local (host)</option>

@@ -21,10 +21,15 @@ test('dispatch modal keeps the primary form compact and puts optional controls i
   assert.match(dispatch, /<details class="advanced-options" id="m-advanced-options">/);
 
   const advancedMarkup = dispatch.slice(advanced);
-  for (const id of ['m-effort', 'm-runtime', 'm-auto-compact-tokens', 'm-wf-auto-merge']) {
+  for (const id of ['m-effort', 'm-runtime', 'm-auto-compact-presets', 'm-wf-auto-merge']) {
     assert.match(advancedMarkup, new RegExp(`id="${id}"`));
   }
-  assert.match(advancedMarkup, /id="m-auto-compact-tokens" type="number" min="100000" max="1000000" step="1"/);
+  assert.doesNotMatch(advancedMarkup, /id="m-auto-compact-tokens"/);
+  assert.match(advancedMarkup, /data-auto-compact-tokens="50000"[^>]*>50k<\/button>/);
+  assert.match(advancedMarkup, /data-auto-compact-tokens="100000"[^>]*>100k<\/button>/);
+  assert.match(advancedMarkup, /data-auto-compact-tokens="250000"[^>]*>250k<\/button>/);
+  assert.match(advancedMarkup, /data-auto-compact-tokens="500000"[^>]*>500k<\/button>/);
+  assert.match(advancedMarkup, /data-auto-compact-tokens="1000000"[^>]*>1m<\/button>/);
 });
 
 test('workflow mode presentation updates the compact control and contextual copy', () => {

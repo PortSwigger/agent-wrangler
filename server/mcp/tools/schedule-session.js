@@ -36,7 +36,7 @@ export const scheduleSessionTool = {
     into: z.string().optional().describe('dispatch: task id to put the new session on. Defaults to your current task.'),
     worktree: z.boolean().optional().describe('dispatch: launch in a fresh git worktree (auto-suffixed for recurring schedules).'),
     workflow: z.boolean().optional().describe('dispatch: run the issue→PR autopilot on `intent` as the issue.'),
-    auto_compact_tokens: z.number().int().min(100000).max(1000000).optional().describe('dispatch: optional immutable auto-compaction threshold / working context budget in tokens (100000–1000000).'),
+    auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('dispatch: optional immutable auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only).'),
     // session fields
     target_session: z.string().optional().describe('session: target session id (card id from list_sessions). Defaults to YOU, the caller.'),
     message: z.string().optional().describe('session: optional text — the relaunch prompt if the target is dormant, or the text injected into its terminal if it\'s live.'),
@@ -71,7 +71,7 @@ export const scheduleSessionTool = {
       const agent = args.agent || 'claude';
       const badTarget = launchTargetError(agent, args.model);
       if (badTarget) return errorResult(badTarget);
-      const autoCompactError = autoCompactTokensError(args.auto_compact_tokens);
+      const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
       if (autoCompactError) return errorResult(autoCompactError);
       // Default the task to the caller's current task, like spawn_session.
       const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;

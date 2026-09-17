@@ -32,10 +32,11 @@ const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
 // (the "branch bleeding between sessions" bug). DATA_DIR isn't a git repo.
 export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
-export function autoCompactTokensError(value) {
+export function autoCompactTokensError(value, agent = 'claude') {
   if (value == null || value === '') return null;
   if (!Number.isInteger(value)) return 'Auto-compaction threshold must be a whole number of tokens.';
-  if (value < 100000 || value > 1000000) return 'Auto-compaction threshold must be between 100000 and 1000000 tokens.';
+  const min = agent === 'codex' ? 50000 : 100000;
+  if (value < min || value > 1000000) return `Auto-compaction threshold must be between ${min} and 1000000 tokens.`;
   return null;
 }
 
@@ -1500,7 +1501,7 @@ export class SessionManager {
   async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
-    const autoCompactError = autoCompactTokensError(autoCompactTokens);
+    const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     const trimmed = cwd && expandTilde(String(cwd).trim());
