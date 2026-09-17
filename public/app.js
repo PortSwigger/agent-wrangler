@@ -5570,13 +5570,6 @@ function connect() {
       if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
       else toast('Worktree removed');
     }
-    else if (msg.type === 'worktree-remove-blocked') {
-      confirmDialog({
-        title: 'Git refused to remove the worktree',
-        body: `Git wouldn't remove the worktree:\n\n${msg.reason}\n\nForce-delete it anyway? Any uncommitted or untracked files in it will be lost.`,
-        okLabel: 'Force delete',
-      }).then((result) => { if (result === 'ok') send({ type: 'worktree-remove', sessionId: msg.sessionId, force: true }); });
-    }
     else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
     else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`);
     else if (msg.type === 'branch-delete-blocked') {

@@ -404,17 +404,12 @@ test('removeWorktree: removes a clean worktree directory', async () => {
   assert.equal(fs.existsSync(wt.path), false);
 });
 
-test('removeWorktree: blocks a dirty worktree without force, succeeds with force', async () => {
+test('removeWorktree: removes a dirty worktree (modified and untracked files) outright', async () => {
   const { repo } = tempRepo();
   const wt = await createWorktree({ cwd: repo, branch: 'rm-dirty', auto: false });
   fs.writeFileSync(path.join(wt.path, 'README.md'), '# dirty\n'); // modify a tracked file
-  const blocked = await removeWorktree({ worktreePath: wt.path, repoRoot: repo });
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.blocked, true);
-  assert.ok(blocked.reason);
-  assert.equal(fs.existsSync(wt.path), true); // not removed
-  const forced = await removeWorktree({ worktreePath: wt.path, repoRoot: repo, force: true });
-  assert.deepEqual(forced, { ok: true });
+  fs.writeFileSync(path.join(wt.path, 'scratch.log'), 'junk\n'); // and leave an untracked one
+  assert.deepEqual(await removeWorktree({ worktreePath: wt.path, repoRoot: repo }), { ok: true });
   assert.equal(fs.existsSync(wt.path), false);
 });
 
@@ -424,7 +419,7 @@ test('removeWorktree: an already-removed dir is a no-op success', async () => {
   assert.deepEqual(await removeWorktree({ worktreePath: gone, repoRoot: repo }), { ok: true, alreadyGone: true });
 });
 
-test('removeWorktree: blocks a worktree containing a submodule, succeeds with force', async () => {
+test('removeWorktree: removes a worktree containing a submodule outright', async () => {
   const { root, repo } = tempRepo();
   const { repo: subrepo } = tempRepo();
   const wt = await createWorktree({ cwd: repo, branch: 'rm-submodule', auto: false });
@@ -432,13 +427,7 @@ test('removeWorktree: blocks a worktree containing a submodule, succeeds with fo
   const git = (...a) => execFileSync('git', ['-C', wt.path, ...a], { stdio: 'pipe', env: { ...process.env, HOME: root } });
   git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'protocol.file.allow=always', 'submodule', 'add', subrepo, 'sub');
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'add submodule');
-  const blocked = await removeWorktree({ worktreePath: wt.path, repoRoot: repo });
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.blocked, true);
-  assert.ok(blocked.reason);
-  assert.equal(fs.existsSync(wt.path), true);
-  const forced = await removeWorktree({ worktreePath: wt.path, repoRoot: repo, force: true });
-  assert.deepEqual(forced, { ok: true });
+  assert.deepEqual(await removeWorktree({ worktreePath: wt.path, repoRoot: repo }), { ok: true });
   assert.equal(fs.existsSync(wt.path), false);
 });
 

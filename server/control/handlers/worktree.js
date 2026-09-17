@@ -2,8 +2,9 @@ import { removeWorktree, deleteBranch, repoRootForWorktree, branchExists } from 
 
 // Cleanup offered after archiving a session that ran in a wrangler-created
 // worktree. The mapping entry survives archive, so entry.worktree is still
-// resolvable here. Both handlers surface a "blocked" reply (dirty worktree /
-// unmerged branch) so the client can re-send with force on explicit confirmation.
+// resolvable here. Removal discards uncommitted files outright (see
+// removeWorktree); branch deletion surfaces a "blocked" reply for an unmerged
+// branch so the client can re-send with force on explicit confirmation.
 
 export const worktreeRemoveHandler = {
   type: 'worktree-remove',
@@ -15,11 +16,7 @@ export const worktreeRemoveHandler = {
     }
     try {
       const repoRoot = await repoRootForWorktree(wt);
-      const res = await removeWorktree({ worktreePath: wt.path, repoRoot, force: Boolean(msg.force) });
-      if (res.blocked) {
-        ctx.reply({ type: 'worktree-remove-blocked', sessionId: msg.sessionId, reason: res.reason });
-        return;
-      }
+      await removeWorktree({ worktreePath: wt.path, repoRoot });
       // Re-check the branch so the follow-up toast only offers branch deletion when
       // there's a branch left to delete.
       const stillBranch = Boolean(repoRoot && wt.branch && (await branchExists(repoRoot, wt.branch)));
