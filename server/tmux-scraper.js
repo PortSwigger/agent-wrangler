@@ -277,28 +277,82 @@ const BACKGROUND_SHELL_PATTERNS = {
   codex: /\d+\s+background terminals?\s+running/i,
 };
 
+// A user's custom statusline (see the `statusline-builder` plugin) renders
+// independently SELECTABLE and REORDERABLE components joined by " | " — e.g.
+// `◆ Sonnet 5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`, but a user who only wants
+// the context bar, or who puts it first, is equally valid. So a segment is
+// never identified by its POSITION (not "before the first pipe", not "the
+// second segment") — each is identified by its own leading marker, which is
+// fixed by the template regardless of what else is on the line or where:
+// the model badge always starts with one of `⚠ ✦ ◆ ⬦` (one per model family,
+// including the "unknown model" fallback), and the context bar is always a
+// run of `█`/`░` block characters immediately before the percentage. Neither
+// marker is used by any other component (cost/git/dir/project/version/auth
+// all lead with their own distinct emoji), so this is unambiguous.
+//
+// MODEL_SEGMENT requires the glyph AND the rest of the segment to look like an
+// actual model label (letters/digits/spaces/×/-, tightly bounded) — not just a
+// leading glyph. A leading-glyph-only check was tried and is unsafe: caught by
+// adversarial review, a real "⚠ Warning: rate limited, retrying in 5s..." tool/
+// assistant line matches a bare `/^[⚠✦◆⬦]/` and would be reported as the model.
+// Every real label this matches against ("Sonnet 5", "Claude Fable 5 2×opus",
+// …) is well within this shape; ordinary prose almost never is (colons,
+// ellipses, and sentence punctuation are exactly what this excludes). Only the
+// generator's own two block characters are accepted for the context bar too —
+// ▓/▒ were previously included for extra generality no real installation
+// produces, which only widened the same collision surface for no capability.
+const MODEL_GLYPH = /^[⚠✦◆⬦]/;
+const MODEL_SEGMENT = /^[⚠✦◆⬦]\s*[\p{L}\p{N}][\p{L}\p{N} ×-]{0,38}$/u;
+const CONTEXT_BAR = /^[█░]+\s*(\d{1,3})%$/;
+
+// Split the pane's last recognisable status-bar-shaped line into trimmed
+// segments — shared by paneModelLabel and paneContextPercent so the two can
+// never disagree about which line is the status bar. Scans from the BOTTOM
+// (the bar is always the last thing rendered) and requires at least one
+// segment matching a marker we actually consume, so ordinary conversation
+// text (which has neither marker) is never mistaken for it. Splitting on `|`
+// degrades gracefully to one segment when the user has only one component
+// selected — a statusline with no other component has no pipe at all.
+function statusBarSegments(paneText) {
+  if (typeof paneText !== 'string') return null;
+  const lines = stripAnsi(paneText).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const segments = lines[i].split('|').map((s) => s.trim()).filter(Boolean);
+    if (segments.some((s) => MODEL_SEGMENT.test(s) || CONTEXT_BAR.test(s))) return segments;
+  }
+  return null;
+}
+
 // The model named in the TUI's own status bar — the ONLY live source for it.
 // A `/model` switch is not recorded in the transcript at all (verified: the line
 // types written are the command's own plumbing, none carrying a model), so the
 // board's `modelPill` — derived from the last assistant message's `message.model`
 // — keeps reporting the OLD model until the next turn actually runs. That made
 // the chat view's chip contradict the pane sitting next to it.
-//
-// The status bar looks like `◆ Sonnet 5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`.
-// Identified by the context meter's percentage next to a pipe rather than by
-// position, so it is not confused with conversation text, and the LAST match
-// wins because the bar is at the bottom. The leading glyph varies (✦, ◆) so it
-// is stripped as "everything before the first letter or digit" rather than
-// matched against a list that a new glyph would silently break.
 export function paneModelLabel(paneText) {
-  if (typeof paneText !== 'string') return null;
-  const line = stripAnsi(paneText).split('\n').filter((l) => /\|/.test(l) && /\d+%/.test(l)).pop();
-  if (!line) return null;
-  const first = line.slice(0, line.indexOf('|'));
-  const label = first.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+  const segments = statusBarSegments(paneText);
+  const segment = segments?.find((s) => MODEL_SEGMENT.test(s));
+  if (!segment) return null;
+  const label = segment.replace(MODEL_GLYPH, '').trim();
   // Bounded, and rejected outright if it is not the shape of a model name — a
   // wrong label here would misreport live state, so no label beats a bad one.
   return label && label.length <= 40 ? label : null;
+}
+
+// The context-window percentage the same status bar shows, when the user has
+// the context component enabled — there is no fallback source for this one
+// anywhere else in the codebase (unlike the model, which the transcript-
+// derived pill also names, just less freshly). Absent the statusline (no
+// custom statusline at all, the context component deselected, a dormant
+// session, or any Codex session — a different TUI with no such bar) this is
+// simply null and the chip stays hidden, never a guess.
+export function paneContextPercent(paneText) {
+  const segments = statusBarSegments(paneText);
+  const segment = segments?.find((s) => CONTEXT_BAR.test(s));
+  const match = segment?.match(CONTEXT_BAR);
+  if (!match) return null;
+  const pct = Number(match[1]);
+  return pct >= 0 && pct <= 100 ? pct : null;
 }
 
 export function hasBackgroundShell(paneText, agent = 'claude') {

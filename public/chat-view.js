@@ -266,6 +266,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // three are held here and consulted together by renderLive() rather than
   // either call site deciding on its own partial view.
   let lastStatus = null;
+  let lastWaitingReason = null;
   let lastPending = null;
   let lastTs = null;
   // Claude Code's suggested next prompt, scraped off the pane server-side (see
@@ -280,6 +281,39 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let graphModel = null;
   let graphSwitchable = false;
   let liveModel = null;
+  // Context-window occupancy has NO transcript-derived fallback (unlike the
+  // model) — see server/control/handlers/chat.js. So there is only ever one
+  // source, and it is null (chip hidden) whenever it cannot be read: a dormant
+  // Claude card, a Claude statusline without a context component, or (for
+  // Codex, whose value comes from the rollout+its own cached model metadata,
+  // never a pane) a model missing from that cache.
+  let liveContextPercent = null;
+  // Built here rather than as static markup in index.html, same reasoning as
+  // the live row in chat-dom.js: only the outer container needs a stable id,
+  // and building the track/fill/label once means the render function only
+  // ever touches a width, a text node and one data attribute.
+  const contextBarEl = document.getElementById('chat-context-bar');
+  const contextBarTrack = document.createElement('span');
+  contextBarTrack.className = 'chat-context-bar-track';
+  const contextBarFill = document.createElement('span');
+  contextBarFill.className = 'chat-context-bar-fill';
+  contextBarTrack.appendChild(contextBarFill);
+  const contextBarLabel = document.createElement('span');
+  contextBarLabel.className = 'chat-context-bar-label';
+  contextBarEl.appendChild(contextBarTrack);
+  contextBarEl.appendChild(contextBarLabel);
+
+  function renderContextBar() {
+    const pct = liveContextPercent;
+    contextBarEl.hidden = pct == null;
+    if (pct == null) return;
+    contextBarFill.style.width = `${pct}%`;
+    contextBarLabel.textContent = `${pct}%`;
+    // Same 50%/70% thresholds as the terminal statusline bar this mirrors, so
+    // the two surfaces never disagree about what "getting full" means.
+    contextBarEl.dataset.level = pct < 50 ? 'ok' : pct < 70 ? 'warn' : 'danger';
+    contextBarEl.setAttribute('title', `Context window ~${pct}% used`);
+  }
 
   function renderModel() {
     const label = liveModel || graphModel?.label;
@@ -331,6 +365,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   function liveLabel(pending) {
     if (!pending) return 'Working';
     return `${pending.name}${pending.target ? `: ${pending.target}` : ''}`;
+  }
+
+  // Every other needs-you reason (a permission prompt, OAuth, a Codex update
+  // banner, a devcontainer failure) is a genuine terminal matter: Send is
+  // disabled because a prompt typed here would land nowhere. An api-error
+  // needs-you is different — the turn already ended cleanly and the pane is
+  // idle, so a normal send is how you retry. Single source of truth for that
+  // exception, shared by setStatus/renderSuggestion/renderSendability so they
+  // can't drift on which needs-you reasons still block.
+  function blockedByNeedsYou() {
+    return lastStatus === 'needs-you' && lastWaitingReason !== 'api-error';
   }
 
   function renderLive() {
@@ -386,7 +431,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // discard something the human was in the middle of writing — and while
     // blocked, when the composer is disabled and the only useful action is
     // answering the prompt in the pane.
-    const show = Boolean(lastSuggestion) && !input.value.trim() && lastStatus !== 'needs-you';
+    const show = Boolean(lastSuggestion) && !input.value.trim() && !blockedByNeedsYou();
     suggestionBtn.hidden = !show;
     if (show) suggestionBtn.textContent = lastSuggestion;
   }
@@ -399,7 +444,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sendBtn.disabled = true;
       return;
     }
-    if (lastStatus === 'needs-you') return; // setStatus owns the button while blocked
+    if (blockedByNeedsYou()) return; // setStatus owns the button while blocked
     input.disabled = false;
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
@@ -808,6 +853,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // session's own setStatus/onChatReply arrives.
       lastPending = null;
       lastStatus = null;
+      lastWaitingReason = null;
       lastTs = null;
       lastSuggestion = null;
       // In-flight uploads belong to the era being left: their tokens can never
@@ -832,6 +878,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
+      liveContextPercent = null;
       // The row is a child of the stream that was just cleared, so the handle is
       // dangling — dropping it here (rather than only in renderLive's not-working
       // branch) stops the next render re-appending a detached node and, worse,
@@ -844,6 +891,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // Cleared, not carried: the model belongs to the session being left. The
       // caller re-seeds it straight after mount (see renderSidebar in app.js).
       renderModel();
+      renderContextBar();
       // Same reasoning as the model: this belongs to the session being left,
       // and the caller re-seeds it right after mount — otherwise a session
       // whose pane never died would flash the PREVIOUS one's exit output.
@@ -867,6 +915,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       jumpBtn.hidden = true;
       lastPending = null;
       lastStatus = null;
+      lastWaitingReason = null;
       lastTs = null;
       lastSuggestion = null;
       // In-flight uploads belong to the era being left: their tokens can never
@@ -888,10 +937,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       liveModel = null;
       graphModel = null;
       graphSwitchable = false;
+      liveContextPercent = null;
       live = null;
       renderLive();
       renderSuggestion();
       renderModel();
+      renderContextBar();
       renderExitNotice(null);
     },
     onChatReply(msg) {
@@ -928,7 +979,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (Number.isFinite(msg.lastTs)) lastTs = msg.lastTs;
       lastSuggestion = typeof msg.suggestion === 'string' && msg.suggestion ? msg.suggestion : null;
       liveModel = typeof msg.modelNow === 'string' && msg.modelNow ? msg.modelNow : null;
+      liveContextPercent = Number.isFinite(msg.contextPercent) ? msg.contextPercent : null;
       renderModel();
+      renderContextBar();
       renderLive();
       renderSuggestion();
       // Apply only forward progress. Two overlapping polls sent before either had
@@ -969,21 +1022,24 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderExitNotice(text || null);
     },
 
-    setStatus(status, waitingFor) {
+    setStatus(status, waitingFor, waitingReason) {
       // A transition AWAY from 'working' must hide the line even with no new
       // reply in flight (e.g. suspend, or the pane dying mid-tool) — otherwise
       // the last reply's pending entry stays displayed after the Stop button
       // (driven by this same status) has already disappeared.
       lastStatus = status;
+      lastWaitingReason = waitingReason || null;
       renderLive();
       renderSuggestion();
       renderHint();
       const bar = document.getElementById('chat-notice-bar');
       const box = document.querySelector('.chat-box');
-      const blocked = status === 'needs-you';
-      bar.hidden = !blocked;
+      const needsYou = status === 'needs-you';
+      const isApiError = needsYou && waitingReason === 'api-error';
+      const blocked = blockedByNeedsYou();
+      bar.hidden = !needsYou;
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
-      if (blocked) {
+      if (needsYou) {
         const msg = document.createElement('span');
         // `waitingFor` is s.waitingFor off the graph node — present for a
         // needs-you the server can actually explain (Codex's own update
@@ -996,16 +1052,24 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         // Send is disabled below, so the terminal is the only place left to
         // act at all, whatever the reason. Falls back to the generic line
         // rather than showing nothing.
-        msg.textContent = waitingFor
-          ? `${waitingFor} — only actionable from the terminal right now.`
-          : 'Waiting on you — this prompt only exists in the terminal.';
+        //
+        // The api-error case gets its own wording and no button at all: the
+        // turn already ended cleanly (Send stays live below), so "only
+        // actionable from the terminal" would be a straight-up lie here.
+        msg.textContent = isApiError
+          ? `${waitingFor || 'API error'} — send another message to retry.`
+          : (waitingFor
+            ? `${waitingFor} — only actionable from the terminal right now.`
+            : 'Waiting on you — this prompt only exists in the terminal.');
         bar.appendChild(msg);
-        const go = document.createElement('button');
-        go.type = 'button';
-        go.className = 'chat-notice-go';
-        go.textContent = 'Terminal →';
-        go.addEventListener('click', () => onGoTerminal?.(sessionId));
-        bar.appendChild(go);
+        if (!isApiError) {
+          const go = document.createElement('button');
+          go.type = 'button';
+          go.className = 'chat-notice-go';
+          go.textContent = 'Terminal →';
+          go.addEventListener('click', () => onGoTerminal?.(sessionId));
+          bar.appendChild(go);
+        }
       }
       // Dim rather than disable-and-hide: a prompt typed while blocked would land in
       // the permission dialog, not the conversation, so the composer must visibly

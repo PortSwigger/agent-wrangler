@@ -15,7 +15,9 @@ async function tmpTranscript(lines) {
 
 function ctx(file, node = { liveSessionId: 'live-1', agent: 'claude' }) {
   const sent = [];
-  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findConversationFile: async () => file };
+  // Defaults to a no-op rather than the real Codex adapter, so a Codex-agent test
+  // that doesn't care about contextPercent never touches the real ~/.codex tree.
+  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findConversationFile: async () => file, analyzeCodex: async () => null };
 }
 
 // --- Codex rollout shapes ------------------------------------------------
@@ -290,20 +292,24 @@ test('chat: a Codex custom_tool_call in one poll pairs with its output in the ne
 });
 
 test('chat: a Codex reply carries every all-paths field, with no Claude-only pane reads', async () => {
-  // CLAUDE.md's all-paths rule (token/lastTs/suggestion/modelNow/epoch). The two
-  // pane-sourced fields are Claude-only by design — Codex's composer is a
-  // different TUI — so they must be present and NULL, never absent: an absent
-  // epoch reads to the client as 0 and rebuilds the stream on every poll.
+  // CLAUDE.md's all-paths rule (token/lastTs/suggestion/modelNow/contextPercent/
+  // epoch). The two pane-sourced fields are Claude-only by design — Codex's
+  // composer is a different TUI — so they must be present and NULL, never
+  // absent: an absent epoch reads to the client as 0 and rebuilds the stream on
+  // every poll. contextPercent is NOT pane-sourced for Codex (it's computed from
+  // the rollout via the adapter), so it is exercised separately below rather than
+  // pinned to null here.
   const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
   const c = ctx(file, { liveSessionId: 'live-codex-fields', agent: 'codex', tmux: 'cx_card_1' });
   c.capturePaneStyled = async () => { throw new Error('a Codex pane must not be scraped for a suggestion'); };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1', token: 11 }, c);
   const reply = c.sent[0];
-  for (const key of ['token', 'lastTs', 'suggestion', 'modelNow', 'epoch', 'offset', 'more', 'pending']) {
+  for (const key of ['token', 'lastTs', 'suggestion', 'modelNow', 'contextPercent', 'epoch', 'offset', 'more', 'pending']) {
     assert.ok(key in reply, `reply is missing ${key}`);
   }
   assert.equal(reply.suggestion, null);
   assert.equal(reply.modelNow, null);
+  assert.equal(reply.contextPercent, null, 'the default ctx() analyzeCodex stub reports nothing');
   assert.equal(reply.epoch, 0, 'a rollout has no rewind representation, so its epoch never moves');
 });
 
@@ -512,6 +518,61 @@ test('chat: codex is excluded from the pane scrape entirely', async () => {
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(c.sent[0].suggestion, null);
   assert.equal(c.captured, undefined);
+});
+
+// --- context-window percentage ---
+
+const paneWithContextBar = `${E}[39m  ${E}[38;5;153m◆ Sonnet 5${E}[38;5;246m ${E}[38;5;248m|${E}[38;5;246m ███░░ 7%`;
+
+test('chat: a live Claude session reports the pane context percentage', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'claude', tmux: 'cc_a', socket: 'sock' }, paneWithContextBar);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].contextPercent, 7);
+});
+
+// No fallback exists for this value anywhere else — unlike the model, a dormant
+// Claude card reports null rather than a stale or guessed number.
+test('chat: a dormant Claude session has no contextPercent', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'claude', tmux: null }, paneWithContextBar);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].contextPercent, null);
+});
+
+// Claude's own statusline might not have the context component selected at all
+// (statusline-builder lets components be picked individually) — the chip must
+// degrade to hidden, not to a stale or wrong number.
+test('chat: a live Claude session with no context bar in its statusline has no contextPercent', async () => {
+  const file = await tmpTranscript([userLine('hi', '2026-08-14T10:00:00.000Z')]);
+  const modelOnlyPane = `${E}[39m  ◆ Sonnet 5`;
+  const c = ctxWithPane(file, { liveSessionId: 'live-1', agent: 'claude', tmux: 'cc_a' }, modelOnlyPane);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].contextPercent, null);
+});
+
+// Codex's contextPercent is computed by the adapter (rollout usage ÷ Codex's own
+// cached model metadata), never scraped from a pane — it works for a DORMANT
+// card too, unlike Claude's.
+test('chat: a Codex session reports contextPercent from the adapter, live or dormant', async () => {
+  const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'live-codex-ctx', agent: 'codex', tmux: null });
+  let seenId = null;
+  c.analyzeCodex = async (id) => { seenId = id; return { contextPercent: 42 }; };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].contextPercent, 42);
+  assert.equal(seenId, 'live-codex-ctx', 'analyzed by the CONVERSATION id, not the card id');
+});
+
+// The adapter call is a real async read (rollout + models_cache.json) that can
+// fail for any of the usual reasons a file read can — degrade to null rather
+// than let it reject the whole poll.
+test('chat: a Codex adapter failure reports contextPercent as null rather than throwing', async () => {
+  const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
+  const c = ctx(file, { liveSessionId: 'live-codex-ctx', agent: 'codex' });
+  c.analyzeCodex = async () => { throw new Error('boom'); };
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].contextPercent, null);
 });
 
 // The all-paths rule that already covers token and lastTs covers this too: a

@@ -233,9 +233,13 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .context-menu-header { padding: 4px 9px 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-subtle); }
 
 #sidebar {
-  width: 46%;
+  /* Grows to fill whatever #grid's fixed width (below) leaves behind, so a
+     window resize changes the conversation pane rather than reflowing the
+     session columns. No explicit width: with #grid as the only other flexible
+     sibling pinned to a fixed size, flex-grow alone gives this the rest of
+     main's width regardless of flex-basis. */
+  flex: 1 1 auto;
   min-width: 280px;
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border-muted);
@@ -411,8 +415,9 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 }
 .ck-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-subtle); }
 .ck-count { font-size: 10px; color: var(--fg-muted); }
+.checklist-filter { margin-left: auto; }
 .ck-add {
-  margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: transparent; color: var(--fg-muted);
   border: 1px solid var(--border-muted); cursor: pointer;
 }
@@ -430,6 +435,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
 .ck-list:empty { display: none; }
+.ck-empty { padding: 8px 10px 9px; color: var(--fg-muted); font-size: 11px; }
+.ck-empty[hidden] { display: none; }
 /* "More below" cue for the capped list — without it the clipped last row reads
    as a rendering glitch. Short and low-opacity so it never obscures the row it
    overlays, and only present while there IS more below (see
@@ -961,16 +968,22 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
    .active without a new colour, and no hover affordance since a click is a no-op. */
 .seg button:disabled { color: var(--fg-subtle); cursor: default; }
 .seg button:disabled:hover { background: transparent; color: var(--fg-subtle); }
-/* The range selector row: a preset <select> plus (only for Custom) two date inputs. */
-.usage-range-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
+/* The range selector row: two primary selects plus (only for Custom) two date inputs. */
+.usage-range-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; align-items: center; gap: 8px 16px; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
 .usage-range-row label { color: var(--fg-muted); }
+.usage-select-control { display: grid; gap: 4px; }
 .usage-range-select, .usage-date-input {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
   color: var(--fg); font-family: inherit; font-size: 12px; padding: 3px 8px;
 }
+.usage-select-control .usage-range-select { width: 100%; }
 .usage-range-select:hover, .usage-date-input:hover { border-color: var(--accent); }
-.usage-custom-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.usage-custom-row { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; flex-wrap: wrap; }
 .usage-custom-row.hidden { display: none; }
+@media (max-width: 480px) {
+  .usage-range-row { grid-template-columns: 1fr; }
+  .usage-custom-row { grid-column: 1; }
+}
 .usage-summary { margin: 14px 0 6px; }
 .usage-total { font-size: 28px; font-weight: 700; color: var(--fg); line-height: 1.1; }
 .usage-sub { font-size: 12px; color: var(--fg-muted); margin-top: 3px; }
@@ -1084,9 +1097,16 @@ body.system-banner-open { padding-top: 30px; }
 /* ── Task Grid ─────────────────────────────────────────────────────────── */
 /* Columns/rows are set inline by renderGrid (they depend on the task count). */
 #grid {
+  /* Fills all of main by default (no #sidebar, or it's collapsed). */
   flex: 1; min-width: 0; display: grid;
   gap: 12px; padding: 14px; background: transparent; overflow: hidden;
 }
+/* With the conversation pane open, #grid becomes the FIXED side and #sidebar
+   (flex:1 1 auto above) absorbs a window resize instead — session columns keep
+   their width instead of stretching. width:54% is only the pre-drag default;
+   #drag-handle's initSidebarResize (app.js) persists an inline px width here
+   the same way it used to on #sidebar, which then wins over this rule. */
+main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
 #grid.hidden { display: none; }
 
@@ -1126,6 +1146,8 @@ body.system-banner-open { padding-top: 30px; }
   cursor: grab; user-select: none;
 }
 .task-name { font-weight: 700; color: var(--fg); font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-link-list { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.task-link-list .link-chip[hidden] { display: none; }
 .task-head .link-chip { font-size: 10px; }
 .task-head .link-chip .icon { width: 11px; height: 11px; }
 .task-new-sess { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
@@ -1490,14 +1512,14 @@ body.system-banner-open { padding-top: 30px; }
    slightly toward --fg (lightens in dark mode, darkens in light mode, so it
    stays a small nudge rather than a fixed color in either theme) for the
    contrast .card-tag chips get for free elsewhere from having non-chip content
-   around them. Scoped to this pill only, not .card-tag itself. */
-.subagent-pill, .checklist-pill { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
+   around them. Scoped to these toggles only, not .card-tag itself. */
+.subagent-pill, .checklist-pill, .checklist-filter { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
 .subagent-toggle-icon { display: inline-flex; }
 /* Same tinted-fill convention as .card-tag.automerge: a light accent wash over
    the base chip fill, with --blue-fg (this codebase's readable-on-a-tint accent
    text, e.g. .search-act--adopt) rather than --accent-fg (reserved for solid-accent
    buttons — it's a stark white, too low-contrast on a mostly-neutral tint). */
-.subagent-pill.showing, .checklist-pill.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
+.subagent-pill.showing, .checklist-pill.showing, .checklist-filter.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
 /* The card's pill disables itself when no sub-agents are currently recent (see
    subagentPillHtml) — toggling it on would show nothing. aria-disabled, not
    :disabled — the button stays clickable so the click can fall through to the
@@ -2826,7 +2848,21 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    the request asked for) and this is the only row down here, so it costs no
    vertical space to put it there. */
 .chat-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
-.chat-hint { font-size: 0.76em; color: var(--fg-subtle); }
+/* flex:1, not margin-left:auto on the trailing chips — the context bar is
+   OFTEN absent (no fallback exists for it, unlike the model: a dormant Claude
+   card, no custom statusline, a Codex model missing from its cache, …), and a
+   `[hidden]` sibling drops out of flex layout entirely, taking its auto margin
+   with it. A margin-left:auto on the FIRST remaining trailing chip would still
+   push things right, but only ONE trailing chip may ever carry it (two auto
+   margins on separate siblings split the free space between them, opening a
+   visible gap) — which one that is changes with which chips are present. The
+   hint growing instead works unconditionally, for any number of trailing
+   chips, hidden or not: it also has to actually AFFORD to grow, or a long
+   paste note could stretch the row, hence the ellipsis/min-width guard. */
+.chat-hint {
+  font-size: 0.76em; color: var(--fg-subtle);
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* A transient paste note borrows the hint line, so it needs to read as a status
    rather than as the permanent keyboard hint it replaced. */
 .chat-hint[data-note="1"] { color: var(--fg-muted); }
@@ -2873,7 +2909,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    records the model of one past turn. Deliberately a little stronger than that
    one: it is live state, not provenance. */
 .chat-current-model {
-  margin-left: auto; flex: none; max-width: 45%;
+  flex: none; max-width: 45%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
   color: var(--fg-muted); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
@@ -2894,6 +2930,49 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Buttons carry an absolute 12px from the global `button` rule, which would sit
    unchanged beside prose the size setting had scaled. */
 .chat-send, .chat-stop { font-size: 0.86em; }
+
+/* Context-window occupancy — informational only, unlike .chat-current-model,
+   so it is a plain div rather than a button: there is nothing to click through
+   to. Track/fill/label are built by chat-view.js (not static markup), same
+   reasoning as the live row in chat-dom.js. Hidden whenever the value cannot be
+   read at all (no fallback exists for this one, unlike the model) — see
+   server/control/handlers/chat.js. */
+.chat-context-bar {
+  display: flex; align-items: center; gap: 5px; flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  color: var(--fg-muted);
+}
+.chat-context-bar[hidden] { display: none; }
+/* --surface-2, not --border-muted: several custom styles (jurassic-park,
+   wrangler, dolphin, …) tint --border-muted the SAME hue family as their own
+   accent colours (it's derived from --border, meant for hairlines), so an
+   amber "warn" fill barely showed up against an amber-tinted track — caught
+   live against jurassic-park at 59%, where the two were nearly
+   indistinguishable. --surface-2 is a genuine panel-background tone in every
+   shipped style, not an accent tint, so it stays neutral under any fill
+   colour; the explicit border (using --border-muted for its INTENDED purpose,
+   a hairline) keeps the track's own extent visible regardless. */
+.chat-context-bar-track {
+  flex: none; width: 38px; height: 5px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border-muted);
+  overflow: hidden;
+}
+/* Width is set inline per-render (the one thing that varies); colour comes from
+   the ancestor's `data-level`, matching the terminal statusline's own
+   50%/70% thresholds so the two never disagree about what "getting full" means. */
+/* display:block is load-bearing, not decoration: this is a bare <span>
+   (chat-view.js), and a span is inline by default — an inline box ignores
+   `width` entirely. It "worked" in every hand-rolled test page used to
+   verify this feature because those used <div>s (block by default), never
+   the real DOM this class actually renders on — so the fill silently never
+   painted at ANY percentage, on the live board, until caught here. The
+   TRACK doesn't need this: it's a direct child of the flex container
+   `.chat-context-bar` and flex items are auto-blockified, but the fill is a
+   child of the (non-flex) track, one level too deep for that to reach. */
+.chat-context-bar-fill { display: block; height: 100%; background: var(--green); }
+.chat-context-bar[data-level="warn"] .chat-context-bar-fill { background: var(--snooze); }
+.chat-context-bar[data-level="danger"] .chat-context-bar-fill { background: var(--red); }
+.chat-context-bar-label { min-width: 2.6em; text-align: right; }
 
 /* The live row. It sits IN the stream as its last child (chat-view.js keeps it
    there) rather than above the composer, because what it answers is "the stream

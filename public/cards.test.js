@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
-  linkChipsHtml, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
+  linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
@@ -223,6 +224,14 @@ test('workerStatusWord: dormant → resume; just-finished → done; else the sta
   assert.equal(workerStatusWord(sess({ status: 'needs-you' }), ctx()), STATUS_WORDS['needs-you']);
   assert.equal(workerStatusWord(sess({ status: 'idle' }), ctx({ justFinished: new Set(['s1']) })), 'done');
   assert.equal(workerStatusWord(sess({ status: 'working' }), ctx()), 'busy');
+});
+
+// An api-error needs-you is retryable by just sending another message, unlike
+// every other needs-you reason — 'reply' (the generic word) would wrongly
+// suggest the same "go answer a prompt" affordance the red dot already implies
+// for a permission prompt or OAuth screen.
+test('workerStatusWord: api-error needs-you reads "error", not the generic "reply"', () => {
+  assert.equal(workerStatusWord(sess({ status: 'needs-you', waitingReason: 'api-error' }), ctx()), 'error');
 });
 
 test('workerRowHtml: carries data-sid and the status word as the dot tooltip, not visible text', () => {
@@ -478,7 +487,19 @@ test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse
   assert.doesNotMatch(html, /data-todoid="t1"/);
 });
 
-test('tileHtml: task tile shows the escaped name, its first link and a +N overflow', () => {
+test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 132, 20, 6), 3);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 104, 20, 6), 2);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 60, 20, 6), 1);
+  assert.equal(visibleTaskLinkCount([30, 40, 50], 20, 20, 6), 0);
+});
+
+test('task header hides chips moved into link overflow', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.task-link-list \.link-chip\[hidden\] \{\s*display: none;\s*\}/);
+});
+
+test('tileHtml: task tile exposes every link as a candidate for inline display', () => {
   const tile = {
     kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [],
     task: { id: 'T1', name: 'My <task>', links: [
@@ -490,7 +511,9 @@ test('tileHtml: task tile shows the escaped name, its first link and a +N overfl
   assert.match(html, /data-taskid="T1"/);
   assert.match(html, /My &lt;task&gt;/);
   assert.match(html, /ENT-1/);
-  assert.match(html, /link-overflow[^>]*>\+1/);
+  assert.match(html, /#2/);
+  assert.match(html, /task-link-list/);
+  assert.match(html, /link-overflow/);
 });
 
 test('tileHtml: carries the restored-task halo class only when this tile is the just-restored task', () => {

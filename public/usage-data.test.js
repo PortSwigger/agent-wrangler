@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellValue, dimensionMap, rankMembers, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
+import { cellValue, dimensionMap, providerBucket, rankMembers, rankProviderAwareModels, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
 
 const CATS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const OTHER = 'cO';
@@ -23,6 +23,16 @@ test('dimensionMap selects the active slice map', () => {
   assert.deepEqual(dimensionMap(undefined, 'task'), {});
 });
 
+test('providerBucket selects one provider while All keeps the combined bucket', () => {
+  const all = { total: { usd: 3, tokens: {} }, providers: {
+    anthropic: { total: { usd: 1, tokens: {} }, byTask: { a: { usd: 1, tokens: {} } } },
+    openai: { total: { usd: 2, tokens: {} }, byTask: { o: { usd: 2, tokens: {} } } },
+  } };
+  assert.equal(providerBucket(all, null).total.usd, 3);
+  assert.equal(providerBucket(all, 'anthropic').byTask.a.usd, 1);
+  assert.equal(providerBucket(all, 'openai').byTask.o.usd, 2);
+});
+
 test('rankMembers orders by the active metric, not always $', () => {
   const members = [{ key: 'input', name: 'Input' }, { key: 'cacheRead', name: 'Cache read' }];
   const buckets = [
@@ -31,6 +41,26 @@ test('rankMembers orders by the active metric, not always $', () => {
   // In $ input dominates; in tokens cache-read dominates — ranking flips with the metric.
   assert.deepEqual(rankMembers(members, buckets, 'usd', 'type').map((m) => m.key), ['input', 'cacheRead']);
   assert.deepEqual(rankMembers(members, buckets, 'tokens', 'type').map((m) => m.key), ['cacheRead', 'input']);
+});
+
+test('rankProviderAwareModels reserves one visible slot for each provider', () => {
+  const members = ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'claude-e', 'claude-f', 'claude-g', 'claude-h', 'gpt-a', 'gpt-b']
+    .map((key) => ({ key, name: key }));
+  const bucket = {
+    byModel: {
+      'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70),
+      'claude-e': cell(60), 'claude-f': cell(50), 'claude-g': cell(40), 'claude-h': cell(30),
+      'gpt-a': cell(10), 'gpt-b': cell(5),
+    },
+    providers: {
+      anthropic: { byModel: { 'claude-a': cell(100), 'claude-b': cell(90), 'claude-c': cell(80), 'claude-d': cell(70), 'claude-e': cell(60), 'claude-f': cell(50), 'claude-g': cell(40), 'claude-h': cell(30) } },
+      openai: { byModel: { 'gpt-a': cell(10), 'gpt-b': cell(5) } },
+    },
+  };
+
+  const ranked = rankProviderAwareModels(members, [bucket], 'usd', ['anthropic', 'openai'], 1, CATS.length);
+
+  assert.deepEqual(displaySlots(ranked, CATS).shown.map((m) => m.key), ['claude-a', 'claude-b', 'claude-c', 'claude-d', 'claude-e', 'gpt-a']);
 });
 
 test('displaySlots colours the first six members and folds the rest', () => {

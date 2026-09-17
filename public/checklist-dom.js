@@ -79,8 +79,12 @@ export function createChecklistDom({ document }) {
     // stamped on the list: switching session is the one case where every row is
     // stale, so the list is emptied rather than diffed against another session's
     // ids. Returns the number of rows now rendered.
-    patch(list, { sessionId, items = [] }) {
+    patch(list, { sessionId, items = [], focusFallback = null }) {
       if (!list) return 0;
+      const focusedIndex = list.dataset.sid === sessionId
+        ? [...list.children].findIndex((row) => row.contains(document.activeElement))
+        : -1;
+      const focusedRow = focusedIndex >= 0 ? list.children[focusedIndex] : null;
       if (list.dataset.sid !== sessionId) {
         while (list.firstChild) list.removeChild(list.firstChild);
         list.dataset.sid = sessionId;
@@ -102,6 +106,10 @@ export function createChecklistDom({ document }) {
       }
       // Anything left in `existing` is an item that has gone.
       for (const row of existing.values()) list.removeChild(row);
+      if (focusedRow && !list.contains(focusedRow)) {
+        const nextRow = list.children[Math.min(focusedIndex, list.children.length - 1)];
+        (nextRow?.querySelector('.ck-check') || focusFallback)?.focus();
+      }
       return items.length;
     },
   };
@@ -121,6 +129,53 @@ export function checklistCountLabel(items = []) {
 // session while the panel is collapsed, so it can never render as empty.
 export function checklistPillLabel(items = []) {
   return `${items.filter((i) => i.done).length}/${items.length}`;
+}
+
+export function visibleChecklistItems(items = [], { showDone = false } = {}) {
+  return showDone ? items : items.filter((item) => !item.done);
+}
+
+export function checklistHiddenDoneLabel(items = [], { showDone = false } = {}) {
+  if (showDone || !items.length || items.some((item) => !item.done)) return '';
+  return `${items.length} completed item${items.length === 1 ? '' : 's'} hidden`;
+}
+
+export function isChecklistShowDone(sessionIds, sessionId) {
+  return Boolean(sessionId) && sessionIds.has(sessionId);
+}
+
+export function toggleChecklistShowDone(sessionIds, sessionId) {
+  if (!sessionId) return sessionIds;
+  if (sessionIds.has(sessionId)) sessionIds.delete(sessionId);
+  else sessionIds.add(sessionId);
+  return sessionIds;
+}
+
+export function parseChecklistShowDone(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id) => typeof id === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+export function serializeChecklistShowDone(sessionIds) {
+  return JSON.stringify([...sessionIds]);
+}
+
+export function reorderVisibleChecklistItems(items, visibleOrder) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set();
+  const reordered = [];
+  for (const id of visibleOrder) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    reordered.push(byId.get(id));
+  }
+  let cursor = 0;
+  return items.map((item) => (seen.has(item.id) ? reordered[cursor++] : item));
 }
 
 // --- per-session disclosure state ---
