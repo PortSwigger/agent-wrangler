@@ -698,7 +698,11 @@ export async function scanAllDaily({
   // Files that read/parse partially or not at all — surfaced so the UI can note the
   // total may be understated, rather than a broken transcript vanishing as a silent $0.
   let failedFiles = 0;
-  const raw = []; // { file|null, owner, task, days: { dayKey: bag } }
+  // `cardId` is the board handle the row was resolved FROM, so a caller that prices
+  // something board-shaped can sum these rows by card without re-deriving which
+  // transcripts a card has owned. It survives the dedup below as the surviving row's
+  // own card, never a merge of both.
+  const raw = []; // { file|null, cardId, owner, task, days: { dayKey: bag } }
   // Files actually touched this pass, so a cache entry for anything else (a
   // deleted transcript, a mapping that's gone) gets evicted below rather than
   // lingering forever.
@@ -723,7 +727,7 @@ export async function scanAllDaily({
         if (!Object.keys(days).length) continue;
         const uuid = path.basename(file, '.jsonl');
         const owner = entry.liveSessionId === uuid || cardId === uuid;
-        raw.push({ file, owner, task, days });
+        raw.push({ file, cardId, owner, task, days });
       }
     } else if (agent === 'codex' && analyzeCodex) {
       // Codex rollouts aren't reliably line-stamped for cost, so attribute the whole
@@ -754,7 +758,7 @@ export async function scanAllDaily({
         byModel[modelId] = { usd: modelUsd, estimatedUsd: modelUsd, tokens: modelTokens };
       }
       raw.push({
-        file: null, owner: true, task,
+        file: null, cardId, owner: true, task,
         days: { [dayKeyOf(created)]: {
           provider: 'openai',
           usd: a.usd, estimatedUsd: a.usd, subAgentUsd: a.subAgentUsd || 0, advisorUsd: 0, advisorTokens: blankTokens(),
