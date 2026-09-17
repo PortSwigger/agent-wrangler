@@ -238,6 +238,11 @@ export function classify(paneText) {
   ) {
     return { status: 'needs-you', waitingFor: 'Codex has a CLI update available' };
   }
+  // The first-launch "do you trust this folder" dialog. It replaces the whole screen
+  // and has no "esc to interrupt", so it read as IDLE — a session parked on it was
+  // invisible on the board and the idle-timer suspend gate could reap it. needs-you
+  // keeps the gate off it, like the login screens above.
+  if (trustDialogState(recent)) return { status: 'needs-you', waitingFor: 'trust dialog' };
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as
@@ -255,6 +260,21 @@ export function classify(paneText) {
     return { status: 'working', waitingFor: 'starting container' };
   }
   return { status: 'idle' };
+}
+
+// Claude's trust dialog, if the pane is showing it: null when it is not, else
+// whether the `❯` cursor sits on "Yes, I trust this folder". The default selection
+// is "No, exit" (verified live on 2.1.263 and 2.1.266), so a bare Enter EXITS the
+// session — an auto-accept has to move the cursor and confirm it moved before it
+// confirms. The "Yes" line alone is not enough evidence: an agent can quote it in
+// conversation, so the dialog's own question or footer must be nearby too.
+export function trustDialogState(paneText) {
+  const lines = stripAnsi(paneText).split('\n');
+  const idx = lines.findIndex((l) => /\bYes, I trust this folder\b/.test(l));
+  if (idx === -1) return null;
+  const near = lines.slice(Math.max(0, idx - 12), idx + 3).join('\n');
+  if (!/Is this a project you created or one you trust|Enter to confirm/.test(near)) return null;
+  return { yesSelected: /❯\s*Yes, I trust this folder/.test(lines[idx]) };
 }
 
 // Each CLI renders its own footer text for "a background/async job is still
