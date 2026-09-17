@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- `autoCompactTokens` is an optional integer in the inclusive range 100000–1000000.
+- `autoCompactTokens` is an optional integer in the inclusive range 100000–1000000 for Claude and 50000–1000000 for Codex.
 - Omission must leave existing commands and session behavior unchanged.
 - A session's value is immutable after dispatch; forks inherit and resumes retain it.
 - Claude receives `--autocompact <tokens>` and Codex receives `-c model_auto_compact_token_limit=<tokens>`.
@@ -59,11 +59,11 @@
 
 **Interfaces:**
 - Produces: optional `autoCompactTokens` dispatch payload from the advanced dialog.
-- Consumes: user-entered token threshold and server validation errors.
+- Consumes: a provider-specific preset selection and server validation errors.
 
 - [ ] Write failing UI fixture/assertion tests for the new advanced control and dispatch payload.
 - [ ] Run the focused UI test and confirm it fails because the field is absent.
-- [ ] Add a compact numeric control with a 100k–1M hint, include it in dispatch reads only when populated, and update human/agent-facing help for the MCP option.
+- [ ] Add compact provider-specific preset buttons plus Default, clear a no-longer-offered selection on provider changes, and update human/agent-facing help for the MCP option.
 - [ ] Run the focused UI and relevant server tests and confirm they pass.
 - [ ] Commit the completed task.
 

@@ -8,7 +8,7 @@ Let a session opt into an auto-compaction threshold without changing the default
 
 Persist an optional `autoCompactTokens` integer on the mapping entry. It is launch configuration, not mutable runtime state: a session keeps its selected threshold for its lifetime. A fork copies the parent's value; a resume carries it forward and reapplies it to the new CLI process.
 
-The server accepts only integers from 100,000 through 1,000,000 inclusive. Omission is valid and is persisted as absent/null only where the existing mapping convention requires it; command builders must receive no provider-specific setting when it is absent.
+The server accepts only integers from 100,000 through 1,000,000 inclusive for Claude, and from 50,000 through 1,000,000 for Codex. Omission is valid and is persisted as absent/null only where the existing mapping convention requires it; command builders must receive no provider-specific setting when it is absent.
 
 ## Provider adapters
 
@@ -16,7 +16,7 @@ Claude receives `--autocompact <tokens>` on launch, resume, and fork. Codex rece
 
 ## Entry points
 
-The dispatch dialog exposes the setting in Advanced options as an optional working-context/auto-compaction threshold. The WebSocket dispatch path, scheduling path, and `spawn_session` MCP tool share server validation. `spawn_session` accepts `auto_compact_tokens`; it is intentionally the future persona/extension integration point.
+The dispatch dialog exposes the setting in Advanced options as preset buttons: 100k/250k/500k/1m for Claude and 50k/100k/250k for Codex, plus Default to leave it unset. Changing providers clears a value not represented by that provider's presets. The WebSocket dispatch path, scheduling path, and `spawn_session` MCP tool share server validation. `spawn_session` accepts `auto_compact_tokens`; it is intentionally the future persona/extension integration point.
 
 Fork has no override control and inherits the source session. No command/API changes an existing session's threshold after creation.
 

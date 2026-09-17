@@ -61,7 +61,7 @@ import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
-import { autoCompactPresetTokens } from './auto-compact-presets.js';
+import { autoCompactPresetTokens, normalizeAutoCompactPreset } from './auto-compact-presets.js';
 
 let currentView = 'grid';
 
@@ -294,6 +294,7 @@ function syncAutoCompactPresets() {
   const modelSel = document.getElementById('m-model');
   const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
   const available = new Set(autoCompactPresetTokens(agent));
+  autoCompactTokens = normalizeAutoCompactPreset(autoCompactTokens, agent);
   document.querySelectorAll('.auto-compact-preset').forEach((button) => {
     const tokens = button.dataset.autoCompactTokens;
     const visible = tokens === '' || available.has(Number(tokens));
