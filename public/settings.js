@@ -146,21 +146,23 @@ export const SETTINGS_TABS = [
 // bridge handles them all with ONE `startsWith` rung instead of a branch per
 // feature flag — the ladder this replaces.
 export const EXT_SETTING_PREFIX = 'ext:';
-// What a human is told AFTER flipping an extension toggle, given the pair the
-// server carries (`enabled` live, `bootEnabled` from the loader's snapshot).
-// Three outcomes, and only the third needs an action — but the other two still
-// need saying, because "the panel went and my agent still has the tools" and
-// "nothing happened at all" are indistinguishable from an unlabelled switch.
-// Deliberately a note on the row rather than a toast: it belongs beside the
-// control that caused it, and a toast is gone before a reader looks down.
-export function extensionFlipNote({ enabled, bootEnabled } = {}) {
-  if (enabled && !bootEnabled) return 'Restart the wrangler to finish turning this on.';
-  if (enabled) return 'Back on the board. Running sessions get its tools at their next resume.';
-  return 'Gone from the board. Running sessions keep its tools until their next resume.';
+// What a human is told AFTER flipping an extension toggle. The flip is now ONE
+// moment in both directions — the server registers and activates on the way on,
+// deactivates and deregisters on the way off — so neither line names a restart.
+// The one thing still pending is an already-running agent session's MCP tools:
+// `--allowedTools` is baked into its launch argv, so it gains or loses the
+// extension's tools only at its next resume. Worth saying either way, because
+// "the panel went and my agent still has the tools" is otherwise indistinguishable
+// from a switch that did nothing. Deliberately a note on the row rather than a
+// toast: it belongs beside the control that caused it, and a toast is gone before
+// a reader looks down.
+export function extensionFlipNote({ enabled } = {}) {
+  if (enabled) return 'On. Running sessions get its tools at their next resume.';
+  return 'Off. Running sessions keep its tools until their next resume.';
 }
 
 // Synthesises the Extensions tab's toggle defs from the server's loaded
-// extension list [{id, label, help, defaultEnabled, enabled, bootEnabled}] and
+// extension list [{id, label, help, defaultEnabled, enabled}] and
 // refreshes the id index. Called on every graph push; the modal renders on
 // open, so the rows are always current. Returns the defs for tests.
 //
@@ -177,10 +179,6 @@ export function setExtensionDefs(list) {
     label: String(e.label || e.id),
     help: e.help || '',
     default: e.defaultEnabled !== false,
-    // Carried onto the def so the flip handler can build its note without
-    // reaching back into app.js's graph state. Safe to snapshot: bootEnabled
-    // cannot change while the process is up, which is the whole point of it.
-    bootEnabled: e.bootEnabled !== false,
   }));
   for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
   for (const d of defs) byId.set(d.id, d);
@@ -463,7 +461,7 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
     // on the row rather than as a toast, and only after a real flip, so an
     // unread row carries no standing warning about a state nobody chose.
     if (def.id.startsWith(EXT_SETTING_PREFIX)) {
-      showFlipNote(row, extensionFlipNote({ enabled: next, bootEnabled: def.bootEnabled }));
+      showFlipNote(row, extensionFlipNote({ enabled: next }));
     }
   });
 

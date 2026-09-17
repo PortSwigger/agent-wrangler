@@ -2,11 +2,20 @@ import path from 'node:path';
 import semver from 'semver';
 import { readConfig, extensionEnabled } from '../config-store.js';
 
-// The in-repo extensions API: one manifest per optional feature, loaded ONCE at
-// boot and gated as a unit by `extensions.<id>` in config.json (config-store's
-// extensionEnabled, defaulting to the manifest's own `defaultEnabled`). A toggle
-// takes effect at the next restart — everything here is fixed at load time, and
-// the consumers below read the loaded lists, never the config, at call time.
+// The extensions API: one manifest per optional feature, gated as a unit by
+// `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
+// to the manifest's own `defaultEnabled`). The loaded object is a LIVE REGISTRY,
+// not a boot snapshot: `loadExtensions` fills it once and `registerExtension` /
+// `unregisterExtension` mutate that same object afterwards, so an install or a
+// settings flip takes effect in-process. Every consumer below reads the object's
+// fields at CALL time, which is what makes mutating it in place enough — and why
+// nothing may ever REASSIGN `loaded.list` (server/index.js and the control
+// handlers hold that array by reference).
+//
+// What a live change cannot do is unload code: Node keeps an imported module
+// forever, so an uninstall deregisters and deactivates but the module itself
+// stays in the cache until a restart, and an UPDATE of an already-registered id
+// keeps restart semantics rather than run two versions at once.
 //
 // This module is a LEAF and every builtin manifest must stay leaf-compatible: it
 // is imported by server/mcp/client-config.js and server/agent-skills.js, which the
@@ -157,27 +166,22 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
 }
 
 // What `graph.extensions` carries every rebuild. Identity/label/help/defaultEnabled
-// come from the boot snapshot (they cannot change without a restart), but `enabled`
-// is re-read from config on EVERY call — the settings toggle has to take an
-// extension's UI off the board on the next tick rather than at the next restart,
-// which is what the pre-extensions per-tick `graph.checklistEnabled` read did.
-// Only the UI moves: tools, handlers, stores and graph contributors were all fixed
-// by loadExtensions, so an extension that booted OFF stays off until a restart.
+// come off the registered entry; `enabled` is re-read from config on EVERY call,
+// so the settings toggle takes an extension's UI off the board on the next tick.
 //
-// `bootEnabled` is that boot value, carried separately so the settings toggle can
-// tell a human WHICH of those two worlds they are in. The pair is the whole state
-// space: enabled && bootEnabled is live; !enabled is hidden now with a running
-// session's tools following at its next resume; enabled && !bootEnabled is the one
-// case nothing can finish without a restart, and saying so is the only way a human
-// tells it apart from a toggle that silently did nothing.
+// `bootEnabled` keeps its name for the client's sake but now means "ACTIVE in
+// this process right now" — its tools, handlers, stores and client asset are
+// registered. `enabled` is the config value. The two differ only in the window
+// between a toggle and its activation settling, and for a quarantined entry,
+// which reports both false however loudly config says otherwise.
 //
 // `handlerTypes` is the one addition the client half needs rather than the
 // human: the browser façade binds an extension's `send` to its OWN registered
-// types (public/slots.js), so this array is what makes that possible. Boot-fixed
-// and a handful of short strings per extension — nowhere near graph.history's
+// types (public/slots.js), so this array is what makes that possible. A handful
+// of short strings per extension — nowhere near graph.history's
 // problem — and deliberately off the per-card path.
 // `quarantine` short-circuits `enabled` in BOTH directions: the config may well
-// say this extension is on, but it contributed nothing at boot, so reporting it
+// say this extension is on, but it is contributing nothing, so reporting it
 // enabled would draw a live-looking toggle over a feature that is not there.
 // The extra fields are the installed-extension row's own content (origin, SHA,
 // author, description) and are third-party strings — the client renders every
@@ -254,6 +258,16 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     sweeps: [],
     clientManifest: [],
     dirs: {},
+    // The name registry, carried ON the object rather than kept local to this
+    // call: a later registerExtension has to claim names against the same sets,
+    // and a later unregisterExtension has to release them, or a reinstall of the
+    // same id (or a re-enable) collides with the copy it just removed.
+    _reg: reg,
+    // id -> the manifest object as it was passed in, for every non-quarantined
+    // entry INCLUDING a disabled one. A boot-disabled extension staged nothing,
+    // so this map is the only thing a later live ENABLE can re-stage from; a
+    // quarantined entry has no manifest worth keeping.
+    _manifests: new Map(),
   };
   for (const ext of builtin) {
     // Pre-quarantined by discovery — a directory that never yielded a usable
@@ -308,10 +322,19 @@ function quarantinedEntry(ext, quarantine) {
 // `out`/`reg` only once the whole entry has validated. A manifest that collides
 // half-way through (two tools, the second name taken) would otherwise leave its
 // first tool registered under an extension that contributes nothing — the exact
-// half-state the quarantine posture exists to avoid.
+// half-state the quarantine posture exists to avoid. That atomicity is also what
+// lets registerExtension hand an install's collision straight back to the
+// handler with nothing written.
+//
+// A row whose id `reg` no longer holds was RELEASED by unregisterExtension (a
+// disable, or an uninstall-then-reinstall of the same id) and is replaced at its
+// own index, so the settings tab's ordering does not jump under a re-enable. An
+// id `reg` still holds is a genuine duplicate and fails.
 function stageExtension(ext, { cfg, out, reg }) {
   validateManifest(ext);
   if (reg.ids.has(ext.id)) fail(ext, 'duplicate extension id');
+  const at = out.list.findIndex((e) => e.id === ext.id);
+  const place = (entry) => { if (at >= 0) out.list[at] = entry; else out.list.push(entry); };
   const enabled = extensionEnabled(ext.id, ext.defaultEnabled, cfg);
   // `requires`/`range`/`storeNames` are the façade's build inputs, carried on
   // the list entry because index.js — not this leaf — is what can build one.
@@ -344,7 +367,8 @@ function stageExtension(ext, { cfg, out, reg }) {
   };
   if (!enabled) {
     reg.ids.add(ext.id);
-    out.list.push(listEntry);
+    place(listEntry);
+    out._manifests?.set(ext.id, ext);
     out.disabledSkillIds.push(...(ext.skills || []));
     return;
   }
@@ -370,11 +394,19 @@ function stageExtension(ext, { cfg, out, reg }) {
   }
 
   reg.ids.add(ext.id);
-  out.list.push(listEntry);
+  place(listEntry);
+  out._manifests?.set(ext.id, ext);
   for (const t of tools) { reg.toolNames.add(t.name); out.tools.push(t); out.allowedToolNames.push(t.name); }
   for (const h of handlers) { reg.handlerTypes.add(h.type); out.handlers.push(h); listEntry.handlerTypes.push(h.type); }
   for (const [name, factory] of stores) { reg.storeNames.add(name); out.stores[name] = factory; }
   out.skillIds.push(...(ext.skills || []));
+  // A RE-registration has to undo the suppression its own unregister added, or
+  // the same skill is nudged and actively suppressed at once. Inert at boot,
+  // where nothing has been disabled yet.
+  if (ext.skills?.length) {
+    const back = new Set(ext.skills);
+    out.disabledSkillIds = out.disabledSkillIds.filter((s) => !back.has(s));
+  }
   // A gate can only ever narrow THIS manifest's own declared skills (its
   // `skills` list is passed back to it and its answer is intersected below),
   // so one extension can never silently suppress another's — nor task-memory's,
@@ -387,11 +419,20 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.dir) out.dirs[ext.id] = ext.dir;
   // Omitted rather than nulled when absent, so the announcement a stock
   // install sends is byte-identical to the pre-styles one.
+  //
+  // An INSTALLED extension's asset URLs carry its pinned commit as `?v=`, which
+  // a builtin (no provenance) has nothing to add and so keeps the bare path.
+  // The browser caches an ES module per URL for the life of the page, so a
+  // reinstall or an update of the same id would otherwise re-announce a URL the
+  // tab has already resolved and silently re-register the OLD client half —
+  // the mirror of the `?t=` the server's own import is cache-busted with. The
+  // static route splits the query off before resolving, so it costs nothing.
+  const assetVersion = ext.provenance?.sha ? `?v=${ext.provenance.sha.slice(0, 12)}` : '';
   if (ext.client || ext.styles) {
     out.clientManifest.push({
       id: ext.id,
-      ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) } : {}),
-      ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) } : {}),
+      ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) + assetVersion } : {}),
+      ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) + assetVersion } : {}),
       // The control types this extension's BROWSER half may send, carried on
       // the connect announcement as well as on graph.extensions because the
       // announcement lands before the first graph — and slots.js fails closed
@@ -402,15 +443,42 @@ function stageExtension(ext, { cfg, out, reg }) {
   }
 }
 
-// Quarantine an extension that only failed once the NON-leaf half of boot
-// reached it — a store factory that threw, an unsatisfiable
-// `engines.wranglerApi` caught by buildHostApi, a graph contributor claiming a
-// reserved key. All of those happen in index.js, AFTER loadExtensions has
-// already registered this manifest's contributions, so this is the one place
-// that has to unregister them by id rather than simply decline to add them.
-export function quarantineExtension(loaded, id, reason) {
+// Stage a manifest into an ALREADY-LOADED registry: the install handler's last
+// step, and the enable handler's first. Everything a live change needs beyond
+// this is index.js's side (stores, façade, hooks, sweeps) — see
+// activateExtension there; this is purely the leaf's half.
+//
+// Throws on a validation failure or a name collision with NOTHING written, since
+// staging commits only at the end — so an install that cannot be registered
+// leaves no half-extension behind and the caller only has to undo the disk half.
+// It never pushes a quarantined row: an install must fail outright rather than
+// land a broken row, while boot and the enable path quarantine deliberately.
+export function registerExtension(loaded, manifest, { cfg = readConfig() } = {}) {
+  stageExtension(manifest, { cfg, out: loaded, reg: loaded._reg });
+  return loaded.list.find((e) => e.id === manifest.id);
+}
+
+// The inverse: take every contribution of `id` back out of the registry and
+// release its names, so the same id can be staged again (a re-enable, or a
+// reinstall after an uninstall). `remove: false` keeps the ROW — a disabled or
+// quarantined extension still has to appear in the settings list saying why —
+// while `remove: true` is uninstall, where the extension is gone entirely.
+//
+// Releasing the names in `_reg` is the part with no boot-time equivalent: before
+// this the registry only ever grew, so a second staging of the same id (or of a
+// tool name the row still held) would have failed as a duplicate.
+export function unregisterExtension(loaded, id, { remove = false } = {}) {
   const entry = loaded.list.find((e) => e.id === id);
-  if (entry) { entry.enabled = false; entry.quarantine = reason; }
+  const reg = loaded._reg;
+  if (reg) {
+    reg.ids.delete(id);
+    // Read off the live lists BEFORE they are filtered — the row itself carries
+    // its handler types and store names, but never its tool names.
+    for (const t of loaded.tools) if (t.extId === id) reg.toolNames.delete(t.name);
+    for (const h of loaded.handlers) if (h.extId === id) reg.handlerTypes.delete(h.type);
+    for (const name of entry?.storeNames || []) reg.storeNames.delete(name);
+  }
+  if (entry) entry.enabled = false;
   loaded.tools = loaded.tools.filter((t) => t.extId !== id);
   loaded.allowedToolNames = loaded.tools.map((t) => t.name);
   loaded.handlers = loaded.handlers.filter((h) => h.extId !== id);
@@ -422,12 +490,36 @@ export function quarantineExtension(loaded, id, reason) {
   for (const name of entry?.storeNames || []) delete loaded.stores[name];
   for (const k of SESSION_HOOKS) loaded.sessionHooks[k] = loaded.sessionHooks[k].filter((h) => h.extId !== id);
   delete loaded.dirs[id];
-  // Its skills leave the nudge and the Codex catalog with it, and join the
-  // DISABLED list — a quarantined extension's skill must be actively suppressed
-  // rather than merely unmentioned, exactly as a toggled-off one's is.
   const skills = new Set(entry?.skills || []);
   loaded.skillIds = loaded.skillIds.filter((s) => !skills.has(s));
-  for (const s of skills) if (!loaded.disabledSkillIds.includes(s)) loaded.disabledSkillIds.push(s);
+  if (remove) {
+    // SPLICED, never reassigned: index.js's extBag and every ctx.ext hold this
+    // array by reference, so a fresh array would leave them reading the old one.
+    const at = loaded.list.findIndex((e) => e.id === id);
+    if (at >= 0) loaded.list.splice(at, 1);
+    loaded._manifests?.delete(id);
+    // An extension that is GONE should neither be nudged nor actively
+    // suppressed — there is no longer a feature for the suppression to describe.
+    loaded.disabledSkillIds = loaded.disabledSkillIds.filter((s) => !skills.has(s));
+  } else {
+    // Its skills leave the nudge and the Codex catalog with it, and join the
+    // DISABLED list — an unregistered extension's skill must be actively
+    // suppressed rather than merely unmentioned, exactly as a toggled-off one's is.
+    for (const s of skills) if (!loaded.disabledSkillIds.includes(s)) loaded.disabledSkillIds.push(s);
+  }
+  return entry || null;
+}
+
+// Quarantine an extension that only failed once the NON-leaf half reached it —
+// a store factory that threw, an unsatisfiable `engines.wranglerApi` caught by
+// buildHostApi, a graph contributor claiming a reserved key. All of those happen
+// in index.js, AFTER the manifest's contributions are registered, so this has to
+// unregister them by id rather than simply decline to add them. Boot is no
+// longer the only moment it can happen: a live ENABLE runs the same activation.
+export function quarantineExtension(loaded, id, reason) {
+  unregisterExtension(loaded, id);
+  const entry = loaded.list.find((e) => e.id === id);
+  if (entry) entry.quarantine = reason;
   return reason;
 }
 

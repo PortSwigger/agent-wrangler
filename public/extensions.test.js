@@ -122,6 +122,17 @@ test('unload leaves every other extension mounted', async () => {
   assert.deepEqual(slots.contributions('panel.section').map((c) => c.extId), ['b']);
 });
 
+// app.js's only way to see an id the server has stopped announcing at all: an
+// uninstall drops it from the manifest AND the graph, so a sync driven off
+// those two alone would never reach its DOM.
+test('loadedIds reports what is mounted right now', async () => {
+  const { loader } = harness({ '/ext/a/index.js': good('a'), '/ext/b/index.js': good('b') });
+  await loader.load([{ id: 'a', client: '/ext/a/index.js' }, { id: 'b', client: '/ext/b/index.js' }]);
+  assert.deepEqual(loader.loadedIds().sort(), ['a', 'b']);
+  loader.unload('a');
+  assert.deepEqual(loader.loadedIds(), ['b']);
+});
+
 
 // ── The manifest `styles` sheet ───────────────────────────────────────────
 test('an announced stylesheet is linked with the module and removed with it', () => {

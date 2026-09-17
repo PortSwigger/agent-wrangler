@@ -4,15 +4,25 @@ import { activeHandlers } from './handlers/index.js';
 // includes every enabled extension's handlers, and the loader behind
 // activeHandlers() is memoised at boot by server/index.js — resolving it at
 // import time would run the loader before index.js got to pass the core
-// registry names in. One Object.fromEntries, once per process.
+// registry names in. One Object.fromEntries, per registry change.
 let handlerByType = null;
 function lookup(type) {
   if (!handlerByType) handlerByType = Object.fromEntries(activeHandlers().map((h) => [h.type, h]));
   return handlerByType[type];
 }
 
-export function _resetRouterForTests() {
+// The map is the ONE place in the server that caches the extension registry
+// rather than reading it per call, so every live register/unregister has to drop
+// it — a handler installed live would otherwise never be found, and a
+// disabled one would keep receiving frames. Called from index.js's
+// `ctx.ext.changed()`, which is the single seam every registry change goes
+// through.
+export function invalidateHandlerMap() {
   handlerByType = null;
+}
+
+export function _resetRouterForTests() {
+  invalidateHandlerMap();
 }
 
 // Parse one control-WS frame and dispatch it to its registered handler. A

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeControlMessage } from './router.js';
+import { routeControlMessage, invalidateHandlerMap, _resetRouterForTests } from './router.js';
+import { getExtensions, registerExtension, unregisterExtension, _resetExtensionsForTests } from '../extensions/index.js';
 
 // A ctx double that records what each handler drove. reply() captures outbound
 // frames so we can assert the error envelope / acks.
@@ -60,4 +61,39 @@ test("an extension handler's throw still lands in the error envelope", async () 
     handlers: [{ type: 'fake-do', extId: 'fake', handler: () => { throw new Error('boom'); } }],
   });
   assert.deepEqual(c.sent, [{ type: 'error', message: 'boom' }]);
+});
+
+// The lazy map is the one cached read of the extension registry, so a live
+// register has to invalidate it — without this a handler installed or enabled
+// in-process is simply never found, for the life of the server.
+test('invalidateHandlerMap is what makes a live-registered handler routable', async () => {
+  _resetExtensionsForTests();
+  const loaded = getExtensions({ cfg: {}, builtin: [] });
+  _resetRouterForTests();
+  const c = ctx({ hostApiFor: () => ({ id: 'live' }) });
+  await routeControlMessage(JSON.stringify({ type: 'live-do' }), c);
+  assert.deepEqual(c.sent, [], 'not registered yet — an unknown type is a no-op');
+
+  let saw = null;
+  registerExtension(loaded, {
+    id: 'live',
+    label: 'Live',
+    defaultEnabled: true,
+    handlers: [{ type: 'live-do', handler: (msg) => { saw = msg; } }],
+  }, { cfg: {} });
+  // Routing BEFORE the invalidate still misses: the map was built by the frame
+  // above and nothing else ever re-reads the registry.
+  await routeControlMessage(JSON.stringify({ type: 'live-do' }), c);
+  assert.equal(saw, null);
+  invalidateHandlerMap();
+  await routeControlMessage(JSON.stringify({ type: 'live-do', a: 1 }), c);
+  assert.deepEqual(saw, { type: 'live-do', a: 1 });
+
+  unregisterExtension(loaded, 'live');
+  invalidateHandlerMap();
+  saw = null;
+  await routeControlMessage(JSON.stringify({ type: 'live-do' }), c);
+  assert.equal(saw, null, 'a disabled extension stops receiving frames');
+  _resetExtensionsForTests();
+  _resetRouterForTests();
 });

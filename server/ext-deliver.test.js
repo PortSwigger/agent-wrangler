@@ -62,6 +62,6 @@ test("deliverMessage's own refusals come back untouched", async () => {
 // what matters is that the facade's deliver carries that extension's own reason.
 test('index.js binds deliver per extension, with the extension id as the resume reason', () => {
   const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  assert.match(src, /deliver: createExtDeliver\(\{[^}]*sessionManager[^}]*tmuxFor[^}]*\}, \{ reason: `ext:\$\{e\.id\}` \}\)/);
+  assert.match(src, /deliver: createExtDeliver\(\{[^}]*sessionManager[^}]*tmuxFor[^}]*\}, \{ reason: `ext:\$\{id\}` \}\)/);
   assert.doesNotMatch(src, /deliver: extDeliver/, 'the one shared deliver is gone');
 });

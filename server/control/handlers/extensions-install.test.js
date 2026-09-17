@@ -7,6 +7,7 @@ import {
   _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
 import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
+import { loadExtensions, registerExtension, unregisterExtension } from '../../extensions/index.js';
 import { discoverExternal } from '../../extensions/external.js';
 import { DATA_DIR } from '../../data-dir.js';
 
@@ -24,11 +25,29 @@ function reset() {
   fs.rmSync(path.join(DATA_DIR, 'extensions.json'), { force: true });
 }
 
-function ctx(list = []) {
-  const calls = { replies: [], broadcasts: [], rebuild: 0 };
+// A REAL loaded registry behind the core-owned bag index.js builds (extBag), so
+// an install's register/unregister actually mutate something and the test can
+// read the result; activate/deactivate are spies, since bringing an extension up
+// binds singletons that only exist inside server/index.js. `builtin` entries go
+// through the loader, so a bare `{id, external}` becomes the same quarantined
+// row discovery would have produced — which is all the uninstall and
+// check-updates paths read.
+function ctx(builtin = [], { onActivate } = {}) {
+  const loaded = loadExtensions({ cfg: {}, builtin });
+  const calls = { replies: [], broadcasts: [], rebuild: 0, activated: [], deactivated: [], changed: 0 };
   return {
     calls,
-    ext: { list },
+    loaded,
+    ext: {
+      list: loaded.list,
+      manifests: loaded._manifests,
+      register: (m, o) => registerExtension(loaded, m, o),
+      unregister: (id, o) => unregisterExtension(loaded, id, o),
+      activate: (id) => { calls.activated.push(id); onActivate?.(id); },
+      deactivate: (id) => { calls.deactivated.push(id); },
+      quarantine: () => {},
+      changed: () => { calls.changed += 1; },
+    },
     reply: (o) => calls.replies.push(o),
     broadcast: (o) => calls.broadcasts.push(o),
     rebuild: async () => { calls.rebuild += 1; },
@@ -46,13 +65,13 @@ function reply(c, type) {
 // package.json disclosure and index.js manifest DISAGREE.
 function fakeClone({
   id = 'notes', requires = [], lock = true, declaration = true,
-  declaredId = id, declaredRequires = requires, indexThrows = false,
+  declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
 } = {}) {
   return async (_url, dest) => {
     fs.mkdirSync(dest, { recursive: true });
     const body = indexThrows
       ? "throw new Error('index.js executed at disclosure time');\n"
-      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  requires: ${JSON.stringify(requires)},\n};\n`;
+      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  defaultEnabled: ${JSON.stringify(defaultEnabled)},\n  requires: ${JSON.stringify(requires)},\n};\n`;
     fs.writeFileSync(path.join(dest, 'index.js'), body);
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
@@ -78,7 +97,7 @@ function fakeClone({
 }
 
 function useFakes(opts = {}) {
-  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => 'c'.repeat(40), npm: async () => {} });
+  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {} });
 }
 
 const URL_NOTES = 'https://example.invalid/notes.git';
@@ -108,7 +127,13 @@ test('ext-install discloses and installs NOTHING; ext-consent completes it', asy
   assert.equal(disclosure.dependencyCount, 2, 'the transitive total is a count, not a list');
   const done = reply(c, 'ext-install-done');
   assert.equal(done.installed, true);
-  assert.equal(done.restartRequired, true, 'new code loads at the next server start');
+  assert.equal(done.restartRequired, undefined, 'a fresh install goes live in this process');
+  assert.equal(done.active, true);
+  // Registered AND activated: the row, its contributions and its client asset
+  // are all there before the reply lands.
+  assert.deepEqual(c.loaded.list.map((e) => e.id), ['notes']);
+  assert.deepEqual(c.calls.activated, ['notes']);
+  assert.equal(c.calls.changed, 1, 'the router map and the client announcement both ride this');
   assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
   const record = readProvenance().notes;
   assert.equal(record.originUrl, URL_NOTES);
@@ -228,7 +253,11 @@ test('ext-uninstall removes the directory and the record, keeps store data, and 
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   assert.equal(readProvenance().notes, undefined);
-  assert.equal(reply(c, 'ext-uninstall-done').restartRequired, true);
+  assert.equal(reply(c, 'ext-uninstall-done').restartRequired, true, 'the module Node already cached is what the restart reclaims');
+  // Deregistered immediately, whatever the module cache still holds.
+  assert.deepEqual(c.loaded.list.map((e) => e.id), ['shipped']);
+  assert.deepEqual(c.calls.deactivated, ['notes']);
+  assert.equal(c.calls.changed, 1);
   assert.equal(c.calls.rebuild, 1);
   await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'shipped' }, c), /ships with the wrangler/);
   await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'nope' }, c), /Unknown extension/);
@@ -336,4 +365,75 @@ test('an abandoned consent is reclaimed rather than wedging every later install'
   assert.notEqual(fresh.tempId, abandoned.tempId);
   // The abandoned staging dir went with the lock — only the live one is left.
   assert.deepEqual(fs.readdirSync(tmpDir()), [fresh.tempId]);
+});
+
+// An UPDATE keeps restart semantics deliberately: Node cannot unload the old
+// module, so activating the new one would run two versions of one extension at
+// once. Any id already carrying a row takes this path, a quarantined one
+// included — a fix-by-reinstall still needs the restart.
+test('installing over an id that already has a row is an update: restart, not live', async () => {
+  reset();
+  const c = ctx([{ id: 'notes', label: 'Notes', defaultEnabled: true, external: true }]);
+  await install(c);
+  const done = reply(c, 'ext-install-done');
+  assert.equal(done.installed, true);
+  assert.equal(done.restartRequired, true);
+  assert.equal(c.calls.broadcasts.at(-1).restartRequired, true, 'the progress line says so too');
+  assert.deepEqual(c.calls.activated, [], 'the new module is never brought up beside the old one');
+  assert.equal(c.calls.changed, 0);
+  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')), 'the files still land');
+  reset();
+});
+
+// Config, not the install button, decides whether it RUNS — the same rule boot
+// applies, so an install can never leave the process in a state a restart would
+// not reproduce.
+test('an extension config says is off installs registered-but-inactive, and says so', async () => {
+  reset();
+  const c = ctx();
+  await install(c, { defaultEnabled: false });
+  const done = reply(c, 'ext-install-done');
+  assert.equal(done.installed, true);
+  assert.equal(done.active, false);
+  assert.deepEqual(c.loaded.list.map((e) => [e.id, e.enabled]), [['notes', false]]);
+  assert.deepEqual(c.calls.activated, []);
+  assert.equal(c.calls.changed, 1, 'the row is new even though nothing is running');
+  reset();
+});
+
+// Everything or nothing: a manifest that cannot be brought up must leave no
+// directory, no provenance record, no row — and must release the install lock.
+test('a failure while going live rolls the whole install back', async () => {
+  reset();
+  const c = ctx([], { onActivate: () => { throw new Error('store factory exploded'); } });
+  const disclosure = await disclose(c, { id: 'boom' });
+  await assert.rejects(
+    () => extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c),
+    /store factory exploded/,
+  );
+  assert.equal(fs.existsSync(path.join(externalDir(), 'boom')), false);
+  assert.equal(readProvenance().boom, undefined);
+  assert.deepEqual(c.loaded.list, []);
+  assert.deepEqual(c.loaded.tools, []);
+  assert.equal(c.calls.broadcasts.at(-1).phase, 'failed');
+  // The lock is released, or one bad extension wedges every later install.
+  assert.equal((await install(ctx())).id, 'notes');
+  reset();
+});
+
+// The same id, twice in one process: the second import must not come back out
+// of Node's ESM cache holding the version that was just deleted from disk.
+test('a same-id reinstall after an uninstall goes live again', async () => {
+  reset();
+  const c = ctx();
+  await install(c, { id: 'recycled' });
+  await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'recycled' }, c);
+  assert.deepEqual(c.loaded.list, []);
+  // `reply()` finds the FIRST frame of a type, so the second round needs a
+  // clean slate; the registry behind the bag is deliberately the same one.
+  c.calls.replies.length = 0;
+  await install(c, { id: 'recycled' });
+  assert.deepEqual(c.loaded.list.map((e) => e.id), ['recycled'], 'the id was released, so it stages again');
+  assert.equal(reply(c, 'ext-install-done').active, true);
+  reset();
 });

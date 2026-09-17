@@ -23,13 +23,19 @@
   one bad directory must not take the board down for every session. Three checks can
   only run outside the leaf — store construction, `buildHostApi`, the graph-key
   assertion — so `server/index.js` catches each per extension and calls
+  `quarantineFor`, which deactivates (façade, stores, hooks, sweeps) and then
   `quarantineExtension`, which **unregisters by id** because the loader has already
   registered that manifest by then. `buildHostApi` still THROWS; only the catch
-  moved. Collision order is load-bearing: builtins come first, externals are
+  moved. **Boot is no longer the only moment this happens**: a live ENABLE runs the
+  same `activateExtension`, so the same three checks can quarantine a row minutes
+  into a session — which is why `quarantineFor` deactivates first, where the boot
+  version had nothing built yet to take back. Collision order is load-bearing: builtins come first, externals are
   appended, and every name check is first-come, so **a builtin wins every tie by
-  construction and the EXTERNAL entry is the one quarantined**. A session hook bound
-  before the façade loop re-checks `hostApis.has(extId)` at call time, or a late
-  quarantine leaves a live hook running with `host` undefined. A quarantined
+  construction and the EXTERNAL entry is the one quarantined**. Every bound session
+  hook re-checks `hostApis.has(extId)` at CALL time — deactivation removes the hook
+  from the list too, but the re-check is what makes it inert whichever of the two
+  runs first, and a quarantine used to leave a live hook running with `host`
+  undefined without it. A quarantined
   **builtin** additionally raises a persistent board banner with **no "dismiss for
   today"** (`graph.quarantinedBuiltins`) — a repo bug that silently contributed
   nothing reads as a feature that quietly vanished, which is the one way this is
@@ -53,6 +59,12 @@
   `getExtensions()` deliberately does **not** also throw when called before priming:
   it cannot tell a mis-ordered boot from the adapters and the whole test suite
   legitimately calling it with an injected `{ builtin }` and no priming at all.
+  **Filled once is not the same as fixed once**: `registerExtension`/
+  `unregisterExtension` MUTATE that primed object in place afterwards, which is the
+  whole live-registry mechanism — so the tripwire still means what it says (nothing
+  calls `loadExtensions` a second time), and **nothing may ever reassign
+  `loaded.list`**, which `index.js`'s `extBag` and every `ctx.ext` hold by
+  reference (`unregisterExtension` splices for exactly this reason).
 - **`server/extensions/install.js` is the ONE place that shells out to `git` or
   `npm`, and its URL allow-list is checked BEFORE git runs.** Same containment
   `pr-status.js` gives `gh` — nothing else in the tree may spawn either. Allowed:
@@ -152,13 +164,34 @@
   store's file is chosen by the extension's own factory, and there is no
   wrangler-owned per-extension data dir to sweep. An explicit purge is deferred, so
   the confirm copy (`uninstallBodyText`) states the gap rather than selling retention
-  as a feature; it also only claims live code is still running when the extension
-  actually loaded this boot (`enabled && bootEnabled && !quarantine`) — a
-  turned-off or quarantined one contributed nothing for a restart to clear.
-  Newly installed code loads at the **next server start**, exactly like the existing
-  `enabled && !bootEnabled` case, and the copy reuses `extensionFlipNote`'s
-  vocabulary rather than inventing a second way of saying "needs a restart";
-  uninstall is symmetric, the code stays live until restart.
+  as a feature; it also only claims live code is still running when the extension is
+  actually active (`enabled && !quarantine`) — a turned-off or quarantined one
+  contributed nothing for a restart to clear.
+- **Install goes LIVE; uninstall deregisters live but still says "restart to
+  reclaim"; UPDATE keeps restart semantics on purpose.** `ext-consent`
+  (`extensions-install.js`) re-runs boot's own admission checks against what it just
+  wrote — `importViolation` BEFORE the import, `admitExternal` after it, both from
+  `extensions/external.js` so an install can never admit something the next boot
+  would quarantine — then registers the manifest and activates it, so the row, its
+  tools, handlers, stores and client asset are all there before the reply lands. It
+  rolls back COMPLETELY on any failure (registry, directory, provenance record), so
+  a manifest whose store factory throws leaves the board as it was. Two exceptions,
+  both because **Node cannot unload a module**: an id that already carries a row
+  (an update, a reinstall over a live one, a fix-by-reinstall of a QUARANTINED one)
+  takes the old restart path, since activating the new version would run two
+  versions of one extension at once; and uninstall deactivates and deregisters
+  immediately but still asks for a restart, because the old module — and anything
+  its top-level code started, a timer of its own or a global listener — is resident
+  until then. That is the whole of the "restart to reclaim" caveat, and
+  `deactivateExtension` cannot touch it. The import is cache-busted (`?t=`), or a
+  same-id reinstall in one process gets the version that was just deleted from disk;
+  an installed extension's `/ext/<id>/` asset URLs carry its pinned commit as `?v=`
+  for the browser-side half of the same problem (the ESM cache is per URL, and the
+  announcement is re-sent on every registry change). **Config, not the install
+  button, decides whether it RUNS** — an extension whose `defaultEnabled` is false,
+  or whose `extensions.<id>` is a stale `false`, lands registered-but-inactive and
+  the reply says `active: false`, because an install must never leave the process in
+  a state a restart would not reproduce.
 - **"Restart the wrangler to finish" now comes with the button that does it — ONE
   button, in the panel head beside "Check for updates" (a restart is a
   whole-wrangler action, so several pending rows must not each draw their own), in
@@ -192,7 +225,7 @@
   drawn only when a check actually found a newer commit** (`status.behind`), so the
   button never implies an update that does not exist, and the check itself reports
   `Checking…` on the button and each row. Settled reports — `Up to date.`,
-  `Cancelled. Nothing was installed.` — are cleared after `EXT_TRANSIENT_MS`
+  `Cancelled. Nothing was installed.`, a finished install — are cleared after `EXT_TRANSIENT_MS`
   (`TRANSIENT_PROGRESS_PHASES`, `public/app.js`): they describe a moment, not a
   state. Anything still awaiting action (a newer commit, an unreachable origin, a
   pending restart) is deliberately NOT on that timer.
@@ -206,38 +239,37 @@
   decoration. The consent modal has **no Enter-to-approve**, unlike `confirmDialog`,
   because approving grants a process full access to the machine.
 - **Extensions API (`server/extensions/index.js`, `public/slots.js`,
-  `public/extensions.js`) — an optional feature is ONE manifest, loaded ONCE at
-  boot, and every gate reads the loaded list, never the config.** A manifest
+  `public/extensions.js`) — an optional feature is ONE manifest, and the loaded
+  object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
   skillsFor, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
-  (`extensionEnabled`, `config-store.js`), and **the two halves of a toggle move
-  at DIFFERENT times — the UI on the next tick, everything else at the next
-  restart.** `graph.extensions[].enabled` is re-read from config on every rebuild
-  (`extensionsForGraph`, NOT `ext.list`'s boot snapshot, which carries only the
-  identity/label/help/defaultEnabled that cannot change without a restart), and
-  the client mounts or unmounts that extension's slot contributions off it
-  (`syncClientExtensions` in `app.js`, the loader's `unload`). That liveness
-  matches what a per-feature flag's own per-tick read (`graph.checklistEnabled
-  = checklistEnabled()`) already gives the features that still have one:
-  **a toggle that changes nothing visible until a restart is a regression, so
-  don't collapse this back onto `ext.list`.** Tools/handlers/skills/stores/graph-contributors/client assets
-  ARE fixed at load, so an agent's MCP tools follow at its next relaunch, and an
-  extension that booted OFF has no store, no handler and no client asset to
-  serve — it cannot be turned on live at all and genuinely needs a restart. **Timing is told to a human by
-  `extensionFlipNote` (`public/settings.js`) AFTER a flip, never by the
-  manifest's `help`** — the row's note picks one of three lines from
-  `{enabled, bootEnabled}` (`bootEnabled` being the loader's own snapshot
-  value, carried on the graph beside the live read), so it can name the
-  restart only in the case that needs one. A static help sentence cannot: a
-  blanket "takes effect after the wrangler restarts" was appended to any help
-  that didn't mention one, and it is now false for the half of a flip that
-  lands on the next tick. A manifest's `help` says what the feature IS and what
-  survives a toggle, nothing about when. Sweeps and session hooks run from the
-  fixed list.
+  (`extensionEnabled`, `config-store.js`), and **a toggle now moves at ONE time,
+  not two**: `extension-enabled.js` writes the config, then re-stages the manifest
+  and calls `ctx.ext.activate` (on) or deactivates and deregisters (off), so tools,
+  handlers, stores, sweeps and the client asset move with the UI.
+  `graph.extensions[].enabled` is still re-read from config on every rebuild
+  (`extensionsForGraph`), and `bootEnabled` beside it **keeps its name but now means
+  "ACTIVE in this process right now"** — the two differ only inside the window
+  between a flip and its activation settling, and for a quarantined row. **The ONE
+  remaining lag is MCP tools inside an ALREADY-RUNNING agent**, whose
+  `--allowedTools` is baked into its launch argv, so it gains or loses them at its
+  next resume. An extension that booted OFF *can* be turned on live: the loader
+  keeps every manifest it read in `_manifests`, disabled ones included, and that map
+  is the only thing a re-stage can work from. The enable path releases the id
+  (`unregister`) BEFORE staging — the loader claims one in `_reg` for every entry it
+  reads, so staging would otherwise fail as a duplicate of the row it is replacing.
+  **Timing is told to a human by `extensionFlipNote` (`public/settings.js`) AFTER a
+  flip, never by the manifest's `help`** — two lines now, neither naming a restart,
+  both naming the next-resume lag, because "the panel went and my agent still has
+  the tools" is otherwise indistinguishable from a switch that did nothing. A static
+  help sentence cannot say this: a blanket "takes effect after the wrangler
+  restarts" was once appended to any help that didn't mention one, and it is simply
+  false. A manifest's `help` says what the feature IS and what survives a toggle,
+  nothing about when.
   Six things are load-bearing. **`server/extensions/**` is imported by the
   `client-config.js` and `agent-skills.js` leaves (which the agent adapters
   import), so every manifest and everything it imports must itself stay
@@ -278,6 +310,19 @@
   must call it FIRST, with the core names, or an adapter's parameterless call
   memoises a copy that skipped the cross-registry check (`router.js` builds its
   handler map lazily on the first frame for exactly this ordering reason).
+  **That map is the ONE place in the server that caches the registry rather than
+  reading it per call, so every live change must end with `ctx.ext.changed()`** —
+  which calls `invalidateHandlerMap()` (`control/router.js`), re-derives the
+  `hideTool` veto, and re-broadcasts the `extensions` client manifest so a new
+  extension's `client`/`styles` load without a reload. Miss it and a handler
+  registered in-process is never found, for the life of the process.
+  **Sweeps go through `startSweepsFor` (`index.js`), and at BOOT they are deferred
+  to `main()`, after the instance lock** — a duplicate instance must not sweep a
+  `DATA_DIR` it is about to be refused, the same reason `sweepStaging` waits —
+  while a live activation is always post-lock and starts them at once.
+  `sweepHandles` is what lets a deactivate stop them; a session hook's wrapper
+  carries an `.extId` tag for the same reason, since that is what a deactivate
+  filters one extension's hooks out on.
   **The `host` façade is the ONLY route to anything an extension cannot import,
   and three of its values are FORCED from the closed-over extension id and are
   NOT caller-passable** — `broadcast`'s `type`, `mail.send`'s `from`, and
@@ -343,9 +388,9 @@
   full tool list, never to a session that can do nothing. `--allowedTools` is
   baked into launch argv and unaffected: granting a tool the listing does not
   advertise is inert.
-  A graph contributor's keys are checked ONCE at boot against
-  `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run in `index.js` against the real
-  stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;
+  A graph contributor's keys are checked ONCE PER ACTIVATION against
+  `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run by `activateExtension` in
+  `index.js` against the real stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;
   a core graph key added to `rebuildOnce` must be added to that set or a
   contributor can silently overwrite it every tick. Session hooks
   (`_extHooks` on `SessionManager`, `_fireExtHooks`) are logged-not-thrown and
@@ -354,8 +399,8 @@
   the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
   coalescing reason the resume log line does. `/ext/<id>/*`
   (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
-  which holds the extensions that were enabled AT BOOT — one disabled at boot is
-  a 404, never served, which is exactly why it cannot be turned back on live — and resolves the rest via `path.resolve` against the
+  which register/unregister maintain, so it holds the CURRENTLY ACTIVE extensions —
+  a disabled or uninstalled one is a 404 from the moment it is deregistered — and resolves the rest via `path.resolve` against the
   extension's `public/` with a prefix check, since `join(normalize())` folds a
   climbing `..` back inside instead of rejecting it. A new client slot needs a
   `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it;

@@ -20,10 +20,10 @@
 // live by the server, so a flip has to take the extension's DOM off the board
 // without a reload. It drops the id from `loaded` as well as tearing the
 // contributions down, so turning the toggle back on re-imports and re-registers
-// (the browser's module cache makes the second import free). The server only
-// ever announces extensions that were ON at boot, so an extension that booted
-// OFF has nothing to re-import here and still needs a restart — which is what
-// the manifest's help text says.
+// (the browser's module cache makes the second import free). The announcement
+// is re-sent on every registry change, not just on connect, so a newly
+// installed or newly enabled extension's client module arrives here on its own
+// — there is nothing left that a reload would fix.
 //
 // `styles` is the manifest's stylesheet (server/extensions/<id>/public/*.css,
 // served from the same /ext/<id>/ route as the module) and is loaded as a plain
@@ -97,5 +97,5 @@ export function createClientExtensionLoader(slots, {
     return true;
   }
 
-  return { load, unload, isLoaded: (id) => loaded.has(id) };
+  return { load, unload, isLoaded: (id) => loaded.has(id), loadedIds: () => [...loaded] };
 }

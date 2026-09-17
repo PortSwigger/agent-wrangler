@@ -26,13 +26,24 @@
 
 export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full access to this machine — your files, your repositories and your agent sessions. The capability list below is disclosure, not a sandbox: it says what the extension asked the wrangler for, and nothing prevents its code (or any of its dependencies) from doing more. Install this only if you trust whoever wrote it, exactly as you would trust a package you npm install into the server.';
 
-// Newly installed or uninstalled code loads (or goes) at the next server start.
-// Same vocabulary as settings.js's extensionFlipNote, deliberately: there must
-// not be a second way of saying "needs a restart". Where the server says it can
-// restart itself (`canRestart`, only under a supervisor) the note is accompanied
-// by the button that does it — an uninstall that visibly changes nothing until
-// some unexplained later restart is the single worst thing this panel did.
+// The two things a live registry still cannot do in process. An UNINSTALL
+// deregisters the extension but cannot reclaim the module Node has already
+// cached, so the code stays resident until the next start; an UPDATE of an
+// already-registered id keeps restart semantics on purpose, because two
+// versions of one extension must never run at once. Everything else — install,
+// enable, disable — lands immediately and never reaches this note. Where the
+// server says it can restart itself (`canRestart`, only under a supervisor) the
+// note is accompanied by the button that does it — an uninstall that visibly
+// changes nothing until some unexplained later restart is the single worst
+// thing this panel did.
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
+
+// An uninstall gets its OWN note, because "to finish" would be a lie there: the
+// row, tools, handlers, stores, sweeps and client asset are all gone already and
+// the reader can see that. The only thing left is the module Node cannot unload
+// and whatever its top-level code started, so the note says exactly that rather
+// than implying the uninstall is half-done.
+export const UNINSTALL_RESTART_NOTE = 'Its code stays in memory until the wrangler restarts.';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -115,11 +126,15 @@ export function extensionRowEl(entry, {
     const note = noteEl('ext-row-quarantine', '');
     note.append(el('strong', null, 'Quarantined: '));
     note.append(document.createTextNode(entry.quarantine));
-    note.append(el('div', 'ext-row-quarantine-help', 'It contributed nothing this boot. Fix or reinstall it, then restart the wrangler.'));
+    note.append(el('div', 'ext-row-quarantine-help', 'It is not running. Fix or reinstall it; a builtin needs a restart.'));
     copy.append(note);
   }
+  // Only ever the transitional frame: an uninstall deregisters the extension, so
+  // the row survives just the gap between the reply and the graph that drops it
+  // from `entries`. The durable affordance is the head's restart button, which
+  // outlives this row.
   if (pendingRemoval) {
-    copy.append(noteEl('ext-row-note', `Uninstalled. ${RESTART_NOTE}`));
+    copy.append(noteEl('ext-row-note', `Uninstalled. ${UNINSTALL_RESTART_NOTE}`));
   } else if (status) {
     copy.append(noteEl('ext-row-note', updateStatusText(status)));
   }
@@ -207,9 +222,10 @@ export function extensionsPanelEl({
   input.placeholder = 'https://github.com/…';
   input.setAttribute('aria-label', 'Extension git URL');
   copy.append(input);
-  // A finished install has no row of its own until the restart loads it, so its
-  // "restart to finish" line rides the progress line instead — the button it
-  // refers to is the one in the head.
+  // Only an update of an already-registered id ever sets `pendingInstall`, and
+  // its row shows the version still running rather than the one on disk — so the
+  // "restart to finish" line rides the install field instead, beside the head's
+  // button, and outlives the progress line once that has faded.
   if (pendingInstall) {
     copy.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
   } else if (progress) {
@@ -334,7 +350,7 @@ function dependencyDiffEl(payload) {
 // is (a store's file is chosen by its own factory). An explicit purge is
 // deferred; until it exists this sentence must describe the gap, not dress it up.
 export function uninstallBodyText(entry) {
-  const live = entry.enabled && entry.bootEnabled && !entry.quarantine;
+  const live = entry.enabled && !entry.quarantine;
   return [
     'Its files are removed from the extensions folder.',
     'Anything it saved elsewhere in the wrangler\'s data folder stays — the wrangler does not know where an extension keeps its own data.',
@@ -353,7 +369,9 @@ export function progressText(phase, extra = {}) {
     case 'resolving': return 'Reading its manifest and lockfile…';
     case 'disclosed': return '';
     case 'installing': return 'Installing its dependencies…';
-    case 'done': return `Installed ${extra.id || ''}. ${RESTART_NOTE}`.trim();
+    case 'done': return extra.restartRequired
+      ? `Installed ${extra.id || ''}. ${RESTART_NOTE}`.trim()
+      : `Installed ${extra.id || ''} and live. Running sessions pick up its tools when they next resume.`.trim();
     case 'cancelled': return 'Cancelled. Nothing was installed.';
     case 'failed': return extra.message ? `Failed: ${extra.message}` : 'Failed.';
     default: return '';
@@ -362,6 +380,9 @@ export function progressText(phase, extra = {}) {
 
 // Which progress lines are a REPORT of something that has finished and must fade,
 // rather than state the reader still has to act on. "Cancelled. Nothing was
-// installed." sat there forever describing a decision made minutes ago; a
-// finished install's line carries the restart button and stays until the restart.
-export const TRANSIENT_PROGRESS_PHASES = new Set(['cancelled', 'failed']);
+// installed." sat there forever describing a decision made minutes ago. A
+// finished install is now a report in BOTH paths: a live one has nothing left to
+// do, and the update path's restart affordance rides `pendingInstall` — the form
+// falls back to `Installed <id>. ${RESTART_NOTE}` for as long as that is set —
+// rather than the progress phase, so fading this line takes the button with it.
+export const TRANSIENT_PROGRESS_PHASES = new Set(['cancelled', 'failed', 'done']);
