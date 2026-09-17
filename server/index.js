@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import openModule from 'open';
 
@@ -13,6 +14,11 @@ import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
+import { getExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter } from './extensions/index.js';
+import { buildHostApi } from './host-api/index.js';
+import { HOST_API_VERSION } from './host-api/version.js';
+import { TOOLS } from './mcp/tools/index.js';
+import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
@@ -37,6 +43,7 @@ import { resolveMarkdownPath } from './file-preview.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession } from './shell-session.js';
+import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage } from './control/router.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
@@ -49,6 +56,7 @@ import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
+import { createExtDeliver } from './ext-deliver.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 
@@ -67,9 +75,61 @@ const shutdownLog = installShutdownLog();
 
 ensurePtyHelperExecutable();
 
+// Load the extensions FIRST, before any store exists, through the memoised
+// getExtensions so the adapters (client-config.js / agent-skills.js default to
+// the same memo) read the very object composed below. The core registry names
+// go in here so a manifest colliding with a core tool/handler fails boot loudly
+// — same posture as InstanceLockError in main(): a bad manifest is a config
+// error a human must see, not something to limp past.
+let ext;
+try {
+  ext = getExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
+} catch (err) {
+  logError(`[agent-wrangler] ${err.message}`);
+  process.exit(1);
+}
 const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
 const memoryStore = new MemoryStore();
+// The core singletons an extension's capability builder binds on its behalf (the
+// leaf rule means nothing under server/extensions/** can import them — see
+// server/extensions/index.js). Handed to host-api/, never reached for, which is
+// why the extension stores are instantiated HERE and not beside the loader.
+const extCore = { sessionManager, taskStore, memoryStore };
+// extId -> the per-extension `host` façade (host-api/index.js), populated once
+// the board primitives below exist. Declared here so every seam bound during
+// boot — session hooks, the skill gate, the tool filter — can close over the
+// LOOKUP rather than the façade: all three fire at run time, long after the Map
+// is filled, and the alternative is re-ordering half this file around them.
+const hostApis = new Map();
+const hostApiFor = (id) => hostApis.get(id);
+let extStores;
+try {
+  // A store factory gets a deliberately MINIMAL bag, not a façade: it runs here,
+  // before rebuild/broadcast/deliver exist at all, and a store's constructor has
+  // no legitimate need for them. The capabilities are for the tools, handlers,
+  // hooks and sweeps that USE the store, all of which run later.
+  extStores = Object.fromEntries(Object.entries(ext.stores).map(([k, factory]) => [k, factory({ id: k, log })]));
+} catch (err) {
+  logError(`[agent-wrangler] ${err.message}`);
+  process.exit(1);
+}
+// Which store names belong to which manifest, so `host.stores` is narrowed to an
+// extension's OWN stores — the pre-façade `extStores` was one flat object every
+// manifest shared.
+const storesFor = (id) => Object.fromEntries(
+  (ext.list.find((e) => e.id === id)?.storeNames || []).filter((n) => Object.hasOwn(extStores, n)).map((n) => [n, extStores[n]]),
+);
+// Extension session hooks (server/extensions/index.js `sessionHooks`), each
+// bound to ITS OWN extension's façade — the loader tags every hook with its
+// owner for exactly this. `stores` and `core` are gone from the payload.
+for (const [name, hooks] of Object.entries(ext.sessionHooks)) {
+  sessionManager._extHooks[name].push(...hooks.map(({ extId, fn }) => (payload) => fn({ ...payload, host: hostApiFor(extId) })));
+}
+// Per-launch skill gating (the _extLaunchSkills seam): consulted by
+// dispatch/resume/fork before the adapter builds the command, so an extension
+// can answer "not this session" for a skill its manifest declares.
+sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
 // to the real runner with memoryStore injected — keeps SessionManager itself
 // free of that dependency, and every test that doesn't stub _archiveReview
@@ -111,6 +171,78 @@ const paneDeferral = createPaneDeferral({
   agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
   sendText,
 });
+
+// The per-extension façades, built HERE — below the target resolvers — because
+// `deliver` needs them: getting text in front of a session's agent means finding
+// its pane (or waking it), and an extension may not import
+// tmux-scraper/session-manager itself (the leaf rule, extensions/index.test.js).
+//
+// The wiring bag every builder draws from. Only host-api/v1.js touches these; an
+// extension sees whatever subset its `requires` declared and nothing else.
+// `archiveSession` and `createTerminal` are composed here rather than in a
+// builder so host-api/ stays a thin bind layer and does not pull the control
+// handlers and the shell plumbing in behind it.
+const extWiring = {
+  core: extCore,
+  rebuild: () => rebuild(),
+  broadcast,
+  scheduleStore,
+  mailStore,
+  archiveSession: async (sessionId, { cascade = true } = {}) => {
+    const sessions = lastGraph?.sessions || [];
+    const ids = [...(cascade ? descendantsOf(sessionId, sessions).map((d) => d.sessionId) : []), sessionId];
+    const result = await archiveCascade(ids, archiveCascadeCtx);
+    await rebuild();
+    return { archived: ids, ...result };
+  },
+  createTerminal: async ({ cwd, command = '' } = {}) => {
+    const terminalId = `t_${crypto.randomBytes(4).toString('hex')}`;
+    const tmuxName = await createShellSession(cwd, sessionManager.socket, sessionManager.tmuxBin, command);
+    terminalRegistry.set(terminalId, { tmuxName, socket: sessionManager.socket, cwd });
+    broadcast({ type: 'open-terminal', terminalId, command, sessionId: null });
+    return { terminalId };
+  },
+};
+// What archiveCascade reads off its ctx — the same shape the board handler and
+// the archive_session tool hand it.
+const archiveCascadeCtx = { sessionManager, taskStore, sessionFromGraph, tmuxFor, socketFor, graph: () => lastGraph };
+try {
+  for (const e of ext.list) {
+    if (!e.enabled) continue;
+    hostApis.set(e.id, buildHostApi({
+      id: e.id,
+      requires: e.requires,
+      range: e.range,
+      stores: storesFor(e.id),
+      log: logError,
+      // Per-EXTENSION now, so the resume log line names which extension woke a
+      // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.
+      deliver: createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor }, { reason: `ext:${e.id}` }),
+      ...extWiring,
+    }));
+  }
+  // Every enabled extension has a façade, so a tagged tool/handler frame can
+  // never find one missing — asserted once here rather than guarded per frame.
+  for (const t of ext.tools) if (!hostApis.has(t.extId)) throw new Error(`Extension ${t.extId}: tool ${t.name} has no host API`);
+  for (const h of ext.handlers) if (!hostApis.has(h.extId)) throw new Error(`Extension ${h.extId}: handler ${h.type} has no host API`);
+  // Graph contributors run every ~4s tick where nothing may log or throw, so
+  // their keys are checked ONCE here, against a real façade.
+  for (const { id, contribute } of ext.graphContributors) assertGraphKeys(id, contribute({ host: hostApiFor(id), graph: {} }));
+} catch (err) {
+  logError(`[agent-wrangler] ${err.message}`);
+  process.exit(1);
+}
+// `deps.ext` / `ctx.ext` do NOT vanish: `hideTool` is a core-owned filter over
+// ALL tools (including ones no extension owns) and `list` is the settings panel's
+// read over every extension. Neither is a per-extension capability, so both stay
+// on the core bag rather than becoming a meta-capability — this is finished, not
+// a half-done migration. The per-extension stores/deliver/core are gone from it.
+const extBag = {
+  list: ext.list,
+  // Null unless some enabled manifest declares a `hideTool` veto, so the MCP
+  // listing keeps its unfiltered identity in the common case.
+  hideTool: createToolFilter(ext, hostApiFor, logError),
+};
 
 // Current fd-watchdog alert, or null when clear — sent to any client that
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone
@@ -477,6 +609,12 @@ const mcpRequestHandler = createMcpRequestHandler({
   // The per-session checklist the four *_checklist* tools write, resolved from
   // the caller's own card id — never a session argument.
   checklistStore,
+  // Core-owned reads over ALL extensions only (the list + the hideTool veto) —
+  // see extBag. An extension's own tool is invoked with its façade instead.
+  ext: extBag,
+  // extId -> that extension's façade. mcp/server.js selects by the loader's
+  // `extId` tag: a tagged tool gets { host, caller }, a core one { deps, caller }.
+  hostApiFor,
   config: { jiraBaseUrl },
   onPrLinksChanged: (scope, ownerId) => { pollPrStatuses({ scope, ownerId }).catch(() => {}); },
   // create_terminal deps
@@ -486,7 +624,12 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
-const server = createHttpServer({ port: PORT, mcpRequestHandler, prAttachHandler, fileHandler });
+// /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
+// extensions alone — so a disabled extension's client is a 404, never served.
+const server = createHttpServer({
+  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler,
+  extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
+});
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
 const controlWss = new WebSocketServer({ noServer: true });
@@ -566,6 +709,14 @@ async function rebuildOnce() {
   // per-session enrichment inside buildGraph: the only consumer is the ONE
   // selected session's Checklist panel, so there is nothing to enrich per card.
   graph.checklists = checklistStore.snapshot();
+  // Which extensions exist and whether each is on — what the settings toggles read
+  // back, and what the client mounts/unmounts its slot contributions from. `enabled`
+  // is re-read from config here, not taken from ext.list's boot snapshot: see
+  // extensionsForGraph.
+  graph.extensions = extensionsForGraph(ext.list);
+  // Each enabled extension's graph contribution. Only enabled ones are in the
+  // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
+  for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
   lastGraph = graph;
 
   for (const sid of autoArchived) {
@@ -590,6 +741,12 @@ const rebuild = createRebuildCoalescer(rebuildOnce);
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
   ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir() }));
+  // Which enabled extensions ship a client module (served under /ext/<id>/),
+  // each with the control types its browser half may send (slots.js binds its
+  // `send` to them and fails closed until it has heard this or a graph), plus
+  // the host API version this server serves. Sent before the first graph,
+  // every connect.
+  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }));
   if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
   if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
   availableAgents()
@@ -608,6 +765,10 @@ controlWss.on('connection', (ws) => {
     scheduleStore,
     mailStore,
     checklistStore,
+    // Same core-owned bag the MCP deps carry (list + hideTool); extension-enabled
+    // reads ctx.ext.list. An extension's handler is invoked with its façade.
+    ext: extBag,
+    hostApiFor,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
@@ -810,6 +971,18 @@ async function main() {
   mailRetentionWarm.unref();
   const mailRetentionPoll = setInterval(mailRetentionSweep, 24 * 60 * 60 * 1000);
   mailRetentionPoll.unref();
+
+  // Extension sweeps (server/extensions/index.js `sweeps`): the same fire-and-
+  // forget, unref'd shape as every poll above. A throw is logged with the
+  // extension and sweep ids — the only per-sweep line allowed, since a sweep
+  // that throws every tick is a bug a human must see. None ship today; this is
+  // the pattern for a later extension.
+  for (const s of ext.sweeps) {
+    const t = setInterval(() => {
+      Promise.resolve(s.run({ host: hostApiFor(s.extId) })).catch((err) => logError(`[ext:${s.extId}:${s.id}]`, err));
+    }, s.everyMs);
+    t.unref();
+  }
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle

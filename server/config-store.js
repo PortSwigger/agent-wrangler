@@ -167,3 +167,12 @@ export function chatViewDefault(cfg = readConfig()) {
 export function checklistEnabled(cfg = readConfig()) {
   return cfg.checklistEnabled !== false;
 }
+
+// Whether an extension (server/extensions/index.js) is enabled on this install:
+// an explicit `extensions.<id>` boolean in config.json, else the manifest's own
+// default. Non-boolean values are ignored rather than coerced. Takes cfg (like
+// taskMemoryEnabled) so tests never write the shared config.json.
+export function extensionEnabled(id, defaultEnabled, cfg = readConfig()) {
+  const v = cfg.extensions?.[id];
+  return typeof v === 'boolean' ? v : Boolean(defaultEnabled);
+}

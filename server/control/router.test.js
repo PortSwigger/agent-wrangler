@@ -38,3 +38,26 @@ test('routeControlMessage wraps a handler throw in the error envelope', async ()
   await routeControlMessage(JSON.stringify({ type: 'refresh' }), c);
   assert.deepEqual(c.sent, [{ type: 'error', message: 'boom' }]);
 });
+
+// Same branch as mcp/server.js: a tagged (extension) handler gets its own facade
+// in place of ctx, an untagged (core) one is unchanged — and the shared error
+// envelope still applies to both, so a bad extension frame cannot kill the socket.
+test('an extension handler is invoked with its facade, not ctx', async () => {
+  const seen = [];
+  const host = { id: 'fake' };
+  const c = ctx({ hostApiFor: (id) => (id === 'fake' ? host : null) });
+  await routeControlMessage(JSON.stringify({ type: 'fake-do', a: 1 }), c, {
+    handlers: [{ type: 'fake-do', extId: 'fake', handler: (msg, arg) => { seen.push({ msg, arg }); } }],
+  });
+  assert.deepEqual(seen[0].msg, { type: 'fake-do', a: 1 });
+  assert.equal(seen[0].arg, host);
+  assert.deepEqual(c.sent, []);
+});
+
+test("an extension handler's throw still lands in the error envelope", async () => {
+  const c = ctx({ hostApiFor: () => ({ id: 'fake' }) });
+  await routeControlMessage(JSON.stringify({ type: 'fake-do' }), c, {
+    handlers: [{ type: 'fake-do', extId: 'fake', handler: () => { throw new Error('boom'); } }],
+  });
+  assert.deepEqual(c.sent, [{ type: 'error', message: 'boom' }]);
+});

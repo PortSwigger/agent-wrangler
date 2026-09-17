@@ -99,7 +99,7 @@ export function cleanClaudeEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
 }
 
-export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, taskMemory }) {
+export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
   // skill discovery alone isn't reliable for one that must be followed at every
   // session start regardless of task relevance — so a mandatory skill's nudge
@@ -107,7 +107,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // worktree guardrail. `taskMemory` is only threaded so tests can pin it; left
   // undefined here (the production path) it falls through to the live-config
   // default inside mandatorySkillPrompt.
-  const appendPrompt = [mandatorySkillPrompt(undefined, { taskMemory }), worktree ? worktreeGuardrailPrompt(worktree) : '']
+  const appendPrompt = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), worktree ? worktreeGuardrailPrompt(worktree) : '']
     .filter(Boolean).join('\n\n');
   const full = [
     ...args,
@@ -177,7 +177,7 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, addDirs = [], worktree = null, workflow = false, spawnedBy, taskMemory }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, addDirs = [], worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
@@ -185,10 +185,10 @@ export const claude = {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     for (const d of addDirs) args.push('--add-dir', d);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, taskMemory }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, taskMemory, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, effort, workflow = false, intent = '', spawnedBy, taskMemory }) {
+  buildResume({ sessionId, resumeId, effort, workflow = false, intent = '', spawnedBy, taskMemory, disabledSkills }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -197,10 +197,10 @@ export const claude = {
     // effort is re-threaded here because it is NOT transcript-restored on resume.
     const args = ['--resume', resumeId, '--permission-mode', 'auto'];
     if (effort) args.push('--effort', effort);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, taskMemory }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, taskMemory, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, model, effort, intent = '', taskMemory }) {
+  buildFork({ sessionId, liveSessionId, sourceId, model, effort, intent = '', taskMemory, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
@@ -209,7 +209,7 @@ export const claude = {
     args.push('--permission-mode', 'auto');
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, taskMemory }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, taskMemory, disabledSkills }));
   },
 
   // Claude is given its id at launch, so the live id is the board id.

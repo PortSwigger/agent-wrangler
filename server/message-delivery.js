@@ -32,7 +32,12 @@ import { adapterFor } from './agents/index.js';
 // edited version pastes it onto the original and the agent gets both fused into one
 // prompt. Only the armed case clears — a draft the human typed in the pane directly
 // is theirs, and discarding it silently would be its own bug.
-export async function deliverMessage(id, text, deps, { imagePaths = [], clearComposer: wantClear = false } = {}) {
+// `reason` is what a dormant target's relaunch is LOGGED as (session-manager's
+// resume line, whose whole point is naming what woke a card) — it defaults to
+// 'message' because a human pressing send and a peer's send_message are what
+// this primitive was built for, and an extension's delivery passes its own so
+// the log never claims a human sent it (see ext-deliver.js).
+export async function deliverMessage(id, text, deps, { imagePaths = [], clearComposer: wantClear = false, reason = 'message' } = {}) {
   const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
   const sendText = deps.sendText ?? defaultSendText;
   const prefillPane = deps.prefillPane ?? defaultPrefillPane;
@@ -103,7 +108,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // absorbed into — the images would simply be dropped, silently.
   const intentCarriesMessage = owned && !imagePaths.length && !wantClear && adapterFor(fresh.agent).resumeCarriesIntent;
   try {
-    const res = await sessionManager.resume(id, dir, { intent: text, reason: 'message' });
+    const res = await sessionManager.resume(id, dir, { intent: text, reason });
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';

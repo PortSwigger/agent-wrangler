@@ -5,7 +5,7 @@ import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
-  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml,
+  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml,
 } from './cards.js';
@@ -81,6 +81,23 @@ test('sessionCardHtml: escapes label, carries data-sid, marks selection', () => 
   assert.match(html, /data-sid="s1"/);
   assert.match(html, /&lt;x&gt;/);
   assert.match(html, /session-card [^"]*selected/);
+});
+
+test('sessionCardHtml: carries the card.pill slot host, between the core chips and the links', () => {
+  const html = sessionCardHtml(sess({ links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1', number: 1 }] }), ctx());
+  assert.match(html, /<span class="card-meta-ext"><\/span>/);
+  assert.ok(html.indexOf('card-meta-ext') < html.indexOf('card-meta-links'), 'the host sits before the right-aligned links');
+  assert.ok(html.indexOf('card-meta-ext') > html.indexOf('class="card-meta"'), 'and inside the chips row');
+  // Empty and unconditional: cards.js knows nothing about which extensions are
+  // loaded — app.js mountCardPills fills the hosts after the render.
+  assert.equal(cardPillHostHtml(), '<span class="card-meta-ext"></span>');
+  assert.equal((sessionCardHtml(sess(), ctx()).match(/card-meta-ext/g) || []).length, 1);
+});
+
+// A worker spine row has no chip row to host a pill; a snoozed row is not a card.
+test('workerRowHtml and snoozedRowHtml carry no card.pill host', () => {
+  assert.doesNotMatch(workerRowHtml(sess(), ctx()), /card-meta-ext/);
+  assert.doesNotMatch(snoozedRowHtml(sess({ snooze: { until: Date.now() + 1000 } }), ctx()), /card-meta-ext/);
 });
 
 test('sessionCardHtml: a slot selection suppresses the card ring', () => {
