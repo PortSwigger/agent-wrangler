@@ -47,6 +47,11 @@ export function dimensionMap(bucket, dimension) {
   return bucket.byTask || {};
 }
 
+export function providerBucket(bucket, provider) {
+  if (!provider) return bucket || {};
+  return bucket?.providers?.[provider] || {};
+}
+
 // The current metric's scalar from one {usd, tokens:{…}} cell (0 when the key had no
 // spend in that bucket). $ reads the dollar figure; Tokens sums all token types — for a
 // Token-type cell only its own slot is populated, so the sum is that type's count.
@@ -67,6 +72,22 @@ export function rankMembers(members, buckets, metric, dimension) {
     for (const b of buckets || []) value += cellValue(dimensionMap(b, dimension)[m.key], metric);
     return { key: m.key, name: m.name, value };
   }).sort((a, b) => b.value - a.value);
+}
+
+export function rankProviderAwareModels(members, buckets, metric, providers, slotsPerProvider = 1, maxSlots = Infinity) {
+  const overall = rankMembers(members, buckets, metric, 'model').filter((m) => m.value > 0);
+  const reserved = new Set();
+  for (const provider of providers) {
+    const providerBuckets = (buckets || []).map((bucket) => providerBucket(bucket, provider));
+    for (const member of rankMembers(members, providerBuckets, metric, 'model').slice(0, slotsPerProvider)) {
+      if (member.value > 0) reserved.add(member.key);
+    }
+  }
+  for (const member of overall) {
+    if (reserved.size >= maxSlots) break;
+    reserved.add(member.key);
+  }
+  return [...overall.filter((m) => reserved.has(m.key)), ...overall.filter((m) => !reserved.has(m.key))];
 }
 
 // Top members (already ranked by the caller) get a colour slot; the remainder's keys

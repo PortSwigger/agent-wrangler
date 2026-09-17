@@ -30,6 +30,9 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import {
   createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
   isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
+  visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
+  parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
+  checklistHiddenDoneLabel,
 } from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
@@ -41,7 +44,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
+import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
@@ -53,7 +56,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
-import { sidebarWidthFromDrag } from './sidebar-side.js';
+import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
@@ -382,6 +385,11 @@ function barWord(s) {
   const phase = workflowPhaseLabel(s.workflow);
   if (phase) return phase;
   // needs-you (red) outranks a manual unread bookmark — a live block beats a cue.
+  // An api-error is retryable by sending another message — 'reply' would wrongly
+  // suggest the same "go answer a prompt in the terminal" affordance as a real
+  // permission prompt or OAuth screen (see workerStatusWord in cards.js, same
+  // vocabulary).
+  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
   if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
@@ -1522,6 +1530,7 @@ function wireGridEvents(el) {
 // keep in sync. One menu lives on <body> at a time; any dismissal (outside
 // mousedown, Escape, scroll, resize) tears it down along with its listeners.
 let overflowMenuEl = null;
+let taskLinkResizeObserver = null;
 function closeOverflowMenu() {
   if (!overflowMenuEl) return;
   overflowMenuEl.remove();
@@ -2425,7 +2434,42 @@ function beginTaskRename(cell) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+function fitTaskLinkLists(el) {
+  el.querySelectorAll('.task-link-list').forEach((list) => {
+    const chips = [...list.querySelectorAll('.link-chip')];
+    const overflow = list.querySelector('.link-overflow');
+    if (!overflow) return;
+    chips.forEach((chip) => { chip.hidden = false; });
+    overflow.hidden = true;
+    const availableWidth = list.clientWidth;
+    const widths = chips.map((chip) => chip.getBoundingClientRect().width);
+    const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
+    let visible = chips.length;
+    if (widths.reduce((sum, width) => sum + width, 0) + gap * (chips.length - 1) > availableWidth) {
+      overflow.hidden = false;
+      overflow.textContent = `+${chips.length}`;
+      visible = visibleTaskLinkCount(widths, availableWidth, overflow.getBoundingClientRect().width, gap);
+      while (visible < chips.length) {
+        overflow.textContent = `+${chips.length - visible}`;
+        const next = visibleTaskLinkCount(widths, availableWidth, overflow.getBoundingClientRect().width, gap);
+        if (next <= visible) break;
+        visible = next;
+      }
+      chips.slice(visible).forEach((chip) => { chip.hidden = true; });
+      overflow.textContent = `+${chips.length - visible}`;
+    }
+    const links = JSON.parse(list.dataset.taskLinks || '[]');
+    overflow.dataset.overflowLinks = JSON.stringify(links.slice(visible));
+  });
+}
+
 function wireTaskControls(el) {
+  taskLinkResizeObserver?.disconnect();
+  fitTaskLinkLists(el);
+  if (typeof ResizeObserver !== 'undefined') {
+    taskLinkResizeObserver = new ResizeObserver(() => fitTaskLinkLists(el));
+    el.querySelectorAll('.task-head').forEach((head) => taskLinkResizeObserver.observe(head));
+  }
   el.querySelectorAll('.link-overflow').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2515,12 +2559,23 @@ const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
 const checklistOpenOverrides = (() => {
   try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
 })();
+const CHECKLIST_SHOW_DONE_KEY = 'wrangler.checklistShowDone';
+const checklistShowDoneIds = (() => {
+  try { return parseChecklistShowDone(localStorage.getItem(CHECKLIST_SHOW_DONE_KEY)); } catch { return new Set(); }
+})();
 function checklistOpen(sessionId) {
   return isChecklistOpen(checklistOpenOverrides, sessionId);
 }
 function toggleChecklist(sessionId) {
   toggleChecklistOpen(checklistOpenOverrides, sessionId);
   try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
+}
+function checklistShowDone(sessionId) {
+  return isChecklistShowDone(checklistShowDoneIds, sessionId);
+}
+function toggleChecklistDoneFilter(sessionId) {
+  toggleChecklistShowDone(checklistShowDoneIds, sessionId);
+  try { localStorage.setItem(CHECKLIST_SHOW_DONE_KEY, serializeChecklistShowDone(checklistShowDoneIds)); } catch {}
 }
 
 // The live array for a session (not a copy) — the optimistic mutations below
@@ -2546,9 +2601,20 @@ function renderChecklist(sessionId) {
   if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
   el.hidden = false;
   document.getElementById('ck-count').textContent = checklistCountLabel(items);
+  const showDone = checklistShowDone(sessionId);
+  const filter = document.getElementById('ck-filter');
+  filter.classList.toggle('showing', showDone);
+  filter.setAttribute('aria-pressed', String(showDone));
+  filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
+  document.getElementById('ck-filter-label').textContent = showDone ? 'All' : 'Open';
+  const visibleItems = visibleChecklistItems(items, { showDone });
+  const empty = document.getElementById('ck-empty');
+  const emptyLabel = checklistHiddenDoneLabel(items, { showDone });
+  if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
+  empty.hidden = !emptyLabel;
   if (checklistDragActive || checklistEditing) return;
   const list = document.getElementById('ck-list');
-  checklistDom.patch(list, { sessionId, items });
+  checklistDom.patch(list, { sessionId, items: visibleItems, focusFallback: filter });
   syncChecklistScrollHint(list);
 }
 
@@ -2690,6 +2756,10 @@ function endChecklistDrag() {
 function initChecklist() {
   const list = document.getElementById('ck-list');
   document.getElementById('ck-add').addEventListener('click', beginChecklistAdd);
+  document.getElementById('ck-filter').addEventListener('click', () => {
+    toggleChecklistDoneFilter(selectedSessionId);
+    renderChecklist(selectedSessionId);
+  });
   list.addEventListener('click', (e) => {
     const row = e.target.closest('.ck-row');
     if (!row || !row.dataset.ckid) return;
@@ -2718,17 +2788,19 @@ function initChecklist() {
     e.preventDefault();
     if (!checklistDragActive) return;
     const sid = selectedSessionId;
-    const order = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
+    const visibleOrder = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
     // A `tmp_` id belongs to an add still in flight — the server has never heard
     // of it, so sending it would just be ignored. Filter it out rather than
     // skipping the whole round trip (skipping would let the next graph echo
     // revert the drag). Reorder appends anything it isn't told about, and an
     // optimistic item is always the last row anyway, so it lands where it was.
+    const items = checklistFor(sid);
+    const reordered = reorderVisibleChecklistItems(items, visibleOrder);
+    const order = reordered.map((item) => item.id);
     send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
     // Optimistic reorder of the local snapshot, so the next patch agrees with
     // the DOM the drag already produced rather than snapping it back.
-    const byId = new Map(checklistFor(sid).map((i) => [i.id, i]));
-    latestChecklists[sid] = order.map((id) => byId.get(id)).filter(Boolean);
+    latestChecklists[sid] = reordered;
     endChecklistDrag();
     renderChecklist(sid);
   });
@@ -3980,12 +4052,21 @@ function applyTerminalSide(side = getSetting('terminalSide')) {
 }
 applyTerminalSide();
 
-// Drag-to-resize the sidebar (stretch the terminal wider than the grid).
+// Drag-to-resize the boundary between the grid and the sidebar. #grid (not
+// #sidebar) is the one whose width is pinned in px — see styles.css's
+// `main:has(#sidebar:not(.collapsed)) #grid` rule — so that a window resize
+// changes the conversation pane's width instead of reflowing the session
+// columns. sidebarWidthFromDrag still computes the pane's own intended width
+// from the mouse position (it already handles both #sidebar sides); this just
+// converts that into the complementary #grid width so the boundary tracks the
+// cursor exactly as before.
 (function initSidebarResize() {
   const handle = document.getElementById('drag-handle');
   const sidebar = document.getElementById('sidebar');
-  const saved = localStorage.getItem('cm-sidebar-w');
-  if (saved) sidebar.style.width = saved;
+  const grid = document.getElementById('grid');
+  const main = document.querySelector('main');
+  const saved = localStorage.getItem('cm-grid-w');
+  if (saved) grid.style.width = saved;
   let dragging = false;
   handle.addEventListener('mousedown', (e) => {
     dragging = true;
@@ -3998,20 +4079,25 @@ applyTerminalSide();
     // The clamp + which-edge-to-measure-from lives in the sidebar-side leaf so it
     // can be unit-tested from both sides; the side is read per-drag rather than
     // captured, so flipping the setting mid-session needs no re-wiring here.
-    const w = sidebarWidthFromDrag({
+    const sidebarW = sidebarWidthFromDrag({
       clientX: e.clientX,
       rect: sidebar.getBoundingClientRect(),
       viewportWidth: window.innerWidth,
       onLeft: getSetting('terminalSide') === 'left',
     });
-    sidebar.style.width = `${w}px`;
+    const gridW = gridWidthFromSidebarDrag({
+      mainWidth: main.getBoundingClientRect().width,
+      handleWidth: handle.getBoundingClientRect().width,
+      sidebarWidth: sidebarW,
+    });
+    grid.style.width = `${gridW}px`;
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('dragging');
     document.body.classList.remove('dragging');
-    localStorage.setItem('cm-sidebar-w', sidebar.style.width);
+    localStorage.setItem('cm-grid-w', grid.style.width);
     // On mouseup, not mousemove: a full re-render per mouse event would rebuild every
     // tile mid-drag.
     renderGridIfVisible();
@@ -4039,7 +4125,7 @@ function renderSidebar(s) {
     // re-seeding here an already-working session shows no "Working — running X" line
     // until the next ~4s graph rebuild, while Stop — driven off the same status — is
     // already visible. The two must never disagree.
-    chatView.setStatus(displayStatus(s), s.waitingFor);
+    chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     // Same reasoning for the model: mount clears it so a session switch cannot
     // leave the previous session's model showing, which means it has to be
     // re-seeded here or the chip stays blank until the next graph rebuild.
@@ -4235,7 +4321,7 @@ function renderPanel(sessionId) {
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
-    chatView.setStatus(displayStatus(s), s.waitingFor);
+    chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
   }

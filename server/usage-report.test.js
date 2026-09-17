@@ -480,6 +480,57 @@ test('Codex carries a model bucket and estimated per-type spend', async () => {
   assert.ok(Math.abs(typeSum - day.total.usd) < 1e-9, 'codex $ across types sums to the bucket total');
 });
 
+test('rebuilds stale Codex cache entries so their cost appears in token-type chart segments', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const uuid = '89898989-8989-8989-8989-898989898989';
+  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
+  fs.writeFileSync(roll, [
+    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, output_tokens: 1000 } } } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: {
+    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+  } });
+
+  await scanAllDaily(d);
+  const cache = readCache(d.dataDir);
+  delete cache.codex[roll].result.costByType;
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify(cache));
+  _resetUsageFileCache();
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const day = r.buckets.find((b) => b.key === '2026-07-11');
+  assert.ok(day.byType.input.usd > 0, 'a legacy cache result is rescanned instead of rendering $0 token-type segments');
+  assert.equal(_usageFileCacheStats().misses, 1, 'the missing cost breakdown makes the old cache entry ineligible');
+});
+
+test('provides provider-specific usage for the chart filter', async () => {
+  const d = makeDirs();
+  const claude = '90909090-9090-9090-9090-909090909090';
+  const codex = '91919191-9191-9191-9191-919191919191';
+  claudeTranscript(d.projectsDir, { sessionId: claude, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1000, output_tokens: 100 }, '2026-07-11T10:00:00.000Z'),
+  ] });
+  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${codex}.jsonl`), [
+    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, output_tokens: 200 } } } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: {
+    ca: { agent: 'claude', liveSessionId: claude, cwd: '/work/proj' },
+    co: { agent: 'codex', liveSessionId: codex, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+  } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const day = r.buckets.find((b) => b.key === '2026-07-11');
+  assert.equal(day.providers.anthropic.total.tokens.input, 1000);
+  assert.equal(day.providers.openai.total.tokens.input, 2000);
+  assert.equal(day.providers.anthropic.total.estimatedUsd, 0);
+  assert.equal(day.providers.openai.total.estimatedUsd, day.providers.openai.total.usd);
+  assert.equal(day.providers.anthropic.byType.input.tokens.input, 1000);
+  assert.equal(day.providers.openai.byType.input.tokens.input, 2000);
+});
+
 test('window covers exactly the expected bucket count and ends at the current period', async () => {
   const d = makeDirs();
   writeStores(d.dataDir, { entries: {} });
