@@ -25,22 +25,40 @@ import { V1_BUILDERS } from './v1.js';
 // selected by the manifest's declared range, rather than editing builders in
 // place — see version.js.
 
-// Merged onto every façade whatever it declares. None of the four reaches server
+// Merged onto every façade whatever it declares. None of the five reaches server
 // state on the extension's behalf, which is why none is gated:
 //   id       — its own id, so a log line or a broadcast payload can name itself.
 //   version  — what it is talking to, matching the range it declared.
 //   stores   — ITS OWN stores only. The pre-façade `extStores` was one flat
 //              object shared by every manifest; the narrowing is the loader's
 //              per-manifest store-name list applied here.
+//   settings — ITS OWN settings values, the same argument as `stores`: this is
+//              the extension's own data, not a core surface, and a capability
+//              for reading back a value a human typed into that extension's own
+//              settings row would be disclosure noise.
 //   log      — routed through server/log.js, prefixed `[ext:<id>]`. The prefix
 //              goes INTO the first argument only when that is a string, so
 //              log(err) / log('[tag]', err) keeps the Error its own argument and
 //              the console still renders the stack (see log.js).
-function alwaysPresent({ id, stores = {}, log = () => {} }) {
+function alwaysPresent({ id, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}) }) {
   return {
     id,
     version: HOST_API_VERSION,
     stores: Object.freeze({ ...stores }),
+    // Narrowed by the SAME mechanism as the three forced values in v1.js: `id`
+    // is closed over here and is not a caller-passable argument, so there is no
+    // signature through which an extension could read a sibling's block. Read
+    // THROUGH on every call rather than snapshotted at build time — a value
+    // edited in the Extensions tab (or by hand in config.json) has to land
+    // without a restart, and the façade is built once per activation.
+    //
+    // A key the manifest did not declare reads as `undefined` rather than
+    // throwing, so `get(k)` and `all()` agree about the vocabulary; a typo is
+    // the extension's own bug and there is nothing for it to leak into.
+    settings: Object.freeze({
+      get: (key) => (settingDefs.some((d) => d.key === key) ? readSettings(id)[key] : undefined),
+      all: () => Object.fromEntries(settingDefs.map((d) => [d.key, readSettings(id)[d.key]])),
+    }),
     log: (...args) => (typeof args[0] === 'string' ? log(`[ext:${id}] ${args[0]}`, ...args.slice(1)) : log(`[ext:${id}]`, ...args)),
   };
 }
@@ -65,6 +83,10 @@ export function buildHostApi({ id, requires = [], range = null, ...wiring } = {}
     throw new Error(`Extension ${id}: needs host API ${range}, this server serves ${HOST_API_VERSION}`);
   }
   const facade = alwaysPresent({ id, ...wiring });
+  // `settingDefs`/`readSettings` ride in on `wiring` with no signature change,
+  // so they reach the capability builders too. No builder reads them and none
+  // should: `host.settings` is already built above, ungated, and is not a
+  // capability — CAPABILITIES and V1_BUILDERS are untouched by it.
   const dep = { id, ...wiring };
   for (const name of requires) {
     const build = Object.hasOwn(V1_BUILDERS, name) ? V1_BUILDERS[name] : null;

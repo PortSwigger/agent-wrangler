@@ -176,3 +176,33 @@ export function extensionEnabled(id, defaultEnabled, cfg = readConfig()) {
   const v = cfg.extensions?.[id];
   return typeof v === 'boolean' ? v : Boolean(defaultEnabled);
 }
+
+// An extension's own settings VALUES, in a NEW `extensionSettings.<id>.<key>`
+// block — deliberately not inside `extensions.<id>`, which is the enable flag
+// and is a BOOLEAN. Keeping them apart is what makes it impossible for a
+// manifest declaring a setting called `enabled` (or for a hand-edit) to make the
+// toggle and a value the same key. Takes cfg (like extensionEnabled) so tests
+// never write the shared config.json.
+export function extensionSetting(id, key, fallback, cfg = readConfig()) {
+  const v = cfg.extensionSettings?.[id]?.[key];
+  return v === undefined ? fallback : v;
+}
+
+// Every stored value for one extension, as `{ key: value }`. `{}` when nothing
+// has ever been set. What extensionsForGraph and host.settings.all() read.
+export function extensionSettings(id, cfg = readConfig()) {
+  const block = cfg.extensionSettings?.[id];
+  return block && typeof block === 'object' && !Array.isArray(block) ? { ...block } : {};
+}
+
+// writeConfig is a SHALLOW merge, so BOTH levels are spread by hand — the same
+// discipline extension-enabled.js uses for `extensions`. Forgetting the inner
+// spread would drop every other setting this extension has; forgetting the
+// outer one would drop every other extension's block.
+export function setExtensionSetting(id, key, value) {
+  const cfg = readConfig();
+  const all = cfg.extensionSettings || {};
+  return writeConfig({
+    extensionSettings: { ...all, [id]: { ...(all[id] || {}), [key]: value } },
+  });
+}

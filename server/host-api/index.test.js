@@ -5,7 +5,7 @@ import { buildHostApi } from './index.js';
 import { V1_BUILDERS } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
 
-const ALWAYS = ['id', 'version', 'stores', 'log'];
+const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
 function wiring(overrides = {}) {
   return {
@@ -59,7 +59,7 @@ test('capabilities sharing a namespace merge into one object', () => {
 test('the facade and every nested sub-object are frozen', () => {
   const host = buildHostApi({ id: 'x', requires: [...CAPABILITIES], ...wiring() });
   assert.ok(Object.isFrozen(host));
-  for (const key of ['sessions', 'tasks', 'memory', 'mail', 'schedules', 'terminals', 'stores']) {
+  for (const key of ['sessions', 'tasks', 'memory', 'mail', 'schedules', 'terminals', 'stores', 'settings']) {
     assert.ok(Object.isFrozen(host[key]), key);
   }
   assert.throws(() => { host.rebuild = () => {}; }, TypeError);
@@ -69,6 +69,45 @@ test('the facade and every nested sub-object are frozen', () => {
 test('host.stores carries only what was wired for this extension', () => {
   const host = buildHostApi({ id: 'x', requires: [], stores: { mine: 1 }, ...wiring() });
   assert.deepEqual(Object.keys(host.stores), ['mine']);
+});
+
+// -- host.settings ---------------------------------------------------------
+const DEFS = [{ key: 'registryUrl', type: 'text', label: 'Registry URL' }, { key: 'auto', type: 'toggle', label: 'Auto' }];
+
+test('host.settings is UNGATED — present on a facade that declared no capabilities at all', () => {
+  const host = buildHostApi({ id: 'x', requires: [], ...wiring() });
+  assert.equal('settings' in host, true, 'the extension\'s own values are not a core surface to gate');
+  assert.deepEqual(host.settings.all(), {}, 'no defs declared, so no vocabulary');
+});
+
+test('host.settings reads ITS OWN id only, and never as a caller-passable argument', () => {
+  const asked = [];
+  const host = buildHostApi({
+    id: 'x', requires: [], settingDefs: DEFS,
+    readSettings: (id) => { asked.push(id); return { x: { registryUrl: 'https://mine' }, other: { registryUrl: 'https://theirs' } }[id] || {}; },
+    ...wiring(),
+  });
+  assert.equal(host.settings.get('registryUrl'), 'https://mine');
+  assert.deepEqual(host.settings.all(), { registryUrl: 'https://mine', auto: undefined });
+  // There is no signature through which a sibling's block could be reached:
+  // `id` is closed over, exactly like broadcast's type and mail.send's from.
+  assert.equal(host.settings.get('registryUrl', 'other'), 'https://mine');
+  assert.deepEqual([...new Set(asked)], ['x']);
+});
+
+test('host.settings reads THROUGH on every call, so an edit lands without a restart', () => {
+  let stored = {};
+  const host = buildHostApi({ id: 'x', requires: [], settingDefs: DEFS, readSettings: () => stored, ...wiring() });
+  assert.equal(host.settings.get('registryUrl'), undefined);
+  stored = { registryUrl: 'https://later' };
+  assert.equal(host.settings.get('registryUrl'), 'https://later', 'the facade is built once per activation; the value is not');
+  assert.deepEqual(host.settings.all(), { registryUrl: 'https://later', auto: undefined });
+});
+
+test('a key the manifest never declared reads undefined from both get and all', () => {
+  const host = buildHostApi({ id: 'x', requires: [], settingDefs: DEFS, readSettings: () => ({ registryUrl: 'https://mine', stray: 'ignored' }), ...wiring() });
+  assert.equal(host.settings.get('stray'), undefined, 'a typo is the extension\'s own bug, with nothing to leak into');
+  assert.deepEqual(Object.keys(host.settings.all()), ['registryUrl', 'auto'], 'get and all agree about the vocabulary');
 });
 
 test('an unknown capability throws naming the extension', () => {

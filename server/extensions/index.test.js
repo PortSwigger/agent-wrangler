@@ -111,7 +111,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
   assert.deepEqual(out.list, [{
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
-    requires: [], range: null, storeNames: ['fake'], skills: ['fake'], handlerTypes: [],
+    requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['fake'], handlerTypes: [],
     external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
@@ -413,6 +413,66 @@ test('tools, handlers and session hooks come out tagged with their owning extens
   assert.equal(typeof out.sessionHooks.onPurge[0].fn, 'function');
 });
 
+// -- settings defs ---------------------------------------------------------
+const SETTING = { key: 'registryUrl', type: 'text', label: 'Registry URL', help: 'Where handles are published.', placeholder: 'https://…' };
+
+test('a settings array is validated per def, and every rejection quarantines naming the extension', () => {
+  assert.ok(validateManifest(manifest({ settings: [SETTING, { key: 'pollMs', type: 'number', label: 'Poll interval' }, { key: 'auto', type: 'toggle', label: 'Auto' }] })));
+  rejects(manifest({ settings: {} }), /Extension fake: settings must be an array of setting definitions/);
+  rejects(manifest({ settings: [null] }), /Extension fake: settings\[0\] is not an object/);
+  for (const key of ['Foo', '_x', '1a', '', 'has-dash', 42]) {
+    rejects(manifest({ settings: [{ ...SETTING, key }] }), /Extension fake: settings\[0\].key must match/);
+  }
+  rejects(manifest({ settings: [SETTING, { ...SETTING }] }), /Extension fake: duplicate setting key "registryUrl"/);
+  rejects(manifest({ settings: [{ ...SETTING, type: 'secret' }] }), /Extension fake: settings.registryUrl.type must be one of text, number, toggle/);
+  rejects(manifest({ settings: [{ ...SETTING, type: undefined }] }), /settings.registryUrl.type must be one of/);
+  rejects(manifest({ settings: [{ ...SETTING, label: '' }] }), /Extension fake: settings.registryUrl.label must be a non-empty string/);
+  rejects(manifest({ settings: [{ ...SETTING, label: 7 }] }), /settings.registryUrl.label must be a non-empty string/);
+  rejects(manifest({ settings: [{ ...SETTING, help: 7 }] }), /Extension fake: settings.registryUrl.help must be a string/);
+  rejects(manifest({ settings: [{ ...SETTING, placeholder: {} }] }), /Extension fake: settings.registryUrl.placeholder must be a string/);
+});
+
+test('the defs land on the list entry as a COPY of the manifest\'s own array', () => {
+  const defs = [{ ...SETTING }];
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ settings: defs })] });
+  assert.deepEqual(out.list[0].settings, [SETTING]);
+  // A manifest that mutates its own array afterwards must move neither the
+  // entry the graph reads nor what ext-setting-set validates against.
+  defs[0].label = 'Something else';
+  defs.push({ key: 'sneaky', type: 'toggle', label: 'Sneaky' });
+  assert.deepEqual(out.list[0].settings, [SETTING]);
+});
+
+test('extensionsForGraph carries the defs and the stored values, both re-read per call', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ settings: [SETTING] })] });
+  let values = {};
+  const rows = () => extensionsForGraph(out.list, () => true, () => values);
+  assert.deepEqual(rows()[0].settings, [SETTING]);
+  assert.deepEqual(rows()[0].settingValues, {});
+  // The same reason `enabled` is re-read: an edit in another tab, or by hand in
+  // config.json, has to reach the panel without a restart.
+  values = { registryUrl: 'https://reg.invalid' };
+  assert.deepEqual(rows()[0].settingValues, { registryUrl: 'https://reg.invalid' });
+  // The defs are copied out too, so a graph consumer cannot write back into
+  // the registry entry through them.
+  rows()[0].settings[0].label = 'mutated';
+  assert.equal(out.list[0].settings[0].label, 'Registry URL');
+});
+
+test('a QUARANTINED extension keeps its setting defs — the panel draws them disabled', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ settings: [SETTING] })] });
+  quarantineExtension(out, 'fake', 'store factory threw');
+  const [row] = extensionsForGraph(out.list, () => true, () => ({}));
+  assert.equal(row.quarantine, 'store factory threw');
+  assert.deepEqual(row.settings, [SETTING], 'hiding them would make a broken extension look like one with nothing to configure');
+});
+
+test('a manifest with no settings reports an empty list rather than undefined', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
+  assert.deepEqual(out.list[0].settings, []);
+  assert.deepEqual(extensionsForGraph(out.list, () => true, () => ({}))[0].settings, []);
+});
+
 test('extensionsForGraph carries each extension\'s own handler types', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
   assert.deepEqual(extensionsForGraph(out.list, () => true)[0].handlerTypes, ['fake-do']);
@@ -466,7 +526,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   const out = loadExtensions({ cfg: {}, builtin: [{ id: 'dud', external: true, quarantine: 'no index.js' }] });
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
-    defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], skills: [],
+    defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
     handlerTypes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);

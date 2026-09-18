@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, extensionEnabled, writeConfig, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -171,5 +171,55 @@ test('extensionEnabled: the manifest default applies until an explicit boolean o
   assert.equal(extensionEnabled('demo', false, { extensions: { demo: true } }), true);
   assert.equal(extensionEnabled('demo', true, { extensions: { demo: 'no' } }), true, 'a non-boolean is ignored, not coerced');
   assert.equal(extensionEnabled('demo', true, { extensions: { other: false } }), true, "another extension's value is not this one's");
+});
+
+test('extensionSetting: the caller\'s fallback stands until a value is stored', () => {
+  assert.equal(extensionSetting('demo', 'registryUrl', undefined, {}), undefined);
+  assert.equal(extensionSetting('demo', 'registryUrl', 'https://d', {}), 'https://d');
+  assert.equal(extensionSetting('demo', 'registryUrl', 'https://d', { extensionSettings: { demo: { registryUrl: 'https://x' } } }), 'https://x');
+  // Only `undefined` means unset — a stored false, 0 or '' is a real choice.
+  assert.equal(extensionSetting('demo', 'auto', true, { extensionSettings: { demo: { auto: false } } }), false);
+  assert.equal(extensionSetting('demo', 'pollMs', 30, { extensionSettings: { demo: { pollMs: 0 } } }), 0);
+  assert.equal(extensionSetting('demo', 'registryUrl', 'https://d', { extensionSettings: { other: { registryUrl: 'https://x' } } }), 'https://d');
+});
+
+test('extensionSettings: an extension\'s whole block, as a copy, and {} when it has none', () => {
+  assert.deepEqual(extensionSettings('demo', {}), {});
+  assert.deepEqual(extensionSettings('demo', { extensionSettings: { other: { a: 1 } } }), {});
+  assert.deepEqual(extensionSettings('demo', { extensionSettings: { demo: 'nope' } }), {}, 'a hand-edited non-object is ignored, not returned');
+  assert.deepEqual(extensionSettings('demo', { extensionSettings: { demo: ['a'] } }), {});
+  const cfg = { extensionSettings: { demo: { registryUrl: 'https://x' } } };
+  const block = extensionSettings('demo', cfg);
+  block.registryUrl = 'mutated';
+  assert.equal(cfg.extensionSettings.demo.registryUrl, 'https://x', 'a copy, so a reader cannot write config back through it');
+});
+
+test('setExtensionSetting spreads BOTH levels: a sibling key and a sibling extension both survive, and extensions.<id> is untouched', () => {
+  withConfigRestored(() => {
+    writeJsonAtomic(CONFIG_PATH, {
+      tmuxSocket: 'aw-1',
+      extensions: { demo: true },
+      extensionSettings: { demo: { pollMs: 30 }, other: { keep: 'me' } },
+    }, { trailingNewline: true });
+    setExtensionSetting('demo', 'registryUrl', 'https://x');
+    assert.deepEqual(readConfig(), {
+      tmuxSocket: 'aw-1',
+      extensions: { demo: true },
+      extensionSettings: { demo: { pollMs: 30, registryUrl: 'https://x' }, other: { keep: 'me' } },
+    });
+    // The whole reason the values live in their own block: a setting can never
+    // collide with the enable flag, whatever a manifest calls its keys.
+    setExtensionSetting('demo', 'enabled', false);
+    assert.equal(readConfig().extensions.demo, true);
+    assert.equal(readConfig().extensionSettings.demo.enabled, false);
+  });
+});
+
+test('setExtensionSetting creates the block for an extension that has never had one', () => {
+  withConfigRestored(() => {
+    writeJsonAtomic(CONFIG_PATH, { tmuxSocket: 'aw-1' }, { trailingNewline: true });
+    setExtensionSetting('demo', 'auto', true);
+    assert.deepEqual(readConfig(), { tmuxSocket: 'aw-1', extensionSettings: { demo: { auto: true } } });
+  });
 });
 
