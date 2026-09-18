@@ -89,11 +89,19 @@ export const codex = {
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
   ],
+  // Codex's own supported_reasoning_levels, per its model catalog: `minimal` is
+  // gone and xhigh/max/ultra arrived with the 5.6 family. The list is per-AGENT
+  // where the catalog is per-MODEL (gpt-5.6-luna has no `ultra`, gpt-5.5 stops
+  // at `xhigh`), so this is the union — the CLI takes the value as a plain
+  // config override and the service decides, and refusing a level a model does
+  // offer is the worse failure of the two.
   efforts: [
-    { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'Extra high' },
+    { value: 'max', label: 'Max' },
+    { value: 'ultra', label: 'Ultra' },
   ],
 
   async isAvailable() {

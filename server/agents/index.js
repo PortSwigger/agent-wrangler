@@ -127,9 +127,37 @@ export function modelError(agentId, model) {
   return `Unknown model "${model}" for agent "${adapter.id}". Valid models: ${valid}.${hint}`;
 }
 
-// Both checks in the order they must run, for a call site that takes both.
-export function launchTargetError(agentId, model) {
-  return agentError(agentId) || modelError(agentId, model);
+// An error message when `effort` is not one of `agentId`'s reasoning-effort
+// levels, else null. Same shape and same reason as modelError: the levels differ
+// per adapter (claude has xhigh/max, codex has minimal) and an unrecognised one
+// is either silently dropped or rejected by the CLI in the pane, where the agent
+// that spawned the session never sees it. Self-safe against an unknown agent for
+// the same reason modelError is.
+export function effortError(agentId, effort) {
+  if (effort == null || effort === '') return null;
+  const wrongAgent = agentError(agentId);
+  if (wrongAgent) return wrongAgent;
+  const adapter = adapterFor(agentId);
+  const efforts = adapter.efforts || [];
+  if (efforts.some((e) => e.value === effort)) return null;
+  const valid = efforts.map((e) => e.value).join(', ');
+  return `Unknown effort "${effort}" for agent "${adapter.id}". Valid efforts: ${valid}.`;
+}
+
+// All three checks in the order they must run, for a call site that takes them.
+// `effort` is optional: the UI dispatch paths pick it from a dropdown and pass
+// nothing here, where the MCP tools take it as a free string from an agent.
+export function launchTargetError(agentId, model, effort) {
+  return agentError(agentId) || modelError(agentId, model) || effortError(agentId, effort);
+}
+
+// The `effort` parameter's own description text on those tools, generated from
+// the adapters — the counterpart to modelChoicesText, and for the same reason:
+// a tool schema is the only enumeration of the effort vocabulary an agent reads.
+export function effortChoicesText() {
+  return ALL
+    .map((a) => `${a.id}: ${(a.efforts || []).map((e) => e.value).join(', ')}`)
+    .join('; ');
 }
 
 // The `model` parameter's own description text on those tools, generated from
@@ -154,6 +182,11 @@ export function modelChoicesText() {
 export function modelTableMarkdown() {
   return ALL.map((a) => {
     const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
-    return [`**${a.label}** (\`agent: "${a.id}"\`):`, ...rows].join('\n');
+    // Efforts ride the same generated block rather than a second one: they are
+    // per-adapter vocabulary picked at the same moment as the model, and a
+    // hand-written list here is exactly the drift this generator exists to stop.
+    const efforts = (a.efforts || []).map((e) => `\`${e.value}\``).join(', ');
+    const effortRow = efforts ? [`- \`effort\`: ${efforts}`] : [];
+    return [`**${a.label}** (\`agent: "${a.id}"\`):`, ...rows, ...effortRow].join('\n');
   }).join('\n\n');
 }
