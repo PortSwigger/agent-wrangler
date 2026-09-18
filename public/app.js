@@ -448,7 +448,15 @@ function applyGraph(graph) {
   // note) is the first frame of a reconnect and the fresh graph arrives after
   // it, so without this the panel re-drew the just-uninstalled extension as an
   // ordinary installed row and kept it there until a manual page refresh.
-  const extSignature = JSON.stringify(latestExtensions);
+  //
+  // The signature deliberately EXCLUDES settingValues. Everything else in this
+  // panel is a report the board owns, but a settings input is the one place in
+  // it a human is mid-way through authoring something, and a ~4s remount would
+  // take the field they are typing in (and its focus) with it. A committed
+  // value is already mirrored onto latestExtensions by onSettingChange, so
+  // excluding it costs only this: a value changed in ANOTHER tab does not
+  // appear until the panel re-mounts for some other reason, or is reopened.
+  const extSignature = JSON.stringify(latestExtensions.map(({ settingValues, ...rest }) => rest));
   if (extSignature !== lastExtSignature) {
     lastExtSignature = extSignature;
     remountExtensions();
@@ -5654,6 +5662,16 @@ function mountExtensionsPanel(host) {
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
     onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
+    onSettingChange: ({ id, key, value }) => {
+      send({ type: 'ext-setting-set', id, key, value });
+      // Written back into our own copy as well as sent: the panel is rebuilt
+      // whole on any remount, and without this a remount between the commit
+      // and the graph that confirms it would redraw the field with the OLD
+      // value. The next graph carries the same value and overwrites this
+      // wholesale.
+      const e = latestExtensions.find((x) => x.id === id);
+      if (e) e.settingValues = { ...(e.settingValues || {}), [key]: value };
+    },
   }));
 }
 

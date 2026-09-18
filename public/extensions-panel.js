@@ -171,6 +171,84 @@ export function extensionRowEl(entry, {
   return row;
 }
 
+// One row per declared setting, beneath its extension's own row. Subordinate by
+// construction (a `.ext-settings` wrapper, indented), because a setting is a
+// property OF the row above it and a flat list would read as another extension.
+//
+// These rows carry `data-ext`/`data-key` and deliberately NOT `data-id`:
+// settings.js's delegated click handler picks up any `.setting-toggle` in the
+// modal and looks the row up with `byId.get(row.dataset.id)`. With no `data-id`
+// that lookup misses and settings.js bails, which is what keeps a toggle-type
+// SETTING from flipping the EXTENSION's enable flag. Putting `ext:<id>` on one
+// of these rows would do exactly that.
+//
+// Disabled only when the extension is QUARANTINED — it is contributing nothing
+// and could not read the value back. NOT disabled when it is merely toggled
+// off: a value is config, it persists across the toggle and across an
+// uninstall/reinstall, and setting a registry URL before switching the thing on
+// is the natural order to do the two in.
+export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
+  const wrap = el('div', 'ext-settings');
+  const values = entry.settingValues || {};
+  const frozen = Boolean(entry.quarantine);
+  for (const def of entry.settings || []) {
+    const row = el('div', 'ext-setting-row');
+    row.dataset.ext = entry.id;
+    row.dataset.key = def.key;
+    const copy = el('div', 'setting-copy');
+    copy.append(el('div', 'setting-label', def.label));
+    if (def.help) copy.append(el('div', 'setting-help', def.help));
+    const current = values[def.key];
+    const commit = (value) => onSettingChange?.({ id: entry.id, key: def.key, value });
+    if (def.type === 'toggle') {
+      const actions = el('div', 'ext-row-actions');
+      const on = Boolean(current);
+      const toggle = el('button', `setting-toggle${on ? ' on' : ''}`);
+      toggle.type = 'button';
+      toggle.setAttribute('role', 'switch');
+      toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+      toggle.setAttribute('aria-label', def.label);
+      toggle.disabled = frozen;
+      toggle.append(el('span', 'setting-knob'));
+      // Its OWN listener, because settings.js's delegated one deliberately
+      // cannot see this row (no data-id) — see the note above.
+      toggle.addEventListener('click', () => { if (!toggle.disabled) commit(!on); });
+      actions.append(toggle);
+      row.append(copy, actions);
+    } else {
+      const input = el('input', 'ext-setting-input');
+      input.type = def.type === 'number' ? 'number' : 'text';
+      // Property assignment, never markup: this is third-party prose and a
+      // human's own text, and neither goes anywhere near innerHTML.
+      input.value = current == null ? '' : String(current);
+      input.placeholder = def.placeholder || '';
+      input.setAttribute('aria-label', def.label);
+      input.disabled = frozen;
+      // Committed on `change` (blur or Enter) and on Enter, never per
+      // keystroke: a control frame and a config.json write per character is not
+      // a thing to ship. An empty field commits as `''` (text) or `null`
+      // (number), which is how a value is cleared. `last` is what keeps Enter
+      // from sending twice — the browser fires `change` for it too — and keeps
+      // a blur that changed nothing from writing at all.
+      let last = input.value;
+      const send = () => {
+        if (input.value === last) return;
+        last = input.value;
+        commit(def.type === 'number' ? (last === '' ? null : Number(last)) : last);
+      };
+      input.addEventListener('change', send);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); send(); } });
+      // Beneath the label rather than out in the actions column, exactly like
+      // the install field: a URL is long and a 38px-wide switch's slot is not
+      // where one goes.
+      copy.append(input);
+      row.append(copy);
+    }
+    wrap.append(row);
+  }
+  return wrap;
+}
+
 // The whole Extensions tab: every extension as one row, the on-demand "Check for
 // updates" button, the install field and the progress line. Built as one element
 // per modal open (settings.js's `extensionsBridge.mount`) rather than patched in
@@ -182,7 +260,7 @@ export function extensionRowEl(entry, {
 export function extensionsPanelEl({
   entries = [], statuses = {}, checking = false, progress = '', busy = false,
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
-  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart,
+  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onSettingChange,
 } = {}) {
   const wrap = el('div');
   const head = el('div', 'ext-installed-head');
@@ -211,6 +289,11 @@ export function extensionsPanelEl({
       onUninstall,
       onUpdate,
     }));
+    // Its own settings, immediately beneath it — but not for a row that is on
+    // its way out, where the whole extension is about to stop existing.
+    if (entry.settings?.length && !removing.has(entry.id)) {
+      wrap.append(extensionSettingRowsEl(entry, { onSettingChange }));
+    }
   }
 
   const form = el('div', 'setting-row ext-row');

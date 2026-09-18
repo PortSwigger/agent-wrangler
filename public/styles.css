@@ -3089,6 +3089,23 @@ a.ext-row-origin { color: var(--blue-fg); }
   font-size: 12px; color: var(--accent); line-height: 1.5; margin-top: 5px;
 }
 .ext-row-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* An extension's own settings, drawn beneath its row. Indented behind a left
+   rule so they read as properties OF that extension rather than as more
+   extensions — the list is otherwise flat and a setting row and an extension
+   row would look like siblings. */
+.ext-settings { margin: -1px 0 0 14px; padding-left: 10px; border-left: 2px solid var(--border-muted); }
+.ext-setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 9px 2px; border-bottom: 1px solid var(--border-muted);
+}
+.ext-setting-row:last-child { border-bottom: 0; }
+.ext-setting-row .setting-copy { flex: 1; }
+.ext-setting-input {
+  width: 100%; margin-top: 6px; padding: 5px 8px; font: inherit; font-size: 12px;
+  background: var(--field-bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.6; cursor: default; }
 /* Uninstalled but still loaded until the restart: visibly spent, but still
    legible — the row is the only thing telling a reader what that restart is
    waiting to finish. */

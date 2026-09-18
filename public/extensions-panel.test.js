@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  extensionRowEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
+  extensionRowEl, extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
 } from './extensions-panel.js';
 
@@ -196,6 +196,113 @@ test('the panel is ONE list of builtins and installed extensions alike', () => {
     assert.ok(texts(full).includes('Check for updates'));
     assert.equal(byClass(full, 'ext-row').length, 3, 'a builtin, an installed one, and the install field');
     assert.equal(byClass(full, 'setting-toggle').length, 2, 'both halves of the list carry their own toggle');
+  });
+});
+
+// -- setting rows ----------------------------------------------------------
+const WITH_SETTINGS = {
+  ...INSTALLED,
+  settings: [
+    { key: 'registryUrl', type: 'text', label: 'Registry URL', help: 'Where handles are published.', placeholder: 'https://…' },
+    { key: 'pollMs', type: 'number', label: 'Poll interval' },
+    { key: 'auto', type: 'toggle', label: 'Auto-deliver' },
+  ],
+  settingValues: { registryUrl: 'https://reg.invalid', pollMs: 30, auto: true },
+};
+
+test('an extension\'s settings are drawn beneath its own row, one row per declared setting', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }, WITH_SETTINGS] });
+    const rows = byClass(panel, 'ext-setting-row');
+    assert.deepEqual(rows.map((r) => r.dataset.key), ['registryUrl', 'pollMs', 'auto']);
+    const all = texts(panel);
+    assert.ok(all.includes('Registry URL'));
+    assert.ok(all.includes('Where handles are published.'));
+    // An extension with none draws no wrapper at all.
+    assert.equal(byClass(extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }] }), 'ext-settings').length, 0);
+  });
+});
+
+test('a setting row carries data-ext/data-key and NO data-id — the collision guard', () => {
+  withDom(() => {
+    for (const row of byClass(extensionSettingRowsEl(WITH_SETTINGS), 'ext-setting-row')) {
+      assert.equal(row.dataset.ext, 'notes');
+      // settings.js's delegated handler looks a row up by `byId.get(dataset.id)`
+      // and bails on a miss. `ext:notes` here would make a toggle-type SETTING
+      // flip the EXTENSION's enable flag instead.
+      assert.equal(row.dataset.id, undefined);
+    }
+  });
+});
+
+test('every third-party string on a setting row is text, never markup', () => {
+  withDom(() => {
+    const evil = '<img src=x onerror=alert(1)>';
+    const wrap = extensionSettingRowsEl({
+      id: 'x', settings: [{ key: 'k', type: 'text', label: evil, help: evil, placeholder: evil }], settingValues: {},
+    });
+    assert.ok(texts(wrap).includes(evil));
+    const input = byClass(wrap, 'ext-setting-input')[0];
+    assert.equal(input.placeholder, evil, 'a property assignment, not markup');
+    for (const node of walk(wrap)) assert.equal(node._html, null, `${node.className} must not use innerHTML`);
+  });
+});
+
+test('a value is shown in its own control, and a quarantined extension\'s controls are disabled', () => {
+  withDom(() => {
+    const live = extensionSettingRowsEl(WITH_SETTINGS);
+    const inputs = byClass(live, 'ext-setting-input');
+    assert.deepEqual(inputs.map((i) => [i.type, i.value, i.disabled]), [['text', 'https://reg.invalid', false], ['number', '30', false]]);
+    assert.equal(byClass(live, 'setting-toggle')[0].getAttribute('aria-checked'), 'true');
+    assert.equal(byClass(live, 'setting-toggle')[0].disabled, false);
+    // An unset value is an empty field, not the string "undefined".
+    assert.equal(byClass(extensionSettingRowsEl({ ...WITH_SETTINGS, settingValues: {} }), 'ext-setting-input')[0].value, '');
+
+    // Quarantined: it is contributing nothing and could not read the value
+    // back, so there is nothing to store a choice against. Merely toggled OFF
+    // is deliberately NOT disabled — a value is config and persists.
+    const dead = extensionSettingRowsEl({ ...WITH_SETTINGS, quarantine: 'store factory threw' });
+    assert.deepEqual(byClass(dead, 'ext-setting-input').map((i) => i.disabled), [true, true]);
+    assert.equal(byClass(dead, 'setting-toggle')[0].disabled, true);
+    const off = extensionSettingRowsEl({ ...WITH_SETTINGS, enabled: false });
+    assert.deepEqual(byClass(off, 'ext-setting-input').map((i) => i.disabled), [false, false]);
+  });
+});
+
+test('a text field commits on change and on Enter, once, and never per keystroke', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl(WITH_SETTINGS, { onSettingChange: (c) => seen.push(c) });
+    const [url, poll] = byClass(wrap, 'ext-setting-input');
+    // Typing alone writes nothing: a control frame and a config.json write per
+    // character is not a thing to ship.
+    url.fire('keydown', { key: 'a' });
+    assert.deepEqual(seen, []);
+    url.value = 'https://other.invalid';
+    url.fire('change');
+    assert.deepEqual(seen, [{ id: 'notes', key: 'registryUrl', value: 'https://other.invalid' }]);
+    // The browser fires `change` for Enter as well, so a re-commit of the same
+    // value — and a blur that changed nothing — must not send a second frame.
+    url.fire('keydown', { key: 'Enter' });
+    url.fire('change');
+    assert.equal(seen.length, 1);
+    poll.value = '';
+    poll.fire('keydown', { key: 'Enter' });
+    assert.deepEqual(seen.at(-1), { id: 'notes', key: 'pollMs', value: null }, 'an empty number field clears the value');
+    poll.value = '90';
+    poll.fire('change');
+    assert.deepEqual(seen.at(-1), { id: 'notes', key: 'pollMs', value: 90 });
+    byClass(wrap, 'setting-toggle')[0].fire('click');
+    assert.deepEqual(seen.at(-1), { id: 'notes', key: 'auto', value: false }, 'the toggle sends the opposite of what it shows');
+  });
+});
+
+test('a quarantined control sends nothing even if something manages to click it', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl({ ...WITH_SETTINGS, quarantine: 'broken' }, { onSettingChange: (c) => seen.push(c) });
+    byClass(wrap, 'setting-toggle')[0].fire('click');
+    assert.deepEqual(seen, []);
   });
 });
 
