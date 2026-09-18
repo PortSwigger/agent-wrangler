@@ -268,16 +268,27 @@
   `value` is read, a misfit is an error envelope rather than a coercion — refuses
   a quarantined extension whatever the panel did, and ends with `ctx.rebuild()`
   and deliberately NOT `ctx.ext.changed()`, since nothing about the registry
-  moved. On the client the setting rows carry `data-ext`/`data-key` and **no
-  `data-id`**: `settings.js`'s delegated handler picks up any `.setting-toggle` in
-  the modal and looks the row up with `byId.get(row.dataset.id)`, so putting
-  `ext:<id>` on one of these rows would make a toggle-type SETTING flip the
-  EXTENSION's enable flag. They are disabled only when the extension is
-  QUARANTINED, never when it is merely off (a value persists, and setting a URL
-  before switching the thing on is the natural order), and `app.js`'s remount
-  signature **excludes `settingValues`** — a ~4s tick must not take a field
-  someone is typing in, and the cost is only that another tab's edit waits for
-  the next remount.
+  moved. On the client the rows are **NOT in the Extensions tab**: the tab is a
+  list of the extensions you have, and every manifest's fields laid out flat
+  under it buried that, so a row draws a **cog** (only when it declares
+  settings, making the cog's presence the disclosure that there is anything to
+  configure) and `app.js`'s `openExtSettings` puts that one extension's rows in
+  their own dialog, built fresh per open from `latestExtensions` — never from
+  the entry the row was drawn with, which may be several graphs old by the time
+  the cog is clicked. A QUARANTINED extension keeps its cog and gets its rows
+  DISABLED, which says "this is what it would want" where a hidden cog would
+  make a broken extension look like one with nothing to configure; merely being
+  switched off disables nothing (a value persists, and setting a URL before
+  switching the thing on is the natural order). The rows carry
+  `data-ext`/`data-key` and **no `data-id`**: `settings.js`'s delegated handler
+  picks up any `.setting-toggle` in the modal and looks the row up with
+  `byId.get(row.dataset.id)`, so putting `ext:<id>` on one of these rows would
+  make a toggle-type SETTING flip the EXTENSION's enable flag — which is also
+  why a toggle row moves its OWN switch on click (nothing else is coming to
+  redraw it, and an input keeps its text only because the browser holds it).
+  `app.js`'s remount signature **excludes `settingValues`**, which now costs
+  nothing at all: the tab draws no value, so a value landing is not news for it
+  to redraw for, and the dialog re-reads on every open.
 - **Extensions API (`server/extensions/index.js`, `public/slots.js`,
   `public/extensions.js`) — an optional feature is ONE manifest, and the loaded
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
@@ -453,7 +464,15 @@
   `renderExtViews`, called from `syncClientExtensions` (a toggle, not a graph
   tick); `hashView` refuses an unregistered `ext:` key and `renderExtViews`
   re-reads the hash once a view registers, which is the only thing that makes a
-  deep link survive the load race. **A manifest's `styles` is a `<link>` the
+  deep link survive the load race. **The `syncHosts` call is split out as
+  `updateExtViews` and runs on EVERY graph as well** — a view is the one slot
+  with no render path of its own (the panel slots go through `renderPanel`, the
+  card pills through `wireGridEvents`), so its host was created once and nothing
+  came back to it, leaving `update(el, session, graph)` effectively dead and a
+  whole pane stale until a reload; `syncHosts` was already being handed
+  `latestGraph`, which is what makes that an oversight rather than a design.
+  Only that call may go on the tick, never `renderExtViews` itself: it creates
+  and destroys rail buttons and re-reads the hash for the deep link above. **A manifest's `styles` is a `<link>` the
   loader adds BEFORE the module import and removes in `unload` and on a failed
   import** — rules that outlived their extension would style elements the core
   still draws — and an announcement carrying neither `client` nor `styles` is
