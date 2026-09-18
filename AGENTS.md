@@ -119,6 +119,19 @@
   import of `session-manager` closes a real module cycle through `client-config.js`
   and the agent adapters and **breaks boot for the whole server** — far worse than
   one broken extension. It catches the honest mistake.
+  **It scans the extension's OWN modules only, and its two exclusions are the same
+  argument twice**: `node_modules` and anything matching `test`/`tests`/`__tests__`/
+  `spec`/`__mocks__` or `*.test.js`/`*.spec.js` (`ownJsFiles`), because only a
+  module the MANIFEST can reach closes the cycle — nothing imports a test file but
+  a test runner. The server-entry pattern needs **two or more** `../` levels for
+  the same reason: from a builtin the entry is `../../index.js`, while a single
+  level can only be an extension's own manifest, since no relative path from
+  `<DATA_DIR>/extensions/<id>/` reaches the repo at all. Both were false
+  positives on the most obvious test an extension can ship — a manifest
+  self-check writing `import ext from '../index.js'` — which quarantined the
+  extension with a reason about server core modules it never imported. Matching
+  by name costs nothing and claims nothing: a static import hidden in `x.test.js`
+  is no more caught than the `await import()` the whole rule concedes.
 - **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
   `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
   `extensions.<id>` enable flags and is untouched by this feature. A record is
@@ -391,9 +404,21 @@
   contributor "helpfully" adds back. `host.stores` is that extension's OWN
   stores only (narrowed by the manifest's store names), and `memory:append` has
   no `write` sibling on purpose. **A store FACTORY is the one thing that gets no
-  capabilities** — a deliberately minimal `{id, log}` bag — because factories run
-  before `rebuild`/`broadcast`/`deliver` exist at all and a constructor has no
-  need for them; every boot-time seam (session hooks, the skill gate, the tool
+  capabilities** — a deliberately minimal `{id, extId, settings, log}` bag —
+  because factories run before `rebuild`/`broadcast`/`deliver` exist at all and a
+  constructor has no need for them; **`settings` is the ONE exception, and config
+  is why it can be**: it is a synchronous read of config.json, which nothing has
+  to bind, so it is available at the one moment a façade is not — and without it
+  a store could not be CONFIGURED at all, which is what forced every extension to
+  hard-code its own state-file path. It is `buildExtSettings`
+  (`host-api/index.js`, exported for this and used by `host.settings` itself, so
+  the narrowing, the read-through and the declared vocabulary cannot drift between
+  the two callers). `id` stays the **STORE NAME** — a store logs and names itself
+  by it, and renaming it would break every store already reading it — so the
+  extension's own id rides alongside as `extId`, which is what a factory placing
+  a file under a per-extension path needs. The bag is not a façade key, but a
+  manifest can only declare a dependency on the number, so it is still a MINOR
+  (`HOST_API_VERSION` 1.3.0); every boot-time seam (session hooks, the skill gate, the tool
   filter) is instead bound over a `hostApiFor(extId)` LOOKUP so it can be wired
   before the Map is filled, since all three only fire at run time.
   **Failure posture, three tiers**: a bad `requires`, an unknown capability or an

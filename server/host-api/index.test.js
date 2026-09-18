@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CAPABILITIES } from '../extensions/index.js';
-import { buildHostApi } from './index.js';
+import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
 
@@ -108,6 +108,25 @@ test('a key the manifest never declared reads undefined from both get and all', 
   const host = buildHostApi({ id: 'x', requires: [], settingDefs: DEFS, readSettings: () => ({ registryUrl: 'https://mine', stray: 'ignored' }), ...wiring() });
   assert.equal(host.settings.get('stray'), undefined, 'a typo is the extension\'s own bug, with nothing to leak into');
   assert.deepEqual(Object.keys(host.settings.all()), ['registryUrl', 'auto'], 'get and all agree about the vocabulary');
+});
+
+// The store-factory half of the same surface (server/index.js activateExtension
+// hands a factory this, since a factory runs before any facade exists). Same
+// builder, so the narrowing, the read-through and the declared vocabulary
+// cannot drift between the two callers.
+test('buildExtSettings is the ONE definition, and host.settings is built from it', () => {
+  let stored = { alpha: { registryUrl: 'https://alpha' }, beta: { registryUrl: 'https://beta' } };
+  const forFactory = buildExtSettings({ id: 'alpha', settingDefs: DEFS, readSettings: (id) => stored[id] || {} });
+  assert.equal(forFactory.get('registryUrl'), 'https://alpha');
+  assert.equal(forFactory.get('registryUrl', 'beta'), 'https://alpha', 'the id is closed over, not a caller-passable argument');
+  assert.equal(forFactory.get('stray'), undefined, 'only the declared vocabulary');
+  stored = { alpha: { registryUrl: 'https://edited' } };
+  assert.equal(forFactory.get('registryUrl'), 'https://edited', 'read THROUGH, so a store built at boot still sees an edit');
+  assert.equal(Object.isFrozen(forFactory), true);
+  // And the facade's own key is the same thing, with nothing extra on it.
+  const host = buildHostApi({ id: 'alpha', requires: [], settingDefs: DEFS, readSettings: (id) => stored[id] || {}, ...wiring() });
+  assert.deepEqual(Object.keys(host.settings), Object.keys(forFactory));
+  assert.deepEqual(host.settings.all(), forFactory.all());
 });
 
 test('an unknown capability throws naming the extension', () => {

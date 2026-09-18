@@ -33,18 +33,39 @@ import { externalDir, readProvenance, tmpDir } from './provenance.js';
 //
 // Shared with index.test.js, which asserts the same list over the in-repo
 // manifests — one array so the runtime scanner and the test cannot drift.
+//
+// The server-entry pattern requires TWO OR MORE levels for a reason: from a
+// builtin at server/extensions/<id>/index.js the entry is `../../index.js` (and
+// `../../../index.js` from a file in a subdirectory of one), while a SINGLE
+// level can only ever be an extension's own manifest — an installed extension
+// lives under <DATA_DIR>/extensions/<id>/, from which no relative path reaches
+// the repo at all, so `from '../index.js'` there is a self-reference. That is
+// exactly what a manifest self-check in test/ writes, and matching it quarantined
+// the extension with a reason about server core modules.
 export const FORBIDDEN_IMPORTS = [
   /\/(session-manager|state-reader|tmux-scraper)\.js['"]/,
-  /from\s+['"](\.\.\/)+index\.js['"]/,
+  /from\s+['"](\.\.\/){2,}index\.js['"]/,
   /\/host-api\//,
 ];
 
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 
+// An extension's own TESTS are not in the server's import graph, which is the
+// same reason node_modules is skipped below: only a module the MANIFEST can
+// reach closes the cycle this rule exists to prevent. Nothing imports a test
+// file but a test runner, so scanning one can only produce a false positive —
+// and it did, on the most obvious test an extension can ship (see
+// FORBIDDEN_IMPORTS). Matched by NAME, so it costs nothing and cannot be
+// mistaken for a security boundary: an extension wanting to hide a static
+// import in a file called `x.test.js` has `await import()` sitting right there.
+const TEST_DIRS = /^(test|tests|__tests__|spec|__mocks__)$/;
+const TEST_FILES = /\.(test|spec)\.js$/;
+
 // Every .js directly under `dir` or in its subdirectories, excluding
 // node_modules — an extension's dependencies are third-party packages that
 // legitimately contain anything, and they are not what this rule is about (they
-// cannot be static-imported by the server's own graph, only by the manifest).
+// cannot be static-imported by the server's own graph, only by the manifest) —
+// and excluding the extension's own tests, for the same reason.
 function ownJsFiles(dir, out = []) {
   let entries;
   try {
@@ -55,8 +76,9 @@ function ownJsFiles(dir, out = []) {
   for (const e of entries) {
     if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
     const full = path.join(dir, e.name);
-    if (e.isDirectory()) ownJsFiles(full, out);
-    else if (e.isFile() && e.name.endsWith('.js')) out.push(full);
+    if (e.isDirectory()) {
+      if (!TEST_DIRS.test(e.name)) ownJsFiles(full, out);
+    } else if (e.isFile() && e.name.endsWith('.js') && !TEST_FILES.test(e.name)) out.push(full);
   }
   return out;
 }

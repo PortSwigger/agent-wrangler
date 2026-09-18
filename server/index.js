@@ -15,7 +15,7 @@ import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension } from './extensions/index.js';
-import { buildHostApi } from './host-api/index.js';
+import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
@@ -260,7 +260,27 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // constructor has no legitimate need for them. The capabilities are for the
     // tools, handlers, hooks and sweeps that USE the store, all of which run
     // later.
-    for (const name of e.storeNames) extStores[name] = ext.stores[name]({ id: name, log });
+    //
+    // `settings` is the ONE exception, and config is why it can be: it is a
+    // small synchronous read of config.json (nothing a façade binds), so it is
+    // available here where nothing else is — and without it a store could not
+    // be CONFIGURED at all, which is what forced every extension to hard-code
+    // its own state-file path. Same read-through view `host.settings` hands the
+    // rest of the extension, from the same builder, narrowed by the same
+    // closed-over id.
+    //
+    // `id` stays the STORE NAME (a store logs and names itself by it) and the
+    // extension's own id rides alongside as `extId`: a factory that wants to
+    // place a file under a per-extension path needs the latter, and renaming
+    // `id` would break every store that already reads it.
+    for (const name of e.storeNames) {
+      extStores[name] = ext.stores[name]({
+        id: name,
+        extId: id,
+        settings: buildExtSettings({ id, settingDefs: e.settings, readSettings: (extId) => extensionSettings(extId) }),
+        log,
+      });
+    }
     // buildHostApi still THROWS as its contract (an unsatisfiable
     // engines.wranglerApi, an unknown capability) — what changed is that the
     // throw is caught per extension and quarantines that one manifest.

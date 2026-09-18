@@ -40,25 +40,34 @@ import { V1_BUILDERS } from './v1.js';
 //              goes INTO the first argument only when that is a string, so
 //              log(err) / log('[tag]', err) keeps the Error its own argument and
 //              the console still renders the stack (see log.js).
+// The `settings` view, EXPORTED because a store factory gets one too and there
+// must be exactly one definition of what an extension's own settings look like
+// (index.js's store bag calls this directly — a factory is built before any
+// façade exists, so it cannot be handed `host`).
+//
+// Narrowed by the SAME mechanism as the three forced values in v1.js: `id` is
+// closed over here and is not a caller-passable argument, so there is no
+// signature through which an extension could read a sibling's block. Read
+// THROUGH on every call rather than snapshotted at build time — a value edited
+// in the Extensions tab (or by hand in config.json) has to land without a
+// restart, and the façade is built once per activation.
+//
+// A key the manifest did not declare reads as `undefined` rather than throwing,
+// so `get(k)` and `all()` agree about the vocabulary; a typo is the extension's
+// own bug and there is nothing for it to leak into.
+export function buildExtSettings({ id, settingDefs = [], readSettings = () => ({}) }) {
+  return Object.freeze({
+    get: (key) => (settingDefs.some((d) => d.key === key) ? readSettings(id)[key] : undefined),
+    all: () => Object.fromEntries(settingDefs.map((d) => [d.key, readSettings(id)[d.key]])),
+  });
+}
+
 function alwaysPresent({ id, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}) }) {
   return {
     id,
     version: HOST_API_VERSION,
     stores: Object.freeze({ ...stores }),
-    // Narrowed by the SAME mechanism as the three forced values in v1.js: `id`
-    // is closed over here and is not a caller-passable argument, so there is no
-    // signature through which an extension could read a sibling's block. Read
-    // THROUGH on every call rather than snapshotted at build time — a value
-    // edited in the Extensions tab (or by hand in config.json) has to land
-    // without a restart, and the façade is built once per activation.
-    //
-    // A key the manifest did not declare reads as `undefined` rather than
-    // throwing, so `get(k)` and `all()` agree about the vocabulary; a typo is
-    // the extension's own bug and there is nothing for it to leak into.
-    settings: Object.freeze({
-      get: (key) => (settingDefs.some((d) => d.key === key) ? readSettings(id)[key] : undefined),
-      all: () => Object.fromEntries(settingDefs.map((d) => [d.key, readSettings(id)[d.key]])),
-    }),
+    settings: buildExtSettings({ id, settingDefs, readSettings }),
     log: (...args) => (typeof args[0] === 'string' ? log(`[ext:${id}] ${args[0]}`, ...args.slice(1)) : log(`[ext:${id}]`, ...args)),
   };
 }
