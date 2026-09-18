@@ -131,9 +131,30 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await send('Runtime.enable');
     await send('Page.enable');
     await send('Page.navigate', { url });
-    // The board renders off its first control-WS graph push, not DOMContentLoaded.
-    await waitFor(async () => (await evaluate(`document.querySelectorAll('.task, .session-card').length > 0`))
-      || (await evaluate(`document.body.innerText.trim().length > 0`)), { tries: 40 });
+    // The board renders off its first control-WS graph push, not DOMContentLoaded, and
+    // #grid is empty in the HTML — so a child inside it IS that push having landed.
+    // Waiting on document.body text instead was BOTH flaky and vacuous, and no increase
+    // in `tries` could fix it, because that wait returned EARLY rather than timing out:
+    // every local asset is `Cache-Control: no-store` (http-handler.js), so the navigate
+    // above re-fetches styles.css every run, and until it applies
+    // `#modal.hidden { display: none }` is not in force — the dialogs and sidebar render,
+    // putting ~1.5k characters on a board that has drawn nothing. The old wait latched
+    // onto that FOUC text on its first poll, then two round trips later asserted either
+    // against the same text (passing with #grid still EMPTY, catching nothing) or, once
+    // styles had landed but the graph had not, against the genuinely-0 gap behind it —
+    // the "board rendered no text at all" failure. Counts CHILDREN rather than matching
+    // #grid's text so the signal survives a copy change to the empty-board hint.
+    const rendered = await waitFor(async () => evaluate(`document.getElementById('grid')?.children.length > 0`));
+    if (!rendered) {
+      // waitFor yields null on a timeout and `evaluate` yields undefined on a dead tab,
+      // so without this the two reach the assertions below indistinguishable from a board
+      // that really did render blank — the reason a timeout used to surface as the
+      // flatly misleading "board rendered no text at all".
+      const alive = (await evaluate('1 + 1')) === 2;
+      assert.fail(alive
+        ? `#grid never got a child: the first control-WS graph push never rendered (readyState=${await evaluate('document.readyState')}, body text=${await evaluate('document.body.innerText.trim().length')} chars)`
+        : 'the DevTools evaluate round trip stopped answering — the tab or renderer died before the board rendered');
+    }
 
     // Assert the page under test is the one we think it is — a stale or redirected tab
     // would otherwise be reported as a healthy board.
@@ -141,6 +162,8 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
 
     // A fresh instance legitimately has zero session cards, so "did it render" is the
     // shell being present — the blank-page regressions produced literally 0 characters.
+    // Only meaningful now that the wait above holds it back until the graph has rendered:
+    // against the FOUC window it was satisfied by markup the board never drew.
     assert.ok(await evaluate(`document.body.innerText.trim().length > 0`), 'board rendered no text at all');
     assert.ok(await evaluate(`!!document.getElementById('grid')`), '#grid (the card grid) is missing');
 
