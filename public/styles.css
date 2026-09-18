@@ -3105,7 +3105,10 @@ a.ext-row-origin { color: var(--blue-fg); }
   background: var(--field-bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: 5px;
 }
-.ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.6; cursor: default; }
+/* Quarantined: the rows still say what the extension would want, but nothing
+   here can be stored against a feature that is not running. */
+.ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.55; cursor: default; }
+.ext-setting-input:disabled { background: var(--surface-2); color: var(--fg-muted); }
 /* Uninstalled but still loaded until the restart: visibly spent, but still
    legible — the row is the only thing telling a reader what that restart is
    waiting to finish. */
