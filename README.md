@@ -33,6 +33,9 @@ otherwise it behaves exactly as a Claude-only board.
   wake-ups — evaluated in your timezone, safe across restarts.
 - **Idle suspend** — reclaims RAM from idle sessions automatically; resume any dormant card with
   one click, conversation intact.
+- **Safe linked-PR upkeep** — optionally auto-rebase a session's checked-out PR branch while the
+  session and checkout are idle and clean, then update the remote with an exact force-with-lease.
+  This is a per-session opt-in and remains separate from auto-merge.
 - **Optional working-context budget** — set an auto-compaction threshold per session in Advanced
   preset buttons (Claude: 100k/250k/500k/1m; Codex: 50k/100k/250k). The MCP API accepts 50k–1M for Codex and 100k–1M for Claude; Codex's default scope caps the effective value at 90% of its model context window. It is unset by default,
   retained across resumes, and inherited by forks.
@@ -64,7 +67,7 @@ otherwise it behaves exactly as a Claude-only board.
 - macOS or Linux, Node.js >= 20
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
   on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
-- `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
+- `gh` (optional — PR auto-attach, check-watching, auto-rebase, and auto-merge shell out to it; run
   `gh auth login` once so it's authenticated)
 
 **Windows** isn't supported natively, but works via WSL2 — WSL2 runs a real Linux kernel, so the

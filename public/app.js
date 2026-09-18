@@ -1774,6 +1774,22 @@ function autoMergeMenuItem(s) {
   };
 }
 
+function autoRebaseMenuItem(s) {
+  let on = Boolean(s.autoRebaseLinkedPr);
+  return {
+    label: 'Auto-rebase linked PR',
+    icon: GITHUB_ICON,
+    trailing: on ? CHECK_ICON : '',
+    keepOpen: true,
+    run: (e) => {
+      on = !on;
+      send({ type: 'auto-rebase-linked-pr', sessionId: s.sessionId, enabled: on });
+      const t = e.currentTarget.querySelector('.context-menu-trailing');
+      if (t) t.innerHTML = on ? CHECK_ICON : '';
+    },
+  };
+}
+
 // "Peer review session": open the dispatch dialog pre-filled to launch a fresh
 // session that reviews this one's work — same folder (so it sees the live,
 // uncommitted WIP), the complementary agent (Claude↔Codex), and a seeded review
@@ -1884,7 +1900,7 @@ function openCardMenu(sessionId, x, y) {
     ]),
     // The PR-check toggles are per-session settings, not actions — set them off behind
     // their own divider, just above Archive, rather than mixed in with the actions.
-    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoMergeMenuItem(s)] : []),
+    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoRebaseMenuItem(s), autoMergeMenuItem(s)] : []),
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
@@ -5160,6 +5176,7 @@ function syncWorkflow() {
   document.getElementById('m-mode-cards').classList.toggle('hidden', reviewMode);
   document.querySelector('.worktree-box').classList.toggle('hidden', on || reviewMode);
   document.getElementById('m-wf-worktree-note').classList.toggle('hidden', !on);
+  document.getElementById('m-wf-auto-rebase-row').classList.toggle('hidden', !on);
   document.getElementById('m-wf-auto-merge-row').classList.toggle('hidden', !on);
   const go = document.getElementById('m-go');
   // Schedule mode owns the Save label (see syncScheduleGo); only set the launch
@@ -5329,6 +5346,7 @@ function readDispatchFields() {
     agent,
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
+    autoRebaseLinkedPr: wfOn && document.getElementById('m-wf-auto-rebase').checked || undefined,
     autoMergeOnPass: wfOn && document.getElementById('m-wf-auto-merge').checked || undefined,
     worktree: (wfOn || wtOn) || undefined,
     worktreeBranch: wtOn ? document.getElementById('m-wt-branch').value.trim() : undefined,
@@ -5384,6 +5402,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
   document.getElementById('m-runtime').value = d.runtime || 'local';
+  document.getElementById('m-wf-auto-rebase').checked = Boolean(d.autoRebaseLinkedPr);
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
@@ -6013,6 +6032,7 @@ function connect() {
     else if (msg.type === 'pr-checks') onPrChecks(msg);
     else if (msg.type === 'pr-merge') onPrMerge(msg);
     else if (msg.type === 'pr-dirty') onPrDirty(msg);
+    else if (msg.type === 'pr-rebase-failed') onPrRebaseFailed(msg);
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
     else if (msg.type === 'schedule-fired') toast(`Scheduled "${msg.name}" started`);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
@@ -6225,6 +6245,21 @@ function onPrDirty(msg) {
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
+  toast(text, true);
+  if (window.Notification && Notification.permission === 'granted') {
+    const n = new Notification(text);
+    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
+  }
+  flashPr(msg.url);
+}
+
+function onPrRebaseFailed(msg) {
+  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  const repo = prRepoName(msg.url);
+  const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
+  const text = msg.conflict
+    ? `[Agent Wrangler] ${label}: automatic rebase stopped on conflicts`
+    : `[Agent Wrangler] ${label}: automatic rebase could not run safely`;
   toast(text, true);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);

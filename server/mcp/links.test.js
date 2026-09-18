@@ -75,6 +75,24 @@ test('pr link preserves an existing unresolvedCount through normalise', () => {
   assert.equal('unresolvedCount' in absent, false);
 });
 
+test('pr link preserves the last auto-rebase failure fingerprint through normalise', () => {
+  const out = normaliseLink({
+    type: 'pr',
+    url: 'https://github.com/acme/widgets/pull/42',
+    rebaseFailureKey: 'head:base',
+  });
+  assert.equal(out.rebaseFailureKey, 'head:base');
+});
+
+test('pr link preserves a deterministic auto-rebase block through normalise', () => {
+  const out = normaliseLink({
+    type: 'pr',
+    url: 'https://github.com/acme/widgets/pull/42',
+    rebaseBlockedKey: 'head:base',
+  });
+  assert.equal(out.rebaseBlockedKey, 'head:base');
+});
+
 test('linkMatches matches jira by key, case-insensitive and trimmed', () => {
   assert.equal(linkMatches({ type: 'jira', key: 'ENT-1' }, { type: 'jira', key: ' ent-1 ' }), true);
 });

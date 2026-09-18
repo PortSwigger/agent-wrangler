@@ -304,6 +304,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1', number: 1 }],
     autoFixPrChecks: false,
     autoMergeOnPass: true,
+    autoRebaseLinkedPr: true,
     childFullView: true,
     autoCompactTokens: 250000,
     nameInherited: true,
@@ -322,6 +323,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.deepEqual(e.links, prev.links); // a PR/Jira link attached before an idle-suspend must survive resume
   assert.equal(e.autoFixPrChecks, false); // an explicit opt-out must not silently revert to the on-default
   assert.equal(e.autoMergeOnPass, true); // ditto for an explicit opt-in surviving a workflow run's idle-suspend
+  assert.equal(e.autoRebaseLinkedPr, true); // history rewriting remains explicitly enabled after a resume
   assert.equal(e.childFullView, true); // ditto for a child's full-view override
   assert.equal(e.autoCompactTokens, 250000);
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
@@ -1463,6 +1465,15 @@ test('dispatch leaves entry.childFullView undefined for a non-nested dispatch', 
   assert.equal(sm.map.get(sessionId).childFullView, undefined);
 });
 
+test('dispatch persists auto-rebase independently from auto-merge', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({
+    cwd: os.tmpdir(), intent: 'x', autoRebaseLinkedPr: true, autoMergeOnPass: false,
+  });
+  assert.equal(sm.map.get(sessionId).autoRebaseLinkedPr, true);
+  assert.equal(sm.map.get(sessionId).autoMergeOnPass, undefined);
+});
+
 test('dispatch persists entry.effort and passes it to buildLaunch', async () => {
   const sm = smForDispatch();
   let captured = '';
@@ -1811,16 +1822,35 @@ test('prLinks lists pr links with their session id', () => {
   mgr.setLinks('CARD1', [
     { type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 },
   ]);
-  assert.deepEqual(mgr.prLinks(), [{ ownerId: 'CARD1', url: 'https://github.com/a/b/pull/7', number: 7, checkStatus: undefined, dirty: undefined, unresolvedCount: undefined }]);
+  assert.deepEqual(mgr.prLinks(), [{ ownerId: 'CARD1', url: 'https://github.com/a/b/pull/7', number: 7, checkStatus: undefined, dirty: undefined, unresolvedCount: undefined, rebaseFailureKey: undefined, rebaseBlockedKey: undefined }]);
 });
 
-test('updateLinkStatus writes checkStatus/dirty onto the matching session pr link', () => {
+test('updateLinkStatus writes checkStatus and dirty onto the matching session pr link', () => {
   const mgr = freshManager();
   mgr.setLinks('CARD1', [{ type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 }]);
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', true, '2026-06-16T00:00:00Z'), true);
   assert.equal(mgr.getLinks('CARD1')[0].checkStatus, 'failing');
   assert.equal(mgr.getLinks('CARD1')[0].dirty, true);
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/999', 'passing', false, 'x'), false);
+});
+
+test('rememberPrRebaseFailure persists the exact head/base pair on its PR link', () => {
+  const mgr = freshManager();
+  const url = 'https://github.com/a/b/pull/7';
+  mgr.setLinks('CARD1', [{ type: 'pr', url, repo: 'a/b', number: 7 }]);
+
+  assert.equal(mgr.rememberPrRebaseFailure('CARD1', url, 'head:base'), true);
+  assert.equal(mgr.getLinks('CARD1')[0].rebaseFailureKey, 'head:base');
+  assert.equal(mgr.rememberPrRebaseFailure('CARD1', 'https://github.com/a/b/pull/9', 'x:y'), false);
+});
+
+test('rememberPrRebaseBlocked persists a deterministic stop fingerprint on its PR link', () => {
+  const mgr = freshManager();
+  const url = 'https://github.com/a/b/pull/7';
+  mgr.setLinks('CARD1', [{ type: 'pr', url, repo: 'a/b', number: 7 }]);
+
+  assert.equal(mgr.rememberPrRebaseBlocked('CARD1', url, 'head:base'), true);
+  assert.equal(mgr.getLinks('CARD1')[0].rebaseBlockedKey, 'head:base');
 });
 
 test('updateLinkStatus returns false when checkStatus AND dirty are unchanged (timestamp still bumped)', () => {

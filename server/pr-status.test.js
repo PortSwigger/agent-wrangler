@@ -27,6 +27,17 @@ test('mergeStateStatus DIRTY sets dirty, independent of checkStatus (a DIRTY PR 
   assert.equal(res.checkStatus, 'pending');
 });
 
+test('PR status carries exact head and base commits independently of mergeStateStatus', async () => {
+  const res = await fetchPrStatus('https://github.com/base/project/pull/7', runner(
+    'OPEN\tpassing\tBLOCKED\tAPPROVED\tfeature\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tmain\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tfork/project\ttrue\n',
+  ));
+  assert.deepEqual(res.rebase, {
+    head: { repo: 'fork/project', ref: 'feature', oid: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    base: { repo: 'base/project', ref: 'main', oid: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+    crossRepository: true,
+  });
+});
+
 test('any non-DIRTY mergeStateStatus reports dirty: false', async () => {
   assert.equal((await fetchPrStatus('u', runner('OPEN\tpassing\tCLEAN\t\n'))).dirty, false);
   assert.equal((await fetchPrStatus('u', runner('OPEN\tpassing\tBLOCKED\t\n'))).dirty, false);
