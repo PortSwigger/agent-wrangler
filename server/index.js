@@ -31,7 +31,7 @@ import { setTmuxBin, sendText } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig, extensionSettings } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -269,6 +269,14 @@ function activateExtension(id, { startSweeps = true } = {}) {
       requires: e.requires,
       range: e.range,
       stores: storesFor(id),
+      // The manifest's own setting DEFS, plus a READ-THROUGH of their values:
+      // host.settings resolves against config.json on every call, so a value
+      // edited in the Extensions tab lands without a restart even though the
+      // façade is built once per activation. readConfig is a small synchronous
+      // JSON read and host.settings is only reached from tool/handler/sweep
+      // code, never from rebuildOnce.
+      settingDefs: e.settings,
+      readSettings: (extId) => extensionSettings(extId),
       log: logError,
       // Per-EXTENSION now, so the resume log line names which extension woke a
       // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.

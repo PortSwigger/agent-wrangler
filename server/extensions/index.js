@@ -1,6 +1,6 @@
 import path from 'node:path';
 import semver from 'semver';
-import { readConfig, extensionEnabled } from '../config-store.js';
+import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -74,6 +74,25 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
+// A settings DEF, not a value: what the Extensions tab draws a row for and what
+// ext-setting-set validates an incoming value against. Keys are camelCase and
+// namespaced per extension in config.json (`extensionSettings.<id>.<key>`), so
+// two manifests can both declare `registryUrl` with no collision and nothing
+// needs a `reg` claim for them — only the within-manifest duplicate check below.
+//
+// No `default` on a def: an unset setting reads as `undefined` and the extension
+// supplies its own fallback. A def-level default would be a fourth thing to
+// validate and a second place a default can disagree with the code reading it,
+// and an extension that is deliberately inert until a value is set needs
+// `undefined` to be distinguishable from a value.
+//
+// No `secret` type either. A masked input that still round-trips through
+// config.json in plaintext would imply a protection that does not exist, and
+// nothing about an extension is protected from an extension anyway — the
+// capability list is disclosure, not a sandbox.
+const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
+const SETTING_TYPES = ['text', 'number', 'toggle'];
+
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
   throw new Error(`Extension ${id}: ${reason}`);
@@ -120,6 +139,23 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
     if (typeof ext.stores !== 'object') fail(ext, 'stores must be an object of factories');
     for (const [name, factory] of Object.entries(ext.stores)) {
       if (typeof factory !== 'function') fail(ext, `stores.${name} must be a factory function`);
+    }
+  }
+  if (ext.settings != null) {
+    if (!Array.isArray(ext.settings)) fail(ext, 'settings must be an array of setting definitions');
+    const keys = new Set();
+    for (const [i, s] of ext.settings.entries()) {
+      if (!s || typeof s !== 'object') fail(ext, `settings[${i}] is not an object`);
+      if (typeof s.key !== 'string' || !SETTING_KEY_RE.test(s.key)) fail(ext, `settings[${i}].key must match ${SETTING_KEY_RE} (got ${JSON.stringify(s.key)})`);
+      if (keys.has(s.key)) fail(ext, `duplicate setting key "${s.key}"`);
+      keys.add(s.key);
+      if (!SETTING_TYPES.includes(s.type)) fail(ext, `settings.${s.key}.type must be one of ${SETTING_TYPES.join(', ')}`);
+      if (typeof s.label !== 'string' || !s.label) fail(ext, `settings.${s.key}.label must be a non-empty string`);
+      // Third-party prose. Type-checked only, exactly like description/author/
+      // homepage above — every consumer renders these via textContent.
+      for (const k of ['help', 'placeholder']) {
+        if (s[k] != null && typeof s[k] !== 'string') fail(ext, `settings.${s.key}.${k} must be a string`);
+      }
     }
   }
   for (const [i, t] of (ext.tools || []).entries()) {
@@ -186,10 +222,10 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
 // The extra fields are the installed-extension row's own content (origin, SHA,
 // author, description) and are third-party strings — the client renders every
 // one of them through `textContent`.
-export function extensionsForGraph(list, enabledFor = extensionEnabled) {
+export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes,
-    quarantine, external, description, author, homepage, provenance, requires,
+    quarantine, external, description, author, homepage, provenance, requires, settings,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -200,6 +236,19 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled) {
     author: author || '',
     homepage: homepage || '',
     requires: [...(requires || [])],
+    // The setting DEFS (third-party prose, rendered via textContent) plus the
+    // current VALUES, re-read from config on every rebuild for exactly the
+    // reason `enabled` is: an edit in another tab, or by hand in config.json,
+    // has to reach the panel. A quarantined row keeps its defs — the panel
+    // draws them DISABLED, which says "this is what it would want" rather than
+    // hiding the rows and making a broken extension look like one with nothing
+    // to configure.
+    //
+    // A handful of short defs and values per extension, the same order of cost
+    // as `requires` and `handlerTypes` above, and deliberately off the per-card
+    // path for the same reason.
+    settings: (settings || []).map((s) => ({ ...s })),
+    settingValues: valuesFor(id),
     // Only the two fields the row shows, never the whole record: `requires` on
     // it is the CONSENTED set, which is an update-flow input and not something
     // the board needs on every tick.
@@ -309,6 +358,7 @@ function quarantinedEntry(ext, quarantine) {
     requires: [],
     range: null,
     storeNames: [],
+    settings: [],
     skills: [],
     handlerTypes: [],
     external: Boolean(ext?.external),
@@ -356,6 +406,16 @@ function stageExtension(ext, { cfg, out, reg }) {
     requires: [...(ext.requires || [])],
     range: ext.engines?.wranglerApi ?? null,
     storeNames: Object.keys(ext.stores || {}),
+    // Copied, not referenced: the entry is what extensionsForGraph reads every
+    // tick and what ext-setting-set validates against, and a manifest that
+    // mutated its own defs array afterwards must not be able to move either.
+    //
+    // Unlike every other contribution on this entry, settings claim NOTHING and
+    // release nothing: no tool, handler, store, hook, sweep or asset, and no
+    // name in `reg` (keys are namespaced by extension id in config.json). So
+    // there is nothing to stage atomically beyond the entry itself and nothing
+    // for unregisterExtension to take back.
+    settings: (ext.settings || []).map((s) => ({ ...s })),
     // Kept on the entry purely so a late quarantine (below) can move this
     // manifest's skills from the enabled list to the disabled one by id.
     skills: [...(ext.skills || [])],
