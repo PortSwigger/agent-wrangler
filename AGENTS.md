@@ -238,6 +238,46 @@
   otherwise plain text: a third-party href is not worth the navigation surface for a
   decoration. The consent modal has **no Enter-to-approve**, unlike `confirmDialog`,
   because approving grants a process full access to the machine.
+- **A manifest's `settings` are DEFS; their values live in
+  `extensionSettings.<id>.<key>`, a block of their own and NOT inside
+  `extensions.<id>`.** That key is the enable flag and is a BOOLEAN, so keeping the
+  two apart is what makes it impossible for a manifest declaring a setting called
+  `enabled` — or for a hand-edit — to make the toggle and a value the same key;
+  values are config, so they survive an uninstall/reinstall, which an extension's
+  own store does not. There is no `default` on a def (an unset setting reads
+  `undefined` and the extension supplies its own fallback, which is also what lets
+  one be deliberately inert until configured) and no `secret` type (a masked input
+  round-tripping through config.json in plaintext would imply a protection that
+  does not exist). Keys are namespaced by extension id, so they claim nothing in
+  `_reg` and stage nothing — the only contribution on a list entry that does
+  neither, which is why `unregisterExtension` has nothing to take back. They are
+  COPIED onto the entry and copied again by `extensionsForGraph`, so a manifest
+  mutating its own array cannot move what the panel draws or what
+  `ext-setting-set` validates against. **`host.settings` is UNGATED for the same
+  reason `stores` is** — the extension's own data, not a core surface — narrowed
+  by the CLOSED-OVER id exactly like `broadcast`'s `type` and `mail.send`'s
+  `from`, so no signature reaches a sibling's block, and READ-THROUGH on every
+  call because the façade is built once per activation and an edit must land
+  without a restart; an undeclared key reads `undefined` from both `get` and
+  `all`. It is an addition to `alwaysPresent` and NOT a capability, so
+  `CAPABILITIES`/`V1_BUILDERS` are untouched and the bump is a MINOR
+  (`HOST_API_VERSION` 1.1.0). **`ext-setting-set` is CORE-owned and untagged**: an
+  extension whose own handler could write `extensionSettings.<its id>` would be
+  authoring the record of what a human chose. It validates a browser-supplied
+  frame against the DECLARING MANIFEST'S OWN defs — the def's type decides how
+  `value` is read, a misfit is an error envelope rather than a coercion — refuses
+  a quarantined extension whatever the panel did, and ends with `ctx.rebuild()`
+  and deliberately NOT `ctx.ext.changed()`, since nothing about the registry
+  moved. On the client the setting rows carry `data-ext`/`data-key` and **no
+  `data-id`**: `settings.js`'s delegated handler picks up any `.setting-toggle` in
+  the modal and looks the row up with `byId.get(row.dataset.id)`, so putting
+  `ext:<id>` on one of these rows would make a toggle-type SETTING flip the
+  EXTENSION's enable flag. They are disabled only when the extension is
+  QUARANTINED, never when it is merely off (a value persists, and setting a URL
+  before switching the thing on is the natural order), and `app.js`'s remount
+  signature **excludes `settingValues`** — a ~4s tick must not take a field
+  someone is typing in, and the cost is only that another tab's edit waits for
+  the next remount.
 - **Extensions API (`server/extensions/index.js`, `public/slots.js`,
   `public/extensions.js`) — an optional feature is ONE manifest, and the loaded
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
