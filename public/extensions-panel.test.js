@@ -218,16 +218,39 @@ const WITH_SETTINGS = {
   settingValues: { registryUrl: 'https://reg.invalid', pollMs: 30, auto: true },
 };
 
-test('an extension\'s settings are drawn beneath its own row, one row per declared setting', () => {
+test('the tab draws a cog, not the settings — and only for an extension that declares some', () => {
   withDom(() => {
     const panel = extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }, WITH_SETTINGS] });
-    const rows = byClass(panel, 'ext-setting-row');
+    // The whole point of the cog: the tab stays a list of extensions, with not
+    // one of anybody's fields laid out flat in it.
+    assert.equal(byClass(panel, 'ext-setting-row').length, 0);
+    assert.equal(byClass(panel, 'ext-settings').length, 0);
+    assert.equal(texts(panel).includes('Registry URL'), false);
+    // Its presence IS the disclosure that there is something to configure, so
+    // an extension declaring none must not draw one.
+    assert.equal(byClass(panel, 'ext-btn-icon').length, 1);
+    assert.equal(byClass(extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }] }), 'ext-btn-icon').length, 0);
+  });
+});
+
+test('one extension\'s rows are the dialog body its cog asks for, one row per declared setting', () => {
+  withDom(() => {
+    const seen = [];
+    const panel = extensionsPanelEl({ entries: [WITH_SETTINGS], onOpenSettings: (e) => seen.push(e.id) });
+    byClass(panel, 'ext-btn-icon')[0].fire('click');
+    assert.deepEqual(seen, ['notes'], 'the cog names its own extension');
+    const rows = byClass(extensionSettingRowsEl(WITH_SETTINGS), 'ext-setting-row');
     assert.deepEqual(rows.map((r) => r.dataset.key), ['registryUrl', 'pollMs', 'auto']);
-    const all = texts(panel);
+    const all = texts(extensionSettingRowsEl(WITH_SETTINGS));
     assert.ok(all.includes('Registry URL'));
     assert.ok(all.includes('Where handles are published.'));
-    // An extension with none draws no wrapper at all.
-    assert.equal(byClass(extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }] }), 'ext-settings').length, 0);
+  });
+});
+
+test('a row on its way out keeps no cog — there is nothing left to configure', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [WITH_SETTINGS], pendingRemoval: ['notes'] });
+    assert.equal(byClass(panel, 'ext-btn-icon').length, 0);
   });
 });
 

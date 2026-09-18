@@ -515,6 +515,20 @@
     </div>
   </div>
 
+  <!-- One extension's own settings, opened by the cog on its row. Its own
+       dialog rather than rows in the Extensions tab: the tab is a list of what
+       you have installed, and every extension's fields laid out flat there
+       buried it. -->
+  <div id="ext-settings-modal" class="hidden">
+    <div class="modal-card settings-card">
+      <h3 id="ext-settings-title">Extension settings</h3>
+      <div id="ext-settings-body" class="settings-body"></div>
+      <div class="modal-actions">
+        <button id="ext-settings-done" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="hidden"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>

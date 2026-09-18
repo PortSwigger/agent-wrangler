@@ -36,7 +36,7 @@ import {
 } from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { extensionsPanelEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -449,13 +449,12 @@ function applyGraph(graph) {
   // it, so without this the panel re-drew the just-uninstalled extension as an
   // ordinary installed row and kept it there until a manual page refresh.
   //
-  // The signature deliberately EXCLUDES settingValues. Everything else in this
-  // panel is a report the board owns, but a settings input is the one place in
-  // it a human is mid-way through authoring something, and a ~4s remount would
-  // take the field they are typing in (and its focus) with it. A committed
-  // value is already mirrored onto latestExtensions by onSettingChange, so
-  // excluding it costs only this: a value changed in ANOTHER tab does not
-  // appear until the panel re-mounts for some other reason, or is reopened.
+  // The signature deliberately EXCLUDES settingValues. The tab does not draw a
+  // single value any more — they live in the dialog behind each row's cog — so
+  // a value landing is not news the list has to redraw for, and a remount would
+  // cost the install field's half-typed URL for nothing. The dialog reads
+  // latestExtensions fresh on every open, which is where a value changed in
+  // ANOTHER tab catches up.
   const extSignature = JSON.stringify(latestExtensions.map(({ settingValues, ...rest }) => rest));
   if (extSignature !== lastExtSignature) {
     lastExtSignature = extSignature;
@@ -476,6 +475,11 @@ function applyGraph(graph) {
   // can ask for reads that — and before the renderPanel further down, so the
   // panel is drawn against the contributions that survive this tick.
   syncClientExtensions();
+  // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
+  // view that has only just registered is updated in the same tick it appears
+  // rather than staying blank until the next one — and unconditionally, because
+  // a view is a whole pane with no other render path of its own.
+  updateExtViews();
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -630,11 +634,30 @@ function renderExtViews() {
     btn.addEventListener('click', () => setView(key));
     layouts.appendChild(btn);
   }
-  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
+  updateExtViews();
   // A deep link can land before the extension's module has loaded, so the hash
   // is re-read once its view finally exists (hashView refuses an unknown one).
   const deep = hashView();
   if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+}
+
+// Hand every mounted view contribution the CURRENT graph. Split out of
+// renderExtViews and called from applyGraph as well, because a view is the one
+// slot with no render path of its own: the panel slots are updated from
+// renderPanel and the card pills from wireGridEvents, but a view's host is
+// created once and then nothing came back to it. Its `update(el, session,
+// graph)` was effectively dead — syncHosts was already being handed
+// latestGraph, which is what makes it clear that was an oversight and not a
+// design — so a contribution could only ever render what the graph happened to
+// say at mount, and went stale until a reload. A view is a whole pane; the one
+// thing it must do is track the board.
+//
+// Only the syncHosts call, never renderExtViews' chrome reconciliation: that
+// creates and destroys rail buttons and re-reads the hash for a deep link, none
+// of which may happen on a ~4s tick.
+function updateExtViews() {
+  const wanted = new Map(slots.contributions('view').map((c) => [extViewKey(c), c]));
+  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
 }
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
@@ -5662,17 +5685,55 @@ function mountExtensionsPanel(host) {
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
     onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
-    onSettingChange: ({ id, key, value }) => {
-      send({ type: 'ext-setting-set', id, key, value });
-      // Written back into our own copy as well as sent: the panel is rebuilt
-      // whole on any remount, and without this a remount between the commit
-      // and the graph that confirms it would redraw the field with the OLD
-      // value. The next graph carries the same value and overwrites this
-      // wholesale.
-      const e = latestExtensions.find((x) => x.id === id);
-      if (e) e.settingValues = { ...(e.settingValues || {}), [key]: value };
+    onOpenSettings: (entry) => openExtSettings(entry.id),
+  }));
+}
+
+// One extension's settings, behind the cog on its row. Its own dialog rather
+// than rows in the tab: the Extensions tab answers "what have I got", and every
+// extension's fields laid out flat under it answered that far worse.
+//
+// Built fresh per open from `latestExtensions` — never from the entry the row
+// was drawn with, which may be several graphs old by the time the cog is
+// clicked. Nothing re-renders it while it is open, deliberately: a field a
+// human is part-way through typing in must not be taken out from under them,
+// which is the same reason applyGraph's remount signature excludes
+// settingValues.
+function openExtSettings(id) {
+  const entry = latestExtensions.find((e) => e.id === id);
+  if (!entry) return;
+  const modal = document.getElementById('ext-settings-modal');
+  const body = document.getElementById('ext-settings-body');
+  document.getElementById('ext-settings-title').textContent = entry.label || entry.id;
+  body.textContent = '';
+  body.append(extensionSettingRowsEl(entry, {
+    onSettingChange: ({ key, value }) => {
+      send({ type: 'ext-setting-set', id: entry.id, key, value });
+      // Written back into our own copy as well as sent, so re-opening the
+      // dialog before the confirming graph arrives shows what was just set
+      // rather than the old value. The next graph carries the same value and
+      // overwrites this wholesale.
+      const live = latestExtensions.find((e) => e.id === entry.id);
+      if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
     },
   }));
+  const done = document.getElementById('ext-settings-done');
+  modal.classList.remove('hidden');
+  done.focus();
+  const close = () => {
+    modal.classList.add('hidden');
+    done.removeEventListener('click', close);
+    modal.removeEventListener('keydown', onKey);
+    modal.removeEventListener('mousedown', onBackdrop);
+  };
+  // Enter closes rather than approving anything: every control here has already
+  // committed on its own change, so there is no pending decision for a key to
+  // confirm — and Enter in a text field is one of the ways it commits.
+  const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); close(); } };
+  const onBackdrop = (e) => { if (e.target === modal) close(); };
+  done.addEventListener('click', close);
+  modal.addEventListener('keydown', onKey);
+  modal.addEventListener('mousedown', onBackdrop);
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never

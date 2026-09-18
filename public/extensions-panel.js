@@ -108,7 +108,7 @@ function restartButtonEl({ restarting, onRestart } = {}) {
 // and where it came from). The commit still appears where it is a decision input,
 // on the consent modal.
 export function extensionRowEl(entry, {
-  status, pendingRemoval, onUninstall, onUpdate,
+  status, pendingRemoval, onUninstall, onUpdate, onOpenSettings,
 } = {}) {
   const row = el('div', `setting-row ext-row${pendingRemoval ? ' ext-row-removed' : ''}`);
   row.dataset.id = `ext:${entry.id}`;
@@ -142,6 +142,25 @@ export function extensionRowEl(entry, {
 
   const actions = el('div', 'ext-row-actions');
   if (!pendingRemoval) {
+    // A cog, not the rows themselves. An extension's settings are ITS business
+    // and belong behind its own row: laid out flat under every extension they
+    // turned one tab into a wall of other people's fields, and the list stopped
+    // reading as "the extensions you have". Drawn only for a manifest that
+    // actually declares settings, so the cog's presence IS the disclosure that
+    // there is something to configure.
+    //
+    // Offered for a QUARANTINED extension too. Its defs are still on the row
+    // and the dialog draws them disabled, which says "this is what it would
+    // want" — hiding the cog would make a broken extension look like one with
+    // nothing to configure.
+    if (entry.settings?.length) {
+      const cog = el('button', 'ext-btn ext-btn-icon', '⚙');
+      cog.type = 'button';
+      cog.title = `Settings for ${entry.label || entry.id}`;
+      cog.setAttribute('aria-label', `Settings for ${entry.label || entry.id}`);
+      cog.addEventListener('click', () => onOpenSettings?.(entry));
+      actions.append(cog);
+    }
     // Update is offered only when a check actually found a newer commit. A
     // permanently present "Update…" button says nothing about whether there is
     // one, and pressing it re-clones and re-consents for no reason.
@@ -171,9 +190,10 @@ export function extensionRowEl(entry, {
   return row;
 }
 
-// One row per declared setting, beneath its extension's own row. Subordinate by
-// construction (a `.ext-settings` wrapper, indented), because a setting is a
-// property OF the row above it and a flat list would read as another extension.
+// One row per declared setting, for ONE extension — the body of the dialog its
+// row's cog opens (app.js's openExtSettings), not part of the tab itself. The
+// Extensions tab stays a list of extensions; a human who wants to configure one
+// asks for it.
 //
 // These rows carry `data-ext`/`data-key` and deliberately NOT `data-id`:
 // settings.js's delegated click handler picks up any `.setting-toggle` in the
@@ -275,7 +295,7 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
 export function extensionsPanelEl({
   entries = [], statuses = {}, checking = false, progress = '', busy = false,
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
-  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onSettingChange,
+  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onOpenSettings,
 } = {}) {
   const wrap = el('div');
   const head = el('div', 'ext-installed-head');
@@ -303,12 +323,8 @@ export function extensionsPanelEl({
       pendingRemoval: removing.has(entry.id),
       onUninstall,
       onUpdate,
+      onOpenSettings,
     }));
-    // Its own settings, immediately beneath it — but not for a row that is on
-    // its way out, where the whole extension is about to stop existing.
-    if (entry.settings?.length && !removing.has(entry.id)) {
-      wrap.append(extensionSettingRowsEl(entry, { onSettingChange }));
-    }
   }
 
   const form = el('div', 'setting-row ext-row');
