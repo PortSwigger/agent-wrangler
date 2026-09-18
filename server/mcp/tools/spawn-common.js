@@ -20,14 +20,14 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
 
   const agent = args.agent || 'claude';
 
-  // Reject a caller-supplied agent/model the adapters don't offer, rather than
+  // Reject a caller-supplied agent/model/effort the adapters don't offer, rather than
   // passing it through to a CLI that either errors in the pane or (for a bad
   // agent, which adapterFor silently resolves to claude) launches something the
-  // caller didn't ask for. Validates `args.model` and deliberately runs BEFORE
+  // caller didn't ask for. Validates `args.model`/`args.effort` and deliberately runs BEFORE
   // the inheritance fallback below: an existing entry may carry a model value
   // since dropped from an adapter, and failing a spawn over a string the caller
   // never supplied would break the inheritance this tool is meant to provide.
-  const badTarget = launchTargetError(agent, args.model);
+  const badTarget = launchTargetError(agent, args.model, args.effort);
   if (badTarget) return errorResult(badTarget);
   const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
   if (autoCompactError) return errorResult(autoCompactError);
@@ -37,10 +37,14 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // session runs the SAME agent — model names don't cross agents (opus vs
   // gpt-5.5). A null caller model means "agent default", which is the right
   // inherited default anyway, so the lookup is a no-op there.
-  let { model } = args;
+  // Effort inherits on exactly the same terms and for the same reason: the level
+  // vocabularies differ per adapter (claude's xhigh/max, codex's minimal), so a
+  // cross-agent spawn falls back to that agent's own default.
+  let { model, effort } = args;
   const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;
-  if (model == null && callerEntry && (callerEntry.agent || 'claude') === agent) {
-    model = callerEntry.model || undefined;
+  if (callerEntry && (callerEntry.agent || 'claude') === agent) {
+    if (model == null) model = callerEntry.model || undefined;
+    if (effort == null) effort = callerEntry.effort || undefined;
   }
 
   let addDirs;
@@ -55,6 +59,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
     result = await deps.dispatch({
       cwd: args.cwd,
       model,
+      effort,
       agent,
       addDirs,
       autoCompactTokens: args.auto_compact_tokens,

@@ -145,6 +145,36 @@ test('spawn_session does not inherit a model across agents', async () => {
   assert.equal(d.calls.dispatch[0].model, undefined);
 });
 
+test('spawn_session passes an explicit effort through to dispatch', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', effort: 'high' });
+  assert.equal(d.calls.dispatch[0].effort, 'high');
+});
+
+test('spawn_session defaults the effort to the caller’s effort', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude', model: 'sonnet', effort: 'xhigh' } } });
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+  assert.equal(d.calls.dispatch[0].effort, 'xhigh');
+});
+
+// Effort levels don't cross agents any more than model names do — claude has
+// xhigh/max, codex has minimal — so an inherited one would be rejected at launch.
+test('spawn_session does not inherit an effort across agents', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude', model: 'sonnet', effort: 'xhigh' } } });
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex' });
+  assert.equal(d.calls.dispatch[0].effort, undefined);
+});
+
+test('spawn_session refuses an effort the chosen agent does not offer', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler(
+    { deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', effort: 'xhigh' });
+
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /Unknown effort "xhigh" for agent "codex"/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
 test('spawn_session leaves model unset when the caller is on the agent default', async () => {
   const d = deps({ entries: { CARD1: { agent: 'claude', model: null } } });
   await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
