@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { knownAgentIds, modelChoicesText } from '../../agents/index.js';
+import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { nestedParentError } from '../../dispatch-runner.js';
 
@@ -33,6 +33,11 @@ export const spawnSessionTool = {
       `Model override for the new session. Defaults to your own model, and only when launching the SAME `
       + `agent — a cross-agent spawn falls back to that agent's own default unless you pass this. `
       + `Valid values — ${modelChoicesText()}.`,
+    ),
+    effort: z.string().optional().describe(
+      `Reasoning-effort override for the new session. Defaults to your own effort, and only when `
+      + `launching the SAME agent — a cross-agent spawn falls back to that agent's own default `
+      + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the new session (--add-dir).'),

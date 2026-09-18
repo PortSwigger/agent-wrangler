@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  adapterFor, agentError, modelError, launchTargetError, knownAgentIds, modelChoicesText,
+  adapterFor, agentError, modelError, effortError, launchTargetError, knownAgentIds, modelChoicesText,
 } from './index.js';
 
 test('a known agent/model pair passes, and an absent model is not a rejection', () => {
@@ -67,4 +67,26 @@ function escape(s) {
 test('modelError called with an unknown agent reports the AGENT, not a claude model', () => {
   assert.match(modelError('codx', 'gpt-5.6-sol'), /Unknown agent "codx"/);
   assert.doesNotMatch(modelError('codx', 'gpt-5.6-sol'), /for agent "claude"/);
+});
+
+test('effortError accepts each adapter’s own levels and rejects one it lacks', () => {
+  assert.equal(effortError('claude', 'max'), null);
+  assert.equal(effortError('codex', 'ultra'), null);
+  assert.equal(effortError('claude', undefined), null);
+  assert.equal(effortError('claude', ''), null);
+  assert.match(effortError('claude', 'ultra'), /Unknown effort "ultra" for agent "claude"/);
+});
+
+// Same self-safety as modelError: an unknown agent must not be reported as a
+// bad effort "for agent claude", which is not the agent the caller named.
+test('effortError reports an unknown agent rather than blaming claude', () => {
+  assert.match(effortError('codx', 'high'), /Unknown agent "codx"/);
+  assert.doesNotMatch(effortError('codx', 'high'), /for agent "claude"/);
+});
+
+test('launchTargetError checks effort after agent and model', () => {
+  assert.equal(launchTargetError('claude', 'opus', 'max'), null);
+  assert.match(launchTargetError('claude', 'gpt-5.5', 'max'), /Unknown model/);
+  assert.match(launchTargetError('claude', 'opus', 'ultra'), /Unknown effort/);
+  assert.equal(launchTargetError('claude', 'opus', undefined), null);
 });
