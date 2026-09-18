@@ -202,7 +202,7 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     const commit = (value) => onSettingChange?.({ id: entry.id, key: def.key, value });
     if (def.type === 'toggle') {
       const actions = el('div', 'ext-row-actions');
-      const on = Boolean(current);
+      let on = Boolean(current);
       const toggle = el('button', `setting-toggle${on ? ' on' : ''}`);
       toggle.type = 'button';
       toggle.setAttribute('role', 'switch');
@@ -212,7 +212,22 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
       toggle.append(el('span', 'setting-knob'));
       // Its OWN listener, because settings.js's delegated one deliberately
       // cannot see this row (no data-id) — see the note above.
-      toggle.addEventListener('click', () => { if (!toggle.disabled) commit(!on); });
+      //
+      // It also has to move the switch ITSELF, exactly as settings.js's
+      // delegated handler does after setSetting: these rows are only rebuilt on
+      // a remount, and app.js's remount signature excludes settingValues on
+      // purpose, so nothing else is coming to redraw it. A text input keeps the
+      // typed text because the browser holds it; a switch has no such state of
+      // its own, so without this the click reads as having done nothing at all.
+      // `on` is the live local value for the same reason — captured once, a
+      // second click would re-send the value the first one already stored.
+      toggle.addEventListener('click', () => {
+        if (toggle.disabled) return;
+        on = !on;
+        toggle.classList.toggle('on', on);
+        toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+        commit(on);
+      });
       actions.append(toggle);
       row.append(copy, actions);
     } else {

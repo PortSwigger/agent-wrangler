@@ -37,6 +37,14 @@ function stubDocument() {
       get textContent() { return this._text; },
       set innerHTML(v) { this._html = v; },
       get innerHTML() { return this._html; },
+      // Backed by `className` rather than a second list, so byClass() below
+      // keeps seeing whatever a toggle has just flipped on itself.
+      classList: {
+        contains: (c) => String(el.className).split(' ').includes(c),
+        add(c) { if (!this.contains(c)) el.className = `${el.className} ${c}`.trim(); },
+        remove(c) { el.className = String(el.className).split(' ').filter((x) => x && x !== c).join(' '); },
+        toggle(c, on) { if (on ?? !this.contains(c)) this.add(c); else this.remove(c); },
+      },
     };
     return el;
   };
@@ -294,6 +302,27 @@ test('a text field commits on change and on Enter, once, and never per keystroke
     assert.deepEqual(seen.at(-1), { id: 'notes', key: 'pollMs', value: 90 });
     byClass(wrap, 'setting-toggle')[0].fire('click');
     assert.deepEqual(seen.at(-1), { id: 'notes', key: 'auto', value: false }, 'the toggle sends the opposite of what it shows');
+  });
+});
+
+test('a toggle setting moves its own switch, and a second click sends the other value', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl(WITH_SETTINGS, { onSettingChange: (c) => seen.push(c) });
+    const toggle = byClass(wrap, 'setting-toggle')[0];
+    // These rows are only rebuilt on a remount, and app.js's remount signature
+    // excludes settingValues on purpose — so nothing else is coming to redraw
+    // this. An input keeps the typed text because the browser holds it; a
+    // switch that does not move itself reads as a click that did nothing.
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    toggle.fire('click');
+    assert.equal(toggle.getAttribute('aria-checked'), 'false');
+    assert.ok(!/\bon\b/.test(toggle.className));
+    toggle.fire('click');
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    assert.ok(/\bon\b/.test(toggle.className));
+    // Captured once, the second click would have re-sent the first's value.
+    assert.deepEqual(seen.map((c) => c.value), [false, true]);
   });
 });
 
