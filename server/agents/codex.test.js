@@ -122,7 +122,7 @@ test('matchContainerized: a devcontainer/docker exec wrapping codex matches; a p
 
 test('codex exposes an efforts list with expected levels and no default', () => {
   const values = codex.efforts.map((e) => e.value);
-  assert.deepEqual(values, ['minimal', 'low', 'medium', 'high']);
+  assert.deepEqual(values, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
   assert.ok(!codex.efforts.some((e) => e.default));
 });
 

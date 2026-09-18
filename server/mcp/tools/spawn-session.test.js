@@ -157,8 +157,8 @@ test('spawn_session defaults the effort to the caller’s effort', async () => {
   assert.equal(d.calls.dispatch[0].effort, 'xhigh');
 });
 
-// Effort levels don't cross agents any more than model names do — claude has
-// xhigh/max, codex has minimal — so an inherited one would be rejected at launch.
+// Effort levels don't cross agents any more than model names do — codex has
+// `ultra`, claude does not — so an inherited one may not be valid over there.
 test('spawn_session does not inherit an effort across agents', async () => {
   const d = deps({ entries: { CARD1: { agent: 'claude', model: 'sonnet', effort: 'xhigh' } } });
   await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex' });
@@ -168,10 +168,10 @@ test('spawn_session does not inherit an effort across agents', async () => {
 test('spawn_session refuses an effort the chosen agent does not offer', async () => {
   const d = deps();
   const out = await spawnSessionTool.handler(
-    { deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', effort: 'xhigh' });
+    { deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'claude', effort: 'ultra' });
 
   assert.equal(out.isError, true);
-  assert.match(out.content[0].text, /Unknown effort "xhigh" for agent "codex"/);
+  assert.match(out.content[0].text, /Unknown effort "ultra" for agent "claude"/);
   assert.equal(d.calls.dispatch.length, 0);
 });
 

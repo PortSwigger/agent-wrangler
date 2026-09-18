@@ -54,7 +54,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.6-sol` — GPT-5.6 Sol · frontier (default)
 - `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
 - `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
-- `effort`: `minimal`, `low`, `medium`, `high`
+- `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
 <!-- END GENERATED MODELS -->
 

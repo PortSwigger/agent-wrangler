@@ -38,7 +38,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // gpt-5.5). A null caller model means "agent default", which is the right
   // inherited default anyway, so the lookup is a no-op there.
   // Effort inherits on exactly the same terms and for the same reason: the level
-  // vocabularies differ per adapter (claude's xhigh/max, codex's minimal), so a
+  // vocabularies differ per adapter (codex offers `ultra`, claude does not), so a
   // cross-agent spawn falls back to that agent's own default.
   let { model, effort } = args;
   const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;

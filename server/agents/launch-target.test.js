@@ -69,13 +69,12 @@ test('modelError called with an unknown agent reports the AGENT, not a claude mo
   assert.doesNotMatch(modelError('codx', 'gpt-5.6-sol'), /for agent "claude"/);
 });
 
-test('effortError accepts each adapter’s own levels and rejects the other’s', () => {
+test('effortError accepts each adapter’s own levels and rejects one it lacks', () => {
   assert.equal(effortError('claude', 'max'), null);
-  assert.equal(effortError('codex', 'minimal'), null);
+  assert.equal(effortError('codex', 'ultra'), null);
   assert.equal(effortError('claude', undefined), null);
   assert.equal(effortError('claude', ''), null);
-  assert.match(effortError('codex', 'max'), /Unknown effort "max" for agent "codex"/);
-  assert.match(effortError('claude', 'minimal'), /Unknown effort "minimal" for agent "claude"/);
+  assert.match(effortError('claude', 'ultra'), /Unknown effort "ultra" for agent "claude"/);
 });
 
 // Same self-safety as modelError: an unknown agent must not be reported as a
@@ -88,6 +87,6 @@ test('effortError reports an unknown agent rather than blaming claude', () => {
 test('launchTargetError checks effort after agent and model', () => {
   assert.equal(launchTargetError('claude', 'opus', 'max'), null);
   assert.match(launchTargetError('claude', 'gpt-5.5', 'max'), /Unknown model/);
-  assert.match(launchTargetError('claude', 'opus', 'minimal'), /Unknown effort/);
+  assert.match(launchTargetError('claude', 'opus', 'ultra'), /Unknown effort/);
   assert.equal(launchTargetError('claude', 'opus', undefined), null);
 });
