@@ -7,12 +7,14 @@ test('HOST_API_VERSION is a real semver version', () => {
   assert.ok(semver.valid(HOST_API_VERSION), HOST_API_VERSION);
 });
 
-// Pinned, because the number is a promise to manifests: 1.1.0 is the release
-// that added host.settings to alwaysPresent, and a manifest declaring ^1.1.0 is
-// saying it needs that key to exist. An additive change bumps the minor and
-// keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.1.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.1.0');
+// Pinned, because the number is a promise to manifests: 1.1.0 added
+// host.settings to alwaysPresent and 1.2.0 added the client-side onMessage seam
+// (public/slots.js), and a manifest declaring either range is saying it needs
+// that surface to exist. An additive change bumps the minor and keeps every
+// ^1.0.0 manifest served by the same builders.
+test('the served version is 1.2.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.2.0');
+  assert.equal(servesRange('^1.2.0'), true);
   assert.equal(servesRange('^1.1.0'), true);
   assert.equal(servesRange('^1.0.0'), true);
   assert.equal(servesRange('^2.0.0'), false);

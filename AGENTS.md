@@ -413,7 +413,31 @@
   forced-value rule: `slots.apiFor` binds each extension's `send` to its OWN
   registered `handlerTypes` (carried on both the `extensions` connect message and
   `graph.extensions`) and FAILS CLOSED — an extension the board has heard nothing
-  about may send nothing. **`onBeforeDispatch`
+  about may send nothing. **The INBOUND half is `onMessage`/`dispatchMessage`
+  (`HOST_API_VERSION` 1.2.0), and the address is the FORCED type, nothing in the
+  payload**: `host.broadcast` stamps `ext:<id>` from the closed-over id, `app.js`'s
+  ws ladder hands every `ext:`-prefixed frame to `slots.dispatchMessage`, and it
+  calls only the listeners THAT id's own module subscribed — so an extension can
+  neither hear a sibling's frames nor one aimed at a core type. Before it the
+  frame fell off the end of that `else if` ladder and was silently dropped, which
+  is why a server half had no way to tell its own browser half anything. The
+  version bump is the point of the change being declarable at all: there is no
+  new server-side key, so `engines.wranglerApi: '^1.2.0'` is the ONLY thing that
+  stops a manifest whose client calls `onMessage` booting against a server whose
+  `app.js` would drop its frames. `onMessage` is on BOTH the api and the
+  registrar `forExtension` returns, and the registrar is the normal place: the api
+  reaches a module through `mount`, and `card.pill` has one host PER CARD, so
+  subscribing there subscribes once per card on screen — which is what the
+  returned unsubscribe is for. A throwing listener is reported and **KEPT**,
+  deliberately unlike a throwing contribution: mount/update run inside the
+  board's own render and removal is what protects that render, while a listener
+  can hurt nothing but itself and deafening an extension for the life of the page
+  over one bad frame is the worse failure. An unknown or unloaded id dispatches
+  nowhere and is NOT reported (an extension with no client half is ordinary, and a
+  broadcast per tick would print a line per tick); a malformed type IS, since only
+  a core bug makes one. `removeExtension` drops the listeners with the apis, so a
+  disabled or uninstalled extension stops hearing at the same moment it stops
+  drawing. **`onBeforeDispatch`
   is the only session hook that runs while the session exists nowhere** — after
   `dispatch` settles the card id, cwd and worktree, `await`ed, before the launch
   command is built — and that window is the whole point: state the agent's very

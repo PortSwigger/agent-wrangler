@@ -16,6 +16,14 @@
 // the rail button and #view= hash route that reach it, from `label`/`icon`).
 // It goes through syncHosts too, but with each entry carrying `only` so a
 // contribution lands in its own host and not in every view's — see sync().
+//
+// Slots are the OUTBOUND half (DOM out, `send` back to the control socket). The
+// INBOUND half is `onMessage`/`dispatchMessage`: a server-side `host.broadcast`
+// puts an `{type:'ext:<id>', …}` frame on the control socket, app.js's ws ladder
+// hands every `ext:`-prefixed frame to dispatchMessage, and it reaches only the
+// listeners that extension's own module subscribed. Without it such a frame fell
+// off the end of app.js's `else if` ladder and was silently dropped, so a server
+// half had no way to tell its own browser half anything — see dispatchMessage.
 export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view'];
 
 // Slots whose contribution must carry more than mount() — a view has no host
@@ -45,6 +53,30 @@ const REQUIRED_FIELDS = { view: ['label'] };
 export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   const apis = new Map();
+  // extId -> Set<fn>: the INBOUND half of the per-extension api, the mirror of
+  // the bound `send` below. A server-side `host.broadcast` forces its frame's
+  // type to `ext:<id>` (host-api/v1.js), and dispatchMessage() below is the only
+  // thing that turns such a frame into a call — keyed on the id parsed out of
+  // that type, so one extension can never hear another's frames however the
+  // payload is shaped.
+  const listeners = new Map();
+
+  // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
+  // unsubscribe function, which is what a contribution that subscribes inside
+  // mount() must call from unmount(): `card.pill` has one host PER CARD, so a
+  // contribution subscribing per mount would subscribe once per card on screen
+  // and hear every frame that many times. Subscribing from the module's
+  // register() (see forExtension) has no such hazard and is the normal place.
+  function subscribe(extId, fn) {
+    if (typeof fn !== 'function') {
+      onError(`[ext:${extId}] onMessage needs a function`);
+      return () => {};
+    }
+    if (!listeners.has(extId)) listeners.set(extId, new Set());
+    const set = listeners.get(extId);
+    set.add(fn);
+    return () => { set.delete(fn); };
+  }
 
   function slotList(slotName) {
     const list = bySlot.get(slotName);
@@ -83,6 +115,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             what the server-side façade stops it doing over MCP.
   //   version — the host API the server serves, so a client module can check what
   //             it is talking to the way its manifest's range does server-side.
+  //   onMessage — the INBOUND mirror of `send`, bound to this extension's OWN
+  //             `ext:<id>` frames. See subscribe() above and dispatchMessage()
+  //             below; the same function is on the registrar forExtension()
+  //             returns, which is where a module-level subscription belongs.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -108,6 +144,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           baseApi.send?.(frame);
         },
+        onMessage: (fn) => subscribe(extId, fn),
       });
     }
     return apis.get(extId);
@@ -185,8 +222,15 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 
     // A registrar bound to one extension id, which is what an extension module's
     // register() receives — so a module can only ever register under its own id.
+    // `onMessage` is here as well as on the api because a subscription needs no
+    // host: a module with no contribution at all (or one whose frames are not
+    // any single contribution's business) has nowhere else to ask for one, and a
+    // subscription taken here is taken exactly once per module load.
     forExtension(extId) {
-      return { register: (slotName, contribution) => this.register(slotName, extId, contribution) };
+      return {
+        register: (slotName, contribution) => this.register(slotName, extId, contribution),
+        onMessage: (fn) => subscribe(extId, fn),
+      };
     },
 
     removeExtension(extId) {
@@ -194,6 +238,50 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
       apis.delete(extId);
+      // A disabled, uninstalled or failed-to-load extension must stop HEARING
+      // too, not just stop drawing: extensions.js calls this on unload, so the
+      // subscription dies with the module that took it and a later re-enable
+      // re-imports and re-subscribes.
+      listeners.delete(extId);
+    },
+
+    // Route one server frame to the extension it names. `frame.type` is
+    // `ext:<extId>`, FORCED server-side from the closed-over extension id
+    // (host-api/v1.js `boardBroadcast`), so the id in the type is the only
+    // address there is and nothing in the payload can redirect it.
+    //
+    // FAILS CLOSED, the same way `send` does: the only route to a listener is a
+    // subscription this extension's own module took, so a board that has heard
+    // nothing about `<extId>` — never announced, not enabled, module never
+    // loaded, already unloaded — has no set to dispatch into and the frame goes
+    // nowhere. Unlike `send` that is NOT reported: an extension with no client
+    // half, or one that simply does not listen, is an ordinary state and a
+    // broadcast per tick would print a line per tick. A MALFORMED type is
+    // reported, because that one can only be a core bug.
+    //
+    // Each listener gets its own shallow COPY of the frame, `type` included, so
+    // one listener cannot reshape what the next one — or a later frame's — sees.
+    // A throwing listener is reported and KEPT, which is deliberately unlike a
+    // throwing contribution: mount/update run inside the board's own render and
+    // a throw there is what the removal rule protects the render from, while a
+    // listener runs in its own loop and can hurt nothing but itself. Deafening
+    // an extension for the life of the page over one bad frame is the worse
+    // failure. Returns how many listeners were called.
+    dispatchMessage(frame) {
+      const type = frame && typeof frame === 'object' ? frame.type : null;
+      const extId = typeof type === 'string' && type.startsWith('ext:') ? type.slice(4) : '';
+      if (!extId) {
+        onError(`[ext] dispatchMessage: "${type}" is not an ext:<id> frame`);
+        return 0;
+      }
+      const set = listeners.get(extId);
+      if (!set || set.size === 0) return 0;
+      let called = 0;
+      for (const fn of [...set]) {
+        called += 1;
+        try { fn({ ...frame }); } catch (err) { onError(`[ext:${extId}] onMessage listener failed`, err); }
+      }
+      return called;
     },
 
     // Mount every contribution to `slotName` into `hostEl`, which for a

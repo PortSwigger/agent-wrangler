@@ -6035,6 +6035,14 @@ function connect() {
     // problem. A render is asked for once something new registered, since the
     // first graph may already have been applied while the module was in flight.
     else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteHandlerTypes(extClientManifest); syncClientExtensions(); }
+    // An extension's server half talking to its own browser half: host.broadcast
+    // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
+    // prefix can never collide with a core type and the id in it is the whole
+    // address. slots.dispatchMessage fails closed — only listeners that
+    // extension's own module subscribed are called, and an unknown or unloaded
+    // id reaches nothing. This branch is the whole reason such a frame is no
+    // longer dropped off the end of this ladder.
+    else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.
