@@ -324,3 +324,97 @@ test('an extension with no known handler types fails CLOSED', () => {
 test('the api carries the host API version', () => {
   assert.equal(sendHarness(['fake-do']).api.version, '9.9.9');
 });
+
+// ── onMessage / dispatchMessage (the INBOUND half) ─────────────────────────────
+// A server-side host.broadcast forces its frame's type to `ext:<its own id>`, so
+// the id in the type is the whole address. These assert the two things that make
+// that safe: an extension hears only its OWN frames, and a board that has heard
+// nothing about an id dispatches nowhere.
+test('onMessage delivers a frame to the extension the type names, and to nobody else', () => {
+  const { slots } = harness();
+  const mine = [];
+  const theirs = [];
+  slots.forExtension('peer-messaging').onMessage((m) => mine.push(m));
+  slots.forExtension('checklist').onMessage((m) => theirs.push(m));
+  assert.equal(slots.dispatchMessage({ type: 'ext:peer-messaging', kind: 'delivered', mode: 'live' }), 1);
+  assert.deepEqual(mine, [{ type: 'ext:peer-messaging', kind: 'delivered', mode: 'live' }]);
+  assert.deepEqual(theirs, []);
+});
+
+test('every listener of one extension is called, and each gets its own copy of the frame', () => {
+  const { slots } = harness();
+  const seen = [];
+  const reg = slots.forExtension('x');
+  reg.onMessage((m) => { seen.push(m); m.mode = 'clobbered'; });
+  reg.onMessage((m) => seen.push(m));
+  assert.equal(slots.dispatchMessage({ type: 'ext:x', mode: 'live' }), 2);
+  assert.equal(seen[1].mode, 'live', 'the first listener could not reshape what the second one sees');
+});
+
+test('an extension the board has heard nothing about receives nothing, silently', () => {
+  const { slots, errors } = harness();
+  assert.equal(slots.dispatchMessage({ type: 'ext:never-installed', kind: 'x' }), 0);
+  // Deliberately NOT reported, unlike a refused send: an extension with no
+  // client half is an ordinary state and a broadcast per tick would print a
+  // line per tick.
+  assert.deepEqual(errors, []);
+});
+
+test('a malformed frame IS reported — only a core bug can produce one', () => {
+  const { slots, errors } = harness();
+  assert.equal(slots.dispatchMessage({ type: 'graph' }), 0);
+  assert.equal(slots.dispatchMessage({ type: 'ext:' }), 0);
+  assert.equal(slots.dispatchMessage('not a frame'), 0);
+  assert.equal(errors.length, 3);
+  assert.match(errors[0], /dispatchMessage: "graph" is not an ext:<id> frame/);
+});
+
+test('onMessage returns an unsubscribe, which is what a per-host mount must call', () => {
+  const { slots } = harness();
+  const seen = [];
+  const off = slots.forExtension('x').onMessage((m) => seen.push(m));
+  slots.dispatchMessage({ type: 'ext:x', n: 1 });
+  off();
+  slots.dispatchMessage({ type: 'ext:x', n: 2 });
+  assert.deepEqual(seen.map((m) => m.n), [1]);
+});
+
+test('onMessage refuses a non-function and still returns a callable unsubscribe', () => {
+  const { slots, errors } = harness();
+  const off = slots.forExtension('x').onMessage('nope');
+  assert.equal(typeof off, 'function');
+  off();
+  assert.equal(slots.dispatchMessage({ type: 'ext:x' }), 0);
+  assert.match(errors[0], /\[ext:x\] onMessage needs a function/);
+});
+
+test('a throwing listener is reported and KEPT — unlike a throwing contribution', () => {
+  const { slots, errors } = harness();
+  const seen = [];
+  const reg = slots.forExtension('x');
+  reg.onMessage(() => { throw new Error('boom'); });
+  reg.onMessage((m) => seen.push(m.n));
+  assert.equal(slots.dispatchMessage({ type: 'ext:x', n: 1 }), 2, 'the second listener still ran');
+  assert.equal(slots.dispatchMessage({ type: 'ext:x', n: 2 }), 2, 'the thrower was not deafened');
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /\[ext:x\] onMessage listener failed/);
+});
+
+test('removeExtension stops an extension HEARING as well as drawing', () => {
+  const { slots } = harness();
+  const seen = [];
+  slots.forExtension('x').onMessage((m) => seen.push(m));
+  slots.removeExtension('x');
+  assert.equal(slots.dispatchMessage({ type: 'ext:x' }), 0);
+  assert.deepEqual(seen, []);
+});
+
+test('the per-extension api carries the same onMessage, bound to its own id', () => {
+  const { api, slots } = sendHarness(['fake-do']);
+  const seen = [];
+  api.onMessage((m) => seen.push(m.n));
+  assert.equal(slots.dispatchMessage({ type: 'ext:fake', n: 7 }), 1);
+  assert.equal(slots.dispatchMessage({ type: 'ext:other', n: 8 }), 0);
+  assert.deepEqual(seen, [7]);
+});

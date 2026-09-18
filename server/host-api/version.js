@@ -13,7 +13,17 @@ import semver from 'semver';
 // An addition to `alwaysPresent` (host-api/index.js) is a MINOR too, even
 // though it is not a capability at all: 1.1.0 added `host.settings`, and a
 // manifest declaring `^1.1.0` is stating that it needs that key to exist.
-export const HOST_API_VERSION = '1.1.0';
+//
+// So is an addition to the CLIENT half, which is what 1.2.0 is: `api.onMessage`
+// / `forExtension().onMessage` (public/slots.js), the inbound seam that makes a
+// `board:broadcast` frame actually reach the same extension's browser half —
+// before it, app.js's ws ladder had no `ext:` branch and dropped it. There is no
+// new server-side key for it, but the number is the only thing a manifest can
+// declare a dependency on, and the server serves both halves: a manifest whose
+// client module calls onMessage declares `^1.2.0` and then refuses to boot
+// against a server whose app.js would drop its frames, which is the whole
+// purpose of carrying a version.
+export const HOST_API_VERSION = '1.2.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
