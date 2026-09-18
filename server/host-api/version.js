@@ -23,7 +23,15 @@ import semver from 'semver';
 // client module calls onMessage declares `^1.2.0` and then refuses to boot
 // against a server whose app.js would drop its frames, which is the whole
 // purpose of carrying a version.
-export const HOST_API_VERSION = '1.2.0';
+//
+// And so is an addition to the STORE FACTORY bag, which is what 1.3.0 is:
+// `extId` and a read-through `settings` beside the store name (server/index.js
+// activateExtension). It is not a façade key either — a factory never gets one
+// — but it is the same argument twice over: a manifest whose store factory
+// reads `settings` to decide its state-file path is broken, silently, against a
+// server that hands it `undefined`, and the declared range is the only thing
+// that can say so.
+export const HOST_API_VERSION = '1.3.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

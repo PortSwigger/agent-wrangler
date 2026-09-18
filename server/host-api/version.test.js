@@ -8,12 +8,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 });
 
 // Pinned, because the number is a promise to manifests: 1.1.0 added
-// host.settings to alwaysPresent and 1.2.0 added the client-side onMessage seam
-// (public/slots.js), and a manifest declaring either range is saying it needs
-// that surface to exist. An additive change bumps the minor and keeps every
-// ^1.0.0 manifest served by the same builders.
-test('the served version is 1.2.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.2.0');
+// host.settings to alwaysPresent, 1.2.0 added the client-side onMessage seam
+// (public/slots.js) and 1.3.0 added `extId`/`settings` to the store factory bag
+// (server/index.js), and a manifest declaring any of those ranges is saying it
+// needs that surface to exist. An additive change bumps the minor and keeps
+// every ^1.0.0 manifest served by the same builders.
+test('the served version is 1.3.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.3.0');
+  assert.equal(servesRange('^1.3.0'), true);
   assert.equal(servesRange('^1.2.0'), true);
   assert.equal(servesRange('^1.1.0'), true);
   assert.equal(servesRange('^1.0.0'), true);

@@ -67,6 +67,37 @@ test('a leaf-rule import violation quarantines, and the rule is shared with inde
   assert.equal(FORBIDDEN_IMPORTS.length, 3);
 });
 
+// The most obvious test an extension can ship — a manifest self-check — used to
+// quarantine it, with a reason about server core modules it never imported. Two
+// independent things had to be wrong for that, and both are asserted here: the
+// scan walked test files at all, and a SINGLE-level `../index.js` matched the
+// server-entry pattern even though no relative path from an installed
+// extension's directory reaches the repo.
+test("an extension's own tests are not scanned, and a self-import is not a server import", async () => {
+  const root = tempRoot();
+  const dir = writeExt(root, 'selfcheck');
+  fs.mkdirSync(path.join(dir, 'test'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'test', 'manifest.test.js'), "import ext from '../index.js';\nimport { SessionManager } from '../../session-manager.js';\n");
+  // A test file beside the manifest rather than in a test/ directory, skipped by
+  // name for the same reason.
+  fs.writeFileSync(path.join(dir, 'smoke.test.js'), "import x from '../../host-api/index.js';\n");
+  // And a REAL module of the extension's own, self-importing the way any
+  // multi-file extension does.
+  fs.writeFileSync(path.join(dir, 'tools.js'), "import manifest from '../index.js';\nexport default manifest;\n");
+  const found = await discoverExternal({ dir: root, provenance: {} });
+  assert.equal(found[0].quarantine, undefined);
+});
+
+test('the server entry is still caught from a builtin\'s depth, in a subdirectory too', async () => {
+  const root = tempRoot();
+  const dir = writeExt(root, 'deep');
+  fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'lib', 'reach.js'), "import x from '../../../index.js';\n");
+  const found = await discoverExternal({ dir: root, provenance: {} });
+  assert.match(found[0].quarantine, /statically imports a server core module/);
+  assert.match(found[0].quarantine, /lib\/reach\.js/);
+});
+
 test('node_modules is not scanned for the import rule', async () => {
   const root = tempRoot();
   const dir = writeExt(root, 'deps');
