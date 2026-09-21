@@ -47,7 +47,15 @@ import semver from 'semver';
 // third time — a manifest declaring `type: 'select'` or a `min` is QUARANTINED
 // by an older server that has never heard of either, so the declared range is
 // the only thing that can say which servers it will load on.
-export const HOST_API_VERSION = '1.5.0';
+//
+// 1.6.0 is the `dispatch.field` slot (public/slots.js) plus the
+// `hideDispatchField` manifest key — the first extension surface that shapes a
+// CORE form. No new façade key again, and the same argument a fourth time, from
+// both halves at once: an older `slots.js` THROWS on an unknown slot name, so
+// the whole client module fails to load, and an older SERVER quarantines a
+// manifest declaring `hideDispatchField` outright. The declared range is the
+// only thing that can say which servers such a manifest will load on.
+export const HOST_API_VERSION = '1.6.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
