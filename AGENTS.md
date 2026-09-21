@@ -585,3 +585,23 @@
   `graph.extensions`. A retired flag's stored value needs carrying over to
   `extensions.<id>` at that point; there is no migration table yet, because
   nothing has been retired.
+- **`host.sessions.spawn({ taskId })` binds task memory BEFORE the pane starts,
+  and `tasks.assign` after the spawn is NOT the same thing.** The option becomes
+  dispatch's `bindMemory`, which points the session's `by-session` symlink at
+  the task folder in the window before launch; assigning afterwards repoints the
+  same link, which a running **Claude** follows and a running **Codex** does
+  not — Codex resolves its writable roots once, at launch, so a late repoint
+  leaves it writing into the session's own scratch memory while the board says
+  it is on the task. The builder therefore does BOTH halves (bind pre-launch,
+  `taskStore.assign` after), exactly as the `spawn_*` tools and the board's own
+  dispatch handler do; that assign is not a `tasks:write` escalation, because
+  the only card it can name is the one the call just minted. The same "ask the
+  wrangler, don't reimplement it" rule is why `worktree: {branch, base, auto,
+  folderName}` exists: an extension that cuts its own worktree and launches into
+  it as a plain cwd gets no worktree record on the card, and the badge, the
+  archive-time cleanup offer and core's `name_branch` all key off that record.
+  Unlike the rest of v1 — thin binds that let the primitive validate — every
+  spawn option is type-checked in the builder and refused BY NAME, unknown keys
+  inside `worktree` included: dispatch is forgiving, so a mistyped option
+  silently launches something subtly different (no grants, no worktree, the
+  wrong base commit) and the extension author has no stack into core to read.

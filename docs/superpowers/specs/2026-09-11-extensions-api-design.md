@@ -269,7 +269,7 @@ The 17 v1 capabilities:
 | `sessions:read` | `host.sessions.list()` / `.get(id)` / `.forTask(taskId)` → **projections** |
 | `sessions:wake` | `host.sessions.wake(id)` → `resume` with `reason: 'ext:<id>'` (forced) |
 | `sessions:archive` | `host.sessions.archive(id, { cascade })` |
-| `sessions:spawn` | `host.sessions.spawn({cwd,intent,agent,model,effort,parentSession})` → `dispatch` |
+| `sessions:spawn` | `host.sessions.spawn({cwd,intent,agent,model,effort,autoCompactTokens,parentSession,worktree,addDirs,taskId,autoMergeOnPass,autoFixPrChecks})` → `dispatch`, returning `{sessionId,tmux,cwd,worktree}` |
 | `sessions:kill` | `host.sessions.kill(id)` — `reason` forced to `ext:<id>` |
 | `tasks:read` | `host.tasks.list()` / `.get(id)` / `.forSession(id)` → projections |
 | `tasks:write` | `host.tasks.create/rename/assign/unassign` |
@@ -304,7 +304,33 @@ because a runtime check a caller can pass a value through is not a control.
 
 `sessions:spawn` **may** set `parentSession` to a card the extension did not
 create — a resolved decision, not an oversight. Board nesting is not ownership,
-and `attach_session` already re-parents anything.
+and `attach_session` already re-parents anything. It may **not** set
+`spawnedBy`: that is core's lineage field, stamped by the `spawn_*` tools from
+the calling session's own id, and an extension has no id of its own to claim
+there — any it named would be another card's.
+
+Every spawn option is **type-checked in the builder and refused by name**, which
+is the exception to "a thin bind over a primitive the core already owns":
+dispatch is forgiving by design, so a mistyped `addDirs` launches with no
+grants and a non-object `worktree` launches in the plain cwd, and both read to
+the extension author as an option that did nothing. An unknown key inside
+`worktree` is refused for the same reason — `baseRef` ignored in place of
+`base` is a branch cut from the wrong commit, which nothing downstream can
+detect.
+
+Three of those options exist because an extension otherwise has to reimplement
+the launch rather than ask for it. `worktree: {branch, base, auto, folderName}`
+makes the WRANGLER cut it (`resolveWorktree` → `createWorktree({baseRef})`), so
+the card carries a real worktree record — the badge, the archive-time cleanup
+offer and core's `name_branch` all key off that, and an extension cutting its
+own and launching into it as a plain cwd gets none of them. `taskId` is the
+whole task binding, not a shorthand for `tasks.assign` afterwards: it binds the
+memory symlink BEFORE the pane starts, and only Claude follows a later repoint
+— Codex resolves its writable root once at launch, so an assign after the fact
+leaves it writing into scratch memory. `autoFixPrChecks` has no dispatch
+argument (it is a tri-state whose absent value means on) and so goes through
+`setAutoFixPrChecks` immediately after launch, which is what lets an extension
+driving its own PR automation switch core's off.
 
 **Projections** (`host-api/project.js`): `sessions:read` and `tasks:read` hand
 back explicit frozen allow-list COPIES, never the live mapping entry. They

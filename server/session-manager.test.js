@@ -1163,6 +1163,36 @@ test('resolveWorktree sanitizes a branch to [A-Za-z0-9-]', async () => {
   assert.match(res.branch, /^[A-Za-z0-9-]+$/);
 });
 
+test('resolveWorktree branches from an explicit base, and refuses one git would not take', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-base-'));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+  const base = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/main', base);
+  // Local main moves on; the base must win, or a job branches off whatever the
+  // human happened to leave in their checkout.
+  fs.writeFileSync(path.join(repo, 'local-only.txt'), 'local work');
+  git('add', 'local-only.txt');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'local only');
+
+  const res = await resolveWorktree({ cwd: repo, branch: 'from-base', auto: true, base: 'refs/remotes/origin/main' });
+  assert.equal(execFileSync('git', ['-C', res.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), base);
+  assert.equal(fs.existsSync(path.join(res.cwd, 'local-only.txt')), false);
+
+  // A revision EXPRESSION is not a ref: refused here rather than handed to
+  // `git worktree add`, where it would read as a commit-ish to be interpreted.
+  await assert.rejects(
+    () => resolveWorktree({ cwd: repo, branch: 'bad-base', auto: true, base: 'HEAD~1' }),
+    (e) => /not a valid base ref/.test(e.message),
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('resolveWorktree refuses a blank or scratch-dir cwd (no silent skip)', async () => {
   await assert.rejects(
     () => resolveWorktree({ cwd: '', intent: 'x', auto: true, short: 'ab' }),
