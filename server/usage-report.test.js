@@ -316,6 +316,23 @@ test('dedups a resumed conversation shared by two card ids', async () => {
   assert.equal(r.totals.tokens.input, 1000, 'shared transcript counted once, not doubled');
 });
 
+test('every scan row names the card it was resolved from, and dedup keeps the survivor\'s card', async () => {
+  const d = makeDirs();
+  const sid = '55555555-5555-5555-5555-555555555555';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [
+    turn('m1', 'claude-opus', { input_tokens: 1000, output_tokens: 1000 }, '2026-07-14T12:00:00.000Z'),
+  ] });
+  // Same two cards as the dedup case above: the owner wins the file, so the one
+  // surviving row must carry the owner's card id, never the loser's.
+  writeStores(d.dataDir, { entries: {
+    resume: { agent: 'claude', liveSessionId: 'unrelated-live-id', cwd: '/work/proj' },
+    owner: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj' },
+  } });
+
+  const scan = await scanAllDaily(d);
+  assert.deepEqual(scan.sessions.map((r) => r.cardId), ['owner']);
+});
+
 test('attributes Codex spend to its createdAt day and flags it estimated', async () => {
   const d = makeDirs();
   const uuid = '44444444-4444-4444-4444-444444444444';
