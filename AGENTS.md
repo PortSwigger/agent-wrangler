@@ -257,7 +257,27 @@
   two apart is what makes it impossible for a manifest declaring a setting called
   `enabled` — or for a hand-edit — to make the toggle and a value the same key;
   values are config, so they survive an uninstall/reinstall, which an extension's
-  own store does not. There is no `default` on a def (an unset setting reads
+  own store does not. A def may DECLARE CONSTRAINTS — `min`/`max`/`step` on a
+  number, `maxLength`/`pattern` on text, `options` on the `select` type — and
+  both halves of that live in `server/extensions/setting-constraints.js`
+  (`validateSettingDef` for a def, `checkSettingValue` for a value) so a
+  constraint nobody enforces cannot be declared and an enforced one cannot go
+  unvalidated. It is a LEAF, which is why `MAX_TEXT_LENGTH` moved there and
+  `ext-setting-set.js` RE-EXPORTS it rather than the other way round. A field on
+  the wrong type is a def error, never ignored; a `pattern` is anchored
+  `^(?:…)$` so it means what HTML's implicitly-anchored `pattern` means, and is
+  length-capped only to bound a careless regex — nothing here is a sandbox. The
+  write path REJECTS and never clamps (a clamp is the same lie as a coercion),
+  CLEARING (`null`, `''`) skips every constraint, and the READ path is
+  untouched, so an out-of-range value already in config.json still reaches the
+  extension and an extension keeps its own guard. The panel mirrors the fields
+  onto native inputs and gates `send()` on `checkValidity()` — an AFFORDANCE,
+  and deliberately not a second copy of the rule engine in the browser; a
+  rejection must not move `last`, or the corrected value looks unchanged and the
+  fix is swallowed. The vocabulary widening is what makes it a MINOR
+  (`HOST_API_VERSION` 1.5.0): an older server QUARANTINES a manifest declaring
+  `select` or a `min`, and the declared range is the only thing that can say so.
+  There is no `default` on a def (an unset setting reads
   `undefined` and the extension supplies its own fallback, which is also what lets
   one be deliberately inert until configured) and no `secret` type (a masked input
   round-tripping through config.json in plaintext would imply a protection that

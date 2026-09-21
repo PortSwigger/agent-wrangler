@@ -2,6 +2,7 @@ import path from 'node:path';
 import semver from 'semver';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
+import { validateSettingDef } from './setting-constraints.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -91,8 +92,16 @@ const ID_RE = /^[a-z][a-z0-9-]*$/;
 // config.json in plaintext would imply a protection that does not exist, and
 // nothing about an extension is protected from an extension anyway — the
 // capability list is disclosure, not a sandbox.
+//
+// Constraint fields (`min`/`max`/`step` on a number, `maxLength`/`pattern` on
+// text, `options` on a select) are DECLARATIVE: their legality is checked here
+// via validateSettingDef, and a value is measured against them on the write
+// path (ext-setting-set) by checkSettingValue — both from
+// setting-constraints.js, so the two cannot drift. The Extensions panel mirrors
+// them onto the native input as an AFFORDANCE; the server write path is the
+// enforcement, and it rejects rather than clamps.
 const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
-const SETTING_TYPES = ['text', 'number', 'toggle'];
+const SETTING_TYPES = ['text', 'number', 'toggle', 'select'];
 
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
@@ -176,6 +185,8 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       for (const k of ['help', 'placeholder']) {
         if (s[k] != null && typeof s[k] !== 'string') fail(ext, `settings.${s.key}.${k} must be a string`);
       }
+      const badConstraint = validateSettingDef(s);
+      if (badConstraint) fail(ext, `settings.${s.key}.${badConstraint}`);
     }
   }
   for (const [i, t] of (ext.tools || []).entries()) {

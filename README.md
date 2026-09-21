@@ -177,6 +177,16 @@ survive and each card just needs a manual Resume.
 - **Sessions not launched through the app** appear as read-only "external" entries — visible with
   status and cost, but without an attachable terminal until relaunched through the dashboard.
 
+## Extensions
+
+Optional features are packaged as extensions — one manifest each, switched on and off from
+**Settings → Extensions**, and installable from a git URL. An extension can add MCP tools,
+control handlers, board state, settings, session hooks and a browser-side half. See
+[docs/extensions.md](docs/extensions.md) for how to write one.
+
+An extension runs inside the wrangler with full access to the machine: its capability list is
+disclosure, not a sandbox. Install one only if you trust whoever wrote it.
+
 ## Workflows (issue → PR autopilot)
 
 Tick **Workflow (issue → PR autopilot)** in the dispatch dialog to launch a hands-off

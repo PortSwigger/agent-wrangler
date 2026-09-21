@@ -11,6 +11,7 @@ import {
   primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
+import { MAX_TEXT_LENGTH, MAX_PATTERN_LENGTH } from './setting-constraints.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
 
@@ -425,12 +426,55 @@ test('a settings array is validated per def, and every rejection quarantines nam
     rejects(manifest({ settings: [{ ...SETTING, key }] }), /Extension fake: settings\[0\].key must match/);
   }
   rejects(manifest({ settings: [SETTING, { ...SETTING }] }), /Extension fake: duplicate setting key "registryUrl"/);
-  rejects(manifest({ settings: [{ ...SETTING, type: 'secret' }] }), /Extension fake: settings.registryUrl.type must be one of text, number, toggle/);
+  rejects(manifest({ settings: [{ ...SETTING, type: 'secret' }] }), /Extension fake: settings.registryUrl.type must be one of text, number, toggle, select/);
   rejects(manifest({ settings: [{ ...SETTING, type: undefined }] }), /settings.registryUrl.type must be one of/);
   rejects(manifest({ settings: [{ ...SETTING, label: '' }] }), /Extension fake: settings.registryUrl.label must be a non-empty string/);
   rejects(manifest({ settings: [{ ...SETTING, label: 7 }] }), /settings.registryUrl.label must be a non-empty string/);
   rejects(manifest({ settings: [{ ...SETTING, help: 7 }] }), /Extension fake: settings.registryUrl.help must be a string/);
   rejects(manifest({ settings: [{ ...SETTING, placeholder: {} }] }), /Extension fake: settings.registryUrl.placeholder must be a string/);
+});
+
+// -- constraint fields -----------------------------------------------------
+// A def's legality and a value's legality come from the same module
+// (setting-constraints.js) so they cannot drift; this covers the def half. A
+// bad constraint QUARANTINES like every other manifest fault.
+const settings = (...defs) => manifest({ settings: defs });
+const NUM = { key: 'pollSeconds', type: 'number', label: 'Poll interval' };
+const SEL = { key: 'mode', type: 'select', label: 'Mode', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] };
+
+test('a fully constrained settings manifest is accepted', () => {
+  assert.ok(validateManifest(settings(
+    { ...NUM, min: 15, max: 600, step: 15 },
+    { ...SETTING, maxLength: 200, pattern: 'https://.*' },
+    SEL,
+  )));
+});
+
+test('an illegal constraint quarantines the extension, naming the setting', () => {
+  for (const field of ['min', 'max', 'step']) {
+    rejects(settings({ ...NUM, [field]: 'nope' }), new RegExp(`Extension fake: settings.pollSeconds.${field} must be a finite number`));
+    rejects(settings({ ...NUM, [field]: Infinity }), new RegExp(`settings.pollSeconds.${field} must be a finite number`));
+  }
+  rejects(settings({ ...NUM, step: 0 }), /Extension fake: settings.pollSeconds.step must be greater than zero/);
+  rejects(settings({ ...NUM, step: -1 }), /step must be greater than zero/);
+  rejects(settings({ ...NUM, min: 10, max: 5 }), /Extension fake: settings.pollSeconds.min must not be greater than max/);
+  rejects(settings({ ...SETTING, maxLength: 0 }), /Extension fake: settings.registryUrl.maxLength must be a positive integer/);
+  rejects(settings({ ...SETTING, maxLength: 1.5 }), /maxLength must be a positive integer/);
+  rejects(settings({ ...SETTING, maxLength: MAX_TEXT_LENGTH + 1 }), new RegExp(`maxLength must not exceed ${MAX_TEXT_LENGTH}`));
+  rejects(settings({ ...SETTING, pattern: 7 }), /Extension fake: settings.registryUrl.pattern must be a string/);
+  rejects(settings({ ...SETTING, pattern: '(' }), /settings.registryUrl.pattern must be a valid regular expression/);
+  rejects(settings({ ...SETTING, pattern: 'a'.repeat(MAX_PATTERN_LENGTH + 1) }), new RegExp(`pattern must be at most ${MAX_PATTERN_LENGTH} characters`));
+  rejects(settings({ ...SEL, options: undefined }), /Extension fake: settings.mode.options must be a non-empty array/);
+  rejects(settings({ ...SEL, options: [] }), /options must be a non-empty array/);
+  rejects(settings({ ...SEL, options: ['a'] }), /settings.mode.options\[0\] is not an object/);
+  rejects(settings({ ...SEL, options: [{ value: 1, label: 'A' }] }), /settings.mode.options\[0\].value must be a string/);
+  rejects(settings({ ...SEL, options: [{ value: 'a', label: '' }] }), /settings.mode.options\[0\].label must be a non-empty string/);
+  rejects(settings({ ...SEL, options: [{ value: 'a', label: 'A' }, { value: 'a', label: 'Again' }] }), /settings.mode.options has a duplicate value "a"/);
+  // Cross-type: a constraint on the wrong type is an error, never ignored.
+  rejects(settings({ ...SETTING, min: 1 }), /Extension fake: settings.registryUrl.min is only valid on a number setting/);
+  rejects(settings({ ...NUM, pattern: 'x' }), /settings.pollSeconds.pattern is only valid on a text setting/);
+  rejects(settings({ key: 'auto', type: 'toggle', label: 'Auto', step: 1 }), /settings.auto.step is only valid on a number setting/);
+  rejects(settings({ ...NUM, options: [{ value: 'a', label: 'A' }] }), /settings.pollSeconds.options is only valid on a select setting/);
 });
 
 test('the defs land on the list entry as a COPY of the manifest\'s own array', () => {

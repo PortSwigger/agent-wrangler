@@ -14,8 +14,9 @@ test('HOST_API_VERSION is a real semver version', () => {
 // options to `sessions:spawn` (host-api/v1.js), and a manifest declaring any of
 // those ranges is saying it needs that surface to exist. An additive change
 // bumps the minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.4.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.4.0');
+test('the served version is 1.5.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.5.0');
+  assert.equal(servesRange('^1.5.0'), true);
   assert.equal(servesRange('^1.4.0'), true);
   assert.equal(servesRange('^1.3.0'), true);
   assert.equal(servesRange('^1.2.0'), true);

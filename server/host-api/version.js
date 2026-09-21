@@ -40,7 +40,14 @@ import semver from 'semver';
 // existing method, so v1.js keeps its builders and no v2.js is needed — but an
 // extension that cuts its own worktree because spawn could not is broken in a
 // way only the declared range can express, which is what the number is for.
-export const HOST_API_VERSION = '1.4.0';
+//
+// 1.5.0 is the SETTING DEF vocabulary widening: a `select` type, and the
+// constraint fields (`min`/`max`/`step`, `maxLength`/`pattern`, `options`)
+// enforced on the write path. No façade key again, and the same argument a
+// third time — a manifest declaring `type: 'select'` or a `min` is QUARANTINED
+// by an older server that has never heard of either, so the declared range is
+// the only thing that can say which servers it will load on.
+export const HOST_API_VERSION = '1.5.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
