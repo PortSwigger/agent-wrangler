@@ -1,0 +1,204 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { externalDir, readProvenance, tmpDir } from './provenance.js';
+
+// Discovery of INSTALLED ("external") extensions: one immediate subdirectory of
+// <DATA_DIR>/extensions/ per extension, each with an index.js default-exporting
+// a manifest. DATA_DIR-relative on purpose — a run-dev isolated instance (fresh
+// AW_DATA_DIR) starts with no installed extensions the same way it starts with
+// no sessions, and server/test-setup.js redirects AW_DATA_DIR so the tests
+// inherit that isolation for free.
+//
+// NOTHING here throws. Every failure becomes a `quarantine` reason carried on
+// the returned entry, which loadExtensions turns into a settings row that
+// contributes nothing — see its failure-posture comment. A directory that can
+// only be half-understood must not take the board down with it.
+//
+// Stays a LEAF: node:fs / node:path / node:url and the provenance leaf only.
+
+// A static import of these breaks BOOT FOR THE WHOLE SERVER, not just one
+// extension: server/extensions/** is imported by mcp/client-config.js and
+// agent-skills.js, which the agent adapters import, so reaching back into
+// session-manager / state-reader / tmux-scraper / the server entry / host-api/
+// closes a real module cycle and nothing comes up at all. That is a far worse
+// failure than one broken extension, which is the entire reason this scan
+// exists.
+//
+// It is a CORRECTNESS rule, NOT a security one, and it is trivially bypassed by
+// `await import(...)` at run time. Nothing here is trying to stop hostile code:
+// an extension runs in-process with full access to the machine (see the trust
+// framing in the spec), so there is no boundary to enforce. It catches the
+// honest mistake.
+//
+// Shared with index.test.js, which asserts the same list over the in-repo
+// manifests — one array so the runtime scanner and the test cannot drift.
+//
+// The server-entry pattern requires TWO OR MORE levels for a reason: from a
+// builtin at server/extensions/<id>/index.js the entry is `../../index.js` (and
+// `../../../index.js` from a file in a subdirectory of one), while a SINGLE
+// level can only ever be an extension's own manifest — an installed extension
+// lives under <DATA_DIR>/extensions/<id>/, from which no relative path reaches
+// the repo at all, so `from '../index.js'` there is a self-reference. That is
+// exactly what a manifest self-check in test/ writes, and matching it quarantined
+// the extension with a reason about server core modules.
+export const FORBIDDEN_IMPORTS = [
+  /\/(session-manager|state-reader|tmux-scraper)\.js['"]/,
+  /from\s+['"](\.\.\/){2,}index\.js['"]/,
+  /\/host-api\//,
+];
+
+const MAX_SCAN_BYTES = 2 * 1024 * 1024;
+
+// An extension's own TESTS are not in the server's import graph, which is the
+// same reason node_modules is skipped below: only a module the MANIFEST can
+// reach closes the cycle this rule exists to prevent. Nothing imports a test
+// file but a test runner, so scanning one can only produce a false positive —
+// and it did, on the most obvious test an extension can ship (see
+// FORBIDDEN_IMPORTS). Matched by NAME, so it costs nothing and cannot be
+// mistaken for a security boundary: an extension wanting to hide a static
+// import in a file called `x.test.js` has `await import()` sitting right there.
+const TEST_DIRS = /^(test|tests|__tests__|spec|__mocks__)$/;
+const TEST_FILES = /\.(test|spec)\.js$/;
+
+// Every .js directly under `dir` or in its subdirectories, excluding
+// node_modules — an extension's dependencies are third-party packages that
+// legitimately contain anything, and they are not what this rule is about (they
+// cannot be static-imported by the server's own graph, only by the manifest) —
+// and excluding the extension's own tests, for the same reason.
+function ownJsFiles(dir, out = []) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!TEST_DIRS.test(e.name)) ownJsFiles(full, out);
+    } else if (e.isFile() && e.name.endsWith('.js') && !TEST_FILES.test(e.name)) out.push(full);
+  }
+  return out;
+}
+
+export function importViolation(dir) {
+  for (const file of ownJsFiles(dir)) {
+    let body;
+    try {
+      // Bounded: a generated or bundled file can be megabytes, and this runs at
+      // boot for every installed extension.
+      if (fs.statSync(file).size > MAX_SCAN_BYTES) continue;
+      body = fs.readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of body.split('\n')) {
+      if (/^\s*import\b/.test(line) && FORBIDDEN_IMPORTS.some((re) => re.test(line))) {
+        return `${path.relative(dir, file)} statically imports a server core module (${line.trim()})`;
+      }
+    }
+  }
+  return null;
+}
+
+// Capabilities the manifest now asks for that its recorded consent does not
+// cover. Checked HERE rather than at install time as well, because a manifest
+// can widen `requires` in place on disk after consent — editing the file is all
+// it takes — and an extension must never silently gain a capability a human
+// never approved. A narrowed or unchanged set proceeds on the recorded consent.
+//
+// An extension with NO provenance record (a hand-dropped directory, a legitimate
+// dev workflow) has nothing to compare against and is not gated: it was placed
+// there by hand, which is its own consent.
+export function unconsentedCapabilities(requires, record) {
+  if (!record || !Array.isArray(record.requires)) return [];
+  const consented = new Set(record.requires);
+  return [...new Set(requires.filter((c) => !consented.has(c)))];
+}
+
+// Everything that decides whether an IMPORTED manifest may be admitted, shared
+// by boot discovery and the install handler so the two cannot drift: an install
+// that skipped one of these checks would land an extension boot would then
+// quarantine, which reads as an install that silently did nothing.
+//
+// `base` is `{id, dir, external, provenance}` — the id being the DIRECTORY name,
+// which is the authority the manifest is held to. Returns the entry to stage, or
+// the quarantine reason discovery would have carried; the caller decides which
+// of those it can live with (discovery quarantines, an install refuses).
+//
+// `importViolation` is deliberately NOT part of this: it runs BEFORE the import,
+// and both callers have to run it there rather than after the fact.
+export function admitExternal(manifest, base) {
+  if (!manifest || typeof manifest !== 'object') return { ok: false, quarantine: 'index.js has no default-exported manifest object' };
+  // EXTERNAL ONLY: the id and the directory name must agree, or the on-disk
+  // layout lies about what is installed — the provenance record, the /ext/<id>/
+  // asset route and the uninstall path are all keyed on one of the two, and a
+  // mismatch makes them disagree silently.
+  if (manifest.id !== base.id) {
+    return { ok: false, quarantine: `manifest id "${String(manifest.id)}" does not match its directory name "${base.id}"` };
+  }
+  const widened = unconsentedCapabilities([...(manifest.requires || [])], base.provenance);
+  if (widened.length) {
+    return { ok: false, quarantine: `widened-and-unconsented requires (${widened.join(', ')}) — reinstall to re-consent` };
+  }
+  // `dir` is overwritten AFTER the manifest spread: a manifest exports its own
+  // `dir` from import.meta.url, and for an installed one the discovered path is
+  // the authority (validateManifest resolves `client`/`styles` under it).
+  return { ok: true, entry: { ...manifest, ...base } };
+}
+
+// An interrupted install leaves nothing but a staging directory, which is the
+// whole reason the install lock can be in-memory (a restart cancels nothing
+// meaningful). Swept at boot rather than on a timer: there is exactly one moment
+// at which no install can be in flight, and this is it.
+export function sweepStaging(dir = tmpDir()) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // A staging dir that cannot be removed is a disk problem, not a reason to
+    // refuse to boot — the next install fails loudly on its own.
+  }
+}
+
+export async function discoverExternal({ dir = externalDir(), provenance = readProvenance(), importer = (url) => import(url) } = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(dir, { withFileTypes: true })
+      // The dot-prefix skip is what excludes the install staging dir
+      // (<DATA_DIR>/extensions/.tmp/), so a half-finished clone is never
+      // discovered as an extension.
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return []; // no extensions dir yet — the ordinary state of a fresh install
+  }
+  const out = [];
+  for (const name of names) {
+    const extDir = path.join(dir, name);
+    // Keyed on the DIRECTORY name, not the manifest's id: a manifest that
+    // cannot be read still has to produce a row, and the directory is the only
+    // name available then. `provenance: null` is what marks an entry as
+    // not-updatable (there is no originUrl to re-clone).
+    const base = { id: name, dir: extDir, external: true, provenance: provenance?.[name] ?? null };
+    const violation = importViolation(extDir);
+    if (violation) { out.push({ ...base, quarantine: violation }); continue; }
+    let manifest;
+    try {
+      // Cache-busted by nothing: this runs once per boot, against modules this
+      // process has not seen. The INSTALL path does bust its import — a same-id
+      // reinstall in one process would otherwise get the old module back.
+      const mod = await importer(pathToFileURL(path.join(extDir, 'index.js')).href);
+      manifest = mod?.default;
+    } catch (err) {
+      out.push({ ...base, quarantine: `could not load index.js (${err?.message || err})` });
+      continue;
+    }
+    const admitted = admitExternal(manifest, base);
+    if (!admitted.ok) { out.push({ ...base, quarantine: admitted.quarantine }); continue; }
+    out.push(admitted.entry);
+  }
+  return out;
+}

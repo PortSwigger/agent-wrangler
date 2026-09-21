@@ -122,7 +122,7 @@ test('matchContainerized: a devcontainer/docker exec wrapping codex matches; a p
 
 test('codex exposes an efforts list with expected levels and no default', () => {
   const values = codex.efforts.map((e) => e.value);
-  assert.deepEqual(values, ['minimal', 'low', 'medium', 'high']);
+  assert.deepEqual(values, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
   assert.ok(!codex.efforts.some((e) => e.default));
 });
 
@@ -139,4 +139,19 @@ test('codex omits model_reasoning_effort when no effort is given', () => {
   assert.doesNotMatch(codex.buildLaunch({ ...base }), /model_reasoning_effort/);
   assert.doesNotMatch(codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL' }), /model_reasoning_effort/);
   assert.doesNotMatch(codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL' }), /model_reasoning_effort/);
+});
+
+test('codex maps an auto-compaction threshold on launch, resume, and fork', () => {
+  const launch = codex.buildLaunch({ ...base, autoCompactTokens: 200000 });
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL', autoCompactTokens: 300000, ...memory });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL', autoCompactTokens: 400000, ...memory });
+  assert.match(launch, /'model_auto_compact_token_limit=200000'/);
+  assert.match(resume, /'model_auto_compact_token_limit=300000'/);
+  assert.match(fork, /'model_auto_compact_token_limit=400000'/);
+});
+
+test('codex leaves auto-compaction unset when a session has no threshold', () => {
+  assert.doesNotMatch(codex.buildLaunch(base), /model_auto_compact_token_limit/);
+  assert.doesNotMatch(codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL', ...memory }), /model_auto_compact_token_limit/);
+  assert.doesNotMatch(codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL', ...memory }), /model_auto_compact_token_limit/);
 });

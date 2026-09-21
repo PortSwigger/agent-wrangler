@@ -120,6 +120,9 @@ export const SETTINGS = [
   },
 ];
 
+// The Extensions tab's rows are not hand-listed: setExtensionDefs builds one
+// toggle per server extension off graph.extensions, so a new extension needs
+// no settings.js edit at all.
 export const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
   {
@@ -135,8 +138,73 @@ export const SETTINGS_TABS = [
     label: 'Automation',
     settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
   },
+  { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
 ];
+
+// Every extension toggle is a scope:'server' def under this prefix, so app.js's
+// bridge handles them all with ONE `startsWith` rung instead of a branch per
+// feature flag — the ladder this replaces.
+export const EXT_SETTING_PREFIX = 'ext:';
+// What a human is told AFTER flipping an extension toggle. The flip is now ONE
+// moment in both directions — the server registers and activates on the way on,
+// deactivates and deregisters on the way off — so neither line names a restart.
+// The one thing still pending is an already-running agent session's MCP tools:
+// `--allowedTools` is baked into its launch argv, so it gains or loses the
+// extension's tools only at its next resume. Worth saying either way, because
+// "the panel went and my agent still has the tools" is otherwise indistinguishable
+// from a switch that did nothing. Deliberately a note on the row rather than a
+// toast: it belongs beside the control that caused it, and a toast is gone before
+// a reader looks down.
+export function extensionFlipNote({ enabled } = {}) {
+  if (enabled) return 'On. Running sessions get its tools at their next resume.';
+  return 'Off. Running sessions keep its tools until their next resume.';
+}
+
+// Synthesises the Extensions tab's toggle defs from the server's loaded
+// extension list [{id, label, help, defaultEnabled, enabled}] and
+// refreshes the id index. Called on every graph push; the modal renders on
+// open, so the rows are always current. Returns the defs for tests.
+//
+// `help` is passed through UNTOUCHED — an earlier version appended a blanket
+// "Takes effect after the wrangler restarts." to any help that did not mention
+// one, which is now simply false for the half of a flip that lands on the next
+// tick. Timing is the flip note's job, and it can be exact because it knows
+// which direction was taken; a static sentence cannot.
+export function setExtensionDefs(list) {
+  const defs = (Array.isArray(list) ? list : []).map((e) => ({
+    id: EXT_SETTING_PREFIX + e.id,
+    type: 'toggle',
+    scope: 'server',
+    label: String(e.label || e.id),
+    help: e.help || '',
+    default: e.defaultEnabled !== false,
+  }));
+  for (const id of [...byId.keys()]) if (id.startsWith(EXT_SETTING_PREFIX)) byId.delete(id);
+  for (const d of defs) byId.set(d.id, d);
+  // Registered in the id index but NOT in the tab's settingIds: the Extensions
+  // tab renders no rowHtml rows of its own any more. extensions-panel.js builds
+  // one row per extension — the toggle and the origin/Update/Uninstall half in
+  // the same row, rather than the same extension appearing in two lists — and
+  // those rows carry this def's id, so the delegated flip handler below still
+  // finds them here.
+  return defs;
+}
+
+// One note element per row, created on first flip and rewritten after. Never
+// innerHTML: the text is ours, but the row it lands in is built from a
+// server-supplied label and this module has no other escape hatch.
+function showFlipNote(row, text) {
+  if (!row) return;
+  let note = row.querySelector('.setting-flip-note');
+  if (!note) {
+    note = document.createElement('div');
+    note.className = 'setting-flip-note';
+    note.setAttribute('role', 'status');
+    row.querySelector('.setting-copy')?.appendChild(note);
+  }
+  note.textContent = text;
+}
 
 export function tabIndexAfterKey(index, key, count) {
   if (key === 'ArrowRight') return (index + 1) % count;
@@ -159,6 +227,11 @@ let appearanceBridge = {
 };
 // (id, value) after every write, either scope — see initSettings' `onChange`.
 let changeBridge = () => {};
+// Fills the Extensions tab's installed-extension mount point. Supplied by
+// app.js, which owns the live graph and the control socket; called on every
+// modal open so a row's quarantine reason and SHA are current. A no-op default
+// keeps every settings test free of the extensions panel.
+let extensionsBridge = { mount: () => {} };
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -253,6 +326,14 @@ function tabPanelHtml(tab, selected) {
     ].join('');
   } else if (tab.id === 'shortcuts') {
     inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
+  } else if (tab.id === 'extensions') {
+    // The WHOLE tab is a mount point: extension content is third-party (label,
+    // description, origin, quarantine reason) and this function is
+    // innerHTML+esc(), so extensions-panel.js builds every one of those rows
+    // with textContent instead — including the toggle, which keeps builtin and
+    // installed extensions in one list instead of the two that repeated each
+    // other's name and description.
+    inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
       role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
@@ -288,10 +369,11 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange } = {}) {
+export function initSettings({ server, appearance, onChange, extensions } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
+  if (extensions) extensionsBridge = extensions;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -301,7 +383,15 @@ export function initSettings({ server, appearance, onChange } = {}) {
   // Land focus on Done so the modal-scoped Escape handler below fires on a fresh
   // open (a click-opened modal otherwise leaves focus on <body>) — same trick the
   // file-preview / schedule modals use.
-  const open = () => { render(body); modal.classList.remove('hidden'); closeBtn?.focus(); };
+  const open = () => {
+    render(body);
+    // After render, because the mount point only exists once the panels are in
+    // the DOM. Every open rebuilds it, so a quarantine reason or a SHA that
+    // changed since the last open is current without any subscription here.
+    extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
+    modal.classList.remove('hidden');
+    closeBtn?.focus();
+  };
   const close = () => modal.classList.add('hidden');
 
   if (btn) btn.addEventListener('click', open);
@@ -367,6 +457,12 @@ export function initSettings({ server, appearance, onChange } = {}) {
     setSetting(def.id, next);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
+    // Extension rows only: what just happened and what is still pending. Shown
+    // on the row rather than as a toast, and only after a real flip, so an
+    // unread row carries no standing warning about a state nobody chose.
+    if (def.id.startsWith(EXT_SETTING_PREFIX)) {
+      showFlipNote(row, extensionFlipNote({ enabled: next }));
+    }
   });
 
   body.addEventListener('keydown', (e) => {

@@ -50,7 +50,7 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, disabledSkills }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
@@ -58,7 +58,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
   // session start. The worktree guardrail still appends when present. `taskMemory`
   // is only threaded so tests can pin it; undefined (the production path) falls
   // through to the live-config default inside both skill helpers.
-  const base = [mandatorySkillPrompt(undefined, { taskMemory }), codexSkillCatalog(undefined, { taskMemory })].filter(Boolean).join('\n\n');
+  const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = [
     '--sandbox', 'workspace-write',
@@ -89,11 +89,19 @@ export const codex = {
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
   ],
+  // Codex's own supported_reasoning_levels, per its model catalog: `minimal` is
+  // gone and xhigh/max/ultra arrived with the 5.6 family. The list is per-AGENT
+  // where the catalog is per-MODEL (gpt-5.6-luna has no `ultra`, gpt-5.5 stops
+  // at `xhigh`), so this is the union — the CLI takes the value as a plain
+  // config override and the service decides, and refusing a level a model does
+  // offer is the worse failure of the two.
   efforts: [
-    { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'Extra high' },
+    { value: 'max', label: 'Max' },
+    { value: 'ultra', label: 'Ultra' },
   ],
 
   async isAvailable() {
@@ -118,31 +126,34 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir }));
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
+    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath }) {
+  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir }));
+    if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
     let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;

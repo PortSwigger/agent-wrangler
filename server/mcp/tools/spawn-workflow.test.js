@@ -47,6 +47,12 @@ test('spawn_workflow wraps the raw issue into the issue-to-pr launch prompt', as
   assert.match(opts.intent, /ENT-42/);
 });
 
+test('spawn_workflow passes auto_compact_tokens through to dispatch', async () => {
+  const d = deps();
+  await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'ENT-42', auto_compact_tokens: 200000 });
+  assert.equal(d.calls.dispatch[0].autoCompactTokens, 200000);
+});
+
 // Same gap as spawn_session: without this, the caller has no name to refer to
 // the new run by, only its raw card id.
 test('spawn_workflow returns the new run’s label so the caller can refer to it by name', async () => {

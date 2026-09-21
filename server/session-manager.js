@@ -20,7 +20,7 @@ import { ensureCodexTrust } from './codex-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
-import { log, logWarn, humanDuration } from './log.js';
+import { log, logWarn, logError, humanDuration } from './log.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -31,6 +31,14 @@ const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
 // the source tree made every blank-cwd session report the wrangler's own branch
 // (the "branch bleeding between sessions" bug). DATA_DIR isn't a git repo.
 export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
+
+export function autoCompactTokensError(value, agent = 'claude') {
+  if (value == null || value === '') return null;
+  if (!Number.isInteger(value)) return 'Auto-compaction threshold must be a whole number of tokens.';
+  const min = agent === 'codex' ? 50000 : 100000;
+  if (value < min || value > 1000000) return `Auto-compaction threshold must be between ${min} and 1000000 tokens.`;
+  return null;
+}
 
 // Env for a `tmux attach` child. Strips TMUX/TMUX_PANE so the client is never
 // seen as nested — if the server itself was launched from inside a tmux those
@@ -188,6 +196,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     intent: parentEntry?.intent || '(forked)',
     name: explicit ? name.trim() : (parentEntry?.name || undefined),
     model: parentEntry?.model ?? null,
+    ...(parentEntry?.autoCompactTokens === undefined ? {} : { autoCompactTokens: parentEntry.autoCompactTokens }),
     createdAt,
     forkedFrom: parentId,
     liveSessionId: undefined,
@@ -278,6 +287,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     nameInherited: prev?.nameInherited,
     model: prev?.model ?? null,
     effort: prev?.effort ?? null,
+    ...(prev?.autoCompactTokens === undefined ? {} : { autoCompactTokens: prev.autoCompactTokens }),
     createdAt: prev?.createdAt ?? now,
     // When THIS relaunch happened, as distinct from createdAt (the card's birth,
     // preserved across every resume). Read only by the suspend timer — see
@@ -372,7 +382,25 @@ export class SessionManager {
     // a no-op by default so this class never learns about the mailbox store;
     // server/index.js binds mailStore.pruneOnArchive.
     this._pruneMailOnArchive = () => {};
+    // Extension session hooks (server/extensions/index.js `sessionHooks`), bound
+    // by server/index.js. Empty by default — same property as the seams above:
+    // every existing test stays inert. Fired sequentially and never abort the
+    // core operation: a hook throw is logged (event-only — these run on
+    // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
+    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    // Seam (same mould) for per-launch skill gating: server/index.js binds
+    // createSkillGate (server/extensions/index.js) with the extension stores
+    // closed over, and dispatch/resume/fork consult it BEFORE building the
+    // launch command. Returns the skill names to suppress for that one launch;
+    // the default answers none, so every existing launch is byte-identical.
+    this._extLaunchSkills = () => [];
     this._load();
+  }
+
+  async _fireExtHooks(name, payload) {
+    for (const fn of this._extHooks[name] || []) {
+      try { await fn(payload); } catch (err) { logError(`[ext-hook:${name}]`, err); }
+    }
   }
 
   entryFor(sessionId) {
@@ -401,7 +429,12 @@ export class SessionManager {
   }
 
   forget(sessionId) {
-    if (this.map.delete(sessionId)) this._save();
+    if (!this.map.delete(sessionId)) return;
+    this._save();
+    // Fire-and-forget after the delete; forget() stays synchronous for its
+    // callers. This is the ONE "card purged from mappings.json" moment an
+    // extension's per-session state (the checklist) is tied to.
+    this._fireExtHooks('onPurge', { sessionId }).catch(() => {});
   }
 
   // Tear down every owned tmux currently hosting this session: the recorded
@@ -502,6 +535,9 @@ export class SessionManager {
     // it runs twice, while the prune is idempotent and must run on every archive
     // of an archive→resume→archive cycle so each live span's read mail goes too.
     this._pruneMailOnArchive(sessionId);
+    // Unawaited like _archiveReview below (archive() is sync); `wasArchived` lets
+    // a hook skip a re-archive of an archive→resume→archive cycle if it needs to.
+    this._fireExtHooks('onArchive', { sessionId, entry, wasArchived }).catch(() => {});
     // Fire-and-forget: archive never waits on this. Skipped for a re-archive of
     // an already-archived session (see wasArchived above) — otherwise archive→
     // resume→archive would review the same growing transcript every time.
@@ -976,8 +1012,9 @@ export class SessionManager {
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
     const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const inner = adapter.buildResume({
-      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined,
+      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
       addDirs,
       ...memory,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
@@ -990,6 +1027,7 @@ export class SessionManager {
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
       intent,
       spawnedBy: prev?.spawnedBy,
+      disabledSkills,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
     await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -1001,6 +1039,10 @@ export class SessionManager {
       short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now(),
     }));
     this._save();
+    // Here, not in resume(): that wrapper coalesces concurrent callers onto one
+    // in-flight promise, so a hook there would fire twice for one relaunch (the
+    // same reason the log line below lives here).
+    await this._fireExtHooks('onResume', { sessionId, entry: this.map.get(sessionId), reason });
     await this.refreshAlive();
     // Logged here rather than in resume(): that wrapper hands a second concurrent
     // caller the in-flight promise, so a line there would report one relaunch twice
@@ -1033,10 +1075,15 @@ export class SessionManager {
     // while Claude continues to derive and use the stable per-session symlink.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
     const addDirs = await withCodexWorktreeAddDir(agent, parentEntry?.worktree, []);
+    // A fork has no entry of its own yet (forkEntry runs after launch), so the
+    // gate is shown the PARENT's — which is what it would inherit anyway, and
+    // the only thing that exists to gate on at this point.
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
       ...memory,
+      disabledSkills,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
@@ -1050,6 +1097,7 @@ export class SessionManager {
     entry.socket = this.socket;
     this.map.set(sessionId, entry);
     this._save();
+    await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     await this.refreshAlive();
     return { sessionId, tmux };
   }
@@ -1450,9 +1498,12 @@ export class SessionManager {
     return dir;
   }
 
-  async dispatch({ cwd, intent = '', model, effort, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
+  async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
+    const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
+    if (autoCompactError) throw new Error(autoCompactError);
+    const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
@@ -1513,7 +1564,19 @@ export class SessionManager {
     // it would only let resume grant the same path twice.
     const grantedDirs = addDirs;
     addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory });
+    // Awaited, and deliberately ahead of both the skill gate and the launch: the
+    // card id, cwd and worktree are settled but nothing has started, so this is
+    // the only window in which an extension can persist state the agent's very
+    // first tool call may already depend on (a receipt needing an owner). There
+    // is no entry to hand it — this is what "before the entry exists" means — so
+    // it gets the dispatch's own shape, and the gate below can then read back
+    // whatever it just wrote. A throwing hook never aborts the dispatch.
+    await this._fireExtHooks('onBeforeDispatch', {
+      sessionId, cwd, agent, intent, model: model || null, effort: effort || null, autoCompactTokens: normalizedAutoCompactTokens || null,
+      worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
+    });
+    const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
@@ -1533,9 +1596,10 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
+    await this._fireExtHooks('onDispatch', { sessionId, entry });
     await this.refreshAlive();
     return { sessionId, tmux, cwd };
   }

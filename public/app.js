@@ -34,6 +34,9 @@ import {
   parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
   checklistHiddenDoneLabel,
 } from './checklist-dom.js';
+import { createSlots } from './slots.js';
+import { createClientExtensionLoader } from './extensions.js';
+import { extensionsPanelEl, extensionSettingRowsEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -52,12 +55,13 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, getSetting } from './settings.js';
+import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
+import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 
 let currentView = 'grid';
 
@@ -138,17 +142,94 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
+// The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
+// carried on every graph push — what the generic `ext:<id>` settings toggles
+// read back, and what mounts/unmounts each one's slot contributions. The
+// identity fields are fixed at server boot; `enabled` is live.
 let checklistEnabled = true; // server config flag, carried on every graph push
-// Whole-store snapshot { cardId: [{id,text,done,createdAt}] } off the graph —
-// session-scoped, but the only consumer is the ONE selected session's panel, so
-// it rides the graph as a snapshot rather than being enriched onto every card.
+let latestExtensions = [];
 let latestChecklists = {};
+// The latest graph as received, handed whole to extension slot updates
+// (slots.update) so an extension reads its own contribution off it — the core
+// never learns those keys.
+let latestGraph = null;
+// The extension slots (slots.js) and the loader that fills them from the
+// server's `extensions` connect message. `extApi` is what every extension's
+// mount() receives (plus a per-extension namespaced storage slots adds):
+// `send` for control messages, the current selection, and a way to ask for a
+// panel re-render — deliberately NOT the board's internals. Declared up here,
+// before any render can run, because renderPanel reads `slots` directly.
+//
+// `extHandlerTypes` is which control types each extension registered server-side,
+// and it is what slots.js binds each extension's `send` to — a frame aimed at
+// anything else is refused in the browser. Filled from BOTH server inputs for the
+// same reason syncClientExtensions listens to both: the `extensions` connect
+// message lands before the first graph, and the graph re-reports it every tick.
+// A missing entry means "allow nothing", so a board that has heard neither fails
+// closed and reports rather than forwarding blind.
+const extHandlerTypes = new Map();
+// The host API version the server serves, announced alongside the manifest.
+// Handed to each extension's client api as `version` — the browser counterpart
+// of the `engines.wranglerApi` range its manifest declares server-side.
+let hostApiVersion = null;
+function noteHandlerTypes(list) {
+  for (const e of Array.isArray(list) ? list : []) {
+    if (e && typeof e.id === 'string' && Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
+  }
+}
+// `extApi.send` stays the RAW send: the per-extension binding happens inside
+// slots.apiFor, which is the only place the extension id is known.
+const slots = createSlots({
+  document,
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
+  handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
+  version: () => hostApiVersion,
+});
+const extApi = {
+  send,
+  selectedSessionId: () => selectedSessionId,
+  requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
+};
+const clientExtensions = createClientExtensionLoader(slots);
+// The `extensions` connect message announces which extensions ship a client
+// module and where it lives; `graph.extensions[].enabled` (re-read from config
+// server-side every rebuild) is what decides whether each one is actually
+// mounted right now. Keeping the announcement here is what lets a settings flip
+// mount or unmount without a reload — see syncClientExtensions.
+let extClientManifest = [];
+
+// Bring the mounted client extensions in line with what the server says is on.
+// Called from both inputs — the connect announcement and every graph — because
+// either can move first: a reconnect re-announces before any graph arrives, and
+// a settings flip changes only `enabled` on a graph the manifest already covers.
+// Nothing is awaited by the caller: one extension failing to import must never
+// hold up a render, and the loader already reports and drops it.
+function syncClientExtensions() {
+  const enabled = new Set(latestExtensions.filter((e) => e.enabled).map((e) => e.id));
+  let unmounted = false;
+  for (const { id } of extClientManifest) {
+    if (!enabled.has(id) && clientExtensions.unload(id)) unmounted = true;
+  }
+  // And anything still mounted that the manifest no longer lists at all — an
+  // uninstall drops the id from BOTH the announcement and the graph, so the
+  // loop above never sees it and its DOM would sit there until a reload.
+  for (const id of clientExtensions.loadedIds()) {
+    if (!extClientManifest.some((e) => e.id === id) && clientExtensions.unload(id)) unmounted = true;
+  }
+  // A panel re-render is what draws the gap the unmount left, and what gives a
+  // freshly-loaded contribution its host to mount into.
+  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); }
+  clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); } });
+}
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
 let proposedCwd = ''; // absolute scratch path shown (~-collapsed) for the open dialog
 
 let dispatchMode = 'standard'; // 'standard' | 'workflow' — the dispatch modal's selected mode card
 let modalMode = 'launch';  // 'launch' | 'schedule-create' | 'schedule-edit' | 'subagent' — #modal is reused for all
+let autoCompactTokens;
+let autoCompactAgent = 'claude';
 let editingScheduleId = null; // the schedule being edited in 'schedule-edit' mode
 let subagentModalReq = null; // { sessionId, subagentId } — the in-flight fetch, to correlate its async reply
 let scheduleAction = 'dispatch'; // 'dispatch' | 'session' — a schedule's action kind
@@ -207,6 +288,21 @@ function populateModelSelect() {
   if (modelEdited && prev) sel.value = prev;
   syncQuickLaunch();
   populateEffortSelect();
+  syncAutoCompactPresets();
+}
+
+function syncAutoCompactPresets() {
+  const modelSel = document.getElementById('m-model');
+  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
+  const available = new Set(autoCompactPresetTokens(agent));
+  document.querySelectorAll('.auto-compact-preset').forEach((button) => {
+    const tokens = button.dataset.autoCompactTokens;
+    const visible = tokens === '' || available.has(Number(tokens));
+    button.classList.toggle('hidden', !visible);
+    const selected = tokens === '' ? autoCompactTokens == null : Number(tokens) === autoCompactTokens;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
 }
 
 // The effort levels depend on the agent that owns the selected model (agent is
@@ -339,6 +435,51 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   checklistEnabled = graph.checklistEnabled !== false;
   latestChecklists = graph.checklists || {};
+  latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
+  noteHandlerTypes(latestExtensions);
+  setExtensionDefs(latestExtensions);
+  // An open panel follows the list, but ONLY when the list itself changed: this
+  // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
+  // git URL out of the install field. The signature is the serialised list for
+  // the same reason history-gate.js compares serialised history — anything
+  // narrower has to be kept in step with the server's record by hand.
+  //
+  // Load-bearing after a RESTART: `config` (which clears the pending-removal
+  // note) is the first frame of a reconnect and the fresh graph arrives after
+  // it, so without this the panel re-drew the just-uninstalled extension as an
+  // ordinary installed row and kept it there until a manual page refresh.
+  //
+  // The signature deliberately EXCLUDES settingValues. The tab does not draw a
+  // single value any more — they live in the dialog behind each row's cog — so
+  // a value landing is not news the list has to redraw for, and a remount would
+  // cost the install field's half-typed URL for nothing. The dialog reads
+  // latestExtensions fresh on every open, which is where a value changed in
+  // ANOTHER tab catches up.
+  const extSignature = JSON.stringify(latestExtensions.map(({ settingValues, ...rest }) => rest));
+  if (extSignature !== lastExtSignature) {
+    lastExtSignature = extSignature;
+    remountExtensions();
+  }
+  // A quarantined BUILTIN is a repo bug, and without this it reads as a feature
+  // that quietly vanished — the settings row carries the reason, but nobody
+  // opens Settings to find out why something they never turned off is gone.
+  // Deliberately NO "dismiss for today": an installed extension's quarantine
+  // stays on its own row (and raises nothing here), so anything that reaches
+  // this banner is the wrangler's own fault and must stay visible until fixed.
+  // Boot-fixed, so re-asserting it on every graph is idempotent.
+  quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  syncQuarantineBanner();
+  latestGraph = graph;
+  // `enabled` is live server-side, so this is where a settings flip becomes a
+  // mount or an unmount. After `latestGraph` is assigned, because the render it
+  // can ask for reads that — and before the renderPanel further down, so the
+  // panel is drawn against the contributions that survive this tick.
+  syncClientExtensions();
+  // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
+  // view that has only just registered is updated in the same tick it appears
+  // rather than staying blank until the next one — and unconditionally, because
+  // a view is a whole pane with no other render path of its own.
+  updateExtViews();
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -409,6 +550,10 @@ function setView(view) {
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
+  // Every extension view host, shown only when it is the current one. Done for
+  // ALL of them on every setView rather than just the pair being swapped, so a
+  // host created while another view was current starts hidden.
+  for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
   const mid = document.querySelector('.rail-mid');
   if (mid) mid.classList.toggle('hidden', view !== 'grid');
   if (view === 'grid') renderGrid();
@@ -417,6 +562,11 @@ function setView(view) {
     // behind the results.
     if (selectedSessionId) deselectSession();
     onEnterSearchView();
+  } else if (isExtView(view) && selectedSessionId) {
+    // Same rule as Search, for the same reason: an extension view owns the
+    // whole board area, so a terminal left attached behind it is invisible and
+    // still 80 columns wide when you come back.
+    deselectSession();
   }
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
@@ -425,6 +575,90 @@ function setView(view) {
 document.querySelectorAll('.layouts button').forEach((btn) => {
   btn.addEventListener('click', () => setView(btn.dataset.view));
 });
+
+// ── Extension views (slots.js `view`) ──────────────────────────────────────
+// A view contribution gets a whole top-level pane of its own beside the board
+// and Search, reached by its own rail button and its own #view= hash. All three
+// — the button, the host, the route — are DERIVED from what is registered right
+// now, so an extension toggled off takes its chrome with it and one toggled on
+// gets it without a reload. Keyed `ext:<extId>:<id>`: a compound key is what
+// keeps two extensions (or one extension's two views) from colliding in
+// `currentView` and in the hash, and the `ext:` prefix is what tells every
+// view-shaped check below that this is not one of the board's own.
+const EXT_VIEW_PREFIX = 'ext:';
+const extViewHosts = new Map(); // view key -> its host element in #ext-views
+function isExtView(view) {
+  return typeof view === 'string' && view.startsWith(EXT_VIEW_PREFIX) && extViewHosts.has(view);
+}
+function extViewKey(c) {
+  return `${EXT_VIEW_PREFIX}${c.extId}:${c.id}`;
+}
+
+// Bring the rail buttons and the view hosts in line with the registered `view`
+// contributions, then mount each one into its OWN host (`only`, see slots.js).
+// Called from syncClientExtensions — the one place that learns an extension has
+// loaded or been switched off — and deliberately not from a render path: this
+// chrome changes on a toggle, not on a graph tick.
+function renderExtViews() {
+  const views = slots.contributions('view');
+  const wanted = new Map(views.map((c) => [extViewKey(c), c]));
+  const layouts = document.querySelector('.layouts');
+  const container = document.getElementById('ext-views');
+  if (!layouts || !container) return;
+  for (const [key, host] of [...extViewHosts]) {
+    if (wanted.has(key)) continue;
+    extViewHosts.delete(key);
+    host.remove();
+    layouts.querySelector(`button[data-view="${CSS.escape(key)}"]`)?.remove();
+    // The view we were looking at has just gone (its extension was switched
+    // off): fall back to the board rather than leaving an empty <main>.
+    if (currentView === key) setView('grid');
+  }
+  for (const [key, c] of wanted) {
+    if (extViewHosts.has(key)) continue;
+    const host = document.createElement('div');
+    host.className = 'ext-view hidden';
+    host.dataset.view = key;
+    container.appendChild(host);
+    extViewHosts.set(key, host);
+    const btn = document.createElement('button');
+    btn.dataset.view = key;
+    btn.title = c.label;
+    btn.setAttribute('aria-label', c.label);
+    // The icon is markup from the extension's own client module — the same
+    // trust level as the module itself, which already owns a whole pane — so
+    // it goes in as HTML. A view with none gets its label's initial rather than
+    // an invisible button.
+    if (c.icon) btn.innerHTML = c.icon;
+    else btn.textContent = c.label.slice(0, 1).toUpperCase();
+    btn.addEventListener('click', () => setView(key));
+    layouts.appendChild(btn);
+  }
+  updateExtViews();
+  // A deep link can land before the extension's module has loaded, so the hash
+  // is re-read once its view finally exists (hashView refuses an unknown one).
+  const deep = hashView();
+  if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+}
+
+// Hand every mounted view contribution the CURRENT graph. Split out of
+// renderExtViews and called from applyGraph as well, because a view is the one
+// slot with no render path of its own: the panel slots are updated from
+// renderPanel and the card pills from wireGridEvents, but a view's host is
+// created once and then nothing came back to it. Its `update(el, session,
+// graph)` was effectively dead — syncHosts was already being handed
+// latestGraph, which is what makes it clear that was an oversight and not a
+// design — so a contribution could only ever render what the graph happened to
+// say at mount, and went stale until a reload. A view is a whole pane; the one
+// thing it must do is track the board.
+//
+// Only the syncHosts call, never renderExtViews' chrome reconciliation: that
+// creates and destroys rail buttons and re-reads the hash for a deep link, none
+// of which may happen on a ~4s tick.
+function updateExtViews() {
+  const wanted = new Map(slots.contributions('view').map((c) => [extViewKey(c), c]));
+  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
+}
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
 // Grid geometry (constants + packing math) lives in ./layout.js; MAX_ONSCREEN_ROWS
@@ -601,8 +835,11 @@ function gridEditing() {
     || a.classList.contains('todo-text-input')
     // The checklist's inline input lives in the sidebar, not #grid — but the
     // grid re-render is what steals focus from whatever is focused anywhere, so
-    // it has to be listed here like the todo inputs.
-    || a.classList.contains('ck-input');
+    // it has to be listed here like the todo inputs. Same for anything focused
+    // inside the extension panel host, generically: the core doesn't know an
+    // extension's classes.
+    || a.classList.contains('ck-input')
+    || Boolean(a.closest?.('#panel-sections'));
 }
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
@@ -1187,7 +1424,32 @@ function focusSession(sid) {
   else selectSession(sid);
 }
 
+// The `card.pill` slot's hosts: one `.card-meta-ext` per rendered card
+// (cards.js cardPillHostHtml), reconciled as a SET because the board rebuilds
+// its whole grid via innerHTML — every host is a fresh element each render, and
+// a card that has gone is a host that simply isn't in this list, which is how
+// its element gets torn down (slots.js syncHosts). Each host is updated with
+// ITS OWN card's session, never the selected one, which is the difference from
+// the panel slots' mountInto/update pair.
+//
+// A host whose data-sid is no longer in the graph is skipped rather than mounted
+// with a null session: a contribution reads the session it is handed, and the
+// card is about to disappear on the next render anyway.
+function mountCardPills(el) {
+  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const entries = [];
+  for (const host of el.querySelectorAll('.card-meta-ext')) {
+    const s = byId.get(host.closest('.session-card')?.dataset.sid);
+    if (s) entries.push({ host, session: s });
+  }
+  slots.syncHosts('card.pill', entries, extApi, latestGraph);
+}
+
 function wireGridEvents(el) {
+  // Both render paths (renderGrid and renderFocusedTile) end here, so this is
+  // the one place the freshly-built cards' extension pill hosts can be filled
+  // without the two sites drifting apart.
+  mountCardPills(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open
@@ -3178,10 +3440,18 @@ function hashSessionId() {
 // bookmarks resolve to Search (the view that replaced History); new hashes only
 // ever write search (syncHash writes from HASH_VIEWS).
 const HASH_VIEWS = ['search'];
+// A view is deep-linkable if it is one of the board's own or an extension view
+// that is registered RIGHT NOW — an unknown `ext:` key is refused rather than
+// selected, so a stale bookmark (or one for an extension that is off) lands on
+// the board instead of a blank pane. renderExtViews re-reads the hash once a
+// view registers, which is what makes a deep link survive the load race.
+function isHashView(view) {
+  return HASH_VIEWS.includes(view) || isExtView(view);
+}
 function hashView() {
   const m = (location.hash || '').match(/^#view=(.+)$/);
   if (m && m[1] === 'history') return 'search';
-  return m && HASH_VIEWS.includes(m[1]) ? m[1] : null;
+  return m && isHashView(m[1]) ? m[1] : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
@@ -3189,7 +3459,7 @@ function hashView() {
 // replaceState so no bare "#" lingers. Skip writes that already match to avoid a
 // hashchange feedback loop.
 function syncHash() {
-  const target = HASH_VIEWS.includes(currentView)
+  const target = isHashView(currentView)
     ? `#view=${currentView}`
     : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
   if (target) {
@@ -4086,6 +4356,12 @@ function renderPanel(sessionId) {
   // from here purely so there is one call site that can't drift out of sync with
   // panel renders (selection, the ~4s poll, every pill toggle).
   renderChecklist(sessionId);
+  // Extension panel sections (#panel-sections, the other #panel SIBLING) are
+  // mounted once and updated from the same call site, for the same reason. The
+  // meta-chip slot is mounted further down, once the chips row it lives in has
+  // been rebuilt.
+  slots.mountInto('panel.section', document.getElementById('panel-sections'), extApi);
+  slots.update('panel.section', s, latestGraph);
   // Both persisted per session id (see the two maps above) — looked up fresh
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
@@ -4119,6 +4395,8 @@ function renderPanel(sessionId) {
     const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
     chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
   }
+  // Extension chips are mounted into this row AFTER it is written — see the
+  // panel.metaChip slot below.
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
   const saRecentCount = visibleSubAgents(saList, { showFinished: false, now: Date.now() }).length;
   if (saList.length) {
@@ -4156,7 +4434,7 @@ function renderPanel(sessionId) {
           ${branchBadge(s.branch)}
           ${s.addDirs?.length ? `<span class="sess-more">+${s.addDirs.length}</span>` : ''}
         </div>
-        <div class="sess-meta">${chips.join('')}${s.links?.length ? `<span class="sess-meta-links">${linkChipsHtml(s.links, cardCtx())}</span>` : ''}</div>
+        <div class="sess-meta">${chips.join('')}<span class="sess-meta-ext"></span>${s.links?.length ? `<span class="sess-meta-links">${linkChipsHtml(s.links, cardCtx())}</span>` : ''}</div>
         ${saDisclosure}`;
   const panel = document.getElementById('panel');
   // Keep the status bar a persistent element: the ~4s graph poll re-renders the
@@ -4192,6 +4470,13 @@ function renderPanel(sessionId) {
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
   const ckToggle = panel.querySelector('#panel-checklist-toggle');
   if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
+  // The chips row above was just rebuilt via innerHTML, so its .sess-meta-ext
+  // host (between the core chips and the right-aligned links) is a fresh
+  // element every render: mountInto re-mounts each extension chip into it
+  // (mount-once is per host element, see slots.js) — the same cadence the
+  // sub-agent pills' click wiring two lines up runs at.
+  slots.mountInto('panel.metaChip', panel.querySelector('.sess-meta-ext'), extApi);
+  slots.update('panel.metaChip', s, latestGraph);
   panel.querySelectorAll('.subagent-row').forEach((row) => {
     row.addEventListener('click', () => openSubagentModal(row.dataset.ownerSid, row.dataset.subagentId));
   });
@@ -5071,6 +5356,7 @@ function readDispatchFields() {
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
+    autoCompactTokens,
     agent,
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
@@ -5122,7 +5408,9 @@ function openModal({ mode, taskId = null, schedule = null }) {
     : (selected ? cwdForTask(selected) : '');
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   document.getElementById('m-intent').value = d.intent || '';
+  autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
+  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
@@ -5139,6 +5427,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   fillPicker(schedule ? parseWhen(schedule.when) : defaultPicker());
   syncModalChrome();
   syncWorkflow();
+  syncAutoCompactPresets();
   setDispatchPending(false);
   syncWorktreeFields();
   requestFolderBrowse();
@@ -5297,6 +5586,193 @@ applyChatFontSize(chatFontSize());
 // modal's optimistic toggle honest until the rebuild echoes back). The appearance
 // bridge hands the Appearance section its theme rows + font-size row (bespoke
 // widgets owned by theme.js / this module — settings.js just composes them in).
+// Quarantined BUILTIN extensions, from the graph. A repo bug that silently
+// contributed nothing reads as a feature that quietly vanished — the settings
+// row carries the reason, but nobody opens Settings to ask why something they
+// never turned off is missing. Deliberately with NO "dismiss for today": an
+// INSTALLED extension's quarantine stays on its own row and raises nothing
+// here, so anything reaching this banner is the wrangler's own fault and must
+// stay visible until it is fixed. That is also why it needs no dismiss-key
+// namespace of its own, though system-banner.js now has one for the producers
+// that do.
+let quarantinedBuiltins = [];
+// #system-banner is one slot and the fd watchdog is the more urgent producer, so
+// it wins while active and this line is re-asserted when it clears.
+let fdBannerActive = false;
+
+function syncQuarantineBanner() {
+  if (!quarantinedBuiltins.length || fdBannerActive) return;
+  const many = quarantinedBuiltins.length !== 1;
+  showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+}
+
+// Extensions panel state. All of it is per-browser and in memory: the update
+// check is on-demand only, the progress line describes a run that cannot outlive
+// this tab's socket, and the mount point is rebuilt on every settings open.
+let extUpdateStatuses = {};
+let extChecking = false;
+let extInstallProgress = '';
+let extInstallPhase = '';
+let extInstallBusy = false;
+let extRestarting = false;
+// Ids uninstalled in THIS process. The server's extension list is a boot
+// snapshot, so an uninstalled extension keeps appearing until the restart
+// actually drops it — without this the row simply sat there unchanged and the
+// uninstall looked like it had done nothing at all.
+const extPendingRemoval = new Set();
+// The id of an extension installed in this process, which has the mirror-image
+// problem: it is in no list until the restart loads it, so its restart
+// affordance has to ride the install form.
+let extPendingInstall = '';
+// Whether the server can restart itself (it is under launchd/systemd). Off for a
+// bare `node server/index.js`, where an exit would just kill the board.
+let canRestartServer = false;
+// The mount point settings.js hands over, kept so a progress broadcast arriving
+// while the modal is open can re-render in place rather than wait for a reopen.
+let extPanelHost = null;
+// The serialised extension list the open panel was last drawn from — see
+// applyGraph, which re-mounts only when this moves.
+let lastExtSignature = null;
+
+const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
+
+// A settled report — "Up to date.", "Cancelled. Nothing was installed." — is
+// about a moment, not a state, and left on screen it reads as a standing
+// property of the extension. Cleared a few seconds later; anything the reader
+// still has to act on (a newer commit, a failed fetch on a row, a pending
+// restart) is deliberately not on this timer.
+const EXT_TRANSIENT_MS = 6000;
+let extTransientTimer = null;
+function clearExtTransientLater() {
+  clearTimeout(extTransientTimer);
+  extTransientTimer = setTimeout(() => {
+    for (const [id, status] of Object.entries(extUpdateStatuses)) {
+      if (!status?.behind && !status?.error) delete extUpdateStatuses[id];
+    }
+    if (TRANSIENT_PROGRESS_PHASES.has(extInstallPhase)) { extInstallProgress = ''; extInstallPhase = ''; }
+    remountExtensions();
+  }, EXT_TRANSIENT_MS);
+}
+
+function mountExtensionsPanel(host) {
+  extPanelHost = host;
+  if (!host) return;
+  host.textContent = '';
+  host.append(extensionsPanelEl({
+    // Builtin and installed alike, one list — the toggle and the provenance are
+    // two halves of the same row now, not two lists repeating each other.
+    entries: latestExtensions,
+    statuses: extUpdateStatuses,
+    checking: extChecking,
+    progress: extInstallProgress,
+    busy: extInstallBusy,
+    pendingRemoval: [...extPendingRemoval],
+    pendingInstall: extPendingInstall,
+    canRestart: canRestartServer,
+    restarting: extRestarting,
+    onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
+    // An update IS an install against the recorded origin — same frame, same
+    // consent modal, same handler. There is deliberately no separate path.
+    onUpdate: (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); },
+    onUninstall: async (entry) => {
+      const answer = await confirmDialog({
+        title: `Uninstall ${entry.label || entry.id}?`,
+        body: uninstallBodyText(entry),
+        okLabel: 'Uninstall',
+        danger: true,
+      });
+      if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
+    },
+    onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
+    onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
+    onOpenSettings: (entry) => openExtSettings(entry.id),
+  }));
+}
+
+// One extension's settings, behind the cog on its row. Its own dialog rather
+// than rows in the tab: the Extensions tab answers "what have I got", and every
+// extension's fields laid out flat under it answered that far worse.
+//
+// Built fresh per open from `latestExtensions` — never from the entry the row
+// was drawn with, which may be several graphs old by the time the cog is
+// clicked. Nothing re-renders it while it is open, deliberately: a field a
+// human is part-way through typing in must not be taken out from under them,
+// which is the same reason applyGraph's remount signature excludes
+// settingValues.
+function openExtSettings(id) {
+  const entry = latestExtensions.find((e) => e.id === id);
+  if (!entry) return;
+  const modal = document.getElementById('ext-settings-modal');
+  const body = document.getElementById('ext-settings-body');
+  document.getElementById('ext-settings-title').textContent = entry.label || entry.id;
+  body.textContent = '';
+  body.append(extensionSettingRowsEl(entry, {
+    onSettingChange: ({ key, value }) => {
+      send({ type: 'ext-setting-set', id: entry.id, key, value });
+      // Written back into our own copy as well as sent, so re-opening the
+      // dialog before the confirming graph arrives shows what was just set
+      // rather than the old value. The next graph carries the same value and
+      // overwrites this wholesale.
+      const live = latestExtensions.find((e) => e.id === entry.id);
+      if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
+    },
+  }));
+  const done = document.getElementById('ext-settings-done');
+  modal.classList.remove('hidden');
+  done.focus();
+  const close = () => {
+    modal.classList.add('hidden');
+    done.removeEventListener('click', close);
+    modal.removeEventListener('keydown', onKey);
+    modal.removeEventListener('mousedown', onBackdrop);
+  };
+  // Enter closes rather than approving anything: every control here has already
+  // committed on its own change, so there is no pending decision for a key to
+  // confirm — and Enter in a text field is one of the ways it commits.
+  const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); close(); } };
+  const onBackdrop = (e) => { if (e.target === modal) close(); };
+  done.addEventListener('click', close);
+  modal.addEventListener('keydown', onKey);
+  modal.addEventListener('mousedown', onBackdrop);
+}
+
+// The consent step. The modal is opened by the server's DISCLOSURE reply, never
+// by the click that asked for it: nothing may be approved before the wrangler
+// has actually read the manifest and lockfile it is describing.
+function openExtConsent(payload) {
+  const modal = document.getElementById('ext-consent-modal');
+  const body = document.getElementById('ext-consent-body');
+  document.getElementById('ext-consent-title').textContent = payload.update ? 'Update extension' : 'Install extension';
+  body.textContent = '';
+  body.append(consentBodyEl(payload));
+  const ok = document.getElementById('ext-consent-ok');
+  const cancel = document.getElementById('ext-consent-cancel');
+  // An update that widens `requires` needs a fresh yes; one that does not is
+  // still shown, because a human asked for it and the dependency diff is worth
+  // reading — but the button says which of the two this is.
+  ok.textContent = payload.reconsentNeeded ? 'Approve & install' : 'Install';
+  modal.classList.remove('hidden');
+  cancel.focus();
+  const done = (approve) => {
+    modal.classList.add('hidden');
+    ok.removeEventListener('click', onOk);
+    cancel.removeEventListener('click', onCancel);
+    modal.removeEventListener('keydown', onKey);
+    modal.removeEventListener('mousedown', onBackdrop);
+    send({ type: 'ext-consent', tempId: payload.tempId, approve });
+  };
+  const onOk = () => done(true);
+  const onCancel = () => done(false);
+  // No Enter-to-approve, unlike confirmDialog: this dialog grants a process
+  // full access to the machine, so approving must be a deliberate click.
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
+  const onBackdrop = (e) => { if (e.target === modal) done(false); };
+  ok.addEventListener('click', onOk);
+  cancel.addEventListener('click', onCancel);
+  modal.addEventListener('keydown', onKey);
+  modal.addEventListener('mousedown', onBackdrop);
+}
+
 initSettings({
   server: {
     get: (id) => {
@@ -5308,6 +5784,13 @@ initSettings({
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'checklistEnabled') return checklistEnabled;
+      // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
+      // back off graph.extensions — one rung for all of them, no per-extension
+      // branch. Undefined for an unknown id so settings.js falls back to its
+      // default.
+      if (id.startsWith(EXT_SETTING_PREFIX)) {
+        return latestExtensions.find((e) => e.id === id.slice(EXT_SETTING_PREFIX.length))?.enabled;
+      }
       return undefined;
     },
     set: (id, value) => {
@@ -5338,6 +5821,11 @@ initSettings({
         // Show/hide at once rather than waiting for the rebuild echo — the panel
         // is right beside the modal that just toggled it.
         renderChecklist(selectedSessionId);
+      } else if (id.startsWith(EXT_SETTING_PREFIX)) {
+        // Nothing flips locally: the server fixed the extension's tools/handlers
+        // at boot, so the toggle only records the choice (read back off the next
+        // graph) and the help text says it takes effect after a restart.
+        send({ type: 'extension-enabled', id: id.slice(EXT_SETTING_PREFIX.length), enabled: Boolean(value) });
       }
     },
   },
@@ -5354,6 +5842,7 @@ initSettings({
     onFontSize: setTermFontSize,
     onChatFontSize: setChatFontSize,
   },
+  extensions: { mount: mountExtensionsPanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', submitDispatch);
@@ -5386,7 +5875,24 @@ function wtSanitize(el, re) {
 }
 document.getElementById('m-wt-branch').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9-]/g); wtBranchEdited = true; refreshWorktreeDefaults(); validateWorktree(); });
 document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSanitize(e.target, /[^a-zA-Z0-9/._~-]/g); wtFolderEdited = true; });
-document.getElementById('m-model').addEventListener('change', () => { modelEdited = true; populateEffortSelect(); syncRuntimeToggle(); });
+document.getElementById('m-model').addEventListener('change', () => {
+  modelEdited = true;
+  const sel = document.getElementById('m-model');
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  autoCompactTokens = normalizeAutoCompactPresetForAgentChange(autoCompactTokens, autoCompactAgent, agent);
+  autoCompactAgent = agent;
+  populateEffortSelect();
+  syncRuntimeToggle();
+  syncAutoCompactPresets();
+});
+document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
+  const button = e.target.closest('.auto-compact-preset');
+  if (!button) return;
+  autoCompactTokens = button.dataset.autoCompactTokens === '' ? undefined : Number(button.dataset.autoCompactTokens);
+  const sel = document.getElementById('m-model');
+  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  syncAutoCompactPresets();
+});
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
@@ -5510,10 +6016,82 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'graph') applyGraph(msg.graph);
-    else if (msg.type === 'config') { sessionsDir = msg.sessionsDir || ''; homeDir = msg.homeDir || ''; }
+    // A `config` is the first frame of every connect, so it is also how the board
+    // learns a restart finished: the pending install/removal notes describe a
+    // boot snapshot that has just been replaced, and the process holding them is
+    // gone either way.
+    else if (msg.type === 'config') {
+      sessionsDir = msg.sessionsDir || '';
+      homeDir = msg.homeDir || '';
+      canRestartServer = Boolean(msg.canRestart);
+      extRestarting = false;
+      extPendingRemoval.clear();
+      extPendingInstall = '';
+      remountExtensions();
+    }
+    // Sent on EVERY connect (before the first graph); the loader is idempotent
+    // per id, so a reconnect registers nothing twice. Not awaited — an
+    // extension that fails to load is logged and dropped, never the board's
+    // problem. A render is asked for once something new registered, since the
+    // first graph may already have been applied while the module was in flight.
+    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteHandlerTypes(extClientManifest); syncClientExtensions(); }
+    // An extension's server half talking to its own browser half: host.broadcast
+    // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
+    // prefix can never collide with a core type and the id in it is the whole
+    // address. slots.dispatchMessage fails closed — only listeners that
+    // extension's own module subscribed are called, and an unknown or unloaded
+    // id reaches nothing. This branch is the whole reason such a frame is no
+    // longer dropped off the end of this ladder.
+    else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
     // Success is silent on purpose: the model chip changes on the next turn, off
     // the transcript, which is real confirmation rather than this reply's
     // optimism. Only a refusal needs saying, because nothing else would show it.
+    // The install/update flow. Progress is broadcast (so a second tab watching
+    // the same install follows it) and the terminal phases are ALSO replied, so
+    // the modal never depends on a broadcast it might have missed.
+    else if (msg.type === 'ext-install-progress') {
+      extInstallProgress = progressText(msg.phase, msg);
+      extInstallPhase = msg.phase;
+      if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
+      remountExtensions();
+    }
+    else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
+    else if (msg.type === 'ext-install-done') {
+      extInstallBusy = false;
+      // An install is live now — the server registers and activates it in
+      // process, and re-announces, so its client half arrives on its own. Only
+      // an UPDATE of an already-registered id still needs the restart (two
+      // versions of one extension must never run at once), and only that case
+      // leaves a pending-install row with its restart button.
+      if (msg.installed) {
+        extPendingInstall = msg.restartRequired ? msg.id : '';
+        // Reinstalling an id uninstalled earlier in THIS process: only a `config`
+        // frame clears the removal set, so without this the freshly installed —
+        // and live — row comes back struck through under its own "Uninstalled"
+        // note, and keeps the head's restart button up for a removal that has
+        // been superseded.
+        extPendingRemoval.delete(msg.id);
+        if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+        else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
+        else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
+      }
+      remountExtensions();
+    }
+    else if (msg.type === 'ext-uninstall-done') {
+      extPendingRemoval.add(msg.id);
+      toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
+      remountExtensions();
+    }
+    else if (msg.type === 'ext-updates') {
+      extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
+      extChecking = false;
+      clearExtTransientLater();
+      remountExtensions();
+    }
+    // The board is about to lose this socket; ws.onclose already retries every
+    // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
+    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
@@ -5529,8 +6107,16 @@ function connect() {
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
     else if (msg.type === 'fd-warning') {
-      if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level });
-      else hideSystemBanner();
+      // #system-banner is one slot, so the two producers have to take turns: an
+      // fd leak is the more urgent of the two and wins while it is active, and
+      // clearing it re-asserts the quarantine line (which is boot-fixed and
+      // otherwise never redrawn) rather than leaving the slot blank.
+      fdBannerActive = Boolean(msg.active);
+      if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
+      else {
+        hideSystemBanner();
+        syncQuarantineBanner();
+      }
     }
     else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
     // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()

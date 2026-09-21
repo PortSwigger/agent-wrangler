@@ -30,11 +30,26 @@ export function extractCaller(req) {
 // injectable so a test can pin the set without writing config.json.
 export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
-  for (const tool of tools) {
+  // Per-CALLER narrowing, the one extension surface that shapes tools an
+  // extension does not own: a session KIND (an automation run, say) that must
+  // not be offered spawning tools. Bound in server/index.js from the enabled
+  // manifests' `hideTool` vetoes (createToolFilter) and absent when none
+  // declares one — so the common case is the unfiltered list, by identity.
+  // Fails open: see createToolFilter. Never authorization — extractCaller is
+  // advisory, and the origin gate is what actually accepts the request.
+  const hide = deps?.ext?.hideTool;
+  const visible = hide ? tools.filter((t) => !hide(caller, t.name)) : tools;
+  for (const tool of visible) {
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.inputSchema },
-      (args) => tool.handler({ deps, caller }, args),
+      // An EXTENSION's tool (tagged with its owner by the loader) is invoked
+      // with that extension's own `host` façade and never `deps` — the whole
+      // point of the façade is that an extension cannot reach a singleton it did
+      // not declare. A core tool is untagged and keeps `deps` unchanged.
+      (args) => (tool.extId
+        ? tool.handler({ host: deps?.hostApiFor?.(tool.extId), caller }, args)
+        : tool.handler({ deps, caller }, args)),
     );
   }
   return server;

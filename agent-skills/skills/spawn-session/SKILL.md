@@ -16,7 +16,7 @@ what you have done, what the new session should do next, and the key files/paths
 it needs. Do **not** write handoff context into task memory: memory is enduring
 information about the task itself, not a channel for briefing another session.
 
-## Choosing the agent and model
+## Choosing the agent, model and effort
 
 `agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
 
@@ -25,6 +25,11 @@ your own model" default only fires when the new session runs the same agent as
 you — model names don't cross providers — so a cross-agent spawn with `model`
 unset lands on whatever that agent's ambient default currently is, which is not
 necessarily its strongest option.
+
+`effort` works the same way: omit it to inherit your own reasoning effort (again
+only within the same agent), or pass one of the levels listed below for that
+agent. The levels differ per provider, so an inherited one is never carried
+across a cross-agent spawn.
 
 The table below is **generated from the wrangler's agent adapters**, so it is the
 same list the tool validates against; an invalid `model` or `agent` is rejected
@@ -40,6 +45,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `sonnet` — Sonnet 5 · 200K context
 - `sonnet[1m]` — Sonnet 5 · 1M context
 - `haiku` — Haiku 4.5 · 200K context
+- `effort`: `low`, `medium`, `high`, `xhigh`, `max`
 
 **Codex** (`agent: "codex"`):
 - `gpt-5.5` — GPT-5.5 · frontier
@@ -48,8 +54,18 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.6-sol` — GPT-5.6 Sol · frontier (default)
 - `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
 - `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
+- `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
 <!-- END GENERATED MODELS -->
+
+## Optional working-context budget
+
+Pass `auto_compact_tokens` to opt the new session into an immutable auto-compaction
+threshold. Use a whole-token value from 100000 through 1000000 for Claude, or from
+50000 through 1000000 for Codex, for example `auto_compact_tokens: 200000`. Omit it to preserve the provider default. The threshold
+is retained if the session is resumed and inherited if it is forked; there is no API to
+change it later. Claude honours the full range. Under Codex's default scope, the effective
+threshold is capped at 90% of the model context window; the threshold does not expand it.
 
 ## Placement
 
