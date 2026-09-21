@@ -387,6 +387,19 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    box of its own to size or style. */
 #panel-sections, .sess-meta-ext, .card-meta-ext, .ext-slot { display: contents; }
 
+/* The dispatch modal's three `dispatch.field` anchor hosts (index.html,
+   #m-dispatch-fields), same layout-transparency rule: an extension's control
+   lays out as a .modal-card child and inherits the modal's own label/select
+   rules, so a contribution shipping a <label>/<select> looks native for free —
+   and a badly sized one is the extension's own problem. */
+.ext-dispatch-slot { display: contents; }
+
+/* A core dispatch field a `dispatch.field` contribution has vetoed
+   (hiddenDispatchFields, slots.js). `.hidden` is not a global rule in this
+   sheet — every user declares its own line. A plain block wrapper: the fields
+   inside lay out exactly as they did unwrapped. */
+.dispatch-field.hidden { display: none; }
+
 /* A `view` contribution's host, created per view by app.js renderExtViews. The
    ONE exception to the layout-transparent rule above: a top-level view is a
    <main> flex item in its own right (same shape as #search), so it needs a real
