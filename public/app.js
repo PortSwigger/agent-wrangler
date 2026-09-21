@@ -168,13 +168,22 @@ let latestGraph = null;
 // A missing entry means "allow nothing", so a board that has heard neither fails
 // closed and reports rather than forwarding blind.
 const extHandlerTypes = new Map();
+// And which core dispatch-modal rows each extension's manifest disclosed it may
+// hide (`hideDispatchField`). The DISCLOSURE half of the dispatch.field veto,
+// filled from the same two inputs and for the same reason: a contribution's own
+// `hides` is filtered against it in slots.js, so the browser half can never
+// widen what the server half declared, and an extension the board has heard
+// nothing about hides nothing.
+const extHideDispatchFields = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
 let hostApiVersion = null;
-function noteHandlerTypes(list) {
+function noteExtClientFacts(list) {
   for (const e of Array.isArray(list) ? list : []) {
-    if (e && typeof e.id === 'string' && Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
+    if (!e || typeof e.id !== 'string') continue;
+    if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
+    if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -183,6 +192,7 @@ const slots = createSlots({
   document,
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
+  hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
   version: () => hostApiVersion,
 });
 const extApi = {
@@ -218,9 +228,9 @@ function syncClientExtensions() {
   }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
-  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); }
+  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); }
   clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); } });
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); } });
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -436,7 +446,7 @@ function applyGraph(graph) {
   checklistEnabled = graph.checklistEnabled !== false;
   latestChecklists = graph.checklists || {};
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
-  noteHandlerTypes(latestExtensions);
+  noteExtClientFacts(latestExtensions);
   setExtensionDefs(latestExtensions);
   // An open panel follows the list, but ONLY when the list itself changed: this
   // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
@@ -5198,6 +5208,9 @@ function syncWorkflow() {
   if (!scheduleMode()) go.textContent = presentation.launchLabel;
   go.classList.toggle('wf', on);
   syncRuntimeToggle();
+  // Standard <-> workflow changes which core fields are meaningful, so a
+  // contribution gets to redraw (and re-veto) for it.
+  syncDispatchExtFields();
 }
 function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 
@@ -5385,7 +5398,65 @@ function readCoreDispatchFields() {
 // quickLaunch path all get it for free — the same shared read that already
 // makes a scheduled dispatch byte-for-byte a manual one.
 function readDispatchFields() {
-  return readCoreDispatchFields();
+  const core = readCoreDispatchFields();
+  return { ...core, ...slots.dispatchFields(dispatchFieldCtx(core)) };
+}
+
+// What a `dispatch.field` contribution is handed as its `update`/merge context.
+// `draft` is the CORE read — never the merged one, or building a ctx would
+// re-enter every contribution's fields(). The agent list is a snapshot rather
+// than a live handle onto board state.
+function dispatchFieldCtx(core = readCoreDispatchFields()) {
+  return {
+    mode: scheduleMode() ? 'schedule' : 'launch',
+    draft: core,
+    agents: availableAgents,
+  };
+}
+
+// Which core row each hideable dispatch field lives in (index.html). Growing
+// DISPATCH_FIELDS server-side means adding a row id here and a wrapper there.
+const DISPATCH_FIELD_ROWS = {
+  model: 'm-model-row',
+  effort: 'm-effort-row',
+  autoCompactTokens: 'm-auto-compact-row',
+  runtime: 'm-runtime-row',
+};
+
+// Recomputed WHOLE every call, never incrementally: that is what lifts the veto
+// of a contribution slots.js has thrown out, and what clears everything in the
+// subagent case where there are no hosts at all.
+//
+// The veto is PRESENTATION ONLY. A hidden #m-effort still holds its value and
+// readCoreDispatchFields still reads it into `effort`; an extension that hides
+// a core field is expected to write that key back through fields(), and if it
+// does not the payload carries whatever the hidden control last held.
+function applyDispatchFieldVeto() {
+  const hidden = new Set(slots.hiddenDispatchFields());
+  for (const [name, id] of Object.entries(DISPATCH_FIELD_ROWS)) {
+    document.getElementById(id)?.classList.toggle('hidden', hidden.has(name));
+  }
+}
+
+// Reconcile the dispatch modal's three anchor hosts against the registered
+// `dispatch.field` contributions. The ctx rides in the `session` position
+// because that is what sync() hands `update` as its second argument —
+// update(el, ctx, graph) — so do not "fix" the name.
+//
+// In `subagent` modalMode the host list is EMPTY, so every contribution tears
+// down by omission (slots' own rule) rather than sitting invisible inside a
+// hidden block, and the veto below then clears naturally.
+//
+// Deliberately NOT on the graph tick, unlike `view`: these hosts exist only
+// while the modal is open and a human is driving it, so the call sites are
+// openModal, the #m-model change listener, syncWorkflow and
+// syncClientExtensions.
+function syncDispatchExtFields() {
+  const ctx = modalMode === 'subagent' ? null : dispatchFieldCtx();
+  const entries = ctx === null ? [] : [...document.querySelectorAll('.ext-dispatch-slot')]
+    .map((host) => ({ host, at: host.dataset.at, session: ctx }));
+  slots.syncHosts('dispatch.field', entries, extApi, latestGraph);
+  applyDispatchFieldVeto();
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
@@ -5442,6 +5513,11 @@ function openModal({ mode, taskId = null, schedule = null }) {
   syncModalChrome();
   syncWorkflow();
   syncAutoCompactPresets();
+  // syncWorkflow() above has already synced once, but the form was not yet in
+  // its final shape then (syncAutoCompactPresets, syncWorktreeFields and
+  // modalMode's chrome all still to settle) — and the double call is harmless:
+  // mount is idempotent per host element and the veto recompute is whole.
+  syncDispatchExtFields();
   setDispatchPending(false);
   syncWorktreeFields();
   requestFolderBrowse();
@@ -5898,6 +5974,8 @@ document.getElementById('m-model').addEventListener('change', () => {
   populateEffortSelect();
   syncRuntimeToggle();
   syncAutoCompactPresets();
+  // A contribution drawing a per-agent control needs the agent swap.
+  syncDispatchExtFields();
 });
 document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
   const button = e.target.closest('.auto-compact-preset');
@@ -6048,7 +6126,7 @@ function connect() {
     // extension that fails to load is logged and dropped, never the board's
     // problem. A render is asked for once something new registered, since the
     // first graph may already have been applied while the module was in flight.
-    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteHandlerTypes(extClientManifest); syncClientExtensions(); }
+    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
     // An extension's server half talking to its own browser half: host.broadcast
     // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
     // prefix can never collide with a core type and the id in it is the whole
