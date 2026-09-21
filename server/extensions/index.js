@@ -1,6 +1,7 @@
 import path from 'node:path';
 import semver from 'semver';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
+import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -98,12 +99,31 @@ function fail(ext, reason) {
   throw new Error(`Extension ${id}: ${reason}`);
 }
 
+// The wrangler's own skill names, read once: agent-skills/skills/ cannot change
+// under a running process, and this is on the boot path for every manifest.
+// They are the OTHER half of what a `skills` entry may resolve to — an
+// extension has always been able to gate an in-repo skill without shipping one.
+let repoNames = null;
+function inRepoSkillNames() {
+  if (!repoNames) repoNames = new Set(skillsIn(SKILLS_ROOT).map((e) => e.name));
+  return repoNames;
+}
+
+// Does this manifest SHIP `<dir>/skills/<name>`? The frontmatter `name` has to
+// agree with the declared one, or the catalog would publish the skill under a
+// name the manifest never claimed — and therefore never gates and never
+// disables with itself.
+function shipsSkill(dir, name) {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
+  return skillAt(path.join(dir, 'skills', name))?.name === name;
+}
+
 // Throws (naming the extension) on any manifest shape the rest of the server
 // would otherwise misread silently. `dir` is the manifest module's own directory
 // (it exports it from import.meta.url) — the only thing a `client` path may
 // resolve inside, and only under its public/ subdir, since that is what the
 // /ext/<id>/ static route will serve.
-export function validateManifest(ext, { dir = ext?.dir } = {}) {
+export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkillNames() } = {}) {
   if (!ext || typeof ext !== 'object') throw new Error('Extension <no id>: manifest is not an object');
   if (typeof ext.id !== 'string' || !ID_RE.test(ext.id)) fail(ext, `id must match ${ID_RE} (got ${JSON.stringify(ext.id)})`);
   if (typeof ext.label !== 'string' || !ext.label) fail(ext, 'label must be a non-empty string');
@@ -166,8 +186,24 @@ export function validateManifest(ext, { dir = ext?.dir } = {}) {
     if (!h || typeof h.type !== 'string' || !h.type) fail(ext, `handlers[${i}] has no type`);
     if (typeof h.handler !== 'function') fail(ext, `handler ${h.type} has no handler function`);
   }
+  // A declared skill must RESOLVE, to one of exactly two places: an in-repo
+  // agent-skills/skills/<name> (all a manifest could name before an extension
+  // could ship one, and still how it gates one) or its own
+  // `<dir>/skills/<name>/SKILL.md`. A name matching neither was silently inert
+  // — the manifest claimed a skill, the catalog had never heard of the
+  // directory, and nothing anywhere said so.
+  //
+  // Shipping a directory that SHADOWS an in-repo skill is refused rather than
+  // resolved either way round: the catalog keeps the in-repo one, so the
+  // extension's copy would be dead content reading exactly like the skill the
+  // agent is actually getting.
   for (const [i, s] of (ext.skills || []).entries()) {
     if (typeof s !== 'string' || !s) fail(ext, `skills[${i}] must be a skill name`);
+    if (repoSkills.has(s)) {
+      if (shipsSkill(dir, s)) fail(ext, `skill "${s}" collides with the in-repo skill of the same name`);
+    } else if (!shipsSkill(dir, s)) {
+      fail(ext, `unknown skill "${s}" — neither agent-skills/skills/${s} in the wrangler nor skills/${s}/SKILL.md declaring \`name: ${s}\` under this extension`);
+    }
   }
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
@@ -291,6 +327,10 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     toolNames: new Set(coreToolNames),
     handlerTypes: new Set(coreHandlerTypes),
     storeNames: new Set(),
+    // SHIPPED skill names only. The in-repo ones are not in here and cannot be
+    // claimed: several manifests gating `checklist` is ordinary, two
+    // directories answering to one catalog name is not.
+    skillNames: new Set(),
   };
   const out = {
     list: [],
@@ -435,6 +475,13 @@ function stageExtension(ext, { cfg, out, reg }) {
   const tools = [];
   const handlers = [];
   const stores = [];
+  // What this manifest SHIPS, as opposed to the in-repo skills it merely gates
+  // — validateManifest has already resolved every declared name, so anything
+  // not in-repo is one of its own. Claimed globally exactly as a tool name is:
+  // the catalog is one flat namespace keyed by the frontmatter `name`, so two
+  // extensions shipping one name would otherwise resolve by load order.
+  const shipped = (ext.skills || []).filter((s) => !inRepoSkillNames().has(s));
+  for (const s of shipped) if (reg.skillNames.has(s)) fail(ext, `skill name "${s}" is already registered`);
   for (const t of ext.tools || []) {
     if (reg.toolNames.has(t.name) || tools.some((s) => s.name === t.name)) fail(ext, `tool name "${t.name}" is already registered`);
     // Tagged with its owner as it is collected: each frame is invoked with
@@ -459,6 +506,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const t of tools) { reg.toolNames.add(t.name); out.tools.push(t); out.allowedToolNames.push(t.name); }
   for (const h of handlers) { reg.handlerTypes.add(h.type); out.handlers.push(h); listEntry.handlerTypes.push(h.type); }
   for (const [name, factory] of stores) { reg.storeNames.add(name); out.stores[name] = factory; }
+  for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));
   // A RE-registration has to undo the suppression its own unregister added, or
   // the same skill is nudged and actively suppressed at once. Inert at boot,
@@ -537,6 +585,10 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
     for (const t of loaded.tools) if (t.extId === id) reg.toolNames.delete(t.name);
     for (const h of loaded.handlers) if (h.extId === id) reg.handlerTypes.delete(h.type);
     for (const name of entry?.storeNames || []) reg.storeNames.delete(name);
+    // In-repo names were never claimed, so dropping them here is a no-op — the
+    // row carries both kinds and telling them apart again would only be a
+    // second place the rule lives.
+    for (const s of entry?.skills || []) reg.skillNames.delete(s);
   }
   if (entry) entry.enabled = false;
   loaded.tools = loaded.tools.filter((t) => t.extId !== id);

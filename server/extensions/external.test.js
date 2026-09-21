@@ -88,6 +88,24 @@ test("an extension's own tests are not scanned, and a self-import is not a serve
   assert.equal(found[0].quarantine, undefined);
 });
 
+// A skill ships for an AGENT to read, and may carry a script for it to run;
+// nothing in the server's import graph can reach one, so scanning the skills
+// directory could only ever produce a false positive — the same argument as
+// test files and node_modules. At the root only: a `skills/` directory inside
+// the extension's own code is ordinary code.
+test("the root skills/ directory is not scanned, but a nested one still is", async () => {
+  const root = tempRoot();
+  const dir = writeExt(root, 'ships');
+  fs.mkdirSync(path.join(dir, 'skills', 'job-worker'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'skills', 'job-worker', 'SKILL.md'), '---\nname: job-worker\ndescription: d\n---\n');
+  fs.writeFileSync(path.join(dir, 'skills', 'job-worker', 'helper.js'), "import { SessionManager } from '../../../session-manager.js';\n");
+  assert.equal((await discoverExternal({ dir: root, provenance: {} }))[0].quarantine, undefined);
+
+  fs.mkdirSync(path.join(dir, 'server', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'server', 'skills', 'reach.js'), "import x from '../../../state-reader.js';\n");
+  assert.match((await discoverExternal({ dir: root, provenance: {} }))[0].quarantine, /server\/skills\/reach\.js/);
+});
+
 test('the server entry is still caught from a builtin\'s depth, in a subdirectory too', async () => {
   const root = tempRoot();
   const dir = writeExt(root, 'deep');

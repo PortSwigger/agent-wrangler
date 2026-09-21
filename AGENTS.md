@@ -302,6 +302,38 @@
   `app.js`'s remount signature **excludes `settingValues`**, which now costs
   nothing at all: the tab draws no value, so a value landing is not news for it
   to redraw for, and the dialog re-reads on every open.
+- **An extension may SHIP a skill, and the whole catalog is assembled in ONE
+  place: `agent-skills.js`'s `allSkillEntries`.** A manifest's `skills` names
+  either one of the wrangler's own `agent-skills/skills/<name>` (all it could
+  name before this, and still how it GATES one) or its own
+  `<dir>/skills/<name>/SKILL.md` — same layout, sidecar `WRANGLER.md` included.
+  The merge reads the loader's list rows (`id`/`dir`/`skills`) on EVERY call, so
+  an install adds a skill and an uninstall takes it away at the next launch with
+  nothing to invalidate; a row is the registration, not the directory on disk.
+  Names are one flat namespace keyed by the frontmatter `name`: the in-repo
+  skill wins any clash, and a SHIPPED name is claimed in `_reg.skillNames`
+  exactly as a tool name is (so the second extension to ship one is quarantined,
+  and a disable releases it), while an in-repo name claims nothing — several
+  manifests gating `checklist` is ordinary. A declared name resolving to NEITHER
+  place is a quarantine, because it used to be silently inert: the manifest said
+  it contributed a skill and the catalog had never heard of the directory.
+  **The reader lives in `server/skill-catalog.js`, not in `agent-skills.js`,
+  purely because the LOADER needs it too** and `agent-skills.js` already imports
+  the loader for `getExtensions()` — it is a leaf (fs/path/url), so
+  `server/extensions/**` may import it without breaching its own rule.
+  **Claude's plugin list is the one channel the gate reaches**: an extension's
+  skill is outside `AGENT_SKILLS_PLUGIN_DIR`, so each ACTIVE one rides as a
+  `--plugin-dir` of its own (a directory holding a SKILL.md loads as a one-skill
+  plugin, the `ISSUE_TO_PR_SKILL_DIR` shape), and unlike the in-repo root that
+  list is filtered — most extension skills carry no nudge, so discovery is their
+  only channel and leaving a suppressed one on the command line would make
+  `skillsFor` decide nothing for Claude. The devcontainer runtime copies every
+  installed extension's skill dirs in UNGATED (`launchInputs`), a superset: the
+  gate has already answered by the time the inner command exists, and a dir
+  copied but never named costs kilobytes where one named but not copied is a
+  plugin path the container does not have. `external.js`'s import scanner skips
+  the ROOT `skills/` directory for the same reason it skips tests — a script a
+  skill ships for its agent is unreachable from the server's import graph.
 - **Extensions API (`server/extensions/index.js`, `public/slots.js`,
   `public/extensions.js`) — an optional feature is ONE manifest, and the loaded
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
@@ -475,8 +507,8 @@
   nothing, and a throwing gate suppresses nothing rather than stripping a real
   launch. It reaches the adapters as `disabledSkills`, threaded beside
   `taskMemory` through `buildLaunch`/`buildResume`/`buildFork` on BOTH adapters
-  into `mandatorySkillPrompt`/`codexSkillCatalog` — a fourth launch path must
-  thread it too. The `_extLaunchSkills` seam is consulted before the adapter
+  into `mandatorySkillPrompt`/`codexSkillCatalog`/`extensionSkillPluginDirs` — a
+  fourth launch path must thread it too. The `_extLaunchSkills` seam is consulted before the adapter
   builds and, in dispatch, deliberately AFTER `onBeforeDispatch`, so a gate can
   read back what that hook just persisted; `entry` is null at dispatch, the
   existing entry at resume and the PARENT's at fork (a fork's own entry is

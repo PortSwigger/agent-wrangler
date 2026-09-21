@@ -5,7 +5,7 @@ import { analyze, listResumable, activityInRange } from '../transcript-reader.js
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
-import { AGENT_SKILLS_PLUGIN_DIR, mandatorySkillPrompt } from '../agent-skills.js';
+import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -122,6 +122,13 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
     // launch, fork, and resume — cwd-independent, surviving a mid-session cd.
     '--plugin-dir', AGENT_SKILLS_PLUGIN_DIR,
   );
+  // An EXTENSION's skill lives in its own install dir, outside that root, so
+  // each one active for this launch rides as a plugin of its own (a directory
+  // holding a SKILL.md loads as a one-skill plugin, the same shape
+  // ISSUE_TO_PR_SKILL_DIR uses below). This list is GATED where the root above
+  // is not: most extension skills carry no nudge, so the command line is the
+  // only thing `skillsFor` could decide for Claude.
+  for (const skillDir of extensionSkillPluginDirs(undefined, { taskMemory, disabledSkills })) full.push('--plugin-dir', skillDir);
   // Workflow runs additionally name the issue-to-pr skill in their launch prompt;
   // load it as a second plugin so it resolves without a user-level symlink.
   // --plugin-dir merges with the user's own plugins and stacks. Scoped to workflow

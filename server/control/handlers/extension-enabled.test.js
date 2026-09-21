@@ -22,13 +22,18 @@ async function withConfig(initial, fn) {
   }
 }
 
+// A declared skill has to RESOLVE now (loader validateManifest), so each
+// fixture names one of the wrangler's own rather than inventing a directory —
+// and a distinct one per id, since two manifests gating the same in-repo skill
+// would make `disabledSkillIds` ambiguous about which row suppressed it.
+const SKILL_FOR = { notes: 'links', other: 'mail', checklist: 'checklist' };
 function manifest(id, overrides = {}) {
   return {
     id,
     label: id,
     defaultEnabled: true,
     tools: [{ name: `${id}_tool`, handler() {} }],
-    skills: [id],
+    skills: [SKILL_FOR[id]],
     ...overrides,
   };
 }
@@ -98,7 +103,7 @@ test('enabling a boot-disabled extension re-stages its contributions and activat
     assert.deepEqual(c.loaded.tools, [], 'nothing staged at boot');
     await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: true }, c);
     assert.deepEqual(c.loaded.tools.map((t) => t.name), ['notes_tool']);
-    assert.deepEqual(c.loaded.skillIds, ['notes']);
+    assert.deepEqual(c.loaded.skillIds, ['links']);
     assert.deepEqual(c.loaded.disabledSkillIds, []);
     assert.deepEqual(c.calls.activated, ['notes']);
     assert.equal(c.calls.changed, 1, 'the router map and the client announcement both ride this');
@@ -129,7 +134,7 @@ test('disabling deactivates, deregisters and KEEPS the row', async () => {
     assert.deepEqual(c.loaded.list.map((e) => e.id), ['notes', 'other'], 'the row carries the toggle that turns it back on');
     assert.equal(c.loaded.list[0].enabled, false);
     assert.deepEqual(c.loaded.tools.map((t) => t.name), ['other_tool']);
-    assert.deepEqual(c.loaded.disabledSkillIds, ['notes']);
+    assert.deepEqual(c.loaded.disabledSkillIds, ['links']);
     assert.equal(c.loaded._reg.toolNames.has('notes_tool'), false, 'the name is released, so a re-enable can claim it again');
     assert.equal(c.calls.changed, 1);
   });
