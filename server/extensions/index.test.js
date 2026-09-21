@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES,
+  BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
   primeExtensions, extensionsPrimed, _resetExtensionsForTests,
@@ -114,7 +114,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['checklist'], handlerTypes: [],
-    external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
+    hideDispatchField: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -572,7 +572,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
-    handlerTypes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
+    handlerTypes: [], hideDispatchField: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -821,4 +821,33 @@ test('a disabled extension claims no skill name, but its row still says what it 
   assert.deepEqual(out.list[0].skills, ['job-worker'], 'the catalog reads dir+skills off the row');
   assert.deepEqual(out.disabledSkillIds, ['job-worker']);
   assert.equal(out._reg.skillNames.has('job-worker'), false);
+});
+
+
+// ── `hideDispatchField` — the disclosure half of the dispatch.field veto ──
+test('hideDispatchField must be an array of known dispatch field names', () => {
+  rejects(manifest({ hideDispatchField: 'effort' }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
+  rejects(manifest({ hideDispatchField: [7] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
+  rejects(manifest({ hideDispatchField: [''] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
+  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, runtime\)/);
+  assert.ok(validateManifest(manifest({ hideDispatchField: [...DISPATCH_FIELDS] })));
+});
+
+test('the dispatch field vocabulary is closed', () => {
+  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'runtime']);
+});
+
+test('the declared hideDispatchField lands on the entry, the announcement and the graph, as a COPY', () => {
+  const ext = manifest({ client: 'public/index.js', hideDispatchField: ['effort'] });
+  const out = loadExtensions({ cfg: {}, builtin: [ext] });
+  assert.deepEqual(out.list[0].hideDispatchField, ['effort']);
+  ext.hideDispatchField.push('runtime');
+  assert.deepEqual(out.list[0].hideDispatchField, ['effort'], 'copied, so a manifest cannot widen itself afterwards');
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', handlerTypes: ['fake-do'], hideDispatchField: ['effort'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].hideDispatchField, ['effort']);
+});
+
+test('an extension hiding nothing omits hideDispatchField from its announcement entry', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
 });
