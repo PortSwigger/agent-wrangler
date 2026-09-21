@@ -5339,7 +5339,13 @@ function fillPicker(p) {
 
 // The dispatch payload, read EXACTLY as submitDispatch reads it, so a scheduled
 // dispatch and a manual one carry the same fields (runDispatch is the shared body).
-function readDispatchFields() {
+//
+// Split in two on purpose. `readCoreDispatchFields` is the CORE half — the form
+// as the board itself reads it — and `readDispatchFields` is that plus the
+// `dispatch.field` extension merge. The split is not cosmetic: a contribution's
+// ctx carries `draft`, which must be the core read, or building a ctx would
+// re-enter every contribution's `fields()`, which builds a ctx, which…
+function readCoreDispatchFields() {
   const sel = document.getElementById('m-model');
   const model = sel.value.trim();
   const wfOn = dispatchMode === 'workflow';
@@ -5372,6 +5378,14 @@ function readDispatchFields() {
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
   };
+}
+
+// Core + the extension merge. Because it sits in the ONE shared read,
+// submitDispatch, readScheduleAction (scheduled dispatch) and the ⌘1/⌘2
+// quickLaunch path all get it for free — the same shared read that already
+// makes a scheduled dispatch byte-for-byte a manual one.
+function readDispatchFields() {
+  return readCoreDispatchFields();
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
