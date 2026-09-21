@@ -54,6 +54,27 @@ test('injected turns are skipped', () => {
   assert.equal(codexEnv.record, undefined);
 });
 
+test('a pasted_content wrapper is stripped before indexing, so a search snippet cannot surface it', () => {
+  const user = extractLine(claude({
+    type: 'user',
+    message: { role: 'user', content: '<pasted_content id="e7ce">\nhello world\n</pasted_content id="e7ce">' },
+    timestamp: '2026-08-01T10:00:00.000Z',
+  }), 'claude');
+  assert.equal(user.record.text, 'hello world');
+});
+
+// The synthetic classification must run on the raw message, before the
+// wrapper is stripped, or a paste whose body starts with a harness marker
+// reads as injected and never reaches the index at all.
+test('a pasted message whose body starts with a harness marker is still indexed', () => {
+  const user = extractLine(claude({
+    type: 'user',
+    message: { role: 'user', content: '<pasted_content id="x"><environment_context>literal text</environment_context></pasted_content id="x">' },
+    timestamp: '2026-08-01T10:00:00.000Z',
+  }), 'claude');
+  assert.equal(user.record.text, '<environment_context>literal text</environment_context>');
+});
+
 test('doc metadata is picked up off non-message lines', () => {
   const title = extractLine(claude({ type: 'ai-title', aiTitle: 'Rebase help', sessionId: 'sid' }), 'claude');
   assert.equal(title.meta.title, 'Rebase help');

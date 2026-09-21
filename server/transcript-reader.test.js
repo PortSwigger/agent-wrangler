@@ -408,6 +408,29 @@ test('reports cwd and summary from the transcript head', async () => {
   assert.equal(candidates[0].summary, 'fix the parser');
 });
 
+// Claude Code wraps composer-pasted material in <pasted_content id="…">…
+// </pasted_content id="…">. Without stripping it, this message would either
+// summarise with the raw tag still in it (wrapper not at position 0) or be
+// skipped outright by the leading-'<' gate (wrapper at position 0) — same
+// leak class chat-events.js and search/extract.js already guard against.
+test('a pasted_content wrapper is stripped from the head summary too', async () => {
+  const dir = makeProjects();
+  writeTranscript(dir, { sessionId: 's1', cwd: '/work/proj', summary: '<pasted_content id="e7ce">\nfix the parser\n</pasted_content id="e7ce">', ageDays: 1 });
+
+  const { candidates } = await listResumable(new Set(), { windowDays: 7, now: NOW, projectsDir: dir });
+
+  assert.equal(candidates[0].summary, 'fix the parser');
+});
+
+test('scanLine also strips a pasted_content wrapper from its own summary field', () => {
+  const state = { totals: {}, subAgents: [], lastActivity: 0, summary: null, apiError: false };
+  scanLine(JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: '<pasted_content id="e7ce">\nhello world\n</pasted_content id="e7ce">' },
+  }), state);
+  assert.equal(state.summary, 'hello world');
+});
+
 test('ai-title records update aiTitle and the last one wins', () => {
   const state = { totals: {}, subAgents: [], lastActivity: 0, summary: null, aiTitle: null };
   scanLine(JSON.stringify({ type: 'ai-title', aiTitle: 'First title', sessionId: 'abc' }), state);
