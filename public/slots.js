@@ -24,11 +24,25 @@
 // listeners that extension's own module subscribed. Without it such a frame fell
 // off the end of app.js's `else if` ladder and was silently dropped, so a server
 // half had no way to tell its own browser half anything — see dispatchMessage.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view'];
+//
+// `dispatch.field` is the fourth shape and the first slot that shapes a CORE
+// form: three anchor hosts inside #modal's #m-dispatch-fields (app.js
+// syncDispatchExtFields), a contribution addressing one of them with `at`, and
+// an optional `hides` veto over named core rows. Its entries carry `at`
+// alongside `only` — see sync().
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field'];
+
+// Where inside the dispatch modal a `dispatch.field` contribution may land.
+// `top` is above the folder field, `model` is beside the model selector, and
+// `advanced` is the last child of the Advanced options body.
+export const DISPATCH_ANCHORS = ['top', 'model', 'advanced'];
 
 // Slots whose contribution must carry more than mount() — a view has no host
-// until the board has something to label its rail button with.
-const REQUIRED_FIELDS = { view: ['label'] };
+// until the board has something to label its rail button with, and a
+// dispatch.field has no sensible DEFAULT place in a form: a control that lands
+// in the wrong block is worse than one that fails to register, so `at` is
+// required and checked against DISPATCH_ANCHORS below.
+const REQUIRED_FIELDS = { view: ['label'], 'dispatch.field': ['at'] };
 
 // Every contribution owns exactly ONE element per host element, created here and
 // handed to mount(el, api) once — `c.mounts` is that host -> element map. A
@@ -50,7 +64,7 @@ const REQUIRED_FIELDS = { view: ['label'] };
 // in every host, the error reported) while every other contribution carries on —
 // the same lesson as module-syntax.test.js's blank-dashboard incident, applied
 // at run time to code the core does not own.
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], version = null }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   const apis = new Map();
   // extId -> Set<fn>: the INBOUND half of the per-extension api, the mirror of
@@ -60,6 +74,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // that type, so one extension can never hear another's frames however the
   // payload is shaped.
   const listeners = new Map();
+  // `extId:name` pairs already reported by hiddenDispatchFields(), so an
+  // undeclared veto prints once for the life of the page rather than once per
+  // recompute.
+  const hideReported = new Set();
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -196,9 +214,19 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // contribution's view and must hold nothing else. The keep-set is therefore
   // computed per contribution — an unaddressed host is not a host that
   // contribution should be torn out of, it is one that was never its.
+  //
+  // `at` is the second, INDEPENDENT entry filter and the group-shaped version
+  // of exactly that argument: `only` names ONE contribution's own host, `at`
+  // names a GROUP of contributions' shared anchor (the dispatch modal's three
+  // anchor hosts, each holding every contribution addressed to it). The
+  // conclusion is the same in both shapes — a host this contribution was not
+  // addressed to is not one to tear it out of, it was never its. They stay two
+  // filters; folding `at` into `only` would lose the group case.
   function sync(slotName, entries, baseApi, withUpdate) {
     for (const c of [...slotList(slotName)]) {
-      const mine = entries.filter((e) => !e.only || (e.only.extId === c.extId && e.only.id === c.id));
+      const mine = entries.filter((e) =>
+        (!e.only || (e.only.extId === c.extId && e.only.id === c.id))
+        && (!e.at || e.at === c.at));
       const keep = new Set(mine.map((e) => e.host));
       for (const host of [...c.mounts.keys()]) if (!keep.has(host)) teardownAt(c, host);
       for (const { host, session, graph } of mine) {
@@ -215,6 +243,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       if (typeof contribution.mount !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} has no mount function`);
       for (const field of REQUIRED_FIELDS[slotName] || []) {
         if (typeof contribution[field] !== 'string' || !contribution[field]) throw new Error(`[ext:${extId}] ${contribution.id} in ${slotName} has no ${field}`);
+      }
+      // Dispatch-modal specifics. Both THROW, like every other register-time
+      // refusal: a typo must fail at load, not render nowhere.
+      if (slotName === 'dispatch.field') {
+        if (!DISPATCH_ANCHORS.includes(contribution.at)) throw new Error(`[ext:${extId}] ${contribution.id} has an unknown dispatch anchor "${contribution.at}" (known: ${DISPATCH_ANCHORS.join(', ')})`);
+        if (contribution.hides != null && (!Array.isArray(contribution.hides) || contribution.hides.some((f) => typeof f !== 'string' || !f))) {
+          throw new Error(`[ext:${extId}] ${contribution.id} hides must be an array of dispatch field names`);
+        }
       }
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
@@ -301,7 +337,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // own entry's session — the one thing `update` below cannot do, since it
     // knows only one. Returns the number of mounted elements across all hosts.
     syncHosts(slotName, entries, baseApi = {}, graph = null) {
-      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, only: e.only ?? null, graph }));
+      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, only: e.only ?? null, at: e.at ?? null, graph }));
       sync(slotName, rows, baseApi, true);
       return slotList(slotName).reduce((n, c) => n + c.mounts.size, 0);
     },
@@ -314,6 +350,85 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const c of [...slotList(slotName)]) {
         for (const host of [...c.mounts.keys()]) if (!updateAt(slotName, c, host, session, graph)) break;
       }
+    },
+
+    // The core dispatch-modal fields the live `dispatch.field` contributions
+    // want hidden, deduped. TWO keys, and the asymmetry is the point:
+    //
+    //   - fails CLOSED on authority. A name is honoured only if the
+    //     extension's MANIFEST declared it (`hideDispatchField`, carried to the
+    //     board on the `extensions` announcement and graph.extensions and read
+    //     back through hideDispatchFieldsFor). An undeclared name is dropped
+    //     and reported — the browser half may never widen what the server half
+    //     disclosed, the same rule as `send`.
+    //   - fails OPEN on health. Only a contribution with a live element counts,
+    //     so the existing "a throwing contribution is REMOVED" rule takes the
+    //     veto with it and the core row comes back on the next sync.
+    //
+    // Reporting is deduped per `extId:name`: app.js recomputes this on modal
+    // open, on every model change and on every syncWorkflow, so a misconfigured
+    // extension would otherwise print a line per interaction.
+    hiddenDispatchFields() {
+      const out = new Set();
+      for (const c of slotList('dispatch.field')) {
+        if (c.mounts.size === 0 || !Array.isArray(c.hides)) continue;
+        const declared = hideDispatchFieldsFor(c.extId) || [];
+        for (const name of c.hides) {
+          if (declared.includes(name)) { out.add(name); continue; }
+          const key = `${c.extId}:${name}`;
+          if (hideReported.has(key)) continue;
+          hideReported.add(key);
+          onError(`[ext:${c.extId}] ${c.id} cannot hide "${name}": not in this extension's manifest hideDispatchField (${declared.join(', ') || 'none'})`);
+        }
+      }
+      return [...out];
+    },
+
+    // The payload half: every live contribution's `fields(el)` return, merged
+    // over each other in REGISTRATION order and spread over core's own read by
+    // the caller (app.js readDispatchFields).
+    //
+    // A dispatch.field contribution has at most ONE element — its `at` matches
+    // exactly one anchor host — so the single entry of `c.mounts` is taken
+    // rather than looped over silently.
+    //
+    // `undefined` VALUES are dropped: a contribution saying "no opinion" must
+    // not blank a core field. `null` is a real value and is kept — `|| undefined`
+    // is core's own idiom in readCoreDispatchFields, not this slot's to impose.
+    // A key a previous contribution already wrote is a COLLISION: reported, last
+    // write wins, because two extensions fighting over one payload key is a
+    // config problem a human has to see. A throwing `fields()` REMOVES the
+    // contribution, unlike a throwing onMessage listener: report-and-keep would
+    // leave a broken extension still holding its `hides` veto while contributing
+    // nothing to the payload, and removing it is what makes that veto fail open.
+    //
+    // `ctx` is accepted but not passed on — the contribution signature is
+    // `fields(el)` — so the merge site has one call shape and a later minor can
+    // widen to `fields(el, ctx)` without touching the caller.
+    dispatchFields(ctx) {
+      const out = {};
+      const writer = new Map();
+      for (const c of [...slotList('dispatch.field')]) {
+        const el = [...c.mounts.values()][0];
+        if (!el || typeof c.fields !== 'function') continue;
+        let got;
+        try {
+          got = c.fields(el);
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
+          drop('dispatch.field', c);
+          continue;
+        }
+        if (!got || typeof got !== 'object') continue;
+        for (const [key, value] of Object.entries(got)) {
+          if (value === undefined) continue;
+          const prev = writer.get(key);
+          if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
+          writer.set(key, `[ext:${c.extId}] ${c.id}`);
+          out[key] = value;
+        }
+      }
+      return out;
     },
 
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a

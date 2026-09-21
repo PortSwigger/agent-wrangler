@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SLOT_NAMES, createSlots, namespacedStorage } from './slots.js';
+import { SLOT_NAMES, DISPATCH_ANCHORS, createSlots, namespacedStorage } from './slots.js';
 
 // A DOM stub sufficient for the mount/update bookkeeping — no jsdom, matching
 // the rest of public/'s tests.
@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   slots.register('view', 'x', { id: 'v', label: 'Jobs', mount() {} });
@@ -417,4 +417,128 @@ test('the per-extension api carries the same onMessage, bound to its own id', ()
   assert.equal(slots.dispatchMessage({ type: 'ext:fake', n: 7 }), 1);
   assert.equal(slots.dispatchMessage({ type: 'ext:other', n: 8 }), 0);
   assert.deepEqual(seen, [7]);
+});
+
+
+// ── The `dispatch.field` slot ─────────────────────────────────────────────
+// The first slot that shapes a CORE form. Entries carry `at` — the group-shaped
+// twin of `only` — and a contribution may veto named core rows through `hides`,
+// which is filtered against what its MANIFEST disclosed.
+function dispatchHarness(declared = {}) {
+  return harness({ hideDispatchFieldsFor: (id) => declared[id] || [] });
+}
+
+test('register refuses a dispatch.field with no anchor, a bad anchor, or a bad hides', () => {
+  const { slots } = dispatchHarness();
+  assert.deepEqual(DISPATCH_ANCHORS, ['top', 'model', 'advanced']);
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'a', mount() {} }), /in dispatch\.field has no at/);
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'a', at: 'sidebar', mount() {} }), /unknown dispatch anchor "sidebar"/);
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'a', at: 'model', hides: 'effort', mount() {} }), /hides must be an array/);
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'a', at: 'model', hides: [''], mount() {} }), /hides must be an array/);
+  slots.register('dispatch.field', 'x', { id: 'a', at: 'model', hides: ['effort'], mount() {} });
+});
+
+test('syncHosts routes each dispatch.field contribution to its own anchor, and shares one anchor', () => {
+  const { document, slots } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {} });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {} });
+  slots.register('dispatch.field', 'c', { id: 'three', at: 'advanced', mount() {} });
+  slots.register('dispatch.field', 'd', { id: 'four', at: 'model', mount() {} });
+  const top = document.make(); const model = document.make(); const advanced = document.make();
+  slots.syncHosts('dispatch.field', [
+    { host: top, at: 'top' }, { host: model, at: 'model' }, { host: advanced, at: 'advanced' },
+  ]);
+  assert.deepEqual(top.children.map((c) => c.dataset.ext), ['a']);
+  // Unlike `only`, an anchor is a GROUP: every contribution addressed to it lands there.
+  assert.deepEqual(model.children.map((c) => c.dataset.ext), ['b', 'd']);
+  assert.deepEqual(advanced.children.map((c) => c.dataset.ext), ['c']);
+});
+
+test('an entry with no `at` still reaches every contribution (card.pill is unchanged)', () => {
+  const { document, slots } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {} });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {} });
+  const host = document.make();
+  slots.syncHosts('dispatch.field', [{ host }]);
+  assert.equal(host.children.length, 2);
+});
+
+test('a dispatch.field whose anchor host is omitted is torn down', () => {
+  const { document, slots } = dispatchHarness();
+  const unmounted = [];
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, unmount: () => unmounted.push('a') });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {} });
+  const top = document.make(); const model = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }]);
+  slots.syncHosts('dispatch.field', [{ host: model, at: 'model' }]);
+  assert.deepEqual(unmounted, ['a']);
+  assert.equal(top.children.length, 0);
+  assert.equal(model.children.length, 1);
+  // The subagent case: no hosts at all tears everything down.
+  slots.syncHosts('dispatch.field', []);
+  assert.equal(model.children.length, 0);
+});
+
+test('dispatchFields merges in registration order, drops undefined and keeps null', () => {
+  const { document, slots } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, fields: () => ({ effort: 'low', model: undefined, taskId: null }) });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {}, fields: () => 'nope' });
+  slots.register('dispatch.field', 'c', { id: 'three', at: 'advanced', mount() {} });
+  const top = document.make(); const model = document.make(); const advanced = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }, { host: advanced, at: 'advanced' }]);
+  assert.deepEqual(slots.dispatchFields({}), { effort: 'low', taskId: null });
+});
+
+test('dispatchFields reports a colliding key and lets the last writer win', () => {
+  const { document, slots, errors } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, fields: () => ({ effort: 'low' }) });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {}, fields: () => ({ effort: 'high' }) });
+  const top = document.make(); const model = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }]);
+  assert.deepEqual(slots.dispatchFields({}), { effort: 'high' });
+  assert.match(errors.join('\n'), /overwrites dispatch field "effort"/);
+});
+
+test('an unmounted dispatch.field contributes no payload and no veto', () => {
+  const { slots } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', hides: ['effort'], mount() {}, fields: () => ({ effort: 'low' }) });
+  assert.deepEqual(slots.dispatchFields({}), {});
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+});
+
+test('a throwing fields() removes the contribution, and its veto goes with it', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', {
+    id: 'one', at: 'top', hides: ['effort'], mount() {},
+    fields() { throw new Error('boom'); },
+  });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), ['effort']);
+  assert.deepEqual(slots.dispatchFields({}), {});
+  assert.match(errors.join('\n'), /fields failed — contribution removed/);
+  assert.deepEqual(slots.contributions('dispatch.field'), []);
+  assert.equal(top.children.length, 0);
+  // Fails OPEN on health: the core row comes back.
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+});
+
+test('hiddenDispatchFields honours only what the manifest disclosed, and reports once', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', hides: ['effort', 'cwd'], mount() {} });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), ['effort']);
+  slots.hiddenDispatchFields();
+  slots.hiddenDispatchFields();
+  assert.equal(errors.filter((e) => /cannot hide "cwd"/.test(e)).length, 1);
+});
+
+test('hiddenDispatchFields fails closed for an extension the board has heard nothing about', () => {
+  const { document, slots, errors } = harness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', hides: ['effort'], mount() {} });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+  assert.match(errors.join('\n'), /cannot hide "effort"/);
 });
