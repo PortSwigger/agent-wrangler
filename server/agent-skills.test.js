@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { skillEntries, codexSkillCatalog, mandatorySkillPrompt, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR } from './agent-skills.js';
+import {
+  skillEntries, allSkillEntries, codexSkillCatalog, mandatorySkillPrompt,
+  extensionSkillPluginDirs, extensionSkillDirs, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR,
+} from './agent-skills.js';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-skills-'));
@@ -125,8 +128,8 @@ test('checklist:false drops the checklist skill from the mandatory nudge and the
 
 // A disabled extension's skill ids (the loader's `disabledSkillIds`) drop from
 // both always-on channels; a fake `ext` pins the set rather than whatever this
-// developer's config.json says. No extension ships a skill yet, so the fixture
-// stands in for the first one that does.
+// developer's config.json says. The id names an IN-REPO skill here — the
+// extension-shipped case is at the bottom of this file.
 test('a disabled extension\'s skill ids drop from the mandatory nudge and the Codex catalog — nothing else', () => {
   const root = fixture();
   const base = { taskMemory: true, checklist: true };
@@ -172,4 +175,91 @@ test('taskMemory:false drops task-memory from the mandatory nudge and the Codex 
   const on = { taskMemory: true };
   assert.match(mandatorySkillPrompt(root, on), /AW_TASK_MEMORY/);
   assert.match(codexSkillCatalog(root, on), /task-memory/);
+});
+
+// ── Extension-shipped skills ──────────────────────────────────────────────
+// An installed extension ships its skills the same way the repo does, under
+// its own `<dir>/skills/<name>/SKILL.md`. The fake registry entries below are
+// the loader's list rows (id/dir/skills), which is all the catalog reads.
+
+function extFixture(id, name, nudge = '') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `aw-ext-${id}-`));
+  const skillDir = path.join(dir, 'skills', name);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: Shipped by ${id}\n---\n\nBody.\n`);
+  if (nudge) fs.writeFileSync(path.join(skillDir, 'WRANGLER.md'), `${nudge}\n`);
+  return { row: { id, dir, skills: [name] }, skillDir };
+}
+
+const registry = (...rows) => ({ list: rows, disabledSkillIds: [] });
+const BOTH_ON = { taskMemory: true, checklist: true };
+
+test('an extension\'s own skills/ joins the catalog, tagged with the extension that ships it', () => {
+  const root = fixture();
+  const { row, skillDir } = extFixture('jobs', 'job-worker', 'Report every step with job_report.');
+  const ext = registry(row);
+  const entry = allSkillEntries(root, ext).find((e) => e.name === 'job-worker');
+  assert.deepEqual({ extId: entry.extId, dir: entry.dir }, { extId: 'jobs', dir: skillDir });
+  assert.match(codexSkillCatalog(root, { ...BOTH_ON, ext }), new RegExp(`- job-worker — Shipped by jobs — ${skillDir}/SKILL\\.md`));
+  assert.match(mandatorySkillPrompt(root, { ...BOTH_ON, ext }), /job_report/);
+  // Claude meets it as a plugin of its own; the in-repo root is not in this list.
+  assert.deepEqual(extensionSkillPluginDirs(root, { ...BOTH_ON, ext }), [skillDir]);
+  assert.deepEqual(extensionSkillDirs(ext), [{ extId: 'jobs', name: 'job-worker', dir: skillDir }]);
+});
+
+test('a skill the manifest does not declare stays content: no gate can narrow it and no toggle can drop it', () => {
+  const root = fixture();
+  const { row } = extFixture('jobs', 'job-worker');
+  fs.mkdirSync(path.join(row.dir, 'skills', 'stowaway'), { recursive: true });
+  fs.writeFileSync(path.join(row.dir, 'skills', 'stowaway', 'SKILL.md'), '---\nname: stowaway\ndescription: Undeclared\n---\n\nBody.\n');
+  const names = allSkillEntries(root, registry(row)).map((e) => e.name);
+  assert.ok(names.includes('job-worker'));
+  assert.ok(!names.includes('stowaway'));
+});
+
+test('the per-launch gate decides an extension skill\'s --plugin-dir, not just its nudge', () => {
+  const root = fixture();
+  const { row, skillDir } = extFixture('jobs', 'job-worker', 'Report every step with job_report.');
+  const ext = registry(row);
+  const gated = { ...BOTH_ON, ext, disabledSkills: ['job-worker'] };
+  assert.deepEqual(extensionSkillPluginDirs(root, gated), [], 'discovery is the only channel most of them have');
+  assert.doesNotMatch(codexSkillCatalog(root, gated), /job-worker/);
+  assert.doesNotMatch(mandatorySkillPrompt(root, gated), /job_report/);
+  // The very next launch, with no gate, sees it again — this is per-session.
+  assert.deepEqual(extensionSkillPluginDirs(root, { ...BOTH_ON, ext }), [skillDir]);
+});
+
+test('a disabled extension\'s shipped skill drops from every channel', () => {
+  const root = fixture();
+  const { row } = extFixture('jobs', 'job-worker', 'Report every step with job_report.');
+  const off = { ...BOTH_ON, ext: { list: [row], disabledSkillIds: ['job-worker'] } };
+  assert.doesNotMatch(codexSkillCatalog(root, off), /job-worker/);
+  assert.doesNotMatch(mandatorySkillPrompt(root, off), /job_report/);
+  assert.deepEqual(extensionSkillPluginDirs(root, off), []);
+});
+
+test('an uninstalled extension is gone from the catalog: the list row IS the registration', () => {
+  const root = fixture();
+  const { row } = extFixture('jobs', 'job-worker');
+  assert.ok(allSkillEntries(root, registry(row)).some((e) => e.name === 'job-worker'));
+  // Its directory may well still be on disk until the restart; nothing reads it.
+  assert.ok(!allSkillEntries(root, registry()).some((e) => e.name === 'job-worker'));
+});
+
+test('an in-repo skill wins a name clash with an extension that ships the same name', () => {
+  const root = fixture();
+  const { row } = extFixture('jobs', 'alpha');
+  const entries = allSkillEntries(root, registry(row)).filter((e) => e.name === 'alpha');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].extId, null, 'the wrangler\'s own copy is the one an agent gets');
+  assert.match(entries[0].path, new RegExp(`^${root}/alpha/SKILL\\.md$`));
+});
+
+test('two extensions shipping one name resolve first-come, never twice', () => {
+  const root = fixture();
+  const first = extFixture('jobs', 'job-worker');
+  const second = extFixture('other', 'job-worker');
+  const entries = allSkillEntries(root, registry(first.row, second.row)).filter((e) => e.name === 'job-worker');
+  assert.deepEqual(entries.map((e) => e.extId), ['jobs'], 'the loader refuses the second claim; this is the shape of that');
+  assert.notEqual(second.skillDir, first.skillDir);
 });

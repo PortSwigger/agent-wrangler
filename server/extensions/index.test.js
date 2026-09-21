@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -25,7 +26,7 @@ function manifest(overrides = {}) {
     stores: { fake: () => ({ snapshot: () => ({ n: 1 }) }) },
     handlers: [{ type: 'fake-do', handler() {} }],
     tools: [{ name: 'fake_tool', handler() {} }],
-    skills: ['fake'],
+    skills: ['checklist'],
     graph: ({ host }) => ({ fakes: host.stores.fake.snapshot() }),
     session: { onPurge() {} },
     ...overrides,
@@ -111,14 +112,14 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
   assert.deepEqual(out.list, [{
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
-    requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['fake'], handlerTypes: [],
+    requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['checklist'], handlerTypes: [],
     external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
   assert.deepEqual(out.handlers, []);
   assert.deepEqual(out.skillIds, []);
-  assert.deepEqual(out.disabledSkillIds, ['fake']);
+  assert.deepEqual(out.disabledSkillIds, ['checklist']);
   assert.deepEqual(out.graphContributors, []);
   assert.deepEqual(out.clientManifest, []);
   assert.deepEqual(out.sweeps, []);
@@ -133,7 +134,7 @@ test('enabled: every channel is populated, allowedToolNames is derived from tool
   assert.equal(out.list[0].enabled, true);
   assert.deepEqual(out.allowedToolNames, out.tools.map((t) => t.name));
   assert.deepEqual(out.handlers.map((h) => h.type), ['fake-do']);
-  assert.deepEqual(out.skillIds, ['fake']);
+  assert.deepEqual(out.skillIds, ['checklist']);
   assert.deepEqual(out.disabledSkillIds, []);
   assert.equal(out.graphContributors.length, 1);
   assert.equal(out.graphContributors[0].id, 'fake');
@@ -292,10 +293,10 @@ test('a store factory is handed the core deps bag rather than called bare', () =
 test('createSkillGate returns the declared skills a gate left out, and only those', () => {
   const loaded = loadExtensions({
     cfg: {},
-    builtin: [manifest({ skills: ['alpha', 'beta'], skillsFor: ({ phase }) => (phase === 'dispatch' ? ['alpha'] : ['alpha', 'beta']) })],
+    builtin: [manifest({ skills: ['checklist', 'links'], skillsFor: ({ phase }) => (phase === 'dispatch' ? ['checklist'] : ['checklist', 'links']) })],
   });
   const gate = createSkillGate(loaded);
-  assert.deepEqual(gate({ phase: 'dispatch' }), ['beta']);
+  assert.deepEqual(gate({ phase: 'dispatch' }), ['links']);
   assert.deepEqual(gate({ phase: 'resume' }), []);
 });
 
@@ -303,9 +304,9 @@ test('createSkillGate hands the gate its own declared skills plus its OWN facade
   const seen = [];
   const asked = [];
   const host = { id: 'fake' };
-  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: (ctx) => { seen.push(ctx); return ctx.skills; } })] });
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['checklist'], skillsFor: (ctx) => { seen.push(ctx); return ctx.skills; } })] });
   createSkillGate(loaded, (extId) => { asked.push(extId); return host; })({ sessionId: 'CARD1', phase: 'resume' });
-  assert.deepEqual(seen[0].skills, ['alpha']);
+  assert.deepEqual(seen[0].skills, ['checklist']);
   assert.equal(seen[0].host, host);
   assert.equal(seen[0].stores, undefined, 'the shared bag is gone');
   assert.equal(seen[0].core, undefined);
@@ -316,19 +317,19 @@ test('createSkillGate hands the gate its own declared skills plus its OWN facade
 test('createSkillGate cannot suppress a skill the extension did not declare', () => {
   // The gate's answer is intersected with its own `skills`, so naming someone
   // else's skill (or task-memory, which is not an extension at all) does nothing.
-  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [] })] });
-  assert.deepEqual(createSkillGate(loaded)({}), ['alpha']);
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['checklist'], skillsFor: () => [] })] });
+  assert.deepEqual(createSkillGate(loaded)({}), ['checklist']);
 });
 
 test('a throwing gate suppresses nothing and is reported', () => {
   const errs = [];
-  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'], skillsFor: () => { throw new Error('boom'); } })] });
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['checklist'], skillsFor: () => { throw new Error('boom'); } })] });
   assert.deepEqual(createSkillGate(loaded, undefined, (...a) => errs.push(a))({}), [], 'a bug here must not strip a real launch');
   assert.match(errs[0][0], /\[ext:fake\] skillsFor failed/);
 });
 
 test('no gate at all means no per-launch suppression', () => {
-  assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['alpha'] })] }))({}), []);
+  assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['checklist'] })] }))({}), []);
 });
 
 // ── Per-caller MCP tool filtering ─────────────────────────────────────────
@@ -352,7 +353,7 @@ test('a throwing veto fails OPEN and is reported', () => {
 });
 
 test('a disabled extension contributes neither a gate nor a veto', () => {
-  const off = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ skills: ['alpha'], skillsFor: () => [], hideTool: () => true })] });
+  const off = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ skills: ['checklist'], skillsFor: () => [], hideTool: () => true })] });
   assert.deepEqual(off.skillGates, []);
   assert.equal(createToolFilter(off), null);
 });
@@ -536,7 +537,7 @@ test('quarantineExtension unregisters a late failure by id, leaving its siblings
   const other = manifest({
     id: 'other', label: 'Other', dir: path.join(HERE, 'other'),
     tools: [{ name: 'other_tool', handler() {} }], handlers: [{ type: 'other-do', handler() {} }],
-    stores: { other: () => ({}) }, skills: ['other'], graph: () => ({ others: 1 }), session: { onPurge() {} },
+    stores: { other: () => ({}) }, skills: ['mail'], graph: () => ({ others: 1 }), session: { onPurge() {} },
   });
   const out = loadExtensions({
     cfg: {},
@@ -559,8 +560,8 @@ test('quarantineExtension unregisters a late failure by id, leaving its siblings
   assert.deepEqual(Object.keys(out.dirs), ['other']);
   // Its skill moves from the enabled list to the disabled one: a quarantined
   // extension's skill must be actively suppressed, not merely unmentioned.
-  assert.deepEqual(out.skillIds, ['other']);
-  assert.deepEqual(out.disabledSkillIds, ['fake']);
+  assert.deepEqual(out.skillIds, ['mail']);
+  assert.deepEqual(out.disabledSkillIds, ['checklist']);
 });
 
 // The LIVE REGISTRY half: register/unregister mutate an already-loaded object in
@@ -576,7 +577,7 @@ test('registerExtension stages a manifest into an already-loaded registry', () =
   assert.deepEqual(out.allowedToolNames, ['fake_tool']);
   assert.deepEqual(out.handlers.map((h) => h.type), ['fake-do']);
   assert.deepEqual(Object.keys(out.stores), ['fake']);
-  assert.deepEqual(out.skillIds, ['fake']);
+  assert.deepEqual(out.skillIds, ['checklist']);
   assert.deepEqual(out.clientManifest.map((c) => c.id), ['fake']);
   assert.deepEqual(Object.keys(out.dirs), ['fake']);
   // The names are CLAIMED, not merely listed — a sibling may not take them.
@@ -632,7 +633,7 @@ test('unregisterExtension without remove keeps the row, drops every channel and 
   assert.deepEqual(out.dirs, {});
   assert.deepEqual(out.sessionHooks.onPurge, []);
   assert.deepEqual(out.skillIds, []);
-  assert.deepEqual(out.disabledSkillIds, ['fake'], 'a switched-off extension\'s skill is actively suppressed');
+  assert.deepEqual(out.disabledSkillIds, ['checklist'], 'a switched-off extension\'s skill is actively suppressed');
   assert.equal(out._reg.ids.has('fake'), false);
   assert.equal(out._reg.toolNames.has('fake_tool'), false);
   assert.equal(out._reg.handlerTypes.has('fake-do'), false);
@@ -702,4 +703,78 @@ test('an installed extension\'s asset URLs carry its pinned commit; a builtin\'s
 test('a duplicate id STILL fails while the registry holds it', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest()] });
   assert.throws(() => registerExtension(out, manifest(), { cfg: {} }), /duplicate extension id/);
+});
+
+// ── Extension-shipped skills ──────────────────────────────────────────────
+// A manifest's `skills` may now name a skill the extension SHIPS, under its own
+// `<dir>/skills/<name>/SKILL.md`. Resolution is checked at load time so a typo
+// quarantines instead of naming a directory the catalog has never heard of.
+
+function shippingDir(name, { frontmatterName = name } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ext-ships-'));
+  const skillDir = path.join(dir, 'skills', name);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: ${frontmatterName}\ndescription: Shipped by a test\n---\n\nBody.\n`);
+  return dir;
+}
+
+test('a manifest may declare a skill it ships itself, and the name is CLAIMED like a tool name', () => {
+  const dir = shippingDir('job-worker');
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ dir, skills: ['job-worker'] })] });
+  assert.equal(out.list[0].quarantine, null);
+  assert.deepEqual(out.skillIds, ['job-worker']);
+  assert.ok(out._reg.skillNames.has('job-worker'));
+  // An in-repo name is gated, not shipped, so it claims nothing: several
+  // manifests may gate `checklist`, only one may ship `job-worker`.
+  assert.equal(loadExtensions({ cfg: {}, builtin: [manifest()] })._reg.skillNames.has('checklist'), false);
+});
+
+test('a declared skill that resolves nowhere quarantines, naming the extension and the skill', () => {
+  rejects(manifest({ skills: ['job-worker'] }), /Extension fake: unknown skill "job-worker" — neither agent-skills\/skills\/job-worker in the wrangler nor skills\/job-worker\/SKILL\.md/);
+  // A directory whose frontmatter answers to another name is the same failure:
+  // the catalog would publish it under a name this manifest never declared.
+  const dir = shippingDir('job-worker', { frontmatterName: 'something-else' });
+  rejects(manifest({ dir, skills: ['job-worker'] }), /Extension fake: unknown skill "job-worker"/);
+});
+
+test('shipping a directory that shadows an in-repo skill quarantines rather than resolving either way', () => {
+  const dir = shippingDir('checklist');
+  rejects(manifest({ dir, skills: ['checklist'] }), /Extension fake: skill "checklist" collides with the in-repo skill of the same name/);
+});
+
+test('two extensions shipping one skill name: the second is the one quarantined', () => {
+  const first = shippingDir('job-worker');
+  const second = shippingDir('job-worker');
+  const out = loadExtensions({
+    cfg: {},
+    builtin: [
+      manifest({ dir: first, skills: ['job-worker'] }),
+      manifest({
+        id: 'other', label: 'Other', dir: second, skills: ['job-worker'],
+        stores: {}, handlers: [], tools: [], graph: null, session: {},
+      }),
+    ],
+  });
+  assert.equal(out.list[0].quarantine, null, 'first come wins, exactly as a tool name does');
+  assert.match(out.list[1].quarantine, /skill name "job-worker" is already registered/);
+  assert.deepEqual(out.skillIds, ['job-worker']);
+});
+
+test('unregistering releases a shipped skill name, so a reinstall can claim it again', () => {
+  const dir = shippingDir('job-worker');
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ dir, skills: ['job-worker'] })] });
+  unregisterExtension(out, 'fake', { remove: true });
+  assert.equal(out._reg.skillNames.has('job-worker'), false);
+  assert.deepEqual(out.skillIds, []);
+  assert.deepEqual(out.disabledSkillIds, [], 'an uninstalled extension is neither nudged nor suppressed');
+  assert.equal(registerExtension(out, manifest({ dir, skills: ['job-worker'] }), { cfg: {} }).quarantine, null);
+  assert.deepEqual(out.skillIds, ['job-worker']);
+});
+
+test('a disabled extension claims no skill name, but its row still says what it ships', () => {
+  const dir = shippingDir('job-worker');
+  const out = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ dir, skills: ['job-worker'] })] });
+  assert.deepEqual(out.list[0].skills, ['job-worker'], 'the catalog reads dir+skills off the row');
+  assert.deepEqual(out.disabledSkillIds, ['job-worker']);
+  assert.equal(out._reg.skillNames.has('job-worker'), false);
 });

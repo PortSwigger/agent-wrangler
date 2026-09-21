@@ -82,7 +82,7 @@ export default {
   stores:   { checklist: ({ core }) => new ChecklistStore() },  // factories, instantiated once by index.js
   handlers: [ /* control-WS handlers {type, handler} */ ],
   tools:    [ /* MCP tools {name, description, inputSchema, handler} */ ],
-  skills:   ['checklist'],          // agent-skills/skills/<name>
+  skills:   ['checklist'],          // agent-skills/skills/<name>, or <dir>/skills/<name> of its own
   skillsFor: ({ sessionId, entry, phase, skills, stores, core }) => skills,  // per-launch narrowing
   hideTool: ({ caller, tool, stores, core }) => false,   // per-caller MCP veto
   graph:    ({ stores }) => ({ checklists: stores.checklist.snapshot() }),
@@ -117,7 +117,10 @@ for: a bad or duplicate id, a tool without `name`/`handler`, a handler without
 `type`/`handler`, a store that is not a factory, a non-function `skillsFor` or
 `hideTool`, a `requires` that is not an array of strings or names a capability
 outside `CAPABILITIES`, an `engines.wranglerApi` that is not a valid semver
-range, an unknown `session` hook name (the known set is `SESSION_HOOKS`:
+range, a `skills` name that resolves to neither an in-repo
+`agent-skills/skills/<name>` nor the manifest's own
+`<dir>/skills/<name>/SKILL.md` (and one that resolves to BOTH, which would be a
+shipped directory shadowing a wrangler skill), an unknown `session` hook name (the known set is `SESSION_HOOKS`:
 `onBeforeDispatch`, `onArchive`, `onFork`, `onPurge`, `onDispatch`,
 `onResume`), a sweep without a positive finite `everyMs`, and a `client` or
 `styles` path that does not resolve inside the manifest's own `public/`.
@@ -519,10 +522,38 @@ resume keeps the list, a fork starts empty, archive keeps it, only a purge
 forgets — so the ABSENCE of `onFork`/`onArchive` is itself worth a test in that
 manifest's own directory.
 
+## Skills an extension ships
+
+A manifest's `skills` names either one of the wrangler's own
+`agent-skills/skills/<name>` — all it could name at first, and still how it
+gates one — or a skill it SHIPS at `<dir>/skills/<name>/SKILL.md`, in exactly
+the in-repo layout (sidecar `WRANGLER.md` included). `agent-skills.js`'s
+`allSkillEntries` is where the two are merged, off the loader's list rows
+(`id`/`dir`/`skills`) on every call, so an install adds a skill and an uninstall
+takes it away at the next launch with nothing to invalidate.
+
+Names are one flat namespace keyed by the frontmatter `name`. The in-repo skill
+wins any clash and the second extension to ship a name is quarantined — the
+loader claims a SHIPPED name in `_reg.skillNames` exactly as it claims a tool
+name, and releases it on unregister. An in-repo name claims nothing: several
+manifests may gate `checklist`.
+
+The two always-on channels need nothing new (the entry carries its own absolute
+`path` and `nudge`), but Claude's discovery does: an extension's skill is
+outside `AGENT_SKILLS_PLUGIN_DIR`, so each ACTIVE one rides as a
+`--plugin-dir` of its own (`extensionSkillPluginDirs`, a directory holding a
+SKILL.md loads as a one-skill plugin). That list is GATED where the in-repo root
+is not, and deliberately: most extension skills carry no `WRANGLER.md`, so
+discovery is their only channel and leaving a suppressed one on the command line
+would make `skillsFor` decide nothing for Claude. The devcontainer runtime
+copies every installed extension's skill dirs in beside the in-repo plugin root
+(`launchInputs`), ungated, since the gate has answered by then.
+
 ## Per-launch skill gating
 
 A manifest's `skills` list is all-or-nothing: a disabled extension's skills drop
-out of the mandatory nudge and the Codex catalog for every session. A feature
+out of the mandatory nudge, the Codex catalog and — when the extension ships it
+— Claude's plugin list, for every session. A feature
 whose launches are of two kinds — an automation run versus an ordinary one —
 needs the same call made per session, which is what `taskMemoryEnabled`'s
 hand-threaded boolean does for the one non-extension case.

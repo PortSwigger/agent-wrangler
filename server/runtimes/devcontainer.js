@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
-import { AGENT_SKILLS_PLUGIN_DIR } from '../agent-skills.js';
+import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillDirs } from '../agent-skills.js';
 import { addDirFor } from '../memory-store.js';
 import { analyzeLines, usageSince } from '../transcript-reader.js';
 import { statusOf } from '../claude-paths.js';
@@ -97,6 +97,14 @@ export function launchInputs(sessionId, { workflow = false } = {}) {
     { src: PR_HOOK_DEP_PATH, dest: `${base}/server/pr-hook.js`, substitute: false },
   ];
   if (workflow) inputs.push({ src: ISSUE_TO_PR_SKILL_DIR, dest: `${base}/issue-to-pr` });
+  // An extension's skill is a --plugin-dir of its own (agents/claude.js), and
+  // that path is on the HOST. Every installed one is copied, not just the ones
+  // this launch's gate kept: the gate has already answered by the time the
+  // inner command exists, and a dir copied but never named costs kilobytes
+  // where one named but not copied is a plugin path the container does not
+  // have. Namespaced by extension id — skill names are unique across the
+  // catalog, their directory names are not.
+  for (const { extId, name, dir } of extensionSkillDirs()) inputs.push({ src: dir, dest: `${base}/ext-skills/${extId}/${name}` });
   return inputs;
 }
 
@@ -113,8 +121,10 @@ export function buildPaneScript({
 }) {
   const wf = shellQuote(hostDir);
   let translated = inner;
-  // Order-independent today: every input's src is a distinct, non-prefixing path. If a src ever became a prefix of another, translate longest-first to avoid a partial-match corruption.
-  for (const { src, dest, substitute = true } of inputs) {
+  // LONGEST src first: an extension's skill dirs are siblings under one
+  // skills/, and one name can prefix another (skills/a, skills/ab), so
+  // substituting the shorter path first would rewrite the head of the longer.
+  for (const { src, dest, substitute = true } of [...inputs].sort((a, b) => b.src.length - a.src.length)) {
     if (substitute) translated = translated.split(src).join(dest);
   }
   translated = rewriteHostUrls(translated, hostAddr);

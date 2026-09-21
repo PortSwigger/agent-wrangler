@@ -1,63 +1,42 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { taskMemoryEnabled, checklistEnabled } from './config-store.js';
 import { getExtensions } from './extensions/index.js';
+import { AGENT_SKILLS_PLUGIN_DIR, SKILLS_ROOT, skillsIn } from './skill-catalog.js';
 
-// The wrangler-meta skills ship in-repo under agent-skills/. Resolved from this
-// module's own path (server/ → repo root → agent-skills), so the running install
-// — worktree or merged main checkout — points at its own bundled copy, and the
-// paths survive an arbitrary or changing session cwd. AGENT_SKILLS_PLUGIN_DIR is
-// the plugin root Claude loads via --plugin-dir; SKILLS_ROOT holds the skill dirs
-// the Codex catalog reads.
-export const AGENT_SKILLS_PLUGIN_DIR = fileURLToPath(new URL('../agent-skills', import.meta.url));
-export const SKILLS_ROOT = path.join(AGENT_SKILLS_PLUGIN_DIR, 'skills');
+// Re-exported rather than relocated: the adapters and the devcontainer runtime
+// ask THIS module where the skills are, and skill-catalog.js exists only
+// because the loader needs the same reader and cannot import this one.
+export { AGENT_SKILLS_PLUGIN_DIR, SKILLS_ROOT } from './skill-catalog.js';
 
-// Minimal frontmatter read: the leading --- block's `name` and `description`
-// lines. Avoids a YAML dependency — the only fields we need are simple scalars on
-// their own line. Returns null when there is no parseable name. Deliberately
-// reads only the two fields Anthropic's skill format defines — SKILL.md stays a
-// portable, standard skill definition; wrangler-specific config never lives here
-// (see readNudge below).
-function readFrontmatter(file) {
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
-  const block = m[1];
-  const field = (key) => {
-    const fm = block.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-    return fm ? fm[1].trim() : '';
-  };
-  const name = field('name');
-  if (!name) return null;
-  return { name, description: field('description') };
-}
-
-// Wrangler-specific per-skill config lives in a sidecar WRANGLER.md next to
-// SKILL.md, never inside the skill's own frontmatter — "must be force-injected
-// at launch" is a wrangler orchestration decision, not skill content, and a
-// sidecar keeps it colocated with the skill it modifies (renaming a skill dir
-// can't drift it out of sync, unlike a name-keyed registry elsewhere). Its raw
-// (trimmed) content IS the nudge text; the file's mere presence marks a skill
-// mandatory. Absence (the common case) means '' — discovery-only.
-function readNudge(skillDir) {
-  try { return fs.readFileSync(path.join(skillDir, 'WRANGLER.md'), 'utf8').trim(); } catch { return ''; }
-}
-
-// One entry per agent-skills/skills/<dir>/SKILL.md, sorted by name. `path` is the
-// absolute SKILL.md path — what the Codex catalog points at and what makes reads
-// cwd-independent. `nudge` is '' unless the skill is mandatory (see
-// mandatorySkillPrompt). Dirs lacking a parseable SKILL.md frontmatter are skipped.
+// The in-repo skills alone — what the one plugin root ships, whatever any
+// extension or flag says. Deliberately unfiltered (see activeSkillEntries).
 export function skillEntries(skillsRoot = SKILLS_ROOT) {
-  let dirents;
-  try { dirents = fs.readdirSync(skillsRoot, { withFileTypes: true }); } catch { return []; }
-  const entries = [];
-  for (const d of dirents) {
-    if (!d.isDirectory()) continue;
-    const dir = path.join(skillsRoot, d.name);
-    const fm = readFrontmatter(path.join(dir, 'SKILL.md'));
-    if (fm) entries.push({ name: fm.name, description: fm.description, nudge: readNudge(dir), path: path.join(dir, 'SKILL.md') });
+  return skillsIn(skillsRoot);
+}
+
+// The whole catalog: the in-repo skills PLUS the ones each registered extension
+// ships under its own `<dir>/skills/<name>/SKILL.md`, tagged with the extension
+// id. Derived from the live registry on every call, exactly as the disabled
+// lists are, so an install adds a skill and an uninstall takes it away at the
+// next launch with nothing to invalidate.
+//
+// Two rules, and neither is a policy of its own: the IN-REPO skill wins a name
+// clash, and an extension may only publish a name its manifest DECLARED. The
+// loader refuses both cases outright (validateManifest / stageExtension claim
+// skill names the way they claim tool names), so what is left here is the shape
+// of that refusal — a quarantined manifest whose directory is still on disk
+// must not reach an agent through the back door.
+export function allSkillEntries(skillsRoot = SKILLS_ROOT, ext = getExtensions()) {
+  const entries = skillEntries(skillsRoot);
+  const seen = new Set(entries.map((e) => e.name));
+  for (const { id, dir, skills } of ext.list || []) {
+    if (!dir || !skills?.length) continue;
+    const declared = new Set(skills);
+    for (const entry of skillsIn(path.join(dir, 'skills'), id)) {
+      if (!declared.has(entry.name) || seen.has(entry.name)) continue;
+      seen.add(entry.name);
+      entries.push(entry);
+    }
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -70,8 +49,10 @@ export function skillEntries(skillsRoot = SKILLS_ROOT) {
 // checklist whose MCP tools aren't registered and whose panel isn't rendered —
 // so each drops out of BOTH always-on channels, the mandatory nudge and the
 // Codex catalog. Only those: the env/symlink plumbing and the stored checklists
-// stay intact, and Claude's --plugin-dir still lists the skill as discoverable,
-// which is inert without the nudge. Both are options (defaulting to live
+// stay intact, and Claude's --plugin-dir still lists an IN-REPO skill as
+// discoverable, which is inert without the nudge — an extension's own skill is
+// the one case where this filter reaches the plugin list too, see
+// extensionSkillPluginDirs. Both are options (defaulting to live
 // config / the boot-loaded extensions) so tests never touch the shared
 // config.json or the loader's memo.
 //
@@ -83,7 +64,7 @@ export function skillEntries(skillsRoot = SKILLS_ROOT) {
 const DISABLEABLE = { 'task-memory': 'taskMemory', checklist: 'checklist' };
 function activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills = [] }) {
   const flags = { taskMemory, checklist };
-  return skillEntries(skillsRoot).filter((e) => {
+  return allSkillEntries(skillsRoot, ext).filter((e) => {
     const flag = DISABLEABLE[e.name];
     if (flag) return flags[flag];
     if (disabledSkills.includes(e.name)) return false;
@@ -114,4 +95,31 @@ export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskM
     + 'descriptions below, read the corresponding SKILL.md file at the given absolute '
     + 'path for the full instructions before acting. The files are read-only.\n\n'
     + lines.join('\n');
+}
+
+// The extra `--plugin-dir` paths a Claude launch carries: one per ACTIVE
+// extension-shipped skill. A directory holding a SKILL.md loads as a one-skill
+// plugin (the shape ISSUE_TO_PR_SKILL_DIR already uses), which is the only way
+// a skill outside the in-repo plugin root reaches the agent at all.
+//
+// Gated, unlike the in-repo root, and that asymmetry is the point: an in-repo
+// skill stays listed when its flag is off because the nudge is what made it
+// mandatory, while most extension skills carry no WRANGLER.md at all — so
+// discovery IS their only channel and leaving a suppressed one on the command
+// line would make `skillsFor` decide nothing for Claude.
+export function extensionSkillPluginDirs(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), ext = getExtensions(), disabledSkills } = {}) {
+  return activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills })
+    .filter((e) => e.extId)
+    .map((e) => e.dir);
+}
+
+// Every extension-shipped skill dir, UNGATED — the devcontainer runtime's copy
+// manifest, built before any launch's gate has answered, so it has to be a
+// superset of whatever --plugin-dir ends up naming. A dir copied in and never
+// named costs a handful of kilobytes; one named and not copied is a plugin path
+// that does not exist inside the container.
+export function extensionSkillDirs(ext = getExtensions()) {
+  return allSkillEntries(SKILLS_ROOT, ext)
+    .filter((e) => e.extId)
+    .map((e) => ({ extId: e.extId, name: e.name, dir: e.dir }));
 }
