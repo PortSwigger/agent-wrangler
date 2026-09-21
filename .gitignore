@@ -9,6 +9,7 @@ sessions/
 .idea
 docs/*
 !docs/images/
+!docs/extensions.md
 
 # Beads / Dolt files (added by bd init)
 .dolt/
