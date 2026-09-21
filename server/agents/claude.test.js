@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
 import { claude, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
 import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, modelsWithDefault } from './index.js';
 
@@ -64,6 +67,30 @@ test('every Claude launch/resume/fork loads the wrangler-meta skills plugin', ()
   const resume = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' });
   const fork = claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FORKLIVE', sourceId: 'SRC' });
   for (const cmd of [launch, resume, fork]) assert.match(cmd, /'--plugin-dir' '[^']*\/agent-skills'/);
+});
+
+// An extension's skill is not in the in-repo plugin root, so it rides as a
+// plugin of its own — on every launch path, and only while the gate keeps it.
+// The registry is primed here rather than injected because buildInnerCommand
+// reads the memo directly, exactly as production does.
+test('an extension-shipped skill is a --plugin-dir on every launch path, and the gate takes it away', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ext-skill-'));
+  const skillDir = path.join(dir, 'skills', 'job-worker');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: job-worker\ndescription: The bounded-step protocol.\n---\n\nBody.\n');
+  _resetExtensionsForTests();
+  getExtensions({ cfg: {}, builtin: [{ id: 'jobs', label: 'Jobs', defaultEnabled: true, dir, skills: ['job-worker'] }] });
+  try {
+    const cmds = [
+      claude.buildLaunch({ sessionId: 'SID' }),
+      claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }),
+      claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FORKLIVE', sourceId: 'SRC' }),
+    ];
+    for (const cmd of cmds) assert.match(cmd, new RegExp(`'--plugin-dir' '${skillDir}'`));
+    assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID', disabledSkills: ['job-worker'] }), /job-worker/);
+  } finally {
+    _resetExtensionsForTests();
+  }
 });
 
 test('a plain launch still carries --append-system-prompt for the mandatory-skill nudge (task memory)', () => {

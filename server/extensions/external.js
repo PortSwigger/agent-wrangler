@@ -61,12 +61,19 @@ const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const TEST_DIRS = /^(test|tests|__tests__|spec|__mocks__)$/;
 const TEST_FILES = /\.(test|spec)\.js$/;
 
+// `<root>/skills/` is agent-facing CONTENT, not modules: the wrangler reads
+// SKILL.md out of it and hands the directory to an agent, and nothing in the
+// server's import graph can reach a script a skill ships for its agent to run.
+// Skipped at the root only — a `skills/` directory nested inside the
+// extension's own code is ordinary code.
+const SKILLS_DIR = 'skills';
+
 // Every .js directly under `dir` or in its subdirectories, excluding
 // node_modules — an extension's dependencies are third-party packages that
 // legitimately contain anything, and they are not what this rule is about (they
 // cannot be static-imported by the server's own graph, only by the manifest) —
 // and excluding the extension's own tests, for the same reason.
-function ownJsFiles(dir, out = []) {
+function ownJsFiles(dir, out = [], root = dir) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -77,7 +84,8 @@ function ownJsFiles(dir, out = []) {
     if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (!TEST_DIRS.test(e.name)) ownJsFiles(full, out);
+      if (dir === root && e.name === SKILLS_DIR) continue;
+      if (!TEST_DIRS.test(e.name)) ownJsFiles(full, out, root);
     } else if (e.isFile() && e.name.endsWith('.js') && !TEST_FILES.test(e.name)) out.push(full);
   }
   return out;
