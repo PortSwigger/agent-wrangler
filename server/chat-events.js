@@ -7,6 +7,8 @@
 // A LEAF: no imports from session-manager / state-reader / tmux-scraper / index.
 // Consequence: it unit-tests from a jsonl string with no server and no DOM.
 
+import { stripPastedContentWrapper } from './pasted-content.js';
+
 // Tool input/output is capped because a single Read of a large file, or an
 // `npm test` dump, arrives as one tool_result. Without the cap one file read
 // pushes a multi-megabyte frame over the control socket every poll.
@@ -201,18 +203,6 @@ function textOf(content) {
     .trim();
 }
 
-// Claude Code (2.1+) wraps material the human pasted into the composer in
-// <pasted_content id="…">…</pasted_content id="…"> — both tags carry the same
-// id, which is composer plumbing the human never sees or typed. It is their
-// own words, verbatim, so the wrapper is discarded and the body kept exactly
-// as pasted — the same "their words, not prose to render" rule the bubble
-// itself follows (chat-dom.js). The backreference guards against two
-// unrelated blocks in one message being spliced across each other's tags.
-const PASTED_CONTENT_RE = /<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">/g;
-function stripPastedContentWrapper(text) {
-  return text.replace(PASTED_CONTENT_RE, '$2');
-}
-
 // Claude Code emits an attached image as THREE things in one user message: the
 // prose (with a `[Image #1]` marker where the path used to be), a real base64
 // `image` block, and a trailing text block reading `[Image: source: <abs path>]`.
@@ -229,9 +219,22 @@ const IMAGE_SOURCE_RE = /^\[Image: source: (.+)\]$/;
 // is no key linking it to its source line. Counting them separately and zipping
 // is therefore the most the transcript supports — an image whose source block is
 // missing still gets a chip, just an unnamed one, which is the honest outcome.
+//
+// Returns `rawText` alongside the stripped `text` — pre- and post-
+// stripPastedContentWrapper. The caller's isSynthetic check MUST run against
+// rawText, never text: a message wrapped in <pasted_content> is, by
+// construction, never harness plumbing (only ever a human's own paste), but
+// its BODY can legitimately start with something that looks like a marker
+// (a human pasting literal `<environment_context>...` text to ask about it).
+// Stripping first and then classifying the result would read that body as
+// synthetic and silently drop a real message — the exact bug this ordering
+// avoids.
 function userTextAndImages(content) {
-  if (typeof content === 'string') return { text: stripPastedContentWrapper(content).trim(), images: [] };
-  if (!Array.isArray(content)) return { text: '', images: [] };
+  if (typeof content === 'string') {
+    const rawText = content.trim();
+    return { text: stripPastedContentWrapper(rawText).trim(), rawText, images: [] };
+  }
+  if (!Array.isArray(content)) return { text: '', rawText: '', images: [] };
   const parts = [];
   const sources = [];
   let imageCount = 0;
@@ -246,7 +249,8 @@ function userTextAndImages(content) {
   // A source block with no image block still counts: it is evidence an image was
   // attached, and dropping it would silently under-report the message.
   const total = Math.max(imageCount, sources.length);
-  const text = stripPastedContentWrapper(parts.join('\n')).trim();
+  const rawText = parts.join('\n').trim();
+  const text = stripPastedContentWrapper(rawText).trim();
   // The label comes from the marker IN THE PROSE, not from counting up from one.
   // Claude Code numbers attachments cumulatively per session, so a message's
   // second-ever image is `[Image #10]` — labelling its chip "Image #2" would
@@ -261,7 +265,7 @@ function userTextAndImages(content) {
     // has to stay trivially testable, and one split is cheaper than the import.
     images.push({ label: `Image #${marked[i] ?? i + 1}`, name: src ? src.split('/').pop() : '' });
   }
-  return { text, images };
+  return { text, rawText, images };
 }
 
 // The cheap gate: one indexOf over the raw line is ~100x cheaper than parsing it
@@ -318,8 +322,8 @@ function pushClaude(entry, state) {
   if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') {
     const q = entry.attachment;
     if (q.isMeta || q.commandMode !== 'prompt') return out;
-    const { text, images } = userTextAndImages(q.prompt);
-    if ((text || images.length) && !isSynthetic(text)) {
+    const { text, rawText, images } = userTextAndImages(q.prompt);
+    if ((text || images.length) && !isSynthetic(rawText)) {
       state.queuedSeen.set(text, (state.queuedSeen.get(text) || 0) + 1);
       if (state.queuedSeen.size > MAX_QUEUED_SEEN) {
         state.queuedSeen.delete(state.queuedSeen.keys().next().value); // oldest-out, same idiom as setPending
@@ -356,11 +360,11 @@ function pushClaude(entry, state) {
         if (notice) out.push({ ...notice, ts });
       }
     }
-    const { text, images } = userTextAndImages(msg.content);
+    const { text, rawText, images } = userTextAndImages(msg.content);
     // `images.length` is part of the emit test, not just a decoration: an
     // image-only paste can leave no prose at all, and gating on text alone would
     // drop that turn from the stream entirely.
-    if ((text || images.length) && !isSynthetic(text)) {
+    if ((text || images.length) && !isSynthetic(rawText)) {
       // Already drawn when it was queued. Consumed rather than merely checked, so
       // the same text queued twice still shows twice — and the emit above always
       // precedes this line, since a prompt is enqueued before it can run.

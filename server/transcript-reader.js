@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { CLAUDE_DIR } from './claude-paths.js';
 import { costUsd } from './pricing.js';
+import { stripPastedContentWrapper } from './pasted-content.js';
 
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 
@@ -188,7 +189,13 @@ async function headMeta(file) {
             const t = msg.content.find((b) => b && b.type === 'text' && typeof b.text === 'string');
             if (t) text = t.text;
           }
-          text = (text || '').trim();
+          // Stripped before the leading-'<' gate below, not after: a message
+          // wrapped in <pasted_content id="…"> starts with '<' and would
+          // otherwise be skipped outright, and one that ISN'T fully wrapped
+          // (there's other text before the tag) would summarise with the raw
+          // wrapper still in it — same leak chat-events.js and
+          // search/extract.js strip before their own uses of this text.
+          text = stripPastedContentWrapper((text || '').trim()).trim();
           if (text && !text.startsWith('<')) summary = text.replace(/\s+/g, ' ').slice(0, 80);
         }
         if (cwd && summary) {
@@ -434,7 +441,8 @@ export function scanLine(line, state) {
       const t = msg.content.find((b) => b && b.type === 'text' && typeof b.text === 'string');
       if (t) text = t.text;
     }
-    text = (text || '').trim();
+    // Same pasted_content strip as headMeta above, and for the same reason.
+    text = stripPastedContentWrapper((text || '').trim()).trim();
     if (text && !text.startsWith('<')) state.summary = text.replace(/\s+/g, ' ').slice(0, 80);
   }
 

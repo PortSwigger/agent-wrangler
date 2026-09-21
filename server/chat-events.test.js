@@ -560,6 +560,37 @@ test('two distinct pasted_content wrappers in one message are unwrapped independ
   assert.equal(user.text, 'first and second');
 });
 
+// The classification gate must run on the RAW message, before the wrapper is
+// stripped — otherwise a paste whose body happens to open with a harness
+// marker like <environment_context> reads as synthetic once unwrapped, and a
+// real human message vanishes from the chat entirely.
+test('a pasted message whose body itself starts with a harness marker still renders — the wrapper proves it is human', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<pasted_content id="x"><environment_context>literal text I want reviewed</environment_context></pasted_content id="x">' }],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.ok(user, 'expected the message to render rather than be dropped as synthetic');
+  assert.equal(user.text, '<environment_context>literal text I want reviewed</environment_context>');
+});
+
+// Same ordering bug, on the queued-prompt path — a prompt typed while the
+// session is mid-turn goes through a different branch of pushClaude.
+test('a queued pasted message whose body starts with a harness marker still renders', () => {
+  const { events } = scanChatText(claudeLines(
+    queued('<pasted_content id="x"><environment_context>literal text</environment_context></pasted_content id="x">'),
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.ok(user, 'expected the queued message to render rather than be dropped as synthetic');
+  assert.equal(user.text, '<environment_context>literal text</environment_context>');
+});
+
 test('a chip label follows the marker in the prose, not a count from one (the TUI numbers per session)', () => {
   // Verified against a live session: the second image of a message was
   // [Image #10], so labelling its chip "Image #2" would contradict the text
