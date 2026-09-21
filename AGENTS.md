@@ -555,12 +555,17 @@
   a disabled or uninstalled one is a 404 from the moment it is deregistered — and resolves the rest via `path.resolve` against the
   extension's `public/` with a prefix check, since `join(normalize())` folds a
   climbing `..` back inside instead of rejecting it. A new client slot needs a
-  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it;
+  `SLOT_NAMES` entry in `slots.js` AND a host in `app.js` that mounts it —
+  `dispatch.field` needs THREE (one per anchor) and its entries carry `at`;
   **`view` is the one slot with ONE host PER CONTRIBUTION, and `only` is what
   enforces that** — every other slot's host holds every contribution (a card's
   chip row shows all the pills), so `sync()` computes its keep-set per
   contribution: a host nobody addressed this round is not one to evict from, it
-  is one that was never that contribution's. Its rail button, `.ext-view` host
+  is one that was never that contribution's. **`at` is the second, INDEPENDENT
+  entry filter on that same line, and the GROUP-shaped version of the same
+  argument**: `only` names one contribution's own host, `at` names a group of
+  contributions' shared anchor — same conclusion, so they stay two filters and
+  folding one into the other would lose the group case. Its rail button, `.ext-view` host
   and `#view=ext:<extId>:<id>` route are all DERIVED by `app.js`'s
   `renderExtViews`, called from `syncClientExtensions` (a toggle, not a graph
   tick); `hashView` refuses an unregistered `ext:` key and `renderExtViews`
@@ -605,6 +610,59 @@
   `graph.extensions`. A retired flag's stored value needs carrying over to
   `extensions.<id>` at that point; there is no migration table yet, because
   nothing has been retired.
+- **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
+  hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
+  REQUIRED at register — unlike a panel chip a form has no sensible default
+  place, and a control landing in the wrong block is worse than one that fails
+  to register, so a bad `at` THROWS at load like every other register-time
+  refusal. Entries carry `at` alongside `only`, so one anchor host holds EVERY
+  contribution addressed to it and a contribution is never torn out of a host
+  that was never its. The `model` host sits **outside** `#m-model-row` on
+  purpose: an extension that hides the core model row must not hide its own
+  replacement with it, and getting that wrong is silent, so
+  `dispatch-modal.test.js` asserts the ordering. It is the one slot with **NO
+  graph-tick path** — its hosts exist only while the modal is open and a human
+  is driving it — so `syncDispatchExtFields` hangs off `openModal`, the
+  `#m-model` change listener, `syncWorkflow` and `syncClientExtensions`, and in
+  `subagent` modalMode it is called with an **EMPTY host list** so contributions
+  tear down by omission rather than sitting invisible inside a hidden block.
+  **The veto is TWO keys and fails CLOSED on authority, OPEN on health.** The
+  manifest's `hideDispatchField` is the DISCLOSURE — a static array (never a
+  function: the board must know what an extension may suppress before any of its
+  code runs), validated against the server-side `DISPATCH_FIELDS` set, riding on
+  the `extensions` announcement and `graph.extensions` exactly as `handlerTypes`
+  does. A contribution's `hides` is the per-contribution USE, filtered against
+  it, and an undeclared name is DROPPED and reported: the browser half may never
+  widen what the server half disclosed, the same rule as `send`. The veto holds
+  only while that extension has a LIVE contribution, so the existing "a throwing
+  contribution is removed" rule brings the core row back on its own — which is
+  also why a throwing `fields()` DROPS the contribution rather than being
+  reported-and-kept like an `onMessage` listener: keeping it would leave a
+  broken extension holding its veto while contributing nothing. Hiding is
+  **PRESENTATION ONLY** — the core control keeps its value and
+  `readCoreDispatchFields` still reads it, so an extension that hides a field
+  and does not write the key back gets whatever the hidden control held; that is
+  the single most likely misunderstanding of the feature. **The payload merge
+  lives in the ONE shared read**, which is why scheduled dispatch and the ⌘1/⌘2
+  quick-launch path get it for free, and why `readDispatchFields` had to SPLIT
+  into a core half (`readCoreDispatchFields` — what the ctx's `draft` is, and
+  what the merge spreads over) and the merged whole: miss the split and building
+  a ctx re-enters every `fields()`, which builds a ctx, which… `undefined`
+  values are dropped (a contribution saying "no opinion" must not blank a core
+  field) while `null` is kept, and a second writer of the same key logs a
+  collision and wins. **ANY core key is writable by design**, `cwd` included —
+  guarding it here would be theatre when an extension already runs in-process
+  with full access to the machine and its server half could `sessions:spawn`
+  anything it liked. **`HOST_API_VERSION` 1.6.0**, a vocabulary widening with no
+  new façade key, and the argument runs from both halves at once: an older
+  `slots.js` THROWS on an unknown slot name (so the whole client module fails to
+  load) and an older server quarantines an unknown `hideDispatchField`, so the
+  declared range is the only thing that can say which servers a manifest will
+  load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
+  that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
+  `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
+  **`BUILTIN` stays empty** and its assertion stays: this is API only, and the
+  coverage is test fixtures.
 - **`host.sessions.spawn({ taskId })` binds task memory BEFORE the pane starts,
   and `tasks.assign` after the spawn is NOT the same thing.** The option becomes
   dispatch's `bindMemory`, which points the session's `by-session` symlink at
