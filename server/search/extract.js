@@ -67,6 +67,16 @@ function isSynthetic(text) {
   return SYNTHETIC_PREFIXES.some((p) => head.startsWith(p));
 }
 
+// Claude Code (2.1+) wraps material the human pasted into the composer in
+// <pasted_content id="…">…</pasted_content id="…"> — same wrapper chat-events.js
+// strips before rendering a bubble. A search snippet is a raw byte slice of
+// whatever lands in the corpus (scan-core.js), so this has to be stripped HERE,
+// before the record is written, not at display time.
+const PASTED_CONTENT_RE = /<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">/g;
+function stripPastedContentWrapper(text) {
+  return text.replace(PASTED_CONTENT_RE, '$2');
+}
+
 // Both extractors return { record?, meta? }:
 //   record — { role, text, tsSec } to index
 //   meta   — document-level facts learned from this line (session id, cwd, title),
@@ -82,7 +92,8 @@ export function extractClaudeLine(entry) {
   if (!msg || typeof msg !== 'object' || entry.isMeta) return { meta };
   const role = msg.role === 'user' ? ROLE_USER : msg.role === 'assistant' ? ROLE_ASSISTANT : null;
   if (role === null) return { meta };
-  const text = claudeText(msg.content).trim();
+  let text = claudeText(msg.content).trim();
+  if (role === ROLE_USER) text = stripPastedContentWrapper(text).trim();
   if (!text) return { meta };
   if (role === ROLE_USER && isSynthetic(text)) return { meta };
   return { meta, record: { role, text, tsSec: tsSecOf(entry.timestamp) } };

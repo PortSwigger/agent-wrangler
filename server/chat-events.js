@@ -201,6 +201,18 @@ function textOf(content) {
     .trim();
 }
 
+// Claude Code (2.1+) wraps material the human pasted into the composer in
+// <pasted_content id="…">…</pasted_content id="…"> — both tags carry the same
+// id, which is composer plumbing the human never sees or typed. It is their
+// own words, verbatim, so the wrapper is discarded and the body kept exactly
+// as pasted — the same "their words, not prose to render" rule the bubble
+// itself follows (chat-dom.js). The backreference guards against two
+// unrelated blocks in one message being spliced across each other's tags.
+const PASTED_CONTENT_RE = /<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">/g;
+function stripPastedContentWrapper(text) {
+  return text.replace(PASTED_CONTENT_RE, '$2');
+}
+
 // Claude Code emits an attached image as THREE things in one user message: the
 // prose (with a `[Image #1]` marker where the path used to be), a real base64
 // `image` block, and a trailing text block reading `[Image: source: <abs path>]`.
@@ -218,7 +230,7 @@ const IMAGE_SOURCE_RE = /^\[Image: source: (.+)\]$/;
 // is therefore the most the transcript supports — an image whose source block is
 // missing still gets a chip, just an unnamed one, which is the honest outcome.
 function userTextAndImages(content) {
-  if (typeof content === 'string') return { text: content.trim(), images: [] };
+  if (typeof content === 'string') return { text: stripPastedContentWrapper(content).trim(), images: [] };
   if (!Array.isArray(content)) return { text: '', images: [] };
   const parts = [];
   const sources = [];
@@ -234,7 +246,7 @@ function userTextAndImages(content) {
   // A source block with no image block still counts: it is evidence an image was
   // attached, and dropping it would silently under-report the message.
   const total = Math.max(imageCount, sources.length);
-  const text = parts.join('\n').trim();
+  const text = stripPastedContentWrapper(parts.join('\n')).trim();
   // The label comes from the marker IN THE PROSE, not from counting up from one.
   // Claude Code numbers attachments cumulatively per session, so a message's
   // second-ever image is `[Image #10]` — labelling its chip "Image #2" would

@@ -54,6 +54,15 @@ test('injected turns are skipped', () => {
   assert.equal(codexEnv.record, undefined);
 });
 
+test('a pasted_content wrapper is stripped before indexing, so a search snippet cannot surface it', () => {
+  const user = extractLine(claude({
+    type: 'user',
+    message: { role: 'user', content: '<pasted_content id="e7ce">\nhello world\n</pasted_content id="e7ce">' },
+    timestamp: '2026-08-01T10:00:00.000Z',
+  }), 'claude');
+  assert.equal(user.record.text, 'hello world');
+});
+
 test('doc metadata is picked up off non-message lines', () => {
   const title = extractLine(claude({ type: 'ai-title', aiTitle: 'Rebase help', sessionId: 'sid' }), 'claude');
   assert.equal(title.meta.title, 'Rebase help');

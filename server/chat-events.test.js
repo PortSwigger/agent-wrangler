@@ -529,6 +529,37 @@ test('a user message keeps its line breaks verbatim (the composer sends multi-li
   assert.equal(events.find((e) => e.kind === 'user').text, "I'm seeing this:\n\nERROR: NOT WORKING");
 });
 
+test('a pasted_content wrapper is stripped, keeping the human\'s pasted text verbatim', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Please review:\n<pasted_content id="e7ce">\nhello world\n</pasted_content id="e7ce">\nthanks' }],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.equal(user.text, 'Please review:\n\nhello world\n\nthanks');
+  assert.ok(!user.text.includes('pasted_content'));
+});
+
+test('two distinct pasted_content wrappers in one message are unwrapped independently, by matching id', () => {
+  const { events } = scanChatText(claudeLines(
+    {
+      type: 'user',
+      timestamp: '2026-08-25T10:00:00Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<pasted_content id="aaaa">first</pasted_content id="aaaa"> and <pasted_content id="bbbb">second</pasted_content id="bbbb">' }],
+      },
+    },
+  ), 'claude');
+  const user = events.find((e) => e.kind === 'user');
+  assert.equal(user.text, 'first and second');
+});
+
 test('a chip label follows the marker in the prose, not a count from one (the TUI numbers per session)', () => {
   // Verified against a live session: the second image of a message was
   // [Image #10], so labelling its chip "Image #2" would contradict the text
