@@ -251,14 +251,46 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
       actions.append(toggle);
       row.append(copy, actions);
     } else {
-      const input = el('input', 'ext-setting-input');
-      input.type = def.type === 'number' ? 'number' : 'text';
+      let input;
+      if (def.type === 'select') {
+        input = el('select', 'ext-setting-input');
+        // A leading empty option is the ONLY clearing route a select has —
+        // `''` reaches the handler as "cleared" and constraints are skipped for
+        // it, exactly as an empty text field is.
+        const blank = el('option');
+        blank.value = '';
+        blank.textContent = '';
+        input.append(blank);
+        for (const o of def.options || []) {
+          const opt = el('option');
+          // Property and textContent, never markup: an option's label is
+          // third-party prose off a git URL a colleague pasted.
+          opt.value = o.value;
+          opt.textContent = o.label;
+          input.append(opt);
+        }
+      } else {
+        input = el('input', 'ext-setting-input');
+        input.type = def.type === 'number' ? 'number' : 'text';
+        input.placeholder = def.placeholder || '';
+        // The declared constraints, mirrored onto the native input. An
+        // AFFORDANCE only — the server write path is the enforcement — and set
+        // only when declared, so an unconstrained setting's markup is unchanged.
+        if (def.type === 'number') {
+          for (const k of ['min', 'max', 'step']) if (def[k] != null) input.setAttribute(k, String(def[k]));
+        } else {
+          if (def.maxLength != null) input.maxLength = def.maxLength;
+          if (def.pattern != null) input.setAttribute('pattern', def.pattern);
+        }
+      }
       // Property assignment, never markup: this is third-party prose and a
       // human's own text, and neither goes anywhere near innerHTML.
       input.value = current == null ? '' : String(current);
-      input.placeholder = def.placeholder || '';
       input.setAttribute('aria-label', def.label);
       input.disabled = frozen;
+      // Empty text means invisible, so this reserves no space until the
+      // browser has something to say about the value.
+      const error = el('div', 'setting-error');
       // Committed on `change` (blur or Enter) and on Enter, never per
       // keystroke: a control frame and a config.json write per character is not
       // a thing to ship. An empty field commits as `''` (text) or `null`
@@ -268,6 +300,18 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
       let last = input.value;
       const send = () => {
         if (input.value === last) return;
+        // Native validity, not a second copy of the server's rule engine: the
+        // message a human reads is the browser's own wording, which is the
+        // price of not keeping two sets of strings in step. Optional-called
+        // because the panel's tests drive a hand-rolled DOM — a stub without
+        // the method reads as valid rather than throwing.
+        if (input.checkValidity?.() === false) {
+          error.textContent = input.validationMessage || '';
+          // `last` deliberately NOT moved: leaving it on the rejected text
+          // would make the corrected value look unchanged and swallow the fix.
+          return;
+        }
+        error.textContent = '';
         last = input.value;
         commit(def.type === 'number' ? (last === '' ? null : Number(last)) : last);
       };
@@ -276,7 +320,7 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
       // Beneath the label rather than out in the actions column, exactly like
       // the install field: a URL is long and a 38px-wide switch's slot is not
       // where one goes.
-      copy.append(input);
+      copy.append(input, error);
       row.append(copy);
     }
     wrap.append(row);

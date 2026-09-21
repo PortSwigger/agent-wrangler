@@ -1,4 +1,5 @@
 import { setExtensionSetting } from '../../config-store.js';
+import { checkSettingValue, MAX_TEXT_LENGTH } from '../../extensions/setting-constraints.js';
 
 // CORE-owned, never extension-owned, and that is the whole point: an extension
 // whose own handler could write `extensionSettings.<its id>` would be writing
@@ -11,8 +12,20 @@ import { setExtensionSetting } from '../../config-store.js';
 // A control frame is browser-supplied, so nothing here trusts `type` off the
 // frame: the def's type decides how `value` is read, and a value that does not
 // fit is an error envelope rather than a coercion, because silently storing 0
-// for "" would make the row lie about what is stored.
-export const MAX_TEXT_LENGTH = 2048;
+// for "" would make the row lie about what is stored. A declared constraint
+// (min/max/step, maxLength/pattern, a select's options) is checked the same
+// way, and REJECTED rather than clamped for the same reason.
+//
+// The READ path is deliberately untouched: a value already in config.json that
+// no longer satisfies a constraint — hand-edited, or stored before the manifest
+// tightened — still reaches the extension as-is via `extensionSettings`. An
+// extension keeps its own guard; this gate is about what a human can newly
+// store through the board, not about what is on disk.
+
+// Re-exported, not defined here: the number and the rules that use it live in
+// the leaf so a def's legality and a value's legality cannot drift. This export
+// stays for the existing import sites.
+export { MAX_TEXT_LENGTH };
 
 export const extSettingSetHandler = {
   type: 'ext-setting-set',
@@ -36,10 +49,14 @@ export const extSettingSetHandler = {
         value = n;
       }
     } else {
+      // text and select both: a select's value is one of its declared option
+      // strings, and `''` clears it exactly as it clears a text field.
       if (typeof msg.value !== 'string') throw new Error(`Setting ${entry.id}.${def.key} must be a string`);
       if (msg.value.length > MAX_TEXT_LENGTH) throw new Error(`Setting ${entry.id}.${def.key} is too long (max ${MAX_TEXT_LENGTH} characters)`);
       value = msg.value;
     }
+    const bad = checkSettingValue(def, value);
+    if (bad) throw new Error(`Setting ${entry.id}.${def.key} ${bad}`);
     setExtensionSetting(entry.id, def.key, value);
     // A rebuild and NOT ctx.ext.changed(): nothing about the REGISTRY moved. No
     // handler was registered or removed, no client asset changed, no hideTool

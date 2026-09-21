@@ -139,3 +139,68 @@ test('one extension\'s write leaves another\'s block and its own other keys alon
     });
   });
 });
+
+// -- declared constraints ---------------------------------------------------
+// The panel mirrors these onto the native input, but THIS is the enforcement,
+// and it rejects rather than clamps. Nothing is written on a rejection.
+const CONSTRAINED = [
+  { key: 'pollSeconds', type: 'number', label: 'Poll interval', min: 15, max: 600, step: 15 },
+  { key: 'fine', type: 'number', label: 'Fine', step: 0.1 },
+  { key: 'registryUrl', type: 'text', label: 'Registry URL', maxLength: 30, pattern: 'https://.*' },
+  { key: 'mode', type: 'select', label: 'Mode', options: [{ value: 'fast', label: 'Fast' }, { value: 'slow', label: 'Slow' }] },
+];
+const constrained = () => ctx([{ id: 'demo', label: 'demo', defaultEnabled: true, settings: CONSTRAINED }]);
+const stored = (key) => readConfig().extensionSettings?.demo?.[key];
+
+test('a number outside min/max or off the declared step is rejected, and nothing is written', async () => {
+  await withConfig({}, async () => {
+    const c = constrained();
+    await assert.rejects(() => set(c, { id: 'demo', key: 'pollSeconds', value: 10 }), /Setting demo.pollSeconds must be at least 15/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'pollSeconds', value: 900 }), /Setting demo.pollSeconds must be at most 600/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'pollSeconds', value: 20 }), /Setting demo.pollSeconds must be 15 plus a multiple of 15/);
+    assert.equal(stored('pollSeconds'), undefined, 'a rejected value writes nothing');
+    await set(c, { id: 'demo', key: 'pollSeconds', value: 45 });
+    assert.equal(stored('pollSeconds'), 45);
+    // The step tolerance exists for exactly this: 0.1 steps produce quotients
+    // no binary float represents exactly.
+    await set(c, { id: 'demo', key: 'fine', value: 0.3 });
+    assert.equal(stored('fine'), 0.3);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'fine', value: 0.35 }), /must be a multiple of 0.1/);
+  });
+});
+
+test('a text value is bounded by maxLength and anchored FULL-STRING against pattern', async () => {
+  await withConfig({}, async () => {
+    const c = constrained();
+    await assert.rejects(() => set(c, { id: 'demo', key: 'registryUrl', value: 'x'.repeat(31) }), /Setting demo.registryUrl is too long \(max 30 characters\)/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'registryUrl', value: 'ftp://reg.invalid' }), /Setting demo.registryUrl does not match the required format/);
+    // A SUBSTRING match is not a match: the server anchors the pattern exactly
+    // as HTML's implicitly-anchored `pattern` attribute does.
+    await assert.rejects(() => set(c, { id: 'demo', key: 'registryUrl', value: 'go to https://reg.invalid now' }), /does not match the required format/);
+    assert.equal(stored('registryUrl'), undefined);
+    await set(c, { id: 'demo', key: 'registryUrl', value: 'https://reg.invalid' });
+    assert.equal(stored('registryUrl'), 'https://reg.invalid');
+  });
+});
+
+test('a select stores only a declared option value', async () => {
+  await withConfig({}, async () => {
+    const c = constrained();
+    await assert.rejects(() => set(c, { id: 'demo', key: 'mode', value: 'medium' }), /Setting demo.mode must be one of "fast", "slow"/);
+    assert.equal(stored('mode'), undefined);
+    await set(c, { id: 'demo', key: 'mode', value: 'slow' });
+    assert.equal(stored('mode'), 'slow');
+  });
+});
+
+test('clearing skips every constraint — that is a select\'s only clearing route', async () => {
+  await withConfig({}, async () => {
+    const c = constrained();
+    await set(c, { id: 'demo', key: 'pollSeconds', value: null });
+    assert.equal(stored('pollSeconds'), null);
+    await set(c, { id: 'demo', key: 'registryUrl', value: '' });
+    assert.equal(stored('registryUrl'), '');
+    await set(c, { id: 'demo', key: 'mode', value: '' });
+    assert.equal(stored('mode'), '');
+  });
+});

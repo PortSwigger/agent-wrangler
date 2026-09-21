@@ -3112,6 +3112,10 @@ a.ext-row-origin { color: var(--blue-fg); }
    here can be stored against a feature that is not running. */
 .ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.55; cursor: default; }
 .ext-setting-input:disabled { background: var(--surface-2); color: var(--fg-muted); }
+/* The browser's own validation message for a rejected setting value. Empty
+   text means no line at all, so nothing is reserved until there is something
+   to say. */
+.setting-error { margin-top: 4px; font-size: 11px; color: var(--danger-strong); }
 /* Uninstalled but still loaded until the restart: visibly spent, but still
    legible — the row is the only thing telling a reader what that restart is
    waiting to finish. */

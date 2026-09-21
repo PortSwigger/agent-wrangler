@@ -19,6 +19,12 @@ function stubDocument() {
       listeners: {},
       disabled: false,
       value: '',
+      // Native validation, stubbed: the gate's LOGIC is what these tests are
+      // about, not the browser's own rule engine. Valid by default; a test sets
+      // `_valid` false and reads `validationMessage` back off the error span.
+      _valid: true,
+      validationMessage: '',
+      checkValidity() { return this._valid; },
       _text: null,
       _html: null,
       get childNodes() { return this.children; },
@@ -511,4 +517,81 @@ test('a settled report fades, but anything still awaiting action does not', () =
   assert.deepEqual([...TRANSIENT_PROGRESS_PHASES].sort(), ['cancelled', 'done', 'failed']);
   assert.equal(TRANSIENT_PROGRESS_PHASES.has('done'), true);
   assert.equal(updateStatusText({ checking: true }), 'Checking…');
+});
+
+
+// -- declared constraints ---------------------------------------------------
+const CONSTRAINED = {
+  ...INSTALLED,
+  settings: [
+    { key: 'pollSeconds', type: 'number', label: 'Poll interval', min: 15, max: 600, step: 15 },
+    { key: 'registryUrl', type: 'text', label: 'Registry URL', maxLength: 30, pattern: 'https://.*' },
+    { key: 'mode', type: 'select', label: 'Mode', options: [{ value: 'fast', label: 'Fast' }, { value: 'slow', label: 'Slow' }] },
+  ],
+  settingValues: { mode: 'slow' },
+};
+
+test('declared constraints are mirrored onto the native input, and absent when undeclared', () => {
+  withDom(() => {
+    const [num, text] = byClass(extensionSettingRowsEl(CONSTRAINED), 'ext-setting-input');
+    assert.deepEqual([num.attrs.min, num.attrs.max, num.attrs.step], ['15', '600', '15']);
+    assert.equal(text.maxLength, 30);
+    assert.equal(text.attrs.pattern, 'https://.*');
+    // An unconstrained setting's markup is unchanged.
+    const [plainText, plainNum] = byClass(extensionSettingRowsEl(WITH_SETTINGS), 'ext-setting-input');
+    assert.equal(plainText.attrs.pattern, undefined);
+    assert.equal(plainText.maxLength, undefined);
+    for (const k of ['min', 'max', 'step']) assert.equal(plainNum.attrs[k], undefined);
+  });
+});
+
+test('an invalid value is reported and NOT committed, and the corrected one still is', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl(CONSTRAINED, { onSettingChange: (c) => seen.push(c) });
+    const num = byClass(wrap, 'ext-setting-input')[0];
+    num._valid = false;
+    num.validationMessage = 'Please enter a valid value.';
+    num.value = '20';
+    num.fire('change');
+    assert.deepEqual(seen, [], 'nothing is sent for a value the browser refuses');
+    assert.equal(byClass(wrap, 'setting-error')[0].textContent, 'Please enter a valid value.');
+    // `last` was deliberately not moved by the rejection, so the fix commits
+    // rather than looking unchanged.
+    num._valid = true;
+    num.value = '30';
+    num.fire('change');
+    assert.deepEqual(seen, [{ id: 'notes', key: 'pollSeconds', value: 30 }]);
+    assert.equal(byClass(wrap, 'setting-error')[0].textContent, '', 'a valid commit clears the message');
+  });
+});
+
+test('a select renders a leading empty option plus the declared ones, and commits on change', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl(CONSTRAINED, { onSettingChange: (c) => seen.push(c) });
+    const sel = byClass(wrap, 'ext-setting-input')[2];
+    assert.equal(sel.tagName, 'SELECT');
+    assert.deepEqual(sel.children.map((o) => [o.value, o.textContent]), [['', ''], ['fast', 'Fast'], ['slow', 'Slow']]);
+    assert.equal(sel.value, 'slow');
+    sel.value = 'fast';
+    sel.fire('change');
+    assert.deepEqual(seen, [{ id: 'notes', key: 'mode', value: 'fast' }]);
+    // The empty option is the only clearing route a select has.
+    sel.value = '';
+    sel.fire('change');
+    assert.deepEqual(seen.at(-1), { id: 'notes', key: 'mode', value: '' });
+  });
+});
+
+test('an option label containing markup goes in as text, never innerHTML', () => {
+  withDom(() => {
+    const evil = '<img src=x onerror=alert(1)>';
+    const wrap = extensionSettingRowsEl({
+      id: 'x', settingValues: {},
+      settings: [{ key: 'mode', type: 'select', label: 'Mode', options: [{ value: 'a', label: evil }] }],
+    });
+    assert.ok(texts(wrap).includes(evil));
+    for (const node of walk(wrap)) assert.equal(node._html, null, `${node.className} must not use innerHTML`);
+  });
 });
