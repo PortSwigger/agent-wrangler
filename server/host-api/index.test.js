@@ -14,11 +14,12 @@ function wiring(overrides = {}) {
         activeEntries: () => [{ sessionId: 'c1', cwd: '/a', liveSessionId: 'uuid' }],
         entryFor: (id) => (id === 'c1' ? { cwd: '/a', liveSessionId: 'uuid' } : null),
         resume: () => {},
-        dispatch: () => {},
+        dispatch: async () => ({ sessionId: 'new', tmux: 'cc_new', cwd: '/a' }),
         killForSession: () => {},
+        setAutoFixPrChecks: () => {},
       },
-      taskStore: { taskFor: () => null, snapshot: () => ({ tasks: [] }) },
-      memoryStore: { read: () => '', hasMemory: () => false, append: () => {} },
+      taskStore: { taskFor: () => null, snapshot: () => ({ tasks: [] }), assign: () => {} },
+      memoryStore: { read: () => '', hasMemory: () => false, append: () => {}, bindSession: () => {} },
     },
     deliver: () => {},
     rebuild: () => {},
@@ -174,6 +175,117 @@ test('wake and kill force reason: ext:<id> and cannot be overridden by an argume
   host.sessions.kill('c1', { reason: 'message' });
   assert.deepEqual(resumed, [{ id: 'c1', cwd: undefined, opts: { reason: 'ext:x' } }]);
   assert.deepEqual(killed, [{ id: 'c1', opts: { reason: 'ext:x' } }]);
+});
+
+// -- sessions:spawn --------------------------------------------------------
+// A spawn wiring that records the dispatch payload and everything the builder
+// does around it, so a test can assert the NAMES the options arrive under —
+// the whole point of the builder is that it is the translation layer.
+function spawnWiring() {
+  const seen = { dispatch: [], assigned: [], bound: [], autoFix: [] };
+  const w = wiring();
+  w.core.sessionManager.dispatch = async (opts) => {
+    seen.dispatch.push(opts);
+    // dispatch mints the card id, which is why a BINDER is passed rather than a
+    // path — call it here as the real one does, before the launch.
+    opts.bindMemory?.('NEWCARD');
+    return { sessionId: 'NEWCARD', tmux: 'cc_new', cwd: opts.cwd || '/a' };
+  };
+  w.core.sessionManager.entryFor = (id) => (id === 'NEWCARD'
+    ? { worktree: { path: '/repo-worktree-fix', branch: 'fix', repoRoot: '/repo', createdAt: 7 } }
+    : null);
+  w.core.sessionManager.setAutoFixPrChecks = (sid, on) => seen.autoFix.push({ sid, on });
+  w.core.taskStore.assign = (sid, taskId) => seen.assigned.push({ sid, taskId });
+  w.core.memoryStore.bindSession = (sid, taskId) => seen.bound.push({ sid, taskId, dispatched: seen.dispatch.length });
+  return { seen, host: buildHostApi({ id: 'x', requires: ['sessions:spawn'], ...w }) };
+}
+
+test('spawn forwards every option to dispatch under its own name', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({
+    cwd: '/repo', intent: 'do it', agent: 'codex', model: 'gpt-5.5', effort: 'high',
+    autoCompactTokens: 120000, parentSession: 'c1',
+    worktree: { branch: 'fix', base: 'refs/remotes/origin/main', auto: true, folderName: '/elsewhere/wt' },
+    addDirs: ['/repo/.git'], autoMergeOnPass: true,
+  });
+  const [opts] = seen.dispatch;
+  assert.equal(opts.cwd, '/repo');
+  assert.equal(opts.intent, 'do it');
+  assert.equal(opts.agent, 'codex');
+  assert.equal(opts.model, 'gpt-5.5');
+  assert.equal(opts.effort, 'high');
+  assert.equal(opts.autoCompactTokens, 120000);
+  assert.equal(opts.parentSession, 'c1');
+  assert.equal(opts.worktree, true);
+  assert.equal(opts.worktreeBranch, 'fix');
+  assert.equal(opts.worktreeBase, 'refs/remotes/origin/main');
+  assert.equal(opts.worktreeAuto, true);
+  assert.equal(opts.worktreeFolderName, '/elsewhere/wt');
+  assert.deepEqual(opts.addDirs, ['/repo/.git']);
+  assert.equal(opts.autoMergeOnPass, true);
+  assert.equal('spawnedBy' in opts, false, 'lineage is core-managed; an extension has no id to claim there');
+});
+
+test('spawn with no worktree option asks dispatch for none', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', intent: 'plain' });
+  const [opts] = seen.dispatch;
+  assert.equal(opts.worktree, undefined);
+  assert.equal('addDirs' in opts, false);
+  assert.equal('autoMergeOnPass' in opts, false);
+  assert.equal(opts.bindMemory, undefined);
+});
+
+test('spawn returns the resolved worktree summary beside the dispatch result', async () => {
+  const { host } = spawnWiring();
+  const res = await host.sessions.spawn({ cwd: '/repo', worktree: { branch: 'fix' } });
+  assert.equal(res.sessionId, 'NEWCARD');
+  assert.equal(res.tmux, 'cc_new');
+  assert.deepEqual(res.worktree, { branch: 'fix', path: '/repo-worktree-fix', repoRoot: '/repo' });
+  assert.ok(Object.isFrozen(res.worktree), 'the same frozen summary shape sessions:read reports');
+  assert.equal('createdAt' in res.worktree, false, 'a summary, not the stored record');
+});
+
+test('spawn taskId binds memory BEFORE launch and assigns the task after', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', taskId: 't1' });
+  // `dispatched: 0` is the assertion that matters: the binder ran inside
+  // dispatch, before the pane, which a tasks.assign afterwards cannot replace
+  // for Codex (it resolves its writable roots once, at launch).
+  assert.deepEqual(seen.bound, [{ sid: 'NEWCARD', taskId: 't1', dispatched: 1 }]);
+  assert.deepEqual(seen.assigned, [{ sid: 'NEWCARD', taskId: 't1' }]);
+});
+
+test('spawn autoFixPrChecks goes through the setter, since dispatch has no argument for it', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', autoFixPrChecks: false });
+  assert.deepEqual(seen.autoFix, [{ sid: 'NEWCARD', on: false }]);
+  assert.equal('autoFixPrChecks' in seen.dispatch[0], false);
+  const untouched = spawnWiring();
+  await untouched.host.sessions.spawn({ cwd: '/repo' });
+  assert.deepEqual(untouched.seen.autoFix, [], 'absent means "inherit the default", not "off"');
+});
+
+test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
+  const { seen, host } = spawnWiring();
+  const bad = [
+    [{ worktree: true }, /worktree must be an object/],
+    [{ worktree: [] }, /worktree must be an object/],
+    [{ worktree: { baseRef: 'main' } }, /worktree has unknown option\(s\) baseRef/],
+    [{ worktree: { branch: 3 } }, /worktree\.branch must be a string/],
+    [{ worktree: { auto: 'yes' } }, /worktree\.auto must be a boolean/],
+    [{ addDirs: '/repo' }, /addDirs must be an array/],
+    [{ addDirs: ['relative/path'] }, /addDirs entries must be absolute/],
+    [{ addDirs: [null] }, /addDirs entries must be absolute/],
+    [{ taskId: 7 }, /taskId must be a non-empty task id/],
+    [{ taskId: '' }, /taskId must be a non-empty task id/],
+    [{ autoMergeOnPass: 'true' }, /autoMergeOnPass must be a boolean/],
+    [{ autoFixPrChecks: 1 }, /autoFixPrChecks must be a boolean/],
+  ];
+  for (const [args, re] of bad) {
+    await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));
+  }
+  assert.deepEqual(seen.dispatch, [], 'a refusal happens before anything is launched');
 });
 
 test('sessions:read hands back projections, never live entries', () => {

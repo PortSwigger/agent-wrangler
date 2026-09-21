@@ -31,7 +31,16 @@ import semver from 'semver';
 // reads `settings` to decide its state-file path is broken, silently, against a
 // server that hands it `undefined`, and the declared range is the only thing
 // that can say so.
-export const HOST_API_VERSION = '1.3.0';
+//
+// 1.4.0 is `sessions:spawn` growing the options a real extension needed to
+// launch work the way core launches it: `worktree` (branch/base/auto/
+// folderName, so the wrangler cuts it and stamps the card's record), `addDirs`,
+// `taskId` (bound BEFORE launch), `autoMergeOnPass`/`autoFixPrChecks`, and the
+// resolved worktree summary on the result. Every one is additive on one
+// existing method, so v1.js keeps its builders and no v2.js is needed — but an
+// extension that cuts its own worktree because spawn could not is broken in a
+// way only the declared range can express, which is what the number is for.
+export const HOST_API_VERSION = '1.4.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

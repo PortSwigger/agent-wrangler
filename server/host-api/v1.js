@@ -1,4 +1,5 @@
-import { projectSession, projectTask } from './project.js';
+import path from 'node:path';
+import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -48,13 +49,112 @@ const sessionsArchive = ({ archiveSession }) => ({
   },
 });
 
+// Every spawn option is type-checked HERE and refused BY NAME. This is the one
+// façade method that starts a process, and dispatch is forgiving by design: a
+// mistyped `addDirs` launches with no grants, a `worktree` that is not an object
+// launches in the plain cwd, and either reads to the extension author as "the
+// option did nothing" with no stack into core to read it from. A refusal is the
+// only failure an extension can act on.
+const spawnError = (msg) => { throw new TypeError(`sessions.spawn: ${msg}`); };
+
+const WORKTREE_OPTS = ['branch', 'base', 'auto', 'folderName'];
+
+// `{ branch?, base?, auto?, folderName? }` -> dispatch's four flat worktree
+// arguments. An UNKNOWN key is refused rather than ignored: `baseRef` for
+// `base` ignored is a branch cut from the wrong commit, and nothing downstream
+// can tell that from a branch cut from the right one.
+function spawnWorktree(worktree) {
+  if (worktree === undefined || worktree === null) return {};
+  if (typeof worktree !== 'object' || Array.isArray(worktree)) spawnError('worktree must be an object like { branch, base, auto, folderName }');
+  const stray = Object.keys(worktree).filter((k) => !WORKTREE_OPTS.includes(k));
+  if (stray.length) spawnError(`worktree has unknown option(s) ${stray.join(', ')} (known: ${WORKTREE_OPTS.join(', ')})`);
+  for (const k of ['branch', 'base', 'folderName']) {
+    if (worktree[k] !== undefined && typeof worktree[k] !== 'string') spawnError(`worktree.${k} must be a string`);
+  }
+  if (worktree.auto !== undefined && typeof worktree.auto !== 'boolean') spawnError('worktree.auto must be a boolean');
+  return {
+    worktree: true,
+    worktreeBranch: worktree.branch ?? '',
+    worktreeBase: worktree.base ?? '',
+    worktreeAuto: worktree.auto ?? false,
+    worktreeFolderName: worktree.folderName ?? '',
+  };
+}
+
+// Absolute only, because that is all `--add-dir` means: a relative grant would
+// resolve against the wrangler's cwd, never the session's, so it would grant
+// something nobody asked for. Existence is dispatch's business (and the
+// adapter's), not the façade's.
+function checkAddDirs(addDirs) {
+  if (addDirs === undefined) return {};
+  if (!Array.isArray(addDirs)) spawnError('addDirs must be an array of absolute path strings');
+  for (const d of addDirs) {
+    if (typeof d !== 'string' || !d || !path.isAbsolute(d)) spawnError(`addDirs entries must be absolute path strings (got ${JSON.stringify(d)})`);
+  }
+  return { addDirs };
+}
+
 const sessionsSpawn = ({ core }) => ({
   sessions: {
     // `parentSession` may name a card this extension did not create. Deliberate,
     // resolved decision — board nesting is not ownership, and the board itself
     // lets any session be re-parented (attach_session). Do not add a check.
-    spawn: ({ cwd, intent, agent, model, effort, parentSession } = {}) =>
-      core.sessionManager.dispatch({ cwd, intent, agent, model, effort, parentSession }),
+    //
+    // `spawnedBy` is deliberately NOT passable. It is core's LINEAGE field —
+    // "the card whose agent asked for this one" — stamped by the spawn_* tools
+    // from the calling session's own id, and an extension is not a session: it
+    // has no id of its own to claim there, and any id it named would be another
+    // card's. The extension's own attribution already exists on every other
+    // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
+    spawn: async ({
+      cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks,
+    } = {}) => {
+      const worktreeOpts = spawnWorktree(worktree);
+      const addDirsOpt = checkAddDirs(addDirs);
+      if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
+      for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks]]) {
+        if (v !== undefined && typeof v !== 'boolean') spawnError(`${name} must be a boolean`);
+      }
+      const result = await core.sessionManager.dispatch({
+        cwd,
+        intent,
+        agent,
+        model,
+        effort,
+        autoCompactTokens,
+        parentSession,
+        ...worktreeOpts,
+        ...addDirsOpt,
+        // Dispatch's own default is off, so `false` is simply no override.
+        ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
+        // `taskId` is the WHOLE task binding, and it has to be one option
+        // rather than a spawn followed by `tasks.assign`: the memory symlink
+        // must point at the task BEFORE the pane starts. Claude re-reads
+        // AW_TASK_MEMORY and follows a later repoint; Codex resolves the
+        // writable root once at launch and never sees it, so an assign after
+        // the fact leaves a Codex session writing into its own scratch memory.
+        ...(taskId ? { bindMemory: (sid) => core.memoryStore.bindSession(sid, taskId) } : {}),
+      });
+      // The other half of that binding, exactly as the spawn_* tools and the
+      // board's own dispatch do it — a no-op if the task was archived meanwhile,
+      // so the session falls back to Ad-hoc rather than failing the launch. It
+      // is not a `tasks:write` escalation: the only card it can ever name is the
+      // one this call just minted.
+      if (taskId) core.taskStore.assign(result.sessionId, taskId);
+      // autoFixPrChecks has no dispatch argument — it is a tri-state whose
+      // ABSENT value means "on", so an extension driving its own PR automation
+      // can only switch core's nudge off through the setter, immediately after
+      // launch and long before the agent could open a PR for the poller to find.
+      if (autoFixPrChecks !== undefined) core.sessionManager.setAutoFixPrChecks(result.sessionId, autoFixPrChecks);
+      // `tmux` stays on the result: it is already in v1 and removing a field is
+      // a breaking reshape (that is what v2.js is for), not a tidy-up. The
+      // worktree record is READ BACK off the entry rather than returned by
+      // dispatch, in the same shape `sessions:read` reports it — without it an
+      // extension that asked for a worktree has no way to learn the branch and
+      // path the wrangler settled on.
+      return { ...result, worktree: deepFreeze(worktreeSummary(core.sessionManager.entryFor(result.sessionId)?.worktree)) };
+    },
   },
 });
 

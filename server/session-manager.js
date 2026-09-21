@@ -10,7 +10,7 @@ import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, linkedWorktreeCommonGitDir } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, linkedWorktreeCommonGitDir, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -324,7 +324,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
 // Resolve worktree creation for a dispatch: derive the branch (default = intent
 // slug), create the worktree, and return the cwd to launch in plus the entry
 // field to persist. Throws WorktreeError on refusal (caller aborts dispatch).
-export async function resolveWorktree({ cwd, intent = '', branch = '', folderName = '', auto = false, short = '' }) {
+export async function resolveWorktree({ cwd, intent = '', branch = '', folderName = '', auto = false, short = '', base = '' }) {
   // A scratch/blank cwd is a throwaway dir under SESSIONS_DIR (freshened per
   // dispatch) — not a real repo to branch from. Refuse rather than silently
   // skip, so the toggle never appears to do nothing.
@@ -335,7 +335,17 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   // sanitizes too). Fall back to the intent slug if a typed branch sanitizes away.
   const b = ((branch.trim() || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short });
   const folder = folderName.trim();
-  const res = await createWorktree({ cwd, branch: b, folderName: folder ? expandTilde(folder) : '', auto });
+  // The base is a REF NAME, never a revision expression: `git worktree add -b`
+  // takes the commit-ish as its last argv element, so a mistyped one is not a
+  // clean failure — it is a branch cut from the wrong commit, or from HEAD.
+  // isValidBranchName is git's own ref-name grammar, which accepts `main`,
+  // `origin/main`, `refs/remotes/origin/main` and a raw sha alike and refuses
+  // `HEAD~1`. Refused, never sanitised: a caller that named a base must get
+  // that base or an error. Only consulted when the branch is NEW — an existing
+  // branch is checked out where it already is, and there is nothing to base.
+  const baseRef = String(base).trim();
+  if (baseRef && !isValidBranchName(baseRef)) throw new WorktreeError(`"${baseRef}" is not a valid base ref.`);
+  const res = await createWorktree({ cwd, branch: b, folderName: folder ? expandTilde(folder) : '', auto, baseRef });
   // Record repoRoot so cleanup-on-archive can find the branch even after the
   // worktree dir is gone (repoRootForWorktree falls back to suffix-stripping for
   // legacy entries that predate this).
@@ -1499,7 +1509,7 @@ export class SessionManager {
   }
 
   async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
-                   worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false,
+                   worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession } = {}) {
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
@@ -1539,7 +1549,7 @@ export class SessionManager {
     let worktreeEntry;
     if (worktree) {
       const wt = await resolveWorktree({
-        cwd, intent, branch: worktreeBranch, folderName: worktreeFolderName, auto: worktreeAuto, short,
+        cwd, intent, branch: worktreeBranch, folderName: worktreeFolderName, auto: worktreeAuto, short, base: worktreeBase,
       });
       cwd = wt.cwd;
       worktreeEntry = wt.worktree;

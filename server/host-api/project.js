@@ -27,7 +27,10 @@ export function deepFreeze(obj) {
 // The worktree SUMMARY, not the stored object: `repoRoot` is how the branch is
 // found after the dir is deleted, `branch`/`path` are what a reader wants to
 // name it. Everything else on there is lifecycle bookkeeping the core owns.
-function worktreeSummary(wt) {
+// Exported because `sessions:spawn` returns the same shape for a worktree it
+// just cut — one definition, so what a spawn hands back and what a later
+// `sessions.get()` reports cannot drift.
+export function worktreeSummary(wt) {
   if (!wt || typeof wt !== 'object') return null;
   return { branch: wt.branch ?? null, path: wt.path ?? null, repoRoot: wt.repoRoot ?? null };
 }
