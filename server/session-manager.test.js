@@ -235,6 +235,29 @@ test('noteLiveSessionId keeps prior ids deduped and never lists the current one'
   assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L1', 'L2']);
 });
 
+// A headless conversation (a `claude -p` run on a card's behalf) is billed to the
+// card by recording it as a prior id: the cost scanners walk priorLiveSessionIds,
+// and cardForLive ignores them, so the card pays for it without ever resuming it.
+test('recordPriorLiveSessionId bills a headless conversation to the card without repointing it', () => {
+  const { sm, saves } = swapManager();
+  assert.equal(sm.recordPriorLiveSessionId('card', 'H1'), true);
+  assert.equal(sm.map.get('card').liveSessionId, 'L1');
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['H1']);
+  assert.equal(sm.cardForLive('H1'), null);
+  assert.equal(saves(), 1);
+});
+
+test('recordPriorLiveSessionId dedupes, and refuses a missing card, an empty id or the current conversation', () => {
+  const { sm, saves } = swapManager({ priorLiveSessionIds: ['L0'] });
+  assert.equal(sm.recordPriorLiveSessionId('card', 'L0'), true); // already billed: idempotent, still saves
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L0']);
+  assert.equal(sm.recordPriorLiveSessionId('missing', 'H1'), false);
+  assert.equal(sm.recordPriorLiveSessionId('card', ''), false);
+  assert.equal(sm.recordPriorLiveSessionId('card', 'L1'), false); // the card's own live conversation is not a prior one
+  assert.deepEqual(sm.map.get('card').priorLiveSessionIds, ['L0']);
+  assert.equal(saves(), 1);
+});
+
 test('forkEntry: falls back to (forked) intent and null model when parent lacks them', () => {
   const entry = forkEntry({
     short: 's', tmux: 'cc_s', cwd: '/repo', parentEntry: undefined,

@@ -156,7 +156,7 @@
   new is being asked for; a manifest that widens itself **in place on disk** after
   consent is caught at the next discovery and quarantined, which is why that check
   lives in `external.js` and not only at install time. The modal shows the **DIFF,
-  not the full lists**: capabilities in full (at most 17, each one matters) but
+  not the full lists**: capabilities in full (at most 19, each one matters) but
   dependencies as the **direct** changes plus a count of the transitive remainder,
   since a real tree churns by hundreds of entries. Removals can only be filtered to
   "the package name left the tree entirely" — the record stores a flat list with no

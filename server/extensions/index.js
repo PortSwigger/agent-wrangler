@@ -63,6 +63,8 @@ export const CAPABILITIES = new Set([
   'terminals:create',
   'schedules:read', 'schedules:write',
   'mail:read', 'mail:send',
+  'usage:read',
+  'sessions:bill',
 ]);
 
 // `onBeforeDispatch` is the one hook that runs while the session does not yet

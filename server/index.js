@@ -218,6 +218,10 @@ const extWiring = {
   broadcast,
   scheduleStore,
   mailStore,
+  // `usage:read` goes through usage-scan-memo's cachedScan over this, the same
+  // memo the Usage panel reads, so an extension pricing cards never walks disk
+  // on its own — see host-api/v1.js usageRead.
+  scanUsage: scanAllDaily,
   archiveSession: async (sessionId, { cascade = true } = {}) => {
     const sessions = lastGraph?.sessions || [];
     const ids = [...(cascade ? descendantsOf(sessionId, sessions).map((d) => d.sessionId) : []), sessionId];
