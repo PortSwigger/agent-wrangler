@@ -19,9 +19,11 @@ export function diffNeedsYou(sessions) {
   return fresh;
 }
 
-// Same transition-detection shape as diffNeedsYou, but for PR CI checks — its
-// own prev Map + seeded flag so it's independent of the needs-you baseline.
-let prevChecks = new Map();
+// PR check notifications remember what people were actually told, not every
+// transient state GitHub exposed while recomputing mergeability against a moving
+// base branch. Otherwise a passing→pending→passing flap at the same head would
+// replay the passing notification even though the PR itself never changed.
+let lastNotified = new Map();
 let checksSeeded = false;
 
 // A checkStatus is *notifiable* when it's a state worth nudging the agent/board
@@ -30,22 +32,31 @@ let checksSeeded = false;
 // stay silent — so we never fire a premature "passed".
 const NOTIFY = new Set(['passing', 'failing', 'awaiting-review', 'changes-requested']);
 
-// links: [{ scope, ownerId, url, number, checkStatus }]. Emit a link only when
-// its checkStatus CHANGES into a notifiable state — so it fires on
-// pending→passing, pending→awaiting-review, awaiting-review→passing, etc., but
-// never on X→X or X→pending. Seeded on the first call so a restart doesn't
-// replay every already-green PR. The key includes scope so a task link and a
-// session link to the same url don't collide. A freshly attached PR that's
-// already notifiable fires on first appearance (new key, prev undefined ≠ status).
+// Rebuild the map from the current link set so removing and later re-attaching a
+// PR makes it new again, while carrying prior notifications through pending/none
+// polls. A restart may see persisted status before the first successful SHA
+// fetch, so its empty-head sentinel adopts that SHA without replaying old news.
 export function diffCheckStatus(links) {
   const events = [];
   const next = new Map();
   for (const l of links) {
     const key = `${l.scope}:${l.ownerId}:${l.url}`;
-    next.set(key, l.checkStatus);
-    if (checksSeeded && NOTIFY.has(l.checkStatus) && prevChecks.get(key) !== l.checkStatus) events.push(l);
+    const prior = lastNotified.get(key);
+    if (!NOTIFY.has(l.checkStatus)) {
+      if (prior !== undefined) next.set(key, prior);
+      continue;
+    }
+    if (!l.headSha) {
+      if (prior !== undefined) next.set(key, prior);
+      else if (!checksSeeded) next.set(key, `${l.checkStatus}@`);
+      continue;
+    }
+    const composite = `${l.checkStatus}@${l.headSha}`;
+    const sameStatusBeforeHeadWasKnown = prior === `${l.checkStatus}@`;
+    if (checksSeeded && prior !== composite && !sameStatusBeforeHeadWasKnown) events.push(l);
+    next.set(key, composite);
   }
-  prevChecks = next;
+  lastNotified = next;
   checksSeeded = true;
   return events;
 }
@@ -124,7 +135,9 @@ export function prPaneLine(number, url, phrase) {
 
 // The one-line pane nudge for a check-status transition.
 export function prPaneNudge(ev) {
-  return prPaneLine(ev.number, ev.url, PR_PANE_PHRASE[ev.checkStatus] || ev.checkStatus);
+  const phrase = PR_PANE_PHRASE[ev.checkStatus] || ev.checkStatus;
+  const shortSha = typeof ev.headSha === 'string' ? ev.headSha.slice(0, 7) : '';
+  return prPaneLine(ev.number, ev.url, shortSha ? `${phrase} (${shortSha})` : phrase);
 }
 
 // Same transition-detection shape as diffCheckStatus, but for the `dirty` (merge

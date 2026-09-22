@@ -55,6 +55,31 @@ test('set_links accepts a pr link and fires the onPrLinksChanged hook', async ()
   assert.deepEqual(out.structuredContent.links[0], { type: 'pr', url: 'https://github.com/a/b/pull/5', repo: 'a/b', number: 5 });
 });
 
+test('set_links schema preserves poller-owned fields on a get/set round-trip', async () => {
+  const captured = {};
+  const links = setLinksTool.inputSchema.links.parse([{
+    type: 'pr',
+    url: 'https://github.com/a/b/pull/5',
+    checkStatus: 'passing',
+    checkStatusFetchedAt: '2026-09-22T12:00:00Z',
+    headSha: '293558cba987',
+    dirty: false,
+    unresolvedCount: 2,
+  }]);
+  await setLinksTool.handler({ deps: deps(captured), caller: 'CARD1' }, { scope: 'session', links });
+  assert.deepEqual(captured.session.links[0], {
+    type: 'pr',
+    url: 'https://github.com/a/b/pull/5',
+    repo: 'a/b',
+    number: 5,
+    checkStatus: 'passing',
+    checkStatusFetchedAt: '2026-09-22T12:00:00Z',
+    headSha: '293558cba987',
+    dirty: false,
+    unresolvedCount: 2,
+  });
+});
+
 test('set_links rejects a non-github pr url with an actionable message', async () => {
   const deps = { config: { jiraBaseUrl: () => '' }, taskStore: { taskFor: () => ({ id: 'T1' }), setLinks: () => true }, sessionManager: { setLinks: () => true } };
   const out = await setLinksTool.handler({ deps, caller: 'CARD1' }, { scope: 'task', links: [{ type: 'pr', url: 'https://example.com/x' }] });

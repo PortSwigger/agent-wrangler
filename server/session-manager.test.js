@@ -1864,15 +1864,18 @@ test('prLinks lists pr links with their session id', () => {
   mgr.setLinks('CARD1', [
     { type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 },
   ]);
-  assert.deepEqual(mgr.prLinks(), [{ ownerId: 'CARD1', url: 'https://github.com/a/b/pull/7', number: 7, checkStatus: undefined, dirty: undefined, unresolvedCount: undefined }]);
+  assert.deepEqual(mgr.prLinks(), [{ ownerId: 'CARD1', url: 'https://github.com/a/b/pull/7', number: 7, checkStatus: undefined, headSha: undefined, dirty: undefined, unresolvedCount: undefined }]);
 });
 
-test('updateLinkStatus writes checkStatus/dirty onto the matching session pr link', () => {
+test('updateLinkStatus writes checkStatus/headSha/dirty onto the matching session pr link', () => {
   const mgr = freshManager();
   mgr.setLinks('CARD1', [{ type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 }]);
-  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', true, '2026-06-16T00:00:00Z'), true);
+  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', true, '2026-06-16T00:00:00Z', undefined, '293558cba987'), true);
   assert.equal(mgr.getLinks('CARD1')[0].checkStatus, 'failing');
+  assert.equal(mgr.getLinks('CARD1')[0].headSha, '293558cba987');
   assert.equal(mgr.getLinks('CARD1')[0].dirty, true);
+  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', true, '2026-06-16T01:00:00Z'), false);
+  assert.equal(mgr.getLinks('CARD1')[0].headSha, '293558cba987');
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/999', 'passing', false, 'x'), false);
 });
 
@@ -1891,7 +1894,7 @@ test('updateLinkStatus returns true when only dirty changes (checkStatus stable)
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', true, 'y'), true);
 });
 
-test('updateLinkStatus writes unresolvedCount as the last param, but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
+test('updateLinkStatus writes unresolvedCount but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
   const mgr = freshManager();
   mgr.setLinks('CARD1', [{ type: 'pr', url: 'https://github.com/a/b/pull/7', repo: 'a/b', number: 7 }]);
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'pending', false, 'x', 2), true);

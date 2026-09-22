@@ -21,6 +21,11 @@ export const setLinksTool = {
       type: z.string().describe('Link type: "jira" or "pr".'),
       key: z.string().optional().describe('Jira issue key, e.g. ENT-10904 (jira only).'),
       url: z.string().optional().describe('Jira url (optional) or the GitHub pull-request url (required for pr).'),
+      checkStatus: z.string().optional(),
+      checkStatusFetchedAt: z.string().optional(),
+      headSha: z.string().optional(),
+      dirty: z.boolean().optional(),
+      unresolvedCount: z.number().optional(),
     })).describe('The full replacement list of links.'),
   },
   async handler({ deps, caller }, args = {}) {
