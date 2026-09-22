@@ -69,7 +69,18 @@ import semver from 'semver';
 // from `badge` gets SILENCE from a server whose slots.js never calls it — no
 // error, no quarantine, just a rail button that never says anything — and the
 // declared range is the only thing that can tell those two servers apart.
-export const HOST_API_VERSION = '1.7.0';
+//
+// 1.8.0 is the CLIENT half once more: `api.openSession(sessionId)`
+// (public/slots.js apiFor, implemented by app.js's base api). It switches the
+// board to the grid and selects the card if it is on the board, otherwise
+// pending-selects it, sends the core `resume` frame and toasts "Restoring…" —
+// what the board itself does for a Search result. An extension could do none
+// of that: its `send` is bound to its OWN handler types so it may not send
+// `resume`, and there is no other route to the view or the selection. No new
+// server-side key, but a manifest whose client half calls `openSession` is
+// broken, silently, against a server whose app.js never supplied it, and the
+// declared range is the only thing that can say so.
+export const HOST_API_VERSION = '1.8.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

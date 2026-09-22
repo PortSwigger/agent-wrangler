@@ -739,7 +739,7 @@ version })` with `register`,
   one card leaves none behind on the others — and reported, and the rest of the
   board carries on.
 - Each extension's `api` is app.js's base (`send`, `selectedSessionId`,
-  `requestPanelRender`) plus a `namespacedStorage('ext.<id>.')` wrapper.
+  `requestPanelRender`, `openSession`) plus a `namespacedStorage('ext.<id>.')` wrapper.
   `storage.raw(key)` escapes the prefix for a key that predates the API (a
   migrating feature's own, like the checklist's `wrangler.checklistOpen`); a new
   key has no reason to use it.
@@ -779,6 +779,14 @@ that prefix and 404s.
   arrive after a contribution has mounted. The api also carries `version` (the
   served `HOST_API_VERSION`), `selectedSessionId`, `requestPanelRender` and the
   namespaced `storage` (with `raw()` retained for `wrangler.checklistOpen`).
+- `openSession(sessionId)` (1.8.0) is the one piece of board NAVIGATION an
+  extension gets: it switches to the grid and selects the card if it is on the
+  board, otherwise pending-selects it, sends the core `resume` frame and toasts
+  `Restoring…` — exactly what a Search result's Restore does. It lives on the
+  base api because an extension can do none of that itself: its `send` is bound
+  to its own handler types, so `resume` is refused, and nothing else reaches the
+  view or the selection. `apiFor` refuses and reports a non-id argument the way
+  it refuses a foreign `send`. No `openDiff` yet.
 - The type list rides BOTH server inputs — the `extensions` connect message
   (which also carries `version`) and `graph.extensions` — because either can
   arrive first; `app.js` owns the map and hands `createSlots` the lookup.

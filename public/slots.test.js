@@ -419,6 +419,49 @@ test('the api carries the host API version', () => {
   assert.equal(sendHarness(['fake-do']).api.version, '9.9.9');
 });
 
+// ── openSession (the one piece of board navigation an extension gets) ─────────
+// An extension's `send` may not carry the core `resume` frame, and nothing else
+// reaches the view or the selection — so the base api implements it and apiFor
+// exposes it, refusing anything that is not a session id the way it refuses a
+// foreign send.
+function openHarness() {
+  const opened = [];
+  const h = harness();
+  const api = { openSession: (sid) => opened.push(sid) };
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), api);
+  return { ...h, opened, api: captured };
+}
+
+test('openSession hands a session id to the base api', () => {
+  const { api, opened, errors } = openHarness();
+  api.openSession('abc123');
+  assert.deepEqual(opened, ['abc123']);
+  assert.deepEqual(errors, []);
+});
+
+test('openSession refuses anything that is not a session id, and reports it', () => {
+  const { api, opened, errors } = openHarness();
+  api.openSession('');
+  api.openSession(42);
+  api.openSession({ sessionId: 'abc123' });
+  api.openSession();
+  assert.deepEqual(opened, [], 'nothing reached the board');
+  assert.equal(errors.length, 4);
+  assert.match(errors[0], /\[ext:fake\] openSession refused: expected a session id, got ""/);
+  assert.match(errors[2], /got \{"sessionId":"abc123"\}/);
+});
+
+test('openSession is a no-op against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), { send() {} });
+  assert.doesNotThrow(() => captured.openSession('abc123'));
+  assert.deepEqual(h.errors, []);
+});
+
 // ── onMessage / dispatchMessage (the INBOUND half) ─────────────────────────────
 // A server-side host.broadcast forces its frame's type to `ext:<its own id>`, so
 // the id in the type is the whole address. These assert the two things that make
