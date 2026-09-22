@@ -16,6 +16,9 @@
 // the rail button and #view= hash route that reach it, from `label`/`icon`).
 // It goes through syncHosts too, but with each entry carrying `only` so a
 // contribution lands in its own host and not in every view's — see sync().
+// A view may also carry `badge()`, the one thing it cannot draw itself: the
+// rail button is the board's chrome, so core owns the element and the
+// extension owns only the number — see reportBadges().
 //
 // Slots are the OUTBOUND half (DOM out, `send` back to the control socket). The
 // INBOUND half is `onMessage`/`dispatchMessage`: a server-side `host.broadcast`
@@ -186,6 +189,49 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return true;
   }
 
+  // What `badge()` returned, as something the board can draw. Anything that is
+  // not a positive whole count draws nothing: absent-or-falsy is the documented
+  // "no badge", and a NaN, negative or fractional value is an extension bug
+  // that must NOT print a line — this runs on the ~4s view tick, so a report
+  // here would be a report per tick, the same reason dispatchMessage says
+  // nothing about a frame nobody is listening for.
+  function badgeCount(n) {
+    const v = Math.floor(Number(n));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  }
+
+  // Ask every DRAWN contribution to this slot what its badge should say, and
+  // hand each answer to `onBadge({extId, id, count})`. Only `view` has a caller
+  // that asks (app.js updateExtViews), because the rail button is the only
+  // chrome core draws on a contribution's behalf — a count on it is the one
+  // thing an extension that owns a whole pane still cannot put there itself,
+  // short of smuggling markup into `icon` and positioning it against a button
+  // core owns.
+  //
+  // Run AFTER mount and update, so a badge reads whatever the update it shares
+  // a tick with just settled, and under the same try/catch-and-drop rule: a
+  // throwing badge removes the contribution exactly as a throwing update does,
+  // because this too runs inside the board's own render.
+  //
+  // A contribution with no `badge`, one with no element (nothing drawn is
+  // nothing to count for) and one that has just been dropped all report
+  // NOTHING rather than a zero. The caller clears whatever it did not hear
+  // about, which is one rule covering all three.
+  function reportBadges(slotName, graph, onBadge) {
+    for (const c of [...slotList(slotName)]) {
+      if (typeof c.badge !== 'function' || c.mounts.size === 0) continue;
+      let n;
+      try {
+        n = c.badge(graph);
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} badge failed — contribution removed`, err);
+        drop(slotName, c);
+        continue;
+      }
+      onBadge({ extId: c.extId, id: c.id, count: badgeCount(n) });
+    }
+  }
+
   // Reconcile a slot against the hosts it should be in RIGHT NOW: mount into
   // each, tear down anything left in a host that isn't listed, and (when the
   // caller passed sessions) update each element with its own host's session.
@@ -216,6 +262,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const field of REQUIRED_FIELDS[slotName] || []) {
         if (typeof contribution[field] !== 'string' || !contribution[field]) throw new Error(`[ext:${extId}] ${contribution.id} in ${slotName} has no ${field}`);
       }
+      // `badge` is optional, but a non-function one is a TYPO, not a choice:
+      // reportBadges would skip it in silence and the author would be left
+      // looking at a rail button that never says anything. Same reason
+      // slotList refuses an unknown slot name — fail at load, not nowhere.
+      if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
     },
@@ -300,9 +351,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // has its element torn down by omission. Each element is updated with its
     // own entry's session — the one thing `update` below cannot do, since it
     // knows only one. Returns the number of mounted elements across all hosts.
-    syncHosts(slotName, entries, baseApi = {}, graph = null) {
+    // `onBadge` is optional and view-only in practice: see reportBadges. It is
+    // handed the same `graph` every row carries, since a badge counts what the
+    // BOARD says and not what one host's session does.
+    syncHosts(slotName, entries, baseApi = {}, graph = null, onBadge = null) {
       const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, only: e.only ?? null, graph }));
       sync(slotName, rows, baseApi, true);
+      if (onBadge) reportBadges(slotName, graph, onBadge);
       return slotList(slotName).reduce((n, c) => n + c.mounts.size, 0);
     },
 

@@ -156,8 +156,23 @@ body {
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid transparent; border-radius: 8px;
   color: var(--fg-muted);
+  /* The containing block for .ext-view-badge below. Inert for every other rail
+     button: nothing else in the rail is absolutely positioned. */
+  position: relative;
 }
 #nav-rail button:hover { background: var(--surface-2); color: var(--fg); }
+/* The needs-you count a `view` extension asks for (slots.js `badge`, app.js
+   setExtViewBadge). Core draws it, so it lives HERE and not in the extension's
+   own stylesheet — beside the button it is positioned against rather than with
+   the card badges (.mail-badge, .sched-badge), whose amber alarm register it
+   otherwise shares. --snooze fill with --bar-on text is the readable pairing
+   the system banner already settled on; --snooze-fg on --snooze is not. */
+.ext-view-badge {
+  position: absolute; top: 0; right: 0;
+  min-width: 13px; padding: 1px 3px; border-radius: 5px;
+  background: var(--snooze); color: var(--bar-on);
+  font-size: 9px; font-weight: 700; line-height: 1.3; text-align: center;
+}
 /* The active view matches the selected-session highlight (--blue), not --accent,
    so the left rail's selection reads the same as the board's (amber in Jurassic
    Park, blue in dark/light). */

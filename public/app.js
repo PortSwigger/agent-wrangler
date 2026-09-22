@@ -657,7 +657,42 @@ function renderExtViews() {
 // of which may happen on a ~4s tick.
 function updateExtViews() {
   const wanted = new Map(slots.contributions('view').map((c) => [extViewKey(c), c]));
-  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph);
+  const counts = new Map();
+  slots.syncHosts('view', [...extViewHosts].map(([key, host]) => ({ host, only: wanted.get(key) })), extApi, latestGraph,
+    (b) => counts.set(extViewKey(b), b.count));
+  // Anything that reported NOTHING this round is cleared: a view with no
+  // `badge`, one whose badge threw and was dropped mid-tick, and one that is
+  // simply back to zero all land here, so a count can never outlive what
+  // produced it (see slots.js reportBadges).
+  for (const [key, c] of wanted) setExtViewBadge(key, c.label, counts.get(key) || 0);
+}
+
+// The rail badge for one view: CORE owns the element, the extension owns only
+// the number. An extension could smuggle a badge into its `icon` markup —
+// `renderExtViews` puts that in as HTML — but the rail is the board's chrome,
+// so it would be positioning itself against a button core lays out, untested by
+// anything here and re-invented by the next extension. The count goes in as
+// text, same rule as every other third-party string, and is capped because the
+// button is 40px wide and a four-digit count would burst it.
+function setExtViewBadge(key, label, count) {
+  const btn = document.querySelector(`.layouts button[data-view="${CSS.escape(key)}"]`);
+  if (!btn) return;
+  let span = btn.querySelector('.ext-view-badge');
+  if (!count) {
+    span?.remove();
+    // The button's whole accessible name is its aria-label (the icon is
+    // decorative markup), so the count has to live there too or it is invisible
+    // to a screen reader.
+    btn.setAttribute('aria-label', label);
+    return;
+  }
+  if (!span) {
+    span = document.createElement('span');
+    span.className = 'ext-view-badge';
+    btn.appendChild(span);
+  }
+  span.textContent = count > 99 ? '99+' : String(count);
+  btn.setAttribute('aria-label', `${label} (${span.textContent})`);
 }
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
