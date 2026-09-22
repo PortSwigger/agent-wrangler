@@ -23,11 +23,11 @@ export function normalisePr(link) {
   const m = GITHUB_PR_RE.exec(url);
   if (!m) throw new Error('PR links must be a GitHub pull-request url like https://github.com/owner/repo/pull/123.');
   const out = { type: 'pr', url, repo: m[1], number: Number(m[2]) };
-  // The poller owns checkStatus/dirty/unresolvedCount, but preserve them if a
-  // set_links round-trip carries them (get_links returns them), so refreshing
-  // the list doesn't wipe them.
+  // The poller owns checkStatus/headSha/dirty/unresolvedCount, but a set_links
+  // round-trip carries them back from get_links and must not wipe them.
   if (typeof link.checkStatus === 'string') out.checkStatus = link.checkStatus;
   if (typeof link.checkStatusFetchedAt === 'string') out.checkStatusFetchedAt = link.checkStatusFetchedAt;
+  if (typeof link.headSha === 'string') out.headSha = link.headSha;
   if (typeof link.dirty === 'boolean') out.dirty = link.dirty;
   if (typeof link.unresolvedCount === 'number') out.unresolvedCount = link.unresolvedCount;
   return out;

@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 
-// The jq derivation runs INSIDE gh (-q), so stdout is four tab-separated fields:
-// `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>`. The PR's own state
-// (OPEN/MERGED/CLOSED), a *rollup word* derived from .statusCheckRollup, and the
-// two free fields that turn the rollup into an authoritative checkStatus.
+// The jq derivation runs INSIDE gh (-q), so stdout is five tab-separated fields:
+// `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>\t<headRefOid>`. The
+// merge/review fields turn the rollup into an authoritative checkStatus; the
+// head SHA distinguishes a real PR push from a base-relative merge-state flap.
 //
 // The rollup word mirrors paddy-log's logic, including the in-progress gotcha: a
 // running CheckRun reports .conclusion as an empty string '' (not null), so
@@ -28,7 +28,7 @@ const JQ = `
       elif ($s|any(. as $x | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"]|index($x))) then "failing"
       elif ($s|any(. as $x | ["PENDING","IN_PROGRESS","QUEUED","EXPECTED"]|index($x))) then "pending"
       else "passing" end ) as $rollup
-  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")"`;
+  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")\\t\\(.headRefOid // "")"`;
 
 // The raw word the JQ derives from the rollup alone (validated on input). The
 // final checkStatus deriveCheckStatus emits is a wider vocabulary — it also
@@ -65,13 +65,13 @@ function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision) {
 // Default runner: run `gh pr view <url> --json <fields> -q <jq>`.
 function defaultRun(url) {
   return new Promise((resolve) => {
-    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision',
+    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision,headRefOid',
       '-q', JQ], { timeout: 15000 },
       (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
   });
 }
 
-// Resolve a PR's { state, checkStatus, reviewDecision, dirty }, or null on any
+// Resolve a PR's { state, checkStatus, reviewDecision, dirty, headSha }, or null on any
 // failure (caller keeps the prior value). `state` drives auto-removal on
 // MERGED/CLOSED; `checkStatus` drives the CI board/pane notifier; `reviewDecision`
 // is the attribution signal for a non-CLEAN block (REVIEW_REQUIRED/CHANGES_REQUESTED
@@ -85,15 +85,15 @@ export async function fetchPrStatus(url, run = defaultRun) {
   try {
     const { code, stdout } = await run(url);
     if (code !== 0) return null;
-    // Strip only the trailing newline, not via trim(): reviewDecision (the last
-    // field) is empty when no review is required, and trim() would eat the tab.
+    // Strip only the trailing newline: headRefOid defensively defaults to an
+    // empty final field, whose delimiter trim() would otherwise consume.
     const parts = String(stdout).replace(/\r?\n$/, '').split('\t');
-    if (parts.length !== 4) return null;
-    const [state, rollup, mergeStateStatus, review] = parts;
+    if (parts.length !== 5) return null;
+    const [state, rollup, mergeStateStatus, review, headSha] = parts;
     if (!VALID_STATE.has(state) || !ROLLUP.has(rollup)) return null;
     const reviewDecision = VALID_REVIEW.has(review) ? review : '';
     const checkStatus = deriveCheckStatus(rollup, mergeStateStatus, reviewDecision);
-    return { state, checkStatus, reviewDecision, dirty: mergeStateStatus === 'DIRTY' };
+    return { state, checkStatus, reviewDecision, dirty: mergeStateStatus === 'DIRTY', headSha };
   } catch {
     return null;
   }

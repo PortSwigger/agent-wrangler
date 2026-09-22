@@ -297,19 +297,20 @@ test('prLinks lists pr links with their task id', () => {
     { type: 'jira', key: 'ENT-1' },
     { type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 },
   ]);
-  assert.deepEqual(store.prLinks(), [{ ownerId: t.id, url: 'https://github.com/a/b/pull/1', number: 1, checkStatus: undefined, dirty: undefined, unresolvedCount: undefined }]);
+  assert.deepEqual(store.prLinks(), [{ ownerId: t.id, url: 'https://github.com/a/b/pull/1', number: 1, checkStatus: undefined, headSha: undefined, dirty: undefined, unresolvedCount: undefined }]);
 });
 
-test('updateLinkStatus writes checkStatus/dirty onto the matching pr link only', () => {
+test('updateLinkStatus writes checkStatus/headSha/dirty onto the matching pr link only', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Login' });
   store.setLinks(t.id, [
     { type: 'jira', key: 'ENT-1' },
     { type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 },
   ]);
-  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'passing', true, '2026-06-16T00:00:00Z'), true);
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'passing', true, '2026-06-16T00:00:00Z', undefined, '293558cba987'), true);
   const links = store.getLinks(t.id);
   assert.equal(links.find((l) => l.type === 'pr').checkStatus, 'passing');
+  assert.equal(links.find((l) => l.type === 'pr').headSha, '293558cba987');
   assert.equal(links.find((l) => l.type === 'pr').dirty, true);
   assert.equal(links.find((l) => l.type === 'jira').checkStatus, undefined);
 });
@@ -341,7 +342,7 @@ test('updateLinkStatus returns true when only dirty changes (checkStatus stable)
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'pending', true, 'y'), true);
 });
 
-test('updateLinkStatus writes unresolvedCount as the last param, but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
+test('updateLinkStatus writes unresolvedCount but excludes it from the changed check (renders nowhere, so it must not force a graph rebuild)', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Login' });
   store.setLinks(t.id, [{ type: 'pr', url: 'https://github.com/a/b/pull/1', repo: 'a/b', number: 1 }]);

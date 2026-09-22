@@ -19,9 +19,11 @@ export function diffNeedsYou(sessions) {
   return fresh;
 }
 
-// Same transition-detection shape as diffNeedsYou, but for PR CI checks — its
-// own prev Map + seeded flag so it's independent of the needs-you baseline.
-let prevChecks = new Map();
+// PR check notifications remember what people were actually told, not every
+// transient state GitHub exposed while recomputing mergeability against a moving
+// base branch. Otherwise a passing→pending→passing flap at the same head would
+// replay the passing notification even though the PR itself never changed.
+let lastNotified = new Map();
 let checksSeeded = false;
 
 // A checkStatus is *notifiable* when it's a state worth nudging the agent/board
@@ -30,22 +32,18 @@ let checksSeeded = false;
 // stay silent — so we never fire a premature "passed".
 const NOTIFY = new Set(['passing', 'failing', 'awaiting-review', 'changes-requested']);
 
-// links: [{ scope, ownerId, url, number, checkStatus }]. Emit a link only when
-// its checkStatus CHANGES into a notifiable state — so it fires on
-// pending→passing, pending→awaiting-review, awaiting-review→passing, etc., but
-// never on X→X or X→pending. Seeded on the first call so a restart doesn't
-// replay every already-green PR. The key includes scope so a task link and a
-// session link to the same url don't collide. A freshly attached PR that's
-// already notifiable fires on first appearance (new key, prev undefined ≠ status).
+// links: [{ scope, ownerId, url, number, checkStatus, headSha }]. A freshly
+// attached PR that's already notifiable fires on first appearance after the
+// restart-seeding sweep; scope keeps task/session links to one URL independent.
 export function diffCheckStatus(links) {
   const events = [];
-  const next = new Map();
   for (const l of links) {
     const key = `${l.scope}:${l.ownerId}:${l.url}`;
-    next.set(key, l.checkStatus);
-    if (checksSeeded && NOTIFY.has(l.checkStatus) && prevChecks.get(key) !== l.checkStatus) events.push(l);
+    if (!NOTIFY.has(l.checkStatus)) continue;
+    const composite = `${l.checkStatus}@${l.headSha || ''}`;
+    if (checksSeeded && lastNotified.get(key) !== composite) events.push(l);
+    lastNotified.set(key, composite);
   }
-  prevChecks = next;
   checksSeeded = true;
   return events;
 }
@@ -124,7 +122,9 @@ export function prPaneLine(number, url, phrase) {
 
 // The one-line pane nudge for a check-status transition.
 export function prPaneNudge(ev) {
-  return prPaneLine(ev.number, ev.url, PR_PANE_PHRASE[ev.checkStatus] || ev.checkStatus);
+  const phrase = PR_PANE_PHRASE[ev.checkStatus] || ev.checkStatus;
+  const shortSha = typeof ev.headSha === 'string' ? ev.headSha.slice(0, 7) : '';
+  return prPaneLine(ev.number, ev.url, shortSha ? `${phrase} (${shortSha})` : phrase);
 }
 
 // Same transition-detection shape as diffCheckStatus, but for the `dirty` (merge

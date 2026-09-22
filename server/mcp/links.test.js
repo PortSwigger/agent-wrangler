@@ -52,9 +52,10 @@ test('pr link requires a url', () => {
 });
 
 test('pr link preserves an existing checkStatus through normalise', () => {
-  const out = normaliseLink({ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', checkStatus: 'passing', checkStatusFetchedAt: '2026-06-16T00:00:00Z' });
+  const out = normaliseLink({ type: 'pr', url: 'https://github.com/acme/widgets/pull/42', checkStatus: 'passing', checkStatusFetchedAt: '2026-06-16T00:00:00Z', headSha: '293558cba987' });
   assert.equal(out.checkStatus, 'passing');
   assert.equal(out.checkStatusFetchedAt, '2026-06-16T00:00:00Z');
+  assert.equal(out.headSha, '293558cba987');
 });
 
 test('pr link preserves an existing dirty flag through normalise', () => {

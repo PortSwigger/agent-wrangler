@@ -2,15 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 
-// link factory: { scope, ownerId, url, number, checkStatus }.
-const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1 } = {}) =>
-  ({ scope, ownerId, url, number, checkStatus });
+// link factory: { scope, ownerId, url, number, checkStatus, headSha }.
+const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1, headSha } = {}) =>
+  ({ scope, ownerId, url, number, checkStatus, headSha });
 const urls = (events) => events.map((e) => `${e.scope}:${e.ownerId}:${e.url}`).sort();
 
-// diffCheckStatus has module-level prev/seeded state (like diffNeedsYou), so
+// diffCheckStatus has module-level last-notified/seeded state (like diffNeedsYou), so
 // these run as one stateful sequence — the FIRST test must seed. Each later
-// scenario passes its baseline call first (which resets prev to just its keys),
-// making the asserted transition deterministic regardless of prior tests.
+// scenario uses distinct keys, making the asserted transition deterministic
+// regardless of prior tests.
 
 test('the first call seeds and emits nothing (no replay on restart)', () => {
   assert.deepEqual(diffCheckStatus([L('passing'), L('failing', { ownerId: 's2' })]), []);
@@ -46,6 +46,26 @@ test('passing→failing (regression) emits', () => {
 test('X→pending never emits', () => {
   diffCheckStatus([L('passing', { ownerId: 'f' })]);   // baseline (ignored)
   assert.deepEqual(diffCheckStatus([L('pending', { ownerId: 'f' })]), []);
+});
+
+test('REGRESSION: passing→pending→passing at the same head notifies only the first passing', () => {
+  const link = (checkStatus) => L(checkStatus, { ownerId: 'base-flap', headSha: '293558cba987' });
+  assert.equal(diffCheckStatus([link('passing')]).length, 1);
+  assert.deepEqual(diffCheckStatus([link('pending')]), []);
+  assert.deepEqual(diffCheckStatus([link('passing')]), []);
+});
+
+test('a real push at the same checkStatus re-fires because the head changed', () => {
+  const link = (headSha) => L('passing', { ownerId: 'real-push', headSha });
+  assert.equal(diffCheckStatus([link('sha-one')]).length, 1);
+  assert.equal(diffCheckStatus([link('sha-two')]).length, 1);
+});
+
+test('a failing regression and passing recovery at the same head both fire', () => {
+  const link = (checkStatus) => L(checkStatus, { ownerId: 'real-regression', headSha: 'sha-same' });
+  assert.equal(diffCheckStatus([link('passing')]).length, 1);
+  assert.equal(diffCheckStatus([link('failing')]).length, 1);
+  assert.equal(diffCheckStatus([link('passing')]).length, 1);
 });
 
 test('task and session links to the same url do not collide (scope in key)', () => {
@@ -160,8 +180,8 @@ test('repoFromPrUrl extracts just the repo name (not owner/repo)', () => {
 
 test('prPaneNudge composes [Agent Wrangler] PR #<n> (<repo>): <phrase>: <url>', () => {
   const url = 'https://github.com/o/agent-wrangler/pull/42';
-  assert.equal(prPaneNudge({ number: 42, url, checkStatus: 'failing' }),
-    '[Agent Wrangler] PR #42 (agent-wrangler): required checks are now failing: ' + url);
+  assert.equal(prPaneNudge({ number: 42, url, checkStatus: 'failing', headSha: '293558cba987' }),
+    '[Agent Wrangler] PR #42 (agent-wrangler): required checks are now failing (293558c): ' + url);
 });
 
 test('prPaneNudge omits the (<repo>) segment entirely for an enterprise/malformed url (no bare "()")', () => {

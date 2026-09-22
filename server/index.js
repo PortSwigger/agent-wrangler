@@ -445,7 +445,7 @@ let lastControlActivity = Date.now();
 // on-attach fast path).
 //
 // The full sweep is re-entrancy-guarded (see createFullSweepGuard): overlapping ticks
-// would each reassign diffCheckStatus's baseline and could re-fire a transition into a
+// could interleave diffCheckStatus's last-notified state and re-fire a transition into a
 // duplicate wake/resume. A targeted poll (`only` set) is never guarded — it must not be
 // starved by a long full sweep and never runs the transition diff below.
 const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
@@ -490,7 +490,7 @@ async function runPrStatusSweep(only) {
     // like every thread just got resolved.
     const unresolvedCount = (await fetchUnresolvedThreadCount(url)) ?? prevUnresolvedCount;
     const at = new Date().toISOString();
-    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount)) changed = true;
+    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount, res.headSha)) changed = true;
   }
   // Detect check-status transitions only on the full sweep (the on-attach fast
   // path skips other links, so its baseline would be incomplete and re-fire).
@@ -509,7 +509,7 @@ async function runPrStatusSweep(only) {
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
       broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, status: ev.checkStatus });
+                  url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha });
       const entry = sessionManager.entryFor(ev.ownerId);
       // The two gated decisions (auto-merge / pane-nudge) live in the pure
       // planCheckTransition (notifier.js, unit-tested matrix); all the I/O stays

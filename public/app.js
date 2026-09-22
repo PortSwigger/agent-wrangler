@@ -6431,7 +6431,9 @@ function onPrChecks(msg) {
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
-  const text = `[Agent Wrangler] ${label}: ${PR_CHECK_TEXT[msg.status] || msg.status}`;
+  const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
+  const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
+  const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
   toast(text, isErr);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
