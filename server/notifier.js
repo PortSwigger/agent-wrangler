@@ -32,18 +32,31 @@ let checksSeeded = false;
 // stay silent — so we never fire a premature "passed".
 const NOTIFY = new Set(['passing', 'failing', 'awaiting-review', 'changes-requested']);
 
-// links: [{ scope, ownerId, url, number, checkStatus, headSha }]. A freshly
-// attached PR that's already notifiable fires on first appearance after the
-// restart-seeding sweep; scope keeps task/session links to one URL independent.
+// Rebuild the map from the current link set so removing and later re-attaching a
+// PR makes it new again, while carrying prior notifications through pending/none
+// polls. A restart may see persisted status before the first successful SHA
+// fetch, so its empty-head sentinel adopts that SHA without replaying old news.
 export function diffCheckStatus(links) {
   const events = [];
+  const next = new Map();
   for (const l of links) {
     const key = `${l.scope}:${l.ownerId}:${l.url}`;
-    if (!NOTIFY.has(l.checkStatus)) continue;
-    const composite = `${l.checkStatus}@${l.headSha || ''}`;
-    if (checksSeeded && lastNotified.get(key) !== composite) events.push(l);
-    lastNotified.set(key, composite);
+    const prior = lastNotified.get(key);
+    if (!NOTIFY.has(l.checkStatus)) {
+      if (prior !== undefined) next.set(key, prior);
+      continue;
+    }
+    if (!l.headSha) {
+      if (prior !== undefined) next.set(key, prior);
+      else if (!checksSeeded) next.set(key, `${l.checkStatus}@`);
+      continue;
+    }
+    const composite = `${l.checkStatus}@${l.headSha}`;
+    const sameStatusBeforeHeadWasKnown = prior === `${l.checkStatus}@`;
+    if (checksSeeded && prior !== composite && !sameStatusBeforeHeadWasKnown) events.push(l);
+    next.set(key, composite);
   }
+  lastNotified = next;
   checksSeeded = true;
   return events;
 }

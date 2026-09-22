@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus, headSha }.
-const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1, headSha } = {}) =>
+const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1, headSha = 'sha-default' } = {}) =>
   ({ scope, ownerId, url, number, checkStatus, headSha });
 const urls = (events) => events.map((e) => `${e.scope}:${e.ownerId}:${e.url}`).sort();
 
@@ -12,19 +12,20 @@ const urls = (events) => events.map((e) => `${e.scope}:${e.ownerId}:${e.url}`).s
 // scenario uses distinct keys, making the asserted transition deterministic
 // regardless of prior tests.
 
-test('the first call seeds and emits nothing (no replay on restart)', () => {
+test('the first call seeds and a missing head does not replay once fetched', () => {
+  assert.deepEqual(diffCheckStatus([L('passing', { headSha: null }), L('failing', { ownerId: 's2' })]), []);
   assert.deepEqual(diffCheckStatus([L('passing'), L('failing', { ownerId: 's2' })]), []);
 });
 
 test('pending→failing and pending→passing emit', () => {
-  diffCheckStatus([L('pending', { ownerId: 'a' }), L('pending', { ownerId: 'b' })]); // baseline
+  diffCheckStatus([L('pending', { ownerId: 'a' }), L('pending', { ownerId: 'b' })]);
   const events = diffCheckStatus([L('failing', { ownerId: 'a' }), L('passing', { ownerId: 'b' })]);
   assert.equal(events.length, 2);
   assert.deepEqual(events.map((e) => e.checkStatus).sort(), ['failing', 'passing']);
 });
 
 test('failing→failing does not emit (no net transition)', () => {
-  diffCheckStatus([L('pending', { ownerId: 'c' })]);   // baseline pending
+  diffCheckStatus([L('pending', { ownerId: 'c' })]);
   diffCheckStatus([L('failing', { ownerId: 'c' })]);   // pending→failing (emits, ignored)
   assert.deepEqual(diffCheckStatus([L('failing', { ownerId: 'c' })]), []); // failing→failing
 });
@@ -48,11 +49,30 @@ test('X→pending never emits', () => {
   assert.deepEqual(diffCheckStatus([L('pending', { ownerId: 'f' })]), []);
 });
 
+test('X→none never emits or resets the last-notified state', () => {
+  const link = (checkStatus) => L(checkStatus, { ownerId: 'none-state' });
+  assert.equal(diffCheckStatus([link('passing')]).length, 1);
+  assert.deepEqual(diffCheckStatus([link('none')]), []);
+  assert.deepEqual(diffCheckStatus([link('passing')]), []);
+});
+
 test('REGRESSION: passing→pending→passing at the same head notifies only the first passing', () => {
   const link = (checkStatus) => L(checkStatus, { ownerId: 'base-flap', headSha: '293558cba987' });
   assert.equal(diffCheckStatus([link('passing')]).length, 1);
   assert.deepEqual(diffCheckStatus([link('pending')]), []);
   assert.deepEqual(diffCheckStatus([link('passing')]), []);
+});
+
+test('a removed then re-attached link notifies again', () => {
+  const link = L('passing', { ownerId: 're-attached', headSha: 'sha-same' });
+  assert.equal(diffCheckStatus([link]).length, 1);
+  assert.deepEqual(diffCheckStatus([]), []);
+  assert.equal(diffCheckStatus([link]).length, 1);
+});
+
+test('a new link with no head waits until the head is known', () => {
+  assert.deepEqual(diffCheckStatus([L('passing', { ownerId: 'head-later', headSha: null })]), []);
+  assert.equal(diffCheckStatus([L('passing', { ownerId: 'head-later' })]).length, 1);
 });
 
 test('a real push at the same checkStatus re-fires because the head changed', () => {
@@ -70,7 +90,7 @@ test('a failing regression and passing recovery at the same head both fire', () 
 
 test('task and session links to the same url do not collide (scope in key)', () => {
   const same = (cs, scope) => L(cs, { scope, ownerId: scope === 'task' ? 't1' : 's1', url: 'https://github.com/o/r/pull/9' });
-  diffCheckStatus([same('pending', 'task'), same('pending', 'session')]); // baseline both pending
+  diffCheckStatus([same('pending', 'task'), same('pending', 'session')]);
   const events = diffCheckStatus([same('passing', 'task'), same('failing', 'session')]);
   assert.equal(events.length, 2);
   assert.deepEqual(urls(events), ['session:s1:https://github.com/o/r/pull/9', 'task:t1:https://github.com/o/r/pull/9']);
@@ -83,7 +103,7 @@ test('a brand-new key appearing already-terminal after seed emits on first sight
 });
 
 test('pending→awaiting-review and pending→changes-requested emit (review states are notifiable)', () => {
-  diffCheckStatus([L('pending', { ownerId: 'g' }), L('pending', { ownerId: 'h' })]); // baseline
+  diffCheckStatus([L('pending', { ownerId: 'g' }), L('pending', { ownerId: 'h' })]);
   const events = diffCheckStatus([L('awaiting-review', { ownerId: 'g' }), L('changes-requested', { ownerId: 'h' })]);
   assert.equal(events.length, 2);
   assert.deepEqual(events.map((e) => e.checkStatus).sort(), ['awaiting-review', 'changes-requested']);
@@ -97,7 +117,7 @@ test('awaiting-review→passing (review approved → mergeable) emits', () => {
 });
 
 test('awaiting-review→awaiting-review does not re-emit (no net transition)', () => {
-  diffCheckStatus([L('pending', { ownerId: 'j' })]);             // baseline
+  diffCheckStatus([L('pending', { ownerId: 'j' })]);
   diffCheckStatus([L('awaiting-review', { ownerId: 'j' })]);     // pending→awaiting-review (emits, ignored)
   assert.deepEqual(diffCheckStatus([L('awaiting-review', { ownerId: 'j' })]), []); // stable
 });

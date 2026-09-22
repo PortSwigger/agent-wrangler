@@ -313,6 +313,8 @@ test('updateLinkStatus writes checkStatus/headSha/dirty onto the matching pr lin
   assert.equal(links.find((l) => l.type === 'pr').headSha, '293558cba987');
   assert.equal(links.find((l) => l.type === 'pr').dirty, true);
   assert.equal(links.find((l) => l.type === 'jira').checkStatus, undefined);
+  assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'passing', true, '2026-06-16T01:00:00Z'), false);
+  assert.equal(store.getLinks(t.id).find((l) => l.type === 'pr').headSha, '293558cba987');
 });
 
 test('updateLinkStatus is a no-op for an unknown task or url', () => {

@@ -1874,6 +1874,8 @@ test('updateLinkStatus writes checkStatus/headSha/dirty onto the matching sessio
   assert.equal(mgr.getLinks('CARD1')[0].checkStatus, 'failing');
   assert.equal(mgr.getLinks('CARD1')[0].headSha, '293558cba987');
   assert.equal(mgr.getLinks('CARD1')[0].dirty, true);
+  assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/7', 'failing', true, '2026-06-16T01:00:00Z'), false);
+  assert.equal(mgr.getLinks('CARD1')[0].headSha, '293558cba987');
   assert.equal(mgr.updateLinkStatus('CARD1', 'https://github.com/a/b/pull/999', 'passing', false, 'x'), false);
 });
 

@@ -862,7 +862,7 @@ export class SessionManager {
     link.dirty = dirty;
     link.checkStatusFetchedAt = fetchedAt;
     link.unresolvedCount = unresolvedCount;
-    link.headSha = headSha;
+    if (typeof headSha === 'string' && headSha) link.headSha = headSha;
     this._save();
     return changed;
   }
