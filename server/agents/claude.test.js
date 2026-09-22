@@ -251,7 +251,31 @@ test('maxContextWindowFor: reads the ceiling off the claude model entry, respect
   assert.equal(maxContextWindowFor('claude', null, 'opusplan'), null);
 });
 
-test('maxContextWindowFor: codex reads from its own models cache, null for a model it has never cached', () => {
+// Regression (found in adversarial review of PR #178): an adopted session, or
+// a legacy entry, deliberately carries `model: null` (see session-manager.js
+// SessionManager.adopt()), so `launchModel` here is genuinely absent — not
+// merely "didn't happen to be passed". Same story after a live /model switch
+// to a value the launch model never recorded. With no launch value to
+// disambiguate, sonnet and sonnet[1m]'s shared transcript prefix must NOT
+// silently resolve to sonnet's 200K — that would render a confidently WRONG
+// number for a real 1M session, which is strictly worse than showing nothing.
+test('maxContextWindowFor: an ambiguous transcript model with no disambiguating launch model stays null, not a guess', () => {
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', null), null);
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', undefined), null);
+  // An unrelated launch model (doesn't disambiguate either) is the same as none.
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'opus'), null);
+  // A currentModel with only ONE possible match is still inferred correctly —
+  // the fix must not turn every unset-launch-model case into a null.
+  assert.equal(maxContextWindowFor('claude', 'claude-opus-4-20250514', null), 1_000_000);
+  assert.equal(maxContextWindowFor('claude', 'claude-haiku-4-5-20251001', null), 200_000);
+});
+
+// codexContextWindow's own read-a-real-cache-entry behaviour is covered with
+// controlled fixtures in codex-rollout.test.js; this only checks the thin
+// wrapper delegates to it for the codex branch, so a deliberately impossible
+// slug (never a real Codex model) keeps the result deterministic regardless
+// of whatever happens to be cached at ~/.codex/models_cache.json on the host.
+test('maxContextWindowFor: codex delegates to codexContextWindow, null for a slug it could never have cached', () => {
   assert.equal(maxContextWindowFor('codex', null, 'not-a-real-model-xyz'), null);
 });
 

@@ -42,11 +42,27 @@ export function modelPillFor(agentId, currentModel, launchModel) {
 // state-reader.js). Codex's window is read from its own live-refreshed models
 // cache (codexContextWindow); every other agent's is hand-carried on its
 // `models` entries (claude.js `contextWindow`). Null when unknown — an unset
-// pill is honest, a guessed number is not.
+// pill is honest, a guessed number is not, which is also why this does NOT
+// just call findModelEntry: a transcript model with no disambiguating launch
+// value (adopt() deliberately stores `model: null`; so do legacy entries) can
+// share one transcriptPrefix across launch values with DIFFERENT windows
+// (sonnet vs sonnet[1m], both "claude-sonnet-") — findModelEntry's own
+// first-match guess is fine for modelPillFor's label (cosmetic), but here it
+// would render a confidently WRONG number, not just a mislabelled one.
 export function maxContextWindowFor(agentId, currentModel, launchModel) {
   if (agentId === 'codex') return codexContextWindow(currentModel || launchModel);
-  const entry = findModelEntry(adapterFor(agentId).models, currentModel, launchModel);
-  return entry?.contextWindow ?? null;
+  const models = adapterFor(agentId).models;
+  if (!currentModel) return launchModel ? (findModelEntry(models, null, launchModel)?.contextWindow ?? null) : null;
+  const launchEntry = models.find((entry) => entry.value === launchModel);
+  if (launchEntry?.transcriptPrefixes?.some((prefix) => currentModel.startsWith(prefix))) {
+    return launchEntry.contextWindow ?? null;
+  }
+  // No launch value disambiguated this transcript model — stay silent unless
+  // every entry it could plausibly be names the SAME window.
+  const candidates = models.filter((entry) => entry.value === currentModel
+    || entry.transcriptPrefixes?.some((prefix) => currentModel.startsWith(prefix)));
+  const windows = new Set(candidates.map((entry) => entry.contextWindow ?? null));
+  return windows.size === 1 ? [...windows][0] : null;
 }
 
 // Mint-time floor for the fallback id lookup a discover-id agent (Codex) does when an
