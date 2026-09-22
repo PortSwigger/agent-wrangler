@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
+import { cachedScan } from '../usage-scan-memo.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -166,6 +167,17 @@ const sessionsKill = ({ id, core }) => ({
   },
 });
 
+// Bill a headless conversation to a card. Thin bind over the primitive, which
+// does the validating (a missing card, an empty id or the card's CURRENT
+// conversation are all `false`, never a throw) and never touches
+// `liveSessionId` — so an extension can make a card PAY for a `claude -p` it
+// ran on the card's behalf, but can never make the card RESUME into it.
+const sessionsBill = ({ core }) => ({
+  sessions: {
+    bill: (sid, liveSessionId) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId),
+  },
+});
+
 const tasksRead = ({ core }) => ({
   tasks: {
     list: () => core.taskStore.snapshot().tasks.map((t) => projectTask(t, t.id)),
@@ -255,6 +267,40 @@ const mailSend = ({ id, mailStore }) => ({
   },
 });
 
+// cardId -> { cardId, usd, estimatedUsd } over a scanAllDaily result. Two rows can
+// share a card (a `/clear` leaves an earlier transcript behind and each is its own
+// row, and a billed headless conversation is another), so rows ACCUMULATE onto the
+// card rather than replacing each other. `estimatedUsd` is the Codex-estimate
+// SLICE of `usd`, a dollar amount and not a flag: any of it means the card's total
+// carries an estimate. A row the scanner could not attribute to a card is skipped —
+// there is nothing board-shaped to hand it to.
+export function usdByCard(scan) {
+  const out = new Map();
+  for (const row of scan?.sessions || []) {
+    if (!row.cardId) continue;
+    const cur = out.get(row.cardId) || { cardId: row.cardId, usd: 0, estimatedUsd: 0 };
+    for (const bag of Object.values(row.days || {})) {
+      cur.usd += bag.usd || 0;
+      cur.estimatedUsd += bag.estimatedUsd || 0;
+    }
+    out.set(row.cardId, cur);
+  }
+  return [...out.values()];
+}
+
+// `scanUsage` is scanAllDaily, wired by index.js (and swapped in tests). It goes
+// through the process-wide memo (usage-scan-memo.js), NEVER around it: the scan
+// is O(every transcript on disk), the Usage panel already shares that memo, and a
+// second consumer keeping a cache of its own would mean two full-history walks
+// minutes apart for the same numbers. The result is frozen — it is the memo's
+// shared rows summed, and an extension mutating what it was handed must not be
+// able to move what the next caller reads.
+const usageRead = ({ scanUsage }) => ({
+  usage: {
+    byCard: async () => deepFreeze(usdByCard(await cachedScan(scanUsage))),
+  },
+});
+
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
@@ -273,4 +319,6 @@ export const V1_BUILDERS = {
   'schedules:write': schedulesWrite,
   'mail:read': mailRead,
   'mail:send': mailSend,
+  'usage:read': usageRead,
+  'sessions:bill': sessionsBill,
 };

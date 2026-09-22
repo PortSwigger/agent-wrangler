@@ -262,7 +262,7 @@ an extension's behalf. Each is a thin bind over a primitive the core already
 owns — the point is a declared, closed vocabulary, not a second implementation of
 session lifecycle.
 
-The 17 v1 capabilities:
+The 19 v1 capabilities:
 
 | capability | surface |
 |---|---|
@@ -283,6 +283,8 @@ The 17 v1 capabilities:
 | `schedules:write` | `host.schedules.create/update/remove` — straight through `schedule-store`, whose `validateAction` is the third model-validation door |
 | `mail:read` | `host.mail.unread(sessionId)` / `.list(sessionId)` |
 | `mail:send` | `host.mail.send(to, text)` — `from` forced to `ext:<id>` |
+| `usage:read` | `host.usage.byCard()` → `Promise<[{cardId, usd, estimatedUsd}]>`, every card's spend summed over every transcript/day it owned, via `usage-scan-memo`'s `cachedScan(scanAllDaily)` (never a scan of its own); `estimatedUsd` is the Codex-estimate slice of `usd` |
+| `sessions:bill` | `host.sessions.bill(sessionId, liveSessionId)` → `boolean` — `recordPriorLiveSessionId`: adds a headless conversation to the card's `priorLiveSessionIds` so the cost scanners bill it there; never touches `liveSessionId`, so nothing will ever resume into it |
 
 Always present, no capability required: `host.id`, `host.version`
 (`HOST_API_VERSION`), `host.stores` (its OWN stores only — narrowed by the

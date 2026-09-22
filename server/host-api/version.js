@@ -48,14 +48,27 @@ import semver from 'semver';
 // by an older server that has never heard of either, so the declared range is
 // the only thing that can say which servers it will load on.
 //
-// 1.6.0 is the `dispatch.field` slot (public/slots.js) plus the
+// 1.6.0 adds two capabilities: `usage:read` (`host.usage.byCard()`, every card's
+// spend summed over every transcript and day it owned, through the shared
+// usage-scan memo) and `sessions:bill` (`host.sessions.bill(sessionId,
+// liveSessionId)`, which records a headless conversation onto a card's
+// `priorLiveSessionIds` so the scanners bill it there, and never repoints the
+// card's live conversation). Both exist because the jobs extension had to price
+// its board and bill a headless triage run to the card that asked for it, and
+// neither is reachable any other way: the scan memo and the entry's prior-id
+// list are core singletons a manifest may not import. Additive keys on the
+// façade, so v1.js keeps its builders — and a manifest declaring `^1.6.0` is
+// saying it needs those two keys to exist, which an older server's
+// unknown-capability quarantine is the only thing that can honour.
+//
+// 1.7.0 is the `dispatch.field` slot (public/slots.js) plus the
 // `hideDispatchField` manifest key — the first extension surface that shapes a
-// CORE form. No new façade key again, and the same argument a fourth time, from
+// CORE form. No new façade key again, and the same argument a fifth time, from
 // both halves at once: an older `slots.js` THROWS on an unknown slot name, so
 // the whole client module fails to load, and an older SERVER quarantines a
 // manifest declaring `hideDispatchField` outright. The declared range is the
 // only thing that can say which servers such a manifest will load on.
-export const HOST_API_VERSION = '1.6.0';
+export const HOST_API_VERSION = '1.7.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

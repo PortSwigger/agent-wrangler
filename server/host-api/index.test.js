@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
-import { V1_BUILDERS } from './v1.js';
+import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
+import { _resetUsageCache } from '../usage-scan-memo.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
@@ -17,6 +18,7 @@ function wiring(overrides = {}) {
         dispatch: async () => ({ sessionId: 'new', tmux: 'cc_new', cwd: '/a' }),
         killForSession: () => {},
         setAutoFixPrChecks: () => {},
+        recordPriorLiveSessionId: () => true,
       },
       taskStore: { taskFor: () => null, snapshot: () => ({ tasks: [] }), assign: () => {} },
       memoryStore: { read: () => '', hasMemory: () => false, append: () => {}, bindSession: () => {} },
@@ -28,6 +30,7 @@ function wiring(overrides = {}) {
     createTerminal: () => {},
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
     mailStore: { unreadInfo: () => null, list: () => [], append: () => {} },
+    scanUsage: async () => ({ sessions: [] }),
     ...overrides,
   };
 }
@@ -305,4 +308,67 @@ test('host.log prefixes the message and keeps an Error its own argument', () => 
   host.log(err);
   assert.deepEqual(lines[0], ['[ext:x] something', err]);
   assert.deepEqual(lines[1], ['[ext:x]', err]);
+});
+
+// ---- usage:read ----------------------------------------------------------
+// A scanAllDaily result in the shape the scanner produces: one row per transcript
+// a card owned, each with per-day bags carrying `usd` and the Codex-estimate
+// slice `estimatedUsd`.
+const day = (usd, estimatedUsd = 0) => ({ usd, estimatedUsd });
+const SCAN = { sessions: [
+  { file: '/t/a.jsonl', cardId: 'c1', days: { '2026-09-01': day(1), '2026-09-02': day(2) } },
+  // A `/clear` left an earlier transcript behind: a second row on the SAME card.
+  { file: '/t/b.jsonl', cardId: 'c1', days: { '2026-09-03': day(4) } },
+  // A Codex card: the whole bag is estimated.
+  { file: null, cardId: 'c2', days: { '2026-09-01': day(0.5, 0.5) } },
+  // A row the scanner could not tie to a card contributes to nobody.
+  { file: '/t/z.jsonl', cardId: null, days: { '2026-09-01': day(99) } },
+] };
+
+test('usdByCard sums every row and day a card owned, keeping the estimate as a dollar slice', () => {
+  assert.deepEqual(usdByCard(SCAN), [
+    { cardId: 'c1', usd: 7, estimatedUsd: 0 },
+    { cardId: 'c2', usd: 0.5, estimatedUsd: 0.5 },
+  ]);
+  assert.deepEqual(usdByCard(null), []);
+  assert.deepEqual(usdByCard({ sessions: [{ cardId: 'c', days: undefined }] }), [{ cardId: 'c', usd: 0, estimatedUsd: 0 }]);
+});
+
+test('usage.byCard goes THROUGH the shared scan memo and hands back a frozen result', async () => {
+  _resetUsageCache();
+  try {
+    let scans = 0;
+    const host = buildHostApi({ id: 'x', requires: ['usage:read'], ...wiring({ scanUsage: async () => { scans += 1; return SCAN; } }) });
+    const first = await host.usage.byCard();
+    const second = await host.usage.byCard();
+    assert.equal(scans, 1, 'two reads inside the TTL are one scan');
+    assert.deepEqual(first, [{ cardId: 'c1', usd: 7, estimatedUsd: 0 }, { cardId: 'c2', usd: 0.5, estimatedUsd: 0.5 }]);
+    assert.deepEqual(second, first);
+    assert.ok(Object.isFrozen(first));
+    assert.ok(Object.isFrozen(first[0]));
+    assert.throws(() => { first[0].usd = 0; }, TypeError);
+  } finally {
+    _resetUsageCache();
+  }
+});
+
+test('usage is ABSENT without usage:read, and sessions.bill is ABSENT without sessions:bill', () => {
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() });
+  assert.equal('usage' in host, false);
+  assert.equal('bill' in host.sessions, false);
+});
+
+// ---- sessions:bill -------------------------------------------------------
+test('sessions.bill forwards both ids to recordPriorLiveSessionId and returns its boolean', () => {
+  const calls = [];
+  const host = buildHostApi({
+    id: 'x',
+    requires: ['sessions:bill'],
+    ...wiring({ core: { ...wiring().core, sessionManager: { recordPriorLiveSessionId: (sid, live) => { calls.push([sid, live]); return sid === 'c1'; } } } }),
+  });
+  assert.equal(host.sessions.bill('c1', 'head-1'), true);
+  assert.equal(host.sessions.bill('missing', 'head-1'), false);
+  assert.deepEqual(calls, [['c1', 'head-1'], ['missing', 'head-1']]);
+  // Only `bill` on the namespace: no read, wake or spawn rode in with it.
+  assert.deepEqual(Object.keys(host.sessions), ['bill']);
 });

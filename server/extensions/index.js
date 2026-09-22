@@ -63,6 +63,8 @@ export const CAPABILITIES = new Set([
   'terminals:create',
   'schedules:read', 'schedules:write',
   'mail:read', 'mail:send',
+  'usage:read',
+  'sessions:bill',
 ]);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
