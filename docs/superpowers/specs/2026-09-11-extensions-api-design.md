@@ -635,7 +635,7 @@ prefix (`join(normalize())` would fold a climbing `..` back inside). Served with
 'card.pill', 'view']` and `createSlots({ document, storage, handlerTypesFor,
 version })` with `register`,
 `forExtension(id)` (a registrar bound to one id), `mountInto(slot, hostEl, api)`,
-`syncHosts(slot, entries, api, graph)`, `update(slot, session, graph)`,
+`syncHosts(slot, entries, api, graph, onBadge)`, `update(slot, session, graph)`,
 `removeExtension(id)` and `contributions(slot)`. A new slot needs an entry in
 `SLOT_NAMES` and a host in `app.js`.
 
@@ -666,6 +666,36 @@ version })` with `register`,
   board draws its rail button before it has a host at all; `contributions(slot)`
   carries `label`/`icon` back for exactly that, and omits both keys where a slot
   needs neither.
+- A `view` may also carry `badge()`, a function returning a count for the rail
+  button — the one affordance a contribution that owns a whole pane still
+  cannot draw itself, because the rail is the board's chrome. CORE owns the
+  element (`.ext-view-badge`, a span inside the button `renderExtViews` built,
+  written with `textContent` and capped at `99+` because the button is 40px
+  wide) and the extension owns only the number; smuggling one into the `icon`
+  markup would mean positioning against a button core lays out, untested by
+  anything in core and re-invented by the next extension. Falsy, absent, or
+  anything that is not a positive whole count draws nothing, and nothing is
+  reported for it (a `badge` that is not a function at all is refused by
+  `register`, since that one can only be a typo): this runs on the ~4s tick, where a report would be a report
+  per tick (the same silence `dispatchMessage` keeps about a frame nobody is
+  listening for).
+  It is evaluated by `reportBadges` (slots.js) from `syncHosts`'s optional
+  `onBadge` — so on the VIEW TICK, every graph, even while another view is on
+  screen (`setView` only hides a view's host), which is what makes a needs-you
+  count visible from anywhere. It runs AFTER mount and update, so a badge reads
+  what the update it shares a tick with just settled, and under the same
+  try/catch-and-drop rule: a throwing badge removes the contribution exactly as
+  a throwing update does. Only a caller that passes `onBadge` asks at all, which
+  today is `app.js`'s `updateExtViews` and therefore only the `view` slot.
+  A contribution with no `badge`, one with no element, and one just dropped all
+  report NOTHING rather than a zero; `updateExtViews` clears every rail button
+  it did not hear about, one rule covering all three, so a count can never
+  outlive what produced it. The count also goes into the button's `aria-label`,
+  which is its whole accessible name (the icon is decorative markup).
+  `HOST_API_VERSION` 1.7.0 is what a manifest declares to say it needs this: as
+  with 1.2.0's `onMessage`, there is no new server-side key, and an older server
+  neither errors nor quarantines — it just never calls `badge`, and the declared
+  range is the only thing that tells the two servers apart.
 - `app.js`'s `renderExtViews()` derives all three pieces of chrome from what is
   registered right now — a `.layouts` rail button, a `.ext-view` host under
   `#ext-views`, and a `#view=ext:<extId>:<id>` hash route — and is called from

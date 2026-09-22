@@ -60,7 +60,16 @@ import semver from 'semver';
 // façade, so v1.js keeps its builders — and a manifest declaring `^1.6.0` is
 // saying it needs those two keys to exist, which an older server's
 // unknown-capability quarantine is the only thing that can honour.
-export const HOST_API_VERSION = '1.6.0';
+//
+// 1.7.0 is the other kind of CLIENT addition: a `view` contribution may carry
+// `badge()`, and core draws the count it returns on the rail button it already
+// builds for that view (public/slots.js reportBadges, app.js
+// setExtViewBadge). No server-side key again, and the reason the number has to
+// move is the reason 1.2.0 did: a manifest whose client half returns a count
+// from `badge` gets SILENCE from a server whose slots.js never calls it — no
+// error, no quarantine, just a rail button that never says anything — and the
+// declared range is the only thing that can tell those two servers apart.
+export const HOST_API_VERSION = '1.7.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
