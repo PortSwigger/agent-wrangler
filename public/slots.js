@@ -122,6 +122,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             `ext:<id>` frames. See subscribe() above and dispatchMessage()
   //             below; the same function is on the registrar forExtension()
   //             returns, which is where a module-level subscription belongs.
+  //   openSession — the one piece of board NAVIGATION an extension gets: show
+  //             this card, resuming it first if it is dormant (1.8.0). The base
+  //             api implements it (app.js) because it drives the view, the
+  //             selection and the core `resume` frame — none of which `send`
+  //             may reach, since it is bound to the extension's own types. A
+  //             non-id argument is reported and dropped, like a refused send.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -148,6 +154,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           baseApi.send?.(frame);
         },
         onMessage: (fn) => subscribe(extId, fn),
+        openSession: (sessionId) => {
+          if (typeof sessionId !== 'string' || !sessionId) {
+            onError(`[ext:${extId}] openSession refused: expected a session id, got ${JSON.stringify(sessionId)}`);
+            return;
+          }
+          baseApi.openSession?.(sessionId);
+        },
       });
     }
     return apis.get(extId);

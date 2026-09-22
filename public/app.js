@@ -189,6 +189,18 @@ const extApi = {
   send,
   selectedSessionId: () => selectedSessionId,
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
+  // Show a card from an extension's own view (a job's session, say): the board's
+  // grid, selected if it is there, otherwise resumed and selected when the next
+  // graph brings it back — the same sequence as a Search result's Restore. This
+  // is the only board navigation an extension has; slots.apiFor exposes it and
+  // has already refused anything that is not a session id.
+  openSession: (sessionId) => {
+    setView('grid');
+    if (latestSessions.some((x) => x.sessionId === sessionId)) { selectSession(sessionId); return; }
+    pendingSelect = sessionId;
+    send({ type: 'resume', sessionId });
+    toast('Restoring…');
+  },
 };
 const clientExtensions = createClientExtensionLoader(slots);
 // The `extensions` connect message announces which extensions ship a client
