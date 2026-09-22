@@ -394,6 +394,18 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    and a badly sized one is the extension's own problem. */
 .ext-dispatch-slot { display: contents; }
 
+/* The ONE box the dispatch anchors do own: the leading margin on each
+   contribution's first element. Layout-transparency makes a contribution
+   responsible for its own rhythm, which is right for what it ships INSIDE
+   itself — but nothing inside one extension can put space between it and the
+   NEXT extension's contribution at the same anchor, and a first child that
+   isn't a <label> (the element core's own rhythm hangs its 10px margin off)
+   lands flush against whatever precedes it. 12px is core's own row spacing
+   (.worktree-box, #m-advanced-options), so a contribution sits in the form's
+   rhythm without opting in, and one that wants its own still overrides this
+   from its own stylesheet. */
+#m-dispatch-fields .ext-slot > :first-child { margin-top: 12px; }
+
 /* A core dispatch field a `dispatch.field` contribution has vetoed
    (hiddenDispatchFields, slots.js). `.hidden` is not a global rule in this
    sheet — every user declares its own line. A plain block wrapper: the fields
