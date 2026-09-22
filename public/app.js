@@ -6164,6 +6164,12 @@ function connect() {
         // note, and keeps the head's restart button up for a removal that has
         // been superseded.
         extPendingRemoval.delete(msg.id);
+        // The row's "a newer commit is available" note came from the last check
+        // and nothing else refreshes it — not this frame, not the restart (the
+        // page survives it), and not the transient timer, which keeps `behind`
+        // on purpose. Left in place it re-offers the update just applied, and a
+        // second Update clones the same sha again.
+        delete extUpdateStatuses[msg.id];
         if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
