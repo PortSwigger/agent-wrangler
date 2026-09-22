@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
 import { claude, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
-import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, modelsWithDefault } from './index.js';
+import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
   assert.equal(claude.id, 'claude');
@@ -238,6 +238,45 @@ test('modelPillFor shortens a transcript model and falls back to the launch mode
   assert.deepEqual(modelPillFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet[1m]'), {
     label: 'sonnet 1m', title: 'claude-sonnet-4-5-20250929',
   });
+});
+
+test('maxContextWindowFor: reads the ceiling off the claude model entry, respecting the 1M/200K split', () => {
+  assert.equal(maxContextWindowFor('claude', null, 'sonnet'), 200_000);
+  assert.equal(maxContextWindowFor('claude', null, 'sonnet[1m]'), 1_000_000);
+  // The transcript prefix alone can't tell sonnet from sonnet[1m] — the launch
+  // value is what disambiguates (same precedence as modelPillFor).
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet[1m]'), 1_000_000);
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet'), 200_000);
+  // opusplan has no single window to report.
+  assert.equal(maxContextWindowFor('claude', null, 'opusplan'), null);
+});
+
+// Regression (found in adversarial review of PR #178): an adopted session, or
+// a legacy entry, deliberately carries `model: null` (see session-manager.js
+// SessionManager.adopt()), so `launchModel` here is genuinely absent — not
+// merely "didn't happen to be passed". Same story after a live /model switch
+// to a value the launch model never recorded. With no launch value to
+// disambiguate, sonnet and sonnet[1m]'s shared transcript prefix must NOT
+// silently resolve to sonnet's 200K — that would render a confidently WRONG
+// number for a real 1M session, which is strictly worse than showing nothing.
+test('maxContextWindowFor: an ambiguous transcript model with no disambiguating launch model stays null, not a guess', () => {
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', null), null);
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', undefined), null);
+  // An unrelated launch model (doesn't disambiguate either) is the same as none.
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'opus'), null);
+  // A currentModel with only ONE possible match is still inferred correctly —
+  // the fix must not turn every unset-launch-model case into a null.
+  assert.equal(maxContextWindowFor('claude', 'claude-opus-4-20250514', null), 1_000_000);
+  assert.equal(maxContextWindowFor('claude', 'claude-haiku-4-5-20251001', null), 200_000);
+});
+
+// codexContextWindow's own read-a-real-cache-entry behaviour is covered with
+// controlled fixtures in codex-rollout.test.js; this only checks the thin
+// wrapper delegates to it for the codex branch, so a deliberately impossible
+// slug (never a real Codex model) keeps the result deterministic regardless
+// of whatever happens to be cached at ~/.codex/models_cache.json on the host.
+test('maxContextWindowFor: codex delegates to codexContextWindow, null for a slug it could never have cached', () => {
+  assert.equal(maxContextWindowFor('codex', null, 'not-a-real-model-xyz'), null);
 });
 
 test('modelsWithDefault leaves the built-in default when AW_DEFAULT_MODEL is unset or unknown', () => {

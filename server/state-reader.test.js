@@ -244,6 +244,28 @@ test('buildGraph falls back to the launch model when no transcript model is avai
   assert.deepEqual(node.modelPill, { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' });
 });
 
+test('buildGraph carries a session\'s auto-compaction threshold onto the board node, null when unset', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'ctx-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', autoCompactTokens: 500000 },
+    { sessionId: 'default-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['ctx-sid'].autoCompactTokens, 500000);
+  assert.equal(byId['default-sid'].autoCompactTokens, null);
+});
+
+test('buildGraph infers modelContextWindow from the launch model when no explicit threshold is set', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'sonnet1m-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'sonnet[1m]' },
+    { sessionId: 'sonnet-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y', model: 'sonnet' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['sonnet1m-sid'].modelContextWindow, 1_000_000);
+  assert.equal(byId['sonnet-sid'].modelContextWindow, 200_000);
+});
+
 test('buildGraph: with no mailStore injected, `mail` is omitted (not a fabricated empty object)', async () => {
   const mgr = makeDormantManager([{ sessionId: 'no-mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
   const graph = await buildGraph(mgr, async () => ({}));
@@ -640,6 +662,27 @@ test('buildGraph: a live-but-UNdiscovered LOCAL tmux is NOT synthesized (runtime
   assert.ok(node, 'dormant node present');
   assert.equal(node.managed, false);
   assert.notEqual(node.waitingFor, 'starting container');
+});
+
+// The synthesized-tmux branch (a Resume fork with no live per-pid session file
+// of its own) has its OWN copy of the autoCompactTokens/modelContextWindow
+// wiring, separate from both the primary live branch and the dormant branch
+// above — this exercises it directly rather than trusting the three copies
+// stay in sync by inspection alone.
+test('buildGraph (synthesized/discovered branch): carries autoCompactTokens and infers modelContextWindow, same as the dormant branch', async () => {
+  const entry = { sessionId: 'ctxdisc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1', model: 'sonnet[1m]', autoCompactTokens: 500000 };
+  const mgr = makeDiscoveredManager(entry, 'cc_ctxdisc');
+  const discover = async () => [{ tmuxName: 'cc_ctxdisc', socket: '', claudePid: 8181, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --resume L1', paneTitle: '' }];
+  const capture = async () => '';
+  const runtimeResolver = () => ({ readLive: async () => null });
+  const enrich = async () => ({ currentModel: 'claude-sonnet-4-5-20250929' });
+  const graph = await buildGraph(mgr, enrich, { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'ctxdisc');
+  assert.ok(node, 'synthesized node present');
+  assert.equal(node.autoCompactTokens, 500000);
+  // Also doubles as an integration check for the launch-model-disambiguates-
+  // the-transcript-prefix fix: sonnet and sonnet[1m] share "claude-sonnet-".
+  assert.equal(node.modelContextWindow, 1_000_000);
 });
 
 // A session-manager stub whose only owned tmux is `cc_lead`, mapped to the lead
