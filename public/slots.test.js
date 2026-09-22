@@ -36,6 +36,9 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
+  // An optional `badge` of the wrong type is a typo that would otherwise be
+  // skipped in silence, leaving a rail button that never says anything.
+  assert.throws(() => slots.register('view', 'x', { id: 'v', label: 'Jobs', mount() {}, badge: 3 }), /badge must be a function/);
   slots.register('view', 'x', { id: 'v', label: 'Jobs', mount() {} });
 });
 
@@ -273,6 +276,97 @@ test('contributions carries the label and icon the board draws a rail button fro
   assert.deepEqual(slots.contributions('panel.section'), [{ extId: 'jobs', id: 'p', mounted: false }]);
 });
 
+// ── The rail badge ────────────────────────────────────────────────────────
+// A view's `badge()` is the one thing it cannot draw itself: core owns the rail
+// button, so the extension returns a number and nothing else. It is evaluated
+// on the SAME tick as update — app.js's updateExtViews passes `onBadge` to
+// syncHosts — and under the same throw-and-drop rule.
+function viewHarness(contributions) {
+  const h = harness();
+  const hosts = new Map();
+  for (const c of contributions) {
+    h.slots.register('view', c.extId, c);
+    hosts.set(c, h.document.make());
+  }
+  const badges = [];
+  const tick = (graph = null) => {
+    badges.length = 0;
+    h.slots.syncHosts('view', [...hosts].map(([c, host]) => ({ host, only: { extId: c.extId, id: c.id } })), {}, graph, (b) => badges.push(b));
+    return badges;
+  };
+  return { ...h, hosts, tick };
+}
+
+test('a view badge is evaluated on the view tick and reported with the count it returned', () => {
+  let count = 3;
+  const seen = [];
+  const { tick } = viewHarness([
+    { extId: 'jobs', id: 'board', label: 'Jobs', mount() {}, badge: (graph) => { seen.push(graph); return count; } },
+  ]);
+  const graph = { sessions: [] };
+  assert.deepEqual(tick(graph), [{ extId: 'jobs', id: 'board', count: 3 }]);
+  // The badge counts what the BOARD says, so it gets the graph the tick carried.
+  assert.deepEqual(seen, [graph]);
+  count = 12;
+  assert.deepEqual(tick(graph), [{ extId: 'jobs', id: 'board', count: 12 }]);
+});
+
+test('a falsy, absent or unusable count reports nothing to draw', () => {
+  const values = [0, null, undefined, NaN, -2, 'lots', {}];
+  let at = 0;
+  const { tick } = viewHarness([
+    { extId: 'jobs', id: 'board', label: 'Jobs', mount() {}, badge: () => values[at] },
+    // No badge at all: reports NOTHING rather than a zero — the caller clears
+    // whatever it did not hear about, which covers this and a dropped one too.
+    { extId: 'logs', id: 'stream', label: 'Logs', mount() {} },
+  ]);
+  for (at = 0; at < values.length; at += 1) {
+    assert.deepEqual(tick(), [{ extId: 'jobs', id: 'board', count: 0 }], `${String(values[at])} draws nothing`);
+  }
+  // A fractional count is floored, not rounded up into existence.
+  at = values.push(2.7) - 1;
+  assert.deepEqual(tick(), [{ extId: 'jobs', id: 'board', count: 2 }]);
+  at = values.push(0.4) - 1;
+  assert.deepEqual(tick(), [{ extId: 'jobs', id: 'board', count: 0 }]);
+});
+
+test('a throwing badge removes that contribution and reports it, like a throwing update', () => {
+  const { slots, errors, hosts, tick } = viewHarness([
+    { extId: 'bad', id: 'v', label: 'Bad', mount() {}, badge() { throw new Error('boom'); } },
+    { extId: 'good', id: 'v', label: 'Good', mount() {}, badge: () => 1 },
+  ]);
+  const badges = tick();
+  assert.deepEqual(badges, [{ extId: 'good', id: 'v', count: 1 }]);
+  assert.deepEqual(slots.contributions('view').map((c) => c.extId), ['good']);
+  assert.equal([...hosts.values()][0].children.length, 0, 'its element goes with it');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /\[ext:bad\] v badge failed — contribution removed/);
+  // The survivor keeps being asked on the next tick.
+  assert.deepEqual(tick(), [{ extId: 'good', id: 'v', count: 1 }]);
+});
+
+test('a badge is only asked for once the contribution is drawn, and after its update', () => {
+  const order = [];
+  const { slots, hosts, tick } = viewHarness([
+    { extId: 'jobs', id: 'board', label: 'Jobs', mount: () => order.push('mount'), update: () => order.push('update'), badge: () => { order.push('badge'); return 1; } },
+  ]);
+  tick();
+  assert.deepEqual(order, ['mount', 'update', 'badge'], 'a badge reads what the update it shares a tick with just settled');
+  // Torn down (its host left the set): nothing drawn is nothing to count for.
+  order.length = 0;
+  assert.deepEqual(slots.syncHosts('view', [], {}, null, () => order.push('badge')), 0);
+  assert.deepEqual(order, []);
+  assert.equal([...hosts.values()][0].children.length, 0);
+});
+
+test('a caller that passes no onBadge never calls badge at all (card.pill is unchanged)', () => {
+  const { document, slots } = harness();
+  let asked = 0;
+  slots.register('card.pill', 'a', { id: 'pill', mount() {}, badge: () => { asked += 1; return 5; } });
+  slots.syncHosts('card.pill', [{ host: document.make(), session: { sessionId: 'CARD1' } }]);
+  assert.equal(asked, 0);
+});
+
 test('an entry with no `only` still reaches every contribution (card.pill is unchanged)', () => {
   const { document, slots } = harness();
   slots.register('card.pill', 'a', { id: 'pill', mount() {} });
@@ -323,6 +417,49 @@ test('an extension with no known handler types fails CLOSED', () => {
 
 test('the api carries the host API version', () => {
   assert.equal(sendHarness(['fake-do']).api.version, '9.9.9');
+});
+
+// ── openSession (the one piece of board navigation an extension gets) ─────────
+// An extension's `send` may not carry the core `resume` frame, and nothing else
+// reaches the view or the selection — so the base api implements it and apiFor
+// exposes it, refusing anything that is not a session id the way it refuses a
+// foreign send.
+function openHarness() {
+  const opened = [];
+  const h = harness();
+  const api = { openSession: (sid) => opened.push(sid) };
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), api);
+  return { ...h, opened, api: captured };
+}
+
+test('openSession hands a session id to the base api', () => {
+  const { api, opened, errors } = openHarness();
+  api.openSession('abc123');
+  assert.deepEqual(opened, ['abc123']);
+  assert.deepEqual(errors, []);
+});
+
+test('openSession refuses anything that is not a session id, and reports it', () => {
+  const { api, opened, errors } = openHarness();
+  api.openSession('');
+  api.openSession(42);
+  api.openSession({ sessionId: 'abc123' });
+  api.openSession();
+  assert.deepEqual(opened, [], 'nothing reached the board');
+  assert.equal(errors.length, 4);
+  assert.match(errors[0], /\[ext:fake\] openSession refused: expected a session id, got ""/);
+  assert.match(errors[2], /got \{"sessionId":"abc123"\}/);
+});
+
+test('openSession is a no-op against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), { send() {} });
+  assert.doesNotThrow(() => captured.openSession('abc123'));
+  assert.deepEqual(h.errors, []);
 });
 
 // ── onMessage / dispatchMessage (the INBOUND half) ─────────────────────────────

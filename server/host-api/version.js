@@ -61,14 +61,34 @@ import semver from 'semver';
 // saying it needs those two keys to exist, which an older server's
 // unknown-capability quarantine is the only thing that can honour.
 //
-// 1.7.0 is the `dispatch.field` slot (public/slots.js) plus the
+// 1.7.0 is the other kind of CLIENT addition: a `view` contribution may carry
+// `badge()`, and core draws the count it returns on the rail button it already
+// builds for that view (public/slots.js reportBadges, app.js
+// setExtViewBadge). No server-side key again, and the reason the number has to
+// move is the reason 1.2.0 did: a manifest whose client half returns a count
+// from `badge` gets SILENCE from a server whose slots.js never calls it — no
+// error, no quarantine, just a rail button that never says anything — and the
+// declared range is the only thing that can tell those two servers apart.
+//
+// 1.8.0 is the CLIENT half once more: `api.openSession(sessionId)`
+// (public/slots.js apiFor, implemented by app.js's base api). It switches the
+// board to the grid and selects the card if it is on the board, otherwise
+// pending-selects it, sends the core `resume` frame and toasts "Restoring…" —
+// what the board itself does for a Search result. An extension could do none
+// of that: its `send` is bound to its OWN handler types so it may not send
+// `resume`, and there is no other route to the view or the selection. No new
+// server-side key, but a manifest whose client half calls `openSession` is
+// broken, silently, against a server whose app.js never supplied it, and the
+// declared range is the only thing that can say so.
+//
+// 1.9.0 is the `dispatch.field` slot (public/slots.js) plus the
 // `hideDispatchField` manifest key — the first extension surface that shapes a
-// CORE form. No new façade key again, and the same argument a fifth time, from
+// CORE form. No new façade key again, and the same argument once more, from
 // both halves at once: an older `slots.js` THROWS on an unknown slot name, so
 // the whole client module fails to load, and an older SERVER quarantines a
 // manifest declaring `hideDispatchField` outright. The declared range is the
 // only thing that can say which servers such a manifest will load on.
-export const HOST_API_VERSION = '1.7.0';
+export const HOST_API_VERSION = '1.9.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
