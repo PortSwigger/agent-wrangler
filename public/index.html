@@ -297,14 +297,27 @@
       </div>
       <label id="m-intent-label">Intent / first prompt</label>
       <textarea id="m-intent" rows="6" placeholder="What should the agent work on?"></textarea>
+      <!-- The three `dispatch.field` anchor hosts (public/slots.js), filled by
+           app.js's syncDispatchExtFields. `display: contents`, so an
+           extension's control lays out as a .modal-card child. -->
+      <div class="ext-dispatch-slot" data-at="top"></div>
       <label>Folder (cwd)</label>
       <div class="combo">
         <input id="m-cwd" placeholder="/Users/you/vcs/project" autocomplete="off" />
         <div id="folder-suggest" class="suggest hidden"></div>
       </div>
       <div id="m-cwd-msg" class="worktree-msg hidden"></div>
-      <label>Model</label>
-      <select id="m-model"></select>
+      <!-- Each hideable core field is wrapped in an id'd row so a
+           `dispatch.field` contribution's `hides` can toggle it (app.js
+           DISPATCH_FIELD_ROWS). A plain block wrapper — the fields inside lay
+           out exactly as they did unwrapped. -->
+      <div class="dispatch-field" id="m-model-row">
+        <label>Model</label>
+        <select id="m-model"></select>
+      </div>
+      <!-- OUTSIDE #m-model-row on purpose: an extension that hides `model` must
+           not hide its own replacement control along with it. -->
+      <div class="ext-dispatch-slot" data-at="model"></div>
       <div class="worktree-box">
         <div class="worktree-title">New worktree</div>
         <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
@@ -325,23 +338,30 @@
       <details class="advanced-options" id="m-advanced-options">
         <summary>Advanced options</summary>
         <div class="advanced-options-body">
-          <label>Effort</label>
-          <select id="m-effort"></select>
-          <label>Auto-compaction threshold</label>
-          <div class="auto-compact-presets" id="m-auto-compact-presets" role="group" aria-label="Auto-compaction threshold">
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="">Default</button>
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="50000">50k</button>
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="100000">100k</button>
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="250000">250k</button>
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="500000">500k</button>
-            <button type="button" class="auto-compact-preset" data-auto-compact-tokens="1000000">1m</button>
+          <div class="dispatch-field" id="m-effort-row">
+            <label>Effort</label>
+            <select id="m-effort"></select>
           </div>
-          <label>Runtime</label>
-          <select id="m-runtime">
-            <option value="local">Local (host)</option>
-            <option value="devcontainer">Devcontainer</option>
-          </select>
+          <div class="dispatch-field" id="m-auto-compact-row">
+            <label>Auto-compaction threshold</label>
+            <div class="auto-compact-presets" id="m-auto-compact-presets" role="group" aria-label="Auto-compaction threshold">
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="">Default</button>
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="50000">50k</button>
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="100000">100k</button>
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="250000">250k</button>
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="500000">500k</button>
+              <button type="button" class="auto-compact-preset" data-auto-compact-tokens="1000000">1m</button>
+            </div>
+          </div>
+          <div class="dispatch-field" id="m-runtime-row">
+            <label>Runtime</label>
+            <select id="m-runtime">
+              <option value="local">Local (host)</option>
+              <option value="devcontainer">Devcontainer</option>
+            </select>
+          </div>
           <label class="check-row hidden" id="m-wf-auto-merge-row"><input type="checkbox" id="m-wf-auto-merge" /> Auto-merge when checks pass</label>
+          <div class="ext-dispatch-slot" data-at="advanced"></div>
         </div>
       </details>
       </div>

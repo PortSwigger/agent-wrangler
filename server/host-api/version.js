@@ -80,7 +80,15 @@ import semver from 'semver';
 // server-side key, but a manifest whose client half calls `openSession` is
 // broken, silently, against a server whose app.js never supplied it, and the
 // declared range is the only thing that can say so.
-export const HOST_API_VERSION = '1.8.0';
+//
+// 1.9.0 is the `dispatch.field` slot (public/slots.js) plus the
+// `hideDispatchField` manifest key — the first extension surface that shapes a
+// CORE form. No new façade key again, and the same argument once more, from
+// both halves at once: an older `slots.js` THROWS on an unknown slot name, so
+// the whole client module fails to load, and an older SERVER quarantines a
+// manifest declaring `hideDispatchField` outright. The declared range is the
+// only thing that can say which servers such a manifest will load on.
+export const HOST_API_VERSION = '1.9.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

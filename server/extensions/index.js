@@ -67,6 +67,18 @@ export const CAPABILITIES = new Set([
   'sessions:bill',
 ]);
 
+// The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
+// core dispatch-modal fields an extension may take over by drawing its own
+// control in the `dispatch.field` slot (public/slots.js). Deliberately SMALL —
+// each name is a field the core draws AND a commitment that app.js has a row id
+// for it (DISPATCH_FIELD_ROWS) and index.html a wrapper. Widening it is a MINOR
+// and three more edits; keep it at four unless a real extension needs more.
+//
+// A STATIC array on the manifest, not a function, for the same reason
+// `requires` is: the board has to know what an extension may suppress before
+// any of its code runs, and a function could answer differently per call.
+export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime', 'model']);
+
 // `onBeforeDispatch` is the one hook that runs while the session does not yet
 // exist anywhere: it fires after dispatch has settled the card id, cwd and
 // worktree but BEFORE the launch command is built and the pane started, which
@@ -154,6 +166,18 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
     }
     for (const c of ext.requires) {
       if (!CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES].sort().join(', ')})`);
+    }
+  }
+  // Which core dispatch-modal rows this extension's browser half may hide. The
+  // DISCLOSURE half of the two-key veto — a contribution's own `hides` is
+  // filtered against it client-side, so the browser can never widen what the
+  // manifest declared.
+  if (ext.hideDispatchField != null) {
+    if (!Array.isArray(ext.hideDispatchField) || ext.hideDispatchField.some((f) => typeof f !== 'string' || !f)) {
+      fail(ext, 'hideDispatchField must be an array of dispatch field names');
+    }
+    for (const f of ext.hideDispatchField) {
+      if (!DISPATCH_FIELDS.has(f)) fail(ext, `unknown dispatch field "${f}" (known: ${[...DISPATCH_FIELDS].sort().join(', ')})`);
     }
   }
   // The host API range this manifest was written against. Only its SHAPE is
@@ -273,12 +297,13 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 // one of them through `textContent`.
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
-    id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes,
+    id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField,
     quarantine, external, description, author, homepage, provenance, requires, settings,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
     handlerTypes: [...(handlerTypes || [])],
+    hideDispatchField: [...(hideDispatchField || [])],
     quarantine: quarantine || null,
     external: Boolean(external),
     description: description || '',
@@ -414,6 +439,7 @@ function quarantinedEntry(ext, quarantine) {
     settings: [],
     skills: [],
     handlerTypes: [],
+    hideDispatchField: [],
     external: Boolean(ext?.external),
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
@@ -473,6 +499,11 @@ function stageExtension(ext, { cfg, out, reg }) {
     // manifest's skills from the enabled list to the disabled one by id.
     skills: [...(ext.skills || [])],
     handlerTypes: [],
+    // Copied, not referenced, like `requires`/`settings`: this is what the
+    // board's veto is checked against and a manifest must not be able to widen
+    // it after the fact. Claims no name in `reg` and stages nothing, so
+    // unregisterExtension has nothing to take back.
+    hideDispatchField: [...(ext.hideDispatchField || [])],
     external: Boolean(ext.external),
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
@@ -560,6 +591,10 @@ function stageExtension(ext, { cfg, out, reg }) {
       // until it has heard one of the two. Omitted when it has none, keeping a
       // handler-less extension's entry byte-identical to the pre-façade one.
       ...(listEntry.handlerTypes.length ? { handlerTypes: [...listEntry.handlerTypes] } : {}),
+      // The core dispatch rows this extension's `dispatch.field` contributions
+      // may veto — same two inputs, same reason, and omitted when empty so an
+      // extension that hides nothing keeps a byte-identical entry.
+      ...(listEntry.hideDispatchField.length ? { hideDispatchField: [...listEntry.hideDispatchField] } : {}),
     });
   }
 }
