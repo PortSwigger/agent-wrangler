@@ -244,6 +244,28 @@ test('buildGraph falls back to the launch model when no transcript model is avai
   assert.deepEqual(node.modelPill, { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' });
 });
 
+test('buildGraph carries a session\'s auto-compaction threshold onto the board node, null when unset', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'ctx-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', autoCompactTokens: 500000 },
+    { sessionId: 'default-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['ctx-sid'].autoCompactTokens, 500000);
+  assert.equal(byId['default-sid'].autoCompactTokens, null);
+});
+
+test('buildGraph infers modelContextWindow from the launch model when no explicit threshold is set', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'sonnet1m-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'sonnet[1m]' },
+    { sessionId: 'sonnet-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y', model: 'sonnet' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['sonnet1m-sid'].modelContextWindow, 1_000_000);
+  assert.equal(byId['sonnet-sid'].modelContextWindow, 200_000);
+});
+
 test('buildGraph: with no mailStore injected, `mail` is omitted (not a fabricated empty object)', async () => {
   const mgr = makeDormantManager([{ sessionId: 'no-mail-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x' }]);
   const graph = await buildGraph(mgr, async () => ({}));

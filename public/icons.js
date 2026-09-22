@@ -98,6 +98,15 @@ export const MAIL_FILLED_ICON =
   '<svg class="icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2" fill="currentColor"/><path d="m3 6.5 9 6 9-6" fill="none" stroke="var(--card-bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 export const DOLLAR_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>';
+// Lucide "arrow-left-right" — leads the cumulative token-usage chip (input
+// flowing one way, output the other).
+export const TOKENS_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>';
+// Lucide "minimize-2" — leads the auto-compaction chip alone, standing in for
+// the label it replaced ("compact@"): four arrows drawing inward reads as
+// "this session's context gets squeezed back down to here."
+export const COMPACT_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>';
 // Sun — "wake now" affordance on a snoozed row. (Distinct from SUN_ICON in theme.js,
 // which is bare inner paths for the theme toggle; this is a full standalone svg.)
 export const WAKE_ICON =

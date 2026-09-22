@@ -5,7 +5,7 @@ import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
-  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, cardPillHostHtml,
+  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml,
 } from './cards.js';
@@ -124,6 +124,63 @@ test('sessionCardHtml: shows the short model label with a CPU icon only when res
 test('modelPillHtml: keeps the label in its own truncatable element', () => {
   const html = modelPillHtml({ label: 'an-unrecognised-model-with-a-very-long-id', title: 'raw-model-id' });
   assert.match(html, /<span class="model-pill-label">an-unrecognised-model-with-a-very-long-id<\/span>/);
+});
+
+test('tokenChipHtml: empty unless expanded AND tokens are present', () => {
+  assert.equal(tokenChipHtml({ tokens: { input: 1000, output: 2000 } }), ''); // no `expanded`
+  assert.equal(tokenChipHtml({ tokens: { input: 1000, output: 2000 } }, { expanded: false }), '');
+  assert.equal(tokenChipHtml({}, { expanded: true }), ''); // no tokens
+});
+
+test('tokenChipHtml: leads with its icon, input before output, only once expanded', () => {
+  const html = tokenChipHtml({ tokens: { input: 45600, output: 12300 } }, { expanded: true });
+  assert.match(html, /<span class="card-tag" title="[^"]*"><svg class="icon"[^>]*>[^]*<\/svg>45\.6k in · 12\.3k out<\/span>/);
+});
+
+test('compactPillHtml: empty when there is nothing to show', () => {
+  assert.equal(compactPillHtml({}), '');
+  assert.equal(compactPillHtml({ autoCompactTokens: null, modelContextWindow: null }), '');
+});
+
+test('compactPillHtml: no text label — just the icon, a bare figure, and a tooltip carrying the meaning', () => {
+  const html = compactPillHtml({ autoCompactTokens: 250000 });
+  assert.match(html, /<span class="card-tag" title="[^"]*250,000[^"]*"><svg class="icon"[^>]*>[^]*<\/svg>250k<\/span>/);
+  assert.doesNotMatch(html, /compact@|>cap |>max /);
+  assert.match(html, /Auto-compaction ceiling/);
+});
+
+test('compactPillHtml: falls back to the model\'s own context window, prefixed "~" as inferred, tooltip says estimated', () => {
+  const html = compactPillHtml({ modelContextWindow: 200000 });
+  assert.match(html, />~200k<\/span>/);
+  assert.match(html, /Auto-compaction ceiling, estimated from the model&#39;s default context window/);
+});
+
+test('compactPillHtml: an explicit threshold wins over the inferred model window', () => {
+  const html = compactPillHtml({ autoCompactTokens: 500000, modelContextWindow: 200000 });
+  assert.match(html, />500k<\/span>/);
+  assert.doesNotMatch(html, /~500k/);
+});
+
+test('sessionCardHtml: two SEPARATE pills — the compaction ceiling shows even collapsed, the in/out breakdown only once expanded', () => {
+  const s = sess({ autoCompactTokens: 500000, tokens: { input: 2000, output: 1000 } });
+  const collapsed = sessionCardHtml(s, ctx());
+  assert.match(collapsed, /Auto-compaction ceiling[^"]*"><svg[^>]*>[^]*<\/svg>500k<\/span>/);
+  assert.doesNotMatch(collapsed, /in ·/);
+  const expanded = sessionCardHtml(s, ctx(), { expanded: true });
+  assert.match(expanded, /2\.0k in · 1\.0k out/);
+  assert.match(expanded, />500k<\/span>/);
+  // Two distinct chips, not one merged pill (a lifetime total and a fixed
+  // per-turn ceiling don't share a scale — see compactPillHtml's comment).
+  const spans = expanded.match(/<span class="card-tag"[^>]*>.*?<\/span>/gs) || [];
+  const tokenSpan = spans.find((sp) => sp.includes('in ·'));
+  assert.ok(tokenSpan, 'the token-usage span exists');
+  assert.doesNotMatch(tokenSpan, /500k/);
+  // Token usage comes before the compaction ceiling in the row.
+  assert.ok(expanded.indexOf('in ·') < expanded.indexOf('500k'), 'token usage precedes the compaction pill');
+});
+
+test('sessionCardHtml: no compaction/token pill at all when nothing is set', () => {
+  assert.doesNotMatch(sessionCardHtml(sess(), ctx()), /Auto-compaction ceiling/);
 });
 
 test('sessionCardHtml: long bar word is clipped to 6 chars with a full-text title', () => {

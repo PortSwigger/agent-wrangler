@@ -8,7 +8,7 @@
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
-  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON,
+  PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON, TOKENS_ICON, COMPACT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
@@ -16,6 +16,7 @@ import {
 } from './util.js';
 import { wakeLabel } from './snooze.js';
 import { isWorkflowRun, sessionGroups } from './workflow.js';
+import { formatAutoCompactTokens } from './auto-compact-presets.js';
 
 export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
 
@@ -235,6 +236,41 @@ export function modelPillHtml(model) {
   return `<span class="card-tag model-pill" title="${esc(model.title)}">${CPU_ICON}<span class="model-pill-label">${esc(model.label)}</span></span>`;
 }
 
+// The output/input token usage chip — a CUMULATIVE total across the whole
+// session's lifetime (every turn ever run, including ones long since
+// compacted away; see transcript-reader.js summarise / codex-rollout.js
+// tokensFor). Only shown once `expanded`: a small board tile has no room for
+// it and it isn't glance-at-a-spine-row information. Kept as its own pill,
+// separate from compactPillHtml below — an earlier version merged the two,
+// but a lifetime total sitting next to a fixed per-turn ceiling read as "this
+// session went over its limit" on anything but a short session, which it
+// hadn't; they answer different questions and deserve different chips.
+export function tokenChipHtml(s, { expanded } = {}) {
+  if (!expanded || !s.tokens) return '';
+  return `<span class="card-tag" title="Tokens spent so far, cumulative for the session's lifetime — input / output">${TOKENS_ICON}${(s.tokens.input / 1000).toFixed(1)}k in · ${(s.tokens.output / 1000).toFixed(1)}k out</span>`;
+}
+
+// The auto-compaction ceiling: the working-context budget the session was
+// actually dispatched with when one was set (autoCompactTokens; see
+// session-manager.js autoCompactTokensError), else the underlying model's own
+// ceiling (modelContextWindow, see agents/index.js maxContextWindowFor),
+// prefixed "~" to mark it as inferred rather than configured. No text label
+// (a "compact@"/"max"/"cap" prefix all either misnamed the mechanism or read
+// as a hard ceiling on the much-bigger, ever-growing lifetime total in
+// tokenChipHtml above) — COMPACT_ICON plus the tooltip carry the meaning
+// instead. Shown even when collapsed/no token usage yet — it's a property of
+// the session, not of its usage so far. Shared by the board card and the
+// detail panel, same as modelPillHtml.
+export function compactPillHtml(s) {
+  const explicitMax = s.autoCompactTokens;
+  const maxTokens = explicitMax || s.modelContextWindow;
+  if (!maxTokens) return '';
+  const title = explicitMax
+    ? `Auto-compaction ceiling: this session's context is compacted back down once it grows past ${maxTokens.toLocaleString('en-US')} tokens`
+    : `Auto-compaction ceiling, estimated from the model's default context window: ~${maxTokens.toLocaleString('en-US')} tokens`;
+  return `<span class="card-tag" title="${esc(title)}">${COMPACT_ICON}${explicitMax ? '' : '~'}${formatAutoCompactTokens(maxTokens)}</span>`;
+}
+
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   const estimated = s.agent === 'codex';
@@ -277,10 +313,9 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const metaLinks = s.links?.length
     ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
     : '';
-  const tokenChip = expanded && s.tokens
-    ? `<span class="card-tag" title="tokens — output / input">${(s.tokens.output / 1000).toFixed(1)}k out · ${(s.tokens.input / 1000).toFixed(1)}k in</span>`
-    : '';
   const modelPill = modelPillHtml(s.modelPill);
+  const compactPill = compactPillHtml(s);
+  const tokenChip = tokenChipHtml(s, { expanded });
   // The show/hide pill; the zone itself renders INSIDE the card (below), not as
   // a sibling after it — otherwise it's unclear which card a zone belongs to
   // once a tile holds more than one. Shown whenever the session has any
@@ -308,7 +343,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
+    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${compactPill}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }

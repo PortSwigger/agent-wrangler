@@ -1,5 +1,6 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
+import { codexContextWindow } from './codex-rollout.js';
 import { logWarn } from '../log.js';
 
 const ALL = [claude, codex];
@@ -8,20 +9,44 @@ export function adapterFor(id) {
   return ALL.find((a) => a.id === id) || claude;
 }
 
-export function modelPillFor(agentId, currentModel, launchModel) {
-  const models = adapterFor(agentId).models;
+// Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a
+// transcript's live model (or, absent that, the launch model) maps to. Prefers
+// the launch entry when its transcriptPrefixes already match the transcript
+// model — two launch values can share one prefix (sonnet vs sonnet[1m] both
+// transcript as "claude-sonnet-"), and only the launch value tells them apart.
+function findModelEntry(models, currentModel, launchModel) {
   const find = (model) => models.find((entry) => entry.value === model
     || entry.transcriptPrefixes?.some((prefix) => model.startsWith(prefix)));
   if (currentModel) {
     const launchEntry = models.find((entry) => entry.value === launchModel);
-    const entry = launchEntry?.transcriptPrefixes?.some((prefix) => currentModel.startsWith(prefix))
+    return launchEntry?.transcriptPrefixes?.some((prefix) => currentModel.startsWith(prefix))
       ? launchEntry
       : find(currentModel);
+  }
+  return launchModel ? find(launchModel) || null : null;
+}
+
+export function modelPillFor(agentId, currentModel, launchModel) {
+  const models = adapterFor(agentId).models;
+  if (currentModel) {
+    const entry = findModelEntry(models, currentModel, launchModel);
     return { label: entry?.pillLabel || currentModel, title: currentModel };
   }
   if (!launchModel) return null;
-  const entry = find(launchModel);
+  const entry = findModelEntry(models, null, launchModel);
   return entry ? { label: entry.pillLabel, title: launchModel } : { label: launchModel, title: launchModel };
+}
+
+// The model's own context-window ceiling — used only to INFER a max-context
+// pill for a session with no explicit auto-compaction threshold (see
+// state-reader.js). Codex's window is read from its own live-refreshed models
+// cache (codexContextWindow); every other agent's is hand-carried on its
+// `models` entries (claude.js `contextWindow`). Null when unknown — an unset
+// pill is honest, a guessed number is not.
+export function maxContextWindowFor(agentId, currentModel, launchModel) {
+  if (agentId === 'codex') return codexContextWindow(currentModel || launchModel);
+  const entry = findModelEntry(adapterFor(agentId).models, currentModel, launchModel);
+  return entry?.contextWindow ?? null;
 }
 
 // Mint-time floor for the fallback id lookup a discover-id agent (Codex) does when an

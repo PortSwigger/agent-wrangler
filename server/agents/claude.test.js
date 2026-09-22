@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
 import { claude, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
-import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, modelsWithDefault } from './index.js';
+import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
   assert.equal(claude.id, 'claude');
@@ -238,6 +238,21 @@ test('modelPillFor shortens a transcript model and falls back to the launch mode
   assert.deepEqual(modelPillFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet[1m]'), {
     label: 'sonnet 1m', title: 'claude-sonnet-4-5-20250929',
   });
+});
+
+test('maxContextWindowFor: reads the ceiling off the claude model entry, respecting the 1M/200K split', () => {
+  assert.equal(maxContextWindowFor('claude', null, 'sonnet'), 200_000);
+  assert.equal(maxContextWindowFor('claude', null, 'sonnet[1m]'), 1_000_000);
+  // The transcript prefix alone can't tell sonnet from sonnet[1m] — the launch
+  // value is what disambiguates (same precedence as modelPillFor).
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet[1m]'), 1_000_000);
+  assert.equal(maxContextWindowFor('claude', 'claude-sonnet-4-5-20250929', 'sonnet'), 200_000);
+  // opusplan has no single window to report.
+  assert.equal(maxContextWindowFor('claude', null, 'opusplan'), null);
+});
+
+test('maxContextWindowFor: codex reads from its own models cache, null for a model it has never cached', () => {
+  assert.equal(maxContextWindowFor('codex', null, 'not-a-real-model-xyz'), null);
 });
 
 test('modelsWithDefault leaves the built-in default when AW_DEFAULT_MODEL is unset or unknown', () => {

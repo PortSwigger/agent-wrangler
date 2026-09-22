@@ -154,13 +154,17 @@ export const claude = {
   // <intent>`), so a dormant-wake nudge handed as the resume intent is delivered by
   // the relaunch itself — no post-resume pane paste needed (see pr-nudge-runner).
   resumeCarriesIntent: true,
+  // contextWindow is the model's own ceiling (label's "200K"/"1M"), used only to
+  // INFER a max-context pill when a session has no explicit auto-compaction
+  // threshold — see agents/index.js maxContextWindowFor. Left off opusplan: its
+  // plan/execution split has no single window to report.
   models: [
-    { value: 'fable', label: 'Fable 5 · 1M context', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'] },
-    { value: 'opus', label: 'Opus 5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true },
+    { value: 'fable', label: 'Fable 5 · 1M context', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
+    { value: 'opus', label: 'Opus 5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
     { value: 'opusplan', label: 'Opus plan · Sonnet execution', pillLabel: 'opus plan' },
-    { value: 'sonnet', label: 'Sonnet 5 · 200K context', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'] },
-    { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'] },
-    { value: 'haiku', label: 'Haiku 4.5 · 200K context', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'] },
+    { value: 'sonnet', label: 'Sonnet 5 · 200K context', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 200_000 },
+    { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 1_000_000 },
+    { value: 'haiku', label: 'Haiku 4.5 · 200K context', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'], contextWindow: 200_000 },
   ],
   efforts: [
     { value: 'low', label: 'Low' },
