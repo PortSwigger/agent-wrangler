@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { codexCostUsd, codexCostUsdByType } from '../pricing.js';
+import { codexCostUsd, codexCostUsdByType, LONG_CONTEXT_TOKENS } from '../pricing.js';
 
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 const MODELS_CACHE_PATH = path.join(os.homedir(), '.codex', 'models_cache.json');
@@ -274,7 +274,21 @@ function scanLine(line, state) {
     state.currentModel = state.pendingModel;
   }
   // total_token_usage is cumulative; the last token_count holds the grand total.
-  if (kind === 'token_count' && p.info && p.info.total_token_usage) state.usage = p.info.total_token_usage;
+  if (kind === 'token_count' && p.info && p.info.total_token_usage) {
+    // A request whose prompt passes the long-context threshold is billed at the
+    // long rate in full, so tally those requests' own usage separately. Codex
+    // re-emits token_count when only rate limits change; an unchanged running
+    // total means no new request, so it isn't counted twice.
+    const last = p.info.last_token_usage;
+    const total = p.info.total_token_usage.total_tokens;
+    if (last && total !== state.usage?.total_tokens && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
+      const l = (state.longUsage ||= { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 });
+      l.input_tokens += last.input_tokens || 0;
+      l.cached_input_tokens += last.cached_input_tokens || 0;
+      l.output_tokens += last.output_tokens || 0;
+    }
+    state.usage = p.info.total_token_usage;
+  }
   // A DIFFERENT top-level shape from `token_count` above (both appear in the same
   // real rollout) whose `usage` is this ONE call's actual size, not a running
   // total — see codexContextWindow/analyzeRollout below, the one consumer.
@@ -296,15 +310,19 @@ function scanLine(line, state) {
   }
 }
 
-function totalsFor(model, usage) {
+function splitUsage(usage) {
   const cacheRead = usage.cached_input_tokens || 0;
   return {
-    [model]: {
-      input: Math.max(0, (usage.input_tokens || 0) - cacheRead),
-      output: usage.output_tokens || 0,
-      cacheRead,
-    },
+    input: Math.max(0, (usage.input_tokens || 0) - cacheRead),
+    output: usage.output_tokens || 0,
+    cacheRead,
   };
+}
+
+function totalsFor(model, usage, longUsage) {
+  const t = splitUsage(usage);
+  if (longUsage) t.long = splitUsage(longUsage);
+  return { [model]: t };
 }
 
 function mergeTotals(dest, src) {
@@ -313,6 +331,12 @@ function mergeTotals(dest, src) {
     d.input += t.input || 0;
     d.output += t.output || 0;
     d.cacheRead += t.cacheRead || 0;
+    if (t.long) {
+      const l = (d.long ||= { input: 0, output: 0, cacheRead: 0 });
+      l.input += t.long.input || 0;
+      l.output += t.long.output || 0;
+      l.cacheRead += t.long.cacheRead || 0;
+    }
   }
 }
 
@@ -379,7 +403,7 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     return null;
   }
   const model = state.model || 'gpt-5.5-codex';
-  const totals = totalsFor(model, state.usage || {});
+  const totals = totalsFor(model, state.usage || {}, state.longUsage);
   // Context occupancy — how full the window is RIGHT NOW — is deliberately NOT
   // derived from the cumulative `usage`/`totals` above (that only ever grows and
   // would read as ~100% almost immediately). `lastCallUsage.input_tokens` is the
