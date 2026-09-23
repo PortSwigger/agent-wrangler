@@ -167,6 +167,19 @@ const sessionsKill = ({ id, core }) => ({
   },
 });
 
+// Stop a card's current turn: Escape into its pane, the key the chat view's Stop
+// button sends and both TUIs read as "interrupt". Composed in index.js
+// (`interruptSession`) because the pane is tmux-scraper's, which host-api/ does
+// not import. Resolves `false` for a card with no live pane (dormant, archived,
+// unknown) and never wakes one — there is nothing running to stop. It does NOT
+// check the card is working: a second Escape on an idle Claude composer opens
+// the rewind menu, so pacing is the caller's, off the graph's `status`.
+const sessionsInterrupt = ({ interruptSession }) => ({
+  sessions: {
+    interrupt: (sid) => interruptSession(sid),
+  },
+});
+
 // Bill a headless conversation to a card. Thin bind over the primitive, which
 // does the validating (a missing card, an empty id or the card's CURRENT
 // conversation are all `false`, never a throw) and never touches
@@ -321,4 +334,5 @@ export const V1_BUILDERS = {
   'mail:send': mailSend,
   'usage:read': usageRead,
   'sessions:bill': sessionsBill,
+  'sessions:interrupt': sessionsInterrupt,
 };

@@ -14,7 +14,7 @@ import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -27,7 +27,7 @@ import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
-import { setTmuxBin, sendText } from './tmux-scraper.js';
+import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
@@ -229,6 +229,14 @@ const extWiring = {
     await rebuild();
     return { archived: ids, ...result };
   },
+  // `sessions:interrupt`: the same Escape the interrupt control handler sends,
+  // minus its composer restore (there is no chat view waiting on a reply).
+  interruptSession: async (sessionId) => {
+    const target = typeof sessionId === 'string' && sessionId ? tmuxFor(sessionId) : null;
+    if (!target) return false;
+    await sendKeys(target, ['Escape'], socketFor(sessionId) || '');
+    return true;
+  },
   createTerminal: async ({ cwd, command = '' } = {}) => {
     const terminalId = `t_${crypto.randomBytes(4).toString('hex')}`;
     const tmuxName = await createShellSession(cwd, sessionManager.socket, sessionManager.tmuxBin, command);
@@ -322,7 +330,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
     for (const [name, hooks] of Object.entries(ext.sessionHooks)) {
       for (const { extId, fn } of hooks) {
         if (extId !== id) continue;
-        const bound = (payload) => (hostApis.has(extId) ? fn({ ...payload, host: hostApiFor(extId) }) : undefined);
+        const bound = (payload) => (hostApis.has(extId) ? fn({ ...hookPayloadFor(extId, payload), host: hostApiFor(extId) }) : undefined);
         bound.extId = extId;
         sessionManager._extHooks[name].push(bound);
       }

@@ -271,12 +271,23 @@ export function compactPillHtml(s) {
   return `<span class="card-tag" title="${esc(title)}">${COMPACT_ICON}${explicitMax ? '' : '~'}${formatAutoCompactTokens(maxTokens)}</span>`;
 }
 
+// The `$` cost tag, shared by the card and the session panel's chip row.
+// `ceiling` is a `card.cost` extension's `{ usd, reached }` (slots.js
+// costCeiling) or null: with one, the tag reads `$8.08 / $50.00` — drawn even
+// before any spend, so a limit set at dispatch is visible from the start — and
+// turns red once reached. Without one it is the plain spend, hidden at $0
+// unless `showZero` (the panel shows a costed $0.00; a card does not).
+export function costTagHtml(s, ceiling, { titleNote = '', showZero = false } = {}) {
+  const estimated = s.agent === 'codex';
+  const spent = typeof s.usd === 'number' ? s.usd : 0;
+  if (!ceiling && !(spent > 0) && !(showZero && typeof s.usd === 'number')) return '';
+  const cost = `${estimated ? '~' : ''}${spent.toFixed(2)}${ceiling ? ` / $${ceiling.usd.toFixed(2)}` : ''}`;
+  const title = `${estimated ? 'estimated cost so far' : 'cost so far'}${titleNote}${ceiling ? ` · spend limit $${ceiling.usd.toFixed(2)}${ceiling.reached ? ' reached' : ''}` : ''}`;
+  return `<span class="card-tag${ceiling?.reached ? ' cost-limit-reached' : ''}" title="${esc(title)}">${DOLLAR_ICON}${esc(cost)}</span>`;
+}
+
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
-  const estimated = s.agent === 'codex';
-  const cost = typeof s.usd === 'number' && s.usd > 0
-    ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
-    : '';
   // Dormant (no live tmux) gets the hollow "resume" bar and a dimmed name; the
   // server reports a frozen `idle` for it, so the bar word/treatment is what
   // tells these apart, not the status class. A restarting card is only briefly
@@ -304,9 +315,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const advisorNote = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
     ? ` ($${s.advisorUsd.toFixed(2)} on advisor consults)`
     : '';
-  const costEl = cost
-    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}${advisorNote}">${DOLLAR_ICON}${esc(cost)}</span>`
-    : '';
+  const costEl = costTagHtml(s, ctx.costCeiling?.(s), { titleNote: advisorNote });
   // Card ring yields to the "new session" slot's ring while the keyboard selection
   // sits on a slot — the terminal stays open underneath, but only one thing is lit.
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
@@ -377,19 +386,13 @@ export function workerRowHtml(s, ctx) {
   // row being restarted is only briefly unmanaged — don't flicker it to the dormant skin.
   const dormant = (s.managed || s.restarting) ? '' : ' dormant';
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
-  const estimated = s.agent === 'codex';
-  const cost = typeof s.usd === 'number' && s.usd > 0
-    ? `${estimated ? '~' : ''}${s.usd.toFixed(2)}`
-    : '';
   const advisorNote = typeof s.advisorUsd === 'number' && s.advisorUsd > 0
     ? ` ($${s.advisorUsd.toFixed(2)} on advisor consults)`
     : '';
   // Same card-tag pill as the full session card's cost chip (sessionCardHtml
   // costEl) — composing on .card-tag, not a bespoke row-only style, so the two
   // read as the same chip whether a session is collapsed into a spine or not.
-  const costEl = cost
-    ? `<span class="card-tag" title="${estimated ? 'estimated cost so far' : 'cost so far'}${advisorNote}">${DOLLAR_ICON}${esc(cost)}</span>`
-    : '';
+  const costEl = costTagHtml(s, ctx.costCeiling?.(s), { titleNote: advisorNote });
   // Same link chips as the full card's metaLinks, alongside the cost pill —
   // a collapsed child otherwise hides its Jira/PR links entirely.
   const metaLinks = s.links?.length

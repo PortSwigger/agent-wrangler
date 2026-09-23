@@ -160,7 +160,7 @@ those carries. Read this before changing anything under
   new is being asked for; a manifest that widens itself **in place on disk** after
   consent is caught at the next discovery and quarantined, which is why that check
   lives in `external.js` and not only at install time. The modal shows the **DIFF,
-  not the full lists**: capabilities in full (at most 19, each one matters) but
+  not the full lists**: capabilities in full (at most 20, each one matters) but
   dependencies as the **direct** changes plus a count of the transitive remainder,
   since a real tree churns by hundreds of entries. Removals can only be filtered to
   "the package name left the tree entirely" — the record stores a flat list with no
@@ -667,6 +667,28 @@ those carries. Read this before changing anything under
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
   **`BUILTIN` stays empty** and its assertion stays: this is API only, and the
   coverage is test fixtures.
+- **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
+  the chrome they feed is core markup an extension can never mount into.**
+  `register` requires `items`/`cost` in place of `mount`. `slots.menuItems(s,
+  graph)` is appended to BOTH the card right-click menu and the pane's Actions
+  menu (`app.js extMenuItems`, with the auto-fix/auto-merge settings group);
+  `label` and `hint` are TEXT and are escaped (`hint` fills the trailing slot),
+  `icon` is markup exactly as a `view`'s is, and `run` is wrapped so a throw is
+  reported rather than escaping into the menu's click handler.
+  `slots.costCeiling(s, graph)` returns **NUMBERS ONLY** — `{ usd, reached }` —
+  and `cards.js costTagHtml` draws the ` / $50.00` and the red
+  `cost-limit-reached` tone itself, so no extension string reaches the tag; the
+  first answering contribution wins and a second is reported once per pair (it
+  runs per card per render, so never per call). A throwing `items()`/`cost()`
+  removes the contribution, the same rule as `badge`.
+- **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
+  half, and the namespace is FORCED.** `dispatchFields` puts it at
+  `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and
+  reported, or it could overwrite a sibling's slice); `runDispatch` →
+  `sessionManager.dispatch` → the `onBeforeDispatch` payload carries the whole
+  bag, and `hookPayloadFor` (extensions/index.js, applied by `index.js`'s hook
+  binding) narrows it to that extension's slice — `null` when it sent nothing.
+  A scheduled dispatch stores the payload whole, so the bag fires with it.
 - **`host.sessions.spawn({ taskId })` binds task memory BEFORE the pane starts,
   and `tasks.assign` after the spawn is NOT the same thing.** The option becomes
   dispatch's `bindMemory`, which points the session's `by-session` symlink at

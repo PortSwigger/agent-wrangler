@@ -32,8 +32,20 @@
 // form: three anchor hosts inside #modal's #m-dispatch-fields (app.js
 // syncDispatchExtFields), a contribution addressing one of them with `at`, and
 // an optional `hides` veto over named core rows. Its entries carry `at`
-// alongside `only` — see sync().
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field'];
+// alongside `only` — see sync(). A contribution may also return `ext(el)`,
+// data for its OWN server half, which rides the dispatch frame as
+// `ext.<extId>` — see dispatchFields().
+//
+// `card.action` and `card.cost` are VALUE slots: no host, no mount. The board
+// asks them for values while it draws core chrome — menu items for a card's
+// right-click and Actions menus (menuItems()), a spend ceiling for the card's
+// cost tag (costCeiling()) — because that chrome is core markup an extension
+// could never mount into.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost'];
+
+// The value slots and the one function each contribution must carry in place
+// of mount().
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost' };
 
 // Where inside the dispatch modal a `dispatch.field` contribution may land.
 // `top` is above the folder field, `model` is beside the model selector, and
@@ -67,6 +79,10 @@ const REQUIRED_FIELDS = { view: ['label'], 'dispatch.field': ['at'] };
 // in every host, the error reported) while every other contribution carries on —
 // the same lesson as module-syntax.test.js's blank-dashboard incident, applied
 // at run time to code the core does not own.
+function isPlainObject(v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
 export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   const apis = new Map();
@@ -81,6 +97,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // undeclared veto prints once for the life of the page rather than once per
   // recompute.
   const hideReported = new Set();
+  // Colliding `card.cost` pairs already reported by costCeiling().
+  const costReported = new Set();
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -299,7 +317,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     register(slotName, extId, contribution) {
       const list = slotList(slotName);
       if (!contribution || typeof contribution.id !== 'string' || !contribution.id) throw new Error(`[ext:${extId}] contribution to ${slotName} has no id`);
-      if (typeof contribution.mount !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} has no mount function`);
+      const valueFn = VALUE_SLOTS[slotName];
+      if (valueFn) {
+        if (typeof contribution[valueFn] !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} in ${slotName} has no ${valueFn} function`);
+      } else if (typeof contribution.mount !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} has no mount function`);
       for (const field of REQUIRED_FIELDS[slotName] || []) {
         if (typeof contribution[field] !== 'string' || !contribution[field]) throw new Error(`[ext:${extId}] ${contribution.id} in ${slotName} has no ${field}`);
       }
@@ -308,6 +329,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
+      if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
       if (slotName === 'dispatch.field') {
@@ -473,12 +495,35 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `ctx` is accepted but not passed on — the contribution signature is
     // `fields(el)` — so the merge site has one call shape and a later minor can
     // widen to `fields(el, ctx)` without touching the caller.
+    //
+    // `ext(el)` is the other half of the payload: data for the contribution's
+    // OWN server half, not a core field. It lands at `ext.<extId>` — the key is
+    // FORCED from the contribution's id, like `send`'s types, so one extension
+    // can never write into another's — and the server hands each extension only
+    // its own slice (onBeforeDispatch's `ext`). Plain objects from several
+    // contributions of one extension merge shallowly; `undefined` is dropped.
     dispatchFields(ctx) {
       const out = {};
       const writer = new Map();
       for (const c of [...slotList('dispatch.field')]) {
         const el = [...c.mounts.values()][0];
-        if (!el || typeof c.fields !== 'function') continue;
+        if (!el) continue;
+        if (typeof c.ext === 'function') {
+          let data;
+          try {
+            data = c.ext(el);
+          } catch (err) {
+            onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
+            drop('dispatch.field', c);
+            continue;
+          }
+          if (data !== undefined) {
+            out.ext ||= {};
+            const prev = out.ext[c.extId];
+            out.ext[c.extId] = isPlainObject(prev) && isPlainObject(data) ? { ...prev, ...data } : data;
+          }
+        }
+        if (typeof c.fields !== 'function') continue;
         let got;
         try {
           got = c.fields(el);
@@ -490,6 +535,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (!got || typeof got !== 'object') continue;
         for (const [key, value] of Object.entries(got)) {
           if (value === undefined) continue;
+          // `ext` is the namespaced bag above, never a field a contribution
+          // may write whole — that would let it overwrite a sibling's slice.
+          if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el)`); continue; }
           const prev = writer.get(key);
           if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
           writer.set(key, `[ext:${c.extId}] ${c.id}`);
@@ -502,6 +550,74 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a
     // contribution before it has a host at all — the view slot's rail button.
     // Both are undefined for the slots that need neither.
+    // The `card.action` items for one card, in registration order, for the
+    // board to append to its right-click and Actions menus. Each is
+    // `{ label, run, hint?, icon?, danger? }`: `label` and `hint` are TEXT
+    // (the menu escapes them, `hint` is drawn in the trailing slot), `icon` is
+    // markup exactly as a `view`'s is. `run` is wrapped so a throw is reported
+    // rather than escaping into the menu's click handler. A throwing `items()`
+    // removes the contribution; a malformed item is skipped and reported.
+    // `items(session, graph, api)` gets the same per-extension api a mounted
+    // contribution does, since a value slot has no mount to receive it in.
+    menuItems(session, graph, baseApi) {
+      const out = [];
+      for (const c of [...slotList('card.action')]) {
+        let items;
+        try {
+          items = c.items(session, graph, apiFor(c.extId, baseApi));
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} items failed — contribution removed`, err);
+          drop('card.action', c);
+          continue;
+        }
+        for (const it of Array.isArray(items) ? items : []) {
+          if (!it || typeof it.label !== 'string' || !it.label || typeof it.run !== 'function') {
+            onError(`[ext:${c.extId}] ${c.id} returned a menu item without a label and run()`);
+            continue;
+          }
+          out.push({
+            extId: c.extId,
+            label: it.label,
+            hint: typeof it.hint === 'string' ? it.hint : '',
+            icon: typeof it.icon === 'string' ? it.icon : '',
+            danger: Boolean(it.danger),
+            run: (e) => { try { it.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} menu item "${it.label}" failed`, err); } },
+          });
+        }
+      }
+      return out;
+    },
+
+    // The spend ceiling for one card's cost tag: `{ usd, reached }` from the
+    // first `card.cost` contribution that answers, or null. NUMBERS only — core
+    // draws the ` / $50.00` and the reached tone itself, so no extension string
+    // reaches that markup. A second answering contribution is a collision,
+    // reported once per pair for the life of the page (this runs per card per
+    // render). A throwing `cost()` removes the contribution.
+    costCeiling(session, graph) {
+      let found = null;
+      for (const c of [...slotList('card.cost')]) {
+        let got;
+        try {
+          got = c.cost(session, graph);
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} cost failed — contribution removed`, err);
+          drop('card.cost', c);
+          continue;
+        }
+        if (got == null) continue;
+        const usd = Number(got.usd);
+        if (!Number.isFinite(usd) || usd <= 0) continue;
+        if (found) {
+          const key = `${found.by}|${c.extId}:${c.id}`;
+          if (!costReported.has(key)) { costReported.add(key); onError(`[ext:${c.extId}] ${c.id} also set a cost ceiling; ${found.by}'s is shown`); }
+          continue;
+        }
+        found = { usd, reached: Boolean(got.reached), by: `${c.extId}:${c.id}` };
+      }
+      return found && { usd: found.usd, reached: found.reached };
+    },
+
     contributions(slotName) {
       return slotList(slotName).map((c) => ({
         extId: c.extId, id: c.id, mounted: c.mounts.size > 0,

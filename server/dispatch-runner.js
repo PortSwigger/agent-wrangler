@@ -77,6 +77,10 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
       ? { issue: rawIssue, phase: { label: 'starting', kind: 'active', at: now }, startedAt: now }
       : (opts.workflow || undefined),
     parentSession: opts.parentSession || undefined,
+    // Extension-owned data from the dialog's dispatch.field contributions
+    // (`ext.<extId>`), handed to each extension's onBeforeDispatch as its own
+    // slice. A scheduled dispatch stores the payload whole, so it rides along.
+    ext: opts.ext && typeof opts.ext === 'object' && !Array.isArray(opts.ext) ? opts.ext : undefined,
     // Bind memory before the process launches, keyed on the chosen task
     // (opts.taskId, before the assign below lands). Claude launches through the
     // stable symlink; Codex consumes bindSession's returned real target.
