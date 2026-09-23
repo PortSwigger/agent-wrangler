@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, linkedWorktreeCommonGitDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, gitCommonDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -111,11 +111,11 @@ test('isLinkedWorktree: true inside a linked worktree, false in the main checkou
   assert.equal(await isLinkedWorktree(repo), false);
 });
 
-test('linkedWorktreeCommonGitDir: resolves the MAIN checkout\'s .git, not the worktree-private git-dir', async () => {
+test('gitCommonDir: in a linked worktree resolves the MAIN checkout\'s .git, not the worktree-private git-dir', async () => {
   const { root, repo } = tempRepo();
   const wt = path.join(root, 'myproj-worktree-feature3');
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', wt, '-b', 'feature3'], { stdio: 'pipe' });
-  const gitDir = await linkedWorktreeCommonGitDir(wt);
+  const gitDir = await gitCommonDir(wt);
   // Not `<repo>/.git/worktrees/feature3` — that's --git-dir, and it's not
   // enough on its own (index.lock succeeds but `git add`'s object write and
   // `git commit`'s ref update still live in the common dir, verified against
@@ -124,14 +124,14 @@ test('linkedWorktreeCommonGitDir: resolves the MAIN checkout\'s .git, not the wo
   assert.equal(fs.existsSync(gitDir), true);
 });
 
-test('linkedWorktreeCommonGitDir: null in the main checkout (not a linked worktree)', async () => {
+test('gitCommonDir: in the main checkout resolves its own .git', async () => {
   const { repo } = tempRepo();
-  assert.equal(await linkedWorktreeCommonGitDir(repo), null);
+  assert.equal(await gitCommonDir(repo), path.join(repo, '.git'));
 });
 
-test('linkedWorktreeCommonGitDir: null outside any git repository', async () => {
+test('gitCommonDir: null outside any git repository', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-nogit-')));
-  assert.equal(await linkedWorktreeCommonGitDir(dir), null);
+  assert.equal(await gitCommonDir(dir), null);
 });
 
 test('createWorktree: creates a sibling worktree on a new branch', async () => {
