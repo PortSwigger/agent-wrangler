@@ -30,6 +30,7 @@ test('get_session_info reports both relations null for a plain top-level session
     sessionId: 'S1', label: 'Solo', task: null,
     parent: null, parentLabel: null, parentChain: [],
     spawnedBy: null, spawnedByLabel: null, spawnerChain: [],
+    autoCompactTokens: null,
   });
 });
 
@@ -128,21 +129,23 @@ test('get_session_info resolves a legacy worker\'s parentSession the same way li
 test('get_session_info sources the caller\'s own fields from the graph row when available', async () => {
   const out = await getSessionInfoTool.handler({
     deps: deps(
-      { S1: { name: 'RawName', parentSession: 'RAW_PARENT' } },
-      { graphSessions: [{ sessionId: 'S1', label: 'Graph-resolved label', parentSession: 'ORCH', spawnedBy: 'PREV' }] },
+      { S1: { name: 'RawName', parentSession: 'RAW_PARENT', autoCompactTokens: 100000 } },
+      { graphSessions: [{ sessionId: 'S1', label: 'Graph-resolved label', parentSession: 'ORCH', spawnedBy: 'PREV', autoCompactTokens: 120000 }] },
     ),
     caller: 'S1',
   });
   assert.equal(out.structuredContent.label, 'Graph-resolved label');
   assert.equal(out.structuredContent.parent, 'ORCH');
   assert.equal(out.structuredContent.spawnedBy, 'PREV');
+  assert.equal(out.structuredContent.autoCompactTokens, 120000);
 });
 
 test('get_session_info falls back to the raw entry when the caller is not (yet) on the graph', async () => {
   const out = await getSessionInfoTool.handler({
-    deps: deps({ S1: { name: 'RawName', parentSession: 'RAW_PARENT' } }, { graphSessions: [] }),
+    deps: deps({ S1: { name: 'RawName', parentSession: 'RAW_PARENT', autoCompactTokens: 100000 } }, { graphSessions: [] }),
     caller: 'S1',
   });
   assert.equal(out.structuredContent.label, 'RawName');
   assert.equal(out.structuredContent.parent, 'RAW_PARENT');
+  assert.equal(out.structuredContent.autoCompactTokens, 100000);
 });

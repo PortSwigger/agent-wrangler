@@ -48,6 +48,7 @@ export const getSessionInfoTool = {
     + 'who actually called spawn_session/spawn_workflow to launch you, walked to root — set once '
     + 'at launch, only for that launch path; null if you were dispatched directly from the board '
     + 'UI. Either can be set with the other null — do not assume one implies the other. The same '
+    + '`autoCompactTokens` is your session\'s auto-compaction working-context ceiling. The same '
     + 'spawnedBy is also available at boot (and after a resume) as the AW_SPAWNER_SESSION_ID env '
     + 'var, but that var never reflects `parent`/nesting at all, and goes stale if you get '
     + 're-nested after launch — this tool always reads live state. `parentLabel`/`spawnedByLabel` '
@@ -67,6 +68,9 @@ export const getSessionInfoTool = {
     const graphRow = deps.graph?.()?.sessions?.find((s) => s.sessionId === caller);
     const parent = graphRow ? (graphRow.parentSession ?? null) : deriveParentSession(entry).parentSession;
     const spawnedBy = graphRow ? (graphRow.spawnedBy ?? null) : deriveParentSession(entry).spawnedBy;
+    const autoCompactTokens = graphRow
+      ? (graphRow.autoCompactTokens ?? null)
+      : (entry.autoCompactTokens ?? null);
     const label = graphRow
       ? (graphRow.label ?? null)
       : sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: caller.slice(0, 8) }) || null;
@@ -86,6 +90,7 @@ export const getSessionInfoTool = {
       spawnedBy,
       spawnedByLabel: spawnerChain[0]?.label ?? null,
       spawnerChain,
+      autoCompactTokens,
     };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
