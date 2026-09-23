@@ -47,7 +47,7 @@ export const getSessionInfoTool = {
     + 'attach_session/detach_session) and can change after launch. `spawnedBy`/`spawnerChain` is '
     + 'who actually called spawn_session/spawn_workflow to launch you, walked to root — set once '
     + 'at launch, only for that launch path; null if you were dispatched directly from the board '
-    + 'UI. Either can be set with the other null — do not assume one implies the other. The same '
+    + 'UI. Either can be set with the other null — do not assume one implies the other. '
     + '`autoCompactTokens` is your session\'s auto-compaction working-context ceiling. The same '
     + 'spawnedBy is also available at boot (and after a resume) as the AW_SPAWNER_SESSION_ID env '
     + 'var, but that var never reflects `parent`/nesting at all, and goes stale if you get '

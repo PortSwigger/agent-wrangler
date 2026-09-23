@@ -21,6 +21,10 @@ test('get_session_info rejects an unmapped caller', async () => {
   assert.match(out.content[0].text, /not found/);
 });
 
+test('get_session_info describes autoCompactTokens as the working-context ceiling', () => {
+  assert.match(getSessionInfoTool.description, /null — do not assume one implies the other\. `autoCompactTokens` is your session's auto-compaction working-context ceiling/);
+});
+
 test('get_session_info reports both relations null for a plain top-level session', async () => {
   const out = await getSessionInfoTool.handler({
     deps: deps({ S1: { name: 'Solo' } }),
