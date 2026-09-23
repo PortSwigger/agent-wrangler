@@ -11,10 +11,10 @@ import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 const exec = promisify(execFile);
 // `*-codex`-suffixed models (e.g. gpt-5.5-codex) are rejected on ChatGPT-account
 // logins ("not supported when using Codex with a ChatGPT account") and only work
-// with API-key auth; plain model ids are broadly valid. gpt-5.6-sol (frontier,
+// with API-key auth; plain model ids are broadly valid. gpt-6-sol (frontier,
 // no -codex suffix) is confirmed to work on a ChatGPT-account login — default
 // to it as the strongest broadly-valid model.
-const DEFAULT_MODEL = 'gpt-5.6-sol';
+const DEFAULT_MODEL = 'gpt-6-sol';
 
 // A TOML double-quoted string for a `-c key=value` override. Escapes backslash
 // and double-quote per TOML basic-string rules; the memory prompt has neither
@@ -85,10 +85,10 @@ export const codex = {
     { value: 'gpt-5.5', label: 'GPT-5.5 · frontier', pillLabel: 'gpt-5.5' },
     { value: 'gpt-5.4', label: 'GPT-5.4 · everyday coding', pillLabel: 'gpt-5.4' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap', pillLabel: 'gpt-5.4 mini' },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', pillLabel: 'gpt-5.6 sol', default: true },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', pillLabel: 'gpt-5.6 sol' },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
-    { value: 'gpt-6-sol', label: 'GPT-6 Sol · frontier', pillLabel: 'gpt-6 sol' },
+    { value: 'gpt-6-sol', label: 'GPT-6 Sol · frontier', pillLabel: 'gpt-6 sol', default: true },
     { value: 'gpt-6-luna', label: 'GPT-6 Luna · fast & cheap', pillLabel: 'gpt-6 luna' },
   ],
   // Codex's own supported_reasoning_levels, per its model catalog: `minimal` is
