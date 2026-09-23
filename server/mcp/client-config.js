@@ -63,7 +63,7 @@ export const CHECKLIST_TOOLS = ['add_checklist_item', 'update_checklist_item', '
 // (itself a leaf — see server/extensions/index.js), derived from the very list
 // the loader registers, so an extension tool is granted in the same place it is
 // declared.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'read_mail', 'list_mail', ...CHECKLIST_TOOLS];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'rename_session', 'read_mail', 'list_mail', ...CHECKLIST_TOOLS];
 
 // `checklist` and `ext` are both injectable (defaulting to the live config read
 // and the boot-loaded extensions) so tests never touch the memo or the shared
