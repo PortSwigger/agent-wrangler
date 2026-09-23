@@ -85,10 +85,15 @@ Known limits of the sandbox, none of which `add_dirs` can lift:
   build then fails writing its own `.gradle/` or `build/` even though that client
   could write there itself. Tell Codex workers to run Gradle with `--no-daemon`,
   or accept that a daemon must only ever serve the worktree that started it.
-- **1Password CLI (`op`)** cannot reach the desktop app from inside the sandbox.
-  Do secret-dependent steps in a Claude session or by hand.
-- `ps` is blocked. The Docker socket is reachable, so `docker`/devcontainer
-  commands work.
+- **1Password CLI (`op`)** cannot reach the desktop app from inside the sandbox
+  (observed on macOS with the app integration). Do secret-dependent steps in a
+  Claude session or by hand.
+- `ps` is blocked on macOS.
+- **Docker is not sandboxed.** The Docker socket is reachable and `docker`
+  commands do run, but the daemon executes outside the sandbox, so anything it
+  bind-mounts is writable regardless of the roots above. Treat the write roots
+  as a guard against accidents, not as a security boundary, on a machine with
+  Docker.
 
 ## Optional working-context budget
 
