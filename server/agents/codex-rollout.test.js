@@ -36,6 +36,28 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.deepEqual(r.subAgents, []);
 });
 
+test('analyzeCodex bills requests over 272K prompt tokens at the long-context rate', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '06', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '99999999-2222-3333-4444-555555555555';
+  const usage = (i, c, o) => ({ input_tokens: i, cached_input_tokens: c, output_tokens: o, total_tokens: i + o });
+  const tc = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(usage(100_000, 0, 1_000), usage(100_000, 0, 1_000)),
+    tc(usage(400_000, 0, 2_000), usage(300_000, 0, 1_000)),
+    // Rate-limit-only re-emit: same running total, must not count the long request twice.
+    tc(usage(400_000, 0, 2_000), usage(300_000, 0, 1_000)),
+  ];
+  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  // Short: 100K in @ $2, 1K out @ $10. Long: 300K in @ $4, 1K out @ $15.
+  const expected = (100_000 * 2 + 1_000 * 10 + 300_000 * 4 + 1_000 * 15) / 1_000_000;
+  assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
+});
+
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
   const { root, uuid } = fixtureSessions();
   const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';

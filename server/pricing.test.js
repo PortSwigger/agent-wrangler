@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { costUsd, codexCostUsd } from './pricing.js';
+import { costUsd, codexCostUsd, codexCostUsdByType } from './pricing.js';
 
 test('codexCostUsd prices gpt-5.5-codex tokens', () => {
   const usd = codexCostUsd({ 'gpt-5.5-codex': { input: 1_000_000, output: 1_000_000, cacheRead: 0 } });
@@ -17,6 +17,29 @@ test('codexCostUsd prices gpt-5.6-sol/terra/luna tokens', () => {
 test('codexCostUsd unknown model still returns a number (default rate)', () => {
   const usd = codexCostUsd({ 'mystery-model': { input: 1_000_000, output: 0, cacheRead: 0 } });
   assert.equal(typeof usd, 'number');
+});
+
+test('codexCostUsd bills gpt-5.6-sol at its Standard short-context rate', () => {
+  const usd = codexCostUsd({ 'gpt-5.6-sol': { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000 } });
+  assert.equal(usd, 4 + 20 + 0.4);
+});
+
+test('codexCostUsd bills the long-context share at the long rate', () => {
+  // 3M input / 1M output / 1M cached, of which 1M / 0.5M / 1M came from long requests.
+  const totals = { 'gpt-6-sol': {
+    input: 3_000_000, output: 1_000_000, cacheRead: 1_000_000,
+    long: { input: 1_000_000, output: 500_000, cacheRead: 1_000_000 },
+  } };
+  const byType = codexCostUsdByType(totals);
+  assert.equal(byType.input, 2 * 2 + 4);
+  assert.equal(byType.output, 0.5 * 10 + 0.5 * 15);
+  assert.equal(byType.cacheRead, 0.4);
+  assert.equal(codexCostUsd(totals), byType.input + byType.output + byType.cacheRead);
+});
+
+test('codexCostUsd falls back to the short rate for a model with no long rate', () => {
+  const usd = codexCostUsd({ 'gpt-5.4-mini': { input: 1_000_000, output: 0, cacheRead: 0, long: { input: 1_000_000, output: 0, cacheRead: 0 } } });
+  assert.equal(usd, 0.75);
 });
 
 test('claude costUsd unchanged for opus (1M input = $5)', () => {
