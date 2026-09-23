@@ -68,6 +68,10 @@ test('allowedToolsArg grants the get_session_info self-lookup tool (no per-call 
   assert.ok(allowedToolsArg().split(',').includes(allowedToolName('get_session_info')));
 });
 
+test('allowedToolsArg grants the get_session_cost self-lookup tool (no per-call prompt)', () => {
+  assert.ok(allowedToolsArg().split(',').includes(allowedToolName('get_session_cost')));
+});
+
 // The two-place registration is the silent-failure mode CLAUDE.md warns about:
 // registering a tool in tools/index.js's TOOLS without also allow-listing it
 // here ships something that passes every unit test and dies silently in a real
