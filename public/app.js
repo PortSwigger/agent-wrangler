@@ -274,7 +274,7 @@ let pendingTodoConsume = null; // {taskId, todoId, key} — set by spawnTodo, co
 // Seeded with the Claude default so the dropdown is correct before that arrives.
 let availableAgents = [{ id: 'claude', label: 'Claude', models: [
   { value: 'fable', label: 'Fable 5 · 1M context' },
-  { value: 'opus', label: 'Opus 5 · 1M context', default: true },
+  { value: 'opus', label: 'Opus 5.5 · 1M context', default: true },
   { value: 'opusplan', label: 'Opus plan · Sonnet execution' },
   { value: 'sonnet', label: 'Sonnet 5 · 200K context' },
   { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context' },

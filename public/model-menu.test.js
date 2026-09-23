@@ -5,7 +5,7 @@ import { currentModelValue } from './model-menu.js';
 // The Claude adapter's real labels — the shapes this has to disambiguate.
 const MODELS = [
   { value: 'fable', label: 'Fable 5 · 1M context' },
-  { value: 'opus', label: 'Opus 5 · 1M context' },
+  { value: 'opus', label: 'Opus 5.5 · 1M context' },
   { value: 'opusplan', label: 'Opus plan · Sonnet execution' },
   { value: 'sonnet', label: 'Sonnet 5 · 200K context' },
   { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context' },
@@ -13,14 +13,14 @@ const MODELS = [
 ];
 
 test('an unambiguous pane label ticks its row', () => {
-  assert.equal(currentModelValue(MODELS, 'Opus 5', null), 'opus');
+  assert.equal(currentModelValue(MODELS, 'Opus 5.5', null), 'opus');
   assert.equal(currentModelValue(MODELS, 'Fable 5', null), 'fable');
   assert.equal(currentModelValue(MODELS, 'Haiku 4.5', null), 'haiku');
 });
 
-// "Opus 5" must not also match "Opus plan · Sonnet execution".
-test('Opus 5 does not collide with Opus plan', () => {
-  assert.equal(currentModelValue(MODELS, 'Opus 5', null), 'opus');
+// "Opus 5.5" must not also match "Opus plan · Sonnet execution".
+test('Opus 5.5 does not collide with Opus plan', () => {
+  assert.equal(currentModelValue(MODELS, 'Opus 5.5', null), 'opus');
   assert.equal(currentModelValue(MODELS, 'Opus plan', null), 'opusplan');
 });
 
@@ -39,7 +39,7 @@ test('an ambiguous label is broken by what was last asked for', () => {
 // Self-healing: a switch made in the pane leaves the memory pointing elsewhere,
 // and an unambiguous label must ignore it rather than trust it.
 test('a stale memory never overrides an unambiguous label', () => {
-  assert.equal(currentModelValue(MODELS, 'Opus 5', 'sonnet[1m]'), 'opus');
+  assert.equal(currentModelValue(MODELS, 'Opus 5.5', 'sonnet[1m]'), 'opus');
 });
 
 test('a memory that no longer matches the label ticks nothing', () => {

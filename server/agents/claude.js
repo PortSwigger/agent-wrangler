@@ -160,7 +160,7 @@ export const claude = {
   // plan/execution split has no single window to report.
   models: [
     { value: 'fable', label: 'Fable 5 · 1M context', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
-    { value: 'opus', label: 'Opus 5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
+    { value: 'opus', label: 'Opus 5.5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
     { value: 'opusplan', label: 'Opus plan · Sonnet execution', pillLabel: 'opus plan' },
     { value: 'sonnet', label: 'Sonnet 5 · 200K context', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 200_000 },
     { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 1_000_000 },
