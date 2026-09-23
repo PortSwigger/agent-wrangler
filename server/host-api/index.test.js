@@ -28,6 +28,7 @@ function wiring(overrides = {}) {
     broadcast: () => {},
     archiveSession: () => {},
     createTerminal: () => {},
+    interruptSession: async () => true,
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
     mailStore: { unreadInfo: () => null, list: () => [], append: () => {} },
     scanUsage: async () => ({ sessions: [] }),
@@ -178,6 +179,14 @@ test('wake and kill force reason: ext:<id> and cannot be overridden by an argume
   host.sessions.kill('c1', { reason: 'message' });
   assert.deepEqual(resumed, [{ id: 'c1', cwd: undefined, opts: { reason: 'ext:x' } }]);
   assert.deepEqual(killed, [{ id: 'c1', opts: { reason: 'ext:x' } }]);
+});
+
+test('sessions:interrupt passes the card id straight to the composed interruptSession', async () => {
+  const seen = [];
+  const host = buildHostApi({ id: 'x', requires: ['sessions:interrupt'], ...wiring({ interruptSession: async (sid) => { seen.push(sid); return sid === 'c1'; } }) });
+  assert.equal(await host.sessions.interrupt('c1'), true);
+  assert.equal(await host.sessions.interrupt('gone'), false);
+  assert.deepEqual(seen, ['c1', 'gone']);
 });
 
 // -- sessions:spawn --------------------------------------------------------

@@ -65,6 +65,7 @@ export const CAPABILITIES = new Set([
   'mail:read', 'mail:send',
   'usage:read',
   'sessions:bill',
+  'sessions:interrupt',
 ]);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
@@ -86,6 +87,16 @@ export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime'
 // very first tool call may already depend on. `onDispatch` fires after the
 // entry is saved — correct for anything reacting to a new card, too late for an
 // invariant the launched process itself relies on.
+// What one extension's session hook is handed: the payload as fired, except
+// `ext` — the dispatch's `{ [extId]: data }` bag from the dialog's
+// dispatch.field contributions — narrowed to THIS extension's slice (null when
+// it sent none), so no extension reads what a sibling's browser half sent.
+export function hookPayloadFor(extId, payload) {
+  if (!payload || !('ext' in payload)) return payload;
+  const bag = payload.ext && typeof payload.ext === 'object' ? payload.ext : {};
+  return { ...payload, ext: Object.hasOwn(bag, extId) ? bag[extId] : null };
+}
+
 export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;

@@ -109,6 +109,16 @@ test('dispatch() fires onBeforeDispatch before the pane starts, and awaits it', 
   assert.equal(payload.entry, undefined);
 });
 
+test('dispatch() hands onBeforeDispatch the dialog\'s ext bag, null when there is none', async () => {
+  const sm = manager();
+  sm._newSession = async () => {};
+  const seen = [];
+  sm._extHooks.onBeforeDispatch.push((p) => { seen.push(p.ext); });
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'a', agent: 'claude', ext: { 'spend-limit': { usd: 50 } } });
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'b', agent: 'claude' });
+  assert.deepEqual(seen, [{ 'spend-limit': { usd: 50 } }, null]);
+});
+
 test('a throwing onBeforeDispatch never aborts the dispatch', async () => {
   // captureErrors is sync-only (it restores in a finally), and this path has to
   // be awaited across the hook — so the swap is done by hand here.

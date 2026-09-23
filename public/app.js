@@ -16,7 +16,7 @@ import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
-  MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, DOLLAR_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
+  MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
   CHECK_ICON, SPAWN_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
 } from './icons.js';
@@ -44,7 +44,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml } from './cards.js';
+import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
@@ -355,13 +355,13 @@ function populateEffortSelect() {
   else eff.value = '';
 }
 
-// The two models offered as one-click "Launch with X" shortcuts (⌘1/⌘2). Derived
+// The three models offered as one-click "Launch with X" shortcuts (⌘1–⌘3). Derived
 // from the user's own history: every session persists the model it launched with
 // (carried onto board + history nodes), so we rank by how often each was chosen.
-// Opus/Sonnet backfill any empty slot so a fresh install still shows two buttons.
-const QUICK_LAUNCH_FALLBACK = ['opus', 'sonnet'];
+// Opus/Sonnet/Fable backfill any empty slot so a fresh install still shows three buttons.
+const QUICK_LAUNCH_FALLBACK = ['opus', 'sonnet', 'fable'];
 let quickLaunchModels = [...QUICK_LAUNCH_FALLBACK];
-// Recompute the top-2 most-used models from live + archived sessions. Only models
+// Recompute the top-3 most-used models from live + archived sessions. Only models
 // still offered in the current list count (a retired model can't be a launch target).
 function computeQuickLaunchModels() {
   const offered = new Set(availableAgents.flatMap((a) => a.models.map((m) => m.value)));
@@ -374,7 +374,7 @@ function computeQuickLaunchModels() {
   const picks = [];
   for (const m of [...ranked, ...QUICK_LAUNCH_FALLBACK]) {
     if (offered.has(m) && !picks.includes(m)) picks.push(m);
-    if (picks.length === 2) break;
+    if (picks.length === 3) break;
   }
   quickLaunchModels = picks;
 }
@@ -387,17 +387,26 @@ function modelShortLabel(value) {
   }
   return value;
 }
-// Label the two quick-launch buttons from the current model list, and hide the whole
+// A play glyph in the Launch button's accent colour marks each quick button as a
+// launch action, standing in for the old "Launch with" text.
+const QUICK_LAUNCH_ICON = '<svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>';
+// Label the three quick-launch buttons from the current model list, and hide the whole
 // group outside launch mode (schedule mode reuses #modal but has no "launch now").
 function syncQuickLaunch() {
   const wrap = document.getElementById('m-quick-launch');
   if (!wrap) return;
   wrap.classList.toggle('hidden', scheduleMode());
   computeQuickLaunchModels();
-  quickLaunchModels.forEach((value, i) => {
-    const btn = document.getElementById(`m-quick-${i + 1}`);
+  [1, 2, 3].forEach((n, i) => {
+    const btn = document.getElementById(`m-quick-${n}`);
+    const value = quickLaunchModels[i];
     if (!btn) return;
-    btn.innerHTML = `Launch with ${esc(modelShortLabel(value))} <span class="kbd">⌘${i + 1}</span>`;
+    // Fewer than three offered models (e.g. a trimmed model list) leaves a slot empty.
+    btn.style.display = value ? '' : 'none';
+    if (!value) return;
+    const name = modelShortLabel(value);
+    btn.innerHTML = `${QUICK_LAUNCH_ICON}${esc(name)} <span class="kbd">⌘${i + 1}</span>`;
+    btn.title = `Launch with ${name} (⌘${i + 1})`;
   });
 }
 // One-click launch on a specific model: point the select at it (marking it an
@@ -1213,6 +1222,7 @@ function cardCtx() {
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
     isChildFullView,
+    costCeiling: (s) => slots.costCeiling(s, latestGraph),
   };
 }
 
@@ -1827,6 +1837,20 @@ function mountMenu(items, x, y) {
 // `on`) rather than dismissing the menu; the server round-trip + next graph poll
 // reconcile the persisted state. run gets the click event — its currentTarget is
 // the row button, whose trailing slot holds the tick.
+// `card.action` extension items for one card, in the menu's own item shape.
+// Sits with the per-session settings (auto-fix, auto-merge) in both the card
+// right-click menu and the pane's Actions menu. `hint` is extension TEXT, so it
+// is escaped into the trailing slot; slots.js has already guarded `run`.
+function extMenuItems(s) {
+  return slots.menuItems(s, latestGraph, extApi).map((it) => ({
+    label: it.label,
+    icon: it.icon,
+    danger: it.danger,
+    run: it.run,
+    ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
+  }));
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -1972,7 +1996,8 @@ function openCardMenu(sessionId, x, y) {
     ]),
     // The PR-check toggles are per-session settings, not actions — set them off behind
     // their own divider, just above Archive, rather than mixed in with the actions.
-    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoMergeMenuItem(s)] : []),
+    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoMergeMenuItem(s), ...extMenuItems(s)]
+      : (extMenuItems(s).length ? [{ sep: true }, ...extMenuItems(s)] : [])),
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
@@ -2014,6 +2039,7 @@ function openActionsMenu(sessionId, x, y) {
       : { label: 'Snooze…', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
     autoFixMenuItem(s),
     autoMergeMenuItem(s),
+    ...extMenuItems(s),
     { sep: true },
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
@@ -4436,7 +4462,8 @@ function renderPanel(sessionId) {
   const chips = [];
   const active = timeAgo(s.lastActivity);
   if (active) chips.push(`<span class="card-tag">${CLOCK_ICON}${esc(active)}</span>`);
-  if (typeof s.usd === 'number') chips.push(`<span class="card-tag" title="cost so far">${DOLLAR_ICON}${s.usd.toFixed(2)}</span>`);
+  const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
+  if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
@@ -5445,7 +5472,7 @@ function readCoreDispatchFields() {
 }
 
 // Core + the extension merge. Because it sits in the ONE shared read,
-// submitDispatch, readScheduleAction (scheduled dispatch) and the ⌘1/⌘2
+// submitDispatch, readScheduleAction (scheduled dispatch) and the ⌘1–⌘3
 // quickLaunch path all get it for free — the same shared read that already
 // makes a scheduled dispatch byte-for-byte a manual one.
 function readDispatchFields() {
@@ -5987,7 +6014,7 @@ initSettings({
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', submitDispatch);
-[1, 2].forEach((n) =>
+[1, 2, 3].forEach((n) =>
   document.getElementById(`m-quick-${n}`).addEventListener('click', () => quickLaunch(quickLaunchModels[n - 1])));
 document.getElementById('m-worktree').addEventListener('change', syncWorktreeFields);
 document.getElementById('m-mode-standard').addEventListener('click', () => setDispatchMode('standard'));
@@ -6039,7 +6066,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
-  else if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2') && !scheduleMode()) {
+  else if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key) && !scheduleMode()) {
     e.preventDefault(); quickLaunch(quickLaunchModels[Number(e.key) - 1]);
   }
   else if (e.key === 'Escape') { e.preventDefault(); cancelModal(); }
