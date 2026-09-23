@@ -40,7 +40,11 @@ export const spawnSessionTool = {
       + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
-    add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the new session (--add-dir).'),
+    add_dirs: z.array(z.string()).optional().describe(
+      'Extra directories to grant the new session (--add-dir). For Codex these are extra WRITABLE '
+      + 'sandbox roots — everything the work must write outside cwd (e.g. ~/.gradle). The repo\'s '
+      + 'git-dir is granted automatically. Each entry must be an existing directory; ~ expands.',
+    ),
     auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only). Immutable for the session and inherited by forks.'),
     into: z.string().optional().describe(
       'Task id to put the new session on, sourced from list_tasks. An id not sourced from '

@@ -10,7 +10,7 @@ import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, linkedWorktreeCommonGitDir, isValidBranchName } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitCommonDir, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -352,15 +352,19 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   return { cwd: res.path, branch: res.branch, worktree: { path: res.path, branch: res.branch, repoRoot: res.repoRoot } };
 }
 
-// Codex-only: fold a linked worktree's common git-dir into addDirs so its
-// sandbox can write index.lock/objects/refs there (see
-// linkedWorktreeCommonGitDir's comment — that dir lives in the main checkout,
-// a sibling directory the sandbox never grants otherwise). No-op for any
-// other agent (no OS sandbox) or a non-worktree session.
-async function withCodexWorktreeAddDir(agent, worktree, addDirs) {
-  if (agent !== 'codex' || !worktree?.path) return addDirs;
-  const gitDir = await linkedWorktreeCommonGitDir(worktree.path);
-  return gitDir ? [...addDirs, gitDir] : addDirs;
+// Codex-only: fold the launch cwd's git-dir into addDirs so its sandbox can
+// write index.lock/objects/refs there. workspace-write keeps `<root>/.git`
+// read-only inside every writable root, and a linked worktree's git-dir is a
+// sibling directory the sandbox never grants at all — either way `git commit`
+// fails under `--ask-for-approval never` unless the common git-dir is granted
+// as a root of its own (see gitCommonDir). Keyed off cwd, not off a
+// wrangler-made worktree entry: a pre-existing worktree handed over as plain
+// `cwd` has the same problem. No-op for any other agent (no OS sandbox) or a
+// cwd outside a repository.
+async function withCodexGitDirAddDir(agent, cwd, addDirs) {
+  if (agent !== 'codex' || !cwd) return addDirs;
+  const gitDir = await gitCommonDir(cwd);
+  return gitDir && !addDirs.includes(gitDir) ? [...addDirs, gitDir] : addDirs;
 }
 
 export class SessionManager {
@@ -1037,7 +1041,7 @@ export class SessionManager {
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     const memory = resolvedMemoryBindingFor(sessionId);
-    const addDirs = await withCodexWorktreeAddDir(agent, prev?.worktree, prev?.addDirs || []);
+    const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
@@ -1100,7 +1104,7 @@ export class SessionManager {
     // Bind before building the command: Codex needs the resolved real task dir,
     // while Claude continues to derive and use the stable per-session symlink.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
-    const addDirs = await withCodexWorktreeAddDir(agent, parentEntry?.worktree, []);
+    const addDirs = await withCodexGitDirAddDir(agent, dir, []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
     // the only thing that exists to gate on at this point.
@@ -1585,11 +1589,11 @@ export class SessionManager {
     // resolved real task/scratch directory returned by the binder. dispatch mints
     // sessionId, hence callers still provide a binder rather than a prebuilt path.
     const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
-    // Keep the grants the dispatch ASKED for, before the codex worktree git-dir is
-    // folded in: that one is derived from the worktree on every launch, so storing
-    // it would only let resume grant the same path twice.
+    // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
+    // in: that one is derived from the cwd on every launch, so storing it would
+    // only let resume grant the same path twice.
     const grantedDirs = addDirs;
-    addDirs = await withCodexWorktreeAddDir(agent, worktreeEntry, addDirs);
+    addDirs = await withCodexGitDirAddDir(agent, cwd, addDirs);
     // Awaited, and deliberately ahead of both the skill gate and the launch: the
     // card id, cwd and worktree are settled but nothing has started, so this is
     // the only window in which an extension can persist state the agent's very

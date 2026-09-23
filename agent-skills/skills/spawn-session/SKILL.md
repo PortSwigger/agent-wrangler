@@ -60,6 +60,41 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 
 <!-- END GENERATED MODELS -->
 
+## Codex sandbox and `add_dirs`
+
+A Codex session runs under Codex's own OS sandbox (`--sandbox workspace-write`,
+approvals off). It can read anywhere, but it can only **write** to: its cwd, `/tmp`
+and `$TMPDIR`, its wrangler memory dir, and each `add_dirs` entry. A blocked write
+fails on the spot with `Operation not permitted` — there is no approval prompt to
+fall back on. Claude sessions have no such sandbox; none of this applies to them.
+
+The wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
+whether cwd is a plain checkout or a linked worktree (pre-existing or created via
+`worktree: true`) — so `git commit`/`push` work without any `add_dirs`.
+
+Anything **else** the work writes outside cwd must be listed in `add_dirs`, as
+existing absolute (or `~/`-prefixed) directories. For a Gradle repo that means at
+least `~/.gradle`; add any wrapper's state dir too (e.g. `~/.local/state/gradle-slot`).
+
+Known limits of the sandbox, none of which `add_dirs` can lift:
+
+- **Gradle daemons are poisoned by the sandbox.** A daemon started inside a Codex
+  session inherits that session's sandbox for its whole life (hours of idle time),
+  sits in the shared `~/.gradle/daemon` registry, and is reused by the next
+  compatible build from *any* session — including a different worktree, whose
+  build then fails writing its own `.gradle/` or `build/` even though that client
+  could write there itself. Tell Codex workers to run Gradle with `--no-daemon`,
+  or accept that a daemon must only ever serve the worktree that started it.
+- **1Password CLI (`op`)** cannot reach the desktop app from inside the sandbox
+  (observed on macOS with the app integration). Do secret-dependent steps in a
+  Claude session or by hand.
+- `ps` is blocked on macOS.
+- **Docker is not sandboxed.** The Docker socket is reachable and `docker`
+  commands do run, but the daemon executes outside the sandbox, so anything it
+  bind-mounts is writable regardless of the roots above. Treat the write roots
+  as a guard against accidents, not as a security boundary, on a machine with
+  Docker.
+
 ## Optional working-context budget
 
 Pass `auto_compact_tokens` to opt the new session into an immutable auto-compaction
