@@ -355,13 +355,13 @@ function populateEffortSelect() {
   else eff.value = '';
 }
 
-// The two models offered as one-click "Launch with X" shortcuts (⌘1/⌘2). Derived
+// The three models offered as one-click "Launch with X" shortcuts (⌘1–⌘3). Derived
 // from the user's own history: every session persists the model it launched with
 // (carried onto board + history nodes), so we rank by how often each was chosen.
-// Opus/Sonnet backfill any empty slot so a fresh install still shows two buttons.
-const QUICK_LAUNCH_FALLBACK = ['opus', 'sonnet'];
+// Opus/Sonnet/Fable backfill any empty slot so a fresh install still shows three buttons.
+const QUICK_LAUNCH_FALLBACK = ['opus', 'sonnet', 'fable'];
 let quickLaunchModels = [...QUICK_LAUNCH_FALLBACK];
-// Recompute the top-2 most-used models from live + archived sessions. Only models
+// Recompute the top-3 most-used models from live + archived sessions. Only models
 // still offered in the current list count (a retired model can't be a launch target).
 function computeQuickLaunchModels() {
   const offered = new Set(availableAgents.flatMap((a) => a.models.map((m) => m.value)));
@@ -374,7 +374,7 @@ function computeQuickLaunchModels() {
   const picks = [];
   for (const m of [...ranked, ...QUICK_LAUNCH_FALLBACK]) {
     if (offered.has(m) && !picks.includes(m)) picks.push(m);
-    if (picks.length === 2) break;
+    if (picks.length === 3) break;
   }
   quickLaunchModels = picks;
 }
@@ -387,17 +387,26 @@ function modelShortLabel(value) {
   }
   return value;
 }
-// Label the two quick-launch buttons from the current model list, and hide the whole
+// A play glyph in the Launch button's accent colour marks each quick button as a
+// launch action, standing in for the old "Launch with" text.
+const QUICK_LAUNCH_ICON = '<svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>';
+// Label the three quick-launch buttons from the current model list, and hide the whole
 // group outside launch mode (schedule mode reuses #modal but has no "launch now").
 function syncQuickLaunch() {
   const wrap = document.getElementById('m-quick-launch');
   if (!wrap) return;
   wrap.classList.toggle('hidden', scheduleMode());
   computeQuickLaunchModels();
-  quickLaunchModels.forEach((value, i) => {
-    const btn = document.getElementById(`m-quick-${i + 1}`);
+  [1, 2, 3].forEach((n, i) => {
+    const btn = document.getElementById(`m-quick-${n}`);
+    const value = quickLaunchModels[i];
     if (!btn) return;
-    btn.innerHTML = `Launch with ${esc(modelShortLabel(value))} <span class="kbd">⌘${i + 1}</span>`;
+    // Fewer than three offered models (e.g. a trimmed model list) leaves a slot empty.
+    btn.style.display = value ? '' : 'none';
+    if (!value) return;
+    const name = modelShortLabel(value);
+    btn.innerHTML = `${QUICK_LAUNCH_ICON}${esc(name)} <span class="kbd">⌘${i + 1}</span>`;
+    btn.title = `Launch with ${name} (⌘${i + 1})`;
   });
 }
 // One-click launch on a specific model: point the select at it (marking it an
@@ -5463,7 +5472,7 @@ function readCoreDispatchFields() {
 }
 
 // Core + the extension merge. Because it sits in the ONE shared read,
-// submitDispatch, readScheduleAction (scheduled dispatch) and the ⌘1/⌘2
+// submitDispatch, readScheduleAction (scheduled dispatch) and the ⌘1–⌘3
 // quickLaunch path all get it for free — the same shared read that already
 // makes a scheduled dispatch byte-for-byte a manual one.
 function readDispatchFields() {
@@ -6005,7 +6014,7 @@ initSettings({
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', submitDispatch);
-[1, 2].forEach((n) =>
+[1, 2, 3].forEach((n) =>
   document.getElementById(`m-quick-${n}`).addEventListener('click', () => quickLaunch(quickLaunchModels[n - 1])));
 document.getElementById('m-worktree').addEventListener('change', syncWorktreeFields);
 document.getElementById('m-mode-standard').addEventListener('click', () => setDispatchMode('standard'));
@@ -6057,7 +6066,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
-  else if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2') && !scheduleMode()) {
+  else if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key) && !scheduleMode()) {
     e.preventDefault(); quickLaunch(quickLaunchModels[Number(e.key) - 1]);
   }
   else if (e.key === 'Escape') { e.preventDefault(); cancelModal(); }

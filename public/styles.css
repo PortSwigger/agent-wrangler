@@ -840,7 +840,9 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 /* Quick-launch shortcuts sit at the bottom-left; margin-right:auto pushes Cancel/Launch to the right. */
 .quick-launch { display: flex; gap: 8px; margin-right: auto; }
 .quick-launch.hidden { display: none; }
-.quick-launch-btn { display: inline-flex; align-items: center; gap: 6px; }
+/* Accent border + icon tie these to the primary Launch button: each one launches too. */
+.quick-launch-btn { display: inline-flex; align-items: center; gap: 6px; border-color: var(--accent); }
+.quick-launch-btn .icon { width: 10px; height: 10px; color: var(--accent); flex: 0 0 auto; }
 .quick-launch-btn .kbd {
   font-size: 10px; color: var(--fg-subtle); border: 1px solid var(--border);
   border-radius: 4px; padding: 0 4px; line-height: 15px;
