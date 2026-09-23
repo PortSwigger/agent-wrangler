@@ -647,7 +647,7 @@ those carries. Read this before changing anything under
   `readCoreDispatchFields` still reads it, so an extension that hides a field
   and does not write the key back gets whatever the hidden control held; that is
   the single most likely misunderstanding of the feature. **The payload merge
-  lives in the ONE shared read**, which is why scheduled dispatch and the ⌘1/⌘2
+  lives in the ONE shared read**, which is why scheduled dispatch and the ⌘1–⌘3
   quick-launch path get it for free, and why `readDispatchFields` had to SPLIT
   into a core half (`readCoreDispatchFields` — what the ctx's `draft` is, and
   what the merge spreads over) and the merged whole: miss the split and building
