@@ -88,6 +88,8 @@ export const codex = {
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', pillLabel: 'gpt-5.6 sol', default: true },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
+    { value: 'gpt-6-sol', label: 'GPT-6 Sol · frontier', pillLabel: 'gpt-6 sol' },
+    { value: 'gpt-6-luna', label: 'GPT-6 Luna · fast & cheap', pillLabel: 'gpt-6 luna' },
   ],
   // Codex's own supported_reasoning_levels, per its model catalog: `minimal` is
   // gone and xhigh/max/ultra arrived with the 5.6 family. The list is per-AGENT

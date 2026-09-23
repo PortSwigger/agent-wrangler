@@ -40,7 +40,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 
 **Claude** (`agent: "claude"`):
 - `fable` — Fable 5 · 1M context
-- `opus` — Opus 5 · 1M context (default)
+- `opus` — Opus 5.5 · 1M context (default)
 - `opusplan` — Opus plan · Sonnet execution
 - `sonnet` — Sonnet 5 · 200K context
 - `sonnet[1m]` — Sonnet 5 · 1M context
@@ -54,6 +54,8 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.6-sol` — GPT-5.6 Sol · frontier (default)
 - `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
 - `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
+- `gpt-6-sol` — GPT-6 Sol · frontier
+- `gpt-6-luna` — GPT-6 Luna · fast & cheap
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
 <!-- END GENERATED MODELS -->

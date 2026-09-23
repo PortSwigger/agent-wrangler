@@ -5,7 +5,7 @@ import { currentModelValue } from './model-menu.js';
 // The Claude adapter's real labels — the shapes this has to disambiguate.
 const MODELS = [
   { value: 'fable', label: 'Fable 5 · 1M context' },
-  { value: 'opus', label: 'Opus 5 · 1M context' },
+  { value: 'opus', label: 'Opus 5.5 · 1M context' },
   { value: 'opusplan', label: 'Opus plan · Sonnet execution' },
   { value: 'sonnet', label: 'Sonnet 5 · 200K context' },
   { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context' },
