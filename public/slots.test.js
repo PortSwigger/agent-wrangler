@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -678,4 +678,60 @@ test('hiddenDispatchFields fails closed for an extension the board has heard not
   slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
   assert.deepEqual(slots.hiddenDispatchFields(), []);
   assert.match(errors.join('\n'), /cannot hide "effort"/);
+});
+
+test('dispatchFields nests ext(el) under the contribution\'s own extension id', () => {
+  const { document, slots, errors } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, ext: () => ({ usd: 50 }) });
+  slots.register('dispatch.field', 'a', { id: 'two', at: 'model', mount() {}, ext: () => ({ note: 'x' }) });
+  slots.register('dispatch.field', 'b', { id: 'three', at: 'advanced', mount() {}, ext: () => undefined, fields: () => ({ ext: { a: { usd: 1 } }, effort: 'low' }) });
+  const top = document.make(); const model = document.make(); const advanced = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }, { host: advanced, at: 'advanced' }]);
+  assert.deepEqual(slots.dispatchFields({}), { ext: { a: { usd: 50, note: 'x' } }, effort: 'low' });
+  assert.match(errors.join('\n'), /cannot write dispatch field "ext"/);
+});
+
+test('a throwing ext(el) removes the contribution', () => {
+  const { document, slots, errors } = dispatchHarness();
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, ext: () => { throw new Error('boom'); }, fields: () => ({ effort: 'low' }) });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.dispatchFields({}), {});
+  assert.match(errors.join('\n'), /ext failed — contribution removed/);
+  assert.equal(slots.contributions('dispatch.field').length, 0);
+});
+
+test('card.action and card.cost are value slots: they need items/cost, not mount', () => {
+  const { slots } = harness();
+  assert.throws(() => slots.register('card.action', 'a', { id: 'x', mount() {} }), /has no items function/);
+  assert.throws(() => slots.register('card.cost', 'a', { id: 'x', mount() {} }), /has no cost function/);
+  slots.register('card.action', 'a', { id: 'x', items: () => [] });
+  slots.register('card.cost', 'a', { id: 'x', cost: () => null });
+});
+
+test('menuItems collects each card.action\'s items, skips malformed ones and guards run()', () => {
+  const { slots, errors } = harness();
+  const ran = [];
+  slots.register('card.action', 'a', { id: 'x', items: (s, g, api) => [{ label: `Limit ${s.sessionId}`, hint: '$5.00', run: () => ran.push(s.sessionId, typeof api.send) }, { label: '' }] });
+  slots.register('card.action', 'b', { id: 'y', items: () => [{ label: 'Boom', run: () => { throw new Error('bad'); } }] });
+  slots.register('card.action', 'c', { id: 'z', items: () => { throw new Error('nope'); } });
+  const items = slots.menuItems({ sessionId: 'c1' }, {}, {});
+  assert.deepEqual(items.map((i) => [i.extId, i.label, i.hint]), [['a', 'Limit c1', '$5.00'], ['b', 'Boom', '']]);
+  items[0].run(); items[1].run();
+  assert.deepEqual(ran, ['c1', 'function']);
+  assert.match(errors.join('\n'), /without a label and run/);
+  assert.match(errors.join('\n'), /menu item "Boom" failed/);
+  assert.match(errors.join('\n'), /z items failed — contribution removed/);
+  assert.equal(slots.contributions('card.action').length, 2);
+});
+
+test('costCeiling takes the first positive answer and reports a second one once', () => {
+  const { slots, errors } = harness();
+  slots.register('card.cost', 'a', { id: 'x', cost: (s) => (s.sessionId === 'c1' ? { usd: 50, reached: true } : null) });
+  slots.register('card.cost', 'b', { id: 'y', cost: () => ({ usd: 10 }) });
+  slots.register('card.cost', 'c', { id: 'z', cost: () => ({ usd: -1 }) });
+  assert.deepEqual(slots.costCeiling({ sessionId: 'c1' }, {}), { usd: 50, reached: true });
+  assert.deepEqual(slots.costCeiling({ sessionId: 'c2' }, {}), { usd: 10, reached: false });
+  slots.costCeiling({ sessionId: 'c1' }, {});
+  assert.equal(errors.filter((e) => /also set a cost ceiling/.test(e)).length, 1);
 });

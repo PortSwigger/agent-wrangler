@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  hookPayloadFor,
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
@@ -850,4 +851,13 @@ test('the declared hideDispatchField lands on the entry, the announcement and th
 test('an extension hiding nothing omits hideDispatchField from its announcement entry', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
   assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
+});
+
+test('hookPayloadFor narrows a dispatch ext bag to the calling extension\'s own slice', () => {
+  const payload = { sessionId: 'c1', ext: { a: { usd: 5 }, b: { secret: true } } };
+  assert.deepEqual(hookPayloadFor('a', payload), { sessionId: 'c1', ext: { usd: 5 } });
+  assert.deepEqual(hookPayloadFor('c', payload), { sessionId: 'c1', ext: null });
+  assert.deepEqual(hookPayloadFor('a', { sessionId: 'c1', ext: null }), { sessionId: 'c1', ext: null });
+  const noExt = { sessionId: 'c1' };
+  assert.equal(hookPayloadFor('a', noExt), noExt);
 });

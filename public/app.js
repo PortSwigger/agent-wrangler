@@ -16,7 +16,7 @@ import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
-  MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, DOLLAR_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
+  MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
   CHECK_ICON, SPAWN_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
 } from './icons.js';
@@ -44,7 +44,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml } from './cards.js';
+import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
@@ -1213,6 +1213,7 @@ function cardCtx() {
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
     isChildFullView,
+    costCeiling: (s) => slots.costCeiling(s, latestGraph),
   };
 }
 
@@ -1827,6 +1828,20 @@ function mountMenu(items, x, y) {
 // `on`) rather than dismissing the menu; the server round-trip + next graph poll
 // reconcile the persisted state. run gets the click event — its currentTarget is
 // the row button, whose trailing slot holds the tick.
+// `card.action` extension items for one card, in the menu's own item shape.
+// Sits with the per-session settings (auto-fix, auto-merge) in both the card
+// right-click menu and the pane's Actions menu. `hint` is extension TEXT, so it
+// is escaped into the trailing slot; slots.js has already guarded `run`.
+function extMenuItems(s) {
+  return slots.menuItems(s, latestGraph, extApi).map((it) => ({
+    label: it.label,
+    icon: it.icon,
+    danger: it.danger,
+    run: it.run,
+    ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
+  }));
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -1972,7 +1987,8 @@ function openCardMenu(sessionId, x, y) {
     ]),
     // The PR-check toggles are per-session settings, not actions — set them off behind
     // their own divider, just above Archive, rather than mixed in with the actions.
-    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoMergeMenuItem(s)] : []),
+    ...(!snoozed ? [{ sep: true }, autoFixMenuItem(s), autoMergeMenuItem(s), ...extMenuItems(s)]
+      : (extMenuItems(s).length ? [{ sep: true }, ...extMenuItems(s)] : [])),
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
@@ -2014,6 +2030,7 @@ function openActionsMenu(sessionId, x, y) {
       : { label: 'Snooze…', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
     autoFixMenuItem(s),
     autoMergeMenuItem(s),
+    ...extMenuItems(s),
     { sep: true },
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
@@ -4436,7 +4453,8 @@ function renderPanel(sessionId) {
   const chips = [];
   const active = timeAgo(s.lastActivity);
   if (active) chips.push(`<span class="card-tag">${CLOCK_ICON}${esc(active)}</span>`);
-  if (typeof s.usd === 'number') chips.push(`<span class="card-tag" title="cost so far">${DOLLAR_ICON}${s.usd.toFixed(2)}</span>`);
+  const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
+  if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.

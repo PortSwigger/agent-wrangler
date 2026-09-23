@@ -696,3 +696,12 @@ test('subagentDividerHtml carries the label and any extra control passed in', ()
   assert.match(subagentDividerHtml(), /subagent-label/);
   assert.match(subagentDividerHtml('<button id="x"></button>'), /<button id="x">/);
 });
+
+test('sessionCardHtml: a card.cost ceiling reads $spent / $ceiling, even before any spend', () => {
+  const withCeiling = (ceiling) => ctx({ costCeiling: () => ceiling });
+  assert.match(sessionCardHtml(sess({ usd: 8.08 }), withCeiling({ usd: 50, reached: false })), /8\.08 \/ \$50\.00<\/span>/);
+  assert.match(sessionCardHtml(sess({ usd: 0 }), withCeiling({ usd: 50, reached: false })), /0\.00 \/ \$50\.00/);
+  assert.doesNotMatch(sessionCardHtml(sess({ usd: 8.08 }), withCeiling({ usd: 50, reached: false })), /cost-limit-reached/);
+  assert.match(sessionCardHtml(sess({ usd: 51 }), withCeiling({ usd: 50, reached: true })), /card-tag cost-limit-reached[^>]*spend limit \$50\.00 reached/);
+  assert.doesNotMatch(sessionCardHtml(sess({ usd: 0 }), ctx()), /cost so far/);
+});

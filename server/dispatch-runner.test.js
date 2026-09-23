@@ -148,3 +148,11 @@ test('runDispatch accepts a valid pair', async () => {
   await runDispatch({ intent: 'go', agent: 'codex', model: 'gpt-5.6-sol' }, d);
   assert.equal(d.calls.dispatch[0].model, 'gpt-5.6-sol');
 });
+
+test('an ext bag passes through to sessionManager.dispatch; a non-object is dropped', async () => {
+  const d = deps();
+  await runDispatch({ cwd: '/repo', intent: 'x', ext: { a: { usd: 5 } } }, d);
+  await runDispatch({ cwd: '/repo', intent: 'x', ext: ['nope'] }, d);
+  assert.deepEqual(d.calls.dispatch[0].ext, { a: { usd: 5 } });
+  assert.equal(d.calls.dispatch[1].ext, undefined);
+});

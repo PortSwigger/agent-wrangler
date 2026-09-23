@@ -285,6 +285,7 @@ The 19 v1 capabilities:
 | `mail:send` | `host.mail.send(to, text)` — `from` forced to `ext:<id>` |
 | `usage:read` | `host.usage.byCard()` → `Promise<[{cardId, usd, estimatedUsd}]>`, every card's spend summed over every transcript/day it owned, via `usage-scan-memo`'s `cachedScan(scanAllDaily)` (never a scan of its own); `estimatedUsd` is the Codex-estimate slice of `usd` |
 | `sessions:bill` | `host.sessions.bill(sessionId, liveSessionId)` → `boolean` — `recordPriorLiveSessionId`: adds a headless conversation to the card's `priorLiveSessionIds` so the cost scanners bill it there; never touches `liveSessionId`, so nothing will ever resume into it |
+| `sessions:interrupt` | `host.sessions.interrupt(id)` → `Promise<boolean>` — Escape into the card's live pane (what the chat Stop button sends); `false` with no pane, never wakes one, and does not check the card is working |
 
 Always present, no capability required: `host.id`, `host.version`
 (`HOST_API_VERSION`), `host.stores` (its OWN stores only — narrowed by the

@@ -88,7 +88,20 @@ import semver from 'semver';
 // the whole client module fails to load, and an older SERVER quarantines a
 // manifest declaring `hideDispatchField` outright. The declared range is the
 // only thing that can say which servers such a manifest will load on.
-export const HOST_API_VERSION = '1.9.0';
+//
+// 1.10.0 adds the `sessions:interrupt` capability (`host.sessions.interrupt(
+// sessionId)` → Promise<boolean>): Escape into a live card's pane, so an
+// extension can stop a turn without killing the pane. Nothing else reaches a
+// pane's keys — `deliver` only pastes text — and the spend-limit extension
+// needed exactly this. An additive key, so v1.js keeps its builders. The same
+// minor carries three CLIENT/dispatch seams that extension needed to live in
+// the board's own chrome rather than beside it: the `card.action` value slot
+// (items in the card and Actions menus), the `card.cost` value slot (a numeric
+// ceiling core draws into the cost tag as `$8.08 / $50.00`), and a
+// dispatch.field contribution's `ext(el)`, which reaches that extension's own
+// `onBeforeDispatch` as `ext`. An older slots.js throws on either slot name
+// and an older server drops `ext`, so only the range can say so.
+export const HOST_API_VERSION = '1.10.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

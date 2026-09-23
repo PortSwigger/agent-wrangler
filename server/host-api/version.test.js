@@ -14,12 +14,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // options to `sessions:spawn` (host-api/v1.js), 1.5.0 widened the setting-def
 // vocabulary, 1.6.0 added the `usage:read` and `sessions:bill` capabilities,
 // 1.7.0 added the `view` slot's `badge`, 1.8.0 the client-side `openSession`
-// (both public/slots.js) and 1.9.0 the `dispatch.field` slot and
-// `hideDispatchField` manifest key, and a manifest declaring any of those
+// (both public/slots.js), 1.9.0 the `dispatch.field` slot and
+// `hideDispatchField` manifest key and 1.10.0 the `sessions:interrupt`
+// capability, and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.9.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.9.0');
+test('the served version is 1.10.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.10.0');
+  assert.equal(servesRange('^1.10.0'), true);
   assert.equal(servesRange('^1.9.0'), true);
   assert.equal(servesRange('^1.8.0'), true);
   assert.equal(servesRange('^1.7.0'), true);
