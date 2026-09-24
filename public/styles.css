@@ -2132,6 +2132,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    The inner element slides in via translateX, clipped by the panel's overflow so
    it never spills onto the sidebar; gated behind reduced-motion. */
 .diff-panel { flex: 1 1 0; min-width: 0; display: flex; overflow: hidden; }
+.diff-panel.sized { flex: 0 0 auto; }
 .diff-panel[hidden] { display: none; }
 main.diffing #grid { display: none; }
 /* The diff view's own fullscreen: mirrors main.maximized but hides the session

@@ -52,7 +52,7 @@ import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } fro
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
@@ -4222,7 +4222,9 @@ applyTerminalSide();
       handleWidth: handle.getBoundingClientRect().width,
       sidebarWidth: sidebarW,
     });
-    grid.style.width = `${gridW}px`;
+    const width = `${gridW}px`;
+    grid.style.width = width;
+    if (isDiffPanelOpen()) setDiffPanelWidth(width);
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
