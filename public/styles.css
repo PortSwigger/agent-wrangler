@@ -2125,21 +2125,18 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 
 /* ── Working-tree diff panel ────────────────────────────────────────────────
-   A slide-in over the #grid slot: it's a #grid flex sibling, so `flex: 1 1 0`
-   makes it inherit the board column's exact width automatically (tracking a
-   drag-resized #sidebar for free) — no absolute geometry to keep in sync. While
-   open, main.diffing hides #grid behind it and the terminal #sidebar stays live.
-   The inner element slides in via translateX, clipped by the panel's overflow so
-   it never spills onto the sidebar; gated behind reduced-motion. */
+   A slide-in over the #grid slot. Before a drag it follows the board's responsive
+   CSS width; a dragged, persisted board width is mirrored inline by app.js. */
 .diff-panel { flex: 1 1 0; min-width: 0; display: flex; overflow: hidden; }
+.diff-panel.sized { flex: 0 0 auto; }
 .diff-panel[hidden] { display: none; }
 main.diffing #grid { display: none; }
+main.diffing .diff-panel:not(.sized) { flex: 0 0 auto; width: 54%; }
 /* The diff view's own fullscreen: mirrors main.maximized but hides the session
-   panel instead of the board, so the diff fills the whole content area. No width
-   override needed — #diff-panel's flex:1 1 0 just grows into the space #sidebar
-   and #drag-handle leave behind once they're gone. */
+   panel instead of the board, so the diff fills the whole content area. */
 main.diff-fullscreen #sidebar,
 main.diff-fullscreen #drag-handle { display: none; }
+main.diff-fullscreen.diffing .diff-panel { flex: 1 1 0; width: auto; }
 /* Same backdrop as the terminal, and the same way: --term-bg is an rgba on dark
    themes, and #grid is display:none while diffing (not just hidden behind this),
    so there's nothing underneath to protect — painting --term-bg directly lets the
