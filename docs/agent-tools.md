@@ -26,7 +26,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `attach_session` | Nest a session under another compatible session on the board. |
 | `detach_session` | Promote a nested session back to the top level. |
 | `rename_session` | Change a session's board label. |
-| `archive_session` | Archive a session, optionally cascading to descendants. |
+| `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. |
 | `name_branch` | Rename the caller's Wrangler-managed worktree branch. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
@@ -59,6 +59,19 @@ add more tools. A running session receives tool-registry changes after its next 
 
 Checklist tools are available only when **Per-session checklist** is enabled. They can access only the
 calling session's list.
+
+## Board TODOs
+
+| Tool | Purpose |
+| --- | --- |
+| `list_todos` | List a task's board TODOs, including any descriptions. |
+| `add_todo` | Add a short title and optional free-form description for findings, remaining work, and the next step. |
+| `edit_todo` | Change a title or description; pass an empty description to clear it. |
+| `delete_todo` | Remove a completed or unwanted TODO. |
+| `move_todo` | Move a TODO between tasks or Unassigned. |
+| `reorder_todos` | Change TODO order within a task. |
+
+Board TODOs are separate from session checklists. Their descriptions can be passed to a new session when it starts from the TODO.
 
 ## Tool safety and scope
 
