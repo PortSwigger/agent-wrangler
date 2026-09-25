@@ -1880,6 +1880,12 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* Editing widens back to the full row — the shrink-to-content sizing above is
    only for the read-only display; the input still wants the whole width. */
 .todo-row .todo-text:has(.todo-text-input) { flex: 1; }
+.todo-details { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+.todo-details svg { width: 12px; height: 12px; }
+.todo-details.has-description { color: var(--purple); }
+.todo-details:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.todo-editor-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 30; }
+.todo-editor-card textarea { min-height: 180px; line-height: 1.5; }
 .todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
 .todo-tooltip {
   position: fixed; z-index: 60; display: none; pointer-events: none;
@@ -1896,9 +1902,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .todo-spawn:hover .todo-tick { display: none; }
 .todo-spawn:hover .todo-play { display: inline-flex; }
 .todo-spawn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-/* margin-left: auto pins it to the row's right edge regardless of how short
-   the (now shrink-to-content) text is — matches the old flex:1 text's layout. */
-.todo-del { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+/* The details button pushes both actions to the row's right edge. */
+.todo-del { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
 .todo-del svg { width: 13px; height: 13px; }
 .todo-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
 .todo-zone { display: flex; margin: 2px 2px 0; }

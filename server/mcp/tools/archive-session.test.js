@@ -45,6 +45,14 @@ test('archive_session rejects a self-archive without touching the session', asyn
   assert.equal(calls.archive.length, 0);
 });
 
+test('archive_session permits a self-archive only with the explicit flag', async () => {
+  const { d, calls } = deps();
+  const out = await archiveSessionTool.handler({ deps: d, caller: 'CARD2' }, { target: 'CARD2', allow_self: true, archive_children: false });
+  assert.equal(out.structuredContent.archived, true);
+  assert.deepEqual(calls.kill, ['CARD2']);
+  assert.deepEqual(calls.archive.map((item) => item.id), ['CARD2']);
+});
+
 test('archive_session rejects an unknown id', async () => {
   const { d, calls } = deps();
   const out = await archiveSessionTool.handler({ deps: d, caller: 'CARD1' }, { target: 'GHOST' });

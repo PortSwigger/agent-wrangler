@@ -7,7 +7,7 @@
 //     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
-  CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON,
+  CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON, PENCIL_ICON,
   PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON, TOKENS_ICON, COMPACT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
@@ -585,9 +585,10 @@ export function snoozedRowHtml(s) {
 
 export function todoRowHtml(td, key) {
   const spawn = `<button class="todo-spawn" title="Start a session from this TODO"><span class="todo-tick">${CHECK_ICON}</span><span class="todo-play">${SPAWN_ICON}</span></button>`;
+  const details = `<button class="todo-details${td.description ? ' has-description' : ''}" title="Edit TODO details" aria-label="Edit TODO details">${PENCIL_ICON}</button>`;
   const del = `<button class="todo-del" title="Delete TODO">${X_ICON}</button>`;
   return `<div class="todo-row" data-todoid="${esc(td.id)}" data-todo-key="${esc(key)}" draggable="true">
-    ${spawn}<span class="todo-text">${esc(td.text)}</span>${del}
+    ${spawn}<span class="todo-text">${esc(td.text)}</span>${details}${del}
   </div>`;
 }
 

@@ -5,7 +5,7 @@
 export const todoAddHandler = {
   type: 'todo-add',
   async handler(msg, ctx) {
-    ctx.taskStore.addTodo(msg.taskId || null, msg.text);
+    ctx.taskStore.addTodo(msg.taskId || null, msg.text, Date.now(), msg.description);
     await ctx.rebuild();
   },
 };
@@ -13,7 +13,7 @@ export const todoAddHandler = {
 export const todoEditHandler = {
   type: 'todo-edit',
   async handler(msg, ctx) {
-    ctx.taskStore.editTodo(msg.taskId || null, msg.todoId, msg.text);
+    ctx.taskStore.editTodo(msg.taskId || null, msg.todoId, msg.text, msg.description);
     await ctx.rebuild();
   },
 };

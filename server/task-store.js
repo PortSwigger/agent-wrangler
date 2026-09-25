@@ -19,7 +19,7 @@ export const ADHOC = 'adhoc';
 //   { tasks: [{id, name}], order: [taskId | 'adhoc', …],
 //     assignments: {sessionId: taskId},
 //     sessionOrder: {taskId | 'adhoc': [sessionId, …]},
-//     todos: {taskId | 'adhoc': [{id, text, createdAt}, …]} }
+//     todos: {taskId | 'adhoc': [{id, text, description?, createdAt}, …]} }
 // The 'adhoc' sessionOrder/todos key (when present) belongs to the unassigned tile.
 // A TODO is the cheapest tier of work — pure un-started intent that a spawn
 // consumes — so it is keyed by task exactly like sessionOrder, not linked to one.
@@ -263,11 +263,12 @@ export class TaskStore {
   // bucket is rejected. createdAt is injectable for deterministic tests. The id is
   // a fresh handle — a TODO carries no link to any session, so this is its only key.
   // null taskId maps to ADHOC (the handlers coerce the unassigned tile's key to null).
-  addTodo(taskId, text, createdAt = Date.now()) {
+  addTodo(taskId, text, createdAt = Date.now(), description = '') {
     const bucket = taskId || ADHOC;
     const trimmed = (text || '').trim();
     if (!trimmed || !this._isBucket(bucket)) return null;
     const todo = { id: `td_${crypto.randomBytes(4).toString('hex')}`, text: trimmed, createdAt };
+    if (description?.trim()) todo.description = description.trim();
     (this.todos[bucket] || (this.todos[bucket] = [])).push(todo);
     this._save();
     return todo;
@@ -275,12 +276,17 @@ export class TaskStore {
 
   // Inline rename. No-op on blank, unchanged, or an unknown bucket/todo.
   // null taskId maps to ADHOC.
-  editTodo(taskId, todoId, text) {
+  editTodo(taskId, todoId, text, description) {
     const bucket = taskId || ADHOC;
-    const trimmed = (text || '').trim();
     const todo = (this.todos[bucket] || []).find((td) => td.id === todoId);
-    if (!todo || !trimmed || trimmed === todo.text) return false;
+    if (!todo || (text === undefined && description === undefined)) return false;
+    const trimmed = text === undefined ? todo.text : (text || '').trim();
+    if (!trimmed) return false;
+    const nextDescription = description === undefined ? (todo.description || '') : description.trim();
+    if (trimmed === todo.text && nextDescription === (todo.description || '')) return false;
     todo.text = trimmed;
+    if (nextDescription) todo.description = nextDescription;
+    else delete todo.description;
     this._save();
     return true;
   }
