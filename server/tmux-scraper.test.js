@@ -16,6 +16,48 @@ test('classify: unchanged for working/idle', () => {
   assert.equal(classify('a quiet prompt').status, 'idle');
 });
 
+test('classify: Claude Code\'s own workspace-trust dialog reads as needs-you across every A/B copy variant', () => {
+  // Verbatim (title/body/CTA) from the installed binary's four live copy
+  // variants for this one dialog — only the title and yes-button wording
+  // differ between them, so the check can't anchor on either.
+  const control = 'Do you trust the files in this folder?\n\n/repo/dir\n\n  Learn more\n\n❯ 1. Yes, proceed\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
+  const normalizeAction = "Accessing workspace:\n\n/repo/dir\n\nQuick safety check: is this a project you created or one you trust?\n\n  Security guide\n\n❯ 1. Yes, I trust this folder\n  2. No, exit\n\nEnter to confirm · Esc to cancel";
+  const positiveAttitude = 'Ready to code here?\n\n/repo/dir\n\nI\'ll need permission to work with your files.\n\n❯ 1. Yes, continue\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
+  const explicit = 'Do you want to work in this folder?\n\n/repo/dir\n\nIn order to work in this folder, we need your permission.\n\n❯ 1. Yes, continue\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
+  for (const pane of [control, normalizeAction, positiveAttitude, explicit]) {
+    const c = classify(pane);
+    assert.equal(c.status, 'needs-you');
+    // Generic on purpose: the same menu shape also covers the Bypass
+    // Permissions and org-managed-settings dialogs below, and a
+    // trust-specific label would misdescribe those. No waitingReason either
+    // — this must stay a plain needs-you (bar word 'reply'/"waiting for
+    // you"), never a distinct word like 'error' or 'retry'.
+    assert.match(c.waitingFor, /terminal/i);
+    assert.equal(c.waitingReason, undefined);
+  }
+});
+test('classify: the same menu shape also covers Bypass Permissions mode and org-managed-settings dialogs', () => {
+  // Verbatim CTA wording from the installed binary — a different dialog,
+  // same numbered Yes/No-exit-plus-footer shape the check anchors on.
+  const bypassPermissions = 'Bypass Permissions mode\n\nThis mode should only be used in a sandboxed container/VM.\n\n❯ 1. No, exit\n  2. Yes, I accept\n\nEnter to confirm · Esc to cancel';
+  const orgSettings = "Managed settings\n\nOnly accept if you trust your organization's IT administration.\n\n❯ 1. Yes, I trust these settings\n  2. No, exit Claude Code\n\nEnter to confirm · Esc to cancel";
+  assert.equal(classify(bypassPermissions).status, 'needs-you');
+  assert.equal(classify(orgSettings).status, 'needs-you');
+});
+test('classify: ordinary conversation mentioning "no" or confirmation prompts does not false-positive on the trust dialog', () => {
+  assert.equal(classify('No, that file does not exist yet — let me check again.').status, 'idle');
+  assert.equal(classify('Press enter to confirm the commit message looks right.').status, 'idle');
+  // Both anchor phrases present, but neither option is an actual numbered
+  // menu line — exactly the shape this file's own diff/tests can end up
+  // showing in someone's pane (e.g. `cat`-ing this test file, or a failed
+  // assertion dump), and the same class of false positive the Codex banner
+  // check above already guards against with its own `^`-anchoring.
+  assert.equal(
+    classify('The options are `Yes, proceed` / `No, exit` — the footer says "press Enter to confirm".').status,
+    'idle',
+  );
+});
+
 test('classify: devcontainer bring-up reads as working (not idle → not reaped) with a hint', () => {
   const pane = 'Resolving Feature dependencies...\nRunning the postCreateCommand from devcontainer.json...\nnpm install';
   const c = classify(pane);
