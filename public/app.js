@@ -211,6 +211,15 @@ const extApi = {
     send({ type: 'resume', sessionId });
     toast('Restoring…');
   },
+  // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
+  // on the live board counts (an archived or unknown id would sit in the
+  // minimised set until the next prune), and minimise() itself refuses the last
+  // visible tile — so report whether the tile really went.
+  minimiseTask: (taskId) => {
+    if (!currentOrder().includes(taskId) || minimisedIds.has(taskId)) return false;
+    minimise(taskId);
+    return minimisedIds.has(taskId);
+  },
 };
 const clientExtensions = createClientExtensionLoader(slots);
 // The `extensions` connect message announces which extensions ship a client
@@ -1851,6 +1860,21 @@ function extMenuItems(s) {
   }));
 }
 
+// `task.action` extension items for one task tile's right-click menu, in the
+// same item shape as extMenuItems. The subject is the tile — `{ id, name,
+// adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
+function extTaskMenuItems(taskId, isNoTask) {
+  const id = isNoTask ? ADHOC_ID : taskId;
+  const task = isNoTask ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask }, latestGraph, extApi).map((it) => ({
+    label: it.label,
+    icon: it.icon,
+    danger: it.danger,
+    run: it.run,
+    ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
+  }));
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -2216,12 +2240,16 @@ function openTaskMenu(cell, x, y) {
   const isNoTask = cell.dataset.entity === 'no-task';
   const taskId = isNoTask ? null : cell.dataset.taskid;
   const todoZone = cell.querySelector('.todo-zone');
+  const extItems = extTaskMenuItems(taskId, isNoTask);
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
     { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
+    ] : []),
+    ...(extItems.length ? [{ sep: true }, ...extItems] : []),
+    ...(!isNoTask ? [
       { sep: true },
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTaskFromCell(cell) },
     ] : []),

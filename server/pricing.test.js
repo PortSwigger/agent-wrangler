@@ -51,3 +51,21 @@ test('claude costUsd prices fable above opus (1M input = $10)', () => {
   const usd = costUsd({ 'claude-fable-5': { input: 1_000_000, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 } });
   assert.equal(usd, 10);
 });
+
+test('claude costUsd prices opus 5.5 below older opus', () => {
+  const one = { input: 1_000_000, output: 1_000_000, cacheWrite5m: 1_000_000, cacheWrite1h: 1_000_000, cacheRead: 1_000_000 };
+  assert.equal(costUsd({ 'claude-opus-5-5': one }), 4 + 20 + 5 + 8 + 0.2);
+  assert.equal(costUsd({ 'claude-opus-5': one }), 5 + 25 + 6.25 + 10 + 0.5);
+});
+
+test('claude costUsd prices sonnet 5 below sonnet 4.x', () => {
+  const one = { input: 1_000_000, output: 1_000_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 };
+  assert.equal(costUsd({ 'claude-sonnet-5': one }), 2 + 10);
+  assert.equal(costUsd({ 'claude-sonnet-4-5-20250929': one }), 3 + 15);
+});
+
+test('claude costUsd prices fable 5.1 cache reads below fable 5', () => {
+  const one = { input: 0, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 1_000_000 };
+  assert.equal(costUsd({ 'claude-fable-5-1': one }), 0.25);
+  assert.equal(costUsd({ 'claude-fable-5': one }), 1);
+});
