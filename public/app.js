@@ -3,7 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
+import { todoKeyToTaskId, todoLaunchIntent, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -2680,6 +2680,9 @@ function wireTaskControls(el) {
   el.querySelectorAll('.todo-spawn').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); spawnTodo(b); })
   );
+  el.querySelectorAll('.todo-details').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); openTodoDetails(b); })
+  );
   el.querySelectorAll('.todo-del').forEach((b) =>
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3061,6 +3064,70 @@ function beginTodoEdit(span) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+function openTodoDetails(btn) {
+  const row = btn.closest('.todo-row');
+  if (!row) return;
+  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
+  const td = todosFor(key).find((item) => item.id === todoId);
+  if (!td) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'todo-editor-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'todo-editor-heading');
+  overlay.innerHTML = `<div class="modal-card todo-editor-card">
+    <h3 id="todo-editor-heading">Edit TODO</h3>
+    <label for="todo-editor-title">Title</label>
+    <input id="todo-editor-title" autocomplete="off">
+    <label for="todo-editor-description">Description</label>
+    <textarea id="todo-editor-description" rows="10" placeholder="Findings, remaining work, next step…"></textarea>
+    <p class="todo-editor-error" role="alert" hidden></p>
+    <div class="modal-actions"><button class="ghost todo-editor-cancel">Cancel</button><button class="primary todo-editor-save">Save</button></div>
+  </div>`;
+  const title = overlay.querySelector('#todo-editor-title');
+  const description = overlay.querySelector('#todo-editor-description');
+  const error = overlay.querySelector('.todo-editor-error');
+  title.value = td.text;
+  description.value = td.description || '';
+  const close = () => overlay.remove();
+  overlay.querySelector('.todo-editor-cancel').addEventListener('click', close);
+  overlay.querySelector('.todo-editor-save').addEventListener('click', () => {
+    const text = title.value.trim();
+    if (!text) { title.focus(); return; }
+    const nextDescription = description.value.trim();
+    const textChanged = text !== td.text;
+    const descriptionChanged = nextDescription !== (td.description || '');
+    if (textChanged || descriptionChanged) {
+      const currentKey = Object.keys(latestTasks.todos || {}).find((bucket) => todosFor(bucket).some((item) => item.id === todoId));
+      if (!currentKey) {
+        error.textContent = 'This TODO no longer exists.';
+        error.hidden = false;
+        return;
+      }
+      send({ type: 'todo-edit', taskId: todoKeyToTaskId(currentKey), todoId,
+        ...(textChanged ? { text } : {}),
+        ...(descriptionChanged ? { description: nextDescription } : {}) });
+      const latestTodo = todosFor(currentKey).find((item) => item.id === todoId);
+      if (latestTodo) {
+        if (textChanged) latestTodo.text = text;
+        if (descriptionChanged) {
+          if (nextDescription) latestTodo.description = nextDescription;
+          else delete latestTodo.description;
+        }
+      }
+      renderGrid();
+    }
+    close();
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+  document.body.appendChild(overlay);
+  (td.description ? description : title).focus();
+}
+
 // Spawn a session from a TODO: open the dispatch modal pre-filled with the todo
 // text, task locked to the todo's own bucket. The todo is consumed (deleted) on
 // the 'dispatched' ack — pendingTodoConsume carries it there.
@@ -3071,7 +3138,7 @@ function spawnTodo(btn) {
   const td = todosFor(key).find((x) => x.id === todoId);
   if (!td) return;
   const taskId = todoKeyToTaskId(key);
-  openDispatch(taskId, { intent: td.text, lockTask: true });
+  openDispatch(taskId, { intent: todoLaunchIntent(td), lockTask: true });
   pendingTodoConsume = { taskId, todoId, key };
 }
 

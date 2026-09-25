@@ -11,6 +11,10 @@ import { tileWeight } from './snooze.js';
 // task, so its WS messages carry taskId: null (the server coerces null ⇒ adhoc).
 export const ADHOC_ID = 'adhoc';
 
+export function todoLaunchIntent(todo) {
+  return todo.description ? `${todo.text}\n\n${todo.description}` : todo.text;
+}
+
 // Minimized-row geometry, in px, feeding the tile-span weight. Measured off the
 // rendered .todo-row / .todo-divider (like SNOOZE_STRIDE_PX). TODO_STRIDE_PX is
 // the top-to-top stride (26px row + 8px flex gap in .task-body = 34px).

@@ -55,6 +55,18 @@ test('add_todo validates the bucket and text, returns an id, and rebuilds only a
   assert.equal(rebuilds(), 1);
 });
 
+test('MCP creates, lists, updates, and clears a TODO description independently of its title', async () => {
+  const { deps, task } = setup();
+  const created = await call('add_todo', deps, { task_id: task.id, text: 'Investigate', description: 'Found a race.' });
+  const id = created.structuredContent.id;
+  assert.equal((await call('list_todos', deps, { task_id: task.id })).structuredContent.todos[0].description, 'Found a race.');
+  assert.equal((await call('edit_todo', deps, { task_id: task.id, id, description: 'Next: add test.' })).structuredContent.changed, true);
+  assert.deepEqual(deps.taskStore.snapshot().todos[task.id][0].text, 'Investigate');
+  assert.equal((await call('edit_todo', deps, { task_id: task.id, id, description: '' })).structuredContent.changed, true);
+  assert.equal(deps.taskStore.snapshot().todos[task.id][0].description, undefined);
+  assert.equal((await call('edit_todo', deps, { task_id: task.id, id })).isError, true);
+});
+
 test('edit_todo and delete_todo target the specified bucket', async () => {
   const { deps, task, rebuilds } = setup();
   const todo = deps.taskStore.addTodo(task.id, 'old');

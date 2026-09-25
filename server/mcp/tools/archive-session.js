@@ -28,10 +28,10 @@ import { stopContainer } from '../../runtimes/devcontainer.js';
 export const archiveSessionTool = {
   name: 'archive_session',
   description:
-    'Stop and archive ANOTHER Agent Wrangler session — kill its process but keep it archived '
+    'Stop and archive an Agent Wrangler session — kill its process but keep it archived '
     + '(resumable), the same as the board\'s "Stop & archive". Use it to close a worker session '
-    + 'you spun off once it has reported its work done. Get the target id from list_sessions. You '
-    + 'cannot archive yourself (finish and stop — that archives automatically). By default this '
+    + 'you spun off once it has reported its work done. Get the target id from list_sessions. Self-archive '
+    + 'requires allow_self: true and immediately stops your own agent; use it only as your final action. By default this '
     + 'also archives any nested child sessions (spawned off this one) — pass archive_children: '
     + 'false to leave them running. For a devcontainer session the Docker container is LEFT '
     + 'RUNNING by default (so resume stays fast) — pass stop_container: true to also stop it, '
@@ -39,6 +39,7 @@ export const archiveSessionTool = {
     + 'does not permanently remove.',
   inputSchema: {
     target: z.string().min(1).describe('Session id to stop and archive (card id, as returned by list_sessions).'),
+    allow_self: z.boolean().optional().describe('Explicitly permit archiving the calling session. Default false; this stops your own agent immediately.'),
     archive_children: z.boolean().optional().describe(
       'Also archive this session\'s nested children (transitively), descendants-first. Default true.',
     ),
@@ -52,8 +53,8 @@ export const archiveSessionTool = {
     const target = (args.target ?? '').trim();
     if (!target) return errorResult('target is required.');
     // Null-safe: a null caller never equals a real id, so it can still archive.
-    if (caller != null && target === caller) {
-      return errorResult('Cannot archive yourself — finish your work and stop; the session is archived automatically.');
+    if (caller != null && target === caller && args.allow_self !== true) {
+      return errorResult('Cannot archive yourself without allow_self: true.');
     }
     const entry = deps.sessionManager.entryFor(target);
     if (!entry) {
@@ -65,7 +66,7 @@ export const archiveSessionTool = {
     const sessions = deps.graph?.()?.sessions || [];
     const descendants = archiveChildren ? descendantsOf(target, sessions) : [];
     const archivedIds = [...descendants.map((d) => d.sessionId), target];
-    const { unclean } = await archiveCascade(archivedIds, deps);
+    const { unclean } = await archiveCascade(archivedIds, deps, { skipJobNudgeIds: target === caller ? [target] : [] });
     await deps.rebuild?.();
 
     // Opt-in devcontainer container stop, mirroring the board's toast offer: left

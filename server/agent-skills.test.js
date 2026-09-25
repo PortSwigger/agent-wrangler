@@ -66,10 +66,17 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
   assert.match(SKILLS_ROOT, /agent-skills\/skills$/);
 });
 
-test('the real agent-skills dir ships task-memory, links, mail, checklist, spawn-session, session-activity, session-hierarchy, adversarial-pr-review, and advisor with descriptions', () => {
+test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory', 'todo']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
+});
+
+test('the todo skill is discoverable for session handoffs', () => {
+  const entry = skillEntries().find((item) => item.name === 'todo');
+  assert.ok(entry);
+  assert.match(entry.description, /current session/);
+  assert.match(codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, checklist: true, ext: { list: [], disabledSkillIds: [] } }), /- todo —/);
 });
 
 test('task-memory, mail and checklist are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
