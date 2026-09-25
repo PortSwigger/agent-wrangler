@@ -1,10 +1,15 @@
 // USD per 1M tokens. Prices change over time — update as needed.
 // Matched against the model id by substring (fable / opus / sonnet / haiku).
 // Cache writes are billed per TTL: 5-minute ephemeral at 1.25x input, 1-hour at
-// 2x; cache reads at 0.1x. Claude Code issues both TTLs, so they're priced apart.
+// 2x; cache reads at 0.1x (Opus 5.5: 0.05x; Fable 5.1: 0.025x). Claude Code
+// issues both TTLs, so they're priced apart.
+// The more specific row must precede the family it overrides (fable-5-1 before fable).
 const TABLE = [
+  { match: 'fable-5-1', input: 10, output: 50, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25 },
   { match: 'fable', input: 10, output: 50, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1 },
+  { match: 'opus-5-5', input: 4, output: 20, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2 },
   { match: 'opus', input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 },
+  { match: 'sonnet-5', input: 2, output: 10, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2 },
   { match: 'sonnet', input: 3, output: 15, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3 },
   { match: 'haiku', input: 1, output: 5, cacheWrite5m: 1.25, cacheWrite1h: 2, cacheRead: 0.1 },
 ];
