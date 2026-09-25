@@ -61,6 +61,8 @@ import { sweepStaging } from './extensions/external.js';
 import { log, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
+import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
+import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
 
 const open = openModule.default || openModule;
 
@@ -856,6 +858,19 @@ function broadcastStylesIfChanged() {
   broadcast({ type: 'styles', styles });
 }
 
+// The dispatch dialog's agent/model/effort lists — sent on connect, and again to
+// every board whenever a model or price catalog refresh changes them.
+async function agentsMessage() {
+  const list = await availableAgents();
+  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [] })) });
+}
+
+function broadcastAgents() {
+  agentsMessage()
+    .then((msg) => { for (const client of controlWss.clients) sendGuarded(client, msg); })
+    .catch(() => {});
+}
+
 function broadcast(obj) {
   const msg = JSON.stringify(obj);
   // readyState alone is not enough: a client that stops reading stays OPEN
@@ -949,12 +964,8 @@ controlWss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }));
   if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
   if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
-  availableAgents()
-    .then((list) => {
-      if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [] })) }));
-      }
-    })
+  agentsMessage()
+    .then((msg) => { if (ws.readyState === 1) ws.send(msg); })
     .catch(() => {});
   // ctx is per-connection because reply() closes over this socket; the rest are
   // shared singletons + the graph-target resolvers.
@@ -1094,6 +1105,10 @@ async function main() {
   });
 
   validateDefaultModel();
+  onPriceCatalogChange(broadcastAgents);
+  onCodexCatalogChange(broadcastAgents);
+  startPriceCatalogRefresh();
+  startCodexCatalogRefresh();
 
   server.listen(PORT, HOST, () => {
     // Loopback presents as "localhost"; any other bind prints its actual host.

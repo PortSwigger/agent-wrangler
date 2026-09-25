@@ -11,7 +11,8 @@
     "prestart": "bash scripts/sync-deps.sh",
     "start": "node server/index.js",
     "test": "node --test --import ./server/test-setup.js",
-    "gen:models": "node scripts/gen-skill-models.mjs"
+    "gen:models": "node scripts/gen-skill-models.mjs",
+    "gen:catalog": "node scripts/gen-catalog.mjs"
   },
   "dependencies": {
     "@devcontainers/cli": "^0.87.0",

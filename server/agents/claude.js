@@ -6,6 +6,7 @@ import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
+import { newestClaudeName, priceCatalogVersion } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -145,6 +146,31 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   return inner;
 }
 
+const MODELS = [
+  { value: 'fable', family: 'fable', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
+  { value: 'opus', family: 'opus', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
+  { value: 'opusplan', label: 'Opus plan · Sonnet execution', pillLabel: 'opus plan' },
+  { value: 'sonnet', family: 'sonnet', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 200_000 },
+  { value: 'sonnet[1m]', family: 'sonnet', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 1_000_000 },
+  { value: 'haiku', family: 'haiku', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'], contextWindow: 200_000 },
+];
+
+let modelsMemo = null; // { version, models }
+
+function claudeModels() {
+  const version = priceCatalogVersion();
+  if (modelsMemo?.version !== version) {
+    const models = MODELS.map(({ family, ...m }) => {
+      if (!family) return m;
+      const name = newestClaudeName(family) || family[0].toUpperCase() + family.slice(1);
+      const ctx = m.contextWindow >= 1_000_000 ? `${m.contextWindow / 1_000_000}M` : `${m.contextWindow / 1000}K`;
+      return { ...m, label: `${name} · ${ctx} context` };
+    });
+    modelsMemo = { version, models };
+  }
+  return modelsMemo.models;
+}
+
 export const claude = {
   id: 'claude',
   label: 'Claude',
@@ -154,18 +180,16 @@ export const claude = {
   // <intent>`), so a dormant-wake nudge handed as the resume intent is delivered by
   // the relaunch itself — no post-resume pane paste needed (see pr-nudge-runner).
   resumeCarriesIntent: true,
-  // contextWindow is the model's own ceiling (label's "200K"/"1M"), used only to
-  // INFER a max-context pill when a session has no explicit auto-compaction
-  // threshold — see agents/index.js maxContextWindowFor. Left off opusplan: its
-  // plan/execution split has no single window to report.
-  models: [
-    { value: 'fable', label: 'Fable 5 · 1M context', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
-    { value: 'opus', label: 'Opus 5.5 · 1M context', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
-    { value: 'opusplan', label: 'Opus plan · Sonnet execution', pillLabel: 'opus plan' },
-    { value: 'sonnet', label: 'Sonnet 5 · 200K context', pillLabel: 'sonnet', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 200_000 },
-    { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context', pillLabel: 'sonnet 1m', transcriptPrefixes: ['claude-sonnet-'], contextWindow: 1_000_000 },
-    { value: 'haiku', label: 'Haiku 4.5 · 200K context', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'], contextWindow: 200_000 },
-  ],
+  // The aliases are Claude Code's own, stable across releases; the version in each
+  // label ("Opus 5.5") comes from the price catalog's newest model of that family,
+  // so a release needs no edit here. contextWindow is Claude Code's ceiling for
+  // the alias (label's "200K"/"1M"), used only to INFER a max-context pill when a
+  // session has no explicit auto-compaction threshold — see agents/index.js
+  // maxContextWindowFor. Left off opusplan: its plan/execution split has no single
+  // window to report.
+  get models() {
+    return claudeModels();
+  },
   efforts: [
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
