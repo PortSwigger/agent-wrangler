@@ -16,15 +16,20 @@ test('classify: unchanged for working/idle', () => {
   assert.equal(classify('a quiet prompt').status, 'idle');
 });
 
-test('classify: Claude Code\'s own workspace-trust dialog reads as needs-you across every A/B copy variant', () => {
-  // Verbatim (title/body/CTA) from the installed binary's four live copy
-  // variants for this one dialog — only the title and yes-button wording
-  // differ between them, so the check can't anchor on either.
-  const control = 'Do you trust the files in this folder?\n\n/repo/dir\n\n  Learn more\n\n❯ 1. Yes, proceed\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
-  const normalizeAction = "Accessing workspace:\n\n/repo/dir\n\nQuick safety check: is this a project you created or one you trust?\n\n  Security guide\n\n❯ 1. Yes, I trust this folder\n  2. No, exit\n\nEnter to confirm · Esc to cancel";
-  const positiveAttitude = 'Ready to code here?\n\n/repo/dir\n\nI\'ll need permission to work with your files.\n\n❯ 1. Yes, continue\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
-  const explicit = 'Do you want to work in this folder?\n\n/repo/dir\n\nIn order to work in this folder, we need your permission.\n\n❯ 1. Yes, continue\n  2. No, exit\n\nEnter to confirm · Esc to cancel';
-  for (const pane of [control, normalizeAction, positiveAttitude, explicit]) {
+test('classify: the OTHER copy variants of the workspace-trust dialog (not the one trustDialogState already owns) fall back to the generic startup-dialog check', () => {
+  // Verbatim (title/body/CTA) from the installed binary's OTHER three live
+  // copy variants for this dialog — trustDialogState() (below, from #156) is
+  // pinned to the fourth ("Accessing workspace:" / "Yes, I trust this
+  // folder"), verified live on a real install; these three fell through to
+  // idle same as before #156, since none contains that exact string. No
+  // leading index on any option — same as the real capture in TRUST_DIALOG
+  // further down, not the numbered menu the installed binary's SelectInput
+  // source renders by default (that discrepancy is real, not a typo: see the
+  // comment on this branch in tmux-scraper.js).
+  const control = 'Do you trust the files in this folder?\n\n/repo/dir\n\n  Learn more\n\n❯ Yes, proceed\n  No, exit\n\nEnter to confirm · Esc to cancel';
+  const positiveAttitude = 'Ready to code here?\n\n/repo/dir\n\nI\'ll need permission to work with your files.\n\n❯ Yes, continue\n  No, exit\n\nEnter to confirm · Esc to cancel';
+  const explicit = 'Do you want to work in this folder?\n\n/repo/dir\n\nIn order to work in this folder, we need your permission.\n\n❯ Yes, continue\n  No, exit\n\nEnter to confirm · Esc to cancel';
+  for (const pane of [control, positiveAttitude, explicit]) {
     const c = classify(pane);
     assert.equal(c.status, 'needs-you');
     // Generic on purpose: the same menu shape also covers the Bypass
@@ -36,22 +41,33 @@ test('classify: Claude Code\'s own workspace-trust dialog reads as needs-you acr
     assert.equal(c.waitingReason, undefined);
   }
 });
+test('classify: the copy variant trustDialogState already recognizes still resolves via ITS wording, not the generic fallback', () => {
+  // Both branches structurally match this text, since "Yes, I trust this
+  // folder" also satisfies the generic check's bare "yes," anchor — this
+  // pins the ORDER in classify() (the specific, live-verified #156 detector
+  // must run first) rather than leaving it to coincidence which one a future
+  // edit puts first.
+  const normalizeAction = "Accessing workspace:\n\n/repo/dir\n\nQuick safety check: is this a project you created or one you trust?\n\n  Security guide\n\n❯ Yes, I trust this folder\n  No, exit\n\nEnter to confirm · Esc to cancel";
+  assert.deepEqual(classify(normalizeAction), { status: 'needs-you', waitingFor: 'trust dialog' });
+});
 test('classify: the same menu shape also covers Bypass Permissions mode and org-managed-settings dialogs', () => {
   // Verbatim CTA wording from the installed binary — a different dialog,
-  // same numbered Yes/No-exit-plus-footer shape the check anchors on.
-  const bypassPermissions = 'Bypass Permissions mode\n\nThis mode should only be used in a sandboxed container/VM.\n\n❯ 1. No, exit\n  2. Yes, I accept\n\nEnter to confirm · Esc to cancel';
-  const orgSettings = "Managed settings\n\nOnly accept if you trust your organization's IT administration.\n\n❯ 1. Yes, I trust these settings\n  2. No, exit Claude Code\n\nEnter to confirm · Esc to cancel";
+  // same Yes/No-exit-plus-footer shape the check anchors on, no leading index.
+  const bypassPermissions = 'Bypass Permissions mode\n\nThis mode should only be used in a sandboxed container/VM.\n\n❯ No, exit\n  Yes, I accept\n\nEnter to confirm · Esc to cancel';
+  const orgSettings = "Managed settings\n\nOnly accept if you trust your organization's IT administration.\n\n❯ Yes, I trust these settings\n  No, exit Claude Code\n\nEnter to confirm · Esc to cancel";
   assert.equal(classify(bypassPermissions).status, 'needs-you');
   assert.equal(classify(orgSettings).status, 'needs-you');
 });
 test('classify: ordinary conversation mentioning "no" or confirmation prompts does not false-positive on the trust dialog', () => {
   assert.equal(classify('No, that file does not exist yet — let me check again.').status, 'idle');
   assert.equal(classify('Press enter to confirm the commit message looks right.').status, 'idle');
-  // Both anchor phrases present, but neither option is an actual numbered
-  // menu line — exactly the shape this file's own diff/tests can end up
+  // Both anchor phrases present, but neither option is at the start of its
+  // own line — exactly the shape this file's own diff/tests can end up
   // showing in someone's pane (e.g. `cat`-ing this test file, or a failed
   // assertion dump), and the same class of false positive the Codex banner
-  // check above already guards against with its own `^`-anchoring.
+  // check above already guards against with its own `^`-anchoring. This
+  // still holds even with the leading index made optional: the anchor is the
+  // LINE START, never the digit.
   assert.equal(
     classify('The options are `Yes, proceed` / `No, exit` — the footer says "press Enter to confirm".').status,
     'idle',
@@ -561,6 +577,18 @@ const TRUST_DIALOG = `
 test('classify: the trust dialog reads as needs-you with a reason (never idle → never reaped, visible on the board)', () => {
   assert.deepEqual(classify(TRUST_DIALOG), { status: 'needs-you', waitingFor: 'trust dialog' });
   assert.deepEqual(classify(TRUST_DIALOG.replace(' ❯ No, exit\n   Yes', '   No, exit\n ❯ Yes')), { status: 'needs-you', waitingFor: 'trust dialog' });
+});
+
+test('classify: the same real capture, with a DIFFERENT variant\'s wording, is caught by the generic fallback instead', () => {
+  // TRUST_DIALOG is what trustDialogState() (#156) already owns via its exact
+  // string. Swap in another variant's CTA text (no leading index — the same
+  // real, un-numbered rendering shape) to prove the generic fallback below it
+  // in classify() actually fires against the real dialog's structure, not
+  // just the hand-built fixtures above.
+  const otherVariant = TRUST_DIALOG.replace('Yes, I trust this folder', 'Yes, proceed');
+  const c = classify(otherVariant);
+  assert.equal(c.status, 'needs-you');
+  assert.match(c.waitingFor, /terminal/i);
 });
 
 test('trustDialogState: reports which option the cursor is on, and nothing for a quoted "Yes" line', () => {

@@ -204,31 +204,6 @@ export function classify(paneText) {
   // first launch parks on one of these awaiting the user — this must read as
   // non-idle or the idle-timer suspend gate reaps it.
   if (/oauth\/authorize|select login method|paste code here if prompted/i.test(recent)) return { status: 'needs-you' };
-  // Claude Code's own startup confirmation dialogs — workspace trust, Bypass
-  // Permissions mode, org-managed settings — are all the same numbered
-  // Yes/No, exit menu, and a fresh worktree/devcontainer parks on one before
-  // the agent can do anything. The TITLE is A/B-tested (verified against the
-  // installed binary: the trust dialog alone renders as "Do you trust the
-  // files in this folder?" / "Ready to code here?" / "Accessing workspace:" /
-  // "Do you want to work in this folder?" depending on the assigned variant),
-  // so it's not a stable anchor across even one dialog, let alone three
-  // different ones. What IS shared by all three dialogs' every variant is the
-  // menu shape itself: a numbered "Yes, …" option, a numbered "No, exit…"
-  // option, and a fixed "Enter to confirm" footer — anchored on all three
-  // together (like the Codex banner check above) so ordinary prose mentioning
-  // any one of them in isolation can't false-positive. waitingFor is
-  // deliberately generic: it's honest for all three dialogs, where a specific
-  // "…workspace trust…" label would misdescribe the other two. Left
-  // unclassified this read as idle: the chat view showed no block and a card
-  // looked live while actually stuck, and the idle-timer suspend gate could
-  // reap it.
-  if (
-    /^[\s›❯]*\d+\.\s*yes,/im.test(recent)
-    && /^[\s›❯]*\d+\.\s*no,\s*exit\b/im.test(recent)
-    && /enter to confirm/i.test(recent)
-  ) {
-    return { status: 'needs-you', waitingFor: 'confirm a startup prompt in the terminal' };
-  }
   // Codex's own "a new CLI version exists" banner: a numbered menu ("1. Update
   // now (runs `brew upgrade --cask codex`) / 2. Skip / 3. Skip until next
   // version") that DEFAULTS to option 1 on a bare Enter. This is TUI chrome,
@@ -268,6 +243,37 @@ export function classify(paneText) {
   // invisible on the board and the idle-timer suspend gate could reap it. needs-you
   // keeps the gate off it, like the login screens above.
   if (trustDialogState(recent)) return { status: 'needs-you', waitingFor: 'trust dialog' };
+  // trustDialogState() above is pinned to the ONE copy variant it was verified
+  // against live ("Accessing workspace:" / "Yes, I trust this folder") — but
+  // that title/CTA wording is A/B-tested (verified against the installed
+  // binary's source: the same dialog also ships as "Do you trust the files in
+  // this folder?" / "Yes, proceed", "Ready to code here?" / "Yes, continue",
+  // and "Do you want to work in this folder?" / "Yes, continue"), and the
+  // installed CLI has the identical Yes/No-exit-plus-footer shape for two
+  // OTHER first-run dialogs: Bypass Permissions mode ("Yes, I accept") and an
+  // org-managed-settings prompt ("Yes, I trust these settings"). None of
+  // those match trustDialogState()'s exact string, so they fell through to
+  // idle same as before #156. This is a deliberately GENERIC fallback for
+  // all of them, anchored on what's shared instead of any one title: a
+  // "Yes, …" option, a "No, exit…" option, and the "Enter to confirm" footer,
+  // each pinned to a line start so ordinary prose mentioning one in isolation
+  // can't false-positive. The leading index ("1." and similar) is OPTIONAL —
+  // do not make it required. The installed binary's own SelectInput source
+  // renders one by default, but the real captured trust dialog above
+  // (`TRUST_DIALOG` in the test file, verified live on 2.1.263/2.1.266) has
+  // NONE, so a version/experiment that hides indices for a plain two-option
+  // Yes/No menu is real, not hypothetical, and requiring the digit would
+  // silently never fire against the exact fixture right above this comment.
+  // waitingFor is deliberately generic rather than trust-specific: it's
+  // honest for all three dialogs sharing this shape, where a "workspace
+  // trust" label would misdescribe the other two.
+  if (
+    /^[\s›❯]*(?:\d+\.\s*)?yes,/im.test(recent)
+    && /^[\s›❯]*(?:\d+\.\s*)?no,\s*exit\b/im.test(recent)
+    && /enter to confirm/i.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: 'confirm a startup prompt in the terminal' };
+  }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as
