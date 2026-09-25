@@ -16,7 +16,7 @@ Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for
 | `session-hierarchy` | Distinguishing board nesting from launch lineage, and finding a session's parent, spawner, or task. | “Which session spawned you, and where are you nested?” |
 | `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, and optional nesting. | “Spawn a Codex session to investigate the failing integration tests.” |
 | `task-memory` | Reading and maintaining context shared by every session assigned to the same task, including work across multiple repositories. | “Record that decision in task memory for future sessions.” |
-| `todo` | Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:todo` explicitly. | “Turn this session into a TODO for later.” |
+| `park-session` | Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:park-session` explicitly. For an ordinary TODO that leaves the session running, use `add_todo`. | “Park this session for later.” |
 
 New sessions receive the skill catalogue; running sessions pick up changes after resuming.
 

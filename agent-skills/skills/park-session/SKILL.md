@@ -1,10 +1,10 @@
 ---
-name: todo
-description: Use when the user asks to turn the current session into a board TODO, including /agent-skills:todo in Claude Code.
+name: park-session
+description: Use when the user explicitly asks to park the current session for later by saving a board TODO and archiving the session, including /agent-skills:park-session in Claude Code.
 disable-model-invocation: true
 ---
 
-# Turn this session into a TODO
+# Park this session
 
 Capture a concise handoff in the current task's board TODO list, then archive this session.
 
