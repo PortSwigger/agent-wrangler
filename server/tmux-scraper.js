@@ -243,6 +243,44 @@ export function classify(paneText) {
   // invisible on the board and the idle-timer suspend gate could reap it. needs-you
   // keeps the gate off it, like the login screens above.
   if (trustDialogState(recent)) return { status: 'needs-you', waitingFor: 'trust dialog' };
+  // trustDialogState() above is pinned to the ONE copy variant it was verified
+  // against live ("Accessing workspace:" / "Yes, I trust this folder") — but
+  // that title/CTA wording is A/B-tested (verified against the installed
+  // binary's source: the same dialog also ships as "Do you trust the files in
+  // this folder?" / "Yes, proceed", "Ready to code here?" / "Yes, continue",
+  // and "Do you want to work in this folder?" / "Yes, continue"), and the
+  // installed CLI has the identical Yes/No-exit-plus-footer shape for two
+  // OTHER first-run dialogs: Bypass Permissions mode ("Yes, I accept") and an
+  // org-managed-settings prompt ("Yes, I trust these settings"). None of
+  // those match trustDialogState()'s exact string, so they fell through to
+  // idle same as before #156. This is a deliberately GENERIC fallback for
+  // all of them, anchored on what's shared instead of any one title: a
+  // "Yes, …" option, a "No, exit…" option, and the "Enter to confirm" footer,
+  // each pinned to a line start so ordinary prose mentioning one in isolation
+  // can't false-positive. The leading index ("1." and similar) is OPTIONAL —
+  // do not make it required. The installed binary's own SelectInput source
+  // renders one by default, but the real captured trust dialog above
+  // (`TRUST_DIALOG` in the test file, verified live on 2.1.263/2.1.266) has
+  // NONE, so a version/experiment that hides indices for a plain two-option
+  // Yes/No menu is real, not hypothetical, and requiring the digit would
+  // silently never fire against the exact fixture right above this comment.
+  // waitingFor is deliberately generic rather than trust-specific: it's
+  // honest for all three dialogs sharing this shape, where a "workspace
+  // trust" label would misdescribe the other two.
+  if (
+    /^[\s›❯]*(?:\d+\.\s*)?yes,/im.test(recent)
+    && /^[\s›❯]*(?:\d+\.\s*)?no,\s*exit\b/im.test(recent)
+    // Line-start anchored like the two option checks above — an unanchored
+    // version matched "Press Enter to confirm the thing later." anywhere in
+    // the pane, so ordinary prose mentioning it once plus two bare option-
+    // shaped lines elsewhere (each individually easy to write without
+    // meaning to render a menu) could false-positive. Caught in adversarial
+    // review, not by the tests: the option anchors alone don't make the
+    // footer safe.
+    && /^[\s›❯]*enter to confirm\b/im.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: 'confirm a startup prompt in the terminal' };
+  }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as
