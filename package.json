@@ -1,7 +1,7 @@
 {
   "name": "agent-wrangler",
   "version": "0.1.0",
-  "description": "Command center for all your Claude Code sessions — visualise, monitor and control them",
+  "description": "Command center for Claude Code and OpenAI Codex sessions — visualise, monitor and control them",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
     "prestart": "bash scripts/sync-deps.sh",
     "start": "node server/index.js",
     "test": "node --test --import ./server/test-setup.js",
+    "docs:check": "node scripts/check-doc-coverage.mjs",
     "gen:models": "node scripts/gen-skill-models.mjs"
   },
   "dependencies": {

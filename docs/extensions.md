@@ -1,10 +1,86 @@
-# Extensions — invariants & footguns
+# Extensions
 
-The extensions API in one place: the manifest, the loader, installation and
-provenance, the host-api façade, the client slots, and every footgun each of
-those carries. Read this before changing anything under
-`server/extensions/**`, `server/host-api/**`, `public/slots.js` or
-`public/extensions*.js`.
+Extensions can add tools, handlers, board state, settings, hooks, skills, scheduled work, actions,
+dispatch fields, views, and browser UI.
+
+Extensions run with the server's machine access. Capabilities are disclosure, not a sandbox; install
+only trusted code and dependencies.
+
+## Install and manage an extension
+
+Open **Settings → Extensions**, paste a git URL, and review the identity, dependencies, and
+capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
+and `ext::` are refused.
+
+The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
+possible; updating loaded code or fully unloading it requires a restart.
+
+## Minimal external extension
+
+An installable repository needs `package.json`, `package-lock.json`, and an `index.js` with a default
+manifest export. Agent Wrangler reads the package declaration before executing extension code.
+
+```json
+{
+  "name": "agent-wrangler-example-extension",
+  "version": "1.0.0",
+  "type": "module",
+  "wranglerExtension": {
+    "id": "example",
+    "label": "Example",
+    "description": "Adds an example capability to Agent Wrangler.",
+    "author": "Your team",
+    "requires": []
+  }
+}
+```
+
+```js
+export default {
+  id: 'example',
+  label: 'Example',
+  description: 'Adds an example capability to Agent Wrangler.',
+  author: 'Your team',
+  requires: [],
+  defaultEnabled: true,
+};
+```
+
+The directory `<id>`, `wranglerExtension.id`, and runtime manifest `id` must agree. IDs begin with a
+lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required even with
+no dependencies; create one with `npm install --package-lock-only`.
+
+Supported manifest contributions are:
+
+| Contribution | Manifest field / implementation |
+| --- | --- |
+| MCP tools | `tools`; `server/mcp/tools/` provides core examples |
+| Control messages | `handlers`; `server/control/handlers/` provides core examples |
+| State and storage | `stores`, `graph` |
+| Session lifecycle | `session` hooks |
+| Periodic work | `sweeps` |
+| Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
+| Extension settings | `settings`, read through `host.settings` |
+| Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
+| Core access | `requires`, served through the versioned host API in `server/host-api/` |
+
+For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
+have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
+
+## Authoring rules
+
+- Keep manifest imports independent of the server entry, `session-manager`, `state-reader`,
+  `tmux-scraper`, and `server/host-api/**`; use the capability-gated `host` object.
+- Declare every capability in `requires`; undeclared host surfaces are structurally absent.
+- Keep `package.json`'s `wranglerExtension` aligned with the manifest; runtime capabilities cannot be
+  broader.
+- Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
+- Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
+
+The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
+`server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
+
+## Internal architecture and invariants
 
 - **An extension runs IN-PROCESS WITH FULL ACCESS TO THE MACHINE, and `requires` is
   DISCLOSURE, not enforcement.** The capability list says what a manifest asked the
