@@ -1,10 +1,10 @@
 ---
-name: todo
-description: Use when the user asks to turn the current session into a board TODO, including /agent-skills:todo in Claude Code.
+name: archive-to-todo
+description: Use when the user explicitly asks to archive the current session as a board TODO for later, including /agent-skills:archive-to-todo in Claude Code. This ends the current session.
 disable-model-invocation: true
 ---
 
-# Turn this session into a TODO
+# Archive this session to a TODO
 
 Capture a concise handoff in the current task's board TODO list, then archive this session.
 
