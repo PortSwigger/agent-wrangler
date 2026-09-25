@@ -10,7 +10,7 @@ function error(message) {
 
 function bucket(deps, taskId) {
   const id = taskId || null;
-  if (id && !deps.taskStore.snapshot().tasks.some((task) => task.id === id)) return null;
+  if (id && !deps.taskStore.snapshot().tasks.some((task) => task.id === id && !task.archivedAt)) return null;
   return id || 'adhoc';
 }
 

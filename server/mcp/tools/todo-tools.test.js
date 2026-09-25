@@ -81,3 +81,26 @@ test('move_todo and reorder_todos preserve task store semantics', async () => {
   assert.equal((await call('reorder_todos', deps, { task_id: 't_missing', order: [] })).isError, true);
   assert.equal(rebuilds(), 2);
 });
+
+test('archived task TODOs cannot be read or changed through MCP', async () => {
+  const { deps, task, rebuilds } = setup();
+  const todo = deps.taskStore.addTodo(task.id, 'hidden soon');
+  const loose = deps.taskStore.addTodo(null, 'visible');
+  deps.taskStore.archiveTask(task.id);
+  assert.equal((await call('list_todos', deps, { task_id: task.id })).isError, true);
+  assert.equal((await call('add_todo', deps, { task_id: task.id, text: 'hidden' })).isError, true);
+  assert.equal((await call('edit_todo', deps, { task_id: task.id, id: todo.id, text: 'changed' })).isError, true);
+  assert.equal((await call('delete_todo', deps, { task_id: task.id, id: todo.id })).isError, true);
+  assert.equal((await call('move_todo', deps, { id: loose.id, to_task_id: task.id })).isError, true);
+  assert.equal((await call('reorder_todos', deps, { task_id: task.id, order: [todo.id] })).isError, true);
+  assert.equal(rebuilds(), 0);
+  assert.deepEqual(deps.taskStore.snapshot().todos[task.id].map((item) => item.text), ['hidden soon']);
+});
+
+test('same-bucket move reports no change without rebuilding', async () => {
+  const { deps, task, rebuilds } = setup();
+  const todo = deps.taskStore.addTodo(task.id, 'stay');
+  const out = await call('move_todo', deps, { id: todo.id, from_task_id: task.id, to_task_id: task.id });
+  assert.deepEqual(out.structuredContent, { moved: false });
+  assert.equal(rebuilds(), 0);
+});
