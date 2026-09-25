@@ -101,7 +101,15 @@ import semver from 'semver';
 // dispatch.field contribution's `ext(el)`, which reaches that extension's own
 // `onBeforeDispatch` as `ext`. An older slots.js throws on either slot name
 // and an older server drops `ext`, so only the range can say so.
-export const HOST_API_VERSION = '1.10.0';
+//
+// 1.11.0 is the CLIENT half again, for a task TILE rather than a card: the
+// `task.action` value slot (items in a task tile's right-click menu, subject
+// `{ id, name, adhoc }`) and `api.minimiseTask(taskId)`, which tucks the tile
+// into the tray the way its header's Minimise does. Minimising is board view
+// state app.js owns — not a control frame `send` could carry — so, like
+// `openSession`, only the base api can reach it. An older slots.js throws on
+// the slot name and has no such method, so only the range can say so.
+export const HOST_API_VERSION = '1.11.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
