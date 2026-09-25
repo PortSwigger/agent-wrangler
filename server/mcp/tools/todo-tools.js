@@ -33,12 +33,12 @@ export const listTodosTool = {
 
 export const addTodoTool = {
   name: 'add_todo',
-  description: 'Add a board TODO to a task from list_tasks, or to Unassigned when task_id is omitted. Returns the new TODO id. Board TODOs are separate from session checklists.',
-  inputSchema: { task_id: taskId, text: z.string().min(1).describe('TODO text.') },
+  description: 'Add a board TODO to a task from list_tasks, or to Unassigned when task_id is omitted. An optional description can capture findings, remaining work, and a useful next step from an exploratory session. Returns the new TODO id. Board TODOs are separate from session checklists.',
+  inputSchema: { task_id: taskId, text: z.string().min(1).describe('Short TODO title.'), description: z.string().optional().describe('Optional free-form handoff details; Markdown is fine. Consider findings, remaining work, and the next step.') },
   async handler({ deps }, args = {}) {
     if (!bucket(deps, args.task_id)) return error(`Unknown task ${args.task_id} — check list_tasks for valid ids.`);
     if (!args.text?.trim()) return error('TODO text cannot be empty.');
-    const todo = deps.taskStore.addTodo(args.task_id || null, args.text);
+    const todo = deps.taskStore.addTodo(args.task_id || null, args.text, Date.now(), args.description);
     if (!todo) return error('Could not add TODO.');
     await deps.rebuild?.();
     return result({ id: todo.id, task_id: args.task_id || null });
@@ -47,14 +47,15 @@ export const addTodoTool = {
 
 export const editTodoTool = {
   name: 'edit_todo',
-  description: 'Change the text of a board TODO. Use its id from list_todos and the task_id of its current task; omit task_id for Unassigned.',
-  inputSchema: { task_id: taskId, id: todoId, text: z.string().min(1).describe('New TODO text.') },
+  description: 'Change a board TODO title or description. Supply either field or both; an empty description clears it. Use its id from list_todos and the task_id of its current task; omit task_id for Unassigned.',
+  inputSchema: { task_id: taskId, id: todoId, text: z.string().min(1).optional().describe('New TODO title; omit to keep the current title.'), description: z.string().optional().describe('New free-form description; omit to keep it, or pass an empty string to clear it.') },
   async handler({ deps }, args = {}) {
     if (!bucket(deps, args.task_id)) return error(`Unknown task ${args.task_id} — check list_tasks for valid ids.`);
-    if (!args.text?.trim()) return error('TODO text cannot be empty.');
+    if (args.text === undefined && args.description === undefined) return error('Supply text or description to edit.');
+    if (args.text !== undefined && !args.text.trim()) return error('TODO text cannot be empty.');
     const current = todos(deps, args.task_id).find((todo) => todo.id === args.id);
     if (!current) return error(`Unknown TODO ${args.id} in this task — check list_todos.`);
-    const changed = deps.taskStore.editTodo(args.task_id || null, args.id, args.text);
+    const changed = deps.taskStore.editTodo(args.task_id || null, args.id, args.text, args.description);
     if (changed) await deps.rebuild?.();
     return result({ changed });
   },

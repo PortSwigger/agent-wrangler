@@ -27,6 +27,11 @@ otherwise it behaves exactly as a Claude-only board.
   terminal no height until you open it, and each session remembers whether you left it open. It is
   deliberately separate from the agent's own private planning tool — that stays internal scratch
   work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
+- **TODOs that carry a handoff** — add a one-line TODO as before, then use its details button to
+  add a description. Agents can create and edit the same description through MCP. Starting the TODO
+  passes both its title and description to the new session. In Claude Code, `/agent-skills:todo` captures the
+  current session as a TODO in its task and archives the session; in Codex, invoke the `todo` skill
+  or ask the agent to turn the session into a TODO.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
   run an issue → PR autopilot with no gates, in its own git worktree.
 - **Scheduling** — one-off or recurring sessions and nudges — agents can even schedule their own
