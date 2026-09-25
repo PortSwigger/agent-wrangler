@@ -38,6 +38,14 @@ test('todo-add and todo-edit pass descriptions through', async () => {
   assert.deepEqual(c.calls.editTodo[0], { taskId: null, todoId: 'td_1', text: undefined, description: 'Next: test.' });
 });
 
+test('todo handlers ignore malformed descriptions', async () => {
+  const c = ctx();
+  await todoAddHandler.handler({ type: 'todo-add', text: 'Investigate', description: 7 }, c);
+  await todoEditHandler.handler({ type: 'todo-edit', todoId: 'td_1', text: 'Updated', description: null }, c);
+  assert.deepEqual(c.calls.addTodo[0], { taskId: null, text: 'Investigate' });
+  assert.deepEqual(c.calls.editTodo[0], { taskId: null, todoId: 'td_1', text: 'Updated' });
+});
+
 test('todo-edit calls editTodo and rebuilds; coerces missing taskId to null', async () => {
   const c = ctx();
   await todoEditHandler.handler({ type: 'todo-edit', todoId: 'td_1', text: 'new' }, c);

@@ -76,7 +76,7 @@ test('the todo skill is discoverable for session handoffs', () => {
   const entry = skillEntries().find((item) => item.name === 'todo');
   assert.ok(entry);
   assert.match(entry.description, /current session/);
-  assert.match(codexSkillCatalog(), /todo/);
+  assert.match(codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, checklist: true, ext: { list: [], disabledSkillIds: [] } }), /- todo —/);
 });
 
 test('task-memory, mail and checklist are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {

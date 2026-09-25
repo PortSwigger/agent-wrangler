@@ -3081,10 +3081,12 @@ function openTodoDetails(btn) {
     <input id="todo-editor-title" autocomplete="off">
     <label for="todo-editor-description">Description</label>
     <textarea id="todo-editor-description" rows="10" placeholder="Findings, remaining work, next step…"></textarea>
+    <p class="todo-editor-error" role="alert" hidden></p>
     <div class="modal-actions"><button class="ghost todo-editor-cancel">Cancel</button><button class="primary todo-editor-save">Save</button></div>
   </div>`;
   const title = overlay.querySelector('#todo-editor-title');
   const description = overlay.querySelector('#todo-editor-description');
+  const error = overlay.querySelector('.todo-editor-error');
   title.value = td.text;
   description.value = td.description || '';
   const close = () => overlay.remove();
@@ -3096,10 +3098,16 @@ function openTodoDetails(btn) {
     const textChanged = text !== td.text;
     const descriptionChanged = nextDescription !== (td.description || '');
     if (textChanged || descriptionChanged) {
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(key), todoId,
+      const currentKey = Object.keys(latestTasks.todos || {}).find((bucket) => todosFor(bucket).some((item) => item.id === todoId));
+      if (!currentKey) {
+        error.textContent = 'This TODO no longer exists.';
+        error.hidden = false;
+        return;
+      }
+      send({ type: 'todo-edit', taskId: todoKeyToTaskId(currentKey), todoId,
         ...(textChanged ? { text } : {}),
         ...(descriptionChanged ? { description: nextDescription } : {}) });
-      const latestTodo = todosFor(key).find((item) => item.id === todoId);
+      const latestTodo = todosFor(currentKey).find((item) => item.id === todoId);
       if (latestTodo) {
         if (textChanged) latestTodo.text = text;
         if (descriptionChanged) {

@@ -66,7 +66,7 @@ export const archiveSessionTool = {
     const sessions = deps.graph?.()?.sessions || [];
     const descendants = archiveChildren ? descendantsOf(target, sessions) : [];
     const archivedIds = [...descendants.map((d) => d.sessionId), target];
-    const { unclean } = await archiveCascade(archivedIds, deps);
+    const { unclean } = await archiveCascade(archivedIds, deps, { skipJobNudgeIds: target === caller ? [target] : [] });
     await deps.rebuild?.();
 
     // Opt-in devcontainer container stop, mirroring the board's toast offer: left

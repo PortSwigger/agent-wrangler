@@ -53,6 +53,17 @@ test('archive_session permits a self-archive only with the explicit flag', async
   assert.deepEqual(calls.archive.map((item) => item.id), ['CARD2']);
 });
 
+test('self-archive skips a background-shell nudge that its caller cannot answer', async () => {
+  const { d, calls } = deps();
+  d.sessionFromGraph = (id) => (id === 'CARD2'
+    ? { sessionId: 'CARD2', label: 'Beta', hasBackgroundShell: true }
+    : null);
+  d.tmuxFor = () => 'tmux-card2';
+  const out = await archiveSessionTool.handler({ deps: d, caller: 'CARD2' }, { target: 'CARD2', allow_self: true });
+  assert.equal(out.structuredContent.backgroundShellUncleanStop, true);
+  assert.deepEqual(calls.kill, ['CARD2']);
+});
+
 test('archive_session rejects an unknown id', async () => {
   const { d, calls } = deps();
   const out = await archiveSessionTool.handler({ deps: d, caller: 'CARD1' }, { target: 'GHOST' });

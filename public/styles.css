@@ -1886,6 +1886,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .todo-details:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .todo-editor-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 30; }
 .todo-editor-card textarea { min-height: 180px; line-height: 1.5; }
+.todo-editor-error { color: var(--red-fg); margin: 0; font-size: 0.85em; }
+.todo-editor-error[hidden] { display: none; }
 .todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
 .todo-tooltip {
   position: fixed; z-index: 60; display: none; pointer-events: none;
