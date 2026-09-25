@@ -58,7 +58,8 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
   // session start. The worktree guardrail still appends when present. `taskMemory`
   // is only threaded so tests can pin it; undefined (the production path) falls
   // through to the live-config default inside both skill helpers.
-  const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
+  const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
+  const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = [
     '--sandbox', 'workspace-write',

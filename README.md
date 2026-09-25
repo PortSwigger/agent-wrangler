@@ -64,6 +64,22 @@ otherwise it behaves exactly as a Claude-only board.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
 
+## Explore the features
+
+The board is only half of Agent Wrangler. Sessions also receive tools and skills for coordinating
+work, reviewing changes, managing tasks, and automating pull requests.
+
+| Guide | What it covers |
+| --- | --- |
+| [Board and sessions](docs/board-and-sessions.md) | Dispatch, tasks, TODOs, task memory, worktrees, devcontainers, nesting, snoozing, archiving, search, settings, and shortcuts |
+| [Agent capabilities](docs/agent-capabilities.md) | The skills you can ask an agent to use, including adversarial PR review, advisor consultations, session spawning, mail, links, and activity summaries |
+| [Reviews and pull requests](docs/reviews-and-prs.md) | Peer-review sessions, adversarial PR reviews, the diff reviewer, PR status, auto-fix, and auto-merge |
+| [Agent tools](docs/agent-tools.md) | Reference for the MCP tools available to Agent Wrangler sessions |
+| [Extensions](docs/extensions.md) | Installing extensions and building one with server, browser, tool, setting, and skill contributions |
+
+If you are unsure what to ask for, start with [Agent capabilities](docs/agent-capabilities.md): it
+includes example prompts for every built-in Wrangler skill.
+
 ## Requirements
 
 - macOS or Linux, Node.js >= 20
@@ -82,7 +98,7 @@ which silently breaks the wrangler's live-status and memory file watchers.
 
 ```bash
 npm install
-npm start          # serves http://localhost:7878 and opens your browser
+npm start          # serves http://localhost:7878
 ```
 
 `npm start` auto-installs after a pull that changes dependencies, so you never
@@ -172,11 +188,12 @@ survive and each card just needs a manual Resume.
 
 ## How it works
 
-- **State** is read live from `~/.claude`: `daemon/roster.json` and `sessions/*.json` (watched for
-  instant updates), enriched with per-session cost and sub-agents parsed incrementally from the
-  transcript under `~/.claude/projects/`.
-- **Dispatch** ("+ New session") starts `claude` inside a detached tmux session named `cc_<short>`.
-  The app records the `sessionId ↔ tmux` mapping in `~/.agent-wrangler/mappings.json`.
+- **State** is read through an adapter for each supported agent. Claude state and transcripts come
+  from `~/.claude`; Codex rollouts come from `~/.codex/sessions`. Agent Wrangler enriches both with
+  live status, cost, model, context-window, and sub-agent information.
+- **Dispatch** ("+ New session") starts the selected `claude` or `codex` command inside a detached
+  tmux session. The app records the board-session, agent-conversation, and tmux mapping in
+  `~/.agent-wrangler/mappings.json`.
 - **Jump in** attaches that tmux session in-browser via xterm.js over a WebSocket (`node-pty`
   running `tmux attach`).
 - **Sessions not launched through the app** appear as read-only "external" entries — visible with
@@ -186,8 +203,9 @@ survive and each card just needs a manual Resume.
 
 Optional features are packaged as extensions — one manifest each, switched on and off from
 **Settings → Extensions**, and installable from a git URL. An extension can add MCP tools,
-control handlers, board state, settings, session hooks and a browser-side half. See
-[docs/extensions.md](docs/extensions.md) for how to write one.
+control handlers, board state, settings, session hooks, skills and a browser-side half. See
+[docs/extensions.md](docs/extensions.md) for installation, a minimal authoring example, and the
+complete implementation constraints.
 
 An extension runs inside the wrangler with full access to the machine: its capability list is
 disclosure, not a sandbox. Install one only if you trust whoever wrote it.

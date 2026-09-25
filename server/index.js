@@ -681,7 +681,7 @@ async function fireDueSchedules() {
 // fireDueSnoozeWakes clears that snooze so it isn't retried every tick forever.
 function onSnoozeWakeError(sessionId, err) {
   const e = sessionManager.entryFor(sessionId);
-  const label = sessionLabel({ names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: sessionId.slice(0, 8) });
+  const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: sessionId.slice(0, 8) });
   broadcast({ type: 'snooze-wake-error', sessionId, label, message: String(err?.message || err) });
 }
 
@@ -691,7 +691,7 @@ function onSnoozeWakeError(sessionId, err) {
 // silent failure would drop the nudge entirely with no re-fire.
 function onPrWakeError(ev, err) {
   const e = sessionManager.entryFor(ev.ownerId);
-  const label = sessionLabel({ names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: ev.ownerId.slice(0, 8) });
+  const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: ev.ownerId.slice(0, 8) });
   broadcast({ type: 'pr-wake-error', sessionId: ev.ownerId, label, number: ev.number, url: ev.url, message: String(err?.message || err) });
 }
 
@@ -918,7 +918,7 @@ async function rebuildOnce() {
 
   for (const sid of autoArchived) {
     const e = sessionManager.entryFor(sid);
-    const label = sessionLabel({ names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: sid.slice(0, 8) });
+    const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: sid.slice(0, 8) });
     broadcast({ type: 'auto-archived', session: { sessionId: sid, label, worktree: await worktreeStatus(e?.worktree) } });
   }
 

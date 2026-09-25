@@ -1122,7 +1122,12 @@ export class SessionManager {
     await this._newSession(tmux, dir, launchCmd, this.socket);
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
-    const entry = forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt });
+    const early = this.map.get(sessionId);
+    const entry = { ...early, ...forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt }) };
+    if (!name.trim() && early?.name) {
+      entry.name = early.name;
+      delete entry.nameInherited;
+    }
     entry.liveSessionId = liveSessionId || undefined;
     entry.socket = this.socket;
     this.map.set(sessionId, entry);
