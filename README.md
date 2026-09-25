@@ -29,8 +29,8 @@ otherwise it behaves exactly as a Claude-only board.
   work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
 - **TODOs that carry a handoff** — add a one-line TODO as before, then use its details button to
   add a description. Agents can create and edit the same description through MCP. Starting the TODO
-  passes both its title and description to the new session. To park the current session as a TODO
-  and archive it, use `/agent-skills:park-session` in Claude Code or invoke the `park-session` skill in Codex.
+  passes both its title and description to the new session. To archive the current session as a TODO,
+  use `/agent-skills:archive-to-todo` in Claude Code or invoke the `archive-to-todo` skill in Codex.
   For an ordinary TODO without archiving, ask the agent to use `add_todo`.
 - **Hands-off workflows** — hand a session a Jira key, GitHub issue, or free-text task and let it
   run an issue → PR autopilot with no gates, in its own git worktree.

@@ -68,16 +68,17 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'checklist', 'links', 'mail', 'park-session', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'archive-to-todo', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
-test('the park-session skill is discoverable for session handoffs', () => {
-  const entry = skillEntries().find((item) => item.name === 'park-session');
+test('the archive-to-todo skill is discoverable for session handoffs', () => {
+  const entry = skillEntries().find((item) => item.name === 'archive-to-todo');
   assert.ok(entry);
   assert.match(entry.description, /current session/);
   const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, checklist: true, ext: { list: [], disabledSkillIds: [] } });
-  assert.match(catalog, /- park-session —/);
+  assert.match(catalog, /- archive-to-todo —/);
+  assert.doesNotMatch(catalog, /- park-session —/);
   assert.doesNotMatch(catalog, /- todo —/);
   assert.doesNotMatch(catalog, /- todoify —/);
 });
