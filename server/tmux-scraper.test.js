@@ -72,6 +72,15 @@ test('classify: ordinary conversation mentioning "no" or confirmation prompts do
     classify('The options are `Yes, proceed` / `No, exit` — the footer says "press Enter to confirm".').status,
     'idle',
   );
+  // Found in adversarial review: the two option lines ARE genuinely at line
+  // start here, each on its own line — the gap was the footer check being
+  // unanchored, so a bare mention of "Enter to confirm" anywhere earlier in
+  // the pane was enough. The footer must be line-start-anchored too, not
+  // just present somewhere in the last 12 lines.
+  assert.equal(
+    classify('Press Enter to confirm the thing later.\n\nYes, proceed\nNo, exit').status,
+    'idle',
+  );
 });
 
 test('classify: devcontainer bring-up reads as working (not idle → not reaped) with a hint', () => {

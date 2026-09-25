@@ -270,7 +270,14 @@ export function classify(paneText) {
   if (
     /^[\s›❯]*(?:\d+\.\s*)?yes,/im.test(recent)
     && /^[\s›❯]*(?:\d+\.\s*)?no,\s*exit\b/im.test(recent)
-    && /enter to confirm/i.test(recent)
+    // Line-start anchored like the two option checks above — an unanchored
+    // version matched "Press Enter to confirm the thing later." anywhere in
+    // the pane, so ordinary prose mentioning it once plus two bare option-
+    // shaped lines elsewhere (each individually easy to write without
+    // meaning to render a menu) could false-positive. Caught in adversarial
+    // review, not by the tests: the option anchors alone don't make the
+    // footer safe.
+    && /^[\s›❯]*enter to confirm\b/im.test(recent)
   ) {
     return { status: 'needs-you', waitingFor: 'confirm a startup prompt in the terminal' };
   }
