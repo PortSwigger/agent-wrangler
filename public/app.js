@@ -3093,11 +3093,20 @@ function openTodoDetails(btn) {
     const text = title.value.trim();
     if (!text) { title.focus(); return; }
     const nextDescription = description.value.trim();
-    if (text !== td.text || nextDescription !== (td.description || '')) {
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(key), todoId, text, description: nextDescription });
-      td.text = text;
-      if (nextDescription) td.description = nextDescription;
-      else delete td.description;
+    const textChanged = text !== td.text;
+    const descriptionChanged = nextDescription !== (td.description || '');
+    if (textChanged || descriptionChanged) {
+      send({ type: 'todo-edit', taskId: todoKeyToTaskId(key), todoId,
+        ...(textChanged ? { text } : {}),
+        ...(descriptionChanged ? { description: nextDescription } : {}) });
+      const latestTodo = todosFor(key).find((item) => item.id === todoId);
+      if (latestTodo) {
+        if (textChanged) latestTodo.text = text;
+        if (descriptionChanged) {
+          if (nextDescription) latestTodo.description = nextDescription;
+          else delete latestTodo.description;
+        }
+      }
       renderGrid();
     }
     close();
