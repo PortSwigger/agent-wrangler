@@ -16,6 +16,11 @@ export const SKILL_PATH = fileURLToPath(
 export const BEGIN = '<!-- BEGIN GENERATED MODELS — edit server/agents/*.js then run `npm run gen:models` -->';
 export const END = '<!-- END GENERATED MODELS -->';
 
+// The adapters' lists are live (Codex's own catalog, the price catalog's newest
+// Claude versions); this table is their bundled snapshot, so it can lag.
+const LIVE_NOTE = 'The running wrangler\'s lists can be newer than this table. An unknown `model` '
+  + 'is rejected with the current valid list, so an error there is the source of truth.';
+
 // Replace whatever sits between the markers with the current table. Throws if the
 // markers are missing rather than guessing where the block belongs — a silent
 // no-op here would let the skill rot with the test still passing.
@@ -25,5 +30,5 @@ export function skillModelBlock(text) {
   if (start === -1 || end === -1 || end < start) {
     throw new Error(`spawn-session SKILL.md is missing the generated-model markers (${BEGIN})`);
   }
-  return `${text.slice(0, start)}${BEGIN}\n\n${modelTableMarkdown()}\n\n${text.slice(end)}`;
+  return `${text.slice(0, start)}${BEGIN}\n\n${modelTableMarkdown()}\n\n${LIVE_NOTE}\n\n${text.slice(end)}`;
 }
