@@ -30,7 +30,7 @@ function walkChain(sessionManager, taskStore, startId, field) {
     seen.add(id);
     const entry = sessionManager.entryFor(id);
     if (!entry) break;
-    const label = sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: id.slice(0, 8) }) || null;
+    const label = sessionLabel({ agent: entry.agent, names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: id.slice(0, 8) }) || null;
     chain.push({ sessionId: id, label, task: taskStore.taskFor(id) ?? null });
     id = deriveParentSession(entry)[field] || null;
   }
@@ -73,7 +73,7 @@ export const getSessionInfoTool = {
       : (entry.autoCompactTokens ?? null);
     const label = graphRow
       ? (graphRow.label ?? null)
-      : sessionLabel({ names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: caller.slice(0, 8) }) || null;
+      : sessionLabel({ agent: entry.agent, names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: caller.slice(0, 8) }) || null;
 
     const parentChain = walkChain(deps.sessionManager, deps.taskStore, parent, 'parentSession');
     const spawnerChain = walkChain(deps.sessionManager, deps.taskStore, spawnedBy, 'spawnedBy');
