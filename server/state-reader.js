@@ -200,6 +200,11 @@ function isAutoAgentTitle(title, cwd) {
     && base.toLowerCase().startsWith(stripped.toLowerCase());
 }
 
+function shortCodexTitle(source) {
+  const short = source.split(' ').slice(0, 8).join(' ').slice(0, 59).trimEnd();
+  return short.length < source.length ? `${short}…` : short;
+}
+
 // Single source of truth for a session's display label, shared by all three
 // build sites so live, resumed, and dormant sessions read identically. Explicit
 // human-chosen names (user rename, live-fork name, dispatch seed name) win as-is;
@@ -223,7 +228,7 @@ function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent
   for (const [index, n] of names.entries()) {
     const c = clean(n);
     if (agent === 'codex' && index > 0 && c === prompt) continue;
-    if (c) return c;
+    if (c) return agent === 'codex' && index > 0 ? shortCodexTitle(c) : c;
   }
   const live = agent === 'claude' ? clean(liveTitle) : '';
   if (live) return live;
@@ -232,8 +237,7 @@ function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent
   if (agent === 'codex') {
     const source = clean(summary) || prompt;
     if (!source) return 'Codex session';
-    const short = source.split(' ').slice(0, 8).join(' ').slice(0, 59).trimEnd();
-    return short.length < source.length ? `${short}…` : short;
+    return shortCodexTitle(source);
   }
   const derived = prompt || clean(summary);
   if (derived) return derived;

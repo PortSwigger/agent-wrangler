@@ -31,6 +31,13 @@ test('rename_session rejects an unknown target', async () => {
   assert.equal(calls.rename.length, 0);
 });
 
+test('rename_session accepts an early guarded self-title before dispatch records the card', async () => {
+  const { d, calls } = deps();
+  const out = await renameSessionTool.handler({ deps: d, caller: 'S1' }, { target: 'S1', name: 'Fix Codex titles', only_if_unnamed: true });
+  assert.equal(out.structuredContent.renamed, true);
+  assert.deepEqual(calls.rename, [{ target: 'S1', name: 'Fix Codex titles', snapshot: { cwd: undefined, intent: undefined } }]);
+});
+
 test('rename_session renames a known target and rebuilds', async () => {
   const entry = { cwd: '/work/project', intent: 'Original task' };
   const { d, calls } = deps({ S1: entry });

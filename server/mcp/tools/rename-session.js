@@ -8,10 +8,8 @@ import { z } from 'zod';
 // prompt into a concise board-card label. Passing an empty name deliberately
 // clears that override and returns the card to its current derived label.
 //
-// Unlike the board handler, this rejects an id unknown to the registry before
-// calling sessionManager.rename. The board has a graph snapshot and uses its
-// rename path to self-heal externally discovered sessions; an MCP caller with a
-// mistyped id is much more likely to want a loud error than an inert new mapping.
+// Unlike the board handler, this rejects an unknown id unless the caller is
+// setting its own guarded title before dispatch has recorded the card.
 export const renameSessionTool = {
   name: 'rename_session',
   description:
@@ -25,17 +23,19 @@ export const renameSessionTool = {
     name: z.string().describe('New custom title. An empty string clears it and restores the derived label.'),
     only_if_unnamed: z.boolean().optional().describe('Leave an existing custom title unchanged, but allow replacing a fork title inherited from its parent. Use for an agent-suggested title.'),
   },
-  async handler({ deps }, args = {}) {
+  async handler({ deps, caller }, args = {}) {
     const target = (args.target ?? '').trim();
     if (!target) return errorResult('target is required.');
     const entry = deps.sessionManager.entryFor(target);
-    if (!entry) return errorResult(`Unknown session ${target} — no such session on the board.`);
-    if (args.only_if_unnamed && entry.name && !entry.nameInherited) {
+    if (!entry && !(args.only_if_unnamed && caller === target && (args.name ?? '').trim())) {
+      return errorResult(`Unknown session ${target} — no such session on the board.`);
+    }
+    if (args.only_if_unnamed && entry?.name && !entry.nameInherited) {
       const structuredContent = { target, name: entry.name, renamed: false };
       return { content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }], structuredContent };
     }
     const name = args.name ?? '';
-    deps.sessionManager.rename(target, name, { cwd: entry.cwd, intent: entry.intent });
+    deps.sessionManager.rename(target, name, { cwd: entry?.cwd, intent: entry?.intent });
     await deps.rebuild?.();
     const structuredContent = { target, name: name.trim() || null, renamed: true };
     return { content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }], structuredContent };

@@ -116,6 +116,14 @@ test('sessionLabel ignores a cached Codex label copied from the full launch prom
   );
 });
 
+test('sessionLabel shortens a cached Codex label copied from a rollout summary', () => {
+  const cached = 'Please investigate all of the inconsistent session naming behavior, including th';
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: [null, cached], intent: '', cwd: CWD }),
+    'Please investigate all of the inconsistent session naming…',
+  );
+});
+
 test('sessionLabel ignores Claude Code\'s auto agent-name title (basename-hex) and falls to intent', () => {
   assert.equal(
     sessionLabel({ names: [], liveTitle: 'agent-wrangler-3f', intent: 'Fix the session title bug', summary: 'a summary', cwd: CWD }),
