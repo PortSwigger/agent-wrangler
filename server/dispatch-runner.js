@@ -11,7 +11,8 @@ import { slugFromIntent } from './worktree.js';
 // NOT rebuild or reply — callers (the /ws handler, the firing engine) own that.
 //
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
-//          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession }
+//          worktreeFolderName, worktreeAuto, workflow, autoRebaseLinkedPr,
+//          autoMergeOnPass, parentSession }
 // (`addDirs` is part of the contract but neither the dispatch dialog nor the
 // schedule UI exposes it, so it resolves to [] when absent.)
 // Nesting only ever renders one level deep (computeAbsorption in
@@ -72,6 +73,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
     worktreeBranch: workflow ? slugFromIntent(rawIssue) : (opts.worktreeBranch || ''),
     worktreeFolderName: workflow ? '' : (opts.worktreeFolderName || ''),
     worktreeAuto: workflow ? true : Boolean(opts.worktreeAuto),
+    autoRebaseLinkedPr: opts.autoRebaseLinkedPr ? true : undefined,
     autoMergeOnPass: opts.autoMergeOnPass ? true : undefined,
     workflow: workflow
       ? { issue: rawIssue, phase: { label: 'starting', kind: 'active', at: now }, startedAt: now }

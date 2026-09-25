@@ -272,7 +272,7 @@ export function shouldReloadWorkflowSkill(workflow) {
 // that hits the idle-suspend would otherwise lose its phase chip on resume), any
 // attached links (a PR/Jira link attached before an idle-suspend must survive the
 // resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
-// autoMergeOnPass — an explicit true/false on either must not silently revert to its
+// autoMergeOnPass, autoRebaseLinkedPr — an explicit true/false on any must not silently revert to its
 // default across the very idle-suspend cycle a long workflow run is most likely to hit),
 // and the per-child full/compact display override (childFullView — same reasoning);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
@@ -310,6 +310,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     links: prev?.links,
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
+    autoRebaseLinkedPr: prev?.autoRebaseLinkedPr,
     childFullView: prev?.childFullView,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
@@ -730,6 +731,24 @@ export class SessionManager {
     return true;
   }
 
+  setAutoRebaseLinkedPr(sessionId, enabled, snapshot = {}) {
+    let entry = this.map.get(sessionId);
+    if (!entry) {
+      entry = {
+        short: crypto.randomBytes(4).toString('hex'),
+        tmux: null,
+        cwd: snapshot.cwd || null,
+        intent: snapshot.intent || '',
+        model: null,
+        createdAt: Date.now(),
+      };
+      this.map.set(sessionId, entry);
+    }
+    entry.autoRebaseLinkedPr = Boolean(enabled);
+    this._save();
+    return true;
+  }
+
   // Per-CHILD (parentSession set) override for whether it renders as a full card
   // instead of the default compact `.worker-row` — the card menu's "Full view"
   // toggle. Unset (never nested through attachSession/dispatch, which stamp a
@@ -840,7 +859,7 @@ export class SessionManager {
     for (const [sessionId, entry] of this.map)
       for (const l of entry.links || [])
         if (l.type === 'pr' && l.url)
-          out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, headSha: l.headSha, dirty: l.dirty, unresolvedCount: l.unresolvedCount });
+          out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, headSha: l.headSha, dirty: l.dirty, unresolvedCount: l.unresolvedCount, rebaseFailureKey: l.rebaseFailureKey, rebaseBlockedKey: l.rebaseBlockedKey });
     return out;
   }
 
@@ -869,6 +888,24 @@ export class SessionManager {
     if (typeof headSha === 'string' && headSha) link.headSha = headSha;
     this._save();
     return changed;
+  }
+
+  rememberPrRebaseFailure(sessionId, url, fingerprint) {
+    const entry = this.map.get(sessionId);
+    const link = (entry?.links || []).find((l) => l.type === 'pr' && l.url === url);
+    if (!link) return false;
+    link.rebaseFailureKey = fingerprint;
+    this._save();
+    return true;
+  }
+
+  rememberPrRebaseBlocked(sessionId, url, fingerprint) {
+    const entry = this.map.get(sessionId);
+    const link = (entry?.links || []).find((l) => l.type === 'pr' && l.url === url);
+    if (!link) return false;
+    link.rebaseBlockedKey = fingerprint;
+    this._save();
+    return true;
   }
 
 
@@ -1530,7 +1567,7 @@ export class SessionManager {
 
   async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext } = {}) {
+                   autoRebaseLinkedPr, autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext } = {}) {
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
@@ -1627,7 +1664,7 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoRebaseLinkedPr: autoRebaseLinkedPr ? true : (existing?.autoRebaseLinkedPr || undefined), autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
