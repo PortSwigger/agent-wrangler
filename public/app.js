@@ -279,22 +279,10 @@ let wtLastCwd = null;      // cwd wtValidation belongs to (stale once cwd change
 let wtPending = false;     // a worktree dispatch is awaiting ack
 let pendingTodoConsume = null; // {taskId, todoId, key} — set by spawnTodo, consumed on 'dispatched'
 
-// Available agents + their models, replaced by the server's `agents` message.
-// Seeded with the Claude default so the dropdown is correct before that arrives.
-let availableAgents = [{ id: 'claude', label: 'Claude', models: [
-  { value: 'fable', label: 'Fable 5 · 1M context' },
-  { value: 'opus', label: 'Opus 5.5 · 1M context', default: true },
-  { value: 'opusplan', label: 'Opus plan · Sonnet execution' },
-  { value: 'sonnet', label: 'Sonnet 5 · 200K context' },
-  { value: 'sonnet[1m]', label: 'Sonnet 5 · 1M context' },
-  { value: 'haiku', label: 'Haiku 4.5 · 200K context' },
-], efforts: [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra high' },
-  { value: 'max', label: 'Max' },
-] }];
+// Available agents + their models, replaced by the server's `agents` message on
+// connect (the lists are the server's live model catalogs — never copied here).
+// Seeded with just the Claude default so a dispatch before that lands still works.
+let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [] }];
 
 function populateModelSelect() {
   const sel = document.getElementById('m-model');

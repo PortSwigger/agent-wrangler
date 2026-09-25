@@ -167,7 +167,7 @@ function mergeInto(dest, src) {
 // `${model} (advisor)` rather than the bare model id — even when the advisor happens
 // to be the same model the parent turn used, its spend must stay a visibly separate
 // row in the Model dimension (byModelOf), not silently merged into ordinary usage.
-// pricing.js's substring match still resolves the suffixed key to the right rate.
+// The price catalog's prefix match still resolves the suffixed key to the right rate.
 // advisorTotals is an "of which" breakout for the separate cost line, not an
 // addition on top of `totals`.
 function addUsageSplit(totals, advisorTotals, model, usage) {

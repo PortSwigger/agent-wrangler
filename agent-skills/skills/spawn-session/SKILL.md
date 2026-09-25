@@ -39,7 +39,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 <!-- BEGIN GENERATED MODELS — edit server/agents/*.js then run `npm run gen:models` -->
 
 **Claude** (`agent: "claude"`):
-- `fable` — Fable 5 · 1M context
+- `fable` — Fable 5.1 · 1M context
 - `opus` — Opus 5.5 · 1M context (default)
 - `opusplan` — Opus plan · Sonnet execution
 - `sonnet` — Sonnet 5 · 200K context
@@ -48,15 +48,16 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`
 
 **Codex** (`agent: "codex"`):
-- `gpt-5.5` — GPT-5.5 · frontier
-- `gpt-5.4` — GPT-5.4 · everyday coding
-- `gpt-5.4-mini` — GPT-5.4 mini · fast & cheap
-- `gpt-5.6-sol` — GPT-5.6 Sol · frontier
-- `gpt-5.6-terra` — GPT-5.6 Terra · everyday coding
-- `gpt-5.6-luna` — GPT-5.6 Luna · fast & cheap
-- `gpt-6-sol` — GPT-6 Sol · frontier (default)
-- `gpt-6-luna` — GPT-6 Luna · fast & cheap
+- `gpt-6-astra` — GPT-6-Astra · Frontier intelligence for the most demanding work
+- `gpt-6-sol` — GPT-6-Sol · Workhorse model for coding and everyday work (default)
+- `gpt-6-luna` — GPT-6-Luna · Fast and affordable model for easier tasks
+- `gpt-5.6-sol` — GPT-5.6-Sol · Older coding model for complex work
+- `gpt-5.6-terra` — GPT-5.6-Terra · Older balanced model for straightforward work
+- `gpt-5.6-luna` — GPT-5.6-Luna · Older fast and efficient model
+- `gpt-5.5` — GPT-5.5 · Legacy coding model
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
+
+The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->
 
