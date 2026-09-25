@@ -55,7 +55,7 @@ test('rename_session reports null when clearing a title', async () => {
 
 test('rename_session only_if_unnamed preserves a human title', async () => {
   const { d, calls } = deps({ S1: { name: 'My chosen title', cwd: '/work/project', intent: 'Original task' } });
-  const out = await renameSessionTool.handler({ deps: d }, { target: 'S1', name: 'Agent suggestion', only_if_unnamed: true });
+  const out = await renameSessionTool.handler({ deps: d, caller: 'S1' }, { target: 'S1', name: 'Agent suggestion', only_if_unnamed: true });
   assert.deepEqual(out.structuredContent, { target: 'S1', name: 'My chosen title', renamed: false });
   assert.equal(calls.rename.length, 0);
   assert.equal(calls.rebuild, 0);
@@ -63,14 +63,32 @@ test('rename_session only_if_unnamed preserves a human title', async () => {
 
 test('rename_session only_if_unnamed sets an unnamed card', async () => {
   const { d, calls } = deps({ S1: { cwd: '/work/project', intent: 'Original task' } });
-  const out = await renameSessionTool.handler({ deps: d }, { target: 'S1', name: 'Agent suggestion', only_if_unnamed: true });
+  const out = await renameSessionTool.handler({ deps: d, caller: 'S1' }, { target: 'S1', name: 'Agent suggestion', only_if_unnamed: true });
   assert.equal(out.structuredContent.renamed, true);
   assert.equal(calls.rename.length, 1);
 });
 
 test('rename_session only_if_unnamed can replace a fork title inherited from its parent', async () => {
   const { d, calls } = deps({ S1: { name: 'Parent title', nameInherited: true, cwd: '/work/project', intent: 'Fork task' } });
-  const out = await renameSessionTool.handler({ deps: d }, { target: 'S1', name: 'Fork task title', only_if_unnamed: true });
+  const out = await renameSessionTool.handler({ deps: d, caller: 'S1' }, { target: 'S1', name: 'Fork task title', only_if_unnamed: true });
   assert.equal(out.structuredContent.renamed, true);
   assert.equal(calls.rename.length, 1);
+});
+
+test('rename_session rejects a guarded suggestion for another existing card', async () => {
+  const { d, calls } = deps({ parent: { name: 'Parent task', nameInherited: true } });
+  const out = await renameSessionTool.handler({ deps: d, caller: 'fork' }, {
+    target: 'parent', name: 'Fork task', only_if_unnamed: true,
+  });
+  assert.equal(out.isError, true);
+  assert.equal(calls.rename.length, 0);
+});
+
+test('rename_session rejects an empty guarded suggestion without clearing an inherited title', async () => {
+  const { d, calls } = deps({ fork: { name: 'Parent task', nameInherited: true } });
+  const out = await renameSessionTool.handler({ deps: d, caller: 'fork' }, {
+    target: 'fork', name: '  ', only_if_unnamed: true,
+  });
+  assert.equal(out.isError, true);
+  assert.equal(calls.rename.length, 0);
 });

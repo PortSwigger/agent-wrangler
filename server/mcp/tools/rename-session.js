@@ -17,17 +17,19 @@ export const renameSessionTool = {
     + 'session-to-session counterpart to the board\'s Rename action. Get the target id from '
     + 'list_sessions. Pass an empty name to clear the custom title and return to the auto-derived '
     + 'label. A set title wins over the live/derived label until cleared, per state-reader.js\'s '
-    + 'sessionLabel behavior. Set only_if_unnamed for an agent suggestion so an existing custom title wins.',
+    + 'sessionLabel behavior. Set only_if_unnamed for a suggestion to your own card so an existing custom title wins.',
   inputSchema: {
     target: z.string().min(1).describe('Session id (card id) to rename, as returned by list_sessions.'),
     name: z.string().describe('New custom title. An empty string clears it and restores the derived label.'),
-    only_if_unnamed: z.boolean().optional().describe('Leave an existing custom title unchanged, but allow replacing a fork title inherited from its parent. Use for an agent-suggested title.'),
+    only_if_unnamed: z.boolean().optional().describe('Suggest a nonempty title for your own card. Leave an existing custom title unchanged, but allow replacing a fork title inherited from its parent.'),
   },
   async handler({ deps, caller }, args = {}) {
     const target = (args.target ?? '').trim();
     if (!target) return errorResult('target is required.');
+    if (args.only_if_unnamed && caller !== target) return errorResult('A guarded title can only rename the caller session.');
+    if (args.only_if_unnamed && !(args.name ?? '').trim()) return errorResult('A guarded title must be nonempty.');
     const entry = deps.sessionManager.entryFor(target);
-    if (!entry && !(args.only_if_unnamed && caller === target && (args.name ?? '').trim())) {
+    if (!entry && !args.only_if_unnamed) {
       return errorResult(`Unknown session ${target} — no such session on the board.`);
     }
     if (args.only_if_unnamed && entry?.name && !entry.nameInherited) {
