@@ -24,6 +24,7 @@ import { addChecklistItemTool } from './add-checklist-item.js';
 import { updateChecklistItemTool } from './update-checklist-item.js';
 import { removeChecklistItemTool } from './remove-checklist-item.js';
 import { listChecklistTool } from './list-checklist.js';
+import { todoTools } from './todo-tools.js';
 import { CHECKLIST_TOOLS } from '../client-config.js';
 import { checklistEnabled } from '../../config-store.js';
 import { getExtensions } from '../../extensions/index.js';
@@ -37,7 +38,7 @@ import { getExtensions } from '../../extensions/index.js';
 // EXTENSION's tools (server/extensions/*/index.js `tools`) are exempt from that
 // two-place rule: the loader derives their launch grant from the same list it
 // registers, so they exist in exactly one place.
-export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
+export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, listTasksTool, ...todoTools, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
 
 // The tools a request actually gets: the core set (less the four checklist tools
 // when `checklistEnabled: false` — the one core feature flag that can remove
