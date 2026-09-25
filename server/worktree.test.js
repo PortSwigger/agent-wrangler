@@ -144,6 +144,26 @@ test('createWorktree: creates a sibling worktree on a new branch', async () => {
   assert.equal(await branchExists(repo, 'fix-auth'), true);
 });
 
+function gitdirLinks(wt) {
+  const pointer = fs.readFileSync(path.join(wt, '.git'), 'utf8').match(/^gitdir: (.*)$/m)[1];
+  const back = fs.readFileSync(path.join(path.isAbsolute(pointer) ? pointer : path.resolve(wt, pointer), 'gitdir'), 'utf8').trim();
+  return { pointer, back };
+}
+
+test('createWorktree: writes absolute gitdir links even when the repo sets worktree.useRelativePaths', async () => {
+  const { repo } = tempRepo();
+  execFileSync('git', ['-C', repo, 'config', 'worktree.useRelativePaths', 'true'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', repo, 'branch', 'existing'], { stdio: 'pipe' });
+  for (const res of [
+    await createWorktree({ cwd: repo, branch: 'rel-new', auto: false }),
+    await createWorktree({ cwd: repo, branch: 'existing', auto: false }),
+  ]) {
+    const { pointer, back } = gitdirLinks(res.path);
+    assert.ok(path.isAbsolute(pointer), `worktree .git points at relative ${pointer}`);
+    assert.ok(path.isAbsolute(back), `reverse gitdir is relative ${back}`);
+  }
+});
+
 // A bare branch ref (no worktree) sitting in the repo, for the existing-branch path.
 function makeBranch(repo, name) {
   execFileSync('git', ['-C', repo, 'branch', name], { stdio: 'pipe' });

@@ -242,9 +242,14 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
   }
 
   // `existing-branch` checks the branch out (no -b); everything else makes a new branch.
+  // Force absolute gitdir links: a repo-level worktree.useRelativePaths would
+  // otherwise write `../<repo>/.git/...`, which a dev container that mounts only
+  // the worktree cannot resolve. `-c` (not --no-relative-paths) so git < 2.48,
+  // which lacks the flag, still works.
+  const gitArgs = ['-C', repoRoot, '-c', 'worktree.useRelativePaths=false', 'worktree', 'add'];
   const addArgs = status === 'existing-branch'
-    ? ['-C', repoRoot, 'worktree', 'add', f, b]
-    : ['-C', repoRoot, 'worktree', 'add', ...(baseRef ? ['--no-track'] : []), '-b', b, f];
+    ? [...gitArgs, f, b]
+    : [...gitArgs, ...(baseRef ? ['--no-track'] : []), '-b', b, f];
   if (status === 'new' && baseRef) addArgs.push(baseRef);
   try {
     await exec('git', addArgs);
