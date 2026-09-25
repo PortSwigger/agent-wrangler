@@ -97,6 +97,17 @@ test('codex resume and fork also carry the nudge + skills catalog in developer_i
   }
 });
 
+test('Codex launch, resume, and fork instruct the agent to set a concise guarded card title', () => {
+  const launch = codex.buildLaunch({ ...base, intent: 'Fix session names' });
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', ...memory });
+  for (const cmd of [launch, resume, fork]) {
+    assert.match(cmd, /rename_session/);
+    assert.match(cmd, /only_if_unnamed/);
+    assert.match(cmd, /AW_SESSION_ID/);
+  }
+});
+
 test('codex does not grant a writable --add-dir for the skills dir', () => {
   const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: [] });
   assert.doesNotMatch(cmd, /--add-dir' '[^']*agent-skills/);

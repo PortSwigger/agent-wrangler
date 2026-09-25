@@ -616,6 +616,39 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
   assert.match(captured, /'--effort' 'low'/);
 });
 
+test('fork() keeps a Codex self-title set before the fork card is registered', async () => {
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  sm._resolveLiveId = async (_adapter, { sessionId }) => {
+    sm.rename(sessionId, 'Review the fork');
+    return 'live-fork';
+  };
+  const { sessionId } = await sm.fork({ sourceId: 'SOURCE', parentId: 'PARENT', parentEntry: { agent: 'codex', name: 'Parent title', intent: 'Parent task' }, cwd: os.tmpdir() });
+  const entry = sm.entryFor(sessionId);
+  assert.equal(entry.name, 'Review the fork');
+  assert.equal(entry.nameInherited, undefined);
+  assert.equal(entry.forkedFrom, 'PARENT');
+  assert.equal(entry.liveSessionId, 'live-fork');
+});
+
+test('fork() keeps the user-provided fork title over an early agent suggestion', async () => {
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  sm._resolveLiveId = async (_adapter, { sessionId }) => {
+    sm.rename(sessionId, 'Agent suggestion');
+    return 'live-fork';
+  };
+  const { sessionId } = await sm.fork({ sourceId: 'SOURCE', parentId: 'PARENT', parentEntry: { agent: 'codex', name: 'Parent title' }, cwd: os.tmpdir(), name: 'My fork title' });
+  assert.equal(sm.entryFor(sessionId).name, 'My fork title');
+  assert.equal(sm.entryFor(sessionId).nameInherited, undefined);
+});
+
 test('fork() re-threads the parent auto-compaction threshold into buildFork', async () => {
   const sm = new SessionManager();
   let captured = '';

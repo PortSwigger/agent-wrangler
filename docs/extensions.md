@@ -757,6 +757,20 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   first answering contribution wins and a second is reported once per pair (it
   runs per card per render, so never per call). A throwing `items()`/`cost()`
   removes the contribution, the same rule as `badge`.
+- **`task.action` is `card.action` for a TILE, and its subject is `{ id, name,
+  adhoc }`, never the DOM cell.** `slots.taskMenuItems(task, graph, api)` shares
+  `menuItems`'s whole body (`valueMenuItems`), so the item shape, escaping and
+  guards cannot drift between the two. It feeds ONLY the tile's right-click menu
+  (`app.js openTaskMenu`, between the task's own actions and Archive task) — NOT
+  the header kebab (`openTaskActionsMenu`), which already carries core's
+  Minimise/Focus and would show an extension's duplicate beside it. The no-task
+  tile is included, as `adhoc: true` with the reserved `ADHOC_ID`, because it
+  can be minimised too. **`api.minimiseTask(taskId)`** (1.11.0) is the action it
+  exists for: base-api-only for `openSession`'s reason (the minimised set is
+  `app.js` view state, not a frame `send` could carry), and it returns a boolean
+  because `minimise()` silently refuses the last visible tile — an extension
+  must be able to tell. `app.js` also refuses an id not in `currentOrder()`, or
+  an archived task would sit in the minimised set until the next prune.
 - **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
   half, and the namespace is FORCED.** `dispatchFields` puts it at
   `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and

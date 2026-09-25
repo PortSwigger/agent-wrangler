@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -462,6 +462,45 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   assert.deepEqual(h.errors, []);
 });
 
+// ── minimiseTask (the tile-level counterpart to openSession) ─────────────────
+// The minimised set is app.js view state, not a control frame, so the base api
+// implements it; apiFor refuses a non-id and passes the base api's answer back.
+function minimiseHarness(answer = true) {
+  const minimised = [];
+  const h = harness();
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, { minimiseTask: (id) => { minimised.push(id); return answer; } });
+  return { ...h, minimised, api: captured };
+}
+
+test('minimiseTask hands a task id to the base api and returns its answer', () => {
+  const { api, minimised, errors } = minimiseHarness(true);
+  assert.equal(api.minimiseTask('t1'), true);
+  assert.deepEqual(minimised, ['t1']);
+  assert.deepEqual(errors, []);
+  assert.equal(minimiseHarness(null).api.minimiseTask('t1'), false, 'a falsy answer is false, not undefined');
+});
+
+test('minimiseTask refuses anything that is not a task id, and reports it', () => {
+  const { api, minimised, errors } = minimiseHarness();
+  assert.equal(api.minimiseTask(''), false);
+  assert.equal(api.minimiseTask({ id: 't1' }), false);
+  assert.equal(api.minimiseTask(), false);
+  assert.deepEqual(minimised, [], 'nothing reached the board');
+  assert.equal(errors.length, 3);
+  assert.match(errors[0], /\[ext:fake\] minimiseTask refused: expected a task id, got ""/);
+});
+
+test('minimiseTask is a no-op against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), { send() {} });
+  assert.equal(captured.minimiseTask('t1'), false);
+  assert.deepEqual(h.errors, []);
+});
+
 // ── onMessage / dispatchMessage (the INBOUND half) ─────────────────────────────
 // A server-side host.broadcast forces its frame's type to `ext:<its own id>`, so
 // the id in the type is the whole address. These assert the two things that make
@@ -723,6 +762,31 @@ test('menuItems collects each card.action\'s items, skips malformed ones and gua
   assert.match(errors.join('\n'), /menu item "Boom" failed/);
   assert.match(errors.join('\n'), /z items failed — contribution removed/);
   assert.equal(slots.contributions('card.action').length, 2);
+});
+
+test('task.action is a value slot: it needs items, not mount', () => {
+  const { slots } = harness();
+  assert.throws(() => slots.register('task.action', 'a', { id: 'x', mount() {} }), /has no items function/);
+  slots.register('task.action', 'a', { id: 'x', items: () => [] });
+});
+
+test('taskMenuItems collects each task.action\'s items for the tile, with the same guards as menuItems', () => {
+  const { slots, errors } = harness();
+  const ran = [];
+  slots.register('task.action', 'a', { id: 'x', items: (t, g, api) => [{ label: `Minimise ${t.id}`, hint: t.name, run: () => ran.push(t.id, typeof api.minimiseTask) }, { label: 'No run' }] });
+  slots.register('task.action', 'b', { id: 'y', items: () => [{ label: 'Boom', run: () => { throw new Error('bad'); } }] });
+  slots.register('task.action', 'c', { id: 'z', items: () => { throw new Error('nope'); } });
+  // A card.action contribution is not a task item, and vice versa.
+  slots.register('card.action', 'd', { id: 'w', items: () => [{ label: 'Card only', run() {} }] });
+  const items = slots.taskMenuItems({ id: 't1', name: 'Ship it', adhoc: false }, {}, {});
+  assert.deepEqual(items.map((i) => [i.extId, i.label, i.hint]), [['a', 'Minimise t1', 'Ship it'], ['b', 'Boom', '']]);
+  items[0].run(); items[1].run();
+  assert.deepEqual(ran, ['t1', 'function']);
+  assert.match(errors.join('\n'), /without a label and run/);
+  assert.match(errors.join('\n'), /menu item "Boom" failed/);
+  assert.match(errors.join('\n'), /z items failed — contribution removed/);
+  assert.equal(slots.contributions('task.action').length, 2);
+  assert.deepEqual(slots.menuItems({ sessionId: 'c1' }, {}, {}).map((i) => i.label), ['Card only']);
 });
 
 test('costCeiling takes the first positive answer and reports a second one once', () => {
