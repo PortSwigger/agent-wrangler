@@ -214,19 +214,15 @@ function shortCodexTitle(source) {
 // fallback until the agent sets a concise title. The "(resumed)" placeholder
 // and blanks count as absent so a resumed session falls through to summary/cwd.
 function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent, summary, cwd, fallback } = {}) {
-  // The auto-name filter applies to every candidate, not just `liveTitle`: it
-  // also leaks into the cached `lastLabel` (snapshotted from a poisoned display
-  // label), the live fork's session-file `name`, and the transcript summary. The
-  // final cwd-basename fallback below is intentionally NOT filtered — it's the
-  // honest "nothing better" label, whereas an auto-name must never preempt a real
-  // intent/summary.
-  const clean = (s) => {
+  // The auto-name filter also applies to cached labels and transcript summaries.
+  // The first name is explicit, so it is never rejected for matching the cwd.
+  const clean = (s, explicit = false) => {
     const t = (s || '').replace(/\s+/g, ' ').trim();
-    return !t || t === '(resumed)' || isAutoAgentTitle(t, cwd) ? '' : t;
+    return !t || t === '(resumed)' || (!explicit && isAutoAgentTitle(t, cwd)) ? '' : t;
   };
   const prompt = clean(intent);
   for (const [index, n] of names.entries()) {
-    const c = clean(n);
+    const c = clean(n, index === 0);
     if (agent === 'codex' && index > 0 && c === prompt) continue;
     if (c) return agent === 'codex' && index > 0 ? shortCodexTitle(c) : c;
   }

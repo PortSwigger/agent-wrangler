@@ -103,8 +103,15 @@ test('sessionLabel uses a neutral Codex label before the first user task', () =>
 
 test('sessionLabel ignores a cached Codex title truncated from the worktree name', () => {
   assert.equal(
-    sessionLabel({ agent: 'codex', names: ['agent-wrangler-worktr...'], summary: 'Fix Codex session names', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names' }),
+    sessionLabel({ agent: 'codex', names: [null, 'agent-wrangler-worktr...'], summary: 'Fix Codex session names', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names' }),
     'Fix Codex session names',
+  );
+});
+
+test('sessionLabel preserves a human Codex title shaped like a clipped worktree name', () => {
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: ['agent-wrangler-worktr...'], summary: 'Fix Codex session names', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names' }),
+    'agent-wrangler-worktr...',
   );
 });
 
