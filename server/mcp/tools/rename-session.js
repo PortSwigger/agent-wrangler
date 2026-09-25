@@ -19,16 +19,21 @@ export const renameSessionTool = {
     + 'session-to-session counterpart to the board\'s Rename action. Get the target id from '
     + 'list_sessions. Pass an empty name to clear the custom title and return to the auto-derived '
     + 'label. A set title wins over the live/derived label until cleared, per state-reader.js\'s '
-    + 'sessionLabel behavior.',
+    + 'sessionLabel behavior. Set only_if_unnamed for an agent suggestion so an existing custom title wins.',
   inputSchema: {
     target: z.string().min(1).describe('Session id (card id) to rename, as returned by list_sessions.'),
     name: z.string().describe('New custom title. An empty string clears it and restores the derived label.'),
+    only_if_unnamed: z.boolean().optional().describe('Leave an existing custom title unchanged, but allow replacing a fork title inherited from its parent. Use for an agent-suggested title.'),
   },
   async handler({ deps }, args = {}) {
     const target = (args.target ?? '').trim();
     if (!target) return errorResult('target is required.');
     const entry = deps.sessionManager.entryFor(target);
     if (!entry) return errorResult(`Unknown session ${target} — no such session on the board.`);
+    if (args.only_if_unnamed && entry.name && !entry.nameInherited) {
+      const structuredContent = { target, name: entry.name, renamed: false };
+      return { content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }], structuredContent };
+    }
     const name = args.name ?? '';
     deps.sessionManager.rename(target, name, { cwd: entry.cwd, intent: entry.intent });
     await deps.rebuild?.();

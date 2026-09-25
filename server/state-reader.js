@@ -188,6 +188,8 @@ function isAutoAgentTitle(title, cwd) {
   const t = String(title || '');
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (new RegExp(`^${esc}(-[0-9a-f]+)?$`, 'i').test(t)) return true;
+  const clipped = t.replace(/(?:\.\.\.|…)$/, '');
+  if (clipped !== t && clipped.length >= 8 && base.toLowerCase().startsWith(clipped.toLowerCase())) return true;
   // For a long basename, Claude Code truncates it mid-word before appending the
   // hex tail (e.g. "…open-te-04" for a "…open-terminal" cwd), so the exact match
   // above misses it. Treat a substantial truncated prefix (+ optional hex tail)
@@ -202,15 +204,11 @@ function isAutoAgentTitle(title, cwd) {
 // build sites so live, resumed, and dormant sessions read identically. Explicit
 // human-chosen names (user rename, live-fork name, dispatch seed name) win as-is;
 // next is `liveTitle` — the summary Claude itself writes to the terminal title,
-// so a card mirrors exactly what the agent's iTerm tab shows — then the
-// auto-derived intent or transcript summary. `liveTitle` exists only for sessions
-// with a live pane, so dormant/history sessions fall through to intent/summary as
-// before. Labels are returned in full — the UI clips them to the available width
-// via CSS ellipsis, so a fixed-character cap here would truncate short of the
-// space a card has. The "(resumed)" placeholder and blanks count as absent — a
-// resumed session with no real name falls through to its summary/cwd rather than
-// literally showing it.
-function sessionLabel({ names = [], liveTitle, aiTitle, intent, summary, cwd, fallback } = {}) {
+// so a Claude card mirrors what the agent's iTerm tab shows. Codex uses its
+// first user message before the launch intent, and shortens either as a temporary
+// fallback until the agent sets a concise title. The "(resumed)" placeholder
+// and blanks count as absent so a resumed session falls through to summary/cwd.
+function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent, summary, cwd, fallback } = {}) {
   // The auto-name filter applies to every candidate, not just `liveTitle`: it
   // also leaks into the cached `lastLabel` (snapshotted from a poisoned display
   // label), the live fork's session-file `name`, and the transcript summary. The
@@ -221,13 +219,23 @@ function sessionLabel({ names = [], liveTitle, aiTitle, intent, summary, cwd, fa
     const t = (s || '').replace(/\s+/g, ' ').trim();
     return !t || t === '(resumed)' || isAutoAgentTitle(t, cwd) ? '' : t;
   };
-  for (const n of names) {
+  const prompt = clean(intent);
+  for (const [index, n] of names.entries()) {
     const c = clean(n);
+    if (agent === 'codex' && index > 0 && c === prompt) continue;
     if (c) return c;
   }
-  const live = clean(liveTitle);
+  const live = agent === 'claude' ? clean(liveTitle) : '';
   if (live) return live;
-  const derived = clean(aiTitle) || clean(intent) || clean(summary);
+  const ai = clean(aiTitle);
+  if (ai) return ai;
+  if (agent === 'codex') {
+    const source = clean(summary) || prompt;
+    if (!source) return 'Codex session';
+    const short = source.split(' ').slice(0, 8).join(' ').slice(0, 59).trimEnd();
+    return short.length < source.length ? `${short}…` : short;
+  }
+  const derived = prompt || clean(summary);
   if (derived) return derived;
   return (cwd ? path.basename(cwd) : '') || fallback || '';
 }
@@ -415,6 +423,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     const enrichment = enrich ? await enrich(s.sessionId, { since: usageSince(mapEntry) }) : null;
     const agentId = mapEntry?.agent || 'claude';
     const name = sessionLabel({
+      agent: agentId,
       names: [mapEntry?.name, s.name && s.name !== s.jobId ? s.name : null, worker?.dispatch?.seed?.name],
       liveTitle: tmux ? titleByTmux.get(tmux) : null,
       aiTitle: enrichment?.aiTitle,
@@ -616,6 +625,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       // (the original title) before the "(resumed)" intent placeholder.
       label: withForkMark(
         sessionLabel({
+          agent: agentId,
           names: [appEntry?.name, live?.name],
           liveTitle: claudeTitle(d.paneTitle),
           aiTitle: enr?.aiTitle,
@@ -706,6 +716,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
         ? await adapterFor(entry.agent).analyze(entry.liveSessionId || sid, { since: usageSince(entry) })
         : (enrich ? await enrich(entry.liveSessionId || sid, { since: usageSince(entry) }) : null));
     const label = sessionLabel({
+      agent: agentId,
       names: [entry.name, entry.lastLabel],
       aiTitle: enrichment?.aiTitle,
       intent: entry.intent,
@@ -814,7 +825,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
     sessionId: e.sessionId,
     // Same label chain as live sessions, minus summary (no transcript read) — so a
     // resumed archive reads its intent, not the "(resumed)" placeholder.
-    label: sessionLabel({ names: [e.name, e.lastLabel], intent: e.intent, cwd: e.cwd, fallback: e.sessionId.slice(0, 8) }),
+    label: sessionLabel({ agent: e.agent, names: [e.name, e.lastLabel], intent: e.intent, cwd: e.cwd, fallback: e.sessionId.slice(0, 8) }),
     cwd: e.cwd || null,
     archivedAt: e.archivedAt,
     model: e.model || null,
