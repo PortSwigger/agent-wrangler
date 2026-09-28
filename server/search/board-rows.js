@@ -92,8 +92,8 @@ function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
 }
 
 // Build the full candidate list. `entries` is an iterable of [cardId, entry]
-// (a Map works); `live` is a Map of cardId -> lastActivity (ms) for sessions in
-// the current graph. Dead (tombstoned) docs are skipped exactly as the scan's
+// (a Map works); `live` is a Map of cardId -> { lastActivity, label } for
+// sessions in the current graph. Dead (tombstoned) docs are skipped exactly as the scan's
 // docMask skips them — their bytes describe a rewritten file — which also routes
 // their board entry through the mappings-only union below.
 export function buildCandidates({ docs = [], entries = new Map(), live = new Map(), taskFor = () => null } = {}) {
