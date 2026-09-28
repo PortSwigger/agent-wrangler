@@ -366,10 +366,12 @@ test('skillsFor and hideTool must be functions', () => {
   assert.throws(() => validateManifest(manifest({ hideTool: 1 })), /hideTool must be a function/);
 });
 
-test('onBeforeDispatch is a known session hook', () => {
+test('onBeforeDispatch and onPrompt are known session hooks', () => {
   assert.ok(SESSION_HOOKS.includes('onBeforeDispatch'));
-  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ session: { onBeforeDispatch: () => {} } })] });
+  assert.ok(SESSION_HOOKS.includes('onPrompt'));
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ session: { onBeforeDispatch: () => {}, onPrompt: () => {} } })] });
   assert.equal(loaded.sessionHooks.onBeforeDispatch.length, 1);
+  assert.equal(loaded.sessionHooks.onPrompt.length, 1);
 });
 
 // ── Stylesheet asset ──────────────────────────────────────────────────────

@@ -97,7 +97,7 @@ export function hookPayloadFor(extId, payload) {
   return { ...payload, ext: Object.hasOwn(bag, extId) ? bag[extId] : null };
 }
 
-export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
+export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume', 'onPrompt'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 

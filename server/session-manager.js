@@ -396,8 +396,8 @@ export class SessionManager {
     // by server/index.js. Empty by default — same property as the seams above:
     // every existing test stays inert. Fired sequentially and never abort the
     // core operation: a hook throw is logged (event-only — these run on
-    // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
-    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    // archive/fork/purge/dispatch/resume/prompt, never per tick) and the next hook runs.
+    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [], onPrompt: [] };
     // Seam (same mould) for per-launch skill gating: server/index.js binds
     // createSkillGate (server/extensions/index.js) with the extension stores
     // closed over, and dispatch/resume/fork consult it BEFORE building the
