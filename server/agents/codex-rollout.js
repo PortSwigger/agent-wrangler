@@ -646,9 +646,12 @@ export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
   const cutoff = now - windowDays * 86_400_000;
   const family = await cachedFamilyIndex(sessionsDir);
   const candidates = [];
-  for (const r of await allRollouts(sessionsDir)) {
+  const seenIds = new Set();
+  for (const r of (await allRollouts(sessionsDir)).sort((a, b) => b.name.localeCompare(a.name))) {
     const sessionId = uuidFromName(r.name);
-    if (!sessionId || family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
+    if (!sessionId || seenIds.has(sessionId)) continue;
+    seenIds.add(sessionId);
+    if (family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
     const { cwd, summary } = headMetaCodex(r.full);
     candidates.push({ sessionId, cwd, summary, lastActivity: Math.round(r.mtimeMs), agent: 'codex' });
   }

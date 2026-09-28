@@ -71,6 +71,18 @@ test('indexes conversation from both agents and skips tool output', async () => 
   assert.equal(res.matches, 0);
 });
 
+test('discovers a resumed Codex rollout under its conversation id', async () => {
+  const id = '01a0c473-2740-7970-8667-e6f359444905';
+  const file = path.join(codexDir, '2026', '08', `rollout-2026-09-28T13-59-30-${id}_01a0e819-57a8-7823-b332-3a6efe7548d3.jsonl`);
+  await fsp.writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id } }) + '\n');
+  try {
+    const sources = await discoverSources({ claudeProjects: claudeDir, codexSessions: codexDir });
+    assert.equal(sources.find((source) => source.file === file)?.id, id);
+  } finally {
+    await fsp.rm(file);
+  }
+});
+
 // Occurrences of "rebase" in the fixture: claude user ×1, claude assistant ×2
 // ("rebase" + "Rebase"), codex user ×1, codex assistant ×1 ("rebased") = 5.
 test('case-insensitive by default, exact when asked', async () => {
