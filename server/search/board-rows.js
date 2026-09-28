@@ -35,7 +35,14 @@ function labelOf(e) {
 
 // The board-join fields, split out so the handler can Object.assign them onto a
 // scan group without clobbering the group's own doc-derived title/cwd/branch.
-// `live` maps card id -> lastActivity for sessions currently in the graph.
+// `live` maps card id -> { lastActivity, label } for sessions currently in the
+// graph — `label` is the fully-resolved display label (sessionLabel() in
+// state-reader.js), which already outranks a mapping's bare name/lastLabel/intent
+// with the live terminal title / ai-title / summary a user actually sees on the
+// card. Without it, an on-board session that was never explicitly renamed is
+// unsearchable by the very title shown for it: lastLabel is only ever stamped at
+// archive/suspend time (session-manager.js), so a live card's true label lives
+// nowhere in the mapping entry at all.
 // `taskFor(cardId)` resolves a session's CURRENT task assignment ({id, name} or
 // null) — needed because session-manager only stamps `entry.task` at archive
 // time (a frozen snapshot); an on-board session has no snapshot yet, so
@@ -47,9 +54,10 @@ function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
   // snapshot): fall back to whatever it's assigned to right now.
   const currentTask = taskFor(cardId);
   const task = e.task && (!currentTask || e.task.id !== currentTask.id) ? e.task : currentTask || e.task;
+  const liveInfo = live.get(cardId);
   return {
     cardId,
-    boardLabel: labelOf(e),
+    boardLabel: liveInfo?.label || labelOf(e),
     lastLabel: e.lastLabel || '',
     task: (task && task.name) || '',
     // The task's id, not just its name — lets the client group same-task rows
@@ -79,7 +87,7 @@ function boardFieldsOf(cardId, e, live, docLastMs, taskFor = () => null) {
     viaTaskArchive: e.viaTaskArchive || null,
     // Best recency signal available: the transcript's own tail, the entry's
     // lifecycle stamps, and the graph's live activity — whichever is newest.
-    lastActivity: Math.max(docLastMs || 0, e.archivedAt || 0, e.createdAt || 0, live.get(cardId) || 0),
+    lastActivity: Math.max(docLastMs || 0, e.archivedAt || 0, e.createdAt || 0, liveInfo?.lastActivity || 0),
   };
 }
 

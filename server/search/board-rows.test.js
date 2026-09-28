@@ -135,7 +135,7 @@ test('buildCandidates: a dead doc is skipped, which routes its entry through the
 });
 
 test('buildCandidates: lastActivity is the max of doc tail, entry stamps, and live graph activity', () => {
-  const live = new Map([['card-a', 9_000_000]]);
+  const live = new Map([['card-a', { lastActivity: 9_000_000, label: '' }]]);
   const rows = buildCandidates({ docs: DOCS, entries: entries(), live });
   const a = rows.find((r) => r.sessionId === 'conv-a');
   assert.equal(a.lastActivity, 9_000_000); // live activity beats lastTs*1000 (1_000_000) and createdAt
