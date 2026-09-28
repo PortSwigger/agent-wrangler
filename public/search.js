@@ -103,7 +103,22 @@ function renderTaskFilter() {
   const options = el('search-task-options');
   if (!summary || !options) return;
   const groups = taskFilterGroups(latestTasks.tasks || [], [...latestSessions, ...latestHistory], latestTasks.assignments || {});
-  summary.textContent = state.taskIds.length ? `Tasks (${state.taskIds.length})` : 'Tasks';
+  // Only the label span's text, not the whole summary — the arrow SVG is
+  // summary's other child (see styles.css's note on why it has to live there).
+  // Mirrors the other facets' "Prefix: value" shape (the prefix is static
+  // HTML here — "Tasks" — since a multi-select has no single current value
+  // to substitute it with): none selected reads as the facet's own default
+  // "All"; exactly one names it, since that's the whole point of narrowing to
+  // one; more than one collapses to a count rather than an unreadable list.
+  const label = summary.querySelector('.search-select-label');
+  if (!state.taskIds.length) {
+    label.textContent = 'All';
+  } else if (state.taskIds.length === 1) {
+    const task = (latestTasks.tasks || []).find((t) => t.id === state.taskIds[0]);
+    label.textContent = task ? (task.name || task.id) : '1 task';
+  } else {
+    label.textContent = `${state.taskIds.length} tasks`;
+  }
   options.textContent = '';
   const append = (tasks, heading) => {
     if (!tasks.length) return;
@@ -113,7 +128,7 @@ function renderTaskFilter() {
     options.appendChild(head);
     for (const task of tasks) {
     const label = document.createElement('label');
-    label.className = 'search-task-option';
+    label.className = 'search-dd-option';
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = state.taskIds.includes(task.id);
@@ -142,6 +157,40 @@ function renderTaskFilter() {
     });
     options.appendChild(clear);
   }
+}
+
+// A single-choice facet as a details/summary dropdown: the closed summary
+// shows the facet name in a muted tag ahead of the current option's own
+// label ("Provider" | "Claude"), which is what tells several of these apart
+// when they're all just sitting at "All" — a native <select> can't do this
+// (its closed box can only ever echo the selected <option>'s own text). The
+// open panel lists bare option labels; repeating the facet name on every row
+// would be pure noise once it's already on the summary. `options` is
+// [{value, label}]; `get`/`set` read and write the backing state field.
+function ddFilter(id, options, get, set) {
+  const details = el(id);
+  const summary = details?.querySelector('summary');
+  const label = summary?.querySelector('.search-select-label');
+  const panel = details?.querySelector('.search-dd-panel');
+  if (!details || !label || !panel) return;
+  function paint() {
+    const current = options.find((o) => o.value === get()) || options[0];
+    label.textContent = current.label;
+    panel.textContent = '';
+    for (const opt of options) {
+      const row = document.createElement('div');
+      row.className = 'search-dd-option' + (opt.value === get() ? ' on' : '');
+      row.textContent = opt.label;
+      row.addEventListener('click', () => {
+        set(opt.value);
+        details.open = false;
+        paint();
+        fire();
+      });
+      panel.appendChild(row);
+    }
+  }
+  paint();
 }
 
 export function clearSearch() {
@@ -721,16 +770,7 @@ function renderResults(msg) {
 
 // ── wiring ─────────────────────────────────────────────────────────────────
 
-function segGroup(attr, onPick) {
-  document.querySelectorAll(`#search .search-seg [data-${attr}]`).forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const group = btn.parentElement;
-      group.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
-      onPick(btn.dataset[attr]);
-      fire();
-    });
-  });
-}
+const DD_IDS = ['search-role-filter', 'search-scope-filter', 'search-agent-filter', 'search-task-filter', 'search-status-filter', 'search-time-filter'];
 
 export function initSearchView() {
   const input = el('search-input');
@@ -744,11 +784,24 @@ export function initSearchView() {
   });
   el('search-case').addEventListener('change', (e) => { state.caseSensitive = e.target.checked; fire(); });
   el('search-word').addEventListener('change', (e) => { state.wholeWord = e.target.checked; fire(); });
-  segGroup('role', (v) => { state.role = v; });
-  segGroup('scope', (v) => { state.scope = v; });
-  el('search-agent-select').addEventListener('change', (e) => { state.agent = e.target.value; fire(); });
-  el('search-status-select').addEventListener('change', (e) => { state.status = e.target.value; fire(); });
-  el('search-time-select').addEventListener('change', (e) => { state.time = e.target.value; fire(); });
+  ddFilter('search-role-filter', [
+    { value: 'all', label: 'Anyone' }, { value: 'user', label: 'You' }, { value: 'assistant', label: 'Agent' },
+  ], () => state.role, (v) => { state.role = v; });
+  ddFilter('search-scope-filter', [
+    { value: 'all', label: 'All' }, { value: 'transcript', label: 'Transcript' },
+    { value: 'session', label: 'Session' }, { value: 'task', label: 'Task' },
+  ], () => state.scope, (v) => { state.scope = v; });
+  ddFilter('search-agent-filter', [
+    { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' },
+  ], () => state.agent, (v) => { state.agent = v; });
+  ddFilter('search-status-filter', [
+    { value: 'all', label: 'All' }, { value: 'board', label: 'Board' },
+    { value: 'archived', label: 'Archived' }, { value: 'offboard', label: 'External' },
+  ], () => state.status, (v) => { state.status = v; });
+  ddFilter('search-time-filter', [
+    { value: 'any', label: 'Any time' }, { value: '24h', label: '24h' },
+    { value: '7d', label: '7d' }, { value: '30d', label: '30d' },
+  ], () => state.time, (v) => { state.time = v; });
   el('search-reindex').addEventListener('click', () => {
     if (state.building) return;
     state.building = true;
@@ -756,7 +809,7 @@ export function initSearchView() {
     toast('Rebuilding the search index…');
   });
   document.addEventListener('pointerdown', (e) => {
-    closeTaskFilterOnOutsideClick(el('search-task-filter'), e.target);
+    for (const id of DD_IDS) closeTaskFilterOnOutsideClick(el(id), e.target);
   });
   renderTaskFilter();
   renderIdle();

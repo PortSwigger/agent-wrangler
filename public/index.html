@@ -105,48 +105,54 @@
           <label class="search-opt"><input type="checkbox" id="search-case" /> <span>Case sensitive</span></label>
           <label class="search-opt"><input type="checkbox" id="search-word" /> <span>Whole word</span></label>
           <span class="search-opt-sep"></span>
-          <div class="search-seg" role="group" aria-label="Who said it">
-            <button type="button" class="on" data-role="all">Anyone</button>
-            <button type="button" data-role="user">You</button>
-            <button type="button" data-role="assistant">Agent</button>
-          </div>
-          <div class="search-seg" role="group" aria-label="Search scope">
-            <button type="button" class="on" data-scope="all">All</button>
-            <button type="button" data-scope="transcript">Transcript</button>
-            <button type="button" data-scope="session">Session</button>
-            <button type="button" data-scope="task">Task</button>
-          </div>
-          <div class="search-select-wrap">
-            <select id="search-agent-select" class="search-select" aria-label="Provider">
-              <option value="all">Provider</option>
-              <option value="claude">Claude</option>
-              <option value="codex">Codex</option>
-            </select>
-            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          </div>
-          <details class="search-task-filter search-select-wrap" id="search-task-filter">
-            <summary id="search-task-summary" class="search-select">Tasks</summary>
-            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-            <div id="search-task-options" class="search-task-options"></div>
+          <details class="search-dd" id="search-role-filter">
+            <summary id="search-role-summary" class="search-select">
+              <span class="search-select-prefix">Who</span>
+              <span class="search-select-label">Anyone</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-role-options" class="search-dd-panel"></div>
           </details>
-          <div class="search-select-wrap">
-            <select id="search-status-select" class="search-select" aria-label="Status">
-              <option value="all">Status</option>
-              <option value="board">Board</option>
-              <option value="archived">Archived</option>
-              <option value="offboard">External</option>
-            </select>
-            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          </div>
-          <div class="search-select-wrap">
-            <select id="search-time-select" class="search-select" aria-label="Time">
-              <option value="any">Time</option>
-              <option value="24h">24h</option>
-              <option value="7d">7d</option>
-              <option value="30d">30d</option>
-            </select>
-            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          </div>
+          <details class="search-dd" id="search-scope-filter">
+            <summary id="search-scope-summary" class="search-select">
+              <span class="search-select-prefix">Scope</span>
+              <span class="search-select-label">All</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-scope-options" class="search-dd-panel"></div>
+          </details>
+          <details class="search-dd" id="search-agent-filter">
+            <summary id="search-agent-summary" class="search-select">
+              <span class="search-select-prefix">Provider</span>
+              <span class="search-select-label">All</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-agent-options" class="search-dd-panel"></div>
+          </details>
+          <details class="search-dd" id="search-task-filter">
+            <summary id="search-task-summary" class="search-select">
+              <span class="search-select-prefix">Tasks</span>
+              <span class="search-select-label">All</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-task-options" class="search-dd-panel"></div>
+          </details>
+          <details class="search-dd" id="search-status-filter">
+            <summary id="search-status-summary" class="search-select">
+              <span class="search-select-prefix">Status</span>
+              <span class="search-select-label">All</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-status-options" class="search-dd-panel"></div>
+          </details>
+          <details class="search-dd" id="search-time-filter">
+            <summary id="search-time-summary" class="search-select">
+              <span class="search-select-prefix">Time</span>
+              <span class="search-select-label">Any time</span>
+              <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div id="search-time-options" class="search-dd-panel"></div>
+          </details>
         </div>
         <!-- Its own row, deliberately, rather than trailing the filter controls above:
              this is status info, not a filter, and letting it share the row with the
