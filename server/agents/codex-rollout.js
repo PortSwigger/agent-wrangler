@@ -7,16 +7,14 @@ import { codexCostUsd, codexCostUsdByType, LONG_CONTEXT_TOKENS } from '../pricin
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 const MODELS_CACHE_PATH = path.join(os.homedir(), '.codex', 'models_cache.json');
 
-function uuidFromName(name) {
-  const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})\.jsonl$/);
+export function uuidFromName(name) {
+  const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})(?:_[0-9a-fA-F-]{36})?\.jsonl$/);
   return m ? m[1] : null;
 }
 
 // Paths only, in readdir order. Split out from allRollouts because resolving ONE
 // id needs nothing but the filenames — the uuid is in the name — and a stat per
-// file is the expensive half of the walk. Order is deliberately unchanged from
-// the stat-ing version: findRollout and buildRolloutIndex both resolve a
-// duplicate uuid to the first one walked, and they have to keep agreeing.
+// file is the expensive half of the walk.
 async function rolloutPaths(sessionsDir) {
   const out = [];
   async function walk(dir) {
@@ -41,9 +39,9 @@ async function allRollouts(sessionsDir) {
   return out;
 }
 
-// `${sessionsDir}\0${sessionId}` -> resolved rollout path. Deliberately the same
-// shape as transcript-reader.js's pathCache, because it exists for the same
-// reason and carries the same two rules:
+// `${sessionsDir}\0${sessionId}` -> resolved rollout path and lookup time.
+// Re-walk after five seconds: a resumed Codex conversation can create a newer
+// rollout with the same session id while the earlier file still exists.
 //
 //  - Only POSITIVE results are cached. A miss stays a miss and is re-walked, so
 //    a rollout that appears after the first lookup is picked up on the next one
@@ -56,37 +54,37 @@ async function allRollouts(sessionsDir) {
 //    rollout deleted or pruned under a cached path would otherwise freeze that
 //    session's chat view and cost forever.
 //
-// This is what makes the chat view's 2s poll cheap: the first open pays one
-// name-only walk of the sessions tree, every poll after it pays one existsSync.
+// This keeps most chat-view polls to one existsSync while allowing a new
+// same-conversation rollout to replace an older cached path.
 const pathCache = new Map();
+const PATH_CACHE_TTL_MS = 5000;
 
 export async function findRollout(sessionId, sessionsDir = CODEX_SESSIONS) {
   const key = `${sessionsDir}\0${sessionId}`;
   const hit = pathCache.get(key);
   if (hit) {
-    if (fs.existsSync(hit)) return hit;
+    if (Date.now() - hit.at < PATH_CACHE_TTL_MS && fs.existsSync(hit.file)) return hit.file;
     pathCache.delete(key);
   }
   let found = null;
   for (const full of await rolloutPaths(sessionsDir)) {
     if (uuidFromName(path.basename(full)) === sessionId) {
-      found = full;
-      break;
+      if (!found || path.basename(full) > path.basename(found)) found = full;
     }
   }
-  if (found) pathCache.set(key, found);
+  if (found) pathCache.set(key, { file: found, at: Date.now() });
   return found;
 }
 
 // One sessionId -> rollout-file map for the whole tree, so a caller resolving many
 // ids (the usage scan) walks the sessions dir ONCE instead of re-walking per id
-// (O(sessions²)). Keeps first-seen on a duplicate uuid, matching findRollout's
-// walk-order pick.
+// (O(sessions²)). Pick the latest filename for a duplicate uuid, as findRollout
+// does for a conversation resumed into a new file.
 export async function buildRolloutIndex(sessionsDir = CODEX_SESSIONS) {
   const byUuid = new Map();
   for (const r of await allRollouts(sessionsDir)) {
     const id = uuidFromName(r.name);
-    if (id && !byUuid.has(id)) byUuid.set(id, r.full);
+    if (id && (!byUuid.has(id) || r.name > path.basename(byUuid.get(id)))) byUuid.set(id, r.full);
   }
   return byUuid;
 }
@@ -648,9 +646,12 @@ export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
   const cutoff = now - windowDays * 86_400_000;
   const family = await cachedFamilyIndex(sessionsDir);
   const candidates = [];
-  for (const r of await allRollouts(sessionsDir)) {
+  const seenIds = new Set();
+  for (const r of (await allRollouts(sessionsDir)).sort((a, b) => a.name < b.name ? 1 : a.name > b.name ? -1 : 0)) {
     const sessionId = uuidFromName(r.name);
-    if (!sessionId || family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
+    if (!sessionId || seenIds.has(sessionId)) continue;
+    seenIds.add(sessionId);
+    if (family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
     const { cwd, summary } = headMetaCodex(r.full);
     candidates.push({ sessionId, cwd, summary, lastActivity: Math.round(r.mtimeMs), agent: 'codex' });
   }

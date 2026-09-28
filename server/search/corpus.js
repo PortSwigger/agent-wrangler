@@ -7,6 +7,7 @@ import { CLAUDE_DIR } from '../claude-paths.js';
 import { writeJsonAtomic } from '../atomic-json.js';
 import { createPool } from './pool.js';
 import { RECORD_SIZE, MAX_CORPUS_BYTES } from './records.js';
+import { uuidFromName } from '../agents/codex-discover.js';
 
 // The searchable corpus: every conversation message on disk, extracted once and
 // stored as flat bytes.
@@ -82,8 +83,6 @@ export function _dropMetaCache() { metaCache = null; }
 
 // ── source discovery ───────────────────────────────────────────────────────
 
-const UUID_RE = /^rollout-.*-([0-9a-fA-F-]{36})\.jsonl$/;
-
 async function claudeSources(root) {
   const out = [];
   let dirs;
@@ -113,8 +112,7 @@ async function codexSources(root) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) await walk(full);
       else if (e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
-        const m = e.name.match(UUID_RE);
-        out.push({ file: full, agent: 'codex', id: m ? m[1] : e.name });
+        out.push({ file: full, agent: 'codex', id: uuidFromName(e.name) || e.name });
       }
     }
   }
