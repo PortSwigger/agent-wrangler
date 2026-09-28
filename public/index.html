@@ -110,11 +110,16 @@
             <button type="button" data-role="user">You</button>
             <button type="button" data-role="assistant">Agent</button>
           </div>
-          <div class="search-seg" role="group" aria-label="Agent">
+          <div class="search-seg" role="group" aria-label="Search scope">
+            <button type="button" class="on" data-scope="all">All</button>
+            <button type="button" data-scope="transcript">Transcript</button>
+            <button type="button" data-scope="session">Session</button>
+            <button type="button" data-scope="task">Task</button>
+          </div>
+          <div class="search-seg" role="group" aria-label="Provider">
             <button type="button" class="on" data-agent="all">All</button>
             <button type="button" data-agent="claude">Claude</button>
             <button type="button" data-agent="codex">Codex</button>
-            <button type="button" data-agent="task">Task</button>
           </div>
           <details class="search-task-filter" id="search-task-filter">
             <summary id="search-task-summary">Tasks</summary>

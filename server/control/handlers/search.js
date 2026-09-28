@@ -27,6 +27,18 @@ let lastRefresh = 0;
 
 const BROWSE_LIMIT = 60;
 const VALID_STATUS = new Set(['board', 'archived', 'offboard']);
+// What's being searched, independent of `agents` (which provider): 'all' is the
+// combined view (today's default); 'transcript' is the corpus scan alone, no
+// metadata rows appended; 'session' is metadata matching alone (title, cwd,
+// branch, task, model, worktree, issue, id), with the scan skipped entirely —
+// no scan means no per-message noise, just one row per matching session;
+// 'task' is archived-task-title matches alone, handled client-side (search-
+// browse.js's matchingArchivedTasks) — this handler just returns no
+// conversation rows for it, same as the metadata-only case with the scan too.
+const VALID_SCOPE = new Set(['transcript', 'session', 'task']);
+function scopeOf(msg) {
+  return VALID_SCOPE.has(msg.scope) ? msg.scope : 'all';
+}
 
 // `title` (the transcript's own ai-title) and `boardLabel` (what the card
 // actually shows — see candidateRows' `live` comment) are checked separately,
@@ -65,6 +77,7 @@ export async function answerSearch(msg, ctx, {
   const raw = String(msg.query || '').replace(/\0/g, '');
   const trimmed = raw.trim();
   const requestId = msg.requestId ?? null;
+  const scope = scopeOf(msg);
   const facets = {
     agents: Array.isArray(msg.agents) ? msg.agents : null,
     taskIds: Array.isArray(msg.taskIds) ? msg.taskIds.filter((id) => typeof id === 'string' && id) : null,
@@ -79,16 +92,18 @@ export async function answerSearch(msg, ctx, {
 
   // Browse: too short to scan for, so list instead. A 1-char query (or any
   // tokens) still filters by metadata — same multi-token AND as History's
-  // filterHistory, so the old view's muscle memory keeps working.
+  // filterHistory, so the old view's muscle memory keeps working. Scope 'task'
+  // hides the conversation listing outright — its rows come entirely from the
+  // client's own archived-task list (search-browse.js), not this candidate set.
   if (trimmed.length < 2) {
     const tokens = tokenize(trimmed);
-    let list = rows.filter((r) => passesFacets(r, facets));
+    let list = scope === 'task' ? [] : rows.filter((r) => passesFacets(r, facets));
     if (tokens.length) list = list.filter((r) => matchMeta(r, tokens));
     list.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
     const limit = Math.max(1, Math.min(1000, Number(msg.limit) || BROWSE_LIMIT));
     const shown = list.slice(0, limit);
     return {
-      type: 'search-results', requestId, browse: true, query: trimmed,
+      type: 'search-results', requestId, browse: true, scope, query: trimmed,
       matches: 0, shownHits: 0,
       groups: shown.map((r) => ({ ...r, matches: 0, hits: [] })),
       total: list.length, truncated: list.length > shown.length,
@@ -97,17 +112,24 @@ export async function answerSearch(msg, ctx, {
     };
   }
 
-  const res = await scan({
-    query: raw,
-    caseSensitive: Boolean(msg.caseSensitive),
-    wholeWord: Boolean(msg.wholeWord),
-    roles: Array.isArray(msg.roles) ? msg.roles : null,
-    agents: facets.agents,
-    sessionIds: taskSessionIds,
-    since: facets.since,
-    until: facets.until,
-    limit: Number(msg.limit) || 0,
-  });
+  // 'session' and 'task' skip the corpus scan entirely: neither wants a single
+  // conversation-text hit in its results, so there's nothing for a scan to
+  // contribute — and skipping it means a title-only search never pays for one.
+  const wantsScan = scope === 'all' || scope === 'transcript';
+  const wantsMeta = scope === 'all' || scope === 'session';
+  const res = wantsScan
+    ? await scan({
+        query: raw,
+        caseSensitive: Boolean(msg.caseSensitive),
+        wholeWord: Boolean(msg.wholeWord),
+        roles: Array.isArray(msg.roles) ? msg.roles : null,
+        agents: facets.agents,
+        sessionIds: taskSessionIds,
+        since: facets.since,
+        until: facets.until,
+        limit: Number(msg.limit) || 0,
+      })
+    : { query: raw, matches: 0, shownHits: 0, groups: [], truncated: false, ms: 0, scannedBytes: 0, mode: 'none', workers: 0, index: stats() };
 
   const byConversation = new Map(rows.map((r) => [r.sessionId, r]));
   const tokens = tokenize(raw);
@@ -133,18 +155,22 @@ export async function answerSearch(msg, ctx, {
   // stay the headline), recency-sorted among themselves. The scan already
   // applied agents (docMask) and per-hit since/until; these rows get the same
   // facets via passesFacets, with since/until cutting on lastActivity instead.
+  // Skipped for 'transcript' (metadata rows are exactly the noise that scope
+  // exists to exclude) and 'task' (no conversation rows at all in that scope).
   const metaOnly = [];
-  for (const r of rows) {
-    if (present.has(r.sessionId)) continue;
-    const mf = matchMeta(r, tokens);
-    if (!mf || !passesFacets(r, facets)) continue;
-    metaOnly.push({ ...r, matches: 0, hits: [], metaMatch: true, matchedFields: mf });
+  if (wantsMeta) {
+    for (const r of rows) {
+      if (present.has(r.sessionId)) continue;
+      const mf = matchMeta(r, tokens);
+      if (!mf || !passesFacets(r, facets)) continue;
+      metaOnly.push({ ...r, matches: 0, hits: [], metaMatch: true, matchedFields: mf });
+    }
+    metaOnly.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   }
-  metaOnly.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   groups.push(...metaOnly);
   groups.sort((a, b) => Number(titleMatches(b, tokens)) - Number(titleMatches(a, tokens)));
 
-  return { type: 'search-results', requestId, browse: false, ...res, groups };
+  return { type: 'search-results', requestId, browse: false, scope, ...res, groups };
 }
 
 function statusReply(extra = {}) {
