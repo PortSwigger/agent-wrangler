@@ -46,6 +46,17 @@ const freePort = () => new Promise((res) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Bounds a HUNG call; it is not a latency budget. Every real CDP call here answers in
+// single-digit ms, so this is deliberately far above any plausible slow-CI figure: the
+// flag it sets is sticky, so one spurious trip would fail the whole test as "stopped
+// answering", and that false failure is the costlier direction to be wrong in. The
+// ceiling is the 180s outer timeout, and the worst case stays well inside it because a
+// trip short-circuits every later call (30s + 79 * 250ms ≈ 50s).
+const CDP_CALL_TIMEOUT_MS = 30_000;
+// Returned in place of a reply that never came. Identity-compared, never read from, so
+// an unanswered call can't be mistaken for a successful one — which for the `*.enable`
+// commands would silently unsubscribe the console-error guard and pass regardless.
+const UNANSWERED = Object.freeze({ unanswered: true });
 
 async function waitFor(fn, { tries = 80, every = 250 } = {}) {
   for (let i = 0; i < tries; i++) {
@@ -114,7 +125,9 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     const errors = [];
     ws.on('message', (raw) => {
       const m = JSON.parse(raw);
-      if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+      if (m.id && pending.has(m.id)) {
+        const p = pending.get(m.id); pending.delete(m.id); clearTimeout(p.timer); p.settle(m);
+      }
       if (m.method === 'Runtime.exceptionThrown') {
         const d = m.params.exceptionDetails;
         errors.push(d.exception?.description || d.text);
@@ -122,33 +135,124 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
         errors.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
       }
     });
-    const send = (method, params = {}) => new Promise((res) => {
-      const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params }));
+    // A CDP call that never gets answered — renderer wedged, tab gone, socket dropped —
+    // must not hang the caller. `waitFor` awaits each poll, so one unanswered reply would
+    // otherwise stall the whole loop until the test's own 180s timeout and report nothing
+    // but "timed out": the poll budget below only means anything if a call always settles.
+    let socketClosed = false;
+    // Set once any call has blown its bound. A wedged-but-open renderer answers nothing,
+    // so without this every remaining poll pays the full timeout — 80 of those against a
+    // 180s outer budget, and the loop would never reach the verdict below.
+    let cdpStalled = false;
+    ws.on('close', () => {
+      socketClosed = true;
+      // Clear the timers too, or the teardown below waits out every outstanding call.
+      for (const p of pending.values()) { clearTimeout(p.timer); p.settle(UNANSWERED); }
+      pending.clear();
     });
+    const send = (method, params = {}) => new Promise((res) => {
+      // Once the socket is gone nothing can answer, and letting each later call sit out
+      // the full timeout would blow the test's own 180s budget before the poll loop below
+      // ever reaches its verdict.
+      if (socketClosed || cdpStalled) return res(UNANSWERED);
+      const i = ++id;
+      const timer = setTimeout(() => { cdpStalled = true; pending.delete(i); res(UNANSWERED); }, CDP_CALL_TIMEOUT_MS);
+      pending.set(i, { settle: res, timer });
+      ws.send(JSON.stringify({ id: i, method, params }));
+    });
+    // Unchecked: the poll loop and the failure diagnosis below WANT a falsy value for a
+    // call that didn't land — they retry, and the diagnosis reports the transport state
+    // itself. Anything asserting about the page uses evaluateChecked instead.
     const evaluate = async (expression) =>
       (await send('Runtime.evaluate', { expression, returnByValue: true })).result?.result?.value;
+    // CDP can answer with an `error` as readily as a result, and both that and an
+    // unanswered call collapse to `undefined` — which downstream reads as "the page says
+    // no". So the assertions after the wait go through here and say what really happened
+    // rather than blaming the DOM for a dead socket.
+    const evaluateChecked = async (expression) => {
+      const reply = await send('Runtime.evaluate', { expression, returnByValue: true });
+      assert.notEqual(reply, UNANSWERED,
+        `CDP stopped answering while evaluating \`${expression}\` (socket ${socketClosed ? 'closed' : 'open'})`);
+      assert.ok(!reply.error, `CDP rejected \`${expression}\`: ${JSON.stringify(reply.error)}`);
+      // A throw inside the page comes back as the THROWN VALUE in the same RemoteObject
+      // slot as a real result, so `throw true` would satisfy a boolean assertion without
+      // the expression ever having evaluated. exceptionDetails is the only thing that
+      // distinguishes them.
+      assert.ok(!reply.result?.exceptionDetails,
+        `\`${expression}\` threw in the page: ${reply.result?.exceptionDetails?.text ?? ''} ${reply.result?.exceptionDetails?.exception?.description ?? ''}`.trim());
+      return reply.result?.result?.value;
+    };
 
-    await send('Runtime.enable');
-    await send('Page.enable');
-    await send('Page.navigate', { url });
-    // The board renders off its first control-WS graph push, not DOMContentLoaded.
-    await waitFor(async () => (await evaluate(`document.querySelectorAll('.task, .session-card').length > 0`))
-      || (await evaluate(`document.body.innerText.trim().length > 0`)), { tries: 40 });
+    // Not fire-and-forget: if Runtime.enable is never acknowledged nothing subscribes to
+    // Runtime.exceptionThrown/consoleAPICalled, and the console-error assertion at the end
+    // then passes against a permanently empty list — a guard that silently checks nothing.
+    const ack = async (method, params) => {
+      const reply = await send(method, params);
+      assert.notEqual(reply, UNANSWERED, `Chrome never acknowledged ${method}`);
+      // An acknowledged FAILURE is not an acknowledgement: a rejected Runtime.enable
+      // subscribes nothing, and the errors assertion at the end then proves nothing.
+      assert.ok(!reply.error, `Chrome rejected ${method}: ${JSON.stringify(reply.error)}`);
+      return reply;
+    };
+    await ack('Runtime.enable');
+    await ack('Page.enable');
+    const navigated = await ack('Page.navigate', { url });
+    assert.ok(!navigated.result?.errorText,
+      `Page.navigate failed: ${navigated.result?.errorText} — the tab may still show the page /json/new opened`);
+    // The board renders off its first control-WS graph push, not DOMContentLoaded, and
+    // #grid is empty in the HTML — so a child inside it means the client has rendered the
+    // grid at all, which on this test's path (fresh data dir, no location hash) only
+    // happens once that push has landed.
+    // Waiting on document.body text instead was BOTH flaky and vacuous, and no increase
+    // in `tries` could fix it, because that wait returned EARLY rather than timing out:
+    // every local asset is `Cache-Control: no-store` (http-handler.js), so the navigate
+    // above re-fetches styles.css every run, and until it applies
+    // `#modal.hidden { display: none }` is not in force — the dialogs and sidebar render,
+    // putting ~1.5k characters on a board that has drawn nothing. The old wait latched
+    // onto that FOUC text on its first poll, then two round trips later asserted either
+    // against the same text (passing with #grid still EMPTY, catching nothing) or, once
+    // styles had landed but the graph had not, against the genuinely-0 gap behind it —
+    // the "board rendered no text at all" failure. Counts CHILDREN rather than matching
+    // #grid's text so the signal survives a copy change to the empty-board hint.
+    const rendered = await waitFor(async () => evaluate(`document.getElementById('grid')?.children.length > 0`));
+    if (!rendered) {
+      // waitFor yields null on a timeout and `evaluate` yields undefined on a dead tab,
+      // so without this the two reach the assertions below indistinguishable from a board
+      // that really did render blank — the reason a timeout used to surface as the
+      // flatly misleading "board rendered no text at all".
+      // Three different failures reach here and the message must not conflate them —
+      // a MISSING #grid is one of the very regressions this test exists to catch, and
+      // the `?.` above reports it as the same falsy value as an empty one.
+      const alive = !socketClosed && !cdpStalled && (await evaluate('1 + 1')) === 2;
+      // `=== true` on purpose: a probe that times out yields undefined, which is NOT the
+      // same answer as the page telling us #grid is absent.
+      const hasGrid = alive && (await evaluate(`!!document.getElementById('grid')`)) === true;
+      const readyState = alive ? await evaluate('document.readyState') : null;
+      const bodyLen = alive ? await evaluate('document.body.innerText.trim().length') : null;
+      // Re-read the transport flags AFTER the probes — one of them may be what broke.
+      assert.fail(!alive || socketClosed || cdpStalled
+        ? `the DevTools evaluate round trip stopped answering (socket ${socketClosed ? 'closed' : 'open'}${cdpStalled ? ', a call exceeded its bound' : ''}) — the tab or renderer died before the board rendered`
+        : !hasGrid
+          ? `#grid (the card grid) is missing from the document entirely (readyState=${readyState})`
+          : `#grid never got a child: the first control-WS graph push never rendered (readyState=${readyState}, body text=${bodyLen} chars)`);
+    }
 
     // Assert the page under test is the one we think it is — a stale or redirected tab
     // would otherwise be reported as a healthy board.
-    assert.equal(await evaluate('location.origin + "/"'), url, 'loaded a different page than expected');
+    assert.equal(await evaluateChecked('location.origin + "/"'), url, 'loaded a different page than expected');
 
     // A fresh instance legitimately has zero session cards, so "did it render" is the
     // shell being present — the blank-page regressions produced literally 0 characters.
-    assert.ok(await evaluate(`document.body.innerText.trim().length > 0`), 'board rendered no text at all');
-    assert.ok(await evaluate(`!!document.getElementById('grid')`), '#grid (the card grid) is missing');
+    // Only meaningful now that the wait above holds it back until the graph has rendered:
+    // against the FOUC window it was satisfied by markup the board never drew.
+    assert.ok(await evaluateChecked(`document.body.innerText.trim().length > 0`), 'board rendered no text at all');
+    assert.ok(await evaluateChecked(`!!document.getElementById('grid')`), '#grid (the card grid) is missing');
 
     // Contract points from the two real regressions: the element a module grabs at
     // import, and a CSS rule whose deletion is otherwise completely silent.
-    assert.ok(await evaluate(`!!document.getElementById('diff-layout-split')`), '#diff-layout-split is missing');
+    assert.ok(await evaluateChecked(`!!document.getElementById('diff-layout-split')`), '#diff-layout-split is missing');
     assert.ok(
-      await evaluate(`[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules]}catch{return []}}).some(r=>r.selectorText==='.diff-row')`),
+      await evaluateChecked(`[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules]}catch{return []}}).some(r=>r.selectorText==='.diff-row')`),
       'the .diff-row side-by-side rule is missing from the stylesheet',
     );
 
