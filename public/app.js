@@ -612,8 +612,11 @@ function setView(view) {
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
 }
+function selectRailView(view) {
+  setView(view !== 'grid' && currentView === view ? 'grid' : view);
+}
 document.querySelectorAll('.layouts button').forEach((btn) => {
-  btn.addEventListener('click', () => setView(btn.dataset.view));
+  btn.addEventListener('click', () => selectRailView(btn.dataset.view));
 });
 
 // ── Extension views (slots.js `view`) ──────────────────────────────────────
@@ -671,7 +674,7 @@ function renderExtViews() {
     // an invisible button.
     if (c.icon) btn.innerHTML = c.icon;
     else btn.textContent = c.label.slice(0, 1).toUpperCase();
-    btn.addEventListener('click', () => setView(key));
+    btn.addEventListener('click', () => selectRailView(key));
     layouts.appendChild(btn);
   }
   updateExtViews();
