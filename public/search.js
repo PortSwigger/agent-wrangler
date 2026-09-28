@@ -223,6 +223,16 @@ function renderIndexLine(msg) {
 function renderTiming(msg) {
   const t = el('search-timing');
   if (!t) return;
+  // Checked ahead of the msg.browse branch below: a Task-scope browse reply
+  // always carries groups:[]/total:0 (the server has no notion of a task row —
+  // see search.js), while renderBrowse still shows real archived-task rows
+  // client-side via matchingArchivedTasks(). Falling through to the generic
+  // browse branch would report "0 conversations" even when tasks are visible.
+  if (msg.scope === 'task') {
+    const n = matchingArchivedTasks().length;
+    t.textContent = n ? `${fmtNum(n)} archived task${n === 1 ? '' : 's'}` : 'no matching archived tasks';
+    return;
+  }
   if (msg.browse) {
     const shown = (msg.groups || []).length;
     const total = msg.total || shown;
@@ -231,14 +241,9 @@ function renderTiming(msg) {
       : `${fmtNum(total)} conversation${total === 1 ? '' : 's'}`;
     return;
   }
-  // 'session'/'task' never reach the corpus scan (see server/control/handlers/
+  // 'session' never reaches the corpus scan (see server/control/handlers/
   // search.js), so "matches · scanned N bytes" would be describing a scan that
-  // never ran — count what these scopes actually found instead.
-  if (msg.scope === 'task') {
-    const n = matchingArchivedTasks().length;
-    t.textContent = n ? `${fmtNum(n)} archived task${n === 1 ? '' : 's'}` : 'no matching archived tasks';
-    return;
-  }
+  // never ran — count what this scope actually found instead.
   if (msg.scope === 'session') {
     const n = (msg.groups || []).length;
     t.textContent = n ? `${fmtNum(n)} session${n === 1 ? '' : 's'} matched` : `no session matches "${msg.query}"`;

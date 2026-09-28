@@ -92,9 +92,13 @@ export async function answerSearch(msg, ctx, {
 
   // Browse: too short to scan for, so list instead. A 1-char query (or any
   // tokens) still filters by metadata — same multi-token AND as History's
-  // filterHistory, so the old view's muscle memory keeps working. Scope 'task'
-  // hides the conversation listing outright — its rows come entirely from the
-  // client's own archived-task list (search-browse.js), not this candidate set.
+  // filterHistory, so the old view's muscle memory keeps working. 'transcript'
+  // and 'session' are deliberately NOT distinguished here: browse is already a
+  // metadata-only listing regardless of scope (there's no corpus scan to run on
+  // a query this short either way), so the scope split only has teeth once a
+  // real search begins below. Scope 'task' hides the conversation listing
+  // outright — its rows come entirely from the client's own archived-task list
+  // (search-browse.js), not this candidate set.
   if (trimmed.length < 2) {
     const tokens = tokenize(trimmed);
     let list = scope === 'task' ? [] : rows.filter((r) => passesFacets(r, facets));
