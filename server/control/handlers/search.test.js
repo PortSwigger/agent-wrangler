@@ -220,6 +220,37 @@ test('search: taskIds restrict both transcript and metadata-only matches', async
   assert.equal(res.shownHits, 1);
 });
 
+test('search: a live board label (e.g. the terminal title Claude set) is searchable with no name/lastLabel', async () => {
+  const entries = new Map([
+    ['card-live', { liveSessionId: 'conv-live', agent: 'claude', intent: 'help me with something', createdAt: 1 }],
+  ]);
+  const sessions = [{ sessionId: 'card-live', label: 'Fix flaky login redirect', lastActivity: 5000 }];
+  const h = harness({ docs: [], entries, sessions });
+  const res = await answerSearch({ query: 'flaky login redirect' }, h.ctx, h.deps);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-live']);
+  assert.equal(res.groups[0].boardLabel, 'Fix flaky login redirect');
+});
+
+test('search: a live board-label match outranks a body-only match, same as a transcript-title match', async () => {
+  const entries = new Map([
+    ['card-a', { liveSessionId: 'conv-a', agent: 'claude', name: 'Body result', createdAt: 1 }],
+  ]);
+  const sessions = [{ sessionId: 'card-a', label: 'Body result', lastActivity: 1 }];
+  const other = { ...structuredClone(SCAN_GROUP_A), docIdx: 1, sessionId: 'conv-b', title: '', cwd: '/repos/api', branch: '' };
+  const entries2 = new Map([
+    ...entries,
+    ['card-b', { liveSessionId: 'conv-b', agent: 'claude', createdAt: 2 }],
+  ]);
+  const sessions2 = [...sessions, { sessionId: 'card-b', label: 'API redesign', lastActivity: 2 }];
+  const h = harness({
+    entries: entries2,
+    sessions: sessions2,
+    scanResult: scanRes([structuredClone(SCAN_GROUP_A), other]),
+  });
+  const res = await answerSearch({ query: 'API' }, h.ctx, h.deps);
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-b', 'conv-a']);
+});
+
 test('search: appended meta rows sort among themselves by lastActivity desc', async () => {
   const entries = new Map([
     ['c1', { liveSessionId: 'g1', agent: 'claude', lastLabel: 'shared-tag one', createdAt: 1_000, archivedAt: 5_000 }],

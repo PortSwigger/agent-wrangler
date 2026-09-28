@@ -134,8 +134,21 @@ test('buildCandidates: a dead doc is skipped, which routes its entry through the
   assert.equal(dead[0].noTranscript, true); // synthesized, not the tombstoned doc
 });
 
+test('buildCandidates: a live graph label wins for boardLabel; falls back to the mapping label when absent', () => {
+  const withLive = buildCandidates({
+    docs: DOCS, entries: entries(),
+    live: new Map([['card-a', { lastActivity: 0, label: 'Live terminal title' }]]),
+  });
+  const a = withLive.find((r) => r.sessionId === 'conv-a');
+  assert.equal(a.boardLabel, 'Live terminal title'); // beats entry.name ('login')
+
+  const withoutLive = buildCandidates({ docs: DOCS, entries: entries(), live: new Map() });
+  const a2 = withoutLive.find((r) => r.sessionId === 'conv-a');
+  assert.equal(a2.boardLabel, 'login'); // no live entry — falls back to the mapping's own name
+});
+
 test('buildCandidates: lastActivity is the max of doc tail, entry stamps, and live graph activity', () => {
-  const live = new Map([['card-a', 9_000_000]]);
+  const live = new Map([['card-a', { lastActivity: 9_000_000, label: '' }]]);
   const rows = buildCandidates({ docs: DOCS, entries: entries(), live });
   const a = rows.find((r) => r.sessionId === 'conv-a');
   assert.equal(a.lastActivity, 9_000_000); // live activity beats lastTs*1000 (1_000_000) and createdAt
