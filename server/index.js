@@ -17,7 +17,6 @@ import { ChecklistStore } from './checklist-store.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
-import { createPromptMonitor } from './prompt-monitor.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
 import { createMailSettleSweeper } from './mail-runner.js';
@@ -132,7 +131,6 @@ function quarantineFor(id, err) {
   log(`[agent-wrangler] extension ${id} quarantined (${entry?.external ? 'installed' : 'builtin'}): ${reason}`);
 }
 const sessionManager = new SessionManager();
-const promptMonitor = createPromptMonitor(sessionManager);
 const taskStore = new TaskStore();
 const memoryStore = new MemoryStore();
 // The core singletons an extension's capability builder binds on its behalf (the
@@ -1040,7 +1038,6 @@ async function main() {
   // one's in-flight staging dir out from under it.
   sweepStaging();
   await sessionManager.init();
-  await promptMonitor.seed();
   setTmuxBin(sessionManager.tmuxBin);
   // Repoint every active session's memory symlink before the first build, repairing
   // any staleness from assignment changes made while the server was down.
@@ -1056,7 +1053,6 @@ async function main() {
   const memoryWatcher = memoryStore.createWatcher();
   memoryWatcher.on('change', (taskId) => { rebuild().catch(() => {}); broadcast({ type: 'memory-changed', taskId }); });
   setInterval(() => rebuild().catch(() => {}), 4000);
-  setInterval(() => promptMonitor.poll().catch((err) => logError('[prompt-monitor]', err)), 2000);
   // Suspend reconcile on a slower cadence than rebuild — teardown is rare and the
   // 4h idle threshold gives ample hysteresis. Rebuild only when it actually acts.
   setInterval(() => {

@@ -551,18 +551,9 @@ those carries. Read this before changing anything under
   contributor can silently overwrite it every tick. Session hooks
   (`_extHooks` on `SessionManager`, `_fireExtHooks`) are logged-not-thrown and
   sequential, never abort the core operation, and fire only on
-  archive/fork/purge/dispatch/resume/prompt (never per tick, so `logError` there obeys
+  archive/fork/purge/dispatch/resume (never per tick, so `logError` there obeys
   the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
-  coalescing reason the resume log line does. **`session.onPrompt` (host API
-  1.11.0) observes each new user prompt after it appears in the agent's
-  transcript**, whether it came from the terminal, the board, or a peer. Its
-  payload is `{ sessionId, liveSessionId, agent, entry, text, images, ts, host }`;
-  `sessionId` is the stable card id, `ts` is the transcript timestamp in
-  milliseconds, and `images` holds chat-view image descriptors when present.
-  The monitor checks every two seconds, suppresses tool results and synthetic
-  context using the chat scanner, and does not replay prompts already present
-  when the server starts. It is an observation hook: the agent has already
-  received the prompt, so it cannot edit or veto it. `/ext/<id>/*`
+  coalescing reason the resume log line does. `/ext/<id>/*`
   (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
   which register/unregister maintain, so it holds the CURRENTLY ACTIVE extensions —
   a disabled or uninstalled one is a 404 from the moment it is deregistered — and resolves the rest via `path.resolve` against the
