@@ -173,3 +173,72 @@ test('the gate sees the existing entry on resume and the parent on fork', async 
   assert.equal(seen[0].entry, parentEntry);
   assert.equal(seen[0].parentId, 'CARD1');
 });
+
+// ── The per-launch Codex policy seam ──────────────────────────────────────
+function codexManager() {
+  const sm = manager();
+  sm._ensureCodexTrust = () => {};
+  sm._resolveLiveId = async () => 'live-codex';
+  return sm;
+}
+
+test('_extCodexPolicy answers undefined by default, so Codex keeps the core flags', async () => {
+  const sm = codexManager();
+  assert.equal(sm._extCodexPolicy({}), undefined);
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  assert.match(built, /'--sandbox' 'workspace-write' '--ask-for-approval' 'never'/);
+});
+
+test('dispatch consults the Codex policy after onBeforeDispatch, with entry null, and threads it to the argv', async () => {
+  const sm = codexManager();
+  const order = [];
+  let ctx = null;
+  let built = '';
+  sm._extHooks.onBeforeDispatch.push(() => order.push('before'));
+  sm._extCodexPolicy = (c) => { order.push('policy'); ctx = c; return { sandbox: 'read-only', approval: 'on-request' }; };
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  assert.deepEqual(order, ['before', 'policy']);
+  assert.deepEqual(ctx, { phase: 'dispatch', sessionId, entry: null });
+  assert.match(built, /'--sandbox' 'read-only' '--ask-for-approval' 'on-request'/);
+});
+
+test('resume hands the Codex policy the existing entry; fork the parent entry, parentId and the new card id', async () => {
+  const sm = codexManager();
+  const seen = [];
+  const built = [];
+  sm._extCodexPolicy = (c) => { seen.push(c); return { bypass: true }; };
+  sm._newSession = async (_t, _d, inner) => { built.push(inner); };
+  sm.map.set('CARD1', { tmux: 'cx_a', cwd: os.tmpdir(), agent: 'codex', liveSessionId: 'ROLL-1' });
+  const prev = sm.entryFor('CARD1');
+  await sm.resume('CARD1', os.tmpdir());
+  assert.equal(seen[0].phase, 'resume');
+  assert.equal(seen[0].sessionId, 'CARD1');
+  assert.equal(seen[0].entry, prev);
+
+  const parentEntry = { agent: 'codex', cwd: os.tmpdir() };
+  const { sessionId } = await sm.fork({ sourceId: 'ROLL-1', parentId: 'CARD1', parentEntry, cwd: os.tmpdir() });
+  assert.equal(seen[1].phase, 'fork');
+  assert.equal(seen[1].sessionId, sessionId);
+  assert.notEqual(sessionId, 'CARD1');
+  assert.equal(seen[1].entry, parentEntry);
+  assert.equal(seen[1].parentId, 'CARD1');
+  for (const cmd of built) {
+    assert.match(cmd, /'--dangerously-bypass-approvals-and-sandbox'/);
+    assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval/);
+  }
+});
+
+test('the Codex policy is never consulted for a Claude launch', async () => {
+  const sm = manager();
+  let asked = 0;
+  sm._extCodexPolicy = () => { asked += 1; return { bypass: true }; };
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'claude' });
+  await sm.fork({ sourceId: 'SRC', parentId: 'P', parentEntry: { agent: 'claude', cwd: os.tmpdir() }, cwd: os.tmpdir() });
+  assert.equal(asked, 0);
+  assert.doesNotMatch(built, /dangerously-bypass-approvals/);
+});

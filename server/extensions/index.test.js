@@ -8,7 +8,7 @@ import {
   hookPayloadFor,
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
-  createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
+  createSkillGate, createCodexPolicyResolver, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
   primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
@@ -332,6 +332,70 @@ test('a throwing gate suppresses nothing and is reported', () => {
 
 test('no gate at all means no per-launch suppression', () => {
   assert.deepEqual(createSkillGate(loadExtensions({ cfg: {}, builtin: [manifest({ skills: ['checklist'] })] }))({}), []);
+});
+
+// ── Per-launch Codex policy ───────────────────────────────────────────────
+function policyExt(id, codexPolicy) {
+  return { id, label: `Policy ${id}`, help: 'Answers a Codex policy.', defaultEnabled: true, dir: path.join(HERE, id), codexPolicy };
+}
+
+test('codexPolicy must be a function', () => {
+  assert.throws(() => validateManifest(manifest({ codexPolicy: { sandbox: 'read-only' } })), /codexPolicy must be a function/);
+});
+
+test('createCodexPolicyResolver passes phase/sessionId/entry plus the OWN facade as ext', () => {
+  const seen = [];
+  const asked = [];
+  const host = { id: 'facade' };
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ codexPolicy: (ctx) => { seen.push(ctx); return { sandbox: 'read-only' }; } })] });
+  const entry = { agent: 'codex' };
+  const out = createCodexPolicyResolver(loaded, (id) => { asked.push(id); return host; })({ phase: 'resume', sessionId: 'CARD1', entry });
+  assert.deepEqual(out, { sandbox: 'read-only' });
+  assert.equal(seen[0].phase, 'resume');
+  assert.equal(seen[0].sessionId, 'CARD1');
+  assert.equal(seen[0].entry, entry);
+  assert.equal(seen[0].ext, host);
+  assert.deepEqual(asked, ['fake']);
+});
+
+test('createCodexPolicyResolver: first answer wins and a collision is logged', () => {
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [
+    policyExt('a', () => undefined),
+    policyExt('b', () => ({ approval: 'on-request' })),
+    policyExt('c', () => ({ bypass: true })),
+  ] });
+  assert.deepEqual(createCodexPolicyResolver(loaded, undefined, (m) => errs.push(m))({}), { approval: 'on-request' });
+  assert.deepEqual(errs, ['[ext:c] codexPolicy ignored; b already answered']);
+});
+
+test('createCodexPolicyResolver: a throw is logged, fails open, and the next extension is still asked', () => {
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [
+    policyExt('a', () => { throw new Error('boom'); }),
+    policyExt('b', () => ({ sandbox: 'danger-full-access' })),
+  ] });
+  assert.deepEqual(createCodexPolicyResolver(loaded, undefined, (m) => errs.push(m))({}), { sandbox: 'danger-full-access' });
+  assert.match(errs[0], /\[ext:a\] codexPolicy failed/);
+  const only = loadExtensions({ cfg: {}, builtin: [policyExt('a', () => { throw new Error('boom'); })] });
+  assert.equal(createCodexPolicyResolver(only, undefined, () => {})({}), undefined);
+});
+
+test('createCodexPolicyResolver normalises an invalid answer, and a Promise counts as invalid', () => {
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [policyExt('a', () => ({ sandbox: 'bogus', approval: 'never' }))] });
+  assert.deepEqual(createCodexPolicyResolver(loaded, undefined, (m) => errs.push(m))({}), { approval: 'never' });
+  assert.match(errs[0], /dropped sandbox="bogus"/);
+  const asy = loadExtensions({ cfg: {}, builtin: [policyExt('a', async () => ({ bypass: true }))] });
+  assert.equal(createCodexPolicyResolver(asy, undefined, () => {})({}), undefined);
+});
+
+test('unregister removes the extension\'s codexPolicy', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [policyExt('a', () => ({ bypass: true }))] });
+  assert.equal(loaded.codexPolicies.length, 1);
+  unregisterExtension(loaded, 'a');
+  assert.deepEqual(loaded.codexPolicies, []);
+  assert.equal(createCodexPolicyResolver(loaded)({}), undefined);
 });
 
 // ── Per-caller MCP tool filtering ─────────────────────────────────────────

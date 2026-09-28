@@ -7,6 +7,7 @@ import { analyzeCodex, listResumableCodex, activityInRangeCodex } from './codex-
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
+import { codexPolicyArgs } from '../extensions/codex-policy.js';
 
 const exec = promisify(execFile);
 // `*-codex`-suffixed models (e.g. gpt-5.5-codex) are rejected on ChatGPT-account
@@ -40,7 +41,13 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 }
 
 // Flags shared by launch/resume/fork: autonomy, network, memory write-grant, and
-// the additive developer-instructions channel (verified equivalent of Claude's
+// the additive developer-instructions channel. Autonomy (sandbox, approval, the
+// network grant, --approve-for-me or bypass) comes from an extension's
+// `codexPolicy` answer when one answers (codexPolicyArgs,
+// extensions/codex-policy.js); otherwise the core defaults apply:
+// --sandbox workspace-write --ask-for-approval never plus the workspace-write
+// network grant. Everything else is unconditional, bypass included.
+// Developer instructions are the verified equivalent of Claude's
 // --append-system-prompt; injected as a `developer`-role message). The session
 // manager passes the real memory target returned by bindSession; the adapter's
 // resolver fallback covers direct callers and legacy seams without ever choosing
@@ -50,7 +57,7 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, disabledSkills }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, disabledSkills, codexPolicy }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
@@ -61,11 +68,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
   const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
   const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
-  const args = [
-    '--sandbox', 'workspace-write',
-    '--ask-for-approval', 'never',
-    '-c', 'sandbox_workspace_write.network_access=true',
-  ];
+  const args = codexPolicyArgs(codexPolicy);
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('--add-dir', memoryDir);
   for (const d of addDirs) args.push('--add-dir', d);
@@ -129,34 +132,34 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills }));
+    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills, codexPolicy }));
     let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills, codexPolicy }));
     return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills }) {
+  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
     ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills }));
+    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills, codexPolicy }));
     let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;

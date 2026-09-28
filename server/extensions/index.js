@@ -3,6 +3,7 @@ import semver from 'semver';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
+import { normalizeCodexPolicy } from './codex-policy.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -254,6 +255,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
     }
   }
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
+  if (ext.codexPolicy != null && typeof ext.codexPolicy !== 'function') fail(ext, 'codexPolicy must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
   if (ext.session != null) {
@@ -392,6 +394,7 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     graphContributors: [],
     sessionHooks: Object.fromEntries(SESSION_HOOKS.map((k) => [k, []])),
     skillGates: [],
+    codexPolicies: [],
     toolFilters: [],
     sweeps: [],
     clientManifest: [],
@@ -575,6 +578,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   // so one extension can never silently suppress another's — nor task-memory's,
   // which is not an extension at all and keeps its own flag.
   if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
+  if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
   for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
@@ -656,6 +660,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.sweeps = loaded.sweeps.filter((s) => s.extId !== id);
   loaded.graphContributors = loaded.graphContributors.filter((g) => g.id !== id);
   loaded.skillGates = loaded.skillGates.filter((g) => g.id !== id);
+  loaded.codexPolicies = loaded.codexPolicies.filter((p) => p.id !== id);
   loaded.toolFilters = loaded.toolFilters.filter((f) => f.id !== id);
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
   for (const name of entry?.storeNames || []) delete loaded.stores[name];
@@ -728,6 +733,41 @@ export function createSkillGate(ext, hostApiFor = () => undefined, onError = () 
       for (const name of skills) if (!kept.has(name)) out.push(name);
     }
     return out;
+  };
+}
+
+// Per-launch Codex autonomy (sandbox, approval, --approve-for-me, bypass). A
+// `codexPolicy` hook is asked at the same three points as a skill gate, and only
+// for a Codex launch, with `{ phase, sessionId, entry, ext }` (plus `parentId`
+// at fork, since the fork has no entry of its own yet). `ext` is the answering
+// extension's OWN façade. The answer goes through normalizeCodexPolicy, so a bad
+// field is dropped and the rest applies. The first usable answer wins; a later
+// one is logged as a collision and discarded. A throw fails open for that
+// extension only, and the next is still asked. Synchronous, like `skillsFor`: a
+// returned Promise is an invalid answer, logged and dropped. `undefined` means
+// the core defaults (codexPolicyArgs).
+export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onError = () => {}) {
+  return function codexPolicyFor(context = {}) {
+    let winner;
+    let winnerId;
+    for (const { id, fn } of ext.codexPolicies) {
+      let raw;
+      try {
+        raw = fn({ ...context, ext: hostApiFor(id) });
+      } catch (err) {
+        onError(`[ext:${id}] codexPolicy failed`, err);
+        continue;
+      }
+      const policy = normalizeCodexPolicy(raw, { extId: id, onError });
+      if (policy === undefined) continue;
+      if (winner !== undefined) {
+        onError(`[ext:${id}] codexPolicy ignored; ${winnerId} already answered`);
+        continue;
+      }
+      winner = policy;
+      winnerId = id;
+    }
+    return winner;
   };
 }
 

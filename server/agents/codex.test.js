@@ -166,3 +166,42 @@ test('codex leaves auto-compaction unset when a session has no threshold', () =>
   assert.doesNotMatch(codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL', ...memory }), /model_auto_compact_token_limit/);
   assert.doesNotMatch(codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL', ...memory }), /model_auto_compact_token_limit/);
 });
+
+// ── Extension-supplied autonomy (codexPolicy) ──────────────────────────────
+test('codexPolicy reaches the argv on launch, resume and fork', () => {
+  const codexPolicy = { sandbox: 'read-only', approval: 'on-request' };
+  const cmds = [
+    codex.buildLaunch({ ...base, intent: '', codexPolicy }),
+    codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory, codexPolicy }),
+    codex.buildFork({ sessionId: 'BID', sourceId: 'SRC', ...memory, codexPolicy }),
+  ];
+  for (const cmd of cmds) {
+    assert.match(cmd, /'--sandbox' 'read-only' '--ask-for-approval' 'on-request'/);
+    assert.doesNotMatch(cmd, /workspace-write|network_access/);
+    assert.match(cmd, /'--add-dir' '\/memory\/tasks\/T1'/);
+  }
+});
+
+test('codexPolicy bypass drops sandbox, approval and network grant but keeps add-dirs and MCP', () => {
+  const codexPolicy = { bypass: true };
+  const cmds = [
+    codex.buildLaunch({ ...base, intent: '', addDirs: ['/a'], codexPolicy }),
+    codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', addDirs: ['/a'], ...memory, codexPolicy }),
+    codex.buildFork({ sessionId: 'BID', sourceId: 'SRC', addDirs: ['/a'], ...memory, codexPolicy }),
+  ];
+  for (const cmd of cmds) {
+    assert.match(cmd, /'--dangerously-bypass-approvals-and-sandbox'/);
+    assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval|network_access/);
+    assert.match(cmd, /'--add-dir' '\/memory\/tasks\/T1'/);
+    assert.match(cmd, /'--add-dir' '\/a'/);
+    assert.match(cmd, /mcp_servers\.agent-wrangler\.url=/);
+    assert.match(cmd, /developer_instructions=/);
+  }
+});
+
+test('codexPolicy approve-for-me emits the flag without -s/-a', () => {
+  const cmd = codex.buildLaunch({ ...base, intent: '', codexPolicy: { approveForMe: true } });
+  assert.match(cmd, /'--approve-for-me'/);
+  assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
+  assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval/);
+});

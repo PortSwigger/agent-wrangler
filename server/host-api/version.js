@@ -109,7 +109,16 @@ import semver from 'semver';
 // state app.js owns — not a control frame `send` could carry — so, like
 // `openSession`, only the base api can reach it. An older slots.js throws on
 // the slot name and has no such method, so only the range can say so.
-export const HOST_API_VERSION = '1.11.0';
+//
+// 1.12.0 is the `codexPolicy` manifest key: a synchronous per-launch hook that
+// answers a Codex session's sandbox, approval policy, `--approve-for-me` and
+// bypass (validated by extensions/codex-policy.js, resolved by
+// createCodexPolicyResolver). No façade key, and a server older than this never
+// calls the hook — the manifest loads but its policy is silently ignored, and
+// every Codex launch keeps the core defaults. So a manifest declaring
+// `^1.12.0` refuses to boot against such a server, which is the only way a
+// human learns the policy they chose is not being applied.
+export const HOST_API_VERSION = '1.12.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

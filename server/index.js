@@ -14,7 +14,7 @@ import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -160,6 +160,8 @@ const storesFor = (id) => Object.fromEntries(
 // dispatch/resume/fork before the adapter builds the command, so an extension
 // can answer "not this session" for a skill its manifest declares.
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
+// Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
+sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
 // to the real runner with memoryStore injected — keeps SessionManager itself
 // free of that dependency, and every test that doesn't stub _archiveReview
