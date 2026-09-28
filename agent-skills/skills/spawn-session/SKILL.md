@@ -63,17 +63,17 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 ## Codex sandbox and `add_dirs`
 
 A Codex session runs under Codex's own OS sandbox (`--sandbox workspace-write`,
-approvals off). It can read anywhere, but it can only **write** to: its cwd, `/tmp`
-and `$TMPDIR`, its wrangler memory dir, and each `add_dirs` entry. A blocked write
-fails on the spot with `Operation not permitted` — there is no approval prompt to
-fall back on. Claude sessions have no such sandbox; none of this applies to them.
+`--ask-for-approval on-request`). It can read anywhere, but it can write without
+approval only to: its cwd, `/tmp` and `$TMPDIR`, its wrangler memory dir, and each
+`add_dirs` entry. A write outside those roots can require approval. Claude
+sessions have no such sandbox; none of this applies to them.
 
 The wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
 whether cwd is a plain checkout or a linked worktree (pre-existing or created via
 `worktree: true`) — so `git commit`/`push` work without any `add_dirs`.
 
-Anything **else** the work writes outside cwd must be listed in `add_dirs`, as
-existing absolute (or `~/`-prefixed) directories. For a Gradle repo that means at
+For unattended writes outside cwd, list those directories in `add_dirs` as
+existing absolute (or `~/`-prefixed) paths. Otherwise Codex may stop for approval. For a Gradle repo that means at
 least `~/.gradle`; add any wrapper's state dir too (e.g. `~/.local/state/gradle-slot`).
 
 Known limits of the sandbox, none of which `add_dirs` can lift:

@@ -107,7 +107,7 @@ export function archiveReviewEnabled(cfg = readConfig()) {
 // Whether a Codex launch/resume/fork marks that invocation's cwd trusted
 // (`-c projects."<cwd>".trust_level="trusted"`), skipping Codex's own
 // trust-folder prompt — Agent Wrangler already sandboxes the session
-// (workspace-write + no approval), so the prompt is pure friction. Default on;
+// (workspace-write), so the prompt is pure friction. Default on;
 // toggled from the board's settings modal (config.json
 // `trustCodexLaunchCwd: false` restores Codex's normal prompt). Takes cfg (like
 // taskMemoryEnabled) so tests never write the shared config.json.

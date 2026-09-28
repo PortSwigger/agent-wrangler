@@ -63,7 +63,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = [
     '--sandbox', 'workspace-write',
-    '--ask-for-approval', 'never',
+    '--ask-for-approval', 'on-request',
     '-c', 'sandbox_workspace_write.network_access=true',
   ];
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);

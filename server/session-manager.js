@@ -356,8 +356,8 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
 // write index.lock/objects/refs there. workspace-write keeps `<root>/.git`
 // read-only inside every writable root, and a linked worktree's git-dir is a
 // sibling directory the sandbox never grants at all — either way `git commit`
-// fails under `--ask-for-approval never` unless the common git-dir is granted
-// as a root of its own (see gitCommonDir). Keyed off cwd, not off a
+// needs approval under `--ask-for-approval on-request` unless the common git-dir
+// is granted as a root of its own (see gitCommonDir). Keyed off cwd, not off a
 // wrangler-made worktree entry: a pre-existing worktree handed over as plain
 // `cwd` has the same problem. No-op for any other agent (no OS sandbox) or a
 // cwd outside a repository.

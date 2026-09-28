@@ -21,7 +21,7 @@ test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   assert.match(cmd, /(^|\s)codex /);
   assert.match(cmd, /'-m' 'gpt-5\.5-codex'/);
   assert.match(cmd, /'--sandbox' 'workspace-write'/);
-  assert.match(cmd, /'--ask-for-approval' 'never'/);
+  assert.match(cmd, /'--ask-for-approval' 'on-request'/);
   assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
   assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
   assert.match(cmd, /You have wrangler-meta skills available/);
@@ -64,6 +64,7 @@ test('codex buildResume: resume id, flags re-applied, no prompt', () => {
   const cmd = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory });
   assert.match(cmd, /codex 'resume' 'ROLL-UUID'/);
   assert.match(cmd, /'--sandbox' 'workspace-write'/);
+  assert.match(cmd, /'--ask-for-approval' 'on-request'/);
   assert.match(cmd, /'--add-dir' '\/memory\/tasks\/T1'/);
   assert.match(cmd, /AW_SESSION_ID='BID'/);
 });
@@ -71,6 +72,7 @@ test('codex buildResume: resume id, flags re-applied, no prompt', () => {
 test('codex buildFork: forks source into new board identity, prompt trails', () => {
   const cmd = codex.buildFork({ sessionId: 'NEWBID', sourceId: 'SRC', model: 'gpt-5.5-codex', intent: 'branch', ...memory });
   assert.match(cmd, /codex 'fork' 'SRC'/);
+  assert.match(cmd, /'--ask-for-approval' 'on-request'/);
   assert.match(cmd, /AW_SESSION_ID='NEWBID'/);
   assert.match(cmd, /'branch'$/);
 });
