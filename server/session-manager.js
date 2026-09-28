@@ -352,15 +352,13 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   return { cwd: res.path, branch: res.branch, worktree: { path: res.path, branch: res.branch, repoRoot: res.repoRoot } };
 }
 
-// Codex-only: fold the launch cwd's git-dir into addDirs so its sandbox can
-// write index.lock/objects/refs there. workspace-write keeps `<root>/.git`
-// read-only inside every writable root, and a linked worktree's git-dir is a
-// sibling directory the sandbox never grants at all — either way `git commit`
-// fails under `--ask-for-approval never` unless the common git-dir is granted
-// as roots of their own (see gitDirs). Keyed off cwd, not off a
-// wrangler-made worktree entry: a pre-existing worktree handed over as plain
-// `cwd` has the same problem. No-op for any other agent (no OS sandbox) or a
-// cwd outside a repository.
+// Codex-only: fold the launch cwd's private and common git metadata dirs into
+// addDirs so its sandbox can write index.lock, objects and refs. Codex marks
+// git metadata read-only inside workspace-write roots, including the linked
+// worktree's private git-dir where index.lock is created. Keyed off cwd, not
+// off a wrangler-made worktree entry: a pre-existing worktree handed over as
+// plain `cwd` has the same problem. No-op for any other agent (no OS sandbox)
+// or a cwd outside a repository.
 async function withCodexGitDirAddDir(agent, cwd, addDirs) {
   if (agent !== 'codex' || !cwd) return addDirs;
   const gitDirsToGrant = await gitDirs(cwd);

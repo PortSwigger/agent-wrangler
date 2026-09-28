@@ -1172,6 +1172,7 @@ test('resume() threads trustCodexLaunchCwd into ensureCodexTrust, keyed on the e
 test('resume() adds the linked worktree common git-dir via --add-dir for a codex entry', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-resume-wt-'));
   const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const worktreeGitDir = execFileSync('git', ['-C', worktreePath, 'rev-parse', '--path-format=absolute', '--git-dir'], { encoding: 'utf8' }).trim();
   const sm = new SessionManager();
   sm.map.clear();
   sm.map.set('card-wt', {
@@ -1186,6 +1187,7 @@ test('resume() adds the linked worktree common git-dir via --add-dir for a codex
   sm._newSession = async (_t, _d, inner) => { captured = inner; };
   await sm.resume('card-wt', worktreePath);
   assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  assert.ok(captured.includes(`'--add-dir' '${worktreeGitDir}'`), captured);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
