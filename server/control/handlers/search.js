@@ -28,16 +28,28 @@ let lastRefresh = 0;
 const BROWSE_LIMIT = 60;
 const VALID_STATUS = new Set(['board', 'archived', 'offboard']);
 
+// `title` (the transcript's own ai-title) and `boardLabel` (what the card
+// actually shows — see candidateRows' `live` comment) are checked separately,
+// each having to contain every token on its own: a token that only appears once
+// title is spliced with boardLabel must not count as "the title matched" (mirrors
+// matchMeta's own join-boundary caveat, but for ranking rather than inclusion).
 function titleMatches(row, tokens) {
-  const title = String(row.title || '').toLowerCase();
-  return tokens.length > 0 && tokens.every((token) => title.includes(token));
+  if (!tokens.length) return false;
+  return [row.title, row.boardLabel].some((field) => {
+    const v = String(field || '').toLowerCase();
+    return tokens.every((token) => v.includes(token));
+  });
 }
 
 // The candidate list the join runs over: index docs + board entries, with live
 // activity from the graph (graph sessions are keyed on the CARD id, which is
 // what every entry field is keyed on too — never the conversation id).
 function candidateRows(ctx, docs) {
-  const live = new Map((ctx.graph()?.sessions || []).map((s) => [s.sessionId, s.lastActivity || 0]));
+  // `label` is the fully-resolved display label a live session's card actually
+  // shows (sessionLabel() in state-reader.js — terminal title / ai-title / name,
+  // whichever wins) — see board-rows.js's boardFieldsOf for why this has to ride
+  // along rather than being re-derived from the mapping entry alone.
+  const live = new Map((ctx.graph()?.sessions || []).map((s) => [s.sessionId, { lastActivity: s.lastActivity || 0, label: s.label || '' }]));
   const taskFor = (cardId) => ctx.taskStore?.taskFor(cardId) || null;
   return buildCandidates({ docs, entries: ctx.sessionManager?.map || new Map(), live, taskFor });
 }
