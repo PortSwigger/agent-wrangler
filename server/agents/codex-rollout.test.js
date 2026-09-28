@@ -333,6 +333,15 @@ test('listResumableCodex lists a conversation once after a same-id resume', asyn
   assert.equal(candidates.filter((candidate) => candidate.sessionId === uuid).length, 1);
 });
 
+test('listResumableCodex prefers a resumed file minted in the same second', async () => {
+  const { root, uuid } = fixtureSessions();
+  const day = path.join(root, '2026', '06', '10');
+  const resumed = path.join(day, `rollout-2026-06-10T09-00-00-${uuid}_01a0e819-57a8-7823-b332-3a6efe7548d3.jsonl`);
+  fs.writeFileSync(resumed, JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } }) + '\n');
+  const { candidates } = await listResumableCodex(new Set(), { sessionsDir: root, now: Date.now() });
+  assert.equal(candidates.find((candidate) => candidate.sessionId === uuid)?.summary, null);
+});
+
 test('listResumableCodex excludes ids already shown', async () => {
   const { root, uuid } = fixtureSessions();
   const { total } = await listResumableCodex(new Set([uuid]), { sessionsDir: root, now: Date.parse('2026-06-10T10:00:00Z') });

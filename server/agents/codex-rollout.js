@@ -647,7 +647,7 @@ export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
   const family = await cachedFamilyIndex(sessionsDir);
   const candidates = [];
   const seenIds = new Set();
-  for (const r of (await allRollouts(sessionsDir)).sort((a, b) => b.name.localeCompare(a.name))) {
+  for (const r of (await allRollouts(sessionsDir)).sort((a, b) => a.name < b.name ? 1 : a.name > b.name ? -1 : 0)) {
     const sessionId = uuidFromName(r.name);
     if (!sessionId || seenIds.has(sessionId)) continue;
     seenIds.add(sessionId);
