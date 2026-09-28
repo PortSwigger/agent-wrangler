@@ -127,19 +127,22 @@ export function isValidBranchName(name) {
   return name.split('/').every((c) => c && !c.startsWith('.') && !c.endsWith('.lock'));
 }
 
-// The git-dir a Codex sandbox needs writable to `git add`/`git commit` from
-// `cwd`: the COMMON dir (`<main checkout>/.git`), never a linked worktree's
-// private `--git-dir` (`.git/worktrees/<name>` — index.lock lands there but the
-// object writes and ref updates still go to the common dir, verified against
-// the real binary). In a plain checkout the two coincide and this is its own
-// `.git`. Null outside any repository.
-export async function gitCommonDir(cwd) {
+// The git metadata directories a Codex sandbox needs writable for
+// `git add`/`git commit`: a linked worktree's private `--git-dir` holds
+// `index.lock`, while the common dir holds objects and refs. A plain checkout
+// returns its single `.git` directory. Empty outside any repository.
+export async function gitDirs(cwd) {
   try {
-    const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir']);
-    return stdout.trim() || null;
+    const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']);
+    return [...new Set(stdout.trim().split('\n').filter(Boolean))];
   } catch {
-    return null;
+    return [];
   }
+}
+
+export async function gitCommonDir(cwd) {
+  const dirs = await gitDirs(cwd);
+  return dirs.at(-1) || null;
 }
 
 export class WorktreeError extends Error {}
