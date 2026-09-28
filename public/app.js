@@ -47,6 +47,7 @@ import {
 import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
+import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } from './modals.js';
 import { openFilePreview } from './file-preview.js';
@@ -195,6 +196,14 @@ const slots = createSlots({
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
   version: () => hostApiVersion,
 });
+function openSessionInBoard(sessionId) {
+  setView('grid');
+  if (latestSessions.some((x) => x.sessionId === sessionId)) { focusSession(sessionId); return; }
+  pendingSelect = sessionId;
+  send({ type: 'resume', sessionId });
+  toast('Restoring…');
+}
+
 const extApi = {
   send,
   selectedSessionId: () => selectedSessionId,
@@ -204,13 +213,7 @@ const extApi = {
   // graph brings it back — the same sequence as a Search result's Restore. This
   // is the only board navigation an extension has; slots.apiFor exposes it and
   // has already refused anything that is not a session id.
-  openSession: (sessionId) => {
-    setView('grid');
-    if (latestSessions.some((x) => x.sessionId === sessionId)) { selectSession(sessionId); return; }
-    pendingSelect = sessionId;
-    send({ type: 'resume', sessionId });
-    toast('Restoring…');
-  },
+  openSession: openSessionInBoard,
   // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
@@ -6561,10 +6564,10 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr);
+  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
+    n.onclick = () => { window.focus(); if (msg.scope === 'session') openSessionInBoard(msg.sessionId); };
   }
   if (isErr) flashPr(msg.url);
 }
