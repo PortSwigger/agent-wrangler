@@ -178,7 +178,12 @@ function ddFilter(id, options, get, set) {
     label.textContent = current.label;
     panel.textContent = '';
     for (const opt of options) {
-      const row = document.createElement('div');
+      // A real <button>, not a plain div: the div-with-onclick version this
+      // replaced was mouse-only — unreachable by Tab, unactivatable by
+      // Enter/Space, and announced to a screen reader as inert text rather
+      // than a selectable option.
+      const row = document.createElement('button');
+      row.type = 'button';
       row.className = 'search-dd-option' + (opt.value === get() ? ' on' : '');
       row.textContent = opt.label;
       row.addEventListener('click', () => {
