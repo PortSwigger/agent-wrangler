@@ -746,9 +746,9 @@ export function initSearchView() {
   el('search-word').addEventListener('change', (e) => { state.wholeWord = e.target.checked; fire(); });
   segGroup('role', (v) => { state.role = v; });
   segGroup('scope', (v) => { state.scope = v; });
-  segGroup('agent', (v) => { state.agent = v; });
-  segGroup('status', (v) => { state.status = v; });
-  segGroup('time', (v) => { state.time = v; });
+  el('search-agent-select').addEventListener('change', (e) => { state.agent = e.target.value; fire(); });
+  el('search-status-select').addEventListener('change', (e) => { state.status = e.target.value; fire(); });
+  el('search-time-select').addEventListener('change', (e) => { state.time = e.target.value; fire(); });
   el('search-reindex').addEventListener('click', () => {
     if (state.building) return;
     state.building = true;
