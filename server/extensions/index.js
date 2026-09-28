@@ -3,6 +3,7 @@ import semver from 'semver';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
+import { nativeHookGroups } from './native-hooks.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -253,6 +254,24 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, `unknown skill "${s}" — neither agent-skills/skills/${s} in the wrangler nor skills/${s}/SKILL.md declaring \`name: ${s}\` under this extension`);
     }
   }
+  // Native hooks are bundled with the extension's Claude plugin directories.
+  // Declare their event names so the install consent and settings row can show
+  // what will run; Codex consumes the same hook files at launch.
+  if (ext.hooks != null && (!Array.isArray(ext.hooks) || ext.hooks.some((h) => typeof h !== 'string' || !/^[A-Za-z][A-Za-z0-9]*$/.test(h)))) {
+    fail(ext, 'hooks must be an array of native hook event names');
+  }
+  const shippedSkills = (ext.skills || []).filter((s) => !repoSkills.has(s));
+  if (dir && shippedSkills.length) {
+    let actual;
+    try { actual = Object.keys(nativeHookGroups({ dir, skills: shippedSkills })).sort(); }
+    catch (err) { fail(ext, `invalid native hooks: ${err.message}`); }
+    const declared = [...new Set(ext.hooks || [])].sort();
+    if (declared.length !== (ext.hooks || []).length || JSON.stringify(actual) !== JSON.stringify(declared)) {
+      fail(ext, `hooks must declare exactly the bundled native hook events (${actual.join(', ') || 'none'})`);
+    }
+  } else if (ext.hooks?.length) {
+    fail(ext, 'hooks require an extension-shipped skill plugin');
+  }
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
@@ -309,7 +328,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField,
-    quarantine, external, description, author, homepage, provenance, requires, settings,
+    quarantine, external, description, author, homepage, provenance, requires, hooks, settings,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -321,6 +340,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     author: author || '',
     homepage: homepage || '',
     requires: [...(requires || [])],
+    hooks: [...(hooks || [])],
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -445,6 +465,7 @@ function quarantinedEntry(ext, quarantine) {
     defaultEnabled: false,
     enabled: false,
     requires: [],
+    hooks: [],
     range: null,
     storeNames: [],
     settings: [],
@@ -494,6 +515,7 @@ function stageExtension(ext, { cfg, out, reg }) {
     defaultEnabled: Boolean(ext.defaultEnabled),
     enabled,
     requires: [...(ext.requires || [])],
+    hooks: [...(ext.hooks || [])],
     range: ext.engines?.wranglerApi ?? null,
     storeNames: Object.keys(ext.stores || {}),
     // Copied, not referenced: the entry is what extensionsForGraph reads every

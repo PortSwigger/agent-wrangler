@@ -1,10 +1,41 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { codex } from './codex.js';
 import { adapterForContainerProcess } from './index.js';
+import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
 
 const memory = { memoryDir: '/memory/tasks/T1', memoryPath: '/memory/tasks/T1/memory.md' };
 const base = { sessionId: 'BID', model: 'gpt-5.5-codex', ...memory };
+
+test('Codex loads declared extension plugin hooks on launch, resume and fork', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-hooks-'));
+  const skill = path.join(dir, 'skills', 'native');
+  fs.mkdirSync(path.join(skill, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: native\ndescription: Native hook plugin.\n---\n');
+  fs.writeFileSync(path.join(skill, 'hooks', 'hooks.json'), JSON.stringify({ hooks: {
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'node ${CLAUDE_PLUGIN_ROOT}/hook.mjs' }] }],
+  } }));
+  _resetExtensionsForTests();
+  getExtensions({ cfg: {}, builtin: [{ id: 'native', label: 'Native', defaultEnabled: true, dir, skills: ['native'], hooks: ['UserPromptSubmit'] }] });
+  try {
+    for (const cmd of [
+      codex.buildLaunch(base),
+      codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory }),
+      codex.buildFork({ ...base, sourceId: 'ROLL-UUID' }),
+    ]) {
+      assert.match(cmd, /hooks\.UserPromptSubmit=/);
+      assert.match(cmd, /hook\.mjs/);
+      assert.match(cmd, /aw-codex-hooks-/);
+    }
+    assert.doesNotMatch(codex.buildLaunch({ ...base, disabledSkills: ['native'] }), /hooks\.UserPromptSubmit=/);
+  } finally {
+    _resetExtensionsForTests();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // NOTE: every arg is shell-quoted via shellQuote(), so flags AND the
 // resume/fork subcommands appear quoted, e.g. `'-m' 'gpt-5.5-codex'` and

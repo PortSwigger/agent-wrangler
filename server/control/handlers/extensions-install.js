@@ -145,6 +145,7 @@ function discloseDeclared(declared) {
     author: declared.author,
     homepage: declared.homepage,
     capabilities: [...declared.requires],
+    hooks: [...declared.hooks],
   };
 }
 
@@ -153,15 +154,16 @@ function discloseDeclared(declared) {
 // capabilities in full (there are at most 17 and each one matters), dependencies
 // as the DIRECT changes plus a count of the transitive churn.
 //
-// `reconsentNeeded` is the gate, and it is only `requires` WIDENING. Unchanged
-// or narrowed proceeds on the recorded consent, because nothing new is being
-// asked for. (external.js re-checks the same thing at every boot, which is what
-// catches a manifest that widens itself in place on disk after consent.)
+// `reconsentNeeded` covers added capabilities or native hook events. Unchanged
+// or narrowed declarations proceed on recorded consent. external.js repeats
+// the widening check at boot for edits made directly to an installed manifest.
 function updateDiff(record, declared, deps) {
   const priorAll = new Set(record.dependencies || []);
   const nextAll = new Set(deps.all);
   const addedCapabilities = unconsentedCapabilities([...declared.requires], record);
   const removedCapabilities = (record.requires || []).filter((c) => !declared.requires.includes(c));
+  const addedHooks = declared.hooks.filter((h) => !(record.hooks || []).includes(h));
+  const removedHooks = (record.hooks || []).filter((h) => !declared.hooks.includes(h));
   const addedDeps = deps.all.filter((d) => !priorAll.has(d));
   const removedDeps = (record.dependencies || []).filter((d) => !nextAll.has(d));
   const nameOf = (s) => s.slice(0, s.lastIndexOf('@'));
@@ -178,11 +180,13 @@ function updateDiff(record, declared, deps) {
     priorSha: record.sha || '',
     addedCapabilities,
     removedCapabilities,
+    addedHooks,
+    removedHooks,
     addedDependencies: addedDeps.filter((d) => deps.direct.includes(d)),
     removedDependencies: removedDeps.filter((d) => !nextNames.has(nameOf(d))),
     addedCount: addedDeps.length,
     removedCount: removedDeps.length,
-    reconsentNeeded: addedCapabilities.length > 0,
+    reconsentNeeded: addedCapabilities.length > 0 || addedHooks.length > 0,
   };
 }
 
@@ -202,6 +206,8 @@ function assertManifestMatchesDeclaration(manifest, declared) {
   if (extra.length) {
     throw new Error(`The extension's index.js requires ${extra.join(', ')}, which its package.json did not disclose — refusing to install capabilities that were never consented to.`);
   }
+  const extraHooks = (manifest.hooks || []).filter((h) => !declared.hooks.includes(h));
+  if (extraHooks.length) throw new Error(`The extension's index.js declares hooks ${extraHooks.join(', ')}, which its package.json did not disclose.`);
 }
 
 // The fresh-install half: import what was just placed on disk and bring it up in
@@ -368,6 +374,7 @@ export const extConsentHandler = {
         // or narrower above, and external.js re-checks the on-disk manifest
         // against this record at every boot.
         requires: [...declared.requires],
+        hooks: [...declared.hooks],
         dependencies: deps.all,
       });
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url} at ${sha.slice(0, 8)}`);

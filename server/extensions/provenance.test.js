@@ -33,6 +33,7 @@ const record = (over = {}) => ({
   sha: 'a'.repeat(40),
   installedAt: '2026-01-01T00:00:00.000Z',
   requires: ['sessions:read', 'tasks:write'],
+  hooks: [],
   dependencies: ['left-pad@1.3.0', 'semver@7.6.0'],
   ...over,
 });
@@ -108,7 +109,7 @@ test('missing or malformed fields normalise instead of throwing', () => {
   const all = readProvenance();
   assert.deepEqual(Object.keys(all), ['demo']);
   assert.deepEqual(all.demo, {
-    id: 'demo', originUrl: null, sha: null, installedAt: null, requires: [], dependencies: [],
+    id: 'demo', originUrl: null, sha: null, installedAt: null, requires: [], hooks: [], dependencies: [],
   });
   clean();
 });

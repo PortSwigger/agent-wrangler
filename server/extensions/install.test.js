@@ -162,15 +162,18 @@ test('readDeclaration reads the disclosure statically, without importing anythin
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', requires: 'tasks:read' } }));
   assert.throws(() => readDeclaration(dir), /requires must be an array/);
 
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', hooks: true } }));
+  assert.throws(() => readDeclaration(dir), /hooks must be an array/);
+
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
-    wranglerExtension: { id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'] },
+    wranglerExtension: { id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'], hooks: ['UserPromptSubmit'] },
   }));
   assert.deepEqual(readDeclaration(dir), {
-    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'],
+    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'], hooks: ['UserPromptSubmit'],
   });
 
   // Absent prose normalises to '' rather than undefined: every consumer renders
   // it through textContent, where undefined would print as "undefined".
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes' } }));
-  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [] });
+  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [], hooks: [] });
 });

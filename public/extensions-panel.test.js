@@ -93,6 +93,16 @@ test('a settings row renders name, description and origin — and nothing else m
   });
 });
 
+test('hook declarations appear on the row and in install consent', () => {
+  withDom(() => {
+    const row = extensionRowEl({ ...INSTALLED, hooks: ['UserPromptSubmit'] });
+    assert.ok(texts(row).includes('Agent hooks: UserPromptSubmit'));
+    const consent = consentBodyEl({ id: 'notes', label: 'Session notes', hooks: ['UserPromptSubmit'], capabilities: [] });
+    assert.ok(texts(consent).includes('Agent hooks'));
+    assert.ok(texts(consent).includes('UserPromptSubmit'));
+  });
+});
+
 test('every extension is ONE row: the toggle lives with the origin and the actions', () => {
   withDom(() => {
     const row = extensionRowEl({ ...INSTALLED, enabled: true });

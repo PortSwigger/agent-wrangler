@@ -151,6 +151,9 @@ export function admitExternal(manifest, base) {
   if (widened.length) {
     return { ok: false, quarantine: `widened-and-unconsented requires (${widened.join(', ')}) — reinstall to re-consent` };
   }
+  if (base.provenance && (manifest.hooks || []).some((h) => !(base.provenance.hooks || []).includes(h))) {
+    return { ok: false, quarantine: 'widened-and-unconsented native hooks — reinstall to re-consent' };
+  }
   // `dir` is overwritten AFTER the manifest spread: a manifest exports its own
   // `dir` from import.meta.url, and for an installed one the discovered path is
   // the authority (validateManifest resolves `client`/`styles` under it).

@@ -358,12 +358,26 @@ those carries. Read this before changing anything under
   plugin path the container does not have. `external.js`'s import scanner skips
   the ROOT `skills/` directory for the same reason it skips tests — a script a
   skill ships for its agent is unreachable from the server's import graph.
+- **Native agent hooks** live in a shipped skill plugin's
+  `skills/<name>/hooks/hooks.json`. Declare the event names as `hooks` in the
+  extension manifest and, for an installed extension, in `package.json`'s
+  `wranglerExtension` block. For example, `hooks: ['UserPromptSubmit']` declares
+  a `UserPromptSubmit` group in that file. The declaration must match the
+  bundled files; a missing, undeclared or malformed hook quarantines the
+  extension. The Extensions tab and install consent show the event names, and
+  adding events in an update requires fresh consent. Claude loads the skill
+  directory as a plugin already. Codex reads the same hook file and receives
+  its command hooks in its launch configuration, including resume and fork.
+  Hooks in a skill suppressed for a launch do not run. Codex's native hook trust
+  review still applies. Use command hooks for this portable path; the plugin
+  root variables `${CLAUDE_PLUGIN_ROOT}` and `${PLUGIN_ROOT}` are set to the
+  shipped skill directory for Codex hook commands.
 - **Extensions API (`server/extensions/index.js`, `public/slots.js`,
   `public/extensions.js`) — an optional feature is ONE manifest, and the loaded
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
+  skillsFor, hideTool, graph, session, hooks, sweeps, client, styles}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json

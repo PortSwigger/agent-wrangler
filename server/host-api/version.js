@@ -101,7 +101,9 @@ import semver from 'semver';
 // dispatch.field contribution's `ext(el)`, which reaches that extension's own
 // `onBeforeDispatch` as `ext`. An older slots.js throws on either slot name
 // and an older server drops `ext`, so only the range can say so.
-export const HOST_API_VERSION = '1.10.0';
+// 1.11.0 lets extensions declare native agent hook events for disclosure and
+// loads extension-shipped plugin hooks in Codex sessions.
+export const HOST_API_VERSION = '1.11.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

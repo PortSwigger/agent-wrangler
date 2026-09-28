@@ -1,7 +1,10 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { resolvedMemoryBindingFor } from '../memory-store.js';
-import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
+import { codexSkillCatalog, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
+import { getExtensions } from '../extensions/index.js';
+import { nativeHookGroups } from '../extensions/native-hooks.js';
 import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
@@ -21,6 +24,28 @@ const DEFAULT_MODEL = 'gpt-6-sol';
 // today, but escape defensively so a future prompt edit can't break the arg.
 function tomlString(s) {
   return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function tomlValue(value) {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `[${value.map(tomlValue).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value).map(([k, v]) => `${tomlString(k)}=${tomlValue(v)}`).join(',')}}`;
+  throw new Error('Unsupported native hook value');
+}
+
+function extensionHookArgs({ taskMemory, disabledSkills }) {
+  const ext = getExtensions();
+  const active = new Set(extensionSkillPluginDirs(undefined, { taskMemory, disabledSkills, ext }));
+  const events = {};
+  for (const entry of ext.list) {
+    if (!entry.enabled || !entry.hooks?.length || !entry.dir) continue;
+    const skills = entry.skills.filter((skill) => active.has(path.join(entry.dir, 'skills', skill)));
+    const groups = nativeHookGroups({ dir: entry.dir, skills });
+    for (const [event, values] of Object.entries(groups)) (events[event] ||= []).push(...values);
+  }
+  return Object.entries(events).flatMap(([event, groups]) => ['-c', `hooks.${event}=${tomlValue(groups)}`]);
 }
 
 function launchMemory(sessionId, memoryDir, memoryPath) {
@@ -66,6 +91,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
     '-c', 'sandbox_workspace_write.network_access=true',
   ];
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
+  args.push(...extensionHookArgs({ taskMemory, disabledSkills }));
   args.push('--add-dir', memoryDir);
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());

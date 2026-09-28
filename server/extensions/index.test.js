@@ -63,6 +63,22 @@ test('validation failures quarantine the extension, naming it in the reason', ()
   rejects(manifest({ label: '' }), /Extension fake: label/);
 });
 
+test('native hook events must match the hooks bundled in a shipped skill plugin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-native-hooks-'));
+  const skill = path.join(dir, 'skills', 'native');
+  fs.mkdirSync(path.join(skill, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: native\ndescription: Native hook plugin.\n---\n');
+  fs.writeFileSync(path.join(skill, 'hooks', 'hooks.json'), JSON.stringify({ hooks: {
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'node ${CLAUDE_PLUGIN_ROOT}/hook.mjs' }] }],
+  } }));
+  const ext = manifest({ dir, skills: ['native'], hooks: ['UserPromptSubmit'] });
+  const loaded = loadExtensions({ cfg: {}, builtin: [ext] });
+  assert.equal(loaded.list[0].quarantine, null);
+  assert.deepEqual(extensionsForGraph(loaded.list)[0].hooks, ['UserPromptSubmit']);
+  rejects({ ...ext, hooks: [] }, /hooks must declare exactly the bundled native hook events/);
+  rejects({ ...ext, hooks: ['Stop'] }, /hooks must declare exactly the bundled native hook events/);
+});
+
 // Collisions quarantine the SECOND claimant, which is how a builtin wins every
 // tie against an appended external one by construction (loadExtensions' order
 // comment) — so each case also asserts the first extension survived intact.
@@ -114,7 +130,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
   assert.deepEqual(out.list, [{
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
-    requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['checklist'], handlerTypes: [],
+    requires: [], hooks: [], range: null, storeNames: ['fake'], settings: [], skills: ['checklist'], handlerTypes: [],
     hideDispatchField: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
@@ -572,7 +588,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   const out = loadExtensions({ cfg: {}, builtin: [{ id: 'dud', external: true, quarantine: 'no index.js' }] });
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
-    defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
+    defaultEnabled: false, enabled: false, requires: [], hooks: [], range: null, storeNames: [], settings: [], skills: [],
     handlerTypes: [], hideDispatchField: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);

@@ -116,6 +116,7 @@ export function extensionRowEl(entry, {
   copy.append(el('div', 'setting-label', entry.label || entry.id));
   const blurb = entry.description || entry.help;
   if (blurb) copy.append(el('div', 'setting-help', blurb));
+  if (entry.hooks?.length) copy.append(el('div', 'ext-row-meta', `Agent hooks: ${entry.hooks.join(', ')}`));
   const origin = originNode(entry.origin);
   if (origin) {
     const meta = el('div', 'ext-row-meta');
@@ -457,6 +458,13 @@ export function consentBodyEl(payload) {
       section(wrap, 'Capabilities unchanged', el('div', 'ext-consent-none', 'It asks for nothing it was not already granted.'));
     }
     section(wrap, 'Dependencies changed', dependencyDiffEl(payload));
+    const addedHooks = payload.addedHooks || [];
+    const removedHooks = payload.removedHooks || [];
+    if (addedHooks.length || removedHooks.length) {
+      section(wrap, 'Agent hooks changed');
+      if (addedHooks.length) wrap.append(chipsEl(addedHooks.map((h) => `+ ${h}`), 'ext-chip ext-chip-add'));
+      if (removedHooks.length) wrap.append(chipsEl(removedHooks.map((h) => `− ${h}`), 'ext-chip ext-chip-remove'));
+    }
   } else {
     section(wrap, 'Capabilities requested', (payload.capabilities || []).length
       ? chipsEl(payload.capabilities, 'ext-chip')
@@ -465,6 +473,7 @@ export function consentBodyEl(payload) {
     if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
     deps.append(el('div', 'ext-consent-note', dependencyCountText(payload)));
     section(wrap, 'Dependencies', deps);
+    if (payload.hooks?.length) section(wrap, 'Agent hooks', chipsEl(payload.hooks, 'ext-chip'));
   }
   wrap.append(el('div', 'ext-consent-note', 'Dependencies are installed with npm install scripts disabled. That stops install-time hooks only — every dependency\'s code still runs inside the wrangler once the extension loads.'));
   return wrap;

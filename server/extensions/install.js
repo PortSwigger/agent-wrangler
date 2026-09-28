@@ -205,6 +205,9 @@ export function readDeclaration(dir) {
   if (d.requires != null && (!Array.isArray(d.requires) || d.requires.some((c) => typeof c !== 'string' || !c))) {
     throw new Error('wranglerExtension.requires must be an array of capability names');
   }
+  if (d.hooks != null && (!Array.isArray(d.hooks) || d.hooks.some((h) => typeof h !== 'string' || !/^[A-Za-z][A-Za-z0-9]*$/.test(h)))) {
+    throw new Error('wranglerExtension.hooks must be an array of native hook event names');
+  }
   // Prose only, and third-party: type-checked here, rendered via textContent
   // everywhere downstream. Capability NAMES are not validated against
   // CAPABILITIES here — this leaf cannot import the loader's vocabulary without
@@ -217,6 +220,7 @@ export function readDeclaration(dir) {
     author: str(d.author),
     homepage: str(d.homepage),
     requires: [...(d.requires || [])],
+    hooks: [...(d.hooks || [])],
   };
 }
 

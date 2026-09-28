@@ -109,6 +109,7 @@ function normalise(id, rec) {
     sha: typeof rec.sha === 'string' ? rec.sha : null,
     installedAt: typeof rec.installedAt === 'string' ? rec.installedAt : null,
     requires: strings(rec.requires),
+    hooks: strings(rec.hooks),
     dependencies: strings(rec.dependencies),
   };
 }

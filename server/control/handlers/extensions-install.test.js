@@ -64,7 +64,7 @@ function reply(c, type) {
 // is the honest case; a test passes them separately to stage a repo whose
 // package.json disclosure and index.js manifest DISAGREE.
 function fakeClone({
-  id = 'notes', requires = [], lock = true, declaration = true,
+  id = 'notes', requires = [], hooks = [], lock = true, declaration = true,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
 } = {}) {
   return async (_url, dest) => {
@@ -79,7 +79,7 @@ function fakeClone({
       dependencies: { left: '^1.0.0' },
       ...(declaration ? {
         wranglerExtension: {
-          id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
+          id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires, hooks,
         },
       } : {}),
     }));
@@ -230,6 +230,18 @@ test('an update diffs against the recorded consent, and only a WIDENED requires 
   assert.deepEqual(wd.addedCapabilities, ['sessions:kill']);
   await extConsentHandler.handler({ type: 'ext-consent', tempId: wd.tempId, approve: true }, widened);
   assert.deepEqual(readProvenance().notes.requires, ['tasks:read', 'sessions:kill'], 'consent is re-recorded at the new set');
+  reset();
+});
+
+test('adding a declared agent hook is disclosed and requires fresh consent', async () => {
+  reset();
+  putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'a'.repeat(40), requires: [], hooks: [], dependencies: [] });
+  const c = ctx();
+  const disclosure = await disclose(c, { hooks: ['UserPromptSubmit'] });
+  assert.deepEqual(disclosure.hooks, ['UserPromptSubmit']);
+  assert.deepEqual(disclosure.addedHooks, ['UserPromptSubmit']);
+  assert.equal(disclosure.reconsentNeeded, true);
+  await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: false }, c);
   reset();
 });
 
