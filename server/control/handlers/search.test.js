@@ -113,6 +113,59 @@ const scanRes = (groups) => ({
   ms: 1, scannedBytes: 99, mode: 'resident', workers: 0, index: { records: 42 },
 });
 
+// ── scope facet ─────────────────────────────────────────────────────────────
+
+test('scope "transcript": metadata-only matches are never appended, but a scan hit still gets its metaMatch flag', async () => {
+  // "migration" matches nothing in this (empty) scan result — only card-old's
+  // metadata — so it must stay invisible under this scope.
+  const empty = harness({ entries: boardEntries(), scanResult: scanRes([]) });
+  const metaOnly = await answerSearch({ query: 'migration', scope: 'transcript' }, empty.ctx, empty.deps);
+  assert.deepEqual(metaOnly.groups, []);
+  assert.equal(metaOnly.scope, 'transcript');
+
+  const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
+  const both = await answerSearch({ query: 'login', scope: 'transcript' }, h.ctx, h.deps); // scan hit AND title match
+  assert.deepEqual(both.groups.map((g) => g.sessionId), ['conv-a']); // still just the scan group
+  assert.equal(both.groups[0].metaMatch, true); // annotation survives — it's not an extra row
+});
+
+test('scope "session": the scan is never called, and results come only from metadata', async () => {
+  const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
+  const res = await answerSearch({ query: 'migration', scope: 'session' }, h.ctx, h.deps);
+  assert.equal(h.scans.length, 0); // no corpus scan for this scope
+  assert.equal(res.scope, 'session');
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-gone']);
+  assert.deepEqual(res.groups[0].hits, []); // no snippets — this scope has no message-level hits at all
+
+  // A term that's only ever said in the conversation body is invisible here — this
+  // scope deliberately never reaches the transcript.
+  const textOnly = await answerSearch({ query: 'never in metadata anywhere', scope: 'session' }, h.ctx, h.deps);
+  assert.deepEqual(textOnly.groups, []);
+});
+
+test('scope "task": no conversation rows at all, and the scan is skipped', async () => {
+  const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
+  const res = await answerSearch({ query: 'login', scope: 'task' }, h.ctx, h.deps); // would match both scan and metadata otherwise
+  assert.equal(h.scans.length, 0);
+  assert.deepEqual(res.groups, []);
+  assert.equal(res.scope, 'task');
+});
+
+test('scope "task" in browse mode also hides the conversation listing', async () => {
+  const h = harness({ entries: boardEntries() });
+  const res = await answerSearch({ query: '', scope: 'task' }, h.ctx, h.deps);
+  assert.equal(res.browse, true);
+  assert.deepEqual(res.groups, []);
+  assert.equal(res.total, 0);
+});
+
+test('an unrecognized scope value falls back to "all"', async () => {
+  const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
+  const res = await answerSearch({ query: 'migration', scope: 'bogus' }, h.ctx, h.deps);
+  assert.equal(res.scope, 'all');
+  assert.deepEqual(res.groups.map((g) => g.sessionId), ['conv-gone', 'conv-a']);
+});
+
 test('search: a metadata title match outranks the scan group after gaining the board join', async () => {
   const h = harness({ entries: boardEntries(), scanResult: scanRes([structuredClone(SCAN_GROUP_A)]) });
   // "migration" was never said in any conversation — it only exists in card-old's metadata.

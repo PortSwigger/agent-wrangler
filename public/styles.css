@@ -2406,27 +2406,59 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    on every keystroke. */
 .search-timing { font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.search-opts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--fg-muted); }
+.search-opts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--fg-muted); }
 .search-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .search-opt input { accent-color: var(--accent); margin: 0; }
 .search-opt-sep { width: 1px; height: 16px; background: var(--border-muted); }
-.search-seg { display: inline-flex; border: 1px solid var(--border-muted); border-radius: 6px; overflow: hidden; }
-.search-seg button {
-  background: var(--surface); border: 0; border-right: 1px solid var(--border-muted); border-radius: 0;
-  color: var(--fg-muted); font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
+/* Every facet (Who/Scope/Provider/Tasks/Status/Time) is one of these: a
+   <details>/<summary> dropdown, not a button row or native <select> — a
+   native <select> can't show a "<Label>: <value>" closed state (the box can
+   only ever echo the selected <option>'s own text), which is what tells two
+   adjacent dropdowns both reading "All" apart. The open panel then lists bare
+   value labels — repeating the prefix on every row would be noise once it's
+   already on the closed summary.
+   The label/value/arrow are three flex children INSIDE <summary> itself,
+   not siblings after it: a native <details> hides every child except
+   <summary> while closed, so anything placed after </summary> (the arrow,
+   the panel) only ever rendered while open — i.e. essentially never, since
+   closed is the state everyone actually sees. <summary> is exempt from that
+   rule, which is why the arrow has to live inside it. */
+.search-dd { position: relative; }
+.search-dd summary { cursor: pointer; user-select: none; list-style: none; }
+.search-dd summary::-webkit-details-marker { display: none; }
+.search-dd[open] summary { color: var(--fg); }
+.search-select {
+  display: inline-flex; align-items: stretch; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border-muted); border-radius: 6px;
+  color: var(--fg-muted); font: inherit; font-size: 11.5px; cursor: pointer;
 }
-.search-seg button:last-child { border-right: 0; }
-.search-seg button:hover { color: var(--fg); background: var(--surface-2); }
-.search-seg button.on { background: var(--accent); color: var(--accent-fg); }
-.search-task-filter { position: relative; }
-.search-task-filter summary { cursor: pointer; user-select: none; }
-.search-task-filter[open] summary { color: var(--fg); }
-.search-task-options { position: absolute; z-index: 3; top: calc(100% + 6px); left: 0; min-width: 190px; max-height: 240px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px color-mix(in srgb, #000 22%, transparent); }
-.search-task-option { display: flex; align-items: center; gap: 6px; padding: 4px 6px; color: var(--fg); cursor: pointer; white-space: nowrap; }
-.search-task-option:hover { background: var(--surface-2); }
+.search-select:hover { color: var(--fg); background: var(--surface-2); }
+.search-select-prefix {
+  display: flex; align-items: center; padding: 4px 8px;
+  background: var(--surface-2); color: var(--fg-subtle); border-right: 1px solid var(--border-muted);
+}
+.search-select-label { display: flex; align-items: center; padding: 4px 6px 4px 8px; }
+.search-select-arrow {
+  align-self: center; flex: 0 0 auto; width: 11px; height: 11px;
+  color: var(--fg-subtle); margin: 0 8px 0 2px;
+}
+.search-dd[open] .search-select-arrow { transform: rotate(180deg); }
+.search-dd-panel { position: absolute; z-index: 3; top: calc(100% + 6px); left: 0; min-width: 190px; max-height: 240px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px color-mix(in srgb, #000 22%, transparent); }
+/* Shared by the Tasks facet's checkbox <label> rows and the single-select
+   facets' <button> rows — the reset properties are no-ops on a <label> and
+   strip a <button>'s UA chrome (border/background/font/alignment), so both
+   read as the same plain row regardless of which element they really are. */
+.search-dd-option {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  margin: 0; border: 0; background: none; font: inherit; text-align: left;
+  padding: 4px 6px; color: var(--fg); cursor: pointer; white-space: nowrap;
+}
+.search-dd-option:hover { background: var(--surface-2); }
+.search-dd-option.on { color: var(--accent); font-weight: 600; }
 .search-task-heading { padding: 5px 6px 3px; color: var(--fg-subtle); font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .search-task-clear { width: 100%; margin-top: 4px; padding: 5px 6px; border: 0; border-top: 1px solid var(--border-muted); background: transparent; color: var(--fg-muted); font: inherit; text-align: left; cursor: pointer; }
 .search-task-clear:hover { color: var(--fg); background: var(--surface-2); }
+.search-index-line { display: flex; align-items: center; gap: 12px; }
 .search-index { font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 .search-reindex { background: none; border: 0; padding: 0; font: inherit; font-size: 11px; color: var(--fg-muted); cursor: pointer; text-decoration: underline; }
 .search-reindex:hover { color: var(--fg); }
