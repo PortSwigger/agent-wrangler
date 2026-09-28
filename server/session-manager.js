@@ -408,6 +408,11 @@ export class SessionManager {
     // launch command. Returns the skill names to suppress for that one launch;
     // the default answers none, so every existing launch is byte-identical.
     this._extLaunchSkills = () => [];
+    // Seam (same mould) for per-launch Codex autonomy: server/index.js binds
+    // createCodexPolicyResolver, and dispatch/resume/fork consult it for a Codex
+    // launch only. Returns a normalised policy or undefined; the default answers
+    // nothing, so every existing launch keeps the core sandbox/approval flags.
+    this._extCodexPolicy = () => undefined;
     this._load();
   }
 
@@ -1043,6 +1048,7 @@ export class SessionManager {
     const memory = resolvedMemoryBindingFor(sessionId);
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
+    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
       addDirs,
@@ -1058,6 +1064,7 @@ export class SessionManager {
       intent,
       spawnedBy: prev?.spawnedBy,
       disabledSkills,
+      codexPolicy,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
     await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -1109,11 +1116,15 @@ export class SessionManager {
     // gate is shown the PARENT's — which is what it would inherit anyway, and
     // the only thing that exists to gate on at this point.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
+    // `parentId` too: onFork (which could copy the parent's stored policy) only
+    // fires after this launch, so the parent's card id is how an extension finds it.
+    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
       ...memory,
       disabledSkills,
+      codexPolicy,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
@@ -1612,7 +1623,8 @@ export class SessionManager {
       ext: ext || null,
     });
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
+    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills, codexPolicy });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);

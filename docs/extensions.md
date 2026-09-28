@@ -439,7 +439,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
+  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
@@ -612,7 +612,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   builds and, in dispatch, deliberately AFTER `onBeforeDispatch`, so a gate can
   read back what that hook just persisted; `entry` is null at dispatch, the
   existing entry at resume and the PARENT's at fork (a fork's own entry is
-  written after launch). **`hideTool` is the one surface that shapes tools an
+  written after launch). **`codexPolicy` (1.12.0) answers a Codex launch's
+  autonomy, per launch, at the same three points as the skill gate** — with
+  `{ phase, sessionId, entry, ext }` (`ext` the extension's own façade; `entry`
+  null at dispatch, the existing entry at resume and the PARENT's at fork, where
+  `parentId` rides too). The answer is `{ sandbox, approval, approveForMe,
+  bypass }`, validated by `server/extensions/codex-policy.js`: an invalid field
+  is dropped and the rest applies, bypass is exclusive, and a combination Codex
+  refuses (its `INCOMPATIBLE` table) drops the named field. The first answer
+  wins and a later one is logged as a collision; a throw fails open to the core
+  defaults (`--sandbox workspace-write --ask-for-approval never` plus the
+  network grant). It is synchronous (a Promise is dropped) and consulted only
+  for Codex, through the `_extCodexPolicy` seam; a new launch path must thread
+  `codexPolicy` too. **`hideTool` is the one surface that shapes tools an
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an
