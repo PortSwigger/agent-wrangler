@@ -5,9 +5,11 @@ import os from 'node:os';
 
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 
-// Pull the trailing UUID out of `rollout-<ts>-<uuid>.jsonl`.
-function uuidFromName(name) {
-  const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})\.jsonl$/);
+// Pull the conversation UUID out of `rollout-<ts>-<uuid>.jsonl` or
+// `rollout-<ts>-<uuid>_<resume-uuid>.jsonl`; the leading UUID remains the
+// session_meta id when Codex resumes into a new file.
+export function uuidFromName(name) {
+  const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})(?:_[0-9a-fA-F-]{36})?\.jsonl$/);
   return m ? m[1] : null;
 }
 
