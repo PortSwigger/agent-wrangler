@@ -54,18 +54,6 @@ test('codex buildLaunch: no env-strip wrapper, no empty trailing prompt', () => 
   assert.doesNotMatch(cmd, /'' *$/);
 });
 
-test('codex launch, resume, and fork register native UserPromptSubmit', () => {
-  for (const cmd of [
-    codex.buildLaunch({ ...base, intent: '' }),
-    codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory }),
-    codex.buildFork({ ...base, sourceId: 'ROLL-UUID' }),
-  ]) {
-    assert.match(cmd, /hooks\.UserPromptSubmit=/);
-    assert.match(cmd, /prompt-hook\.mjs/);
-    assert.match(cmd, /AW_PROMPT_HOOK_URL=/);
-  }
-});
-
 test('codex buildLaunch: extra addDirs each get --add-dir', () => {
   const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: ['/a', '/b'] });
   assert.match(cmd, /'--add-dir' '\/a'/);

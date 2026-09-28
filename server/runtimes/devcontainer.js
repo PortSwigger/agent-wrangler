@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PROMPT_HOOK_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
+import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillDirs } from '../agent-skills.js';
 import { addDirFor } from '../memory-store.js';
 import { analyzeLines, usageSince } from '../transcript-reader.js';
@@ -62,7 +62,7 @@ export async function stopContainer(cwd, { run = defaultRun } = {}) {
   }
 }
 
-// The inline --mcp-config and hook callback URLs point at 127.0.0.1 (the loopback
+// The inline --mcp-config and AW_PR_ATTACH_URL point at 127.0.0.1 (the loopback
 // the host server advertises). From inside a container that address is the
 // container itself, so rewrite it to a host-reachable name/IP settled by the
 // Phase 0 spike (host.docker.internal on Docker Desktop). String-level: the URLs
@@ -95,7 +95,6 @@ export function launchInputs(sessionId, { workflow = false } = {}) {
     { src: addDirFor(sessionId), dest: notesDir },
     { src: PR_HOOK_PATH, dest: `${base}/scripts/pr-attach-hook.mjs`, chmodX: true },
     { src: PR_HOOK_DEP_PATH, dest: `${base}/server/pr-hook.js`, substitute: false },
-    { src: PROMPT_HOOK_PATH, dest: `${base}/scripts/prompt-hook.mjs`, chmodX: true },
   ];
   if (workflow) inputs.push({ src: ISSUE_TO_PR_SKILL_DIR, dest: `${base}/issue-to-pr` });
   // An extension's skill is a --plugin-dir of its own (agents/claude.js), and

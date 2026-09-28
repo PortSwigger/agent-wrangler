@@ -22,8 +22,8 @@ const MIME = {
   '.gif': 'image/gif',
 };
 
-// The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach and
-// POST /prompt-hook (launch hook callbacks), the styles manifest + asset routes, the /ext/<id>/ extension
+// The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach (the launch
+// hook's callback), the styles manifest + asset routes, the /ext/<id>/ extension
 // client route, and static public/ serving. WS upgrades are wired separately on
 // the returned server in index.js.
 //
@@ -32,7 +32,7 @@ const MIME = {
 // holds enabled ids alone) — a disabled extension's client must not be served,
 // and that membership check, not an id regex, is the whole gate. GET-only static
 // content, so no origin gate, same posture as public/.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, promptHookHandler, fileHandler, extensionAssets = () => null }) {
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extensionAssets = () => null }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -40,7 +40,7 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, pro
     // The explicit <link rel=icon> in index.html is what's actually used.
     if (urlPath === '/favicon.ico') urlPath = '/favicon.svg';
 
-    if (req.method === 'POST' && (urlPath === '/mcp' || urlPath === '/pr-attach' || urlPath === '/prompt-hook')) {
+    if (req.method === 'POST' && (urlPath === '/mcp' || urlPath === '/pr-attach')) {
       // Same CSRF gate as the WS upgrade: a cross-origin POST still fires spawn even
       // when CORS blocks the reply. Absent Origin = a non-browser client (MCP client,
       // or the local PostToolUse hook fetch) → allow.
@@ -48,7 +48,7 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, pro
         res.writeHead(403).end('forbidden');
         return;
       }
-      (urlPath === '/mcp' ? mcpRequestHandler : urlPath === '/pr-attach' ? prAttachHandler : promptHookHandler)(req, res);
+      (urlPath === '/mcp' ? mcpRequestHandler : prAttachHandler)(req, res);
       return;
     }
 

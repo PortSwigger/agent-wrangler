@@ -551,21 +551,18 @@ those carries. Read this before changing anything under
   contributor can silently overwrite it every tick. Session hooks
   (`_extHooks` on `SessionManager`, `_fireExtHooks`) are logged-not-thrown and
   sequential, never abort the core operation, and fire only on
-  archive/fork/purge/dispatch/resume (never per tick, so `logError` there obeys
+  archive/fork/purge/dispatch/resume/prompt (never per tick, so `logError` there obeys
   the log rule); `onResume` fires in `_doResume`, not `resume()`, for the same
   coalescing reason the resume log line does. **`session.onPrompt` (host API
-  1.11.0) runs before each submitted prompt reaches the model**, via both
-  agents' native `UserPromptSubmit` hooks. It includes prompts typed directly
-  in the terminal and prompts delivered through the board or by peers. Its
-  payload is `{ sessionId, liveSessionId, agent, entry, prompt, cwd, model,
-  source, host }`; `sessionId` is the stable card id, and `entry` can be null
-  for the first prompt while its card is still launching. Return a string or
-  `{ additionalContext: string }` to add context to that same prompt. Return
-  `{ decision: 'block', reason: string }` to stop it. Empty returns do nothing;
-  extension errors are logged and fail open. Hooks run in registration order,
-  and their context strings are joined in that order. Codex's native hook trust
-  review applies to the injected command; Wrangler does not disable that review.
-  `/ext/<id>/*`
+  1.11.0) observes each new user prompt after it appears in the agent's
+  transcript**, whether it came from the terminal, the board, or a peer. Its
+  payload is `{ sessionId, liveSessionId, agent, entry, text, images, ts, host }`;
+  `sessionId` is the stable card id, `ts` is the transcript timestamp in
+  milliseconds, and `images` holds chat-view image descriptors when present.
+  The monitor checks every two seconds, suppresses tool results and synthetic
+  context using the chat scanner, and does not replay prompts already present
+  when the server starts. It is an observation hook: the agent has already
+  received the prompt, so it cannot edit or veto it. `/ext/<id>/*`
   (`http-handler.js`) validates the id by MEMBERSHIP in the loader's `dirs`,
   which register/unregister maintain, so it holds the CURRENTLY ACTIVE extensions —
   a disabled or uninstalled one is a 404 from the moment it is deregistered — and resolves the rest via `path.resolve` against the
