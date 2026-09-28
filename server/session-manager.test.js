@@ -721,6 +721,7 @@ function realWorktreeRepo(rawRoot) {
 test('fork() adds the linked worktree common git-dir via --add-dir for a codex parent', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-fork-wt-'));
   const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const worktreeGitDir = execFileSync('git', ['-C', worktreePath, 'rev-parse', '--path-format=absolute', '--git-dir'], { encoding: 'utf8' }).trim();
   const sm = new SessionManager();
   sm._newSession = async () => {};
   sm._save = () => {};
@@ -734,6 +735,7 @@ test('fork() adds the linked worktree common git-dir via --add-dir for a codex p
     cwd: worktreePath,
   });
   assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  assert.ok(captured.includes(`'--add-dir' '${worktreeGitDir}'`), captured);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -1621,11 +1623,14 @@ test('dispatch: worktree mode adds the linked worktree common git-dir via --add-
   const sm = smForDispatch();
   sm._ensureCodexTrust = () => {};
   let captured = '';
-  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  let launchedCwd = '';
+  sm._newSession = async (_t, cwd, inner) => { launchedCwd = cwd; captured = inner; };
   await sm.dispatch({
     cwd: repo, intent: 'fix the bug', agent: 'codex', worktree: true, worktreeAuto: true,
   });
   assert.ok(captured.includes(`'--add-dir' '${path.join(repo, '.git')}'`), captured);
+  const worktreeGitDir = execFileSync('git', ['-C', launchedCwd, 'rev-parse', '--path-format=absolute', '--git-dir'], { encoding: 'utf8' }).trim();
+  assert.ok(captured.includes(`'--add-dir' '${worktreeGitDir}'`), captured);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

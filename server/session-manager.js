@@ -10,7 +10,7 @@ import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
 import { containerIdFor } from './runtimes/devcontainer.js';
 import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitCommonDir, isValidBranchName } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -357,14 +357,14 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
 // read-only inside every writable root, and a linked worktree's git-dir is a
 // sibling directory the sandbox never grants at all — either way `git commit`
 // fails under `--ask-for-approval never` unless the common git-dir is granted
-// as a root of its own (see gitCommonDir). Keyed off cwd, not off a
+// as roots of their own (see gitDirs). Keyed off cwd, not off a
 // wrangler-made worktree entry: a pre-existing worktree handed over as plain
 // `cwd` has the same problem. No-op for any other agent (no OS sandbox) or a
 // cwd outside a repository.
 async function withCodexGitDirAddDir(agent, cwd, addDirs) {
   if (agent !== 'codex' || !cwd) return addDirs;
-  const gitDir = await gitCommonDir(cwd);
-  return gitDir && !addDirs.includes(gitDir) ? [...addDirs, gitDir] : addDirs;
+  const gitDirsToGrant = await gitDirs(cwd);
+  return gitDirsToGrant.reduce((dirs, gitDir) => dirs.includes(gitDir) ? dirs : [...dirs, gitDir], addDirs);
 }
 
 export class SessionManager {
