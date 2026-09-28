@@ -203,6 +203,15 @@ test('classify: ordinary conversation text mentioning trust does not false-posit
   assert.equal(classify('Do you trust the contents of this directory? I do.').status, 'idle');
   assert.equal(classify('1. Yes, continue with the plan\n2. No, quit early').status, 'idle');
 });
+test('classify: the footer phrase in ordinary prose plus two option-shaped lines does not false-positive (adversarial review finding)', () => {
+  // Found in adversarial review: the footer check was unanchored, so prose
+  // mentioning "press enter to continue" anywhere in the pane, combined with
+  // two short, generic option-shaped lines elsewhere, satisfied all three
+  // predicates — the same false-positive class the Claude fallback's "enter
+  // to confirm" check above is already line-anchored against.
+  const pane = 'Earlier we discussed that Codex can say: press enter to continue.\n\n1. Yes, continue with the plan\n2. No, quit early';
+  assert.equal(classify(pane).status, 'idle');
+});
 
 test('matches the original session tmux launched with --session-id', () => {
   const discovered = [

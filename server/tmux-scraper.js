@@ -304,10 +304,18 @@ export function classify(paneText) {
   // trailing words ("continue with the plan"). Same accepted residual risk as
   // the OAuth/update-banner checks — deliberately writing this exact wording as
   // actual menu options is what it'd take to false-positive.
+  //
+  // Footer is line-anchored too, same discipline as the Claude fallback's
+  // "enter to confirm" check just above (caught in adversarial review there,
+  // and again here): an unanchored footer matches "…Codex can say: press enter
+  // to continue." in ordinary prose, which combined with two short, generic
+  // option-shaped lines elsewhere ("1. Yes, continue with the plan" / "2. No,
+  // quit early" — plausible free text, unlike the update banner's far more
+  // distinctive option wording) false-positived into needs-you.
   if (
     /^[\s›]*1\.\s*yes,\s*continue\b/im.test(recent)
     && /^[\s›]*2\.\s*no,\s*quit\b/im.test(recent)
-    && /press\s+enter\s+to\s+continue/i.test(recent)
+    && /^[\s›]*press\s+enter\s+to\s+continue\b/im.test(recent)
   ) {
     return { status: 'needs-you', waitingFor: 'Codex is asking whether to trust this folder' };
   }
