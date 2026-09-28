@@ -394,10 +394,15 @@ export class SessionManager {
     this._pruneMailOnArchive = () => {};
     // Extension session hooks (server/extensions/index.js `sessionHooks`), bound
     // by server/index.js. Empty by default — same property as the seams above:
-    // every existing test stays inert. Fired sequentially and never abort the
-    // core operation: a hook throw is logged (event-only — these run on
-    // archive/fork/purge/dispatch/resume/prompt, never per tick) and the next hook runs.
+    // every existing test stays inert. Lifecycle hooks are sequential and never
+    // abort the core operation: a throw is logged, then the next hook runs.
+    // onPrompt also runs sequentially and fails open on a throw, but an explicit
+    // blocking return prevents that prompt from reaching the model.
     this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [], onPrompt: [] };
+    // A launch prompt can reach the native hook before dispatch/fork saves its
+    // entry. Keep that card routable during launch; failed launches expire rather
+    // than leaving a permanent callback address behind.
+    this._pendingPromptSessions = new Map();
     // Seam (same mould) for per-launch skill gating: server/index.js binds
     // createSkillGate (server/extensions/index.js) with the extension stores
     // closed over, and dispatch/resume/fork consult it BEFORE building the
@@ -411,6 +416,44 @@ export class SessionManager {
     for (const fn of this._extHooks[name] || []) {
       try { await fn(payload); } catch (err) { logError(`[ext-hook:${name}]`, err); }
     }
+  }
+
+  acceptsPromptHook(sessionId) {
+    const entry = this.map.get(sessionId);
+    if (entry && !entry.archivedAt) return true;
+    const until = this._pendingPromptSessions.get(sessionId) || 0;
+    if (until > Date.now()) return true;
+    this._pendingPromptSessions.delete(sessionId);
+    return false;
+  }
+
+  _allowPromptDuringLaunch(sessionId) {
+    const until = Date.now() + 60_000;
+    this._pendingPromptSessions.set(sessionId, until);
+    const timer = setTimeout(() => {
+      if (this._pendingPromptSessions.get(sessionId) === until) this._pendingPromptSessions.delete(sessionId);
+    }, 60_000);
+    timer.unref();
+  }
+
+  // UserPromptSubmit is a request/response hook: returned context must reach the
+  // native CLI before its model request. Keep extension order, and fail open on
+  // one bad extension just as lifecycle hooks do.
+  async runPromptHooks(payload) {
+    const contexts = [];
+    for (const fn of this._extHooks.onPrompt) {
+      let result;
+      try { result = await fn(payload); }
+      catch (err) { logError('[ext-hook:onPrompt]', err); continue; }
+      if (result == null) continue;
+      if (typeof result === 'string') result = { additionalContext: result };
+      if (typeof result !== 'object') { logError('[ext-hook:onPrompt] invalid result'); continue; }
+      if (result.decision === 'block') {
+        return { decision: 'block', reason: typeof result.reason === 'string' ? result.reason : 'Prompt blocked by an extension.' };
+      }
+      if (typeof result.additionalContext === 'string' && result.additionalContext.trim()) contexts.push(result.additionalContext);
+    }
+    return contexts.length ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: contexts.join('\n\n') } } : {};
   }
 
   entryFor(sessionId) {
@@ -1056,6 +1099,7 @@ export class SessionManager {
       disabledSkills,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
+    this._allowPromptDuringLaunch(sessionId);
     await this._newSession(tmux, dir, launchCmd, this.socket);
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
@@ -1064,6 +1108,7 @@ export class SessionManager {
     this.map.set(sessionId, resumeEntry(prev, {
       short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now(),
     }));
+    this._pendingPromptSessions.delete(sessionId);
     this._save();
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
     // in-flight promise, so a hook there would fire twice for one relaunch (the
@@ -1115,6 +1160,7 @@ export class SessionManager {
       inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
     });
     const launchedAt = Date.now();
+    this._allowPromptDuringLaunch(sessionId);
     await this._newSession(tmux, dir, launchCmd, this.socket);
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
@@ -1122,6 +1168,7 @@ export class SessionManager {
     entry.liveSessionId = liveSessionId || undefined;
     entry.socket = this.socket;
     this.map.set(sessionId, entry);
+    this._pendingPromptSessions.delete(sessionId);
     this._save();
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     await this.refreshAlive();
@@ -1606,6 +1653,7 @@ export class SessionManager {
     const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills });
     const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
     const launchedAt = Date.now();
+    this._allowPromptDuringLaunch(sessionId);
     await this._newSession(tmux, cwd, inner, this.socket);
 
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
@@ -1625,6 +1673,7 @@ export class SessionManager {
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
     this.map.set(sessionId, entry);
+    this._pendingPromptSessions.delete(sessionId);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     await this.refreshAlive();

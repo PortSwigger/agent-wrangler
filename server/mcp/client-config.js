@@ -19,6 +19,10 @@ export function prAttachUrl(port = serverPort()) {
   return `http://127.0.0.1:${port}/pr-attach`;
 }
 
+export function promptHookUrl(port = serverPort()) {
+  return `http://127.0.0.1:${port}/prompt-hook`;
+}
+
 // Claude carries the caller's card id as a custom header (supported by
 // --mcp-config's per-server `headers`).
 export function claudeMcpConfigArg(cardId, port = serverPort()) {

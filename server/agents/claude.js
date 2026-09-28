@@ -4,7 +4,7 @@ import { linkPathFor, addDirFor } from '../memory-store.js';
 import { analyze, listResumable, activityInRange } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
+import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, promptHookUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
@@ -23,18 +23,23 @@ export const PR_HOOK_PATH = path.join(fileURLToPath(import.meta.url), '..', '..'
 // The .mjs imports `../server/pr-hook.js` at runtime; the devcontainer runtime copies
 // this file to the sibling container location so that relative import resolves.
 export const PR_HOOK_DEP_PATH = path.join(fileURLToPath(import.meta.url), '..', '..', 'pr-hook.js');
+export const PROMPT_HOOK_PATH = fileURLToPath(new URL('../../scripts/prompt-hook.mjs', import.meta.url));
 
 // Inline --settings value for every Claude launch. Claude merges --settings with
 // the user's own settings.json (additive) and an explicit --settings key wins over
 // the file, so this forces behaviour regardless of the user's global config:
 //   - tui: 'fullscreen' pins the alternate-screen renderer on (CLI 2.1.89+) so a
 //     spawned pane never falls back to the inline renderer, whatever the user set.
-//   - the PR-attach hook on Bash; a user's own hooks still run alongside it. Passive:
-//     the hook exits 0 with no stdout, never blocking a tool.
+//   - the PR-attach hook on Bash and the extension UserPromptSubmit bridge; a
+//     user's own hooks still run alongside them. The bridge can return context
+//     or an explicit block before Claude handles the prompt.
 function launchSettings() {
   return JSON.stringify({
     tui: 'fullscreen',
-    hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] },
+    hooks: {
+      PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: PROMPT_HOOK_PATH, timeout: 10 }] }],
+    },
   });
 }
 
@@ -135,7 +140,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // launches so it doesn't appear in every session's skill list.
   if (workflow) full.push('--plugin-dir', ISSUE_TO_PR_SKILL_DIR);
   let inner = `AW_SESSION_ID=${shellQuote(sessionId)} AW_TASK_MEMORY=${shellQuote(linkPathFor(sessionId))} `
-    + `AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} `;
+    + `AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PROMPT_HOOK_URL=${shellQuote(promptHookUrl())} AW_AGENT=claude `;
   if (spawnedBy) inner += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   inner += `claude ${full.map(shellQuote).join(' ')}`;
   // `--` terminates option parsing: the trailing flags (--mcp-config,

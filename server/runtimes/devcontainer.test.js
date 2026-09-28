@@ -61,16 +61,18 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
   assert.match(s, /docker exec -u root "\$CID" chmod \+x '\/tmp\/aw-abc\/scripts\/pr-attach-hook\.mjs'/);
 });
 
-test('launchInputs: base = skills + notes + PR-hook (2 files); workflow adds issue-to-pr', () => {
+test('launchInputs: base includes both native hook scripts; workflow adds issue-to-pr', () => {
   const base = launchInputs('abc');
   const dests = base.map((i) => i.dest);
   assert.deepEqual(dests, [
     '/tmp/aw-abc/skills', '/tmp/aw-abc/notes',
     '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
+    '/tmp/aw-abc/scripts/prompt-hook.mjs',
   ]);
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);
+  assert.equal(base.find((i) => i.dest.endsWith('/prompt-hook.mjs')).chmodX, true);
   const wf = launchInputs('abc', { workflow: true });
   assert.ok(wf.some((i) => i.dest === '/tmp/aw-abc/issue-to-pr'), 'workflow adds issue-to-pr');
   assert.ok(!base.some((i) => i.dest === '/tmp/aw-abc/issue-to-pr'), 'non-workflow omits it');

@@ -184,6 +184,18 @@ test('claude launch injects the PR-attach hook on Bash + the attach-url env', ()
   assert.match(cmd, /AW_PR_ATTACH_URL='http:\/\/127\.0\.0\.1:\d+\/pr-attach'/);
 });
 
+test('claude launch, resume, and fork register native UserPromptSubmit', () => {
+  for (const cmd of [
+    claude.buildLaunch({ sessionId: 'CARD', liveSessionId: 'LIVE' }),
+    claude.buildResume({ sessionId: 'CARD', resumeId: 'LIVE' }),
+    claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FORK', sourceId: 'LIVE' }),
+  ]) {
+    assert.match(cmd, /UserPromptSubmit/);
+    assert.match(cmd, /prompt-hook\.mjs/);
+    assert.match(cmd, /AW_PROMPT_HOOK_URL=/);
+  }
+});
+
 test('claude resume + fork also inject the PR-attach hook (all paths share buildInnerCommand)', () => {
   const resume = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' });
   const fork = claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FORKLIVE', sourceId: 'SRC' });

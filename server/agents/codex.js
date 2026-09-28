@@ -2,11 +2,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolvedMemoryBindingFor } from '../memory-store.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
-import { shellQuote } from './claude.js';
+import { shellQuote, PROMPT_HOOK_PATH } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
+import { codexMcpConfigArgs, MCP_TOKEN_ENV, promptHookUrl } from '../mcp/client-config.js';
 
 const exec = promisify(execFile);
 // `*-codex`-suffixed models (e.g. gpt-5.5-codex) are rejected on ChatGPT-account
@@ -34,7 +34,7 @@ function launchMemory(sessionId, memoryDir, memoryPath) {
 // task/scratch file, never the by-session symlink rejected by Codex 0.149+.
 function envPrefix(sessionId, spawnedBy, memoryPath) {
   let env = `AW_SESSION_ID=${shellQuote(sessionId)} AW_TASK_MEMORY=${shellQuote(memoryPath)} `
-    + `${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
+    + `${MCP_TOKEN_ENV}=${shellQuote(sessionId)} AW_PROMPT_HOOK_URL=${shellQuote(promptHookUrl())} AW_AGENT=codex `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
@@ -66,6 +66,10 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory
     '-c', 'sandbox_workspace_write.network_access=true',
   ];
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
+  // The hook is carried in this session's config layer, not written into the
+  // user's project. It executes before each prompt's model request and can add
+  // developer context to that same turn.
+  args.push('-c', `hooks.UserPromptSubmit=[{hooks=[{type="command",command=${tomlString(PROMPT_HOOK_PATH)},timeout=10}]}]`);
   args.push('--add-dir', memoryDir);
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());

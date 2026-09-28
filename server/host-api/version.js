@@ -101,9 +101,9 @@ import semver from 'semver';
 // dispatch.field contribution's `ext(el)`, which reaches that extension's own
 // `onBeforeDispatch` as `ext`. An older slots.js throws on either slot name
 // and an older server drops `ext`, so only the range can say so.
-// 1.11.0 adds session.onPrompt. Unlike dispatch and resume hooks, it observes
-// actual user turns in either agent's transcript, including turns typed directly
-// in the terminal and turns sent by peers or the board.
+// 1.11.0 adds session.onPrompt, backed by both agents' native UserPromptSubmit
+// hooks. Extensions can add context to the very prompt being submitted or block
+// it, including prompts typed directly in the terminal.
 export const HOST_API_VERSION = '1.11.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and

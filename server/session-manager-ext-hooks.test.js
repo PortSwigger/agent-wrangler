@@ -137,6 +137,48 @@ test('a throwing onBeforeDispatch never aborts the dispatch', async () => {
   assert.ok(sm.entryFor(sessionId));
 });
 
+test('onPrompt returns ordered same-turn context and an explicit block', async () => {
+  const sm = manager();
+  const seen = [];
+  sm._extHooks.onPrompt.push(async (p) => { seen.push(p.prompt); return { additionalContext: 'first reminder' }; });
+  sm._extHooks.onPrompt.push(() => 'second reminder');
+  const context = await sm.runPromptHooks({ sessionId: 'CARD', prompt: 'hello' });
+  assert.deepEqual(seen, ['hello']);
+  assert.deepEqual(context, { hookSpecificOutput: {
+    hookEventName: 'UserPromptSubmit', additionalContext: 'first reminder\n\nsecond reminder',
+  } });
+  sm._extHooks.onPrompt.push(() => ({ decision: 'block', reason: 'wait' }));
+  assert.deepEqual(await sm.runPromptHooks({ prompt: 'hello' }), { decision: 'block', reason: 'wait' });
+});
+
+test('the first launch prompt can reach onPrompt before the card entry is saved', async () => {
+  const sm = manager();
+  sm._extHooks.onPrompt.push(({ entry }) => ({ additionalContext: entry ? 'late' : 'before first model request' }));
+  let result;
+  sm._newSession = async (_tmux, _cwd, command) => {
+    const sessionId = command.match(/AW_SESSION_ID='([^']+)'/)?.[1];
+    assert.ok(sm.acceptsPromptHook(sessionId));
+    assert.equal(sm.entryFor(sessionId), undefined);
+    result = await sm.runPromptHooks({ sessionId, entry: sm.entryFor(sessionId) || null, prompt: 'launch' });
+  };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'launch', agent: 'claude' });
+  assert.equal(result.hookSpecificOutput.additionalContext, 'before first model request');
+  assert.ok(sm.entryFor(sessionId));
+});
+
+test('a failing prompt extension does not suppress later context', async () => {
+  const sm = manager();
+  sm._extHooks.onPrompt.push(() => { throw new Error('broken'); });
+  sm._extHooks.onPrompt.push(() => ({ additionalContext: 'still here' }));
+  const errors = [];
+  const orig = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.equal((await sm.runPromptHooks({ prompt: 'hello' })).hookSpecificOutput.additionalContext, 'still here');
+  } finally { console.error = orig; }
+  assert.match(String(errors[0][0]), /ext-hook:onPrompt/);
+});
+
 // ── The per-launch skill gate seam ────────────────────────────────────────
 test('_extLaunchSkills answers nothing by default, so a bare launch is unchanged', async () => {
   const sm = manager();
