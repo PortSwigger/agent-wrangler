@@ -6561,7 +6561,10 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr);
+  const actions = msg.scope === 'session'
+    ? [{ label: 'View session', onClick: () => selectSession(msg.sessionId) }]
+    : [];
+  toast(text, isErr, isErr ? { actions, duration: 15000 } : undefined);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
