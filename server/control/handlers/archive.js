@@ -91,13 +91,13 @@ export function descendantsOf(target, sessions) {
 // board's cascade ("Archive all") so both callers tear down a tree identically.
 // (The board's SOLO archive path is deliberately separate — see archiveHandler
 // below — because there a human already confirmed via the 3-way dialog.)
-export async function archiveCascade(ids, ctx, { viaTaskArchive } = {}) {
+export async function archiveCascade(ids, ctx, { viaTaskArchive, skipJobNudgeIds = [] } = {}) {
   let unclean = false;
   for (const id of ids) {
     const node = ctx.sessionFromGraph?.(id) ?? null;
     if (node?.hasBackgroundShell) {
       const tmux = ctx.tmuxFor?.(id);
-      if (tmux && !(await nudgeAndWaitForJobs(tmux, node, { ctx, id }))) unclean = true;
+      if (tmux && (skipJobNudgeIds.includes(id) || !(await nudgeAndWaitForJobs(tmux, node, { ctx, id })))) unclean = true;
     }
     try {
       // Kill every owned tmux hosting this session (original + any forks), not just

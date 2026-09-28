@@ -3,7 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
+import { todoKeyToTaskId, todoLaunchIntent, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -52,7 +52,7 @@ import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } fro
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen } from './diff-view.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
@@ -210,6 +210,15 @@ const extApi = {
     pendingSelect = sessionId;
     send({ type: 'resume', sessionId });
     toast('Restoring…');
+  },
+  // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
+  // on the live board counts (an archived or unknown id would sit in the
+  // minimised set until the next prune), and minimise() itself refuses the last
+  // visible tile — so report whether the tile really went.
+  minimiseTask: (taskId) => {
+    if (!currentOrder().includes(taskId) || minimisedIds.has(taskId)) return false;
+    minimise(taskId);
+    return minimisedIds.has(taskId);
   },
 };
 const clientExtensions = createClientExtensionLoader(slots);
@@ -603,8 +612,11 @@ function setView(view) {
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
 }
+function selectRailView(view) {
+  setView(view !== 'grid' && currentView === view ? 'grid' : view);
+}
 document.querySelectorAll('.layouts button').forEach((btn) => {
-  btn.addEventListener('click', () => setView(btn.dataset.view));
+  btn.addEventListener('click', () => selectRailView(btn.dataset.view));
 });
 
 // ── Extension views (slots.js `view`) ──────────────────────────────────────
@@ -662,7 +674,7 @@ function renderExtViews() {
     // an invisible button.
     if (c.icon) btn.innerHTML = c.icon;
     else btn.textContent = c.label.slice(0, 1).toUpperCase();
-    btn.addEventListener('click', () => setView(key));
+    btn.addEventListener('click', () => selectRailView(key));
     layouts.appendChild(btn);
   }
   updateExtViews();
@@ -1851,6 +1863,21 @@ function extMenuItems(s) {
   }));
 }
 
+// `task.action` extension items for one task tile's right-click menu, in the
+// same item shape as extMenuItems. The subject is the tile — `{ id, name,
+// adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
+function extTaskMenuItems(taskId, isNoTask) {
+  const id = isNoTask ? ADHOC_ID : taskId;
+  const task = isNoTask ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask }, latestGraph, extApi).map((it) => ({
+    label: it.label,
+    icon: it.icon,
+    danger: it.danger,
+    run: it.run,
+    ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
+  }));
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -2216,12 +2243,16 @@ function openTaskMenu(cell, x, y) {
   const isNoTask = cell.dataset.entity === 'no-task';
   const taskId = isNoTask ? null : cell.dataset.taskid;
   const todoZone = cell.querySelector('.todo-zone');
+  const extItems = extTaskMenuItems(taskId, isNoTask);
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
     { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
+    ] : []),
+    ...(extItems.length ? [{ sep: true }, ...extItems] : []),
+    ...(!isNoTask ? [
       { sep: true },
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTaskFromCell(cell) },
     ] : []),
@@ -2652,6 +2683,9 @@ function wireTaskControls(el) {
   el.querySelectorAll('.todo-spawn').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); spawnTodo(b); })
   );
+  el.querySelectorAll('.todo-details').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); openTodoDetails(b); })
+  );
   el.querySelectorAll('.todo-del').forEach((b) =>
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3033,6 +3067,70 @@ function beginTodoEdit(span) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+function openTodoDetails(btn) {
+  const row = btn.closest('.todo-row');
+  if (!row) return;
+  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
+  const td = todosFor(key).find((item) => item.id === todoId);
+  if (!td) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'todo-editor-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'todo-editor-heading');
+  overlay.innerHTML = `<div class="modal-card todo-editor-card">
+    <h3 id="todo-editor-heading">Edit TODO</h3>
+    <label for="todo-editor-title">Title</label>
+    <input id="todo-editor-title" autocomplete="off">
+    <label for="todo-editor-description">Description</label>
+    <textarea id="todo-editor-description" rows="10" placeholder="Findings, remaining work, next step…"></textarea>
+    <p class="todo-editor-error" role="alert" hidden></p>
+    <div class="modal-actions"><button class="ghost todo-editor-cancel">Cancel</button><button class="primary todo-editor-save">Save</button></div>
+  </div>`;
+  const title = overlay.querySelector('#todo-editor-title');
+  const description = overlay.querySelector('#todo-editor-description');
+  const error = overlay.querySelector('.todo-editor-error');
+  title.value = td.text;
+  description.value = td.description || '';
+  const close = () => overlay.remove();
+  overlay.querySelector('.todo-editor-cancel').addEventListener('click', close);
+  overlay.querySelector('.todo-editor-save').addEventListener('click', () => {
+    const text = title.value.trim();
+    if (!text) { title.focus(); return; }
+    const nextDescription = description.value.trim();
+    const textChanged = text !== td.text;
+    const descriptionChanged = nextDescription !== (td.description || '');
+    if (textChanged || descriptionChanged) {
+      const currentKey = Object.keys(latestTasks.todos || {}).find((bucket) => todosFor(bucket).some((item) => item.id === todoId));
+      if (!currentKey) {
+        error.textContent = 'This TODO no longer exists.';
+        error.hidden = false;
+        return;
+      }
+      send({ type: 'todo-edit', taskId: todoKeyToTaskId(currentKey), todoId,
+        ...(textChanged ? { text } : {}),
+        ...(descriptionChanged ? { description: nextDescription } : {}) });
+      const latestTodo = todosFor(currentKey).find((item) => item.id === todoId);
+      if (latestTodo) {
+        if (textChanged) latestTodo.text = text;
+        if (descriptionChanged) {
+          if (nextDescription) latestTodo.description = nextDescription;
+          else delete latestTodo.description;
+        }
+      }
+      renderGrid();
+    }
+    close();
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+  document.body.appendChild(overlay);
+  (td.description ? description : title).focus();
+}
+
 // Spawn a session from a TODO: open the dispatch modal pre-filled with the todo
 // text, task locked to the todo's own bucket. The todo is consumed (deleted) on
 // the 'dispatched' ack — pendingTodoConsume carries it there.
@@ -3043,7 +3141,7 @@ function spawnTodo(btn) {
   const td = todosFor(key).find((x) => x.id === todoId);
   if (!td) return;
   const taskId = todoKeyToTaskId(key);
-  openDispatch(taskId, { intent: td.text, lockTask: true });
+  openDispatch(taskId, { intent: todoLaunchIntent(td), lockTask: true });
   pendingTodoConsume = { taskId, todoId, key };
 }
 
@@ -4222,7 +4320,9 @@ applyTerminalSide();
       handleWidth: handle.getBoundingClientRect().width,
       sidebarWidth: sidebarW,
     });
-    grid.style.width = `${gridW}px`;
+    const width = `${gridW}px`;
+    grid.style.width = width;
+    if (isDiffPanelOpen()) setDiffPanelWidth(width);
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;

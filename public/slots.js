@@ -41,11 +41,16 @@
 // right-click and Actions menus (menuItems()), a spend ceiling for the card's
 // cost tag (costCeiling()) — because that chrome is core markup an extension
 // could never mount into.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost'];
+//
+// `task.action` is `card.action`'s mirror for a task tile: menu items for the
+// tile's right-click menu (taskMenuItems()). Its subject is the TILE, not a
+// session — `{ id, name, adhoc }`, the no-task tile being `adhoc` with the
+// reserved id — which is also what `api.minimiseTask` takes.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action'];
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items' };
 
 // Where inside the dispatch modal a `dispatch.field` contribution may land.
 // `top` is above the folder field, `model` is beside the model selector, and
@@ -164,6 +169,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             selection and the core `resume` frame — none of which `send`
   //             may reach, since it is bound to the extension's own types. A
   //             non-id argument is reported and dropped, like a refused send.
+  //   minimiseTask — the tile-level counterpart (1.11.0): tuck this task's tile
+  //             into the tray, exactly as its header's Minimise does. Same
+  //             reason it lives on the base api — the minimised set is board
+  //             view state (app.js), not a control frame — and the same
+  //             refusal for a non-id argument. The base api returns whether the
+  //             tile was actually minimised (an unknown id, or the last visible
+  //             tile, is a no-op), and that answer is passed straight back.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -196,6 +208,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             return;
           }
           baseApi.openSession?.(sessionId);
+        },
+        minimiseTask: (taskId) => {
+          if (typeof taskId !== 'string' || !taskId) {
+            onError(`[ext:${extId}] minimiseTask refused: expected a task id, got ${JSON.stringify(taskId)}`);
+            return false;
+          }
+          return Boolean(baseApi.minimiseTask?.(taskId));
         },
       });
     }
@@ -311,6 +330,40 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (withUpdate && !updateAt(slotName, c, host, session, graph)) break;
       }
     }
+  }
+
+  // The body of both menu value slots: every contribution's `items(subject,
+  // graph, api)` in registration order, normalised to the menu's item shape. A
+  // throwing `items()` removes the contribution; a malformed item is skipped and
+  // reported; `run` is wrapped so a throw never escapes into the menu's click
+  // handler.
+  function valueMenuItems(slotName, subject, graph, baseApi) {
+    const out = [];
+    for (const c of [...slotList(slotName)]) {
+      let items;
+      try {
+        items = c.items(subject, graph, apiFor(c.extId, baseApi));
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} items failed — contribution removed`, err);
+        drop(slotName, c);
+        continue;
+      }
+      for (const it of Array.isArray(items) ? items : []) {
+        if (!it || typeof it.label !== 'string' || !it.label || typeof it.run !== 'function') {
+          onError(`[ext:${c.extId}] ${c.id} returned a menu item without a label and run()`);
+          continue;
+        }
+        out.push({
+          extId: c.extId,
+          label: it.label,
+          hint: typeof it.hint === 'string' ? it.hint : '',
+          icon: typeof it.icon === 'string' ? it.icon : '',
+          danger: Boolean(it.danger),
+          run: (e) => { try { it.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} menu item "${it.label}" failed`, err); } },
+        });
+      }
+    }
+    return out;
   }
 
   return {
@@ -560,32 +613,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `items(session, graph, api)` gets the same per-extension api a mounted
     // contribution does, since a value slot has no mount to receive it in.
     menuItems(session, graph, baseApi) {
-      const out = [];
-      for (const c of [...slotList('card.action')]) {
-        let items;
-        try {
-          items = c.items(session, graph, apiFor(c.extId, baseApi));
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} items failed — contribution removed`, err);
-          drop('card.action', c);
-          continue;
-        }
-        for (const it of Array.isArray(items) ? items : []) {
-          if (!it || typeof it.label !== 'string' || !it.label || typeof it.run !== 'function') {
-            onError(`[ext:${c.extId}] ${c.id} returned a menu item without a label and run()`);
-            continue;
-          }
-          out.push({
-            extId: c.extId,
-            label: it.label,
-            hint: typeof it.hint === 'string' ? it.hint : '',
-            icon: typeof it.icon === 'string' ? it.icon : '',
-            danger: Boolean(it.danger),
-            run: (e) => { try { it.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} menu item "${it.label}" failed`, err); } },
-          });
-        }
-      }
-      return out;
+      return valueMenuItems('card.action', session, graph, baseApi);
+    },
+
+    // The `task.action` items for one task tile's right-click menu — the same
+    // item shape and the same guards as menuItems(), with the TILE as subject:
+    // `items(task, graph, api)` where `task` is `{ id, name, adhoc }`.
+    taskMenuItems(task, graph, baseApi) {
+      return valueMenuItems('task.action', task, graph, baseApi);
     },
 
     // The spend ceiling for one card's cost tag: `{ usd, reached }` from the

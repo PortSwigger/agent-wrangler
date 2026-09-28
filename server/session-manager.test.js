@@ -616,6 +616,39 @@ test('fork() re-threads the parent entry\'s effort into buildFork', async () => 
   assert.match(captured, /'--effort' 'low'/);
 });
 
+test('fork() keeps a Codex self-title set before the fork card is registered', async () => {
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  sm._resolveLiveId = async (_adapter, { sessionId }) => {
+    sm.rename(sessionId, 'Review the fork');
+    return 'live-fork';
+  };
+  const { sessionId } = await sm.fork({ sourceId: 'SOURCE', parentId: 'PARENT', parentEntry: { agent: 'codex', name: 'Parent title', intent: 'Parent task' }, cwd: os.tmpdir() });
+  const entry = sm.entryFor(sessionId);
+  assert.equal(entry.name, 'Review the fork');
+  assert.equal(entry.nameInherited, undefined);
+  assert.equal(entry.forkedFrom, 'PARENT');
+  assert.equal(entry.liveSessionId, 'live-fork');
+});
+
+test('fork() keeps the user-provided fork title over an early agent suggestion', async () => {
+  const sm = new SessionManager();
+  sm._newSession = async () => {};
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  sm._resolveLiveId = async (_adapter, { sessionId }) => {
+    sm.rename(sessionId, 'Agent suggestion');
+    return 'live-fork';
+  };
+  const { sessionId } = await sm.fork({ sourceId: 'SOURCE', parentId: 'PARENT', parentEntry: { agent: 'codex', name: 'Parent title' }, cwd: os.tmpdir(), name: 'My fork title' });
+  assert.equal(sm.entryFor(sessionId).name, 'My fork title');
+  assert.equal(sm.entryFor(sessionId).nameInherited, undefined);
+});
+
 test('fork() re-threads the parent auto-compaction threshold into buildFork', async () => {
   const sm = new SessionManager();
   let captured = '';
@@ -1424,8 +1457,8 @@ function smForDispatch() {
 }
 
 // Nothing else records the grants, so an unstamped entry is a resume that cannot
-// re-grant them. Only what the caller asked for is stored: the codex worktree
-// git-dir is re-derived per launch, and persisting it would double the flag.
+// re-grant them. Only what the caller asked for is stored: the codex git-dir is
+// re-derived from the cwd per launch, and persisting it would double the flag.
 test('dispatch stamps the addDirs it was asked for onto the entry, and nothing else', async () => {
   const sm = smForDispatch();
   const granted = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', addDirs: ['/projects/main/.git'] });
@@ -2199,4 +2232,94 @@ test('syncNotesToContainer: docker cp -L notes for a live devcontainer session; 
   const cps = calls.filter((c) => c[0] === 'docker' && c[1] === 'cp');
   assert.equal(cps.length, 1);                       // only the devcontainer entry copies
   assert.ok(cps[0].join(' ').includes(':/tmp/aw-d/notes')); // into the container's notes dir
+});
+
+// The git-dir grant keys off the LAUNCH CWD, not off a wrangler-made worktree
+// entry: a Codex worker handed a pre-existing linked worktree as plain `cwd`
+// (no `worktree` field on its entry) has exactly the same sandbox problem, and
+// so does a plain checkout — Codex keeps `<root>/.git` read-only inside every
+// writable root, so `git commit` there fails on index.lock too (verified
+// against codex-cli 0.156.1) unless the git-dir is granted as its own root.
+test('dispatch: a codex cwd that is a pre-existing linked worktree (no worktree mode) gets the common git-dir via --add-dir', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-cwd-wt-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  const r = await sm.dispatch({ cwd: worktreePath, intent: 'fix the bug', agent: 'codex' });
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  assert.equal(sm.map.get(r.sessionId).worktree, undefined);
+  assert.equal(sm.map.get(r.sessionId).addDirs, undefined);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dispatch: a codex cwd that is a plain checkout gets its own .git via --add-dir', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-cwd-repo-'));
+  const { repo, gitDir } = realWorktreeRepo(root);
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: repo, intent: 'fix the bug', agent: 'codex' });
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dispatch: a git-dir already in the requested addDirs is granted once', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-cwd-dup-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = smForDispatch();
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: worktreePath, intent: 'fix the bug', agent: 'codex', addDirs: [gitDir] });
+  assert.equal(captured.split(`'--add-dir' '${gitDir}'`).length - 1, 1, captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dispatch: a claude cwd that is a plain checkout gets no .git --add-dir (no OS sandbox to feed)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dispatch-cwd-claude-'));
+  const { repo, gitDir } = realWorktreeRepo(root);
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.dispatch({ cwd: repo, intent: 'fix the bug', agent: 'claude' });
+  assert.ok(!captured.includes(gitDir), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('resume() grants the common git-dir from the entry cwd even without a worktree field', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-resume-cwd-wt-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('card-cwd-wt', { agent: 'codex', cwd: worktreePath, liveSessionId: 'live-cwd-wt' });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm.killForSession = async () => [];
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.resume('card-cwd-wt', worktreePath);
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('fork() grants the common git-dir from the fork cwd even without a parent worktree field', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-fork-cwd-wt-'));
+  const { worktreePath, gitDir } = realWorktreeRepo(root);
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._ensureCodexTrust = () => {};
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await sm.fork({
+    sourceId: 'SRC', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', cwd: worktreePath },
+    cwd: worktreePath,
+  });
+  assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
+  fs.rmSync(root, { recursive: true, force: true });
 });

@@ -7,8 +7,8 @@ function ctx() {
   return {
     calls,
     taskStore: {
-      addTodo: (taskId, text) => calls.addTodo.push({ taskId, text }),
-      editTodo: (taskId, todoId, text) => calls.editTodo.push({ taskId, todoId, text }),
+      addTodo: (taskId, text, createdAt, description) => calls.addTodo.push({ taskId, text, ...(description !== undefined ? { description } : {}) }),
+      editTodo: (taskId, todoId, text, description) => calls.editTodo.push({ taskId, todoId, text, ...(description !== undefined ? { description } : {}) }),
       deleteTodo: (taskId, todoId) => calls.deleteTodo.push({ taskId, todoId }),
       moveTodo: (todoId, fromTaskId, toTaskId) => calls.moveTodo.push({ todoId, fromTaskId, toTaskId }),
       reorderTodos: (taskId, order) => calls.reorderTodos.push({ taskId, order }),
@@ -28,6 +28,22 @@ test('todo-add passes a real taskId through', async () => {
   const c = ctx();
   await todoAddHandler.handler({ type: 'todo-add', taskId: 'T1', text: 'ship' }, c);
   assert.deepEqual(c.calls.addTodo, [{ taskId: 'T1', text: 'ship' }]);
+});
+
+test('todo-add and todo-edit pass descriptions through', async () => {
+  const c = ctx();
+  await todoAddHandler.handler({ type: 'todo-add', text: 'Investigate', description: 'Found a race.' }, c);
+  await todoEditHandler.handler({ type: 'todo-edit', todoId: 'td_1', description: 'Next: test.' }, c);
+  assert.deepEqual(c.calls.addTodo[0], { taskId: null, text: 'Investigate', description: 'Found a race.' });
+  assert.deepEqual(c.calls.editTodo[0], { taskId: null, todoId: 'td_1', text: undefined, description: 'Next: test.' });
+});
+
+test('todo handlers ignore malformed descriptions', async () => {
+  const c = ctx();
+  await todoAddHandler.handler({ type: 'todo-add', text: 'Investigate', description: 7 }, c);
+  await todoEditHandler.handler({ type: 'todo-edit', todoId: 'td_1', text: 'Updated', description: null }, c);
+  assert.deepEqual(c.calls.addTodo[0], { taskId: null, text: 'Investigate' });
+  assert.deepEqual(c.calls.editTodo[0], { taskId: null, todoId: 'td_1', text: 'Updated' });
 });
 
 test('todo-edit calls editTodo and rebuilds; coerces missing taskId to null', async () => {

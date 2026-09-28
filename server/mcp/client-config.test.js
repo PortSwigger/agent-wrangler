@@ -64,6 +64,10 @@ test('allowedToolsArg grants the assign_session tool (no per-call prompt)', () =
   assert.ok(allowedToolsArg().split(',').includes(allowedToolName('assign_session')));
 });
 
+test('allowedToolsArg grants the rename_session tool (no per-call prompt)', () => {
+  assert.ok(allowedToolsArg().split(',').includes(allowedToolName('rename_session')));
+});
+
 test('allowedToolsArg grants the get_session_info self-lookup tool (no per-call prompt)', () => {
   assert.ok(allowedToolsArg().split(',').includes(allowedToolName('get_session_info')));
 });

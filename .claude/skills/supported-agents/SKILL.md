@@ -29,6 +29,7 @@ These are stable conceptual differences. For current mechanisms, read the adapte
 | System prompt injection | Dedicated CLI flag | Config key injected as a developer-role message |
 | Skills delivery | Per-launch plugin dir (cwd-independent) | Text catalog injected at launch; skill files read on demand via absolute path |
 | Slash-command plugins | Yes | No — MCP tools are the parity layer |
+| OS sandbox | None | `workspace-write` seatbelt: writes only to cwd, tmp, memory dir, each `--add-dir`; the launch cwd's git common dir is auto-granted (session-manager) |
 
 ## Three launch sites
 

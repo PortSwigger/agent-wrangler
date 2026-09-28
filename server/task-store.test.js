@@ -403,6 +403,19 @@ test('editTodo renames in place; no-op on blank/unchanged/unknown', () => {
   assert.equal(new TaskStore(file).snapshot().todos[t.id][0].text, 'new');
 });
 
+test('TODO descriptions persist and can be edited without changing the title', () => {
+  const file = tmpFile();
+  const store = new TaskStore(file);
+  const task = store.createTask({ name: 'Project' });
+  const todo = store.addTodo(task.id, 'Investigate indexing', 1, 'Found a race.\n\nNext: reproduce it.');
+  assert.equal(todo.description, 'Found a race.\n\nNext: reproduce it.');
+  assert.equal(store.editTodo(task.id, todo.id, undefined, 'Next: add a regression test.'), true);
+  assert.equal(store.snapshot().todos[task.id][0].text, 'Investigate indexing');
+  assert.equal(new TaskStore(file).snapshot().todos[task.id][0].description, 'Next: add a regression test.');
+  assert.equal(store.editTodo(task.id, todo.id, undefined, ''), true);
+  assert.equal(store.snapshot().todos[task.id][0].description, undefined);
+});
+
 test('deleteTodo removes a todo; keeps map sparse (deletes key when empty); no-op on unknown', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Work' });

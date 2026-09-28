@@ -10,6 +10,16 @@ sessions/
 docs/*
 !docs/images/
 !docs/extensions.md
+!docs/agent-capabilities.md
+!docs/agent-tools.md
+!docs/board-and-sessions.md
+!docs/reviews-and-prs.md
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/maintain-product-docs/
+!.claude/skills/maintain-product-docs/SKILL.md
 
 # Beads / Dolt files (added by bd init)
 .dolt/

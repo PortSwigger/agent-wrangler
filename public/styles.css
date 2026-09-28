@@ -1880,6 +1880,14 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* Editing widens back to the full row — the shrink-to-content sizing above is
    only for the read-only display; the input still wants the whole width. */
 .todo-row .todo-text:has(.todo-text-input) { flex: 1; }
+.todo-details { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+.todo-details svg { width: 12px; height: 12px; }
+.todo-details.has-description { color: var(--purple); }
+.todo-details:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.todo-editor-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 30; }
+.todo-editor-card textarea { min-height: 180px; line-height: 1.5; }
+.todo-editor-error { color: var(--red-fg); margin: 0; font-size: 0.85em; }
+.todo-editor-error[hidden] { display: none; }
 .todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
 .todo-tooltip {
   position: fixed; z-index: 60; display: none; pointer-events: none;
@@ -1896,9 +1904,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .todo-spawn:hover .todo-tick { display: none; }
 .todo-spawn:hover .todo-play { display: inline-flex; }
 .todo-spawn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-/* margin-left: auto pins it to the row's right edge regardless of how short
-   the (now shrink-to-content) text is — matches the old flex:1 text's layout. */
-.todo-del { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
+/* The details button pushes both actions to the row's right edge. */
+.todo-del { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
 .todo-del svg { width: 13px; height: 13px; }
 .todo-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
 .todo-zone { display: flex; margin: 2px 2px 0; }
@@ -2125,21 +2132,18 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 
 /* ── Working-tree diff panel ────────────────────────────────────────────────
-   A slide-in over the #grid slot: it's a #grid flex sibling, so `flex: 1 1 0`
-   makes it inherit the board column's exact width automatically (tracking a
-   drag-resized #sidebar for free) — no absolute geometry to keep in sync. While
-   open, main.diffing hides #grid behind it and the terminal #sidebar stays live.
-   The inner element slides in via translateX, clipped by the panel's overflow so
-   it never spills onto the sidebar; gated behind reduced-motion. */
+   A slide-in over the #grid slot. Before a drag it follows the board's responsive
+   CSS width; a dragged, persisted board width is mirrored inline by app.js. */
 .diff-panel { flex: 1 1 0; min-width: 0; display: flex; overflow: hidden; }
+.diff-panel.sized { flex: 0 0 auto; }
 .diff-panel[hidden] { display: none; }
 main.diffing #grid { display: none; }
+main.diffing .diff-panel:not(.sized) { flex: 0 0 auto; width: 54%; }
 /* The diff view's own fullscreen: mirrors main.maximized but hides the session
-   panel instead of the board, so the diff fills the whole content area. No width
-   override needed — #diff-panel's flex:1 1 0 just grows into the space #sidebar
-   and #drag-handle leave behind once they're gone. */
+   panel instead of the board, so the diff fills the whole content area. */
 main.diff-fullscreen #sidebar,
 main.diff-fullscreen #drag-handle { display: none; }
+main.diff-fullscreen.diffing .diff-panel { flex: 1 1 0; width: auto; }
 /* Same backdrop as the terminal, and the same way: --term-bg is an rgba on dark
    themes, and #grid is display:none while diffing (not just hidden behind this),
    so there's nothing underneath to protect — painting --term-bg directly lets the

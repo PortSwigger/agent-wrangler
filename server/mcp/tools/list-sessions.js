@@ -13,7 +13,8 @@ export const listSessionsTool = {
     + 'this session is nested under on the board (opt-in, changeable later via attach_session/'
     + 'detach_session); `spawnedBy` is who actually called spawn_session/spawn_workflow to launch '
     + 'it (set once at launch, only when launched that way — null for a session dispatched '
-    + 'directly from the board UI). Either can be set with the other null. Prefer `label` over '
+    + 'directly from the board UI). Either can be set with the other null. `autoCompactTokens` is '
+    + 'the session\'s auto-compaction working-context ceiling. Prefer `label` over '
     + '`sessionId` when telling the user about a session — but labels aren\'t guaranteed unique '
     + '(often intent-derived, so a session and one it spawned can share the same displayed label; '
     + 'see the `session-hierarchy` skill), so when presenting more than one row pair the label '
@@ -31,6 +32,7 @@ export const listSessionsTool = {
       task: deps.taskStore.taskFor(s.sessionId) ?? null,
       parentSession: s.parentSession ?? null,
       spawnedBy: s.spawnedBy ?? null,
+      autoCompactTokens: s.autoCompactTokens ?? null,
       isCaller: caller != null && s.sessionId === caller,
     }));
     const callerRow = sessions.find((s) => s.isCaller);

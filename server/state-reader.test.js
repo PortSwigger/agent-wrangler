@@ -75,6 +75,62 @@ test('sessionLabel prefers the live Claude title over intent and summary', () =>
   );
 });
 
+test('sessionLabel uses a Codex rollout summary before a long launch prompt', () => {
+  assert.equal(
+    sessionLabel({ agent: 'codex', intent: 'Review the README and document every feature in a long initial prompt', summary: 'Review Agent Wrangler documentation', cwd: CWD }),
+    'Review Agent Wrangler documentation',
+  );
+});
+
+test('sessionLabel keeps a Codex prompt fallback short when no summary exists yet', () => {
+  const intent = 'Please investigate all of the inconsistent session naming behavior, including the worktree fallback and the initial prompt fallback, then fix it';
+  const label = sessionLabel({ agent: 'codex', intent, cwd: CWD });
+  assert.ok(label.length <= 80);
+  assert.notEqual(label, intent);
+});
+
+test('sessionLabel shortens a rollout summary that is just the first user message', () => {
+  const intent = 'Please investigate all of the inconsistent session naming behavior, including the worktree fallback and the initial prompt fallback, then fix it';
+  assert.equal(
+    sessionLabel({ agent: 'codex', intent, summary: intent.slice(0, 80), cwd: CWD }),
+    'Please investigate all of the inconsistent session naming…',
+  );
+});
+
+test('sessionLabel uses a neutral Codex label before the first user task', () => {
+  assert.equal(sessionLabel({ agent: 'codex', cwd: '/work/agent-wrangler-worktree-codex-session-names', fallback: 'cx_1234' }), 'Codex session');
+});
+
+test('sessionLabel ignores a cached Codex title truncated from the worktree name', () => {
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: [null, 'agent-wrangler-worktr...'], summary: 'Fix Codex session names', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names' }),
+    'Fix Codex session names',
+  );
+});
+
+test('sessionLabel preserves a human Codex title shaped like a clipped worktree name', () => {
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: ['agent-wrangler-worktr...'], summary: 'Fix Codex session names', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names' }),
+    'agent-wrangler-worktr...',
+  );
+});
+
+test('sessionLabel ignores a cached Codex label copied from the full launch prompt', () => {
+  const intent = 'Please investigate all of the inconsistent session naming behavior, including the worktree fallback and the initial prompt fallback, then fix it';
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: [null, intent], intent, summary: 'Fix Codex session names', cwd: CWD }),
+    'Fix Codex session names',
+  );
+});
+
+test('sessionLabel shortens a cached Codex label copied from a rollout summary', () => {
+  const cached = 'Please investigate all of the inconsistent session naming behavior, including th';
+  assert.equal(
+    sessionLabel({ agent: 'codex', names: [null, cached], intent: '', cwd: CWD }),
+    'Please investigate all of the inconsistent session naming…',
+  );
+});
+
 test('sessionLabel ignores Claude Code\'s auto agent-name title (basename-hex) and falls to intent', () => {
   assert.equal(
     sessionLabel({ names: [], liveTitle: 'agent-wrangler-3f', intent: 'Fix the session title bug', summary: 'a summary', cwd: CWD }),
@@ -401,6 +457,14 @@ test('buildGraph history record carries viaTaskArchive, null when absent', async
   assert.equal(byId.solo.viaTaskArchive, null);
 });
 
+test('buildGraph history keeps an unnamed Codex card from reverting to its full launch prompt', async () => {
+  const intent = 'Please investigate all of the inconsistent session naming behavior, including the worktree fallback and the initial prompt fallback, then fix it';
+  const mgr = makeArchiveManager([{ sessionId: 'cx-archive', agent: 'codex', cwd: '/nonexistent/project', archivedAt: 1, intent }]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  assert.ok(graph.history[0].label.length <= 80);
+  assert.notEqual(graph.history[0].label, intent);
+});
+
 test('buildGraph carries suspendedAt onto the dormant board node', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'susp-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', suspendedAt: 1781000000000 },
@@ -493,6 +557,15 @@ function makeDiscoveredManager(entry, tmuxName) {
     socketOf: () => '',
   };
 }
+
+test('buildGraph ignores a Codex pane title made from the truncated worktree name', async () => {
+  const entry = { sessionId: 'cx1', agent: 'codex', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names', intent: 'Why are Codex session names sometimes the full initial prompt?', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cx_1234');
+  const discover = async () => [{ tmuxName: 'cx_1234', socket: '', claudePid: 4242, agent: 'codex', cwd: entry.cwd, command: 'codex', paneTitle: '⠏ agent-wrangler-worktr...' }];
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({ summary: 'Fix Codex session names' }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture: async () => '' });
+  assert.equal(graph.sessions.find((s) => s.sessionId === 'cx1').label, 'Fix Codex session names');
+});
 
 test('buildGraph: a discovered devcontainer session in bring-up reads working with a starting-container hint', async () => {
   const entry = { sessionId: 'dc1', agent: 'claude', runtime: 'devcontainer', cwd: '/nonexistent/repo', liveSessionId: 'L1' };

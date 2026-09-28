@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   TODO_STRIDE_PX, TODO_DIVIDER_PX, CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, ADHOC_ID,
   SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
-  todoKeyToTaskId, tileWeightWithTodos, reorderedTodoIds,
+  todoKeyToTaskId, tileWeightWithTodos, reorderedTodoIds, todoLaunchIntent,
   tooltipPosition, TOOLTIP_MARGIN_PX, TOOLTIP_GAP_PX,
 } from './todo.js';
 import { tileWeight, SNOOZE_DIVIDER_PX, SNOOZE_STRIDE_PX } from './snooze.js';
@@ -21,6 +21,11 @@ test('todoKeyToTaskId: the adhoc sentinel maps to null, real ids pass through', 
   assert.equal(todoKeyToTaskId('task_123'), 'task_123');
   assert.equal(todoKeyToTaskId(null), null);
   assert.equal(todoKeyToTaskId(undefined), null);
+});
+
+test('todoLaunchIntent includes a description when starting a rich TODO', () => {
+  assert.equal(todoLaunchIntent({ text: 'Investigate' }), 'Investigate');
+  assert.equal(todoLaunchIntent({ text: 'Investigate', description: 'Found a race.\nNext: add test.' }), 'Investigate\n\nFound a race.\nNext: add test.');
 });
 
 test('tileWeightWithTodos: zero todos adds nothing over the snooze weight', () => {

@@ -11,6 +11,7 @@ import {
   noticeEl, fileHeaderEl, hunkHeadEl, binaryEl, lineEl, pairRowEl, editorEl, detachedSectionEl,
   fileListEl, orderFilesForDisplay,
 } from './diff-dom.js';
+import { diffPanelSizing, nextDiffPanelState } from './diff-panel-layout.js';
 
 // The working-tree diff panel: a slide-in over the #grid slot (the terminal
 // #sidebar stays live, so the user keeps talking to the agent while reviewing).
@@ -51,6 +52,7 @@ sendBtn.title = 'Send to agent (⌘/Ctrl + Enter)';
 
 let openSid = null;        // session whose diff is shown, or null when closed
 let diffFullscreen = false; // the diff panel's own fullscreen (hides #sidebar); reset on close
+let diffPanelWidth = '';
 let sessionLabel = '';     // the session label shown in diff-sub, before any baseRef suffix
 let diffMode = 'working-tree'; // 'working-tree' (uncommitted only) or 'branch' (vs origin/branch)
 // 'inline' (one unified column) or 'split' (old | new side by side). Unlike diffMode
@@ -185,6 +187,7 @@ export function closeDiffPanel() {
 export function setDiffFullscreen(on) {
   if (diffFullscreen === on) return;
   diffFullscreen = on;
+  applyPanelState(nextDiffPanelState({ storedWidth: diffPanelWidth || gridWidth(), fullscreen: on }));
   document.querySelector('main').classList.toggle('diff-fullscreen', on);
   fullscreenBtn.innerHTML = on ? MINIMIZE_ICON : MAXIMIZE_ICON;
   fullscreenBtn.title = on ? 'Restore' : 'Fullscreen';
@@ -192,8 +195,27 @@ export function setDiffFullscreen(on) {
   if (on) setMaximized(false);
 }
 
+export function setDiffPanelWidth(width) {
+  applyPanelState(nextDiffPanelState({ storedWidth: diffPanelWidth, nextWidth: width, fullscreen: diffFullscreen }));
+}
+
+function gridWidth() {
+  return document.getElementById('grid').style.width;
+}
+
+function applyPanelSizing({ width, sized }) {
+  panelEl.style.width = width;
+  panelEl.classList.toggle('sized', sized);
+}
+
+function applyPanelState({ storedWidth, width, sized }) {
+  diffPanelWidth = storedWidth;
+  applyPanelSizing({ width, sized });
+}
+
 function showPanel() {
   clearTimeout(hideTimer);
+  setDiffPanelWidth(gridWidth());
   document.querySelector('main').classList.add('diffing');
   panelEl.hidden = false;
   panelEl.setAttribute('aria-hidden', 'false');
