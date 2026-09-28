@@ -281,6 +281,36 @@ export function classify(paneText) {
   ) {
     return { status: 'needs-you', waitingFor: 'confirm a startup prompt in the terminal' };
   }
+  // Codex's OWN "do you trust this directory?" dialog — a different product's
+  // wording, not a variant of the Claude-CLI fallback just above (that one is
+  // pinned to Claude Code's own "no, exit"/"enter to confirm" phrasing and
+  // deliberately doesn't recognize Codex's). Shown on a fresh dispatch/relaunch
+  // whenever `ensureCodexTrust` hasn't (or couldn't) persist trust for this repo
+  // ahead of time (see codex-trust.js). Same hazard class as the update banner
+  // above: this is TUI chrome never written to the rollout, its menu defaults to
+  // option 1 ("Yes, continue") on a bare Enter, and the chat view sends a prompt
+  // by pasting text then pressing Enter — so an ordinary Send would silently
+  // confirm trusting a folder the human never actually reviewed. Anchored on the
+  // trailing menu + "press enter to continue", not the leading question, for the
+  // same reason as the update banner: a narrow pane can wrap the long "Working
+  // with untrusted contents…" description far enough to push the question line
+  // out of the 12-line tail window, but nothing renders after "press enter to
+  // continue" while Codex is blocked on stdin, so it's always present in the
+  // tail regardless of wrap. Verified against the real dialog (`codex` in a
+  // fresh untrusted dir).
+  //
+  // Weaker anchor than the update banner's three numbered lines: only two menu
+  // lines plus the trailing phrase, and `\b` after "continue"/"quit" tolerates
+  // trailing words ("continue with the plan"). Same accepted residual risk as
+  // the OAuth/update-banner checks — deliberately writing this exact wording as
+  // actual menu options is what it'd take to false-positive.
+  if (
+    /^[\s›]*1\.\s*yes,\s*continue\b/im.test(recent)
+    && /^[\s›]*2\.\s*no,\s*quit\b/im.test(recent)
+    && /press\s+enter\s+to\s+continue/i.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: 'Codex is asking whether to trust this folder' };
+  }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as
