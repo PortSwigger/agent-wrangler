@@ -783,6 +783,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   because `minimise()` silently refuses the last visible tile — an extension
   must be able to tell. `app.js` also refuses an id not in `currentOrder()`, or
   an archived task would sit in the minimised set until the next prune.
+- **`api.settings()`** (1.13.0) returns the extension's own current setting
+  values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
+  at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL
+  from Settings and send every value explicitly — before it, a server half had
+  to fill empty fields from settings, so a dispatch could never send `false`
+  for a toggle Settings had on.
 - **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
   half, and the namespace is FORCED.** `dispatchFields` puts it at
   `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and

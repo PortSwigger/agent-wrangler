@@ -176,6 +176,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             refusal for a non-id argument. The base api returns whether the
   //             tile was actually minimised (an unknown id, or the last visible
   //             tile, is a no-op), and that answer is passed straight back.
+  //   settings — this extension's OWN current setting values (1.13.0), a fresh
+  //             copy per call so a caller cannot write through into board
+  //             state. Read live, never captured, so a dispatch.field can
+  //             prefill from what Settings holds right now. Unset keys are
+  //             absent, exactly as `host.settings` reads them server-side.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -216,6 +221,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
+        settings: () => ({ ...(baseApi.settingsFor?.(extId) || {}) }),
       });
     }
     return apis.get(extId);
