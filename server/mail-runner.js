@@ -1,21 +1,11 @@
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { composeMailNotification } from './mail-notification.js';
 
-// Process every due settle window: compose the terse notification from the
-// recipient's currently-unread mail and deliver it (waking a dormant recipient
-// first). `takeDueSettles` durably marks attempts in progress and load recovery
-// re-opens them after a server restart. The in-flight guard prevents overlapping
-// sweeps from selecting the same window twice.
-//
-// Archived re-check: `deliverMailNotification` re-checks archivedAt itself
-// immediately before resuming a dormant recipient (the load-bearing race guard
-// — see its own comment) and returns 'skip' for an archived/gone one. A LIVE
-// recipient can't be simultaneously archived in this codebase (archive() kills
-// every owned tmux before it stamps archivedAt — see control/handlers/archive.js),
-// so no separate live-side check is needed here.
-// Isolates failures per recipient (one bad delivery can't abort the sweep, same
-// as fireDueSnoozeWakes). Returns the count actually notified so the caller can
-// batch one rebuild.
+// Process every due settle window and deliver only to live, idle recipients.
+// Dormant mail stays unread and is retried until the session is resumed.
+// `takeDueSettles` durably marks attempts in progress and load recovery re-opens
+// them after a server restart. The in-flight guard prevents overlapping sweeps.
+// Isolates failures per recipient so one bad delivery can't abort the sweep.
 export async function sweepDueSettles(deps, now = Date.now()) {
   const { mailStore, onError } = deps;
   let notified = 0;
@@ -38,7 +28,7 @@ export async function sweepDueSettles(deps, now = Date.now()) {
         reopen.add(to);
       } else {
         mailStore.markNotified(to, now);
-        if (mode.mode === 'dormant') notified += 1;
+        notified += 1;
       }
     } catch (err) {
       reopen.add(to);
@@ -49,21 +39,16 @@ export async function sweepDueSettles(deps, now = Date.now()) {
   return notified;
 }
 
-// Build the guarded tick: an overlapping sweep (a dormant wake inside
-// sweepDueSettles can take seconds, well past the 2s poll cadence) is a no-op
-// rather than resuming the same recipient concurrently. Mirrors
-// createSnoozeWakeSweeper. `onWoken` (rebuild) fires only when a dormant wake
-// actually happened — a live-only sweep never touched anything the board needs
-// to refresh for.
-export function createMailSettleSweeper(deps, { onWoken } = {}) {
+// Build the guarded tick. A recent-resume MCP readiness wait can outlast the
+// poll cadence, so overlapping sweeps are skipped.
+export function createMailSettleSweeper(deps) {
   let sweeping = false;
   return async function sweep(now = Date.now()) {
     if (sweeping) return { skipped: true };
     sweeping = true;
     try {
-      const woken = await sweepDueSettles(deps, now);
-      if (woken && onWoken) await onWoken(woken);
-      return { skipped: false, woken };
+      const notified = await sweepDueSettles(deps, now);
+      return { skipped: false, notified };
     } finally {
       sweeping = false;
     }

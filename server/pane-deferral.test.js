@@ -67,13 +67,23 @@ test('mail waits for a working turn to finish without entering the volatile noti
 });
 
 test('mail status capture includes working indicators above a long task list', async () => {
-  const pane = ['esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), composer()].join('\n');
+  const pane = ['• Working (12s · esc to interrupt)', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), composer()].join('\n');
   const d = deps({ pane });
   const pd = createPaneDeferral(d);
 
   assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'deferred');
   assert.equal(d.captures[0].lines, 60);
   assert.deepEqual(d.sent, []);
+});
+
+test('idle mail delivery ignores quoted working text in pane history', async () => {
+  const pane = ['grep result: esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), composer()].join('\n');
+  const d = deps({ pane });
+  const pd = createPaneDeferral(d);
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'sent');
+  assert.equal(d.captures[0].lines, 60);
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'New mail', socket: '' }]);
 });
 
 test('mail readiness gate runs only after the recipient is idle and the composer is empty', async () => {
@@ -88,6 +98,20 @@ test('mail readiness gate runs only after the recipient is idle and the composer
   status = 'idle';
   assert.equal(await pd.deliverOrDefer(notification), 'sent');
   assert.equal(readyChecks, 1);
+});
+
+test('mail rechecks the pane after the readiness gate before pasting', async () => {
+  let pane = composer();
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral(d);
+  const notification = {
+    id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false,
+    beforeSend: async () => { pane = composer('human started typing'); },
+  };
+
+  assert.equal(await pd.deliverOrDefer(notification), 'deferred');
+  assert.equal(d.captures.length, 2);
+  assert.deepEqual(d.sent, []);
 });
 
 test('a Codex draft stays protected when output contains a Claude prompt mark', async () => {

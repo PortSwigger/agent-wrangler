@@ -81,24 +81,20 @@ test('send_message: the same unknown-id error fires for a short/truncated ref or
   assert.equal(sent.length, 0);
 });
 
-test('send_message wakes a dormant target: resumes with the wrapped message as the intent, and rebuilds the board', async () => {
+test('send_message does not resume a dormant legacy target', async () => {
   const sent = [];
   const d = deps(sent);
   const resumed = [];
-  let rebuilt = 0;
   d.sessionManager = {
     entryFor: () => ({ cwd: '/x', agent: 'claude' }),
     isResuming: () => false,
     resume: async (id, dir, opts) => { resumed.push({ id, dir, opts }); return { tmux: 'cc_woken' }; },
   };
-  d.rebuild = async () => { rebuilt += 1; };
   const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'DORMANT1', text: 'wake up' });
-  assert.equal(out.structuredContent.delivered, true);
-  assert.equal(out.structuredContent.woke, true);
-  assert.equal(resumed.length, 1);
-  assert.match(resumed[0].opts.intent, /wake up/); // the wrapped message rides the resume intent
-  assert.equal(sent.length, 0); // Claude + owned ⇒ delivered via intent, not a fallback paste
-  assert.equal(rebuilt, 1);
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /dormant.*resume it before sending/i);
+  assert.equal(resumed.length, 0);
+  assert.equal(sent.length, 0);
 });
 
 test('send_message errors when the target is archived, without resuming it', async () => {

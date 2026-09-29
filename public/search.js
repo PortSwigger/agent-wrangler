@@ -35,7 +35,8 @@ const state = {
   caseSensitive: false,
   wholeWord: false,
   role: 'all',     // all | user | assistant
-  agent: 'all',    // all | claude | codex
+  scope: 'all',    // all | transcript | session | task — what's being searched
+  agent: 'all',    // all | claude | codex — which provider, independent of scope
   status: 'all',   // all | board | archived | offboard
   time: 'any',     // any | 24h | 7d | 30d
   taskIds: [],
@@ -80,11 +81,8 @@ function fire() {
     caseSensitive: state.caseSensitive,
     wholeWord: state.wholeWord,
     roles: state.role === 'all' ? null : [state.role],
-    // 'task' isn't a transcript agent the server knows — it's a client-side view
-    // that hides conversation rows entirely (see renderBrowse/renderResults), so
-    // the server-side agent filter stays unset (same as 'all') to keep the index
-    // stats/timing line accurate.
-    agents: state.agent === 'all' || state.agent === 'task' ? null : [state.agent],
+    scope: state.scope,
+    agents: state.agent === 'all' ? null : [state.agent],
     taskIds: state.taskIds,
     status: state.status,
     since: sinceMs(),
@@ -105,7 +103,22 @@ function renderTaskFilter() {
   const options = el('search-task-options');
   if (!summary || !options) return;
   const groups = taskFilterGroups(latestTasks.tasks || [], [...latestSessions, ...latestHistory], latestTasks.assignments || {});
-  summary.textContent = state.taskIds.length ? `Tasks (${state.taskIds.length})` : 'Tasks';
+  // Only the label span's text, not the whole summary — the arrow SVG is
+  // summary's other child (see styles.css's note on why it has to live there).
+  // Mirrors the other facets' "Prefix: value" shape (the prefix is static
+  // HTML here — "Tasks" — since a multi-select has no single current value
+  // to substitute it with): none selected reads as the facet's own default
+  // "All"; exactly one names it, since that's the whole point of narrowing to
+  // one; more than one collapses to a count rather than an unreadable list.
+  const label = summary.querySelector('.search-select-label');
+  if (!state.taskIds.length) {
+    label.textContent = 'All';
+  } else if (state.taskIds.length === 1) {
+    const task = (latestTasks.tasks || []).find((t) => t.id === state.taskIds[0]);
+    label.textContent = task ? (task.name || task.id) : '1 task';
+  } else {
+    label.textContent = `${state.taskIds.length} tasks`;
+  }
   options.textContent = '';
   const append = (tasks, heading) => {
     if (!tasks.length) return;
@@ -115,7 +128,7 @@ function renderTaskFilter() {
     options.appendChild(head);
     for (const task of tasks) {
     const label = document.createElement('label');
-    label.className = 'search-task-option';
+    label.className = 'search-dd-option';
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = state.taskIds.includes(task.id);
@@ -144,6 +157,45 @@ function renderTaskFilter() {
     });
     options.appendChild(clear);
   }
+}
+
+// A single-choice facet as a details/summary dropdown: the closed summary
+// shows the facet name in a muted tag ahead of the current option's own
+// label ("Provider" | "Claude"), which is what tells several of these apart
+// when they're all just sitting at "All" — a native <select> can't do this
+// (its closed box can only ever echo the selected <option>'s own text). The
+// open panel lists bare option labels; repeating the facet name on every row
+// would be pure noise once it's already on the summary. `options` is
+// [{value, label}]; `get`/`set` read and write the backing state field.
+function ddFilter(id, options, get, set) {
+  const details = el(id);
+  const summary = details?.querySelector('summary');
+  const label = summary?.querySelector('.search-select-label');
+  const panel = details?.querySelector('.search-dd-panel');
+  if (!details || !label || !panel) return;
+  function paint() {
+    const current = options.find((o) => o.value === get()) || options[0];
+    label.textContent = current.label;
+    panel.textContent = '';
+    for (const opt of options) {
+      // A real <button>, not a plain div: the div-with-onclick version this
+      // replaced was mouse-only — unreachable by Tab, unactivatable by
+      // Enter/Space, and announced to a screen reader as inert text rather
+      // than a selectable option.
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'search-dd-option' + (opt.value === get() ? ' on' : '');
+      row.textContent = opt.label;
+      row.addEventListener('click', () => {
+        set(opt.value);
+        details.open = false;
+        paint();
+        fire();
+      });
+      panel.appendChild(row);
+    }
+  }
+  paint();
 }
 
 export function clearSearch() {
@@ -225,12 +277,30 @@ function renderIndexLine(msg) {
 function renderTiming(msg) {
   const t = el('search-timing');
   if (!t) return;
+  // Checked ahead of the msg.browse branch below: a Task-scope browse reply
+  // always carries groups:[]/total:0 (the server has no notion of a task row —
+  // see search.js), while renderBrowse still shows real archived-task rows
+  // client-side via matchingArchivedTasks(). Falling through to the generic
+  // browse branch would report "0 conversations" even when tasks are visible.
+  if (msg.scope === 'task') {
+    const n = matchingArchivedTasks().length;
+    t.textContent = n ? `${fmtNum(n)} archived task${n === 1 ? '' : 's'}` : 'no matching archived tasks';
+    return;
+  }
   if (msg.browse) {
     const shown = (msg.groups || []).length;
     const total = msg.total || shown;
     t.textContent = shown < total
       ? `showing ${fmtNum(shown)} of ${fmtNum(total)} — narrow with a filter or query`
       : `${fmtNum(total)} conversation${total === 1 ? '' : 's'}`;
+    return;
+  }
+  // 'session' never reaches the corpus scan (see server/control/handlers/
+  // search.js), so "matches · scanned N bytes" would be describing a scan that
+  // never ran — count what this scope actually found instead.
+  if (msg.scope === 'session') {
+    const n = (msg.groups || []).length;
+    t.textContent = n ? `${fmtNum(n)} session${n === 1 ? '' : 's'} matched` : `no session matches "${msg.query}"`;
     return;
   }
   const roundTrip = inflightAt ? Math.round(performance.now() - inflightAt) : 0;
@@ -592,15 +662,15 @@ function browseRowUnitNode(r) {
 
 // Archived tasks that belong in the current result set: only under the All /
 // Archived status facets (a task is by definition not "on board" or a bare
-// transcript), only under the All / Task agent facets (a task isn't tied to one
-// agent — it can hold both Claude and Codex sessions — so a Claude/Codex filter
-// must not pull in unrelated task rows), inside the time facet's window, and —
+// transcript), only under the All / Task scope facets (a task isn't tied to one
+// agent — it can hold both Claude and Codex sessions — so the provider facet
+// plays no part in this decision at all), inside the time facet's window, and —
 // when there's a query — only when every whitespace token matches the task name
 // (same AND semantics History's filter used). The empty browse query passes
 // everything through.
 function matchingArchivedTasks() {
   if (state.status !== 'all' && state.status !== 'archived') return [];
-  if (state.agent !== 'all' && state.agent !== 'task') return [];
+  if (state.scope !== 'all' && state.scope !== 'task') return [];
   let tasks = (latestTasks.tasks || []).filter((t) => t.archivedAt);
   const since = sinceMs();
   if (since) tasks = tasks.filter((t) => (t.archivedAt || 0) >= since);
@@ -627,11 +697,11 @@ function renderBrowse(msg) {
   const host = el('search-results');
   if (!host) return;
   host.textContent = '';
-  // The Task facet is a client-side view over archived tasks only — conversation
+  // The Task scope is a client-side view over archived tasks only — conversation
   // rows (and their truncation note, which describes the conversation total) are
   // suppressed entirely rather than filtered, since the server has no notion of
   // a "task" row to filter by.
-  const taskOnly = state.agent === 'task';
+  const taskOnly = msg.scope === 'task';
   const groups = taskOnly ? [] : msg.groups;
   const buckets = buildBrowseBuckets(groups, matchingArchivedTasks(), Date.now());
   if (!buckets.length) {
@@ -668,16 +738,23 @@ function renderResults(msg) {
   const host = el('search-results');
   if (!host) return;
   host.textContent = '';
-  // The Task facet hides every conversation match (text-hit and metadata-only
+  // The Task scope hides every conversation match (text-hit and metadata-only
   // alike) and shows only archived tasks whose name matches the query.
-  const taskOnly = state.agent === 'task';
+  const taskOnly = msg.scope === 'task';
   // Scan groups come first (server order), then the appended metadata-only
   // groups (metaMatch, hits:[]) — rendered browse-style under a slim divider.
+  // Under scope 'session' every group IS a metadata-only group (the server
+  // never scanned), so hitGroups is naturally empty and the divider is skipped.
   const metaGroups = taskOnly ? [] : msg.groups.filter((g) => g.metaMatch && !(g.hits && g.hits.length));
   const hitGroups = taskOnly ? [] : msg.groups.filter((g) => !metaGroups.includes(g));
   const tasks = matchingArchivedTasks();
   if (!hitGroups.length && !metaGroups.length && !tasks.length) {
-    renderIdle(taskOnly ? `No archived task matches "${msg.query}".` : `No conversation contains "${msg.query}".`);
+    const empty = taskOnly
+      ? `No archived task matches "${msg.query}".`
+      : msg.scope === 'session'
+        ? `No session matches "${msg.query}".`
+        : `No conversation contains "${msg.query}".`;
+    renderIdle(empty);
     return;
   }
   const frag = document.createDocumentFragment();
@@ -689,7 +766,7 @@ function renderResults(msg) {
     frag.appendChild(more);
   }
   if (metaGroups.length || tasks.length) {
-    if (!taskOnly) frag.appendChild(dividerNode('Matched by title, path, or label'));
+    if (!taskOnly && hitGroups.length) frag.appendChild(dividerNode('Matched by title, path, or label'));
     for (const g of metaGroups) frag.appendChild(browseRowNode(g));
     for (const t of tasks) frag.appendChild(taskRowNode(t));
   }
@@ -698,16 +775,7 @@ function renderResults(msg) {
 
 // ── wiring ─────────────────────────────────────────────────────────────────
 
-function segGroup(attr, onPick) {
-  document.querySelectorAll(`#search .search-seg [data-${attr}]`).forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const group = btn.parentElement;
-      group.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
-      onPick(btn.dataset[attr]);
-      fire();
-    });
-  });
-}
+const DD_IDS = ['search-role-filter', 'search-scope-filter', 'search-agent-filter', 'search-task-filter', 'search-status-filter', 'search-time-filter'];
 
 export function initSearchView() {
   const input = el('search-input');
@@ -721,10 +789,24 @@ export function initSearchView() {
   });
   el('search-case').addEventListener('change', (e) => { state.caseSensitive = e.target.checked; fire(); });
   el('search-word').addEventListener('change', (e) => { state.wholeWord = e.target.checked; fire(); });
-  segGroup('role', (v) => { state.role = v; });
-  segGroup('agent', (v) => { state.agent = v; });
-  segGroup('status', (v) => { state.status = v; });
-  segGroup('time', (v) => { state.time = v; });
+  ddFilter('search-role-filter', [
+    { value: 'all', label: 'Anyone' }, { value: 'user', label: 'You' }, { value: 'assistant', label: 'Agent' },
+  ], () => state.role, (v) => { state.role = v; });
+  ddFilter('search-scope-filter', [
+    { value: 'all', label: 'All' }, { value: 'transcript', label: 'Transcript' },
+    { value: 'session', label: 'Session' }, { value: 'task', label: 'Task' },
+  ], () => state.scope, (v) => { state.scope = v; });
+  ddFilter('search-agent-filter', [
+    { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' },
+  ], () => state.agent, (v) => { state.agent = v; });
+  ddFilter('search-status-filter', [
+    { value: 'all', label: 'All' }, { value: 'board', label: 'Board' },
+    { value: 'archived', label: 'Archived' }, { value: 'offboard', label: 'External' },
+  ], () => state.status, (v) => { state.status = v; });
+  ddFilter('search-time-filter', [
+    { value: 'any', label: 'Any time' }, { value: '24h', label: '24h' },
+    { value: '7d', label: '7d' }, { value: '30d', label: '30d' },
+  ], () => state.time, (v) => { state.time = v; });
   el('search-reindex').addEventListener('click', () => {
     if (state.building) return;
     state.building = true;
@@ -732,7 +814,7 @@ export function initSearchView() {
     toast('Rebuilding the search index…');
   });
   document.addEventListener('pointerdown', (e) => {
-    closeTaskFilterOnOutsideClick(el('search-task-filter'), e.target);
+    for (const id of DD_IDS) closeTaskFilterOnOutsideClick(el(id), e.target);
   });
   renderTaskFilter();
   renderIdle();

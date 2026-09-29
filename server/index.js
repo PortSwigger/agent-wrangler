@@ -711,7 +711,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 const fireMailSettlesTick = createMailSettleSweeper({
   mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore, paneDeferral,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
-}, { onWoken: () => rebuild() });
+});
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
 // runs INSIDE the one session whose Bash tool ran `gh pr create` and posts the

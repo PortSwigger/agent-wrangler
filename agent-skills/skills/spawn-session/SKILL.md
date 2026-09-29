@@ -20,6 +20,8 @@ information about the task itself, not a channel for briefing another session.
 
 `agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
 
+**Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just the wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
+
 **Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit
 your own model" default only fires when the new session runs the same agent as
 you — model names don't cross providers — so a cross-agent spawn with `model`

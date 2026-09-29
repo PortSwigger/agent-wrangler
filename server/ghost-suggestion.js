@@ -63,7 +63,7 @@ const visible = (s) => s.replace(ANSI, '').trim();
 export function paneComposerIsEmpty(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   if (agent === 'codex') {
-    if (/esc to interrupt/i.test(paneText.replace(ANSI, ''))) return false;
+    if (paneHasWorkingStatus(paneText)) return false;
     const line = paneText.split('\n').filter((candidate) => candidate.includes(CODEX_PROMPT_MARK)).pop();
     return line === CODEX_EMPTY_COMPOSER;
   }
@@ -79,6 +79,11 @@ export function paneComposerIsEmpty(paneText, agent = 'claude') {
     return close === -1 ? '' : part.slice(close);
   }).join('');
   return !visible(withoutGhost);
+}
+
+export function paneHasWorkingStatus(paneText) {
+  return typeof paneText === 'string'
+    && /^\s*[\p{S}\p{P}]\s+.+\(\s*\d+s\s*[·•]\s*esc to interrupt\s*\)\s*$/imu.test(paneText.replace(ANSI, ''));
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.

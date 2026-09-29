@@ -58,6 +58,16 @@ export function createPaneDeferral({
     }
   }
 
+  async function paneIsReadyToNotify(id, tmux, socket) {
+    try {
+      const pane = await capture(tmux, CAPTURE_LINES, socket);
+      return classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status !== 'working'
+        && paneComposerIsEmpty(pane, agentFor(id));
+    } catch {
+      return false;
+    }
+  }
+
   // Paste `text` into the card's pane if its composer is confirmed empty,
   // otherwise queue it for the next drain. `tmux`/`socket` override the lookup
   // for a pane the caller already holds (deliverPrNudge's post-resume handle,
@@ -74,9 +84,7 @@ export function createPaneDeferral({
     if (!name) return defer();
     const sock = socket ?? socketFor?.(id) ?? '';
     if (deferWhileWorking) {
-      let pane;
-      try { pane = await capture(name, CAPTURE_LINES, sock); } catch { return defer(); }
-      if (classify(pane, { tailLines: CAPTURE_LINES }).status === 'working' || !paneComposerIsEmpty(pane, agentFor(id))) return defer();
+      if (!(await paneIsReadyToNotify(id, name, sock))) return defer();
     } else if (!(await composerIsClear(id, name, sock))) {
       return defer();
     }
@@ -86,6 +94,10 @@ export function createPaneDeferral({
       } catch {
         return defer();
       }
+      const stillSafe = deferWhileWorking
+        ? await paneIsReadyToNotify(id, name, sock)
+        : await composerIsClear(id, name, sock);
+      if (!stillSafe) return defer();
     }
     try {
       await sendText(name, text, sock);

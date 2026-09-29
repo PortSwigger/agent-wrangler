@@ -65,8 +65,8 @@ export function createMcpRequestHandler(deps) {
       const caller = extractCaller(req);
       // Stamp the caller on EVERY request, boot handshake included: an agent's
       // client connects as part of its own startup and makes no tool call
-      // unprompted, so the handshake is the signal the dormant mail wake waits
-      // for before starting the turn that reads the mail (mcp-activity.js).
+      // unprompted, so a recently resumed session can wait for this handshake
+      // before starting the turn that reads its mail (mcp-activity.js).
       noteMcpCaller(caller);
       let body = '';
       for await (const chunk of req) body += chunk;

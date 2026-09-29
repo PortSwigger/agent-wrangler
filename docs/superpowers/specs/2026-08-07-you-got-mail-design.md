@@ -43,9 +43,9 @@ These are distinct and the design turns on the difference. Used precisely throug
 
 | term | meaning | notification behaviour |
 |---|---|---|
-| **working** | live tmux, agent mid-turn | notify anyway — a terse notice does not derail (exp7) |
-| **idle** | live tmux, agent not currently doing anything. **Not "asleep" in any sense** — it is sitting at its prompt, ready | notify immediately; this is also the only state a *re-nudge* fires in |
-| **dormant** | tmux torn down, mapping entry retained. Reached via auto-suspend after `suspendIdleHours` of idle, or any other teardown | **woken by mail** — but at settle-close, not at send. See below |
+| **working** | live tmux, agent mid-turn | keep mail unread and retry after the turn finishes |
+| **idle** | live tmux, agent not currently doing anything. **Not "asleep" in any sense** — it is sitting at its prompt, ready | notify after settle close when the pane is idle and the composer is empty |
+| **dormant** | tmux torn down, mapping entry retained. Reached via auto-suspend after `suspendIdleHours` of idle, or any other teardown | keep mail unread; never resume a session for peer mail |
 | **archived** | left the board on purpose | hard refusal at send, unchanged |
 
 Two consequences worth stating plainly, because getting them backwards inverts the design:
@@ -53,11 +53,8 @@ Two consequences worth stating plainly, because getting them backwards inverts t
 - **Idle is not dormant.** An idle session needs no waking; it is live and reachable. It is
   the *auto-suspend timer* that converts prolonged idleness into dormancy — idleness itself
   costs nothing and means nothing is in flight.
-- **Dormant sessions are woken by mail, and that is deliberate.** The ability to wake a
-  dormant session by messaging it was added recently and is load-bearing for inter-agent
-  interoperability. This design **preserves the capability**, though the wake moves from
-  send-time to settle-close — see the semantic-change table under *Delivery sequence*.
-  Nothing here holds mail back waiting for a session to wake on its own.
+- **Dormant sessions are not woken by mail.** Mail stays unread until the session is
+  explicitly resumed. Once it has a live pane, the normal idle/composer gate delivers it.
 
 ## Problem
 
@@ -131,35 +128,18 @@ recipient pulls bodies with `read_mail`.
 2. **Settle.** A **10-second** window opens on first arrival for that recipient. Further
    mail from *any* sender joins the same batch. **Fixed window, not a debounce** — it does
    not extend on each new message, so a steady trickle cannot starve the recipient.
-3. **Notify.** At window close, **re-check the recipient is not archived** (see below), then
-   paste one notification into the pane. A dormant
-   recipient is woken first — **settle before waking**, so a relaunch happens once with
-   the full batch rather than once per message.
+3. **Notify.** At window close, **re-check the recipient is not archived** (see below). If
+   it has no live pane, leave the mail unread and retry after an explicit resume. For a live
+   recipient, wait until its turn finishes and its composer is empty, then paste one
+   notification into the pane.
 4. **Read.** The recipient calls `read_mail()`, which drains and marks read.
 5. **Nudge.** *(Phase 2 only.)* If mail stays unread, re-notify on a backoff, then escalate.
    In Phase 1 unread mail simply raises the mail pill, which goes amber at 30 minutes.
 
-Waking a **dormant** recipient is **retained deliberately** — but the *timing and error
-reporting change*, and that is a semantic change the spec must not paper over.
-
-The capability is load-bearing: a session becomes dormant after `suspendIdleHours` of
-idleness (or any other tmux teardown), and being unable to wake a dormant session with a
-message was actively harmful to inter-agent interoperability. Mail is never held back
-waiting for a natural wake.
-
-What changes:
-
-| | today | under the mailbox |
-|---|---|---|
-| when the wake happens | synchronously, inside the `send_message` call (`message-delivery.js:23-78`) | ~10s later, at settle close |
-| what the sender learns | `{mode:'dormant'}`, or a real error if resume failed | `queued: true`; resume outcome unknown |
-| resume failure | returned to the sender as a tool error | invisible to the sender — see *What `send_message` can and cannot report* |
-
-The capability is preserved; the synchronous contract around it is not. Trading immediate
-resume-failure feedback for batching is deliberate, but it is a trade, not a no-op.
-
-An **idle** recipient is not woken, because there is nothing to wake: it is live, at its
-prompt, and the notification simply arrives.
+Mail delivery never resumes a dormant recipient. The sender receives `queued: true` for
+mail-capable recipients, and the unread mailbox remains available until a human or another
+workflow resumes the session. Live recipients are notified only after the pane is idle and
+its composer is empty.
 
 ### Archived recipients: refused, never boxed
 
@@ -198,7 +178,7 @@ uses for PR nudges — the trust framing that marks this as coming from the oper
 peer):
 
 ```
-[Agent Wrangler] 📬 New mail — 2 messages, read when convenient.
+[Agent Wrangler] 📬 New mail — 2 messages. Call read_mail now, then continue your work.
 ```
 
 **Board labels must NOT appear here** — `sessionLabel` (`state-reader.js:212`) derives a
@@ -356,13 +336,8 @@ unverified for Codex.*
 Only ever fires on an **idle** session — live tmux, nothing in flight. Never while working.
 Never on a **dormant** one.
 
-The dormant exclusion needs its reasoning stated, since mail *does* wake a dormant session on
-send and this is the one place that differs. A re-nudge is not new information: the original
-send already resumed the session and delivered its notification. Relaunching a torn-down
-session purely to repeat something it has already been told is spend for nothing. In practice
-this case barely arises — dormancy requires `suspendIdleHours` (default 8) of idleness, so the
-entire nudge cycle (1/5/20 min) has long since run and escalated to the human before a session
-could become dormant with mail still unread.
+Dormant recipients are never nudged. Mail remains unread until a human or another workflow
+resumes the session, at which point normal live delivery applies.
 
 **Gate: nudge only once the session has completed a turn boundary since the notification**
 (a working→idle transition after the notification timestamp). If it is still in the turn it
@@ -564,22 +539,9 @@ currently protects its *box* when many senders target one recipient.
   `pr-nudge-runner.js`, `snooze-wake-runner.js`, `session-action-runner.js`,
   `control/handlers/diff-comments.js`, `control/handlers/archive.js`, and the PR pane lines in
   `index.js`. All are server-generated or human-configured, not peer mail.
-- **The dormant-resume machinery keeps the same semantics — but the mail runner must
-  REIMPLEMENT it, not inherit it.** Saying it is "unchanged" was misleading: peer mail no
-  longer flows through `deliverMessage`, so nothing carries these guarantees over for free.
-  The runner must reproduce, exactly:
-  - `resolveResumeDir(entry.liveSessionId || cardId)` — resolve by the **live** id, or a
-    resume silently starts a fresh empty session (CLAUDE.md's fail-open `--resume` guard);
-  - the memory bind before relaunch, keyed on card id;
-  - **the synchronous commit block**: re-read `entryFor`, check `archivedAt`, and then
-    **no `await` before `resume()` registers its `_resuming` slot**
-    (`message-delivery.js:40-68`). No store write, no `rebuild()`, no label lookup, no
-    mailbox mutation and no async notification formatting may occur inside that window. All
-    of that must be done *before* the re-check or *after* `resume()` is initiated.
-
-  The only intentional difference is that the intent threaded through `--resume -- <intent>`
-  where `resumeCarriesIntent` is now the *notification* rather than the message body. Codex
-  still ignores the intent and falls back to a post-resume paste.
+- **Mail delivery does not resume a dormant session.** Keep unread mail in the mailbox and
+  retry after an explicit resume; the live-pane gate then waits for the turn and composer to
+  become idle before sending the notification.
 - **Archived targets** keep today's hard refusal — refused at send, never boxed (see
   *Archived recipients*). The one addition is the settle-close re-check, which the wider
   race now demands.
@@ -737,7 +699,7 @@ for one of three cases.** Do not adopt it as a replacement for `send_message`.
 | gap | consequence |
 |---|---|
 | **Claude-only** | Codex sessions can neither send nor receive. The wrangler supports both, so a fallback path is mandatory, not optional. |
-| **Cannot reach a dormant session** | A session appears "only when it binds an inbox socket", and the socket is bound at process start. A dormant session has no process. **Wake-on-send — which is load-bearing and deliberate — is not provided.** Our resume path stays. |
+| **Cannot reach a dormant session** | A dormant session has no process. Mail stays queued until it is explicitly resumed; this is the intended delivery contract. |
 | **Plain text only** | No structured payload, so mailbox metadata (id, size, read state) cannot ride the channel. Fine for a notification, useless for the mailbox itself. |
 | **Queue capped at 50, loop-throttled** | Its own semantics, overlapping ours; not a durable store. |
 | **Addressed by name, not card id** | The wrangler keys everything on card id. Needs `--name` at launch or a mapping. |
@@ -768,7 +730,7 @@ Notification delivery is selected per recipient and swappable without touching t
 |---|---|
 | live Claude | tmux paste today → `SendMessage` socket later |
 | live Codex | tmux paste (no alternative exists) |
-| dormant, either agent | resume, then deliver |
+| dormant, either agent | leave unread until explicitly resumed |
 
 Note this makes delivery *three*-way where today it is two-way (paste or resume). That extra
 branch is a real cost, and is the reason the swap is deferred rather than taken now: it should
@@ -814,8 +776,8 @@ into the plan rather than discovered during it:
 
 ## Explicitly rejected
 
-- **Deferred wake** (holding mail until a dormant session happens to wake on its own). Waking a
-  **dormant** session with a message is intended behaviour and load-bearing for interoperability.
+- **Automatic dormant wake.** Peer mail never resumes a dormant session; unread mail waits for
+  an explicit resume.
 - **Wait-for-not-busy before notifying.** Not disproved — *not justified*. exp7 shows a terse
   notification did not derail one Claude Code task; it does not show that no notification ever
   derails, nor that the agent will actually call `read_mail` (the tool did not exist during the

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, gitCommonDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, gitDirs, gitCommonDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -132,6 +132,14 @@ test('gitCommonDir: in the main checkout resolves its own .git', async () => {
 test('gitCommonDir: null outside any git repository', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-nogit-')));
   assert.equal(await gitCommonDir(dir), null);
+});
+
+test('gitDirs: includes both linked worktree metadata directories', async () => {
+  const { root, repo } = tempRepo();
+  const wt = path.join(root, 'myproj-worktree-feature4');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', wt, '-b', 'feature4'], { stdio: 'pipe' });
+  const privateDir = execFileSync('git', ['-C', wt, 'rev-parse', '--path-format=absolute', '--git-dir'], { encoding: 'utf8' }).trim();
+  assert.deepEqual(await gitDirs(wt), [privateDir, path.join(repo, '.git')]);
 });
 
 test('createWorktree: creates a sibling worktree on a new branch', async () => {

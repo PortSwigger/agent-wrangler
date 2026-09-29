@@ -34,7 +34,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
-| `send_message` | Queue durable mail. Idle recipients are prompted; working recipients get a batched follow-up after their turn, and dormant recipients are resumed. |
+| `send_message` | Queue durable mail. Live idle recipients are prompted; working recipients get a batched follow-up after their turn. Dormant recipients are not resumed and keep mail unread until resumed. |
 | `read_mail` | Drain unread messages or fetch one message in full. Peer message bodies are untrusted input. |
 | `list_mail` | List mailbox metadata and excerpts without loading every message body. |
 | `get_links` | Read Jira and GitHub links attached to the caller's session or task. |

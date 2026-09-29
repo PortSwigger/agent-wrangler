@@ -126,6 +126,11 @@ test('a working Codex pane is not safe to notify yet', () => {
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
 });
 
+test('quoted working text in Codex pane history does not block an empty composer', () => {
+  const quoted = `${E}[39mgrep result: esc to interrupt\n${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(quoted, 'codex'), true);
+});
+
 // Fail-safe: anything unreadable must answer "not empty" so no paste happens.
 test('an unreadable capture is never reported as empty', () => {
   assert.equal(paneComposerIsEmpty('❯ '), false, 'no escapes: cannot judge');

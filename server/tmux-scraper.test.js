@@ -173,8 +173,56 @@ test('classify: unchanged for working/idle/login', () => {
 });
 
 test('classify: detects a working turn when its indicator sits above a long task list', () => {
-  const pane = ['esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
+  const pane = ['• Working (12s · esc to interrupt)', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
   assert.equal(classify(pane, { tailLines: 60 }).status, 'working');
+  assert.equal(classify(pane).status, 'idle');
+});
+
+test('classify: mail deferral requires a live working status line, not quoted output', () => {
+  const working = '• Working (12s · esc to interrupt)';
+  const quoted = ['grep result: esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
+  assert.equal(classify(working, { tailLines: 60, strictWorking: true }).status, 'working');
+  assert.equal(classify(quoted, { tailLines: 60, strictWorking: true }).status, 'idle');
+});
+
+test('classify: Codex\'s "do you trust this directory?" dialog reads as needs-you with a reason', () => {
+  // Verbatim from a live, non-destructive capture: `codex` launched fresh in
+  // an untrusted temp dir, pane captured, tmux session killed WITHOUT ever
+  // pressing a key — the real "Yes, continue" default was never triggered.
+  const pane = '> You are in /private/tmp/codex-trust-test-dir\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue';
+  const c = classify(pane);
+  assert.equal(c.status, 'needs-you');
+  assert.match(c.waitingFor, /trust this folder/i);
+});
+const REAL_TRUST_DIALOG_LINES = [
+  '> You are in /private/tmp/codex-trust-test-dir', '',
+  '  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.', '',
+  '› 1. Yes, continue', '  2. No, quit', '',
+  '  Press enter to continue',
+];
+test('classify: the real trust dialog reads as needs-you at every realistic (and several unrealistic) pane widths', () => {
+  for (const width of [40, 30, 24, 20, 16, 12]) {
+    const wrapped = REAL_TRUST_DIALOG_LINES.flatMap((l) => (l === '' ? [''] : wordWrap(l, width)));
+    const c = classify(wrapped.join('\n'));
+    assert.equal(c.status, 'needs-you', `width ${width} should still read as needs-you`);
+    // Not just "some needs-you branch fired" — this exact branch, at every
+    // width. `\s*` between anchor words matches a wrapped newline too, which
+    // is what keeps this passing even where wordWrap splits "Yes," and
+    // "continue" onto separate physical lines.
+    assert.match(c.waitingFor, /trust this folder/i, `width ${width} should give the trust-dialog reason`);
+  }
+});
+test('classify: ordinary conversation text mentioning trust does not false-positive', () => {
+  assert.equal(classify('Do you trust the contents of this directory? I do.').status, 'idle');
+  assert.equal(classify('1. Yes, continue with the plan\n2. No, quit early').status, 'idle');
+});
+test('classify: the footer phrase in ordinary prose plus two option-shaped lines does not false-positive (adversarial review finding)', () => {
+  // Found in adversarial review: the footer check was unanchored, so prose
+  // mentioning "press enter to continue" anywhere in the pane, combined with
+  // two short, generic option-shaped lines elsewhere, satisfied all three
+  // predicates — the same false-positive class the Claude fallback's "enter
+  // to confirm" check above is already line-anchored against.
+  const pane = 'Earlier we discussed that Codex can say: press enter to continue.\n\n1. Yes, continue with the plan\n2. No, quit early';
   assert.equal(classify(pane).status, 'idle');
 });
 
