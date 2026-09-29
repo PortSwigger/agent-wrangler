@@ -84,8 +84,8 @@ export function paneComposerIsEmpty(paneText, agent = 'claude') {
 export function paneHasWorkingStatus(paneText) {
   if (typeof paneText !== 'string') return false;
   const recent = paneText.replace(ANSI, '').split('\n').filter((line) => line.trim());
-  const codexWorking = /^\s*•\s+Working\b.*\(\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\b[^)]*esc to interrupt[^)]*\).*/iu;
-  const claudeWorking = /^\s*[\p{S}\p{P}]\s+.+\(\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\s*[·•]\s*↓[^)]*tokens?[^)]*\).*/iu;
+  const codexWorking = /^\s*•\s+.+\([^)]*esc to interrupt[^)]*\).*/iu;
+  const claudeWorking = /^\s*[✻✳✽✶✢✷✸✹✺✼✾✿·]\s+.+\((?:(?:\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\b|[^)]*esc to interrupt)[^)]*)\).*/iu;
   return recent.some((line) => codexWorking.test(line) || claudeWorking.test(line));
 }
 

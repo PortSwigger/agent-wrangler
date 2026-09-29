@@ -31,6 +31,7 @@ const CAPTURE_LINES = 60;
 
 export function createPaneDeferral({
   tmuxFor, socketFor, agentFor = () => 'claude',
+  statusFor = () => null,
   sendText = defaultSendText,
   capture = defaultCapture,
   classify = defaultClassify,
@@ -60,8 +61,10 @@ export function createPaneDeferral({
 
   async function paneIsReadyToNotify(id, tmux, socket) {
     try {
+      const status = statusFor(id);
+      if (status != null && status !== 'idle') return false;
       const pane = await capture(tmux, CAPTURE_LINES, socket);
-      return classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status !== 'working'
+      return classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status === 'idle'
         && paneComposerIsEmpty(pane, agentFor(id));
     } catch {
       return false;

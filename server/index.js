@@ -201,6 +201,7 @@ const paneDeferral = createPaneDeferral({
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
+  statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
   sendText,
 });
 

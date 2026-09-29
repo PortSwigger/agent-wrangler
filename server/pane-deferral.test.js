@@ -76,6 +76,24 @@ test('mail status capture includes working indicators above a long task list', a
   assert.deepEqual(d.sent, []);
 });
 
+test('mail notification waits when the board still reports a working turn during a pane redraw', async () => {
+  const pane = composer();
+  const d = deps({ pane });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'working' });
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'deferred');
+  assert.deepEqual(d.sent, []);
+});
+
+test('mail notification waits for a needs-you board state instead of treating it as idle', async () => {
+  const pane = composer();
+  const d = deps({ pane });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'needs-you' });
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'deferred');
+  assert.deepEqual(d.sent, []);
+});
+
 test('idle mail delivery ignores quoted working text in pane history', async () => {
   const pane = ['grep result: esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), composer()].join('\n');
   const d = deps({ pane });

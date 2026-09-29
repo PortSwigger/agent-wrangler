@@ -193,6 +193,23 @@ test('classify: mail deferral recognizes current Codex and Claude working status
   }
 });
 
+test('classify: mail deferral recognizes short Claude turns, compaction, and Codex phase labels', () => {
+  const panes = [
+    '✻ Thinking… (3s)',
+    '✻ Compacting conversation… (12s · ↑ 3.1k tokens)',
+    '✻ Pondering… (esc to interrupt)',
+    '• Planning review (12s • esc to interrupt)',
+  ];
+  for (const pane of panes) {
+    assert.equal(classify(pane, { tailLines: 60, strictWorking: true }).status, 'working', pane);
+  }
+});
+
+test('classify: a quoted Claude status line is not a live working marker', () => {
+  const quoted = '> quoted: ✻ Thinking… (3s)';
+  assert.equal(classify(quoted, { tailLines: 60, strictWorking: true }).status, 'idle');
+});
+
 test('classify: Codex\'s "do you trust this directory?" dialog reads as needs-you with a reason', () => {
   // Verbatim from a live, non-destructive capture: `codex` launched fresh in
   // an untrusted temp dir, pane captured, tmux session killed WITHOUT ever
