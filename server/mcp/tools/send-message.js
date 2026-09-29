@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { SEND_MAX_BYTES } from '../../mailbox-store.js';
+import { sendText as defaultSendText } from '../../tmux-scraper.js';
 
 // Route a peer message through the durable mailbox ("you've got mail" Phase 1):
 // send_message now APPENDS to the recipient's mailbox and returns immediately —
@@ -127,7 +128,12 @@ async function legacyPushFallback({ deps, caller, to, text, gate }) {
   }
   const label = labelFor(deps, to);
   try {
-    await deps.sendText(tmux, compose(caller, deps, text), deps.socketFor?.(to) ?? '');
+    const prompt = compose(caller, deps, text);
+    if (deps.sendText) {
+      await deps.sendText(tmux, prompt, deps.socketFor?.(to) ?? '');
+    } else {
+      await defaultSendText(tmux, prompt, deps.socketFor?.(to) ?? '', deps.tmuxRun);
+    }
   } catch (err) {
     return errorResult(err?.message || String(err));
   }

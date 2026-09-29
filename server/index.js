@@ -795,6 +795,7 @@ const mcpRequestHandler = createMcpRequestHandler({
   // peer's terminal and archive_session can snapshot a target before stopping it.
   tmuxFor,
   socketFor,
+  sendText,
   sessionFromGraph,
   // Shared in-memory loop backstop for send_message; one instance for the process.
   messageThrottle: createMessageThrottle(),

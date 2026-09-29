@@ -82,8 +82,11 @@ export function paneComposerIsEmpty(paneText, agent = 'claude') {
 }
 
 export function paneHasWorkingStatus(paneText) {
-  return typeof paneText === 'string'
-    && /^\s*[\p{S}\p{P}]\s+.+\(\s*\d+s\s*[·•]\s*esc to interrupt\s*\)\s*$/imu.test(paneText.replace(ANSI, ''));
+  if (typeof paneText !== 'string') return false;
+  const recent = paneText.replace(ANSI, '').split('\n').filter((line) => line.trim());
+  const codexWorking = /^\s*•\s+Working\b.*\(\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\b[^)]*esc to interrupt[^)]*\).*/iu;
+  const claudeWorking = /^\s*[\p{S}\p{P}]\s+.+\(\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\s*[·•]\s*↓[^)]*tokens?[^)]*\).*/iu;
+  return recent.some((line) => codexWorking.test(line) || claudeWorking.test(line));
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.

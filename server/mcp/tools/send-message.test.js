@@ -43,6 +43,19 @@ test('send_message delivers one wrapped prompt to the live target on its socket'
   assert.deepEqual(out.structuredContent, { to: 'CARD2', label: 'Beta', delivered: true, woke: false });
 });
 
+test('send_message uses the default tmux sender when production deps omit sendText', async () => {
+  const d = deps([]);
+  delete d.sendText;
+  const calls = [];
+  d.tmuxRun = async (socket, args) => { calls.push({ socket, args }); return { stdout: '' }; };
+
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'CARD2', text: 'ping' });
+
+  assert.equal(out.structuredContent.delivered, true);
+  assert.ok(calls.some(({ args }) => args[0] === 'paste-buffer'));
+  assert.ok(calls.some(({ args }) => args[0] === 'send-keys' && args.at(-1) === 'Enter'));
+});
+
 test('send_message fences the body in matching BEGIN/END markers sharing a nonce', async () => {
   const sent = [];
   await sendMessageTool.handler({ deps: deps(sent), caller: 'CARD1' }, { to: 'CARD2', text: 'ping' });

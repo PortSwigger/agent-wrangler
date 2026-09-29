@@ -126,6 +126,11 @@ test('a working Codex pane is not safe to notify yet', () => {
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
 });
 
+test('a long-running Codex status with background-terminal text is not an empty composer', () => {
+  const working = `${E}[1m•${E}[0m Working ${E}[2m(27m 09s • esc to interrupt)${E}[0m · 1 background terminal running · /ps to…`;
+  assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
+});
+
 test('quoted working text in Codex pane history does not block an empty composer', () => {
   const quoted = `${E}[39mgrep result: esc to interrupt\n${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
   assert.equal(paneComposerIsEmpty(quoted, 'codex'), true);

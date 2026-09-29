@@ -185,6 +185,14 @@ test('classify: mail deferral requires a live working status line, not quoted ou
   assert.equal(classify(quoted, { tailLines: 60, strictWorking: true }).status, 'idle');
 });
 
+test('classify: mail deferral recognizes current Codex and Claude working status lines', () => {
+  const codex = '• Working (27m 09s • esc to interrupt) · 1 background terminal running · /ps to…';
+  const claude = '✳ Objects in mirror are closer than they appear… (21m 53s · ↓ 5.4k tokens)';
+  for (const pane of [codex, claude]) {
+    assert.equal(classify(pane, { tailLines: 60, strictWorking: true }).status, 'working', pane);
+  }
+});
+
 test('classify: Codex\'s "do you trust this directory?" dialog reads as needs-you with a reason', () => {
   // Verbatim from a live, non-destructive capture: `codex` launched fresh in
   // an untrusted temp dir, pane captured, tmux session killed WITHOUT ever
