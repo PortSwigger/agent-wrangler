@@ -462,6 +462,28 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   assert.deepEqual(h.errors, []);
 });
 
+// ── settings (1.13.0): the extension's own current values, read live ─────────
+test('settings reads this extension\'s own values live, as a copy', () => {
+  const h = harness();
+  let captured = null;
+  const values = { fake: { bypass: true } };
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, { settingsFor: (id) => values[id] });
+  assert.deepEqual(captured.settings(), { bypass: true });
+  captured.settings().bypass = false;
+  assert.equal(values.fake.bypass, true, 'a caller cannot write through');
+  values.fake = { bypass: false };
+  assert.deepEqual(captured.settings(), { bypass: false }, 'read at call time, not captured');
+});
+
+test('settings is an empty object when the base api has none', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, {});
+  assert.deepEqual(captured.settings(), {});
+});
+
 // ── minimiseTask (the tile-level counterpart to openSession) ─────────────────
 // The minimised set is app.js view state, not a control frame, so the base api
 // implements it; apiFor refuses a non-id and passes the base api's answer back.
