@@ -1,12 +1,11 @@
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { composeMailNotification } from './mail-notification.js';
 
-// Close every due settle window: compose the terse notification from the
+// Process every due settle window: compose the terse notification from the
 // recipient's currently-unread mail and deliver it (waking a dormant recipient
-// first). `mailStore.takeDueSettles` already cleared each selected recipient's
-// deadline SYNCHRONOUSLY at selection, so even an overlapping sweep (the 2s
-// cadence is finer than a dormant wake can take) can't select the same window
-// twice.
+// first). `takeDueSettles` durably marks attempts in progress and load recovery
+// re-opens them after a server restart. The in-flight guard prevents overlapping
+// sweeps from selecting the same window twice.
 //
 // Archived re-check: `deliverMailNotification` re-checks archivedAt itself
 // immediately before resuming a dormant recipient (the load-bearing race guard
@@ -24,17 +23,15 @@ export async function sweepDueSettles(deps, now = Date.now()) {
   for (const to of mailStore.takeDueSettles(now)) {
     try {
       const pending = mailStore.unreadMessages(to);
-      if (!pending.length) continue; // nothing left to notify about (e.g. already undeliverable)
+      if (!pending.length) {
+        mailStore.clearSettle(to);
+        continue;
+      }
       const mode = await deliverMailNotification(to, composeMailNotification(pending), deps);
       if (mode.mode === 'skip') {
         mailStore.markUndeliverable(to);
       } else if (mode.mode === 'error') {
-        // takeDueSettles already cleared the deadline SYNCHRONOUSLY at
-        // selection, and append() only opens a fresh window on a NEW message
-        // (`if settleDeadline == null`) — without re-arming here, a failed
-        // delivery strands this batch 'unread' forever with the sender
-        // already told queued:true, and no Phase-1 mechanism ever retries it.
-        // Not Phase 2 retry/backoff machinery: just don't drop the ball.
+        // Re-arm a fresh settle window after failed delivery.
         reopen.add(to);
         onError?.(to, new Error(mode.error || 'mail delivery failed'));
       } else if (mode.mode === 'deferred') {

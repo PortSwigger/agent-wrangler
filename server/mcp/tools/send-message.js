@@ -30,8 +30,8 @@ export const sendMessageTool = {
   name: 'send_message',
   description:
     'Send a message to another Agent Wrangler session. Queues into the recipient\'s mailbox; '
-    + 'an idle recipient is prompted to read_mail, while a working recipient gets one batched '
-    + 'follow-up prompt after the current turn. Use it to coordinate '
+    + 'an idle recipient is prompted to read_mail (dormant recipients are resumed first), '
+    + 'while a working recipient gets one batched follow-up prompt after the current turn. Use it to coordinate '
     + 'with a peer session — nudge a worker, report back, hand off a result. Works on any session '
     + 'that isn\'t archived; messaging an archived session returns an error. `to` must be a full '
     + 'Agent Wrangler `sessionId` — from list_sessions, get_session_info, spawn_session, or '

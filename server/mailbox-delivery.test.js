@@ -19,7 +19,7 @@ function deps({
   live = {}, entries = {}, resumeThrows = false, resumeTmux = 'cc_joined',
   resuming = false,
   resumeReturnsPane = true, pasteLandsOnAttempt = 1,
-  mcpConnectsAfterPolls = 0, mcpSeenStale = false,
+  mcpConnectsAfterPolls = 0, mcpSeenStale = false, mcpReadyTimeoutMs = 30,
 } = {}) {
   const sent = [];
   const resumed = [];
@@ -49,7 +49,11 @@ function deps({
     // so the live-path assertions below are unchanged; pane-deferral.test.js
     // owns the gating behaviour, and the wiring test pins that it is consulted.
     paneDeferral: {
-      deliverOrDefer: async ({ text, tmux, socket }) => { sent.push({ name: tmux, text, socket }); return 'sent'; },
+      deliverOrDefer: async ({ text, tmux, socket, beforeSend }) => {
+        await beforeSend?.();
+        sent.push({ name: tmux, text, socket });
+        return 'sent';
+      },
     },
     // Models a freshly-resumed pane whose TUI discards pastes until it's ready:
     // before `pasteLandsOnAttempt` pastes have been sent, the pane shows only the
@@ -74,7 +78,7 @@ function deps({
       if (mcpSeenStale) return STALE_MCP_SEEN;
       return mcpPolls.length > mcpConnectsAfterPolls ? Date.now() : 0;
     },
-    mcpReadyTimeoutMs: 30,
+    mcpReadyTimeoutMs,
     mcpReadyPollMs: 1,
   };
 }
@@ -156,11 +160,24 @@ test('live recipient resumed moments ago: waits for the new MCP connection befor
     live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } },
     entries: { CARD1: { relaunchedAt } },
     mcpConnectsAfterPolls: 3,
+    mcpReadyTimeoutMs: 10000,
   });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.deepEqual(mode, { mode: 'live' });
   assert.deepEqual(d.mcpPolls.slice(0, 4), [0, 0, 0, 0]);
   assert.equal(d.sent.length, 1);
+});
+
+test('live recipient with an old relaunch timestamp: does not wait on process-local MCP state after a server restart', async () => {
+  const relaunchedAt = Date.now() - 60_000;
+  const d = deps({
+    live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } },
+    entries: { CARD1: { relaunchedAt } },
+    mcpSeenStale: true,
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.equal(d.mcpPolls.length, 0);
 });
 
 test('dormant Codex recipient: resume ignores the intent, so the notification is pasted into the resumed pane', async () => {

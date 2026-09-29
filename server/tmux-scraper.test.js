@@ -172,6 +172,12 @@ test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('Select login method: 1. Claude account').status, 'needs-you');
 });
 
+test('classify: detects a working turn when its indicator sits above a long task list', () => {
+  const pane = ['esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
+  assert.equal(classify(pane, { tailLines: 60 }).status, 'working');
+  assert.equal(classify(pane).status, 'idle');
+});
+
 test('matches the original session tmux launched with --session-id', () => {
   const discovered = [
     { tmuxName: 'cc_c7980336', command: `claude --session-id ${ID} --permission-mode auto do a thing` },

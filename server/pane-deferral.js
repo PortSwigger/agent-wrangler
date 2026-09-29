@@ -27,7 +27,7 @@ import { paneComposerIsEmpty } from './ghost-suggestion.js';
 export const MAX_PENDING_PER_CARD = 200;
 
 // Enough pane history for both composer parsing and the working-state marker.
-const CAPTURE_LINES = 12;
+const CAPTURE_LINES = 60;
 
 export function createPaneDeferral({
   tmuxFor, socketFor, agentFor = () => 'claude',
@@ -62,7 +62,7 @@ export function createPaneDeferral({
   // otherwise queue it for the next drain. `tmux`/`socket` override the lookup
   // for a pane the caller already holds (deliverPrNudge's post-resume handle,
   // which tmuxFor may not report yet). Returns 'sent' | 'deferred'.
-  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, queueOnDefer = true }) {
+  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, queueOnDefer = true, beforeSend }) {
     const defer = () => {
       if (queueOnDefer) enqueue(id, text);
       return 'deferred';
@@ -76,9 +76,16 @@ export function createPaneDeferral({
     if (deferWhileWorking) {
       let pane;
       try { pane = await capture(name, CAPTURE_LINES, sock); } catch { return defer(); }
-      if (classify(pane).status === 'working' || !paneComposerIsEmpty(pane, agentFor(id))) return defer();
+      if (classify(pane, { tailLines: CAPTURE_LINES }).status === 'working' || !paneComposerIsEmpty(pane, agentFor(id))) return defer();
     } else if (!(await composerIsClear(id, name, sock))) {
       return defer();
+    }
+    if (beforeSend) {
+      try {
+        if (await beforeSend() === false) return defer();
+      } catch {
+        return defer();
+      }
     }
     try {
       await sendText(name, text, sock);

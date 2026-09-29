@@ -9,7 +9,7 @@ description: Use when you get a "📬 New mail" notification pasted into your te
 queues into your mailbox, and you get a short notification instead:
 
 ```
-[Agent Wrangler] 📬 New mail — 2 messages, read when convenient.
+[Agent Wrangler] 📬 New mail — 2 messages. Call read_mail now, then continue your work.
 ```
 
 That's it — no body, no sender name, not even which peer sent it. It's

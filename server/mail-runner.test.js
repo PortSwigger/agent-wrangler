@@ -28,6 +28,7 @@ function deps({ mailStore, live = {}, entries = {} } = {}) {
     socketFor: (id) => live[id]?.socket ?? '',
     memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
+    mcpSeenAt: () => Date.now(),
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
     // The live announcement goes through paneDeferral; this double records the
     // notification and lets individual tests model a deferred send.
@@ -109,7 +110,7 @@ test('sweepDueSettles: persists deferred recipients in one retry update', async 
 
   await sweepDueSettles(d, SETTLE_MS);
 
-  assert.equal(saves, 2, 'one save closes the due windows and one saves all retries');
+  assert.equal(saves, 2, 'one save claims due windows and one persists all retry deadlines');
   assert.equal(store.boxes.get('CARD1').settleDeadline, 2 * SETTLE_MS);
   assert.equal(store.boxes.get('CARD2').settleDeadline, 2 * SETTLE_MS);
 });

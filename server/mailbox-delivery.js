@@ -52,17 +52,18 @@ export async function deliverMailNotification(to, text, deps) {
     // marking the mail undeliverable.
     const entry = sessionManager.entryFor(to);
     if (entry?.archivedAt) return { mode: 'skip' };
-    // A live pane may have been resumed by another action moments ago. Its
-    // composer can look idle before the relaunched process has reconnected its
-    // MCP tools, so hold the mail prompt until that process is ready. Keep the
-    // wait bounded so a missing /mcp signal cannot strand delivery.
-    if (entry?.relaunchedAt && mcpSeenAt(to) <= entry.relaunchedAt) {
-      await waitForMcpReady(to, entry.relaunchedAt, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
-    }
     // Mail stays unread until a turn can actually start. While this recipient is
     // working (or the composer is occupied), let the durable mailbox drive the
     // retry so the next attempt can batch all pending messages into one prompt.
-    const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral);
+    const beforeSend = async () => {
+      const relaunchedAt = entry?.relaunchedAt;
+      const relaunchAge = Date.now() - relaunchedAt;
+      if (typeof relaunchedAt === 'number' && relaunchAge >= 0 && relaunchAge <= mcpReadyTimeoutMs
+        && mcpSeenAt(to) <= relaunchedAt) {
+        await waitForMcpReady(to, relaunchedAt, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
+      }
+    };
+    const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral, beforeSend);
     if (delivery === 'deferred') return { mode: 'deferred' };
     return { mode: 'live' };
   }
@@ -138,9 +139,9 @@ export async function deliverMailNotification(to, text, deps) {
 // Phase 1 — see the spec's "Claude Code cross-session messaging" section); that
 // swap would make the gate unnecessary for Claude, since a socket message does
 // not go through the composer at all.
-function liveTransport(id, tmux, text, socket, paneDeferral) {
+function liveTransport(id, tmux, text, socket, paneDeferral, beforeSend) {
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false,
+    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false, beforeSend,
   });
 }
 

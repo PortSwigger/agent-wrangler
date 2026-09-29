@@ -66,6 +66,30 @@ test('mail waits for a working turn to finish without entering the volatile noti
   assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'New mail', socket: '' }]);
 });
 
+test('mail status capture includes working indicators above a long task list', async () => {
+  const pane = ['esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), composer()].join('\n');
+  const d = deps({ pane });
+  const pd = createPaneDeferral(d);
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'deferred');
+  assert.equal(d.captures[0].lines, 60);
+  assert.deepEqual(d.sent, []);
+});
+
+test('mail readiness gate runs only after the recipient is idle and the composer is empty', async () => {
+  const d = deps();
+  let status = 'working';
+  let readyChecks = 0;
+  const pd = createPaneDeferral({ ...d, classify: () => ({ status }) });
+  const notification = { id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false, beforeSend: async () => { readyChecks += 1; } };
+
+  assert.equal(await pd.deliverOrDefer(notification), 'deferred');
+  assert.equal(readyChecks, 0);
+  status = 'idle';
+  assert.equal(await pd.deliverOrDefer(notification), 'sent');
+  assert.equal(readyChecks, 1);
+});
+
 test('a Codex draft stays protected when output contains a Claude prompt mark', async () => {
   const strayClaudeMark = `${E}[0m    ${E}[2m───── ❯ ${E}[0m`;
   const codexDraft = `${E}[1m›${E}[0m explain this failure`;
