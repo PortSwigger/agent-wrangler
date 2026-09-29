@@ -1642,12 +1642,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .worker-row.job .worker-dot { background: var(--green); }
 .worker-row.needs-you .worker-dot { background: var(--red); }
 .worker-row.just-finished .worker-dot { background: var(--just-finished); }
-/* Spine-row mail signal: a worker/child row has no name row or meta row for
-   the full mail-badge pill, so stale unread mail (>=30min unnotified) gets a
-   bare dot instead — sized against .worker-dot's 8px so it reads as secondary
-   to status, not a second status dot. Amber-only (fresh unread mail is not
-   worth a row-level signal); a snoozed row gets nothing (see snoozedRowHtml). */
-.worker-mail-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mail); flex: none; }
+/* Worker rows use the same mail badge as full cards, so fresh mail is visible
+   immediately even when the child is collapsed into its parent's spine. */
 .worker-row.dormant .worker-dot { background: transparent; border: 1px solid var(--border); }
 .worker-name {
   flex: 1 1 auto; min-width: 0;

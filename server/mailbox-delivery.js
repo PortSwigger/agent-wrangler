@@ -24,7 +24,7 @@ import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 // tmux paste -> the SendMessage socket) touches only that one branch — today
 // both live Claude and live Codex use the same tmux paste, so the branch is a
 // no-op until that swap lands.
-// Returns { mode: 'live' | 'dormant' | 'skip' } or { mode: 'error', error }.
+// Returns { mode: 'live' | 'dormant' | 'deferred' | 'skip' } or { mode: 'error', error }.
 // 'skip' = archived or gone (never resume it — resurrection-by-mail is the one
 // outcome this must not produce). Only 'dormant' warrants the caller's
 // rebuild(); 'error' means delivery failed and carries the failure message —
@@ -52,11 +52,11 @@ export async function deliverMailNotification(to, text, deps) {
     // marking the mail undeliverable.
     const entry = sessionManager.entryFor(to);
     if (entry?.archivedAt) return { mode: 'skip' };
-    // Held rather than pasted when the human is mid-prompt (pane-deferral.js).
-    // Returning 'live' either way is correct: the mail itself is already safe in
-    // the store, and the queue guarantees the announcement lands once the
-    // composer clears — the only thing deferred is the tap on the shoulder.
-    await liveTransport(to, target, text, socketFor(to), paneDeferral);
+    // Mail stays unread until a turn can actually start. While this recipient is
+    // working (or the composer is occupied), let the durable mailbox drive the
+    // retry so the next attempt can batch all pending messages into one prompt.
+    const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral);
+    if (delivery === 'deferred') return { mode: 'deferred' };
     return { mode: 'live' };
   }
 
@@ -132,7 +132,9 @@ export async function deliverMailNotification(to, text, deps) {
 // swap would make the gate unnecessary for Claude, since a socket message does
 // not go through the composer at all.
 function liveTransport(id, tmux, text, socket, paneDeferral) {
-  return paneDeferral.deliverOrDefer({ id, text, tmux, socket });
+  return paneDeferral.deliverOrDefer({
+    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false,
+  });
 }
 
 const MCP_READY_TIMEOUT_MS = 15000;

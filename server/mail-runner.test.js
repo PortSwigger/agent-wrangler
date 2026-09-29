@@ -29,10 +29,8 @@ function deps({ mailStore, live = {}, entries = {} } = {}) {
     memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
-    // The live announcement now goes through paneDeferral (held while the human
-    // is mid-prompt). This double records the same shape the direct paste did,
-    // so the live-path assertions below are unchanged; pane-deferral.test.js
-    // owns the gating behaviour, and the wiring test pins that it is consulted.
+    // The live announcement goes through paneDeferral; this double records the
+    // notification and lets individual tests model a deferred send.
     paneDeferral: {
       deliverOrDefer: async ({ text, tmux, socket }) => { sent.push({ name: tmux, text, socket }); return 'sent'; },
     },
@@ -54,7 +52,7 @@ test('sweepDueSettles: notifies a live recipient and marks the window notified',
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /1 message, read when convenient\./);
+  assert.match(d.sent[0].text, /1 message\. Read it with read_mail now/);
   assert.equal(d.sent[0].name, 'cc_one');
   assert.ok(store.boxes.get('CARD1').lastNotifiedAt != null);
 });
@@ -66,7 +64,31 @@ test('sweepDueSettles: fan-in batch — one notification for the whole batch, no
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /2 messages, read when convenient\./);
+  assert.match(d.sent[0].text, /2 messages\. Read it with read_mail now/);
+});
+
+test('sweepDueSettles: deferred live delivery stays unread and retries the latest batch', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'one' }, 0);
+  const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
+  const attempted = [];
+  let result = 'deferred';
+  d.paneDeferral.deliverOrDefer = async ({ text }) => {
+    attempted.push(text);
+    return result;
+  };
+
+  await sweepDueSettles(d, SETTLE_MS);
+  assert.equal(store.list('CARD1')[0].state, 'unread');
+  assert.equal(store.boxes.get('CARD1').lastNotifiedAt, null);
+  assert.equal(store.boxes.get('CARD1').settleDeadline, 2 * SETTLE_MS);
+
+  store.append('CARD1', { from: 'sess_b', body: 'two' }, SETTLE_MS + 1);
+  result = 'sent';
+  await sweepDueSettles(d, 2 * SETTLE_MS);
+  assert.match(attempted[0], /1 message/);
+  assert.match(attempted[1], /2 messages/);
+  assert.equal(store.boxes.get('CARD1').lastNotifiedAt, 2 * SETTLE_MS);
 });
 
 test('sweepDueSettles: not-yet-due recipient is left alone', async () => {

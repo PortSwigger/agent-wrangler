@@ -266,10 +266,9 @@ test('resume failure: returns error (with the real failure message, never undefi
   assert.match(mode.error, /transcript gone/);
 });
 
-// Wiring, not gating logic (that lives in pane-deferral.test.js): the live
-// announcement must go through the gate, so a "you've got mail" line can never
-// be spliced into a prompt the human is half-way through typing.
-test('live recipient mid-prompt: the announcement is held, not spliced into the draft', async () => {
+// Wiring, not gating logic (that lives in pane-deferral.test.js): a live mail
+// notification must defer to the durable mailbox retry while a prompt is active.
+test('live recipient mid-prompt: mail stays unread for a durable retry', async () => {
   const pasted = [];
   const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } } });
   const pd = createPaneDeferral({
@@ -282,7 +281,7 @@ test('live recipient mid-prompt: the announcement is held, not spliced into the 
 
   const res = await deliverMailNotification('CARD1', '[Agent Wrangler] 📬 New mail', d);
 
-  assert.equal(res.mode, 'live', 'the mail is notified-as-live; only the tap on the shoulder waits');
+  assert.equal(res.mode, 'deferred');
   assert.deepEqual(pasted, [], 'nothing pasted on top of the draft');
-  assert.deepEqual(pd.pending('CARD1'), ['[Agent Wrangler] 📬 New mail']);
+  assert.deepEqual(pd.pending('CARD1'), [], 'the durable mailbox, not the in-memory pane queue, owns retries');
 });

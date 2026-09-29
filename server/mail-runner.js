@@ -36,6 +36,8 @@ export async function sweepDueSettles(deps, now = Date.now()) {
         // Not Phase 2 retry/backoff machinery: just don't drop the ball.
         mailStore.reopenSettle(to, now);
         onError?.(to, new Error(mode.error || 'mail delivery failed'));
+      } else if (mode.mode === 'deferred') {
+        mailStore.reopenSettle(to, now);
       } else {
         mailStore.markNotified(to, now);
         if (mode.mode === 'dormant') notified += 1;

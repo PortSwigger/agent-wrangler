@@ -51,6 +51,21 @@ test('an empty Codex composer takes the notification immediately', async () => {
   assert.deepEqual(pd.pending('c1'), []);
 });
 
+test('mail waits for a working turn to finish without entering the volatile notification queue', async () => {
+  const d = deps();
+  let status = 'working';
+  const pd = createPaneDeferral({ ...d, classify: () => ({ status }) });
+  const notification = { id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false };
+
+  assert.equal(await pd.deliverOrDefer(notification), 'deferred');
+  assert.deepEqual(d.sent, []);
+  assert.deepEqual(pd.pending('c1'), []);
+
+  status = 'idle';
+  assert.equal(await pd.deliverOrDefer(notification), 'sent');
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'New mail', socket: '' }]);
+});
+
 test('a Codex draft stays protected when output contains a Claude prompt mark', async () => {
   const strayClaudeMark = `${E}[0m    ${E}[2m───── ❯ ${E}[0m`;
   const codexDraft = `${E}[1m›${E}[0m explain this failure`;

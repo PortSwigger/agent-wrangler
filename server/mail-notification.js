@@ -10,10 +10,10 @@
 // text. No "call read_mail()" instruction here either: the standing
 // instruction to read mail at a natural break lives ONCE in the `mail`
 // agent-skill's always-on nudge (its sidecar WRANGLER.md, mirroring
-// task-memory) rather than being repeated in every notification — see
-// agent-skills/skills/mail/WRANGLER.md.
+// task-memory) — this notification is the explicit wake prompt that starts the
+// turn when a recipient is idle.
 export function composeMailNotification(messages) {
   const count = messages.length;
   const noun = count === 1 ? 'message' : 'messages';
-  return `[Agent Wrangler] 📬 New mail — ${count} ${noun}, read when convenient.`;
+  return `[Agent Wrangler] 📬 New mail — ${count} ${noun}. Read it with read_mail now, then continue your work.`;
 }
