@@ -118,7 +118,13 @@ import semver from 'semver';
 // every Codex launch keeps the core defaults. So a manifest declaring
 // `^1.12.0` refuses to boot against such a server, which is the only way a
 // human learns the policy they chose is not being applied.
-export const HOST_API_VERSION = '1.12.0';
+//
+// 1.13.0 is the CLIENT half: `api.settings()`, the extension's own current
+// setting values in the browser. Without it a dispatch.field could not prefill
+// from Settings, so the server half had to fill empty fields itself — which
+// meant a dispatch could never turn off a toggle Settings had on. An older
+// slots.js has no such method, so only the range can say so.
+export const HOST_API_VERSION = '1.13.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

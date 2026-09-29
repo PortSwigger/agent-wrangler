@@ -223,6 +223,8 @@ const extApi = {
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs slots' per-extension `api.settings()`, which binds the id.
+  settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
 };
 const clientExtensions = createClientExtensionLoader(slots);
 // The `extensions` connect message announces which extensions ship a client
