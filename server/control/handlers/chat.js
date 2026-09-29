@@ -1,5 +1,5 @@
 import fsp from 'node:fs/promises';
-import { findConversationFile as realFindConversationFile } from '../../conversation-file.js';
+import { findConversationFiles as realFindConversationFiles } from '../../conversation-file.js';
 import { createChatScanner } from '../../chat-events.js';
 import { capturePaneStyled, paneModelLabel, paneContextPercent } from '../../tmux-scraper.js';
 import { parseGhostSuggestion } from '../../ghost-suggestion.js';
@@ -49,7 +49,70 @@ export const MAX_INITIAL_BYTES = 8 * 1024 * 1024;
 // and never revisited must not occupy a slot forever. 50 is comfortably above
 // how many sessions are ever open in chat view on one board at once.
 const MAX_CACHED_SCANNERS = 50;
-const scannerCache = new Map(); // convId -> { scanner, offset, agent }
+const scannerCache = new Map(); // convId -> { scanner, offset, agent, segments }
+
+// The offset on the wire is a byte position in the ordered rollout chain. Each
+// segment owns a half-open interval in that virtual stream; a newly discovered
+// resume appends an interval without changing any earlier offset. Claude has one
+// segment, so its offsets retain their existing meaning.
+async function openSegments(files) {
+  const segments = [];
+  let end = 0;
+  try {
+    for (const [index, file] of files.entries()) {
+      const size = (await fsp.stat(file)).size;
+      const handle = await fsp.open(file, 'r');
+      const segment = { file, handle, start: end, end: end + size, separator: false };
+      segments.push(segment);
+      if (index < files.length - 1 && size) {
+        const last = Buffer.alloc(1);
+        const { bytesRead } = await handle.read(last, 0, 1, size - 1);
+        if (!bytesRead) throw new Error('Rollout changed during chat read');
+        segment.separator = last[0] !== 0x0a;
+      }
+      end += size + Number(segment.separator);
+    }
+    return { segments, size: end };
+  } catch (error) {
+    await Promise.all(segments.map(({ handle }) => handle.close()));
+    throw error;
+  }
+}
+
+async function readVirtualRange(segments, start, size) {
+  const buf = Buffer.alloc(size - start);
+  for (const segment of segments) {
+    const from = Math.max(start, segment.start);
+    const to = Math.min(size, segment.end);
+    if (from < to) {
+      let position = from - segment.start;
+      while (position < to - segment.start) {
+        const { bytesRead } = await segment.handle.read(buf, segment.start - start + position, to - segment.start - position, position);
+        if (!bytesRead) throw new Error('Rollout changed during chat read');
+        position += bytesRead;
+      }
+    }
+    // A completed old JSON line need not end in '\n' after an interruption.
+    // Supply that delimiter at the file boundary so the next rollout's first
+    // line cannot consume it. It occupies one virtual byte and therefore stays
+    // part of the same byte-offset arithmetic as every real newline.
+    if (segment.separator && segment.end >= start && segment.end < size) buf[segment.end - start] = 0x0a;
+  }
+  return buf;
+}
+
+function chainRebased(previous, current) {
+  if (current.length < previous.length) return true;
+  for (const [index, old] of previous.entries()) {
+    const now = current[index];
+    if (old.file !== now.file) return true;
+    const oldSize = old.end - old.start;
+    const nowSize = now.end - now.start;
+    if (index < previous.length - 1 ? oldSize !== nowSize : oldSize > nowSize) return true;
+    if (index < previous.length - 1 && old.separator !== now.separator) return true;
+  }
+  return false;
+}
 
 function touchCache(convId, entry) {
   // Map preserves insertion order; delete-then-set moves this key to the most-
@@ -63,9 +126,12 @@ function touchCache(convId, entry) {
 
 // The client's stream is append-only (chat-view.js: APPEND, NEVER RE-RENDER), so
 // a rewind — which retroactively kills events already on screen — cannot be
-// expressed as more events. It is expressed as `epoch`: a per-conversation
-// counter the client mirrors and compares on every reply, rebuilding its stream
-// from a fresh window read whenever it moves. Held OUTSIDE the scanner cache,
+// expressed as more events. Nor can a removed or shortened earlier rollout,
+// which changes the meaning of virtual offsets already sent to the client.
+// Both move `epoch`: a per-conversation counter the client mirrors and compares
+// on every reply, rebuilding from a fresh window read when it changes. An
+// appended rollout is an ordinary continuation and does not move it. Held
+// OUTSIDE the scanner cache,
 // because that fresh read replaces the scanner and the counter has to outlive it.
 //
 // Evicting an entry resets its conversation to 0, which a client holding a
@@ -110,10 +176,9 @@ function getOrCreateScanner(convId, since, agent) {
 
 // On-demand, uncached read of one session's conversation. A fresh, TARGETED reply
 // to the requesting client only (like subagent-detail / get-memory), never
-// broadcast — only the reader of this session needs it. findConversationFile is a
-// ctx seam for test isolation, and is what resolves a Claude transcript or a
-// Codex rollout from the SAME card — the whole path below is agent-agnostic
-// after it, because the scanner already is.
+// broadcast — only the reader of this session needs it. findConversationFiles
+// resolves one Claude transcript or the full Codex rollout chain from the SAME
+// card. The read below treats either result as one virtual byte stream.
 //
 // `token`, like `sessionId`, is echoed back verbatim and unvalidated on EVERY
 // reply path below — the server never interprets it. The client (chat-view.js)
@@ -131,7 +196,7 @@ function getOrCreateScanner(convId, since, agent) {
 export const chatHandler = {
   type: 'chat',
   async handler(msg, ctx) {
-    const findConversationFile = ctx.findConversationFile || realFindConversationFile;
+    const findConversationFiles = ctx.findConversationFiles || ctx.findConversationFile || realFindConversationFiles;
     // The client sends the CARD id; the transcript is named by the CONVERSATION
     // id. Resolve card → liveSessionId off the graph, falling back to the card id
     // for legacy pre-split entries — the same resolution subagent-detail.js does.
@@ -182,18 +247,38 @@ export const chatHandler = {
       ? (pane ? paneContextPercent(pane) : null)
       : (await analyzeCodex(convId).catch(() => null))?.contextPercent ?? null;
 
-    const file = await findConversationFile(convId, agent);
-    if (!file) {
+    const resolved = await findConversationFiles(convId, agent);
+    // Older handler tests inject the single-file seam; production and new chain
+    // tests supply an array. Normalising here leaves the one-file path identical.
+    const files = Array.isArray(resolved) ? resolved : (resolved ? [resolved] : []);
+    if (!files.length) {
+      if (agent === 'codex' && scannerCache.has(convId)) {
+        scannerCache.delete(convId);
+        bumpEpoch(convId);
+      }
       ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
       return;
     }
 
-    let size = 0;
+    let opened;
     try {
-      size = (await fsp.stat(file)).size;
+      opened = await openSegments(files);
     } catch {
       ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
       return;
+    }
+
+    const { segments, size } = opened;
+
+    // A client offset is meaningful only while all preceding file boundaries
+    // retain their byte positions. Growth in the last file, or a new file at
+    // the end, preserves them; deletion, truncation, or replacement does not.
+    // Move the epoch before clamping `sinceOffset`, so the client discards this
+    // reply and rebuilds instead of repeatedly polling from a stale position.
+    const cached = scannerCache.get(convId);
+    if (agent === 'codex' && cached?.segments && chainRebased(cached.segments, segments)) {
+      scannerCache.delete(convId);
+      bumpEpoch(convId);
     }
 
     const since = Number.isFinite(msg.sinceOffset) ? Math.max(0, Math.min(msg.sinceOffset, size)) : null;
@@ -210,15 +295,6 @@ export const chatHandler = {
     // must move this with it.
     let windowed = since == null && start > 0;
 
-    let handle;
-    try {
-      handle = await fsp.open(file, 'r');
-    } catch {
-      // Deleted/unreadable between the stat above and this open — degrade the
-      // same way a missing file or a failed stat does, never throw.
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
-      return;
-    }
     try {
       // Bounded, so this cannot spin: the event-count widen strictly grows
       // `attempt` until it hits `ceiling` (~6 passes at the production numbers) and
@@ -226,9 +302,8 @@ export const chatHandler = {
       // `windowed`, which is the only thing that can re-trigger it. A follow-up
       // poll (since != null) never widens at all — its body runs exactly once.
       for (;;) {
-        const len = size - start;
-        const buf = Buffer.alloc(len);
-        await handle.read(buf, 0, len, start);
+        const buf = await readVirtualRange(segments, start, size);
+        const len = buf.length;
         // Byte arithmetic, NOT string slicing. A windowed read can begin mid
         // multi-byte character; decoding first would turn those bytes into U+FFFD,
         // whose re-encoded byteLength no longer matches what was consumed —
@@ -306,7 +381,7 @@ export const chatHandler = {
         // Only the FINAL attempt's scanner is ever cached; the discarded attempts'
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
-        if (scanner) touchCache(convId, { scanner, offset, agent });
+        if (scanner) touchCache(convId, { scanner, offset, agent, segments: segments.map(({ file, start, end, separator }) => ({ file, start, end, separator })) });
         // Bumped before the reply is built so this very reply carries the new
         // value: the client is told to rebuild in the same message that would
         // otherwise have appended events the rewind just killed.
@@ -315,7 +390,7 @@ export const chatHandler = {
         return;
       }
     } finally {
-      await handle.close();
+      await Promise.all(segments.map(({ handle }) => handle.close()));
     }
   },
 };

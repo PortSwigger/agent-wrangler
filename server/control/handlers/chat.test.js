@@ -5,6 +5,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chatHandler, WINDOW_BYTES, TARGET_EVENTS, MAX_INITIAL_BYTES } from './chat.js';
+import { findConversationFiles } from '../../conversation-file.js';
 
 async function tmpTranscript(lines) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'aw-chat-'));
@@ -29,6 +30,21 @@ async function tmpRollout(lines) {
   const file = path.join(dir, 'rollout-2026-09-06T10-00-00-live-codex.jsonl');
   await fsp.writeFile(file, lines.map((o) => JSON.stringify(o)).join('\n') + '\n');
   return file;
+}
+
+async function splitRollout(uuid, oldLines, newLines) {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'aw-split-rollout-'));
+  const firstDay = path.join(root, '2026', '09', '28');
+  const secondDay = path.join(root, '2026', '09', '29');
+  await fsp.mkdir(firstDay, { recursive: true });
+  await fsp.mkdir(secondDay, { recursive: true });
+  const oldFile = path.join(firstDay, `rollout-2026-09-28T21-28-30-${uuid}.jsonl`);
+  const newFile = path.join(secondDay, `rollout-2026-09-29T09-52-14-${uuid}_01a0ec5d-555a-7f10-abc5-35aa3badf9e4.jsonl`);
+  const meta = { type: 'session_meta', payload: { session_id: uuid, id: uuid, thread_source: 'user' } };
+  const write = (file, lines) => fsp.writeFile(file, [meta, ...lines].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  await write(oldFile, oldLines);
+  await write(newFile, newLines);
+  return { root, oldFile, newFile };
 }
 
 const codexUser = (text, ts) => ({
@@ -289,6 +305,140 @@ test('chat: a Codex custom_tool_call in one poll pairs with its output in the ne
   assert.equal(toolEvent.output, 'Script completed\nOutput:\nall green');
   assert.equal(second.pending, null, 'and the call is no longer open');
   assert.equal(second.lastTs, Date.parse('2026-09-06T10:00:09.000Z'));
+});
+
+test('chat: a resumed Codex rollout opens with the complete ordered conversation', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { root, oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('first café', '2026-09-28T21:28:30.000Z'), codexUser('before rewind', '2026-09-28T21:30:00.000Z')],
+    [codexUser('after rewind', '2026-09-29T09:52:14.000Z')]);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  c.findConversationFiles = (id, agent) => findConversationFiles(id, agent, { sessionsDir: root });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.deepEqual(c.sent[0].events.map((event) => event.text), ['first café', 'before rewind', 'after rewind']);
+  assert.equal(c.sent[0].offset, fs.statSync(oldFile).size + fs.statSync(newFile).size);
+  assert.equal(c.sent[0].epoch, 0);
+});
+
+test('chat: a newly added rollout continues the scanner and virtual offset', async () => {
+  const uuid = '01a0c473-2740-7970-8667-e6f359444905';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('run checks', '2026-09-21T15:51:16.000Z'), codexToolCall('across', 'exec', 'npm test', '2026-09-21T15:51:17.000Z')],
+    [codexToolOutput('across', 'passed', '2026-09-28T13:59:30.000Z')]);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  let chain = [oldFile];
+  c.findConversationFiles = async () => chain;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.equal(first.pending?.name, 'exec');
+  chain = [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  const second = c.sent[1];
+  assert.equal(second.events.find((event) => event.kind === 'tool')?.output, 'passed');
+  assert.equal(second.pending, null);
+  assert.equal(second.offset, fs.statSync(oldFile).size + fs.statSync(newFile).size);
+  assert.equal(second.epoch, first.epoch);
+  await fsp.appendFile(newFile, JSON.stringify(codexUser('next', '2026-09-28T14:00:00.000Z')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: second.offset }, c);
+  assert.deepEqual(c.sent[2].events.map((event) => event.text), ['next']);
+  assert.equal(c.sent[2].epoch, first.epoch);
+});
+
+test('chat: growth in the previous last file before a new rollout is still an append', async () => {
+  const uuid = '01a0c473-2740-7970-8667-e6f359444905';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexToolCall('across', 'exec', 'npm test', '2026-09-21T15:51:17.000Z')],
+    [codexToolOutput('across', 'passed', '2026-09-28T13:59:30.000Z')]);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  let chain = [oldFile];
+  c.findConversationFiles = async () => chain;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  await fsp.appendFile(oldFile, JSON.stringify(codexUser('last old message', '2026-09-21T15:51:18.000Z')) + '\n');
+  chain = [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  assert.equal(c.sent[1].epoch, first.epoch);
+  assert.ok(c.sent[1].events.some((event) => event.text === 'last old message'));
+  assert.equal(c.sent[1].events.find((event) => event.kind === 'tool')?.output, 'passed');
+});
+
+test('chat: the initial event-count window reaches into an older rollout', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const oldLines = Array.from({ length: 400 }, (_, i) => codexUser(`old ${i} ${'x'.repeat(2000)}`, '2026-09-28T21:28:30.000Z'));
+  const { oldFile, newFile } = await splitRollout(uuid, oldLines, [codexUser('new reply', '2026-09-29T09:52:14.000Z')]);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  c.findConversationFiles = async () => [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.equal(c.sent[0].events.at(-1).text, 'new reply');
+  assert.ok(c.sent[0].events.some((event) => event.text.startsWith('old 200 ')));
+  assert.ok(c.sent[0].events.length >= TARGET_EVENTS);
+  assert.equal(c.sent[0].more, true);
+  assert.equal(c.sent[0].offset, fs.statSync(oldFile).size + fs.statSync(newFile).size);
+});
+
+test('chat: a virtual offset inside an older file reads through the next file', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('already seen', '2026-09-28T21:28:30.000Z'), codexUser('remaining old', '2026-09-28T21:28:31.000Z')],
+    [codexUser('new', '2026-09-29T09:52:14.000Z')]);
+  const bytes = fs.readFileSync(oldFile);
+  const firstLineEnd = bytes.indexOf(0x0a);
+  const sinceOffset = bytes.indexOf(0x0a, firstLineEnd + 1) + 1;
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  c.findConversationFiles = async () => [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset }, c);
+  assert.deepEqual(c.sent[0].events.map((event) => event.text), ['remaining old', 'new']);
+  assert.equal(c.sent[0].offset, fs.statSync(oldFile).size + fs.statSync(newFile).size);
+});
+
+test('chat: a rollout boundary preserves an old JSON line without a final newline', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('old final event', '2026-09-28T21:28:30.000Z')],
+    [codexUser('new event', '2026-09-29T09:52:14.000Z')]);
+  await fsp.truncate(oldFile, fs.statSync(oldFile).size - 1);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  c.findConversationFiles = async () => [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.deepEqual(c.sent[0].events.map((event) => event.text), ['old final event', 'new event']);
+});
+
+test('chat: adding a rollout completes an old unterminated line without moving the epoch', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('old final event', '2026-09-28T21:28:30.000Z')],
+    [codexUser('new event', '2026-09-29T09:52:14.000Z')]);
+  await fsp.truncate(oldFile, fs.statSync(oldFile).size - 1);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  let chain = [oldFile];
+  c.findConversationFiles = async () => chain;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  assert.deepEqual(first.events, []);
+  chain = [oldFile, newFile];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  assert.deepEqual(c.sent[1].events.map((event) => event.text), ['old final event', 'new event']);
+  assert.equal(c.sent[1].epoch, first.epoch);
+  assert.equal(c.sent[1].offset, fs.statSync(oldFile).size + 1 + fs.statSync(newFile).size);
+});
+
+test('chat: removing an older rollout moves the epoch so the client rebuilds', async () => {
+  const uuid = '01a0c473-2740-7970-8667-e6f359444905';
+  const { oldFile, newFile } = await splitRollout(uuid,
+    [codexUser('removed history', '2026-09-21T15:51:16.000Z')],
+    [codexUser('retained history', '2026-09-28T13:59:30.000Z')]);
+  const c = ctx(null, { liveSessionId: uuid, agent: 'codex' });
+  let chain = [oldFile, newFile];
+  c.findConversationFiles = async () => chain;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  const first = c.sent[0];
+  chain = [newFile];
+  await fsp.appendFile(newFile, JSON.stringify(codexUser('later', '2026-09-28T14:00:00.000Z')) + '\n');
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1', sinceOffset: first.offset }, c);
+  assert.equal(c.sent[1].epoch, first.epoch + 1);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
+  assert.deepEqual(c.sent[2].events.map((event) => event.text), ['retained history', 'later']);
+  assert.equal(c.sent[2].epoch, first.epoch + 1);
 });
 
 test('chat: a Codex reply carries every all-paths field, with no Claude-only pane reads', async () => {

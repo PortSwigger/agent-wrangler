@@ -1,5 +1,5 @@
 import { findTranscript } from './transcript-reader.js';
-import { findRollout } from './agents/codex-rollout.js';
+import { findRollout, findRolloutChain } from './agents/codex-rollout.js';
 
 // Card conversation id + agent -> the file that conversation is recorded in.
 //
@@ -23,4 +23,12 @@ import { findRollout } from './agents/codex-rollout.js';
 // undefined leaves each finder on its own production default.
 export function findConversationFile(convId, agent, { projectsDir, sessionsDir } = {}) {
   return agent === 'codex' ? findRollout(convId, sessionsDir) : findTranscript(convId, projectsDir);
+}
+
+// Chat consumes every Codex continuation as one stream. The single-file finder
+// remains for paths such as interrupt restore, which want the latest prompt.
+export async function findConversationFiles(convId, agent, { projectsDir, sessionsDir } = {}) {
+  if (agent === 'codex') return findRolloutChain(convId, sessionsDir);
+  const file = await findTranscript(convId, projectsDir);
+  return file ? [file] : [];
 }
