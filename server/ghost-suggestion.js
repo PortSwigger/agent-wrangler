@@ -63,7 +63,7 @@ const visible = (s) => s.replace(ANSI, '').trim();
 export function paneComposerIsEmpty(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   if (agent === 'codex') {
-    if (/esc to interrupt/i.test(paneText.replace(ANSI, ''))) return false;
+    if (paneHasWorkingStatus(paneText)) return false;
     const line = paneText.split('\n').filter((candidate) => candidate.includes(CODEX_PROMPT_MARK)).pop();
     return line === CODEX_EMPTY_COMPOSER;
   }
@@ -79,6 +79,14 @@ export function paneComposerIsEmpty(paneText, agent = 'claude') {
     return close === -1 ? '' : part.slice(close);
   }).join('');
   return !visible(withoutGhost);
+}
+
+export function paneHasWorkingStatus(paneText) {
+  if (typeof paneText !== 'string') return false;
+  const recent = paneText.replace(ANSI, '').split('\n').filter((line) => line.trim());
+  const codexWorking = /^\s*•\s+.+\([^)]*esc to interrupt[^)]*\).*/iu;
+  const claudeWorking = /^\s*[✻✳✽✶✢✷✸✹✺✼✾✿·]\s+.+\((?:(?:\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\b|[^)]*esc to interrupt)[^)]*)\).*/iu;
+  return recent.some((line) => codexWorking.test(line) || claudeWorking.test(line));
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.

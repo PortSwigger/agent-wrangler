@@ -201,6 +201,7 @@ const paneDeferral = createPaneDeferral({
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
+  statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
   sendText,
 });
 
@@ -711,7 +712,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 const fireMailSettlesTick = createMailSettleSweeper({
   mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore, paneDeferral,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
-}, { onWoken: () => rebuild() });
+});
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
 // runs INSIDE the one session whose Bash tool ran `gh pr create` and posts the
@@ -795,6 +796,7 @@ const mcpRequestHandler = createMcpRequestHandler({
   // peer's terminal and archive_session can snapshot a target before stopping it.
   tmuxFor,
   socketFor,
+  sendText,
   sessionFromGraph,
   // Shared in-memory loop backstop for send_message; one instance for the process.
   messageThrottle: createMessageThrottle(),

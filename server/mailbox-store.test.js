@@ -52,11 +52,34 @@ test('takeDueSettles: a steady trickle cannot starve the recipient — each wind
   assert.deepEqual(store.takeDueSettles(SETTLE_MS + 5 + SETTLE_MS), ['rcpt']);
 });
 
-test('takeDueSettles: clears the deadline synchronously at selection (idempotent even without markNotified)', () => {
+test('takeDueSettles: durably claims a due window once within the current process', () => {
   const store = new MailboxStore(tmpFile());
   store.append('rcpt', { from: 'a', body: 'one' }, 0);
   assert.deepEqual(store.takeDueSettles(SETTLE_MS), ['rcpt']);
-  assert.deepEqual(store.takeDueSettles(SETTLE_MS + 1), []); // not selected twice
+  assert.deepEqual(store.takeDueSettles(SETTLE_MS + 1), []);
+  store.markNotified('rcpt', SETTLE_MS + 1);
+  assert.deepEqual(store.takeDueSettles(SETTLE_MS + 2), []);
+});
+
+test('restart during settle delivery: a due unread box is selected again after reload', () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  store.append('rcpt', { from: 'a', body: 'one' }, 0);
+  assert.deepEqual(store.takeDueSettles(SETTLE_MS), ['rcpt']);
+
+  const reloaded = new MailboxStore(file);
+  assert.deepEqual(reloaded.takeDueSettles(SETTLE_MS + 1), ['rcpt']);
+});
+
+test('a message arriving during delivery keeps its own settle window after the older batch is notified', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'a', body: 'first' }, 0);
+  assert.deepEqual(store.takeDueSettles(SETTLE_MS), ['rcpt']);
+  store.append('rcpt', { from: 'b', body: 'second' }, SETTLE_MS + 1);
+  store.markNotified('rcpt', SETTLE_MS + 2);
+
+  assert.equal(store.boxes.get('rcpt').settleDeadline, 2 * SETTLE_MS + 1);
+  assert.deepEqual(store.takeDueSettles(2 * SETTLE_MS + 1), ['rcpt']);
 });
 
 test('drain: oldest-first, marks read, excludes undeliverable', () => {
@@ -308,7 +331,8 @@ test('empty boxes are pruned: no messages and no open settle window holds nothin
   const file = tmpFile();
   const store = new MailboxStore(file);
   const { id } = store.append('rcpt', { from: 'a', body: 'x' }, 0);
-  store.takeDueSettles(SETTLE_MS); // clears the deadline, as mail-runner.js does
+  store.takeDueSettles(SETTLE_MS);
+  store.clearSettle('rcpt');
   store.getOne('rcpt', id); // read
   store.pruneOnArchive('rcpt'); // drops the read message, emptying the box
   assert.equal(store.boxes.has('rcpt'), false);
@@ -511,7 +535,8 @@ test('expireStaleUnread: touches ONLY unread mail — read/undeliverable is prun
 test('expireStaleUnread: an emptied box goes away, and an unknown recipient never creates one', () => {
   const store = new MailboxStore(tmpFile());
   store.append('rcpt', { from: 'a', body: 'x' }, 1);
-  store.takeDueSettles(60_000); // window closed, as mail-runner.js does
+  store.takeDueSettles(60_000);
+  store.clearSettle('rcpt');
   store.expireStaleUnread('rcpt', 1_000_000);
   assert.equal(store.boxes.has('rcpt'), false);
   assert.equal(store.expireStaleUnread('nobody', 1_000_000), 0);
@@ -580,7 +605,8 @@ test('reconcileArchived: batches many recipients into ONE write, dropping evicta
   store.getOne('a', readId, now);
   store.append('b', { from: 'p', body: 'stale unread' }, now - UNREAD_TTL_MS - 1);
   store.append('c', { from: 'p', body: 'current unread' }, now);
-  store.takeDueSettles(now + SETTLE_MS); // the sweeper has closed every window
+  store.takeDueSettles(now + SETTLE_MS);
+  for (const to of ['a', 'b', 'c']) store.markNotified(to, now + SETTLE_MS);
 
   let writes = 0;
   const realSave = store._save.bind(store);

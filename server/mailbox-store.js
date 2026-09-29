@@ -69,13 +69,13 @@ const byteSize = (s) => Buffer.byteLength(s, 'utf8');
 // to completion with no await, so two calls can never interleave within one process.
 //
 // On disk: { "<cardId>": { messages: [{id,from,fromLabel,at,body,size,state,readAt}],
-//   settleDeadline, lastNotifiedAt } }. `state` is the ONE source of truth for a
+//   settleDeadline, deliveryStartedAt, lastNotifiedAt } }. `state` is the ONE source of truth for a
 // message's lifecycle ('unread' | 'undeliverable' | 'read') — no separate `read`
 // boolean, so there is nothing to drift out of sync with it.
 export class MailboxStore {
   constructor(file = MAILBOX_FILE) {
     this.file = file;
-    this.boxes = new Map(); // cardId -> { messages: [...], settleDeadline, lastNotifiedAt }
+    this.boxes = new Map(); // cardId -> { messages: [...], settleDeadline, deliveryStartedAt, lastNotifiedAt }
     this._load();
   }
 
@@ -94,6 +94,7 @@ export class MailboxStore {
           size: typeof m.size === 'number' ? m.size : byteSize(m.body ?? ''),
         })),
         settleDeadline: box.settleDeadline ?? null,
+        deliveryStartedAt: box.deliveryStartedAt ?? null,
         lastNotifiedAt: box.lastNotifiedAt ?? null,
       });
     }
@@ -112,10 +113,19 @@ export class MailboxStore {
     // from the Map it iterates — safe: a Map skips an entry deleted before it's
     // reached, and the only entries it can delete are empty ones, which have
     // nothing left to enforce anyway.
-    for (const box of this.boxes.values()) this._enforceRetentionCaps(box);
+    let recoveredDelivery = false;
+    for (const box of this.boxes.values()) {
+      if (box.deliveryStartedAt != null) {
+        const startedAt = box.deliveryStartedAt;
+        box.deliveryStartedAt = null;
+        if (box.messages.some((m) => m.state === 'unread')) box.settleDeadline = startedAt;
+        recoveredDelivery = true;
+      }
+      this._enforceRetentionCaps(box);
+    }
     this._pruneEmptyBoxes();
     const after = this.boxes.size + [...this.boxes.values()].reduce((n, b) => n + b.messages.length, 0);
-    if (after !== before) this._save();
+    if (after !== before || recoveredDelivery) this._save();
   }
 
   _save() {
@@ -127,7 +137,7 @@ export class MailboxStore {
   _box(to) {
     let box = this.boxes.get(to);
     if (!box) {
-      box = { messages: [], settleDeadline: null, lastNotifiedAt: null };
+      box = { messages: [], settleDeadline: null, deliveryStartedAt: null, lastNotifiedAt: null };
       this.boxes.set(to, box);
     }
     return box;
@@ -247,26 +257,28 @@ export class MailboxStore {
   _evictableCount(box) { return box.messages.filter((m) => this._isEvictable(m)).length; }
   _evictableBytes(box) { return box.messages.filter((m) => this._isEvictable(m)).reduce((n, m) => n + m.size, 0); }
 
-  // Recipients whose settle window is due (<= now). Clears the deadline
-  // SYNCHRONOUSLY at selection (not left for the caller to clear later) — so
-  // even a missed in-flight guard can't select and re-notify the same window
-  // twice, and a server restart mid-window is recoverable: the deadline is
-  // already persisted, so the first sweep after boot selects it exactly once.
+  // Durably mark due recipients in progress before delivery. A restart clears
+  // this marker and reopens an immediate settle window for any unread mail.
   takeDueSettles(now = Date.now()) {
     const due = [];
+    let changed = false;
     for (const [to, box] of this.boxes) {
-      if (box.settleDeadline != null && box.settleDeadline <= now) {
-        box.settleDeadline = null;
+      if (box.settleDeadline == null || box.settleDeadline > now || box.deliveryStartedAt != null) continue;
+      box.settleDeadline = null;
+      if (box.messages.some((m) => m.state === 'unread')) {
+        box.deliveryStartedAt = now;
         due.push(to);
       }
+      changed = true;
     }
-    if (due.length) this._save();
+    if (changed) this._save();
     return due;
   }
 
   markNotified(to, at = Date.now()) {
     const box = this._box(to);
     box.lastNotifiedAt = at;
+    box.deliveryStartedAt = null;
     this._save();
   }
 
@@ -276,7 +288,8 @@ export class MailboxStore {
   // state alone. Never re-marked as fresh if the card is later un-archived.
   markUndeliverable(to) {
     const box = this._box(to);
-    let changed = false;
+    let changed = box.deliveryStartedAt != null;
+    box.deliveryStartedAt = null;
     for (const m of box.messages) {
       if (m.state === 'unread') { m.state = 'undeliverable'; changed = true; }
     }
@@ -286,17 +299,41 @@ export class MailboxStore {
     }
   }
 
-  // Re-open a fresh settle window for a recipient whose settle-close delivery
-  // just failed (mode:'error' — see mail-runner.js). takeDueSettles already
-  // cleared the deadline synchronously at selection, and nothing else re-arms
-  // it, so without this a failed delivery strands the batch 'unread' forever
-  // with the sender already told queued:true. No-op if the box is now empty
-  // (e.g. every pending message was concurrently marked undeliverable).
-  reopenSettle(to, now = Date.now()) {
+  clearSettle(to) {
     const box = this.boxes.get(to);
-    if (!box || !box.messages.some((m) => m.state === 'unread')) return;
-    box.settleDeadline = now + SETTLE_MS;
+    if (!box || (box.settleDeadline == null && box.deliveryStartedAt == null)) return;
+    box.settleDeadline = null;
+    box.deliveryStartedAt = null;
     this._save();
+  }
+
+  // Re-open a fresh settle window for recipients whose delivery was deferred or
+  // failed. A durably marked in-progress attempt is recovered on restart.
+  reopenSettle(to, now = Date.now()) {
+    this.reopenSettles([to], now);
+  }
+
+  reopenSettles(recipients, now = Date.now()) {
+    let changed = false;
+    for (const to of recipients) {
+      const box = this.boxes.get(to);
+      if (!box) continue;
+      const hasUnread = box.messages.some((m) => m.state === 'unread');
+      if (!hasUnread) {
+        if (box.deliveryStartedAt != null) {
+          box.deliveryStartedAt = null;
+          changed = true;
+        }
+        continue;
+      }
+      const deadline = now + SETTLE_MS;
+      if (box.settleDeadline !== deadline || box.deliveryStartedAt != null) {
+        box.settleDeadline = deadline;
+        box.deliveryStartedAt = null;
+        changed = true;
+      }
+    }
+    if (changed) this._save();
   }
 
   // Read-only peek at the currently unread messages, oldest-first, WITHOUT
