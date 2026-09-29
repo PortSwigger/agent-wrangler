@@ -293,10 +293,18 @@ export class MailboxStore {
   // with the sender already told queued:true. No-op if the box is now empty
   // (e.g. every pending message was concurrently marked undeliverable).
   reopenSettle(to, now = Date.now()) {
-    const box = this.boxes.get(to);
-    if (!box || !box.messages.some((m) => m.state === 'unread')) return;
-    box.settleDeadline = now + SETTLE_MS;
-    this._save();
+    this.reopenSettles([to], now);
+  }
+
+  reopenSettles(recipients, now = Date.now()) {
+    let changed = false;
+    for (const to of recipients) {
+      const box = this.boxes.get(to);
+      if (!box || !box.messages.some((m) => m.state === 'unread')) continue;
+      box.settleDeadline = now + SETTLE_MS;
+      changed = true;
+    }
+    if (changed) this._save();
   }
 
   // Read-only peek at the currently unread messages, oldest-first, WITHOUT

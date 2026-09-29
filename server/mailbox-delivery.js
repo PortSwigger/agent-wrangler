@@ -52,6 +52,13 @@ export async function deliverMailNotification(to, text, deps) {
     // marking the mail undeliverable.
     const entry = sessionManager.entryFor(to);
     if (entry?.archivedAt) return { mode: 'skip' };
+    // A live pane may have been resumed by another action moments ago. Its
+    // composer can look idle before the relaunched process has reconnected its
+    // MCP tools, so hold the mail prompt until that process is ready. Keep the
+    // wait bounded so a missing /mcp signal cannot strand delivery.
+    if (entry?.relaunchedAt && mcpSeenAt(to) <= entry.relaunchedAt) {
+      await waitForMcpReady(to, entry.relaunchedAt, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
+    }
     // Mail stays unread until a turn can actually start. While this recipient is
     // working (or the composer is occupied), let the durable mailbox drive the
     // retry so the next attempt can batch all pending messages into one prompt.

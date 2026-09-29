@@ -7,13 +7,10 @@
 // `[Agent Wrangler]` is the established prefix for a server-originated pane
 // paste (see notifier.js's PR nudges) — it marks this as coming from the
 // wrangler itself, the trust framing that distinguishes it from a peer's own
-// text. No "call read_mail()" instruction here either: the standing
-// instruction to read mail at a natural break lives ONCE in the `mail`
-// agent-skill's always-on nudge (its sidecar WRANGLER.md, mirroring
-// task-memory) — this notification is the explicit wake prompt that starts the
-// turn when a recipient is idle.
+// text. The notification starts a turn only once the recipient can act on it,
+// so it explicitly asks the session to read its mailbox before continuing work.
 export function composeMailNotification(messages) {
   const count = messages.length;
   const noun = count === 1 ? 'message' : 'messages';
-  return `[Agent Wrangler] 📬 New mail — ${count} ${noun}. Read it with read_mail now, then continue your work.`;
+  return `[Agent Wrangler] 📬 New mail — ${count} ${noun}. Call read_mail now, then continue your work.`;
 }

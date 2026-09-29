@@ -150,6 +150,19 @@ test('live recipient: the readiness gate is not consulted at all — its process
   assert.equal(d.mcpPolls.length, 0);
 });
 
+test('live recipient resumed moments ago: waits for the new MCP connection before prompting for mail', async () => {
+  const relaunchedAt = Date.now();
+  const d = deps({
+    live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } },
+    entries: { CARD1: { relaunchedAt } },
+    mcpConnectsAfterPolls: 3,
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.mcpPolls.slice(0, 4), [0, 0, 0, 0]);
+  assert.equal(d.sent.length, 1);
+});
+
 test('dormant Codex recipient: resume ignores the intent, so the notification is pasted into the resumed pane', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };

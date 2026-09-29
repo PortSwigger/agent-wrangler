@@ -24,12 +24,12 @@ sections below cover more than the nudge does.)
 
 ## Reading it
 
-**Finish what you're doing first.** The notification is a heads-up, not an
-interrupt — nothing about it requires you to stop mid-task. Get to a reasonable
-stopping point, then call `read_mail()` with no arguments to drain everything
-unread, oldest-first. A large message may come back as an excerpt rather than
-the full body (over ~4KB alone, or once a batch's total passes ~16KB) — follow
-up with `read_mail({ id })` to fetch that one message in full.
+When a mail notification starts a turn, call `read_mail()` with no arguments
+before continuing your work. The server waits until an active turn finishes
+before sending its notification, so mail does not interrupt work already in
+progress. A large message may come back as an excerpt rather than the full body
+(over ~4KB alone, or once a batch's total passes ~16KB) — follow up with
+`read_mail({ id })` to fetch that one message in full.
 
 Lost track of a message after your context got summarized? `list_mail()` gives
 you metadata for every message in your box (unread, read, and undeliverable) —

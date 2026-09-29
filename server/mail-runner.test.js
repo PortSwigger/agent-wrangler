@@ -52,7 +52,7 @@ test('sweepDueSettles: notifies a live recipient and marks the window notified',
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /1 message\. Read it with read_mail now/);
+  assert.match(d.sent[0].text, /1 message\. Call read_mail now/);
   assert.equal(d.sent[0].name, 'cc_one');
   assert.ok(store.boxes.get('CARD1').lastNotifiedAt != null);
 });
@@ -64,7 +64,7 @@ test('sweepDueSettles: fan-in batch — one notification for the whole batch, no
   const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
-  assert.match(d.sent[0].text, /2 messages\. Read it with read_mail now/);
+  assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
 });
 
 test('sweepDueSettles: deferred live delivery stays unread and retries the latest batch', async () => {
@@ -89,6 +89,29 @@ test('sweepDueSettles: deferred live delivery stays unread and retries the lates
   assert.match(attempted[0], /1 message/);
   assert.match(attempted[1], /2 messages/);
   assert.equal(store.boxes.get('CARD1').lastNotifiedAt, 2 * SETTLE_MS);
+});
+
+test('sweepDueSettles: persists deferred recipients in one retry update', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'one' }, 0);
+  store.append('CARD2', { from: 'sess_b', body: 'two' }, 0);
+  const save = store._save.bind(store);
+  let saves = 0;
+  store._save = () => { saves += 1; save(); };
+  const d = deps({
+    mailStore: store,
+    live: {
+      CARD1: { tmux: 'cc_one', socket: '/s/1' },
+      CARD2: { tmux: 'cc_two', socket: '/s/2' },
+    },
+  });
+  d.paneDeferral.deliverOrDefer = async () => 'deferred';
+
+  await sweepDueSettles(d, SETTLE_MS);
+
+  assert.equal(saves, 2, 'one save closes the due windows and one saves all retries');
+  assert.equal(store.boxes.get('CARD1').settleDeadline, 2 * SETTLE_MS);
+  assert.equal(store.boxes.get('CARD2').settleDeadline, 2 * SETTLE_MS);
 });
 
 test('sweepDueSettles: not-yet-due recipient is left alone', async () => {

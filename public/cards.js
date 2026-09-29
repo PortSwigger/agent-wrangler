@@ -398,6 +398,7 @@ export function workerRowHtml(s, ctx) {
   const metaLinks = s.links?.length
     ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
     : '';
+  // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
   return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>

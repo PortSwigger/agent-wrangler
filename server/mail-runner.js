@@ -20,6 +20,7 @@ import { composeMailNotification } from './mail-notification.js';
 export async function sweepDueSettles(deps, now = Date.now()) {
   const { mailStore, onError } = deps;
   let notified = 0;
+  const reopen = new Set();
   for (const to of mailStore.takeDueSettles(now)) {
     try {
       const pending = mailStore.unreadMessages(to);
@@ -34,19 +35,20 @@ export async function sweepDueSettles(deps, now = Date.now()) {
         // delivery strands this batch 'unread' forever with the sender
         // already told queued:true, and no Phase-1 mechanism ever retries it.
         // Not Phase 2 retry/backoff machinery: just don't drop the ball.
-        mailStore.reopenSettle(to, now);
+        reopen.add(to);
         onError?.(to, new Error(mode.error || 'mail delivery failed'));
       } else if (mode.mode === 'deferred') {
-        mailStore.reopenSettle(to, now);
+        reopen.add(to);
       } else {
         mailStore.markNotified(to, now);
         if (mode.mode === 'dormant') notified += 1;
       }
     } catch (err) {
-      mailStore.reopenSettle(to, now);
+      reopen.add(to);
       try { onError?.(to, err); } catch { /* surfacing must never crash the sweep */ }
     }
   }
+  mailStore.reopenSettles([...reopen], now);
   return notified;
 }
 

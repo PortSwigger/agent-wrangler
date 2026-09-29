@@ -1642,8 +1642,6 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .worker-row.job .worker-dot { background: var(--green); }
 .worker-row.needs-you .worker-dot { background: var(--red); }
 .worker-row.just-finished .worker-dot { background: var(--just-finished); }
-/* Worker rows use the same mail badge as full cards, so fresh mail is visible
-   immediately even when the child is collapsed into its parent's spine. */
 .worker-row.dormant .worker-dot { background: transparent; border: 1px solid var(--border); }
 .worker-name {
   flex: 1 1 auto; min-width: 0;
@@ -2016,6 +2014,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .mail-badge.stale { color: var(--mail-fg); }
 .session-card.selected .mail-badge { color: var(--fg); }
 .session-card.selected .mail-badge.stale { color: var(--mail-fg); }
+.worker-row.selected .mail-badge { color: var(--fg); }
+.worker-row.selected .mail-badge.stale { color: var(--mail-fg); }
 .card-loc { font-size: 11px; color: var(--fg-muted); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
 .card-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Folder + branch share one line, each truncating its own text. When the card
