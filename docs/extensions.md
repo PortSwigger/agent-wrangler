@@ -788,7 +788,63 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL
   from Settings and send every value explicitly — before it, a server half had
   to fill empty fields from settings, so a dispatch could never send `false`
-  for a toggle Settings had on.
+  for a toggle Settings had on. Since 1.14.0 it is a function WITH properties
+  (still callable bare): **`api.settings.set(key, value)`** → Promise sends
+  core's `ext-setting-set` with a `reqId` through the RAW base send (it is core's
+  handler, not the extension's own type — safe only because slots forces the id
+  and the server validates against that manifest's defs), resolving or rejecting
+  on the matching `ext-setting-result` reply (10s timeout; a failure replaces
+  the generic error toast); **`api.settings.onChange(fn)`** fires when a graph
+  carries different `settingValues` for that extension than the last one (the
+  existing rebuild is the broadcast — no new frame), with the same
+  report-and-keep rule as `onMessage`, and dies in `removeExtension`.
+- **Setting defs: `list`, `hidden`, `maxItems` (1.14.0).** A `list` value is an
+  array of distinct strings (each ≤ `MAX_TEXT_LENGTH`, at most `maxItems`, itself
+  ≤ 500 and legal on a list only); `ext-setting-set` copies it and rejects
+  anything else — never coerces. `hidden: true` (boolean, any type) keeps a def
+  off the dialog's rows: it is a value the extension manages itself. A visible
+  `list` draws a read-only item count; an editable list UI is deferred.
+- **`settings.panel` (1.14.0) is the extension's own block in its settings
+  dialog**, above the manifest rows (`app.js openExtSettings`). Single-host, via
+  `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
+  mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
+  **Done means save for panel contributions only**: `slots.savePanels` awaits
+  each `save` in turn and a rejection keeps the dialog open (the extension shows
+  its own error); Escape or the backdrop closes without saving; `unmountHost`
+  runs every `unmount` on close. The manifest rows still commit on change, and
+  the button stays "Done".
+- **The chip veto (1.14.0) is presentation-only, and scoped to the board
+  CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
+  `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,
+  `core:compact`, `core:subagents`, `core:restarting`, `core:automerge`,
+  `core:runtime`, `core:worktree`, `core:pr`, `core:jira` (cards.js
+  `CORE_CHIPS`, meta-row order; PR and Jira link chips keyed separately). A
+  `card.pill` contribution's key is `<extId>:<id>` (on its `.ext-slot` as
+  `data-chip`) and it may carry a `label` (fallback: its id). `api.cards`
+  (`chips()`, `hideChips(keys)`, `renderSample(el, { hidden })`) is gated on
+  **`cards:hideChips`, the first CLIENT-ONLY capability**: it rides `requires`
+  (and the connect announcement, for `handlerTypes`' fail-closed reason) and is
+  disclosed in the consent dialog, but lives in `CLIENT_CAPABILITIES`, disjoint
+  from `CAPABILITIES`, and `buildHostApi` skips it — there is no façade key. The
+  `cards` key is always on the client api; every call THROWS without the grant.
+  The board hides the **union** of every extension's `hideChips` set; a
+  `removeExtension` (disable, uninstall, failed load) clears that extension's
+  set and redraws, so its chips come back. A hidden core chip is still rendered
+  with `hidden` (`ctx.hiddenChips`); a hidden pill is simply not mounted in that
+  host (torn down if it was) but stays registered. The detail panel and task
+  tiles share the builders and carry `data-chip` too, but never apply the veto —
+  keep the `[hidden]` CSS scoped to `.card-meta`.
+- **Sample cards are reconciled with the board's in ONE `syncHosts` call.**
+  `renderSample` draws an inert `sessionCardHtml(SAMPLE_SESSION)`
+  (`public/sample-session.js`, every core chip populated, `sessionId:
+  '__sample__'`, `sample: true`) and registers its `.card-meta-ext` in
+  `app.js`'s `sampleHosts`, which `mountCardPills` appends to the board's
+  entries with that preview's own `hidden` set and `sample: true`. Reconciled
+  separately, each render would tear down the other's pills (`syncHosts` is
+  set-semantics over the whole slot). A pill that throws on a sample host is
+  reported once and skipped THERE only — never dropped from the board. **Pill
+  authors:** `session.sample === true` means a preview; render placeholder
+  content or nothing (a picker may then label it "not in preview").
 - **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
   half, and the namespace is FORCED.** `dispatchFields` puts it at
   `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and
