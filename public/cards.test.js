@@ -7,8 +7,9 @@ import {
   workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
-  subagentDividerHtml,
+  subagentDividerHtml, CORE_CHIPS,
 } from './cards.js';
+import { SAMPLE_SESSION } from './sample-session.js';
 
 // A render context matching app.js `cardCtx()`. Derived-status helpers are the real
 // shapes (a status word, a bar affordance, a snooze phase) so the builders exercise
@@ -117,7 +118,7 @@ test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
 test('sessionCardHtml: shows the short model label with a CPU icon only when resolved', () => {
   const known = sessionCardHtml(sess({ modelPill: { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' } }), ctx());
   const unknown = sessionCardHtml(sess({ modelPill: null }), ctx());
-  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol"><svg class="icon"[^>]*>[^]*<\/svg><span class="model-pill-label">gpt-5\.6 sol<\/span><\/span>/);
+  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol" data-chip="core:model"><svg class="icon"[^>]*>[^]*<\/svg><span class="model-pill-label">gpt-5\.6 sol<\/span><\/span>/);
   assert.doesNotMatch(unknown, /model-pill/);
 });
 
@@ -164,7 +165,7 @@ test('compactPillHtml: an explicit threshold wins over the inferred model window
 test('sessionCardHtml: two SEPARATE pills — the compaction ceiling shows even collapsed, the in/out breakdown only once expanded', () => {
   const s = sess({ autoCompactTokens: 500000, tokens: { input: 2000, output: 1000 } });
   const collapsed = sessionCardHtml(s, ctx());
-  assert.match(collapsed, /Auto-compaction ceiling[^"]*"><svg[^>]*>[^]*<\/svg>500k<\/span>/);
+  assert.match(collapsed, /Auto-compaction ceiling[^"]*" data-chip="core:compact"><svg[^>]*>[^]*<\/svg>500k<\/span>/);
   assert.doesNotMatch(collapsed, /in ·/);
   const expanded = sessionCardHtml(s, ctx(), { expanded: true });
   assert.match(expanded, /2\.0k in · 1\.0k out/);
@@ -713,4 +714,21 @@ test('sessionCardHtml: a card.cost ceiling reads $spent / $ceiling, even before 
   assert.doesNotMatch(sessionCardHtml(sess({ usd: 8.08 }), withCeiling({ usd: 50, reached: false })), /cost-limit-reached/);
   assert.match(sessionCardHtml(sess({ usd: 51 }), withCeiling({ usd: 50, reached: true })), /card-tag cost-limit-reached[^>]*spend limit \$50\.00 reached/);
   assert.doesNotMatch(sessionCardHtml(sess({ usd: 0 }), ctx()), /cost so far/);
+});
+
+const chipKeys = (html) => [...html.matchAll(/data-chip="([^"]+)"/g)].map((m) => m[1]);
+
+test('the sample session renders every core chip, each keyed, and CORE_CHIPS matches the markup', () => {
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx(), { expanded: true });
+  assert.deepEqual(chipKeys(html), CORE_CHIPS.map((c) => c.key));
+  assert.doesNotMatch(html, / hidden[ >]/);
+});
+
+test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys PR and Jira separately', () => {
+  const hiddenChips = new Set(['core:cost', 'core:pr']);
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ hiddenChips }), { expanded: true });
+  const hidden = [...html.matchAll(/data-chip="([^"]+)" hidden/g)].map((m) => m[1]);
+  assert.deepEqual(hidden, ['core:cost', 'core:pr']);
+  assert.match(html, /<span class="card-meta-ext"><\/span>/);
+  assert.match(html, /data-chip="core:jira">/);
 });

@@ -286,6 +286,37 @@ export function costTagHtml(s, ceiling, { titleNote = '', showZero = false } = {
   return `<span class="card-tag${ceiling?.reached ? ' cost-limit-reached' : ''}" title="${esc(title)}">${DOLLAR_ICON}${esc(cost)}</span>`;
 }
 
+// The stable keys of the core chips sessionCardHtml draws in `.card-meta`, in
+// meta-row order. Each chip carries `data-chip="<key>"`; a `card.pill`
+// contribution's key is `<extId>:<contribId>` (slots.js). api.cards.chips()
+// reads this list, and ctx.hiddenChips (a Set of these keys) renders a chip with
+// the `hidden` attribute — on the board CARD only: the shared builders are also
+// used by the detail panel and task tiles, which never apply the veto.
+export const CORE_CHIPS = Object.freeze([
+  { key: 'core:age', label: 'Age' },
+  { key: 'core:cost', label: 'Cost' },
+  { key: 'core:model', label: 'Model' },
+  { key: 'core:tokens', label: 'Tokens' },
+  { key: 'core:compact', label: 'Auto-compact' },
+  { key: 'core:subagents', label: 'Sub-agents' },
+  { key: 'core:restarting', label: 'Restarting' },
+  { key: 'core:automerge', label: 'Auto-merge' },
+  { key: 'core:runtime', label: 'Runtime' },
+  { key: 'core:worktree', label: 'Worktree' },
+  { key: 'core:pr', label: 'Pull request' },
+  { key: 'core:jira', label: 'Jira' },
+].map((c) => Object.freeze(c)));
+
+// Tag a chip's markup (its first element) with its key, plus `hidden` when the
+// card's ctx.hiddenChips says so. Empty in, empty out.
+function keyChip(html, key, ctx) {
+  if (!html) return '';
+  const hidden = ctx.hiddenChips?.has(key) ? ' hidden' : '';
+  // Appended at the END of the opening tag so each builder's own markup (class
+  // first) reads unchanged; attribute values are esc()'d, so the first `>` is it.
+  return html.replace('>', ` data-chip="${esc(key)}"${hidden}>`);
+}
+
 export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const state = ctx.cardState(s);
   // Dormant (no live tmux) gets the hollow "resume" bar and a dimmed name; the
@@ -319,8 +350,10 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // Card ring yields to the "new session" slot's ring while the keyboard selection
   // sits on a slot — the terminal stays open underneath, but only one thing is lit.
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
+  // Each link chip keyed by its own type (core:pr / core:jira), so the two can
+  // be hidden separately; the wrapper stays even when every chip is hidden.
   const metaLinks = s.links?.length
-    ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
+    ? `<span class="card-meta-links">${s.links.map((l) => keyChip(linkChipsHtml([l], ctx), `core:${l.type}`, ctx)).join('')}</span>`
     : '';
   const modelPill = modelPillHtml(s.modelPill);
   const compactPill = compactPillHtml(s);
@@ -352,7 +385,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${age}${costEl}${modelPill}${tokenChip}${compactPill}${subAgentPill}${restarting}${automerge}${runtimeChip}${wt}${cardPillHostHtml()}${metaLinks}</div>
+    <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }
