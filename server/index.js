@@ -1031,7 +1031,7 @@ function exitForRestart(reason) {
 
 function wranglerIsQuiet() {
   return headlessRunsInFlight() === 0
-    && !sessionManager.hasResumeInFlight()
+    && !sessionManager.hasLaunchInFlight()
     && scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS).length === 0;
 }
 
