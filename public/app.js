@@ -5768,8 +5768,10 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // Default the repo to the task's dominant cwd. Live sessions win; if the task
   // has none left on the board (e.g. all archived) fall back to its history —
   // archived entries keep their task assignment + cwd — so the repo isn't lost.
+  // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel));
+    const hidden = hiddenRecents();
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule
