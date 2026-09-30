@@ -6322,23 +6322,31 @@ modal.addEventListener('keydown', (e) => {
   const box = document.getElementById('folder-suggest');
   input.addEventListener('focus', () => { suggestIndex = -1; suggestWanted = true; requestFolderBrowse(); renderFolderSuggest(); });
   input.addEventListener('input', () => { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); });
-  // Picking a folder leaves the caret inside it (trailing '/') and re-opens the
-  // list on its children, so a deep path is reachable by repeated selection.
+  // Picking a folder leaves the caret inside it (trailing '/') and prefetches its
+  // children, but closes the list so it doesn't cover the launch buttons. A click
+  // in the field, a keystroke or ArrowDown re-opens it on those children, so a deep
+  // path is still reachable by repeated selection.
   function pickFolder(path) {
     input.value = `${path.replace(/\/+$/, '')}/`;
-    fsProbed = null; fsFolders = []; suggestIndex = -1; suggestWanted = true;
+    fsProbed = null; fsFolders = [];
+    hideFolderSuggest();
     requestFolderBrowse();
     syncWorktreeFields();
-    renderFolderSuggest();
   }
+  function reopenFolderSuggest() { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); }
+  // Focus stays in the field after a pick, so a click there fires no focus event.
+  input.addEventListener('mousedown', () => { if (document.activeElement === input && !suggestWanted) reopenFolderSuggest(); });
   input.addEventListener('blur', () => setTimeout(hideFolderSuggest, 120)); // let a click land first
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !suggestWanted) { e.preventDefault(); reopenFolderSuggest(); return; }
     if (box.classList.contains('hidden')) return;
     const items = [...box.querySelectorAll('.suggest-item')];
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); suggestIndex = Math.max(suggestIndex - 1, 0); renderFolderSuggest(); }
     else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickFolder(items[suggestIndex].dataset.path); }
     else if (e.key === 'Delete' && e.shiftKey && items[suggestIndex]?.querySelector('.suggest-remove')) { e.preventDefault(); hideRecentFolder(items[suggestIndex].dataset.path); renderFolderSuggest(); }
+    // Tab completes to the highlighted folder (or the top one if none is highlighted).
+    else if (e.key === 'Tab' && !e.shiftKey && items.length) { e.preventDefault(); pickFolder(items[Math.max(suggestIndex, 0)].dataset.path); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideFolderSuggest(); } // first Esc closes the dropdown, not the dialog
   });
   box.addEventListener('mousedown', (e) => {
