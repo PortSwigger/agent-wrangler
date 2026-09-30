@@ -64,7 +64,7 @@ function reply(c, type) {
 // is the honest case; a test passes them separately to stage a repo whose
 // package.json disclosure and index.js manifest DISAGREE.
 function fakeClone({
-  id = 'notes', requires = [], lock = true, declaration = true,
+  id = 'notes', requires = [], lock = true, declaration = true, deps = true,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
 } = {}) {
   return async (_url, dest) => {
@@ -76,7 +76,7 @@ function fakeClone({
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
       type: 'module',
-      dependencies: { left: '^1.0.0' },
+      ...(deps ? { dependencies: { left: '^1.0.0' } } : {}),
       ...(declaration ? {
         wranglerExtension: {
           id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
@@ -171,6 +171,17 @@ test('a repository with no package-lock.json is refused, and the staging dir is 
   // The lock is released on the failure path, or one bad repository would wedge
   // every later install for the life of the process.
   assert.equal((await install(ctx())).id, 'notes');
+  reset();
+});
+
+test('a dependency-free repository with no package-lock.json discloses an empty dependency set', async () => {
+  reset();
+  const c = ctx();
+  useFakes({ lock: false, deps: false });
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c);
+  const disclosure = c.calls.replies.find((r) => r.type === 'ext-install-disclosure');
+  assert.deepEqual(disclosure.dependencies, []);
+  assert.equal(disclosure.dependencyCount, 0);
   reset();
 });
 

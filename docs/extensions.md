@@ -17,8 +17,8 @@ possible; updating loaded code or fully unloading it requires a restart.
 
 ## Minimal external extension
 
-An installable repository needs `package.json`, `package-lock.json`, and an `index.js` with a default
-manifest export. Agent Wrangler reads the package declaration before executing extension code.
+An installable repository needs `package.json` and an `index.js` with a default manifest export, plus
+`package-lock.json` if it declares any runtime dependencies. Agent Wrangler reads the package declaration before executing extension code.
 
 ```json
 {
@@ -47,8 +47,10 @@ export default {
 ```
 
 The directory `<id>`, `wranglerExtension.id`, and runtime manifest `id` must agree. IDs begin with a
-lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required even with
-no dependencies; create one with `npm install --package-lock-only`.
+lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required only when
+`package.json` declares `dependencies`, `optionalDependencies`, `peerDependencies` or
+`bundleDependencies`; create one with `npm install --package-lock-only`. A dependency-free extension
+may omit it, and install then skips `npm ci`.
 
 Supported manifest contributions are:
 
@@ -157,9 +159,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reintroduce the hazard by interpolating a stored URL. The clone disables both
   protocols **in git itself** as well, because a clone can follow a submodule URL or
   a redirect nothing screened, and passes the URL after `--` as its own argv element
-  (`execFile`, never `shell: true`). `package-lock.json` is **mandatory** and its
-  absence refuses the install before the disclosure — an unpinned dependency set
-  cannot be disclosed honestly, so there is nothing to consent to. The subprocess
+  (`execFile`, never `shell: true`). `package-lock.json` is **mandatory whenever runtime
+  dependencies are declared** and its absence then refuses the install before the
+  disclosure — an unpinned dependency set cannot be disclosed honestly, so there is
+  nothing to consent to. With no runtime dependencies declared the set is provably
+  empty, so a missing lockfile is accepted and `npm ci` is skipped. The subprocess
   runners are a **module** seam, never an option on the incoming frame: a control
   frame is browser-supplied, so a `_clone` a client could set would be arbitrary
   code execution offered as an API.
