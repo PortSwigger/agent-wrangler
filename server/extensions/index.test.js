@@ -925,3 +925,20 @@ test('hookPayloadFor narrows a dispatch ext bag to the calling extension\'s own 
   const noExt = { sessionId: 'c1' };
   assert.equal(hookPayloadFor('a', noExt), noExt);
 });
+
+test('a list setting is accepted, maxItems only on a list, and hidden must be a boolean', () => {
+  const LIST = { key: 'hiddenChips', type: 'list', label: 'Hidden chips' };
+  assert.ok(validateManifest(manifest({ settings: [{ ...LIST, maxItems: 200, hidden: true }] })));
+  assert.ok(validateManifest(manifest({ settings: [{ key: 'auto', type: 'toggle', label: 'Auto', hidden: false }] })));
+  rejects(manifest({ settings: [{ ...LIST, maxItems: 0 }] }), /settings.hiddenChips.maxItems must be a positive integer/);
+  rejects(manifest({ settings: [{ ...LIST, maxItems: 501 }] }), /settings.hiddenChips.maxItems must not exceed 500/);
+  rejects(manifest({ settings: [{ key: 'name', type: 'text', label: 'Name', maxItems: 3 }] }), /settings.name.maxItems is only valid on a list setting/);
+  rejects(manifest({ settings: [{ ...LIST, hidden: 'yes' }] }), /settings.hiddenChips.hidden must be a boolean/);
+});
+
+test('a client-only capability is accepted in requires and rides the announcement', () => {
+  assert.ok(validateManifest(manifest({ requires: ['cards:hideChips'] })));
+  rejects(manifest({ requires: ['cards:teleport'] }), /unknown capability "cards:teleport" \(known: .*cards:hideChips/);
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [], requires: ['cards:hideChips'] })] });
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', requires: ['cards:hideChips'] }]);
+});

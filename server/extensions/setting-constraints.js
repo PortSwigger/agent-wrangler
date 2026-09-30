@@ -31,7 +31,11 @@ const FIELD_TYPES = {
   min: 'number', max: 'number', step: 'number',
   maxLength: 'text', pattern: 'text',
   options: 'select',
+  maxItems: 'list',
 };
+
+// A `list` value's hard ceiling on items, and the most a def's maxItems may ask.
+export const MAX_LIST_ITEMS = 500;
 
 const isFinite_ = (v) => typeof v === 'number' && Number.isFinite(v);
 
@@ -74,6 +78,10 @@ export function validateSettingDef(def) {
       if (typeof o.label !== 'string' || !o.label) return `options[${i}].label must be a non-empty string`;
     }
   }
+  if (def.type === 'list' && def.maxItems != null) {
+    if (!Number.isInteger(def.maxItems) || def.maxItems < 1) return 'maxItems must be a positive integer';
+    if (def.maxItems > MAX_LIST_ITEMS) return `maxItems must not exceed ${MAX_LIST_ITEMS}`;
+  }
   return null;
 }
 
@@ -113,6 +121,21 @@ export function checkSettingValue(def, value) {
   if (def.type === 'text') {
     if (def.maxLength != null && value.length > def.maxLength) return `is too long (max ${def.maxLength} characters)`;
     if (def.pattern != null && !compile(def.pattern).test(value)) return `does not match the required format (${def.pattern})`;
+    return null;
+  }
+  if (def.type === 'list') {
+    // An array of distinct strings. Never "cleared" by the check above — an
+    // empty list is a real value (nothing chosen), not an absent one.
+    if (!Array.isArray(value)) return 'must be a list of strings';
+    const max = def.maxItems ?? MAX_LIST_ITEMS;
+    if (value.length > max) return `has too many items (max ${max})`;
+    const seen = new Set();
+    for (const item of value) {
+      if (typeof item !== 'string') return 'must contain only strings';
+      if (item.length > MAX_TEXT_LENGTH) return `has an item that is too long (max ${MAX_TEXT_LENGTH} characters)`;
+      if (seen.has(item)) return `has a duplicate item ${JSON.stringify(item)}`;
+      seen.add(item);
+    }
     return null;
   }
   if (def.type === 'select') {

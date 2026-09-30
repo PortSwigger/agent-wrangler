@@ -69,6 +69,14 @@ export const CAPABILITIES = new Set([
   'sessions:interrupt',
 ]);
 
+// Capabilities with NO server façade: grants the BROWSER half checks (slots.js
+// apiFor) rather than anything buildHostApi binds. They share the manifest's
+// `requires` list, so the consent dialog discloses them like any other, but
+// buildHostApi skips them and V1_BUILDERS has no key for them — which is why
+// they are a separate set, disjoint from CAPABILITIES (host-api/index.test.js).
+//   cards:hideChips — hide chips in the board cards' meta row (api.cards).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
+
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own
 // control in the `dispatch.field` slot (public/slots.js). Deliberately SMALL —
@@ -127,7 +135,7 @@ const ID_RE = /^[a-z][a-z0-9-]*$/;
 // them onto the native input as an AFFORDANCE; the server write path is the
 // enforcement, and it rejects rather than clamps.
 const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
-const SETTING_TYPES = ['text', 'number', 'toggle', 'select'];
+const SETTING_TYPES = ['text', 'number', 'toggle', 'select', 'list'];
 
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
@@ -177,7 +185,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, 'requires must be an array of capability names');
     }
     for (const c of ext.requires) {
-      if (!CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES].sort().join(', ')})`);
+      if (!CAPABILITIES.has(c) && !CLIENT_CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES, ...CLIENT_CAPABILITIES].sort().join(', ')})`);
     }
   }
   // Which core dispatch-modal rows this extension's browser half may hide. The
@@ -223,6 +231,10 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       for (const k of ['help', 'placeholder']) {
         if (s[k] != null && typeof s[k] !== 'string') fail(ext, `settings.${s.key}.${k} must be a string`);
       }
+      // `hidden` keeps the def off the Extensions dialog's rows: a value the
+      // extension manages itself (a settings.panel, api.settings.set) and a
+      // human has no row-shaped way to edit. Any type may carry it.
+      if (s.hidden != null && typeof s.hidden !== 'boolean') fail(ext, `settings.${s.key}.hidden must be a boolean`);
       const badConstraint = validateSettingDef(s);
       if (badConstraint) fail(ext, `settings.${s.key}.${badConstraint}`);
     }
@@ -610,6 +622,10 @@ function stageExtension(ext, { cfg, out, reg }) {
       // may veto — same two inputs, same reason, and omitted when empty so an
       // extension that hides nothing keeps a byte-identical entry.
       ...(listEntry.hideDispatchField.length ? { hideDispatchField: [...listEntry.hideDispatchField] } : {}),
+      // The capability grant, for the same fail-closed reason as handlerTypes:
+      // a client-only capability (cards:hideChips) is checked by slots.js, which
+      // must know the grant before the first graph. Omitted when empty.
+      ...(listEntry.requires.length ? { requires: [...listEntry.requires] } : {}),
     });
   }
 }
