@@ -87,8 +87,9 @@ test('readHead and lsRemoteHead parse a sha out of runner output', async () => {
   await assert.rejects(() => lsRemoteHead('file:///tmp/x', { git: bad.run }), /Refusing/);
 });
 
-test('a missing package-lock.json refuses distinguishably', () => {
+test('a missing package-lock.json refuses distinguishably when dependencies are declared', () => {
   const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ dependencies: { left: '^1.0.0' } }));
   try {
     lockDependencies(dir);
     assert.fail('expected a refusal');
@@ -134,13 +135,37 @@ test('lockDependencies walks a legacy v1 dependencies tree', () => {
   assert.equal(out.transitiveCount, 2);
 });
 
-test('npmCi installs into the extension dir with scripts off and dev omitted', async () => {
+test('a missing package-lock.json is fine when no runtime dependencies are declared', () => {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'ext', dependencies: {}, devDependencies: { tap: '^1.0.0' } }));
+  assert.deepEqual(lockDependencies(dir), { all: [], direct: [], transitiveCount: 0 });
+});
+
+test('a missing package-lock.json still refuses optional or peer dependencies, or an unreadable package.json', () => {
+  for (const pkg of [{ optionalDependencies: { a: '1' } }, { peerDependencies: { a: '1' } }, { bundleDependencies: ['a'] }, null]) {
+    const dir = tmpdir();
+    if (pkg) fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg));
+    assert.throws(() => lockDependencies(dir), MissingLockfileError);
+  }
+});
+
+test('npmCi skips npm entirely when there is no lockfile', async () => {
+  const dir = tmpdir();
   const npm = fakeRunner();
-  const out = await npmCi('/ext/clone', { npm: npm.run });
+  const out = await npmCi(dir, { npm: npm.run });
+  assert.equal(npm.calls.length, 0);
+  assert.equal(out, path.join(dir, 'node_modules'));
+});
+
+test('npmCi installs into the extension dir with scripts off and dev omitted', async () => {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, 'package-lock.json'), '{}');
+  const npm = fakeRunner();
+  const out = await npmCi(dir, { npm: npm.run });
   assert.deepEqual(npm.calls[0].args, ['ci', '--ignore-scripts', '--omit=dev']);
-  assert.equal(npm.calls[0].opts.cwd, '/ext/clone');
+  assert.equal(npm.calls[0].opts.cwd, dir);
   assert.ok(!('shell' in npm.calls[0].opts));
-  assert.equal(out, path.join('/ext/clone', 'node_modules'));
+  assert.equal(out, path.join(dir, 'node_modules'));
 });
 
 test('readDeclaration reads the disclosure statically, without importing anything', async (t) => {
