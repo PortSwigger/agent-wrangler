@@ -5198,6 +5198,14 @@ const modal = document.getElementById('modal');
 // Recency-ordered, de-duplicated recent folders for the dispatch dropdown. A
 // custom dropdown (not <datalist>) so we can anchor it below the input and cap it.
 let recentFolders = [];
+// Folders the user dismissed from the recents list, per browser.
+const HIDDEN_RECENTS_KEY = 'aw.hiddenRecentFolders';
+function hiddenRecents() { try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_RECENTS_KEY) || '[]')); } catch { return new Set(); } }
+function hideRecentFolder(path) {
+  const set = hiddenRecents(); set.add(path);
+  try { localStorage.setItem(HIDDEN_RECENTS_KEY, JSON.stringify([...set])); } catch {}
+  recentFolders = recentFolders.filter((p) => p !== path);
+}
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
 // control message. `fsProbed` is the exact input value the reply belongs to —
@@ -5270,7 +5278,8 @@ function refreshFolderList() {
   items.sort((a, b) => b.at - a.at);
   const seen = new Set();
   recentFolders = [];
-  for (const { cwd } of items) if (!seen.has(cwd)) { seen.add(cwd); recentFolders.push(cwd); }
+  const hidden = hiddenRecents();
+  for (const { cwd } of items) if (!seen.has(cwd) && !hidden.has(cwd)) { seen.add(cwd); recentFolders.push(cwd); }
   if (!document.getElementById('folder-suggest')?.classList.contains('hidden')) renderFolderSuggest();
 }
 // The folder field's canonical value. Picking a folder from the dropdown leaves a
@@ -5297,7 +5306,7 @@ function renderFolderSuggest() {
   if (suggestIndex >= matches.length) suggestIndex = matches.length - 1;
   if (!matches.length) { closeSuggestBox(box); return; } // nothing yet — stays wanted
   box.innerHTML = matches
-    .map((m, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(m.path)}">${esc(m.path)}${m.recent ? '<span class="suggest-tag">recent</span>' : ''}</div>`)
+    .map((m, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(m.path)}">${esc(m.path)}${m.recent ? '<span class="suggest-remove" title="Remove from recents (Shift+Delete)">✕</span><span class="suggest-tag">recent</span>' : ''}</div>`)
     .join('');
   box.classList.remove('hidden');
 }
@@ -6329,12 +6338,14 @@ modal.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); suggestIndex = Math.max(suggestIndex - 1, 0); renderFolderSuggest(); }
     else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickFolder(items[suggestIndex].dataset.path); }
+    else if (e.key === 'Delete' && e.shiftKey && items[suggestIndex]?.querySelector('.suggest-remove')) { e.preventDefault(); hideRecentFolder(items[suggestIndex].dataset.path); renderFolderSuggest(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideFolderSuggest(); } // first Esc closes the dropdown, not the dialog
   });
   box.addEventListener('mousedown', (e) => {
     const item = e.target.closest('.suggest-item');
     if (!item) return;
     e.preventDefault(); // keep focus; avoids the blur-hide race
+    if (e.target.closest('.suggest-remove')) { hideRecentFolder(item.dataset.path); renderFolderSuggest(); return; }
     pickFolder(item.dataset.path);
   });
 })();
