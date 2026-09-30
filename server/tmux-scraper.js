@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
-import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { paneComposerIsEmpty, paneHasWorkingStatus } from './ghost-suggestion.js';
 
 const exec = promisify(execFile);
 
@@ -193,9 +193,9 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
 // vs idle. The "needs you" (waiting) state comes from Claude's own session
 // file (status: 'waiting'), not from scraping the pane — pane scraping produced
 // false positives (e.g. a newline in the prompt looked like a selection menu).
-export function classify(paneText) {
-  const recent = stripAnsi(paneText).split('\n').filter((l) => l.trim()).slice(-12).join('\n');
-  if (/esc to interrupt/i.test(recent)) return { status: 'working' };
+export function classify(paneText, { tailLines = 12, strictWorking = false } = {}) {
+  const recent = stripAnsi(paneText).split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
+  if (strictWorking ? paneHasWorkingStatus(recent) : /esc to interrupt/i.test(recent)) return { status: 'working' };
   // Verified against the real fresh-container login flow (Group G E2E capture):
   // the method-picker ("Select login method: 1. Claude account with
   // subscription…"), the OAuth URL screen (claude.com/cai/oauth/authorize,

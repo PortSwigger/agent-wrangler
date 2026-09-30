@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { deliverMessage } from '../../message-delivery.js';
 import { SEND_MAX_BYTES } from '../../mailbox-store.js';
+import { sendText as defaultSendText } from '../../tmux-scraper.js';
 
 // Route a peer message through the durable mailbox ("you've got mail" Phase 1):
 // send_message now APPENDS to the recipient's mailbox and returns immediately —
@@ -9,15 +9,11 @@ import { SEND_MAX_BYTES } from '../../mailbox-store.js';
 // at settle close, driven by mail-runner.js. This is a deliberate change from
 // synchronous delivery: see the spec's "What send_message can and cannot report".
 //
-// Rollout guard: `--allowedTools` is baked into a session's launch argv, so a
-// session launched/resumed before this change has no `read_mail` to call and
-// would be notified about a tool it can't use. `entry.mailCapable` (stamped at
-// dispatch/resume/fork — session-manager.js) tracks whether THIS recipient's
-// current argv includes it; an unstamped recipient falls back to today's direct
-// push, UNCHANGED, so the mailbox never routes mail to a session that can't read
-// it. The fallback also covers a live session with no mapping entry at all (the
-// buildGraph "forkOwner" case) — no entry ⇒ not mailCapable ⇒ fallback, exactly
-// today's behaviour.
+// `entry.mailCapable` tracks whether the recipient's current process can call
+// read_mail. Legacy recipients get a direct prompt only while live; dormant
+// legacy recipients must be resumed before a sender can message them. The
+// fallback also covers a live session with no mapping entry (the buildGraph
+// "forkOwner" case).
 //
 // The fallback keeps its BEGIN/END nonce fence (compose(), below) — that fence
 // guards a body pasted into a RAW PROMPT STREAM, where a forged END marker could
@@ -29,9 +25,12 @@ import { SEND_MAX_BYTES } from '../../mailbox-store.js';
 export const sendMessageTool = {
   name: 'send_message',
   description:
-    'Send a message to another Agent Wrangler session. Queues into the recipient\'s mailbox; '
-    + 'they are notified (a terse "you\'ve got mail" paste) and read it with read_mail when they '
-    + 'reach a good stopping point — this does not interrupt them mid-task. Use it to coordinate '
+    'Send a message to another Agent Wrangler session. Mail-capable recipients get durable mailbox '
+    + 'delivery; '
+    + 'a live idle recipient is prompted to read_mail, while a working recipient gets one batched '
+    + 'follow-up prompt after the current turn. Dormant mail-capable recipients are not resumed '
+    + 'for delivery; mail stays queued until they are resumed. A legacy recipient without mailbox '
+    + 'support must have a live terminal. Use it to coordinate '
     + 'with a peer session — nudge a worker, report back, hand off a result. Works on any session '
     + 'that isn\'t archived; messaging an archived session returns an error. `to` must be a full '
     + 'Agent Wrangler `sessionId` — from list_sessions, get_session_info, spawn_session, or '
@@ -64,8 +63,8 @@ export const sendMessageTool = {
     if (caller != null && to === caller) return errorResult('Cannot send a message to yourself.');
 
     // Loop backstop: throttle per {caller,to} pair, checked BEFORE any delivery
-    // attempt so a rate-limited message can never wake a dormant session (fallback
-    // path) or occupy mailbox capacity as a side effect. Skipped for an
+    // attempt so a rate-limited message can never occupy mailbox capacity as a
+    // side effect. Skipped for an
     // identity-less caller (no pair to key on; a non-session caller won't loop).
     // The prose framing is the primary defence — this only stops a runaway.
     const gate = caller != null ? deps.messageThrottle?.check(caller, to) : null;
@@ -94,14 +93,13 @@ export const sendMessageTool = {
         + 'verbatim.',
       );
     }
+    if (entry?.archivedAt) return errorResult(`Session ${to} is archived; messaging an archived session isn't supported.`);
     if (!entry?.mailCapable) return legacyPushFallback({ deps, caller, to, text, gate });
 
     // Refused, never boxed (see the spec's "Archived recipients"): accepting mail
     // into a box nobody will ever read would return queued:true for a message
     // that can never be delivered. entry is guaranteed present here — mailCapable
     // is only ever stamped onto a real mapping entry.
-    if (entry.archivedAt) return errorResult(`Session ${to} is archived; messaging an archived session isn't supported.`);
-
     let appended;
     try {
       appended = deps.mailStore.append(to, { from: caller, fromLabel: labelFor(deps, caller), body: text });
@@ -111,9 +109,7 @@ export const sendMessageTool = {
     gate?.commit?.();
 
     const label = labelFor(deps, to);
-    // `queued: true`, not `delivered` — the message hasn't been delivered yet (the
-    // settle window hasn't closed). `woke` is dropped: whether a dormant recipient
-    // gets woken happens ~10s later at settle close and is unknowable at return.
+    // `queued: true`, not `delivered` — the settle window hasn't closed yet.
     const structuredContent = { to, label, queued: true, id: appended.id };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
@@ -126,16 +122,24 @@ export const sendMessageTool = {
 // Self-contained (not folded into the handler above) so the mailbox branch above
 // reads as the primary path, with this as the rollout-era exception it is.
 async function legacyPushFallback({ deps, caller, to, text, gate }) {
+  const tmux = deps.tmuxFor?.(to);
+  if (!tmux) {
+    return errorResult(`Session ${to} is dormant and is not resumed for peer mail; resume it before sending.`);
+  }
   const label = labelFor(deps, to);
-  const result = await deliverMessage(to, compose(caller, deps, text), deps);
-  if (result.mode === 'error') return errorResult(result.error);
-  // Woken but unconfirmed (see deliverMessage): the peer may never have received
-  // it, so don't tell the sender it was delivered.
-  if (result.outcome === 'unknown') return errorResult(result.error);
+  try {
+    const prompt = compose(caller, deps, text);
+    if (deps.sendText) {
+      await deps.sendText(tmux, prompt, deps.socketFor?.(to) ?? '');
+    } else {
+      await defaultSendText(tmux, prompt, deps.socketFor?.(to) ?? '', deps.tmuxRun);
+    }
+  } catch (err) {
+    return errorResult(err?.message || String(err));
+  }
   gate?.commit?.();
-  if (result.mode === 'dormant') await deps.rebuild?.();
 
-  const structuredContent = { to, label, delivered: true, woke: result.mode === 'dormant' };
+  const structuredContent = { to, label, delivered: true, woke: false };
   return {
     content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
     structuredContent,

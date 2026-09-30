@@ -172,6 +172,44 @@ test('classify: unchanged for working/idle/login', () => {
   assert.equal(classify('Select login method: 1. Claude account').status, 'needs-you');
 });
 
+test('classify: detects a working turn when its indicator sits above a long task list', () => {
+  const pane = ['• Working (12s · esc to interrupt)', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
+  assert.equal(classify(pane, { tailLines: 60 }).status, 'working');
+  assert.equal(classify(pane).status, 'idle');
+});
+
+test('classify: mail deferral requires a live working status line, not quoted output', () => {
+  const working = '• Working (12s · esc to interrupt)';
+  const quoted = ['grep result: esc to interrupt', ...Array.from({ length: 20 }, (_, i) => `todo ${i}`), '❯'].join('\n');
+  assert.equal(classify(working, { tailLines: 60, strictWorking: true }).status, 'working');
+  assert.equal(classify(quoted, { tailLines: 60, strictWorking: true }).status, 'idle');
+});
+
+test('classify: mail deferral recognizes current Codex and Claude working status lines', () => {
+  const codex = '• Working (27m 09s • esc to interrupt) · 1 background terminal running · /ps to…';
+  const claude = '✳ Objects in mirror are closer than they appear… (21m 53s · ↓ 5.4k tokens)';
+  for (const pane of [codex, claude]) {
+    assert.equal(classify(pane, { tailLines: 60, strictWorking: true }).status, 'working', pane);
+  }
+});
+
+test('classify: mail deferral recognizes short Claude turns, compaction, and Codex phase labels', () => {
+  const panes = [
+    '✻ Thinking… (3s)',
+    '✻ Compacting conversation… (12s · ↑ 3.1k tokens)',
+    '✻ Pondering… (esc to interrupt)',
+    '• Planning review (12s • esc to interrupt)',
+  ];
+  for (const pane of panes) {
+    assert.equal(classify(pane, { tailLines: 60, strictWorking: true }).status, 'working', pane);
+  }
+});
+
+test('classify: a quoted Claude status line is not a live working marker', () => {
+  const quoted = '> quoted: ✻ Thinking… (3s)';
+  assert.equal(classify(quoted, { tailLines: 60, strictWorking: true }).status, 'idle');
+});
+
 test('classify: Codex\'s "do you trust this directory?" dialog reads as needs-you with a reason', () => {
   // Verbatim from a live, non-destructive capture: `codex` launched fresh in
   // an untrusted temp dir, pane captured, tmux session killed WITHOUT ever

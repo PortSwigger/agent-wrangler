@@ -150,11 +150,9 @@ test('POST /mcp tools/call attributes the caller from a bearer token', async () 
   });
 });
 
-// The dormant mail wake gates its paste on "this card's MCP client has connected
-// since the relaunch" (mcp-activity.js), so what matters is that the BOOT
-// handshake — not just a later tools/call — is what stamps the card. A launched
-// agent makes no tool call of its own accord, so recording only tools/call would
-// leave the gate waiting for its full timeout on every wake.
+// A recently resumed session's mail prompt waits for its MCP client to connect
+// since the relaunch (mcp-activity.js). The BOOT handshake stamps the card
+// before any tool call, so the gate can release as soon as the client is ready.
 test('POST /mcp records the caller at its initialize handshake, before any tool call', async () => {
   await withServer(fakeDeps(), async (port) => {
     const before = mcpSeenAt('CARD-BOOT');

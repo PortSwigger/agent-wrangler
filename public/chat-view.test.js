@@ -728,7 +728,7 @@ test('the jump highlight only ever clears the bubble it was actually pulsing', a
 test('isHumanTypedUserItem rejects Agent-Wrangler-authored notices, accepts everything else', async () => {
   const { isHumanTypedUserItem, AGENT_WRANGLER_NOTICE_PREFIX } = await import('./chat-view.js');
   assert.equal(isHumanTypedUserItem({ event: { text: 'a real question' } }), true);
-  assert.equal(isHumanTypedUserItem({ event: { text: `${AGENT_WRANGLER_NOTICE_PREFIX} 📬 New mail — 1 message, read when convenient.` } }), false);
+  assert.equal(isHumanTypedUserItem({ event: { text: `${AGENT_WRANGLER_NOTICE_PREFIX} 📬 New mail — 1 message. Call read_mail now, then continue your work.` } }), false);
   assert.equal(isHumanTypedUserItem({ event: { text: `${AGENT_WRANGLER_NOTICE_PREFIX} PR #42: checks passing` } }), false);
   assert.equal(isHumanTypedUserItem({ event: {} }), true, 'an image-only paste has no text and is still human');
 });
@@ -743,7 +743,7 @@ test('a mail/PR-nudge bubble is never the jump target, even as the newest one', 
   // Delivered AFTER the human's own message, and renders in the same bubble
   // style (CLAUDE.md's mailbox bullet: it belongs on screen) — but it must not
   // displace the real message as the jump target.
-  view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [{ kind: 'user', text: '[Agent Wrangler] 📬 New mail — 1 message, read when convenient.' }] });
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [{ kind: 'user', text: '[Agent Wrangler] 📬 New mail — 1 message. Call read_mail now, then continue your work.' }] });
   const mailNode = streamEl.children.filter((c) => c.className === 'chat-user')[1];
   humanNode._rect = { top: -100, bottom: -20 };
   mailNode._rect = { top: 50, bottom: 80 };

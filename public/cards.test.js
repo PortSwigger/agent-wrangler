@@ -265,10 +265,12 @@ test('sessionCardHtml: no mail badge when there is no unread mail', () => {
   assert.doesNotMatch(html, /mail-badge/);
 });
 
-test('workerRowHtml: a bare amber worker-mail-dot renders only when mail is stale — never for normal unread, never for none', () => {
-  assert.doesNotMatch(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx()), /worker-mail-dot/);
-  assert.doesNotMatch(workerRowHtml(sess({ mail: null }), ctx()), /worker-mail-dot/);
-  assert.match(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: true } }), ctx()), /worker-mail-dot/);
+test('workerRowHtml: unread mail badge is visible for fresh and stale mail, absent when empty', () => {
+  const fresh = workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx());
+  const stale = workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: true } }), ctx());
+  assert.match(fresh, /class="mail-badge"[^>]*>.*2<\/span>/);
+  assert.match(stale, /class="mail-badge stale"[^>]*>.*2<\/span>/);
+  assert.doesNotMatch(workerRowHtml(sess({ mail: null }), ctx()), /mail-badge/);
 });
 
 test('snoozedRowHtml: never renders mail, even when the session has stale unread mail (an asleep session not reading mail is not news)', () => {

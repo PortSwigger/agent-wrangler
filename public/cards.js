@@ -431,15 +431,12 @@ export function workerRowHtml(s, ctx) {
   const metaLinks = s.links?.length
     ? `<span class="card-meta-links">${linkChipsHtml(s.links, ctx)}</span>`
     : '';
-  // A worker/child row has no name row or meta row to hold the full mail-badge
-  // pill, so it gets a bare dot instead — amber (stale) only, no count. Normal
-  // (fresh) unread mail is not worth a row-level signal here; only the case that
-  // wants a human's attention is.
-  const mailDot = s.mail?.amber ? '<span class="worker-mail-dot" title="unread mail — a while since notifying"></span>' : '';
+  // Keep fresh mail visible when a child is collapsed into its parent's spine.
+  const mailBadge = mailBadgeHtml(s);
   return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
-    ${mailDot}
+    ${mailBadge}
     <span class="worker-meta">${costEl}${metaLinks}</span>
     <span class="worker-ring" aria-hidden="true"></span>
   </div>`;
