@@ -38,6 +38,9 @@ export function createClientExtensionLoader(slots, {
   importer = (url) => import(url),
   onError = (...a) => console.error(...a),
   document: doc = globalThis.document,
+  // app.js's base api, handed to slots.forExtension so a module's registrar
+  // exposes `api` at register() time (1.14.0).
+  api = {},
 } = {}) {
   const loaded = new Set();
   const sheets = new Map(); // id -> the <link> element, so unload can remove it
@@ -76,7 +79,7 @@ export function createClientExtensionLoader(slots, {
         if (mod) {
           const loadedMod = await importer(mod);
           if (typeof loadedMod?.default?.register !== 'function') throw new Error(`${mod} has no default export with a register(slots) function`);
-          loadedMod.default.register(slots.forExtension(id));
+          loadedMod.default.register(slots.forExtension(id, api));
         }
         changed = true;
       } catch (err) {

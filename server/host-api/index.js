@@ -1,4 +1,4 @@
-import { CAPABILITIES } from '../extensions/index.js';
+import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { HOST_API_VERSION, servesRange } from './version.js';
 import { V1_BUILDERS } from './v1.js';
 
@@ -98,6 +98,8 @@ export function buildHostApi({ id, requires = [], range = null, ...wiring } = {}
   // capability — CAPABILITIES and V1_BUILDERS are untouched by it.
   const dep = { id, ...wiring };
   for (const name of requires) {
+    // A client-only grant (slots.js checks it) has no façade key by design.
+    if (CLIENT_CAPABILITIES.has(name)) continue;
     const build = Object.hasOwn(V1_BUILDERS, name) ? V1_BUILDERS[name] : null;
     if (!build) {
       throw new Error(`Extension ${id}: unknown capability "${name}" (known: ${[...CAPABILITIES].sort().join(', ')})`);

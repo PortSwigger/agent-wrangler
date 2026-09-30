@@ -29,7 +29,25 @@ export { MAX_TEXT_LENGTH };
 
 export const extSettingSetHandler = {
   type: 'ext-setting-set',
+  // `reqId` (optional, a string of at most 64 chars) is api.settings.set's
+  // promise: the outcome is replied as `ext-setting-result` on this socket, and
+  // a failure goes there INSTEAD of the router's generic error envelope, so the
+  // extension that asked can show its own message. Without it, unchanged.
   async handler(msg, ctx) {
+    const reqId = typeof msg.reqId === 'string' && msg.reqId && msg.reqId.length <= 64 ? msg.reqId : null;
+    if (!reqId) return write(msg, ctx);
+    try {
+      await write(msg, ctx);
+    } catch (err) {
+      ctx.reply({ type: 'ext-setting-result', reqId, ok: false, error: String(err.message || err) });
+      return;
+    }
+    ctx.reply({ type: 'ext-setting-result', reqId, ok: true });
+  },
+};
+
+async function write(msg, ctx) {
+  {
     const entry = ctx.ext.list.find((e) => e.id === msg.id);
     if (!entry) throw new Error(`Unknown extension: ${String(msg.id)}`);
     // A quarantined extension is contributing nothing and cannot read the value
@@ -48,6 +66,11 @@ export const extSettingSetHandler = {
         if (!Number.isFinite(n)) throw new Error(`Setting ${entry.id}.${def.key} must be a number`);
         value = n;
       }
+    } else if (def.type === 'list') {
+      // Copied, never coerced: a non-array is an error, and every item is
+      // checked by checkSettingValue below.
+      if (!Array.isArray(msg.value)) throw new Error(`Setting ${entry.id}.${def.key} must be a list of strings`);
+      value = [...msg.value];
     } else {
       // text and select both: a select's value is one of its declared option
       // strings, and `''` clears it exactly as it clears a text field.
@@ -65,5 +88,5 @@ export const extSettingSetHandler = {
     // The graph is the only thing that has to carry the new value back (see
     // extensionsForGraph).
     await ctx.rebuild();
-  },
-};
+  }
+}

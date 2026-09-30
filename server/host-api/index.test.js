@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CAPABILITIES } from '../extensions/index.js';
+import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
@@ -380,4 +380,11 @@ test('sessions.bill forwards both ids to recordPriorLiveSessionId and returns it
   assert.deepEqual(calls, [['c1', 'head-1'], ['missing', 'head-1']]);
   // Only `bill` on the namespace: no read, wake or spawn rode in with it.
   assert.deepEqual(Object.keys(host.sessions), ['bill']);
+});
+
+test('CLIENT_CAPABILITIES is disjoint from CAPABILITIES and builds no façade key', () => {
+  for (const c of CLIENT_CAPABILITIES) assert.equal(CAPABILITIES.has(c), false, c);
+  const host = buildHostApi({ id: 'demo', requires: ['cards:hideChips'] });
+  assert.equal('cards' in host, false);
+  assert.deepEqual(Object.keys(host).sort(), ['id', 'log', 'settings', 'stores', 'version']);
 });

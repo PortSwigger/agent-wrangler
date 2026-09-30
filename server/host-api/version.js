@@ -124,7 +124,22 @@ import semver from 'semver';
 // from Settings, so the server half had to fill empty fields itself — which
 // meant a dispatch could never turn off a toggle Settings had on. An older
 // slots.js has no such method, so only the range can say so.
-export const HOST_API_VERSION = '1.13.0';
+//
+// 1.14.0 lets an extension choose which chips a board card shows. Every core
+// chip in a card's meta row carries a stable `data-chip` key (cards.js
+// CORE_CHIPS), a `card.pill` contribution's key is `<extId>:<id>` and it may
+// carry a `label`. `api.cards` (chips, hideChips, renderSample) is gated on
+// `cards:hideChips`, the first CLIENT-ONLY capability: it rides `requires` and
+// is disclosed like any other, but it has no server façade, so it lives in
+// CLIENT_CAPABILITIES rather than as a V1_BUILDERS key. Also the
+// `settings.panel` slot (an extension's own block in its settings dialog,
+// saved on Done), `api.settings.set(key, value)` → Promise and
+// `api.settings.onChange(fn)`, and the `list` setting type with the `hidden`
+// and `maxItems` def fields, and `registrar.api` (the contribution api, on the
+// registrar register() receives, for load-time use). An older slots.js throws on the slot name and an
+// older server quarantines `type: 'list'` and the unknown capability, so only
+// the range can say so.
+export const HOST_API_VERSION = '1.14.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

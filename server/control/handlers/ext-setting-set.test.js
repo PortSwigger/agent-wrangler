@@ -204,3 +204,32 @@ test('clearing skips every constraint — that is a select\'s only clearing rout
     assert.equal(stored('mode'), '');
   });
 });
+
+const LIST_DEFS = [{ key: 'hidden', type: 'list', label: 'Hidden', maxItems: 2 }];
+
+test('a list value is stored as a copy; non-array, non-string, duplicate and over-maxItems are refused', async () => {
+  await withConfig({}, async () => {
+    const c = ctx([manifest('demo', { settings: LIST_DEFS })]);
+    await set(c, { id: 'demo', key: 'hidden', value: ['a', 'b'] });
+    assert.deepEqual(readConfig().extensionSettings, { demo: { hidden: ['a', 'b'] } });
+    await set(c, { id: 'demo', key: 'hidden', value: [] });
+    assert.deepEqual(readConfig().extensionSettings, { demo: { hidden: [] } });
+    await assert.rejects(() => set(c, { id: 'demo', key: 'hidden', value: 'a' }), /must be a list of strings/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'hidden', value: [1] }), /must contain only strings/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'hidden', value: ['a', 'a'] }), /duplicate item "a"/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'hidden', value: ['a', 'b', 'c'] }), /too many items \(max 2\)/);
+    assert.deepEqual(readConfig().extensionSettings, { demo: { hidden: [] } });
+  });
+});
+
+test('a reqId gets an ext-setting-result reply, in place of the error envelope on failure', async () => {
+  await withConfig({}, async () => {
+    const c = ctx([manifest('demo', { settings: LIST_DEFS })]);
+    await routeControlMessage(JSON.stringify({ type: 'ext-setting-set', id: 'demo', key: 'hidden', value: ['x'], reqId: 'r1' }), c);
+    assert.deepEqual(c.calls.replies, [{ type: 'ext-setting-result', reqId: 'r1', ok: true }]);
+    await routeControlMessage(JSON.stringify({ type: 'ext-setting-set', id: 'demo', key: 'hidden', value: 'x', reqId: 'r2' }), c);
+    assert.equal(c.calls.replies.length, 2);
+    assert.deepEqual({ ...c.calls.replies[1], error: undefined }, { type: 'ext-setting-result', reqId: 'r2', ok: false, error: undefined });
+    assert.match(c.calls.replies[1].error, /must be a list of strings/);
+  });
+});

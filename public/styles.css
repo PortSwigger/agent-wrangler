@@ -2030,6 +2030,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .card-tag svg { width: 10px; height: 10px; }
 /* Right-aligned chip on the meta line (worktree marker). Purple ties it to the
    branch colour so a worktree session reads as a branch-side concept. */
+/* A chip hidden by an extension (api.cards.hideChips): `.card-tag`'s own
+   display out-specifies the UA's [hidden]. Scoped to the card's meta row only —
+   the detail panel shares the builders but never applies the veto. */
+.card-meta [data-chip][hidden] { display: none !important; }
 .card-tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: none; background: var(--surface-2); color: var(--fg-muted); line-height: normal; display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; white-space: nowrap; }
 .model-pill { max-width: 14em; }
 .model-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3235,3 +3239,6 @@ a.ext-row-origin { color: var(--blue-fg); }
   background: var(--field-bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: 5px;
 }
+
+/* An extension's own settings.panel contributions, above its manifest rows. */
+.ext-settings-panel { margin-bottom: 12px; }
