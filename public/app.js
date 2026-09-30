@@ -44,7 +44,8 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
@@ -176,6 +177,9 @@ const extHandlerTypes = new Map();
 // widen what the server half declared, and an extension the board has heard
 // nothing about hides nothing.
 const extHideDispatchFields = new Map();
+// And each extension's `requires` grant, for the client-only capabilities
+// slots.js checks (cards:hideChips). Same two inputs, same fail-closed default.
+const extRequires = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -185,6 +189,7 @@ function noteExtClientFacts(list) {
     if (!e || typeof e.id !== 'string') continue;
     if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
     if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
+    if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -194,8 +199,20 @@ const slots = createSlots({
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
+  requiresFor: (id) => extRequires.get(id) || [],
+  coreChips: CORE_CHIPS,
+  // An extension's hideChips (or its removal) changed the veto: redraw the
+  // board, which re-syncs the pills too (wireGridEvents → mountCardPills).
+  // Deferred a microtask so a burst of calls — and a call from inside a
+  // render — lands as one render after it.
+  onChipsChanged: () => {
+    if (chipsRenderQueued) return;
+    chipsRenderQueued = true;
+    queueMicrotask(() => { chipsRenderQueued = false; if (latestGraph) renderGrid(); });
+  },
   version: () => hostApiVersion,
 });
+let chipsRenderQueued = false;
 function openSessionInBoard(sessionId) {
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) { focusSession(sessionId); return; }
@@ -225,7 +242,71 @@ const extApi = {
   },
   // Backs slots' per-extension `api.settings()`, which binds the id.
   settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
+  // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
+  // on purpose — ext-setting-set is core's handler, never an extension's own
+  // type — which is safe only because the id is forced by slots and the server
+  // validates against that manifest's defs.
+  setExtSetting: setExtSettingAcked,
+  // Backs `api.cards.renderSample`.
+  renderSampleCard,
 };
+
+// Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
+const extSettingPending = new Map();
+let extSettingSeq = 0;
+function setExtSettingAcked(extId, key, value) {
+  const reqId = `s${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extSettingPending.delete(reqId);
+      reject(new Error('Saving the setting timed out'));
+    }, 10000);
+    extSettingPending.set(reqId, {
+      resolve: () => {
+        // Optimistic, like openExtSettings: the next graph carries the same value.
+        const live = latestExtensions.find((e) => e.id === extId);
+        if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
+        resolve();
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-setting-set', id: extId, key, value, reqId });
+  });
+}
+function settleExtSetting(msg) {
+  const p = extSettingPending.get(msg.reqId);
+  if (!p) return;
+  extSettingPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(); else p.reject(new Error(String(msg.error || 'Setting refused')));
+}
+
+// Live sample cards (api.cards.renderSample): host `.card-meta-ext` → the
+// fake session and that preview's own hidden set. mountCardPills reconciles
+// them in the SAME syncHosts call as the board's hosts — separately, each
+// render would tear down the other's pills.
+const sampleHosts = new Map();
+function pruneSampleHosts() {
+  for (const host of [...sampleHosts.keys()]) if (!host.isConnected) sampleHosts.delete(host);
+}
+function renderSampleCard(el, _extId, hidden) {
+  if (!el) return;
+  pruneSampleHosts();
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
+  // Inert: never wired (no wireGridEvents), not focusable, not clickable.
+  const card = el.querySelector('.session-card');
+  if (card) {
+    card.style.pointerEvents = 'none';
+    card.removeAttribute('tabindex');
+    card.removeAttribute('role');
+    card.setAttribute('draggable', 'false');
+    card.setAttribute('aria-hidden', 'true');
+  }
+  const host = el.querySelector('.card-meta-ext');
+  if (host) sampleHosts.set(host, { session: SAMPLE_SESSION, hidden });
+  mountCardPills(document);
+}
 const clientExtensions = createClientExtensionLoader(slots);
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
@@ -480,8 +561,14 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   checklistEnabled = graph.checklistEnabled !== false;
   latestChecklists = graph.checklists || {};
+  const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
+  // api.settings.onChange: only an extension whose values actually moved.
+  for (const e of latestExtensions) {
+    const was = prevSettingValues.get(e.id);
+    if (was !== undefined && was !== JSON.stringify(e.settingValues || {})) slots.settingsChanged(e.id, e.settingValues || {});
+  }
   setExtensionDefs(latestExtensions);
   // An open panel follows the list, but ONLY when the list itself changed: this
   // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
@@ -1240,6 +1327,7 @@ function cardCtx() {
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
+    hiddenChips: slots.hiddenChips(),
   };
 }
 
@@ -1525,6 +1613,10 @@ function mountCardPills(el) {
   for (const host of el.querySelectorAll('.card-meta-ext')) {
     const s = byId.get(host.closest('.session-card')?.dataset.sid);
     if (s) entries.push({ host, session: s });
+  }
+  pruneSampleHosts();
+  for (const [host, { session, hidden }] of sampleHosts) {
+    if (!entries.some((e) => e.host === host)) entries.push({ host, session, hidden, sample: true });
   }
   slots.syncHosts('card.pill', entries, extApi, latestGraph);
 }
@@ -5979,6 +6071,13 @@ function openExtSettings(id) {
   const body = document.getElementById('ext-settings-body');
   document.getElementById('ext-settings-title').textContent = entry.label || entry.id;
   body.textContent = '';
+  // The extension's own `settings.panel` contributions, ABOVE the manifest
+  // rows. Only this extension's (onlyExt). Their `save` runs on Done.
+  const panelHost = document.createElement('div');
+  panelHost.className = 'ext-settings-panel';
+  body.append(panelHost);
+  const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
+  if (!panels) panelHost.remove();
   body.append(extensionSettingRowsEl(entry, {
     onSettingChange: ({ key, value }) => {
       send({ type: 'ext-setting-set', id: entry.id, key, value });
@@ -5993,18 +6092,51 @@ function openExtSettings(id) {
   const done = document.getElementById('ext-settings-done');
   modal.classList.remove('hidden');
   done.focus();
+  let saving = false;
   const close = () => {
     modal.classList.add('hidden');
-    done.removeEventListener('click', close);
+    done.removeEventListener('click', onDone);
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
+    // unmount runs for every panel contribution; its sample card goes too.
+    slots.unmountHost('settings.panel', panelHost);
+    panelHost.remove();
+    pruneSampleHosts();
   };
-  // Enter closes rather than approving anything: every control here has already
-  // committed on its own change, so there is no pending decision for a key to
-  // confirm — and Enter in a text field is one of the ways it commits.
-  const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); close(); } };
+  // Done means SAVE for panel contributions only — the manifest rows below
+  // have already committed on change. A rejecting save keeps the dialog open
+  // (the extension shows its own error); Escape/backdrop close without saving.
+  const onDone = async () => {
+    if (saving) return;
+    if (!panels) { close(); return; }
+    saving = true;
+    done.disabled = true;
+    try {
+      await slots.savePanels(panelHost);
+      close();
+    } catch (err) {
+      console.error(`[ext:${entry.id}] settings panel save failed`, err);
+    } finally {
+      saving = false;
+      done.disabled = false;
+    }
+  };
+  // Enter means Done, except inside a text input, where it is one of the ways a
+  // manifest row commits (and a panel's own field may want it).
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Enter') {
+      const t = e.target;
+      if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)))) {
+        if (!panels) { e.preventDefault(); close(); }
+        return;
+      }
+      e.preventDefault();
+      onDone();
+    }
+  };
   const onBackdrop = (e) => { if (e.target === modal) close(); };
-  done.addEventListener('click', close);
+  done.addEventListener('click', onDone);
   modal.addEventListener('keydown', onKey);
   modal.addEventListener('mousedown', onBackdrop);
 }
@@ -6496,6 +6628,7 @@ function connect() {
         }
       }
     }
+    else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
     else if (msg.type === 'error') {
       if (wtPending) {
         wtPending = false; setDispatchPending(false);

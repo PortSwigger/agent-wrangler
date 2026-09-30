@@ -3243,3 +3243,6 @@ a.ext-row-origin { color: var(--blue-fg); }
   background: var(--field-bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: 5px;
 }
+
+/* An extension's own settings.panel contributions, above its manifest rows. */
+.ext-settings-panel { margin-bottom: 12px; }

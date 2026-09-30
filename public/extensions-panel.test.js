@@ -595,3 +595,19 @@ test('an option label containing markup goes in as text, never innerHTML', () =>
     for (const node of walk(wrap)) assert.equal(node._html, null, `${node.className} must not use innerHTML`);
   });
 });
+
+test('a hidden def draws no row; a visible list draws a read-only item count', () => {
+  withDom(() => {
+    const entry = {
+      id: 'chips', label: 'Chips', enabled: true,
+      settings: [
+        { key: 'hiddenChips', type: 'list', label: 'Hidden chips', hidden: true },
+        { key: 'tags', type: 'list', label: 'Tags' },
+      ],
+      settingValues: { hiddenChips: ['a'], tags: ['x', 'y'] },
+    };
+    const wrap = extensionSettingRowsEl(entry);
+    assert.deepEqual(byClass(wrap, 'ext-setting-row').map((r) => r.dataset.key), ['tags']);
+    assert.ok(texts(wrap).includes('2 items'));
+  });
+});

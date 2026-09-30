@@ -52,10 +52,29 @@ function el(tag, className, text) {
   return node;
 }
 
+// Plain-language descriptions for capabilities a name alone does not explain,
+// shown as the chip's tooltip, and as a line under the chips in the consent dialog.
+export const CAPABILITY_DESCRIPTIONS = {
+  'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
+};
+
 function chipsEl(items, className) {
   const wrap = el('div', 'ext-chips');
-  for (const item of items) wrap.append(el('span', className, item));
+  for (const item of items) {
+    const chip = el('span', className, item);
+    if (CAPABILITY_DESCRIPTIONS[item]) chip.title = CAPABILITY_DESCRIPTIONS[item];
+    wrap.append(chip);
+  }
   return wrap;
+}
+
+// The requested chips plus, below them, a plain sentence for each capability
+// with a description.
+function capabilitiesEl(caps) {
+  const box = el('div');
+  box.append(chipsEl(caps, 'ext-chip'));
+  for (const c of caps) if (CAPABILITY_DESCRIPTIONS[c]) box.append(el('div', 'ext-consent-note', `${c}: ${CAPABILITY_DESCRIPTIONS[c]}`));
+  return box;
 }
 
 function section(parent, title, body) {
@@ -212,6 +231,8 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   const values = entry.settingValues || {};
   const frozen = Boolean(entry.quarantine);
   for (const def of entry.settings || []) {
+    // Managed by the extension itself (a settings.panel), never a row.
+    if (def.hidden) continue;
     const row = el('div', 'ext-setting-row');
     row.dataset.ext = entry.id;
     row.dataset.key = def.key;
@@ -220,6 +241,13 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     if (def.help) copy.append(el('div', 'setting-help', def.help));
     const current = values[def.key];
     const commit = (value) => onSettingChange?.({ id: entry.id, key: def.key, value });
+    if (def.type === 'list') {
+      // Read-only summary: an editable list UI is deferred.
+      const n = Array.isArray(current) ? current.length : 0;
+      row.append(copy, el('div', 'ext-row-actions', `${n} item${n === 1 ? '' : 's'}`));
+      wrap.append(row);
+      continue;
+    }
     if (def.type === 'toggle') {
       const actions = el('div', 'ext-row-actions');
       let on = Boolean(current);
@@ -459,7 +487,7 @@ export function consentBodyEl(payload) {
     section(wrap, 'Dependencies changed', dependencyDiffEl(payload));
   } else {
     section(wrap, 'Capabilities requested', (payload.capabilities || []).length
-      ? chipsEl(payload.capabilities, 'ext-chip')
+      ? capabilitiesEl(payload.capabilities)
       : el('div', 'ext-consent-none', 'None — it asks the wrangler for nothing.'));
     const deps = el('div');
     if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
