@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import openModule from 'open';
 
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
-import { analyze } from './transcript-reader.js';
+import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
 import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
@@ -30,7 +30,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig, extensionSettings, applyRetiredFlagMigrations } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -65,6 +65,10 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
+import { readCodeVersion, clearRollbackMarker, readRolledBack } from './self-update.js';
+import { createUpdateService } from './update-service.js';
+import { nextSessionToRefresh } from './session-refresh.js';
+import { headlessRunsInFlight } from './headless-claude.js';
 
 const open = openModule.default || openModule;
 
@@ -978,6 +982,9 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
+  graph.autoUpdate = autoUpdateMode();
+  graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
+  graph.codeVersion = codeVersion;
   // Which extensions exist and whether each is on — what the settings toggles read
   // back, and what the client mounts/unmounts its slot contributions from. `enabled`
   // is re-read from config here, not taken from ext.list's boot snapshot: see
@@ -1011,13 +1018,48 @@ async function rebuildOnce() {
 }
 
 const rebuild = createRebuildCoalescer(rebuildOnce);
+let codeVersion = null;
+let updates = null;
+const UPDATE_CHECK_MS = (Number(process.env.AW_UPDATE_CHECK_MINUTES) || 60) * 60 * 1000;
+const ROLLBACK_CLEAR_AFTER_MS = 30000;
+const QUIET_SCHEDULE_WINDOW_MS = 2 * 60 * 1000;
+
+function exitForRestart(reason) {
+  shutdownLog.noteReason(reason);
+  setTimeout(() => process.exit(0), 250).unref();
+}
+
+function wranglerIsQuiet() {
+  return headlessRunsInFlight() === 0
+    && !sessionManager.hasResumeInFlight()
+    && scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS).length === 0;
+}
+
+async function refreshOneStaleSession() {
+  if (!refreshSessionsAfterUpdate() || !codeVersion || !lastGraph) return;
+  const s = nextSessionToRefresh(lastGraph.sessions || [], {
+    codeVersion,
+    attached: await sessionManager.attachedSessions(),
+    isResuming: (id) => sessionManager.isResuming(id),
+    entryFor: (id) => sessionManager.entryFor(id),
+    now: Date.now(),
+  });
+  if (!s) return;
+  const entry = sessionManager.entryFor(s.sessionId);
+  const dir = await resolveResumeDir(entry?.liveSessionId || s.sessionId, { graphCwd: s.cwd, entryCwd: entry?.cwd });
+  if (!dir || !fs.existsSync(dir)) return;
+  log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersion.slice(0, 7)}`);
+  memoryStore.bindSession(s.sessionId, taskStore.taskFor(s.sessionId)?.id || null);
+  await sessionManager.resume(s.sessionId, dir, { reason: 'update-refresh' });
+  await rebuild();
+}
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported() }));
+  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateRolledBack: updates?.rolledBack() || null }));
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1056,10 +1098,8 @@ controlWss.on('connection', (ws) => {
     // the shutdown log, and a self-inflicted exit must record WHY or its line
     // reads exactly like the hard kill a missing reason is supposed to mean. The
     // small delay lets the ack reach the browser before the socket dies with us.
-    restart: () => {
-      shutdownLog.noteReason('restart requested from the board');
-      setTimeout(() => process.exit(0), 250).unref();
-    },
+    restart: () => exitForRestart('restart requested from the board'),
+    updates,
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
 });
@@ -1108,6 +1148,20 @@ async function main() {
   // in-memory. After the lock, so a duplicate instance never sweeps the running
   // one's in-flight staging dir out from under it.
   sweepStaging();
+  codeVersion = await readCodeVersion();
+  sessionManager.codeVersion = codeVersion;
+  updates = createUpdateService({
+    supervised: restartSupported,
+    mode: () => autoUpdateMode(),
+    isQuiet: wranglerIsQuiet,
+    rolledBack: readRolledBack(),
+    onStatus: (status) => broadcast({ type: 'update-status', ...status }),
+    onApplied: (result) => {
+      broadcast({ type: 'update-applied', head: result.head });
+      exitForRestart(`updated to ${result.head}`);
+    },
+    log,
+  });
   await sessionManager.init();
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
@@ -1176,7 +1230,14 @@ async function main() {
     const url = `http://${host}:${PORT}`;
     log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
     if (shouldOpenBrowser()) open(url).catch(() => {});
+    setTimeout(() => clearRollbackMarker(), ROLLBACK_CLEAR_AFTER_MS).unref();
   });
+
+  if (!process.env.AW_DEV) {
+    setTimeout(() => updates.tick(), 60 * 1000).unref();
+    setInterval(() => updates.tick(), UPDATE_CHECK_MS).unref();
+  }
+  setInterval(() => refreshOneStaleSession().catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless
   // of whether the prior async tick has settled, so a slow sweep CAN overlap the next
