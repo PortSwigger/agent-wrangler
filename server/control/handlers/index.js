@@ -24,6 +24,7 @@ import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { restartHandler } from './restart.js';
+import { updateCheckHandler, updateApplyHandler, autoUpdateModeHandler, refreshSessionsAfterUpdateHandler } from './self-update.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
   taskCreateHandler,
@@ -93,6 +94,10 @@ export const CONTROL_HANDLERS = [
   extUninstallHandler,
   extCheckUpdatesHandler,
   restartHandler,
+  updateCheckHandler,
+  updateApplyHandler,
+  autoUpdateModeHandler,
+  refreshSessionsAfterUpdateHandler,
   setSessionModelHandler,
   taskCreateHandler,
   taskRenameHandler,

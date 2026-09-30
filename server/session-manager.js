@@ -384,6 +384,7 @@ export class SessionManager {
     this._deathsReported = new Set(); // dead tmux names already logged (see refreshAlive)
     this._deathsSeeded = false; // the first scan seeds without logging: those panes predate us
     this._resuming = new Map(); // card id -> in-flight resume promise (coalesces concurrent resumes)
+    this.codeVersion = null;
     // Seam (like _newSession/_save) so a test can observe/stub the one call in
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
@@ -1009,6 +1010,10 @@ export class SessionManager {
     return this._resuming.has(sessionId);
   }
 
+  hasResumeInFlight() {
+    return this._resuming.size > 0;
+  }
+
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
   async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified' } = {}) {
@@ -1114,9 +1119,10 @@ export class SessionManager {
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this
     // install's socket — so a legacy default-socket session migrates here.
-    this.map.set(sessionId, resumeEntry(prev, {
-      short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now(),
-    }));
+    this.map.set(sessionId, {
+      ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now() }),
+      launchedCodeVersion: this.codeVersion || undefined,
+    });
     this._save();
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
     // in-flight promise, so a hook there would fire twice for one relaunch (the
@@ -1189,6 +1195,7 @@ export class SessionManager {
     }
     entry.liveSessionId = liveSessionId || undefined;
     entry.socket = this.socket;
+    entry.launchedCodeVersion = this.codeVersion || undefined;
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
@@ -1729,7 +1736,7 @@ export class SessionManager {
     // `mailCapable: false` for a buildLaunch runtime (its command has no
     // --mcp-config, so no read_mail) and for one with `deliver`, which is how
     // send_message routes a peer message to that `deliver` instead.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver) };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

@@ -154,8 +154,8 @@ body {
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid transparent; border-radius: 8px;
   color: var(--fg-muted);
-  /* The containing block for .ext-view-badge below. Inert for every other rail
-     button: nothing else in the rail is absolutely positioned. */
+  /* The containing block for .ext-view-badge below and the settings button's
+     update dot. */
   position: relative;
 }
 #nav-rail button:hover { background: var(--surface-2); color: var(--fg); }
@@ -3080,3 +3080,12 @@ a.ext-row-origin { color: var(--blue-fg); }
 
 /* An extension's own settings.panel contributions, above its manifest rows. */
 .ext-settings-panel { margin-bottom: 12px; }
+.update-summary { margin-top: 8px; font-size: 12px; color: var(--fg); }
+.update-error { color: var(--danger-strong); }
+.update-commits { margin: 6px 0 0; padding-left: 18px; max-height: 240px; overflow-y: auto; font-size: 12px; color: var(--fg-subtle); }
+.update-commits li { margin: 2px 0; overflow-wrap: anywhere; }
+#settings-btn.has-update::after {
+  content: ''; position: absolute; top: 7px; right: 7px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+}
+.card-tag.older-code { color: var(--warn-fg); background: color-mix(in srgb, var(--warn) 18%, var(--surface-2)); }

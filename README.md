@@ -62,6 +62,12 @@ otherwise it behaves exactly as a Claude-only board.
   reply arriving word by word the way the terminal does; while a turn is running it shows a
   live row naming the tool in flight and how long the session has been busy.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
+- **Updates from the board** — Settings › Updates checks `origin/main`, lists the new commits and
+  fast-forwards the install and restarts it in one click; sessions keep running through the restart
+  and open tabs reload onto the new code. It checks hourly and can install on its own (Off / Notify /
+  Auto). If an update can't start, the next restart rolls back to the commit it came from. Needs the
+  background service below, a clean checkout on `main`, and no local commits. Running sessions
+  get an "older version" tag until they restart, and an opt-in setting restarts idle ones for you.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
 
@@ -125,6 +131,10 @@ Environment variables:
   `0.0.0.0` when a devcontainer session needs to reach this server's `/mcp` from inside its
   container. Widens exposure on a shared machine (the control/MCP posture is localhost-advisory),
   so treat it as a deliberate opt-in, not a default
+- `AW_UPDATE_CHECK_MINUTES` — how often the board checks `origin/main` for updates when Settings ›
+  Updates is on Notify or Auto (default `60`)
+- `AW_ROLLBACK_AFTER_STARTS` — how many starts an update gets to come up healthy before
+  `scripts/wrangler-start.sh` rolls it back (default `3`, i.e. two failed attempts)
 
 ### Run as a background service
 
