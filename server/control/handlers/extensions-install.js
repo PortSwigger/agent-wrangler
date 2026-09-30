@@ -295,7 +295,7 @@ export const extInstallHandler = {
       try {
         deps = lockDependencies(dir);
       } catch (err) {
-        if (err instanceof MissingLockfileError) throw new Error('This repository ships no package-lock.json. An extension without a lockfile is not installable — its dependency set would be unpinned and unreviewable.');
+        if (err instanceof MissingLockfileError) throw new Error('This repository declares dependencies but ships no package-lock.json. An extension with dependencies and no lockfile is not installable — its dependency set would be unpinned and unreviewable.');
         throw err;
       }
       const existing = recordFor(declared.id);

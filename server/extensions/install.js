@@ -18,7 +18,8 @@ const execFileAsync = promisify(execFile);
 const defaultGit = (args, opts = {}) => execFileAsync('git', args, { timeout: 120000, maxBuffer: 8 * 1024 * 1024, ...opts });
 const defaultNpm = (args, opts = {}) => execFileAsync('npm', args, { timeout: 300000, maxBuffer: 16 * 1024 * 1024, ...opts });
 
-// Thrown by lockDependencies when the clone has no package-lock.json. A named
+// Thrown by lockDependencies when the clone has no package-lock.json but does
+// declare dependencies (a dependency-free extension needs no lockfile). A named
 // class (and `code`) is what lets the control handler tell "this repo is not
 // installable — it ships no lockfile" apart from a parse failure or an IO
 // error, so the user gets the one message that tells them what to fix. Callers
@@ -112,9 +113,17 @@ function parseSha(stdout, what) {
 // with `transitiveCount` standing in for the rest. Direct names come from the
 // lockfile's root package entry (v2/v3 `packages[""]`) when present, else the
 // clone's package.json, so the answer survives either lockfile vintage.
+//
+// A clone with NO lockfile is accepted only when its package.json declares no
+// runtime dependencies at all: the disclosed set is then provably empty, so
+// nothing is unpinned. devDependencies don't count — `npm ci --omit=dev` never
+// installs them.
 export function lockDependencies(dir) {
   const file = path.join(dir, 'package-lock.json');
-  if (!fs.existsSync(file)) throw new MissingLockfileError(file);
+  if (!fs.existsSync(file)) {
+    if (declaresNoDependencies(dir)) return { all: [], direct: [], transitiveCount: 0 };
+    throw new MissingLockfileError(file);
+  }
   const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
 
   const seen = new Set();
@@ -155,6 +164,25 @@ export function lockDependencies(dir) {
   const all = [...seen].sort();
   const direct = all.filter((s) => directNames.has(s.slice(0, s.lastIndexOf('@'))));
   return { all, direct, transitiveCount: all.length - direct.length };
+}
+
+const RUNTIME_DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'bundleDependencies', 'bundledDependencies'];
+
+// True only when package.json parses and every runtime dependency field is
+// absent or empty. Unreadable or unparsable means "can't prove it", so false.
+function declaresNoDependencies(dir) {
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  } catch {
+    return false;
+  }
+  return RUNTIME_DEP_FIELDS.every((k) => {
+    const v = pkg?.[k];
+    if (v == null) return true;
+    if (Array.isArray(v)) return v.length === 0;
+    return typeof v === 'object' && Object.keys(v).length === 0;
+  });
 }
 
 function directDependencyNames(dir, lock) {
@@ -230,7 +258,12 @@ export function readDeclaration(dir) {
 // extension is imported, with the server's own privileges. Installing an
 // extension is exactly as much trust as `npm install`-ing a package into the
 // server, and nothing here should be read as sandboxing it.
+//
+// With no lockfile there is nothing to install (lockDependencies has already
+// refused any lockfile-less clone that declares dependencies), and `npm ci`
+// would fail outright, so it is skipped.
 export async function npmCi(dir, { npm = defaultNpm } = {}) {
+  if (!fs.existsSync(path.join(dir, 'package-lock.json'))) return path.join(dir, 'node_modules');
   await npm(['ci', '--ignore-scripts', '--omit=dev'], { cwd: dir });
   return path.join(dir, 'node_modules');
 }
