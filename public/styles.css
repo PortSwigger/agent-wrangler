@@ -835,6 +835,11 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 /* Marks a folder that came from the board's own history rather than from disk —
    inherits currentColor so it stays legible on the accent-filled active row. */
 .modal-card .suggest-tag { float: right; margin-left: 10px; font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.04em; }
+/* The remove ✕ only appears on the hovered/active recent row, swapping in for the tag. */
+.modal-card .suggest-remove { display: none; float: right; margin-left: 10px; padding: 0 4px; font-size: 11px; border-radius: 3px; opacity: 0.7; }
+.modal-card .suggest-remove:hover { opacity: 1; background: color-mix(in srgb, currentColor 20%, transparent); }
+.modal-card .suggest-item:hover .suggest-remove, .modal-card .suggest-item.active .suggest-remove { display: inline; }
+.modal-card .suggest-item:hover .suggest-tag, .modal-card .suggest-item.active .suggest-tag { display: none; }
 .modal-card input.input-error { border-color: var(--danger-strong); }
 .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
 /* Quick-launch shortcuts sit at the bottom-left; margin-right:auto pushes Cancel/Launch to the right. */
