@@ -109,6 +109,17 @@ test('sessionCardHtml: dormant (unmanaged) session gets the dormant class', () =
   assert.match(sessionCardHtml(sess({ managed: false }), ctx()), /session-card [^"]*dormant/);
 });
 
+test('sessionCardHtml shows auto-rebase as a distinct opt-in from auto-merge', () => {
+  const rebase = sessionCardHtml(sess({ autoRebaseLinkedPr: true }), ctx());
+  assert.match(rebase, /class="card-tag autorebase"/);
+  assert.match(rebase, />auto-rebase</);
+  assert.doesNotMatch(rebase, /auto-merge/);
+
+  const both = sessionCardHtml(sess({ autoRebaseLinkedPr: true, autoMergeOnPass: true }), ctx());
+  assert.match(both, /auto-rebase/);
+  assert.match(both, /auto-merge/);
+});
+
 test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
   assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5 }), ctx()), /~1\.50/);
   assert.match(sessionCardHtml(sess({ agent: 'claude', usd: 1.5 }), ctx()), /(?<!~)1\.50/);

@@ -184,6 +184,35 @@ export function prDirtyPaneNudge(ev) {
   return prPaneLine(ev.number, ev.url, 'merge conflicts with the base branch — needs a rebase');
 }
 
+const REBASE_FAILURE_PHRASE = {
+  'dirty-worktree': 'working tree is not clean',
+  'operation-in-progress': 'another merge or rebase is already in progress',
+  'remote-not-found': 'no matching GitHub remote is configured',
+  'remote-list-failed': 'Git remotes could not be inspected',
+  'status-check-failed': 'the working tree status could not be inspected',
+  'git-state-check-failed': 'the repository operation state could not be inspected',
+  'fetch-failed': 'fetching the PR base failed',
+  'fetch-head-missing': 'the fetched base commit could not be resolved',
+  'base-ref-check-failed': 'the current base branch could not be verified',
+  'ancestry-check-failed': 'the branch ancestry could not be inspected',
+  'push-failed-local-rewrite': 'the push failed and the rewritten local branch could not be safely restored; reconcile it manually',
+  'rebase-failed': 'git rebase failed before reporting a conflict',
+  'new-head-missing-local-rewrite': 'the rebased commit could not be resolved and the local branch may need manual reconciliation',
+  'session-became-busy-local-rewrite': 'the checkout changed after rebasing and could not be safely restored; reconcile it manually',
+  'unexpected-error': 'an unexpected local Git error occurred',
+};
+
+export function prRebaseFailurePaneNudge(ev, result) {
+  if (result.kind === 'conflict') {
+    return prPaneLine(ev.number, ev.url, 'automatic rebase stopped on conflicts — resolve the rebase in this checkout');
+  }
+  const phrase = REBASE_FAILURE_PHRASE[result.reason] || result.reason || 'unknown safety failure';
+  if (result.reason?.endsWith('-local-rewrite')) {
+    return prPaneLine(ev.number, ev.url, `automatic rebase needs manual reconciliation — ${phrase}`);
+  }
+  return prPaneLine(ev.number, ev.url, `automatic rebase did not run — ${phrase}`);
+}
+
 // Transition-detection for unresolved review-THREAD counts — its own prev Map,
 // but DELIBERATELY no `seeded` flag (unlike diffCheckStatus/diffDirty). Those
 // two track small enum/bool state spaces where firing on first sight is exactly

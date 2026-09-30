@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
 
-// The jq derivation runs INSIDE gh (-q), so stdout is five tab-separated fields:
-// `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>\t<headRefOid>`. The
-// merge/review fields turn the rollup into an authoritative checkStatus; the
-// head SHA distinguishes a real PR push from a base-relative merge-state flap.
+// The jq derivation runs INSIDE gh (-q), so stdout starts with four tab-separated
+// status fields, followed by the immutable head/base identity used by auto-rebase.
+// (OPEN/MERGED/CLOSED), a *rollup word* derived from .statusCheckRollup, and the
+// two free fields that turn the rollup into an authoritative checkStatus.
+// The head SHA also distinguishes a real PR push from a base-relative
+// merge-state flap in the notification baseline.
 //
 // The rollup word mirrors paddy-log's logic, including the in-progress gotcha: a
 // running CheckRun reports .conclusion as an empty string '' (not null), so
@@ -28,7 +30,7 @@ const JQ = `
       elif ($s|any(. as $x | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"]|index($x))) then "failing"
       elif ($s|any(. as $x | ["PENDING","IN_PROGRESS","QUEUED","EXPECTED"]|index($x))) then "pending"
       else "passing" end ) as $rollup
-  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")\\t\\(.headRefOid // "")"`;
+  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")\\t\\(.headRefName // "")\\t\\(.headRefOid // "")\\t\\(.baseRefName // "")\\t\\(.baseRefOid // "")\\t\\(.headRepository.nameWithOwner // "")\\t\\(.isCrossRepository // false)"`;
 
 // The raw word the JQ derives from the rollup alone (validated on input). The
 // final checkStatus deriveCheckStatus emits is a wider vocabulary — it also
@@ -65,7 +67,7 @@ function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision) {
 // Default runner: run `gh pr view <url> --json <fields> -q <jq>`.
 function defaultRun(url) {
   return new Promise((resolve) => {
-    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision,headRefOid',
+    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision,headRefName,headRefOid,baseRefName,baseRefOid,headRepository,isCrossRepository',
       '-q', JQ], { timeout: 15000 },
       (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
   });
@@ -85,15 +87,35 @@ export async function fetchPrStatus(url, run = defaultRun) {
   try {
     const { code, stdout } = await run(url);
     if (code !== 0) return null;
-    // Strip only the trailing newline: headRefOid defensively defaults to an
-    // empty final field, whose delimiter trim() would otherwise consume.
+    // Strip only the trailing newline, not via trim(): any trailing optional
+    // field can be empty, and trim() would eat its tab separator.
     const parts = String(stdout).replace(/\r?\n$/, '').split('\t');
-    if (parts.length !== 5) return null;
-    const [state, rollup, mergeStateStatus, review, headSha] = parts;
+    if (parts.length !== 5 && parts.length !== 10) return null;
+    const [state, rollup, mergeStateStatus, review] = parts;
     if (!VALID_STATE.has(state) || !ROLLUP.has(rollup)) return null;
     const reviewDecision = VALID_REVIEW.has(review) ? review : '';
     const checkStatus = deriveCheckStatus(rollup, mergeStateStatus, reviewDecision);
-    return { state, checkStatus, reviewDecision, dirty: mergeStateStatus === 'DIRTY', headSha };
+    const headSha = parts.length === 5 ? parts[4] : parts[5];
+    if (!headSha) return null;
+    const result = {
+      state,
+      checkStatus,
+      reviewDecision,
+      dirty: mergeStateStatus === 'DIRTY',
+      headSha,
+    };
+    if (parts.length === 5) return result;
+    const [, , , , headRef, headOid, baseRef, baseOid, headRepo, cross] = parts;
+    const baseRepo = /^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url)?.[1];
+    if (headRef && baseRef && headRepo && baseRepo
+        && /^[0-9a-f]{40}$/.test(headOid) && /^[0-9a-f]{40}$/.test(baseOid)) {
+      result.rebase = {
+        head: { repo: headRepo, ref: headRef, oid: headOid },
+        base: { repo: baseRepo, ref: baseRef, oid: baseOid },
+        crossRepository: cross === 'true',
+      };
+    }
+    return result;
   } catch {
     return null;
   }
@@ -106,9 +128,15 @@ export async function fetchPrStatus(url, run = defaultRun) {
 // --delete-branch: the branch is checked out in the wrangler-created worktree
 // (so a local delete would fail), and the existing archive-time cleanup flow
 // owns branch/worktree removal. Resolves { code, stderr }.
-function defaultMerge(url) {
+export function mergePrArgs(url, headSha) {
+  const args = ['pr', 'merge', url, '--squash'];
+  if (headSha) args.push('--match-head-commit', headSha);
+  return args;
+}
+
+function defaultMerge(url, headSha) {
   return new Promise((resolve) => {
-    execFile('gh', ['pr', 'merge', url, '--squash'], { timeout: 30000 },
+    execFile('gh', mergePrArgs(url, headSha), { timeout: 30000 },
       (err, _stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stderr: stderr || '' }));
   });
 }
@@ -170,9 +198,9 @@ export async function fetchPrDiff(url, run = defaultDiffRun) {
 // (branch protection, conflicts, method not allowed) is surfaced to the user as
 // a toast/pane nudge so they can merge manually, never a crash. The error text
 // is the trimmed first line of gh's stderr (kept short for the pane/toast).
-export async function mergePr(url, run = defaultMerge) {
+export async function mergePr(url, { headSha = '', run = defaultMerge } = {}) {
   try {
-    const { code, stderr } = await run(url);
+    const { code, stderr } = await run(url, headSha);
     if (code === 0) return { ok: true };
     const error = String(stderr).trim().split('\n')[0] || `gh pr merge exited ${code}`;
     return { ok: false, error };
