@@ -6313,17 +6313,23 @@ modal.addEventListener('keydown', (e) => {
   const box = document.getElementById('folder-suggest');
   input.addEventListener('focus', () => { suggestIndex = -1; suggestWanted = true; requestFolderBrowse(); renderFolderSuggest(); });
   input.addEventListener('input', () => { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); });
-  // Picking a folder leaves the caret inside it (trailing '/') and re-opens the
-  // list on its children, so a deep path is reachable by repeated selection.
+  // Picking a folder leaves the caret inside it (trailing '/') and prefetches its
+  // children, but closes the list so it doesn't cover the launch buttons. A click
+  // in the field, a keystroke or ArrowDown re-opens it on those children, so a deep
+  // path is still reachable by repeated selection.
   function pickFolder(path) {
     input.value = `${path.replace(/\/+$/, '')}/`;
-    fsProbed = null; fsFolders = []; suggestIndex = -1; suggestWanted = true;
+    fsProbed = null; fsFolders = [];
+    hideFolderSuggest();
     requestFolderBrowse();
     syncWorktreeFields();
-    renderFolderSuggest();
   }
+  function reopenFolderSuggest() { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); }
+  // Focus stays in the field after a pick, so a click there fires no focus event.
+  input.addEventListener('mousedown', () => { if (document.activeElement === input && !suggestWanted) reopenFolderSuggest(); });
   input.addEventListener('blur', () => setTimeout(hideFolderSuggest, 120)); // let a click land first
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !suggestWanted) { e.preventDefault(); reopenFolderSuggest(); return; }
     if (box.classList.contains('hidden')) return;
     const items = [...box.querySelectorAll('.suggest-item')];
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
