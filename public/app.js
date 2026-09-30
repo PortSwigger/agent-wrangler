@@ -6335,6 +6335,8 @@ modal.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); suggestIndex = Math.max(suggestIndex - 1, 0); renderFolderSuggest(); }
     else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickFolder(items[suggestIndex].dataset.path); }
+    // Tab completes to the highlighted folder (or the top one if none is highlighted).
+    else if (e.key === 'Tab' && !e.shiftKey && items.length) { e.preventDefault(); pickFolder(items[Math.max(suggestIndex, 0)].dataset.path); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideFolderSuggest(); } // first Esc closes the dropdown, not the dialog
   });
   box.addEventListener('mousedown', (e) => {
