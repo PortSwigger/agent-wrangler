@@ -529,10 +529,17 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // host: a module with no contribution at all (or one whose frames are not
     // any single contribution's business) has nowhere else to ask for one, and a
     // subscription taken here is taken exactly once per module load.
-    forExtension(extId) {
+    // `api` (1.14.0) is the SAME object apiFor() gives contributions (built once
+    // per extension, so identity holds), so a module can call e.g.
+    // api.cards.hideChips or api.settings.onChange from register() with no
+    // contribution mounted. Same capability gates; removeExtension clears
+    // whatever it took. A getter, so a registrar that never touches it builds
+    // nothing. `baseApi` is app.js's extApi, passed through extensions.js.
+    forExtension(extId, baseApi = {}) {
       return {
         register: (slotName, contribution) => this.register(slotName, extId, contribution),
         onMessage: (fn) => subscribe(extId, fn),
+        get api() { return apiFor(extId, baseApi); },
       };
     },
 

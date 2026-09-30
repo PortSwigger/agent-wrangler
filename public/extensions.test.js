@@ -158,3 +158,19 @@ test('a module that fails to import takes its stylesheet back off', async () => 
   assert.deepEqual(head.children, []);
   assert.equal(errors.length, 1);
 });
+
+test('the loader hands the registrar the base api it was given, as registrar.api', async () => {
+  const document = { head: { appendChild() {}, removeChild() {} }, createElement: () => ({ dataset: {} }) };
+  const slots = createSlots({ document, storage: null, onError() {} });
+  const sent = [];
+  const base = { settingsFor: () => ({ k: 'v' }), send: (f) => sent.push(f) };
+  let got = null;
+  const loader = createClientExtensionLoader(slots, {
+    importer: async () => ({ default: { register(reg) { got = reg.api.settings(); } } }),
+    onError() {},
+    document,
+    api: base,
+  });
+  assert.equal(await loader.load([{ id: 'a', client: '/ext/a/index.js' }]), true);
+  assert.deepEqual(got, { k: 'v' });
+});

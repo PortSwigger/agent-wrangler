@@ -813,6 +813,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   its own error); Escape or the backdrop closes without saving; `unmountHost`
   runs every `unmount` on close. The manifest rows still commit on change, and
   the button stays "Done".
+- **`registrar.api` (1.14.0).** The registrar a module's `register(registrar)`
+  receives carries `api`, the SAME object (by identity) every contribution's
+  `mount(el, api)` gets, so a module can call `api.cards.hideChips(...)` or
+  `api.settings.onChange(fn)` at load time with nothing mounted. Capability
+  gates apply unchanged, and `removeExtension` (disable, uninstall, failed load)
+  drops its `onChange` subscriptions and hidden chips exactly as for a mounted
+  contribution. `extensions.js` passes app.js's base api through
+  `slots.forExtension(id, baseApi)`.
 - **The chip veto (1.14.0) is presentation-only, and scoped to the board
   CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
   `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,

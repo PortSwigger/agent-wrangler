@@ -135,7 +135,8 @@ import semver from 'semver';
 // `settings.panel` slot (an extension's own block in its settings dialog,
 // saved on Done), `api.settings.set(key, value)` → Promise and
 // `api.settings.onChange(fn)`, and the `list` setting type with the `hidden`
-// and `maxItems` def fields. An older slots.js throws on the slot name and an
+// and `maxItems` def fields, and `registrar.api` (the contribution api, on the
+// registrar register() receives, for load-time use). An older slots.js throws on the slot name and an
 // older server quarantines `type: 'list'` and the unknown capability, so only
 // the range can say so.
 export const HOST_API_VERSION = '1.14.0';

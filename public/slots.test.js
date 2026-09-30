@@ -983,3 +983,35 @@ test('settings() stays callable; set forwards to the base api with the forced id
   h.slots.removeExtension('a');
   assert.equal(h.slots.settingsChanged('a', {}), 0, 'subscriptions die with the extension');
 });
+
+// ── registrar.api (1.14.0) ──────────────────────────────────────────────────
+test('registrar.api is the contribution api, gated, and cleaned up by removeExtension', () => {
+  let chipsChanged = 0;
+  const h = harness({
+    requiresFor: (id) => (id === 'ok' ? ['cards:hideChips'] : undefined),
+    onChipsChanged: () => { chipsChanged += 1; },
+  });
+  const base = { settingsFor: () => ({ a: 1 }) };
+  const reg = h.slots.forExtension('ok', base);
+  const api = reg.api;
+  assert.equal(reg.api, api, 'built once');
+  let mountedApi = null;
+  reg.register('panel.section', { id: 'p', mount: (el, a) => { mountedApi = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), base);
+  assert.equal(mountedApi, api, 'same object a contribution gets');
+  assert.deepEqual(api.settings(), { a: 1 });
+
+  assert.throws(() => h.slots.forExtension('denied', base).api.cards.hideChips([]), /requires the cards:hideChips capability/);
+
+  const seen = [];
+  api.settings.onChange((v) => seen.push(v));
+  api.cards.hideChips(['core:age']);
+  assert.deepEqual([...h.slots.hiddenChips()], ['core:age']);
+  assert.equal(h.slots.settingsChanged('ok', { a: 2 }), 1);
+  const before = chipsChanged;
+  h.slots.removeExtension('ok');
+  assert.equal(chipsChanged, before + 1);
+  assert.deepEqual([...h.slots.hiddenChips()], []);
+  assert.equal(h.slots.settingsChanged('ok', { a: 3 }), 0);
+  assert.deepEqual(seen, [{ a: 2 }]);
+});

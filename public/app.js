@@ -307,7 +307,7 @@ function renderSampleCard(el, _extId, hidden) {
   if (host) sampleHosts.set(host, { session: SAMPLE_SESSION, hidden });
   mountCardPills(document);
 }
-const clientExtensions = createClientExtensionLoader(slots);
+const clientExtensions = createClientExtensionLoader(slots, { api: extApi });
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
 // server-side every rebuild) is what decides whether each one is actually
