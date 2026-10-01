@@ -1009,15 +1009,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
   sessions keep their env until relaunched.
-- **`host.events`** (capability `events`, 1.16.0): `on(name, fn)` and `emit(name, payload)`.
+- **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
-- **`activate({ host })` / `deactivate({ host })`** (1.16.0) manifest functions run when the
+- **`activate({ host })` / `deactivate({ host })`** (1.17.0) manifest functions run when the
   extension turns on or off; a throwing `activate` quarantines it.
-- **`host.memory.*`** (1.16.0) is provided by the task-memory extension. While it is off,
+- **`host.memory.*`** (1.17.0) is provided by the task-memory extension. While it is off,
   `read` returns `null`, `has` and `append` return `false`, with a logged warning.
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
