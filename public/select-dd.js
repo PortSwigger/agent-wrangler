@@ -94,7 +94,7 @@ export function enhanceSelect(select) {
     }
     const options = [...select.options];
     for (let i = select.selectedIndex + step; i >= 0 && i < options.length; i += step) {
-      if (options[i].disabled) continue;
+      if (options[i].matches(':disabled')) continue;
       select.selectedIndex = i;
       select.dispatchEvent(new Event('change', { bubbles: true }));
       break;
