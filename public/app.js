@@ -15,7 +15,7 @@ import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillIn
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
-  TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
+  TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
   CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
@@ -43,7 +43,8 @@ import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderTh
 import { toast } from './toast.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
-import { openFork, openCustomSnooze, openMemory, onMemory, onMemoryChanged } from './modals.js';
+import { openFork, openCustomSnooze } from './modals.js';
+import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
@@ -130,7 +131,6 @@ function restoreAll() {
 export let latestSessions = [];
 export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
-let taskMemoryEnabled = true; // server config flag, carried on every graph push
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
@@ -212,8 +212,12 @@ function openSessionInBoard(sessionId) {
   toast('Restoring…');
 }
 
+// Lazy + memoised so <script> load order can't break module init: window.markdownit
+// is only read on first render, by which point the classic vendor <script> has run.
+let renderMarkdown;
 const extApi = {
   send,
+  markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
   // Show a card from an extension's own view (a job's session, say): the board's
@@ -557,7 +561,6 @@ function applyGraph(graph) {
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
   if (currentView === 'search') refreshSearchTaskFilter();
   latestSchedules = graph.schedules || { schedules: [] };
-  taskMemoryEnabled = graph.taskMemoryEnabled !== false;
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
@@ -1272,7 +1275,7 @@ function cardCtx() {
     justFinished, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
-    subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
+    subagentShown: { has: isSubagentShown }, now: Date.now(),
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     hiddenChips: slots.hiddenChips(),
@@ -2200,7 +2203,7 @@ function openTaskActionsMenu(taskId, x, y) {
       } },
     ...(isAdhoc ? [] : [
       { sep: true },
-      ...(taskMemoryEnabled ? [{ label: 'Task memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
+      ...extTaskMenuItems(taskId, false),
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
     ]),
   ];
@@ -2294,7 +2297,6 @@ function openTaskMenu(cell, x, y) {
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
     ...(!isNoTask ? [
-      ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
@@ -5588,7 +5590,6 @@ function openExtConsent(payload) {
 initSettings({
   server: {
     get: (id) => {
-      if (id === 'taskMemoryEnabled') return taskMemoryEnabled;
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
@@ -5605,10 +5606,7 @@ initSettings({
       return undefined;
     },
     set: (id, value) => {
-      if (id === 'taskMemoryEnabled') {
-        taskMemoryEnabled = Boolean(value);
-        send({ type: 'set-task-memory-enabled', enabled: taskMemoryEnabled });
-      } else if (id === 'subagentsExpandedByDefault') {
+      if (id === 'subagentsExpandedByDefault') {
         subagentsExpandedByDefault = Boolean(value);
         send({ type: 'set-subagents-expanded-by-default', enabled: subagentsExpandedByDefault });
       } else if (id === 'trustCodexLaunchCwd') {
@@ -6017,8 +6015,6 @@ function connect() {
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
-    else if (msg.type === 'memory') onMemory(msg);
-    else if (msg.type === 'memory-changed') onMemoryChanged(msg);
     else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
     else if (msg.type === 'folder-browse') onFolderBrowse(msg);
     else if (msg.type === 'dispatched') {

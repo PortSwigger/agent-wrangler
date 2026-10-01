@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { linkPathFor, addDirFor } from '../memory-store.js';
+import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
@@ -99,19 +99,20 @@ export function cleanClaudeEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
 }
 
-export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
+export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
   // skill discovery alone isn't reliable for one that must be followed at every
   // session start regardless of task relevance — so a mandatory skill's nudge
   // still rides the always-on appended prompt, alongside the conditional
-  // worktree guardrail. `taskMemory` is only threaded so tests can pin it; left
-  // undefined here (the production path) it falls through to the live-config
-  // default inside mandatorySkillPrompt.
-  const appendPrompt = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), worktree ? worktreeGuardrailPrompt(worktree) : '']
+  // worktree guardrail. An extension-shipped nudge (task-memory's) rides here
+  // too, gated by that extension being enabled (agent-skills.js).
+  const appendPrompt = [mandatorySkillPrompt(undefined, { disabledSkills }), worktree ? worktreeGuardrailPrompt(worktree) : '']
     .filter(Boolean).join('\n\n');
+  // The directories the enabled extensions granted this launch (task-memory's
+  // per-session notes dir) — see launch-context.js.
   const full = [
     ...args,
-    '--add-dir', addDirFor(sessionId),
+    ...launchAddDirArgs(launchContext),
   ];
   if (appendPrompt) full.push('--append-system-prompt', appendPrompt);
   full.push(
@@ -128,14 +129,16 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // ISSUE_TO_PR_SKILL_DIR uses below). This list is GATED where the root above
   // is not: most extension skills carry no nudge, so the command line is the
   // only thing `skillsFor` could decide for Claude.
-  for (const skillDir of extensionSkillPluginDirs(undefined, { taskMemory, disabledSkills })) full.push('--plugin-dir', skillDir);
+  for (const skillDir of extensionSkillPluginDirs(undefined, { disabledSkills })) full.push('--plugin-dir', skillDir);
   // Workflow runs additionally name the issue-to-pr skill in their launch prompt;
   // load it as a second plugin so it resolves without a user-level symlink.
   // --plugin-dir merges with the user's own plugins and stacks. Scoped to workflow
   // launches so it doesn't appear in every session's skill list.
   if (workflow) full.push('--plugin-dir', ISSUE_TO_PR_SKILL_DIR);
-  let inner = `AW_SESSION_ID=${shellQuote(sessionId)} AW_TASK_MEMORY=${shellQuote(linkPathFor(sessionId))} `
-    + `AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} `;
+  // Extension env first, core's after: in a shell prefix the LAST assignment of
+  // a name wins, so an extension can add variables but never override ours.
+  let inner = launchEnvPrefix(launchContext, shellQuote)
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} `;
   if (spawnedBy) inner += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   inner += `claude ${full.map(shellQuote).join(' ')}`;
   // `--` terminates option parsing: the trailing flags (--mcp-config,
@@ -188,7 +191,7 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, taskMemory, disabledSkills }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
@@ -197,10 +200,10 @@ export const claude = {
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, taskMemory, disabledSkills }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, taskMemory, disabledSkills }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -210,10 +213,10 @@ export const claude = {
     const args = ['--resume', resumeId, '--permission-mode', 'auto'];
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, taskMemory, disabledSkills }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, model, effort, autoCompactTokens, intent = '', taskMemory, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, model, effort, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
@@ -223,7 +226,7 @@ export const claude = {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, taskMemory, disabledSkills }));
+    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
   },
 
   // Claude is given its id at launch, so the live id is the board id.

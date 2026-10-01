@@ -39,4 +39,4 @@ Use these board-visible surfaces instead of burying coordination state in a tran
 ## Availability
 
 Extensions may add skills and tools while enabled. Disabling **Per-session checklist** in
-**Settings → Extensions** removes its four tools and the `checklist` skill after sessions resume.
+**Settings → Extensions** removes its four tools and the `checklist` skill after sessions resume. Disabling **Task memory** removes the `task-memory` skill and its `AW_TASK_MEMORY` variable from new launches.

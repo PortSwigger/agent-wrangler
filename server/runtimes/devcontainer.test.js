@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { rewriteHostUrls, containerInputPaths, launchInputs, buildPaneScript, devcontainer, stopContainer, hasDevcontainerConfig } from './devcontainer.js';
+import { rewriteHostUrls, containerInputPaths, launchDirDest, launchInputs, buildPaneScript, devcontainer, stopContainer, hasDevcontainerConfig } from './devcontainer.js';
 
 test('rewriteHostUrls: swaps loopback for the container-reachable host', () => {
   const inner = 'claude --mcp-config \'{"url":"http://127.0.0.1:8787/mcp"}\'';
@@ -21,19 +21,25 @@ test('rewriteHostUrls: defaults to host.docker.internal', () => {
 test('containerInputPaths: sessioned /tmp paths', () => {
   const p = containerInputPaths('abc');
   assert.equal(p.skillsDir, '/tmp/aw-abc/skills');
-  assert.equal(p.notesDir, '/tmp/aw-abc/notes');
+});
+
+test('launchDirDest: the Nth extension-granted dir lands at a stable, index-keyed container path', () => {
+  assert.equal(launchDirDest('abc', 0), '/tmp/aw-abc/launch-dirs/0');
+  assert.equal(launchDirDest('abc', 1), '/tmp/aw-abc/launch-dirs/1');
 });
 
 test('buildPaneScript: up → discover cid → mkdir → cp -L skills+notes → exec translated inner', () => {
   const s = buildPaneScript({
     inner: "claude --plugin-dir /host/skills --add-dir /host/notes --mcp-config 'http://127.0.0.1:9/mcp'",
     hostDir: '/Users/me/code/repo', sessionId: 'abc', hostAddr: 'host.docker.internal',
+    launchContext: { env: {}, addDirs: ['/host/notes'] },
   });
   assert.match(s, /devcontainer up --workspace-folder '\/Users\/me\/code\/repo'/);
   assert.match(s, /docker ps -q --filter label=devcontainer\.local_folder='\/Users\/me\/code\/repo'/);
   assert.match(s, /docker exec "\$CID" mkdir -p '\/tmp\/aw-abc'/);
   assert.match(s, /docker cp -L .*:'\/tmp\/aw-abc\/skills'/);
-  assert.match(s, /docker cp -L .*:'\/tmp\/aw-abc\/notes'/);
+  assert.match(s, /docker cp -L '\/host\/notes' "\$CID":'\/tmp\/aw-abc\/launch-dirs\/0'/);
+  assert.match(s, /--add-dir \/tmp\/aw-abc\/launch-dirs\/0/); // the grant is translated in the command
   assert.match(s, /devcontainer exec --workspace-folder '\/Users\/me\/code\/repo' sh -lc/);
   assert.match(s, /host\.docker\.internal:9/);        // url rewritten
 });
@@ -61,18 +67,22 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
   assert.match(s, /docker exec -u root "\$CID" chmod \+x '\/tmp\/aw-abc\/scripts\/pr-attach-hook\.mjs'/);
 });
 
-test('launchInputs: base = skills + notes + PR-hook (2 files) + each extension skill; workflow adds issue-to-pr', () => {
-  const base = launchInputs('abc');
-  // Extension-shipped skills ride along under ext-skills/<extId>/<name> (the
-  // builtin checklist and todos ship one each), so they are asserted apart from the fixed four.
-  const dests = base.map((i) => i.dest).filter((d) => !d.includes('/ext-skills/'));
+test('launchInputs: base = skills + PR-hook (2 files) + each extension-granted dir; workflow adds issue-to-pr', () => {
+  // Extension-shipped skill dirs ride along too (checklist, todos, adversarial-review,
+  // task-memory); they are covered by their own asserts, so only the core inputs are pinned here.
+  const core = (inputs) => inputs.filter((i) => !i.dest.includes('/ext-skills/'));
+  const base = launchInputs('abc', { launchContext: { env: {}, addDirs: ['/h/notes', '/h/other'] } });
+  const dests = core(base).map((i) => i.dest);
   assert.deepEqual(dests, [
-    '/tmp/aw-abc/skills', '/tmp/aw-abc/notes',
+    '/tmp/aw-abc/skills', '/tmp/aw-abc/launch-dirs/0', '/tmp/aw-abc/launch-dirs/1',
     '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
   ]);
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/checklist/checklist'), 'the checklist extension\'s skill dir is copied in');
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/todos/archive-to-todo'), 'the todos extension\'s skill dir is copied in');
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/adversarial-review/adversarial-pr-review'), 'the adversarial-review extension\'s skill dir is copied in');
+  assert.deepEqual(core(launchInputs('abc')).map((i) => i.dest), [
+    '/tmp/aw-abc/skills', '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
+  ]); // no grant, no extra copy
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);

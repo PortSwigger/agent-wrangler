@@ -520,11 +520,11 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    is what attaches them). That is exactly how #ext-consent-modal shipped, which
    is why modal-overlay.test.js now asserts the two selectors cover every
    `class="hidden"` modal in index.html. */
-#modal, #memory-modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal, #ext-settings-modal {
+#modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal, #ext-settings-modal {
   position: fixed; inset: 0; background: var(--overlay);
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
-#modal.hidden, #memory-modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden, #ext-settings-modal.hidden { display: none; }
+#modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden, #ext-settings-modal.hidden { display: none; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
@@ -534,89 +534,47 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 #sn-when, #m-sch-at, #m-sch-time { color-scheme: dark; }
 body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme: light; }
 .confirm-body { font-size: 13px; color: var(--fg-muted); line-height: 1.55; white-space: pre-line; margin: 0; }
-.memory-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
-.memory-text { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; }
-
-/* Title + Write·Split·Preview toggle share the modal's first row. */
-.memory-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
-.memory-head h3 { margin: 0; }
-/* Segmented control: flush buttons (collapsed inner borders), active = accent —
-   the --accent/--accent-fg precedent from .suggest-item.active, not the --blue toggle. */
-.memory-mode { display: inline-flex; flex: 0 0 auto; }
-.memory-mode button {
-  padding: 4px 11px; font-size: 12px; border-radius: 0; border-right-width: 0;
-  background: var(--surface-2); color: var(--fg-muted);
-}
-.memory-mode button:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
-.memory-mode button:last-child { border-top-right-radius: 6px; border-bottom-right-radius: 6px; border-right-width: 1px; }
-.memory-mode button:hover { background: var(--border-muted); color: var(--fg); }
-.memory-mode button.active, .memory-mode button.active:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-
-/* Editor + preview live side by side; the mode-* class on #memory-card decides
-   which panes show and how wide the card is. Split needs the room, so it widens
-   past the default 560px (still under .modal-card's 92vw cap). */
-.memory-body { display: flex; gap: 14px; align-items: stretch; }
-#memory-card { transition: width 0.18s ease; }
-#memory-card.mode-split { width: 920px; }
-#memory-card.mode-write .memory-preview { display: none; }
-#memory-card.mode-preview .memory-text { display: none; }
-#memory-card.mode-write .memory-text,
-#memory-card.mode-preview .memory-preview { flex: 1 1 auto; width: 100%; }
-/* flex-basis 0 + min-width 0 so the two panes split evenly and can shrink. */
-#memory-card.mode-split .memory-text,
-#memory-card.mode-split .memory-preview { flex: 1 1 0; min-width: 0; width: auto; }
-@media (prefers-reduced-motion: reduce) { #memory-card { transition: none; } }
-
-/* Read-only render of the buffer. Bordered like the textarea (same field-bg) so
-   the two panes read as one surface; all colours via theme vars for dark/light. */
-.memory-preview {
-  min-height: 320px; max-height: 60vh; overflow: auto;
-  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px 14px; color: var(--fg); font-size: 13px; line-height: 1.6; box-sizing: border-box;
-}
-/* .chat-prose (the chat view's rendered-markdown block, styles.css:~2190) shares
-   every one of these ELEMENT rules — same renderer, same markdown shape — so it
-   rides alongside .memory-preview here rather than duplicating them. It does NOT
-   join the boxed-panel rule above (min-height/max-height/background/border/
-   padding): a chat message is a bubble in a stream, not a bordered preview pane. */
-.memory-preview > :first-child, .chat-prose > :first-child { margin-top: 0; }
-.memory-preview > :last-child, .chat-prose > :last-child { margin-bottom: 0; }
-.memory-preview h1, .memory-preview h2, .memory-preview h3,
-.memory-preview h4, .memory-preview h5, .memory-preview h6,
+/* Rendered-markdown ELEMENT rules, shared by .chat-prose (the chat view) and
+   .file-body (the file preview) — same renderer, same markdown shape. Any
+   extension rendering api.ui.markdownPreview() output should add .chat-prose. */
+.file-body > :first-child, .chat-prose > :first-child { margin-top: 0; }
+.file-body > :last-child, .chat-prose > :last-child { margin-bottom: 0; }
+.file-body h1, .file-body h2, .file-body h3,
+.file-body h4, .file-body h5, .file-body h6,
 .chat-prose h1, .chat-prose h2, .chat-prose h3,
 .chat-prose h4, .chat-prose h5, .chat-prose h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; }
-.memory-preview h1, .chat-prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
-.memory-preview h2, .chat-prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
-.memory-preview h3, .chat-prose h3 { font-size: 1.15em; }
-.memory-preview p, .chat-prose p { margin: 0.6em 0; }
-.memory-preview ul, .memory-preview ol, .chat-prose ul, .chat-prose ol { margin: 0.6em 0; padding-left: 1.5em; }
-.memory-preview li, .chat-prose li { margin: 0.2em 0; }
-.memory-preview li > ul, .memory-preview li > ol, .chat-prose li > ul, .chat-prose li > ol { margin: 0.2em 0; }
-.memory-preview a, .chat-prose a { color: var(--blue-fg); text-decoration: none; }
-.memory-preview a:hover, .chat-prose a:hover { text-decoration: underline; }
-.memory-preview strong, .chat-prose strong { color: var(--fg); font-weight: 600; }
-.memory-preview em, .chat-prose em { font-style: italic; }
-.memory-preview code, .chat-prose code {
+.file-body h1, .chat-prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.file-body h2, .chat-prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
+.file-body h3, .chat-prose h3 { font-size: 1.15em; }
+.file-body p, .chat-prose p { margin: 0.6em 0; }
+.file-body ul, .file-body ol, .chat-prose ul, .chat-prose ol { margin: 0.6em 0; padding-left: 1.5em; }
+.file-body li, .chat-prose li { margin: 0.2em 0; }
+.file-body li > ul, .file-body li > ol, .chat-prose li > ul, .chat-prose li > ol { margin: 0.2em 0; }
+.file-body a, .chat-prose a { color: var(--blue-fg); text-decoration: none; }
+.file-body a:hover, .chat-prose a:hover { text-decoration: underline; }
+.file-body strong, .chat-prose strong { color: var(--fg); font-weight: 600; }
+.file-body em, .chat-prose em { font-style: italic; }
+.file-body code, .chat-prose code {
   background: var(--surface-2); color: var(--blue-fg);
   padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.memory-preview pre, .chat-prose pre {
+.file-body pre, .chat-prose pre {
   background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 6px;
   padding: 10px 12px; overflow: auto; margin: 0.6em 0;
 }
 /* .chat-prose only, not merged above: a chat message sits inside the scrolling
    .chat-stream, not its own bordered pane, so an unwrapped long line (a stack
    trace, a URL) would scroll the WHOLE stream sideways instead of just the code
-   block. .memory-preview keeps its plain horizontal-scroll pre unchanged. */
+   block. .file-body keeps its plain horizontal-scroll pre unchanged. */
 .chat-prose pre { white-space: pre-wrap; word-break: break-word; }
-.memory-preview pre code, .chat-prose pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
-.memory-preview blockquote, .chat-prose blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
-.memory-preview hr, .chat-prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
-.memory-preview table, .chat-prose table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
-.memory-preview th, .memory-preview td, .chat-prose th, .chat-prose td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
-.memory-preview th, .chat-prose th { background: var(--surface-2); color: var(--fg); font-weight: 600; }
-.memory-preview img, .chat-prose img { max-width: 100%; }
+.file-body pre code, .chat-prose pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
+.file-body blockquote, .chat-prose blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
+.file-body hr, .chat-prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.file-body table, .chat-prose table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
+.file-body th, .file-body td, .chat-prose th, .chat-prose td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.file-body th, .chat-prose th { background: var(--surface-2); color: var(--fg); font-weight: 600; }
+.file-body img, .chat-prose img { max-width: 100%; }
 /* Frosted glass (matches .context-menu): keep the theme's translucent surface,
    but blur the busy wallpaper/board behind so dialog text stays readable without
    going dark/opaque. The shadow lifts it off the blurred backdrop. */
@@ -650,13 +608,11 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-head h3 { margin: 0; color: var(--fg); }
 .file-path { font-size: 11px; color: var(--fg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; margin-top: 3px; }
 .file-head-actions { display: flex; gap: 8px; flex: 0 0 auto; }
-/* Reuses .memory-preview for element styling (headings/code/tables/text) but
-   resets its field-inset CONTAINER chrome: drop the 60vh cap so the body fills
-   the full-height card, and the bordered-box look so the doc reads flush inside
-   the card's own 20px padding. */
+/* Shares the rendered-markdown element rules above. Fills the full-height card,
+   flush inside the card's own 20px padding. */
 .file-body {
   flex: 1 1 auto; overflow-y: auto; min-height: 0;
-  max-height: none; background: none; border: none; border-radius: 0; padding: 0;
+  color: var(--fg); font-size: 13px; line-height: 1.6;
 }
 .file-loading, .file-error { font-size: 13px; }
 .file-loading { color: var(--fg-muted); }
@@ -2555,9 +2511,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 
 .chat-assistant { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 /* .chat-prose's element rules (headings/links/code/pre/tables/…) live with
-   .memory-preview's, styles.css:~474 — same renderer, same markdown shape.
+   .file-body's, styles.css:~474 — same renderer, same markdown shape.
    The measure and leading are set here, not there: this is body copy in a
-   reading column, where .memory-preview is a compact preview pane. */
+   reading column, where .file-body is a compact preview pane. */
 .chat-prose { font-size: 1em; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
 /* Held at half opacity at rest and lifted on hover. The model id repeats on
    every prose block in a turn and almost never changes, so at full strength it
@@ -2644,7 +2600,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-tool-output {
   margin: 0; padding: 7px 10px; border-top: 1px solid var(--border-muted);
   /* --surface-2, this file's established code-block shade (.chat-prose pre,
-     .memory-preview pre use it with the same border): --field-bg is #0d1117 in
+     .file-body pre use it with the same border): --field-bg is #0d1117 in
      dark but #ffffff in light, so it would have made the output block vanish
      into the row on the light theme. */
   background: var(--surface-2); color: var(--fg-muted);

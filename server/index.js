@@ -10,7 +10,6 @@ import { analyze } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
-import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
@@ -30,7 +29,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig, extensionSettings, applyRetiredFlagMigrations } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig, extensionSettings, applyRetiredFlagMigrations } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -55,6 +54,8 @@ import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
+import { createEventBus } from './events.js';
+import { collectLaunchContext } from './launch-context.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
 import { log, logError } from './log.js';
@@ -135,12 +136,11 @@ function quarantineFor(id, err) {
 }
 const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
-const memoryStore = new MemoryStore();
 // The core singletons an extension's capability builder binds on its behalf (the
 // leaf rule means nothing under server/extensions/** can import them — see
 // server/extensions/index.js). Handed to host-api/, never reached for, which is
 // why the extension stores are instantiated HERE and not beside the loader.
-const extCore = { sessionManager, taskStore, memoryStore };
+const extCore = { sessionManager, taskStore };
 // extId -> the per-extension `host` façade (host-api/index.js), populated once
 // the board primitives below exist. Declared here so every seam bound during
 // boot — session hooks, the skill gate, the tool filter — can close over the
@@ -148,6 +148,10 @@ const extCore = { sessionManager, taskStore, memoryStore };
 // is filled, and the alternative is re-ordering half this file around them.
 const hostApis = new Map();
 const hostApiFor = (id) => hostApis.get(id);
+// The core event bus (server/events.js): core announces on it, an extension
+// subscribes through `host.events`. A subscription belongs to its extension and
+// is dropped on deactivate, so a disabled extension hears nothing.
+const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) });
 // name -> the instance an extension's store factory returned. Filled by
 // activateExtension below (and emptied by deactivateExtension), never here: an
 // extension can be activated at boot, at an install, or at a settings flip, and
@@ -165,12 +169,19 @@ const storesFor = (id) => Object.fromEntries(
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
 sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
+// Per-launch env and directory grants from the enabled extensions (the
+// `session.launchContext` hook, server/launch-context.js): dispatch/resume/fork
+// await it before building the command. `_taskFor` is how session-manager asks
+// "which task is this session on" without knowing the task store.
+sessionManager._launchContext = (ctx) => collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
+sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
-// to the real runner with memoryStore injected — keeps SessionManager itself
-// free of that dependency, and every test that doesn't stub _archiveReview
-// stays a no-op by construction.
+// to the real runner with the event bus injected — the review publishes its
+// result as `archive-review:completed` and whichever extension cares (task-memory)
+// writes it; keeps SessionManager itself free of that dependency, and every test
+// that doesn't stub _archiveReview stays a no-op by construction.
 sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
-  runArchiveReview(sessionId, entry, task, { memoryStore, ...extraDeps });
+  runArchiveReview(sessionId, entry, task, { events: coreEvents, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops
@@ -219,6 +230,10 @@ const paneDeferral = createPaneDeferral({
 // handlers and the shell plumbing in behind it.
 const extWiring = {
   core: extCore,
+  events: coreEvents,
+  // `memory.*` is provided by the task-memory extension's store while it is
+  // active (host-api/v1.js degrades to "not available" when this is null).
+  memoryProvider: () => extStores.taskMemory ?? null,
   rebuild: () => rebuild(),
   broadcast,
   scheduleStore,
@@ -317,7 +332,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       log: logError,
       // Per-EXTENSION now, so the resume log line names which extension woke a
       // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.
-      deliver: createExtDeliver({ sessionManager, memoryStore, taskStore, tmuxFor, socketFor }, { reason: `ext:${id}` }),
+      deliver: createExtDeliver({ sessionManager, taskStore, tmuxFor, socketFor }, { reason: `ext:${id}` }),
       ...extWiring,
     }));
     // Graph contributors run every ~4s tick where nothing may log or throw, so
@@ -340,6 +355,10 @@ function activateExtension(id, { startSweeps = true } = {}) {
         sessionManager._extHooks[name].push(bound);
       }
     }
+    // Lifecycle: where a store's watcher or an event subscription is started.
+    // After the façade, hooks and graph check, so a throw here quarantines a
+    // fully-wired extension and deactivateExtension below undoes all of it.
+    ext._manifests.get(id)?.activate?.({ host: hostApiFor(id) });
     if (startSweeps) startSweepsFor(id);
   } catch (err) {
     deactivateExtension(id);
@@ -376,6 +395,15 @@ function startSweepsFor(id) {
 // a timer of its own or added a global listener keeps it until a restart. That
 // is the whole of the "restart to reclaim" caveat.
 function deactivateExtension(id) {
+  // Before the façade and stores go: `deactivate` stops what `activate` began
+  // (a watcher) through the same `host`. Errors are logged, never thrown — this
+  // is also the catch path of a failed activation.
+  try {
+    if (hostApis.has(id)) ext._manifests.get(id)?.deactivate?.({ host: hostApiFor(id) });
+  } catch (err) {
+    logError(`[ext:${id}] deactivate failed`, err);
+  }
+  coreEvents.offOwner(id);
   for (const t of sweepHandles.get(id) || []) clearInterval(t);
   sweepHandles.delete(id);
   hostApis.delete(id);
@@ -547,7 +575,7 @@ async function runPrStatusSweep(only) {
         // and must NOT rebuild.
         deliverPrNudge(ev, entry, {
           message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
-          sessionManager, memoryStore, taskStore, onError: onPrWakeError,
+          sessionManager, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
       // A successful merge leaves the MERGED-state path (next poll) to remove the
@@ -574,7 +602,7 @@ async function runPrStatusSweep(only) {
       if (planDirtyTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
-          sessionManager, memoryStore, taskStore, onError: onPrWakeError,
+          sessionManager, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
     }
@@ -596,7 +624,7 @@ async function runPrStatusSweep(only) {
       if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault)) {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
-          sessionManager, memoryStore, taskStore, onError: onPrWakeError,
+          sessionManager, onError: onPrWakeError,
         }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
       }
     }
@@ -621,9 +649,9 @@ function removePrLink(store, ownerId, url) {
 // Throws on a gone target — the caller turns that into a schedule-error.
 function performScheduleAction(action, now) {
   if (!action || action.kind === 'dispatch') {
-    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, memoryStore }, now);
+    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore }, now);
   }
-  return runSessionAction(action, { sessionManager, tmuxFor, socketFor, memoryStore, taskStore });
+  return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
 }
 
 // Fire one schedule (shared by the ~30s tick and schedule-run-now): perform its
@@ -705,7 +733,7 @@ function onPrWakeError(ev, err) {
 
 const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
   entries: () => sessionManager.snoozedEntries(),
-  sessionManager, tmuxFor, socketFor, memoryStore, taskStore,
+  sessionManager, tmuxFor, socketFor,
   onWakeError: onSnoozeWakeError,
 }, { onWoken: () => rebuild() });
 
@@ -715,7 +743,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore, paneDeferral,
+  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 });
 
@@ -783,15 +811,14 @@ async function fileHandler(req, res) {
 }
 
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
-// dispatch (mints the card id, runs the memory binder pre-launch) → assign →
-// rebuild. memoryStore/rebuild are reached the same way the dispatch handler does.
+// dispatch (mints the card id, collects the launch context pre-launch) → assign →
+// rebuild.
 const mcpRequestHandler = createMcpRequestHandler({
   taskStore,
   graph: () => lastGraph,
   // list_tasks folds out scratch cwds when picking a task's bestFolder.
   sessionsDir: SESSIONS_DIR,
   dispatch: (opts) => sessionManager.dispatch(opts),
-  memoryStore,
   rebuild: () => rebuild(),
   sessionManager,
   // schedule_session creates a schedule (dispatch / resume / message) through the
@@ -890,12 +917,6 @@ async function rebuildOnce() {
   const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
-  // Annotate each task with whether it has memory so tiles can render the dot
-  // without fetching content.
-  for (const t of graph.tasks.tasks) t.hasMemory = memoryStore.hasMemory(t.id);
-  // Rides the graph (not the connect-time config message) so a settings toggle
-  // re-renders every open board via the ordinary rebuild broadcast.
-  graph.taskMemoryEnabled = taskMemoryEnabled();
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.childFullViewByDefault = childFullViewByDefault();
@@ -962,7 +983,6 @@ controlWss.on('connection', (ws) => {
   const ctx = {
     sessionManager,
     taskStore,
-    memoryStore,
     scheduleStore,
     mailStore,
     // Same core-owned bag the MCP deps carry (list + hideTool); extension-enabled
@@ -1039,19 +1059,19 @@ async function main() {
   sweepStaging();
   await sessionManager.init();
   setTmuxBin(sessionManager.tmuxBin);
-  // Repoint every active session's memory symlink before the first build, repairing
-  // any staleness from assignment changes made while the server was down.
-  for (const { sessionId } of sessionManager.activeEntries())
-    memoryStore.bindSession(sessionId, taskStore.taskFor(sessionId)?.id || null);
+  // Re-run the launch context for every active session before the first build
+  // (reason `adopt`): extensions repair per-session state that went stale while
+  // the server was down (task-memory repoints each memory symlink at its task's
+  // current folder), and the context is remembered for the paste dir. The
+  // extensions are already active — they are activated at module load, above.
+  for (const { sessionId } of sessionManager.activeEntries()) {
+    await sessionManager.launchContext(sessionId, 'adopt').catch((err) => logError(`[launch-context] adopt failed for ${sessionId}`, err));
+  }
   await rebuild();
 
   // Watch state files for instant updates; also poll to refresh cost/liveness.
   const watcher = createWatcher();
   watcher.on('change', () => rebuild().catch(() => {}));
-  // Memory changing on disk (agent append or the human's own editor): refresh the
-  // dot via rebuild and nudge any open editor to live-refresh.
-  const memoryWatcher = memoryStore.createWatcher();
-  memoryWatcher.on('change', (taskId) => { rebuild().catch(() => {}); broadcast({ type: 'memory-changed', taskId }); });
   setInterval(() => rebuild().catch(() => {}), 4000);
   // Suspend reconcile on a slower cadence than rebuild — teardown is rare and the
   // 4h idle threshold gives ample hysteresis. Rebuild only when it actually acts.

@@ -97,8 +97,11 @@ export const taskAssignHandler = {
     const ids = [msg.sessionId, ...descendantsOf(msg.sessionId, sessions).map((d) => d.sessionId)];
     for (const id of ids) {
       ctx.taskStore.assign(id, taskId);
-      ctx.memoryStore.bindSession(id, taskId);
-      await ctx.sessionManager.syncNotesToContainer(id).catch(() => {});
+      // Not a launch: the `assign` reason lets the extensions re-point per-task
+      // state (task-memory's symlink), and what they granted is what a live
+      // devcontainer session needs re-copied.
+      const { addDirs } = await ctx.sessionManager.launchContext(id, 'assign');
+      await ctx.sessionManager.syncNotesToContainer(id, { addDirs }).catch(() => {});
     }
     await ctx.rebuild();
   },
@@ -132,7 +135,6 @@ export const taskDeleteHandler = {
       await ctx.rebuild();
       return;
     }
-    for (const sid of unassigned) ctx.memoryStore.bindSession(sid, null);
     await ctx.ext?.fireTaskDelete?.(msg.taskId);
     await ctx.rebuild();
   },

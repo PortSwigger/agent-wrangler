@@ -38,7 +38,7 @@ import { adapterFor } from './agents/index.js';
 // this primitive was built for, and an extension's delivery passes its own so
 // the log never claims a human sent it (see ext-deliver.js).
 export async function deliverMessage(id, text, deps, { imagePaths = [], clearComposer: wantClear = false, reason = 'message' } = {}) {
-  const { tmuxFor, socketFor, sessionManager, memoryStore, taskStore } = deps;
+  const { tmuxFor, socketFor, sessionManager } = deps;
   const sendText = deps.sendText ?? defaultSendText;
   const prefillPane = deps.prefillPane ?? defaultPrefillPane;
   const clearComposer = deps.clearComposer ?? defaultClearComposer;
@@ -81,9 +81,6 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   if (!dir || !fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
   }
-  // Bind memory BEFORE the relaunch so the resumed agent's AW_TASK_MEMORY resolves at
-  // boot, keyed on the stable card id (matches resume.js / session-action-runner.js).
-  memoryStore.bindSession(id, taskStore.taskFor(id)?.id || null);
 
   // ---- SYNCHRONOUS COMMIT BLOCK: no await between this re-check and resume(). ----
   // Mirrors deliverPrNudge's archive-race guard: the awaits above can straddle a

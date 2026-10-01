@@ -636,10 +636,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   **A manifest's `skills` list is all-or-nothing; `skillsFor` is the PER-LAUNCH
   narrowing, and it can only ever narrow its OWN manifest's list** —
   `createSkillGate` intersects the gate's answer with the `skills` it declared,
-  so naming a sibling's skill (or `task-memory`, not an extension at all) does
+  so naming a sibling's skill does
   nothing, and a throwing gate suppresses nothing rather than stripping a real
-  launch. It reaches the adapters as `disabledSkills`, threaded beside
-  `taskMemory` through `buildLaunch`/`buildResume`/`buildFork` on BOTH adapters
+  launch. It reaches the adapters as `disabledSkills`, threaded
+  through `buildLaunch`/`buildResume`/`buildFork` on BOTH adapters
   into `mandatorySkillPrompt`/`codexSkillCatalog`/`extensionSkillPluginDirs` — a
   fourth launch path must thread it too. The `_extLaunchSkills` seam is consulted before the adapter
   builds and, in dispatch, deliberately AFTER `onBeforeDispatch`, so a gate can
@@ -727,10 +727,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
   extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
   exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
-  `skills/`, `public/` and its tests). **`checklist`, `todos` and `adversarial-review` are the three so far**, and
+  `skills/`, `public/` and its tests). **`checklist`, `todos`, `adversarial-review` and `task-memory` are the shipped set**, and
   `index.test.js` asserts the exact id list so a stray manifest can't register
   tools and handlers on every install unnoticed. **Migrating a flagged feature
-  (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
+  (archive-review) is: move its code under `builtin/<id>/`, a
   manifest + `BUILTIN` row, delete its accessor, `set-<x>-enabled` handler and
   settings def, and add a `{ oldKey, extId }` row to `RETIRED_FLAGS`** — never a
   fresh `if (id === …)` rung in `app.js`, since `setExtensionDefs` renders the
@@ -740,7 +740,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `server/index.js` BEFORE `primeExtensions` reads config. Only an explicit
   `false` moves (`extensions.<id> = false`); `true`/missing/garbage just drop the
   old key, and an explicit existing `extensions.<id>` boolean wins. Idempotent;
-  rows stay forever. Current row: `checklistEnabled` → `checklist`.
+  rows stay forever. Current rows: `checklistEnabled` → `checklist`, `taskMemoryEnabled` → `task-memory`.
 - **The checklist is a reference builtin.** Store, four MCP tools, four control
   handlers, the `checklist` skill (plus its `WRANGLER.md` nudge), an `onPurge`
   session hook (purge is the only thing that drops a list; archive keeps it), a
@@ -955,14 +955,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   bag, and `hookPayloadFor` (extensions/index.js, applied by `index.js`'s hook
   binding) narrows it to that extension's slice — `null` when it sent nothing.
   A scheduled dispatch stores the payload whole, so the bag fires with it.
-- **`host.sessions.spawn({ taskId })` binds task memory BEFORE the pane starts,
-  and `tasks.assign` after the spawn is NOT the same thing.** The option becomes
-  dispatch's `bindMemory`, which points the session's `by-session` symlink at
-  the task folder in the window before launch; assigning afterwards repoints the
+- **`host.sessions.spawn({ taskId })` hands the task to dispatch BEFORE the pane
+  starts, and `tasks.assign` after the spawn is NOT the same thing.** The option
+  becomes dispatch's `taskId`, which is what `session.launchContext` hooks see
+  (task-memory points the session's `by-session` symlink at the task folder in
+  that window); assigning afterwards repoints the
   same link, which a running **Claude** follows and a running **Codex** does
   not — Codex resolves its writable roots once, at launch, so a late repoint
   leaves it writing into the session's own scratch memory while the board says
-  it is on the task. The builder therefore does BOTH halves (bind pre-launch,
+  it is on the task. The builder therefore does BOTH halves (pass the task pre-launch,
   `taskStore.assign` after), exactly as the `spawn_*` tools and the board's own
   dispatch handler do; that assign is not a `tasks:write` escalation, because
   the only card it can name is the one the call just minted. The same "ask the
@@ -991,3 +992,43 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   def; the setting's `placeholder` is the default text, so an empty field shows
   what will run. A generic `read_skill` for any extension is deferred until a
   second skill needs settings-rendered content.
+
+## Launch context, events and lifecycle
+
+- **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
+  reason, host }`, returns `{ env?, addDirs? }` (or a Promise of it). `server/launch-context.js`
+  `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
+  collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
+  written after, so an extension can never override `AW_SESSION_ID`) and
+  `addDirs` (absolute, deduped), and logs and skips a hook that throws or
+  answers nonsense. Dispatch, resume and fork await it before building the
+  command; the Claude and Codex adapters and the devcontainer runtime (which
+  copies each granted dir into the container) read the result through the same
+  helpers. `reason` is one of `dispatch | resume | fork | message | snooze-wake |
+  spawn | assign | adopt`; `assign` (a running session moved to another task) and
+  `adopt` (server boot) are not launches: the hook still runs and the result is
+  discarded. Turning an extension on or off applies to new launches; running
+  sessions keep their env until relaunched.
+- **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
+  Subscriber errors are caught and logged per handler, `emit` does not wait, and
+  an extension's subscriptions are dropped when it deactivates, so a disabled
+  extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
+  extension cannot forge a core event. Core event: `archive-review:completed
+  { sid, taskId, markdown }` (the review is skipped when nobody listens).
+- **`activate({ host })` / `deactivate({ host })`** (1.17.0) manifest functions run when the
+  extension turns on or off; a throwing `activate` quarantines it.
+- **`host.memory.*`** (1.17.0) is provided by the task-memory extension. While it is off,
+  `read` returns `null`, `has` and `append` return `false`, with a logged warning.
+- **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
+  markdown renderer (`public/markdown-preview.js`).
+
+## Builtin: task-memory
+
+`server/extensions/builtin/task-memory/` (default on) owns the memory store and
+watcher (started in `activate`), the `AW_TASK_MEMORY` env and `--add-dir` grant
+(Claude gets the stable symlink, Codex the resolved path), the `task-memory`
+skill, the `get-memory`/`set-memory` handlers, the task `hasMemory` graph dot,
+and the modal and task-menu items. Disabling it in Settings > Extensions removes
+all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
+`taskMemoryEnabled: false` config value is migrated to
+`extensions.task-memory = false` at boot.

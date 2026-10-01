@@ -22,10 +22,9 @@ function deps({
 } = {}) {
   const sent = [];
   const resumed = [];
-  const bound = [];
   const errors = [];
   return {
-    message, sent, resumed, bound, errors,
+    message, sent, resumed, errors,
     sessionManager: {
       entryFor: (id) => entries[id] || null,
       isResuming: () => resuming,
@@ -37,8 +36,6 @@ function deps({
     },
     tmuxFor: (id) => live[id]?.tmux ?? null,
     socketFor: (id) => live[id]?.socket ?? '',
-    memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
-    taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
     // The live paste now goes through paneDeferral. This double records the same
     // shape the old direct sendText did, so every delivery assertion below still
@@ -62,7 +59,7 @@ test('live owner: sendText into the pane on its socket, no resume', async () => 
   assert.equal(d.resumed.length, 0);
 });
 
-test('dormant Claude owner (we OWN the resume): resume with the nudge as the intent, memory bound, no sendText (no double delivery)', async () => {
+test('dormant Claude owner (we OWN the resume): resume with the nudge as the intent, no sendText (no double delivery)', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'claude' }; // Claude's buildResume threads the intent
   const d = deps({ message: 'PR #7 failing', entries: { CARD1: entry } }); // has an entry, not live, not resuming
@@ -71,7 +68,6 @@ test('dormant Claude owner (we OWN the resume): resume with the nudge as the int
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].id, 'CARD1');
   assert.deepEqual(d.resumed[0].opts, { intent: 'PR #7 failing', reason: 'pr-nudge' }); // the SAME nudge drives the resume
-  assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
   assert.equal(d.sent.length, 0); // Claude + owned ⇒ intent carried the nudge ⇒ NO fallback sendText
 });
 
@@ -124,7 +120,7 @@ test('gone owner (no entry): never woken — no resume, no sendText', async () =
   assert.equal(d.sent.length, 0);
 });
 
-test('snoozed owner: never woken by a PR transition (board-toast-only, like archived) — early guard fires BEFORE resolveResumeDir + memory binding', async () => {
+test('snoozed owner: never woken by a PR transition (board-toast-only, like archived) — early guard fires BEFORE resolveResumeDir', async () => {
   const dir = realDir();
   // A getter on cwd flags when the runner reaches resolveResumeDir's call site
   // (`resolveResumeDir(..., { entryCwd: entry.cwd })`) — the FIRST thing after the
@@ -140,10 +136,8 @@ test('snoozed owner: never woken by a PR transition (board-toast-only, like arch
   assert.equal(d.resumed.length, 0); // a snooze suppresses the wake entirely
   assert.equal(d.sent.length, 0);
   assert.equal(d.errors.length, 0); // a deliberate skip, not an error
-  // The early guard must fire BEFORE any binding/dir work — a snoozed card's memory
-  // binding must not be mutated (consistent with archived).
+  // The early guard must fire BEFORE any dir work (consistent with archived).
   assert.equal(cwdReads, 0);         // resolveResumeDir call site never reached
-  assert.equal(d.bound.length, 0);   // memoryStore.bindSession NEVER called
 });
 
 test('snooze lands DURING the resume await: fresh re-check catches it and aborts the wake (board-toast-only)', async () => {

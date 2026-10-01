@@ -84,7 +84,6 @@ function handlerCtx(entry, { graphCwd = os.tmpdir(), clearReturns = true } = {})
         return { tmux: 'cc_new' };
       },
     },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null, isAssignedToArchivedTask: () => false, unassign: () => {} },
     reply: () => {},
     rebuild: async () => { calls.rebuild += 1; },
@@ -124,28 +123,22 @@ test('resume: killJobsFirst with no live tmux skips the nudge and resumes', asyn
 // Ad-hoc (isAssignedToArchivedTask) instead of leaving the stale assignment
 // that would otherwise resurface it under the task's tile if that task were
 // restored later without this session.
-test('resume: a session whose task is still archived is unassigned to Ad-hoc, memory bound to scratch', async () => {
+test('resume: a session whose task is still archived is unassigned to Ad-hoc', async () => {
   const entry = { cwd: os.tmpdir(), socket: 'sockR' };
   const c = handlerCtx(entry);
-  const bindCalls = [];
-  c.memoryStore = { bindSession: (sid, taskId) => bindCalls.push({ sid, taskId }) };
   const unassignCalls = [];
   c.taskStore = { taskFor: () => ({ id: 'T1', name: 'Login' }), isAssignedToArchivedTask: () => true, unassign: (sid) => unassignCalls.push(sid) };
   await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
   assert.deepEqual(unassignCalls, ['S1']);
-  assert.deepEqual(bindCalls, [{ sid: 'S1', taskId: null }]);
 });
 
-test('resume: a session whose task is live (or unassigned) binds memory to the task normally, no unassign', async () => {
+test('resume: a session whose task is live (or unassigned) keeps its assignment, no unassign', async () => {
   const entry = { cwd: os.tmpdir(), socket: 'sockR' };
   const c = handlerCtx(entry);
-  const bindCalls = [];
-  c.memoryStore = { bindSession: (sid, taskId) => bindCalls.push({ sid, taskId }) };
   const unassignCalls = [];
   c.taskStore = { taskFor: () => ({ id: 'T1', name: 'Login' }), isAssignedToArchivedTask: () => false, unassign: (sid) => unassignCalls.push(sid) };
   await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
   assert.deepEqual(unassignCalls, []);
-  assert.deepEqual(bindCalls, [{ sid: 'S1', taskId: 'T1' }]);
 });
 
 test('resume: a note-less dormant wake resumes and never prefills', async () => {

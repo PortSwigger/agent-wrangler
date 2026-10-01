@@ -22,7 +22,6 @@ function deps({ mailStore, live = {}, entries = {} } = {}) {
     },
     tmuxFor: (id) => live[id]?.tmux ?? null,
     socketFor: (id) => live[id]?.socket ?? '',
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     mcpSeenAt: () => Date.now(),
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },

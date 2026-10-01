@@ -1101,6 +1101,33 @@ test('api.requestBoardRender calls the base api and tolerates its absence', () =
   assert.equal(n, 1);
 });
 
+
+// ── api.ui.markdownPreview ───────────────────────────────────────────────────
+function uiHarness(base) {
+  const h = harness();
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, base);
+  return { ...h, api: captured };
+}
+
+test('ui.markdownPreview delegates to the base api and returns its HTML', () => {
+  const { api } = uiHarness({ markdownPreview: (md) => `<p>${md}</p>` });
+  assert.equal(api.ui.markdownPreview('hi'), '<p>hi</p>');
+  assert.ok(Object.isFrozen(api.ui));
+});
+
+test('ui.markdownPreview refuses a non-string, reports it, and gives an empty string', () => {
+  const { api, errors } = uiHarness({ markdownPreview: () => 'x' });
+  assert.equal(api.ui.markdownPreview(42), '');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /\[ext:fake\] ui\.markdownPreview refused/);
+});
+
+test('ui.markdownPreview is empty when the base api has no renderer', () => {
+  assert.equal(uiHarness({}).api.ui.markdownPreview('x'), '');
+});
+
 test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elements, and clears on removeExtension', () => {
   const { slots, errors } = harness();
   const attrs = () => {

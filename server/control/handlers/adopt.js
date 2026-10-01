@@ -95,7 +95,6 @@ export async function adoptConversation(msg, ctx, {
     // PROMPTS (resume-needs-dir: the transcript's dir is gone) doesn't throw; that
     // card is deliberately kept, so answering the prompt resumes it in place.
     ctx.sessionManager.forget(sessionId);
-    ctx.memoryStore.forget(sessionId);
     await ctx.rebuild();
     fail(ctx, liveSessionId, String(err?.message || err));
     return;

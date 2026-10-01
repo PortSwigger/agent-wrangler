@@ -8,8 +8,7 @@ import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor } from './runtimes/index.js';
-import { containerIdFor } from './runtimes/devcontainer.js';
-import { addDirFor, linkPathFor, resolvedMemoryBindingFor } from './memory-store.js';
+import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
@@ -387,7 +386,7 @@ export class SessionManager {
     // Seam (like _ensureCodexTrust) for archive()'s fire-and-forget "review this
     // transcript into task memory" side effect — a no-op by default so every
     // existing archive-path test stays inert; server/index.js binds the real
-    // runArchiveReview (server/archive-review-runner.js) with memoryStore
+    // runArchiveReview (server/archive-review-runner.js) with the event bus
     // injected, keeping this class free of that dependency.
     this._archiveReview = async () => 'skipped';
     // Seam (same mould as _archiveReview) for archive()'s mailbox pruning —
@@ -400,6 +399,16 @@ export class SessionManager {
     // core operation: a hook throw is logged (event-only — these run on
     // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
     this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    // Seam (same mould) for the `session.launchContext` hook
+    // (server/launch-context.js): asked by dispatch/resume/fork BEFORE the launch
+    // command is built, answering the `{ env, addDirs }` the enabled extensions
+    // add to the agent process. server/index.js binds collectLaunchContext with
+    // the loader and façades closed over; the default answers nothing, so every
+    // existing launch is byte-identical and every test stays inert.
+    this._launchContext = async () => ({ env: {}, addDirs: [] });
+    // Seam for "which task is this session on" — session-manager does not know
+    // the task store. Bound to taskStore.taskFor by server/index.js.
+    this._taskFor = () => null;
     // Seam (same mould) for per-launch skill gating: server/index.js binds
     // createSkillGate (server/extensions/index.js) with the extension stores
     // closed over, and dispatch/resume/fork consult it BEFORE building the
@@ -418,6 +427,23 @@ export class SessionManager {
     for (const fn of this._extHooks[name] || []) {
       try { await fn(payload); } catch (err) { logError(`[ext-hook:${name}]`, err); }
     }
+  }
+
+  // The launch context for a session that is NOT being launched through this
+  // class right now — a running session re-pointed at another task (`assign`),
+  // or one the server adopts at boot (`adopt`). The extensions' hooks still run
+  // (task-memory repoints its symlink); the caller discards the result unless it
+  // wants the granted dirs. Agent, runtime and task default to what the mapping
+  // and the task store say.
+  async launchContext(sessionId, reason, { task } = {}) {
+    const entry = this.map.get(sessionId);
+    return this._launchContext({
+      sid: sessionId,
+      task: task !== undefined ? task : (this._taskFor(sessionId) || null),
+      agent: entry?.agent || 'claude',
+      runtime: entry?.runtime || 'local',
+      reason,
+    });
   }
 
   entryFor(sessionId) {
@@ -1045,14 +1071,20 @@ export class SessionManager {
       dir = lp.dir;
     }
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
-    const memory = resolvedMemoryBindingFor(sessionId);
+    // Awaited before the command is built: the hook may bind state (task-memory
+    // repoints the session's symlink) that the launch reads. A resume's reason is
+    // passed through when it is one a hook distinguishes, else plain 'resume'.
+    const launchContext = await this._launchContext({
+      sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
+      reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
+    });
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
     const inner = adapter.buildResume({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
       addDirs,
-      ...memory,
+      launchContext,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
       // issue-to-pr skill plugin so a suspended/rebooted autopilot run keeps it —
       // see shouldReloadWorkflowSkill for what disqualifies a worker (modern or
@@ -1066,7 +1098,7 @@ export class SessionManager {
       disabledSkills,
       codexPolicy,
     });
-    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow) });
+    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     await this._newSession(tmux, dir, launchCmd, this.socket);
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
@@ -1095,7 +1127,7 @@ export class SessionManager {
   // the LIVE conversation id to branch from; the caller resolves it as
   // liveSessionId||sessionId so a previously-resumed session forks from its
   // current state, not a frozen owner-id transcript.
-  async fork({ sourceId, parentId, parentEntry, cwd, prompt = '', name = '', bindMemory } = {}) {
+  async fork({ sourceId, parentId, parentEntry, cwd, prompt = '', name = '' } = {}) {
     const agent = parentEntry?.agent || 'claude';
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
@@ -1108,9 +1140,12 @@ export class SessionManager {
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
-    // Bind before building the command: Codex needs the resolved real task dir,
-    // while Claude continues to derive and use the stable per-session symlink.
-    const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    // The fork lands in its parent's task, so the launch context is asked with
+    // that task before the command is built (an extension that binds per-task
+    // state, like task-memory, must see it first).
+    const launchContext = await this._launchContext({
+      sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork',
+    });
     const addDirs = await withCodexGitDirAddDir(agent, dir, []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
@@ -1122,12 +1157,12 @@ export class SessionManager {
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
-      ...memory,
+      launchContext,
       disabledSkills,
       codexPolicy,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
-      inner, cwd: dir, sessionId, worktree: parentEntry?.worktree,
+      inner, cwd: dir, sessionId, worktree: parentEntry?.worktree, launchContext,
     });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -1235,19 +1270,22 @@ export class SessionManager {
     return { sessionId, adopted: true };
   }
 
-  // Re-copy the per-task notes into a live devcontainer session's container. Host
-  // sessions follow a reassignment for free (the agent reads through the repointed
-  // by-session symlink); a devcontainer session's notes were COPIED in at launch, so
-  // a reassignment must re-copy notes.md to keep the in-container notes current.
+  // Re-copy the extension-granted directories (`launchContext.addDirs`, e.g.
+  // task-memory's notes) into a live devcontainer session's container. Host
+  // sessions follow a reassignment for free (the agent reads through the
+  // repointed symlink); a devcontainer session's dirs were COPIED in at launch,
+  // so a reassignment must re-copy them to keep the in-container copy current.
   // No-op unless the entry is a devcontainer runtime with a running container (a
-  // stopped/dormant container yields no cid → skip; best-effort). `run` is injectable
-  // for tests (default: the module's promisified execFile).
-  async syncNotesToContainer(sessionId, { run = exec } = {}) {
+  // stopped/dormant container yields no cid → skip; best-effort). `run` is
+  // injectable for tests (default: the module's promisified execFile).
+  async syncNotesToContainer(sessionId, { run = exec, addDirs = [] } = {}) {
     const entry = this.map.get(sessionId);
-    if (!entry || entry.runtime !== 'devcontainer' || !entry.cwd) return;
+    if (!entry || entry.runtime !== 'devcontainer' || !entry.cwd || !addDirs.length) return;
     const cid = await containerIdFor(entry.cwd, run);
     if (!cid) return;
-    await run('docker', ['cp', '-L', linkPathFor(sessionId), `${cid}:/tmp/aw-${sessionId}/notes`]);
+    for (const [i, src] of addDirs.entries()) {
+      await run('docker', ['cp', '-L', src, `${cid}:${launchDirDest(sessionId, i)}`]);
+    }
   }
 
   _load() {
@@ -1546,7 +1584,7 @@ export class SessionManager {
     return dir;
   }
 
-  async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], bindMemory,
+  async dispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext } = {}) {
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
@@ -1602,11 +1640,13 @@ export class SessionManager {
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
-    // Bind before building the command. Claude uses the stable by-session link;
-    // Codex 0.149+ rejects symlinked writable roots, so its adapter receives the
-    // resolved real task/scratch directory returned by the binder. dispatch mints
-    // sessionId, hence callers still provide a binder rather than a prebuilt path.
-    const memory = bindMemory?.(sessionId) || resolvedMemoryBindingFor(sessionId);
+    // The launch context (env + directory grants from the enabled extensions),
+    // collected before the command is built. dispatch mints sessionId, so the
+    // caller names the task by `taskId` (before its own assign lands) rather than
+    // handing in anything pre-built.
+    const launchContext = await this._launchContext({
+      sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
+    });
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
@@ -1626,8 +1666,8 @@ export class SessionManager {
     });
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, ...memory, disabledSkills, codexPolicy });
-    const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill });
+    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy });
+    const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
 

@@ -17,7 +17,7 @@ import { sendText as defaultSendText } from './tmux-scraper.js';
 // fakes, mirroring dispatch-runner. Keyed on the card id throughout (action.sessionId
 // is the board handle, never a conversation id).
 export async function runSessionAction(action, deps) {
-  const { sessionManager, tmuxFor, socketFor, memoryStore, taskStore } = deps;
+  const { sessionManager, tmuxFor, socketFor } = deps;
   const sendText = deps.sendText ?? defaultSendText;
   const id = action.sessionId;
 
@@ -50,9 +50,6 @@ export async function runSessionAction(action, deps) {
   if (!dir || !fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
   }
-  // Bind memory BEFORE the relaunch so the resumed agent's AW_TASK_MEMORY /
-  // --add-dir resolve at boot, keyed on the stable card id (matches resume.js).
-  memoryStore.bindSession(id, taskStore.taskFor(id)?.id || null);
   await sessionManager.resume(id, dir, { intent: message, reason: 'schedule' });
   return { sessionId: id };
 }

@@ -75,7 +75,6 @@ function makeCtx({ live, sessionLinks = [], taskLinks = [] }) {
       getLinks: () => sessionLinks,
       resume: async () => { calls.resumed += 1; calls.order.push('resume'); isLive = true; return { tmux: 'cc_1' }; },
     },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => ({ id: 'T1' }), getLinks: () => taskLinks },
     rebuild: async () => {},
     tmuxFor: () => (isLive ? 'cc_1' : null),

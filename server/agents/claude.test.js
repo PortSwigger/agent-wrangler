@@ -94,9 +94,10 @@ test('an extension-shipped skill is a --plugin-dir on every launch path, and the
 });
 
 test('a plain launch still carries --append-system-prompt for the mandatory-skill nudge (task memory)', () => {
-  // taskMemory pinned so this doesn't depend on the live config.json (the
-  // disabled path is covered in agent-skills.test.js).
-  const plain = claude.buildLaunch({ sessionId: 'SID', taskMemory: true });
+  // The nudge comes from the task-memory extension's own skill, so it is there
+  // while that extension is enabled (the default); the disabled path is covered
+  // in agent-skills.test.js.
+  const plain = claude.buildLaunch({ sessionId: 'SID' });
   assert.match(plain, /--append-system-prompt/);
   assert.match(plain, /AW_TASK_MEMORY/);
   assert.doesNotMatch(plain, /already running inside a dedicated git worktree/);

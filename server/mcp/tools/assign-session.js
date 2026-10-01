@@ -4,9 +4,8 @@ import { descendantsOf } from '../../control/handlers/archive.js';
 // Move a session (default: the caller) onto a task, or back to Ad-hoc — the
 // session-to-session counterpart of dragging a card onto a task tile. Mirrors
 // the /ws task-assign handler (server/control/handlers/tasks.js): assign, then
-// rebind memory to the new task's file (or scratch, for Ad-hoc) BEFORE rebuilding.
-// A running Claude follows the repointed symlink immediately; Codex uses a real
-// launch-time path and follows the new binding on its next relaunch. Also
+// tell the extensions (the `assign` launch-context reason) BEFORE rebuilding, so
+// per-task state — task-memory's symlink — follows the new task. Also
 // cascades to the target's transitive parentSession family (same as the ws
 // handler) so a parent doesn't leave its children assigned to the old task.
 export const assignSessionTool = {
@@ -32,7 +31,7 @@ export const assignSessionTool = {
       return errorResult(`Unknown task ${taskId} — check list_tasks for valid ids.`);
     }
     if (!taskId) deps.taskStore.assign(target, null);
-    deps.memoryStore.bindSession(target, taskId);
+    await deps.sessionManager.launchContext(target, 'assign');
 
     // Move the target's whole transitive parentSession family along with it — a
     // child left assigned to the old task would otherwise render as an orphaned
@@ -40,7 +39,7 @@ export const assignSessionTool = {
     const sessions = deps.graph?.()?.sessions || [];
     for (const child of descendantsOf(target, sessions)) {
       deps.taskStore.assign(child.sessionId, taskId);
-      deps.memoryStore.bindSession(child.sessionId, taskId);
+      await deps.sessionManager.launchContext(child.sessionId, 'assign');
     }
 
     await deps.rebuild?.();

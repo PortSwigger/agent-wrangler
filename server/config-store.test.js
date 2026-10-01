@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -104,37 +104,28 @@ test('prStatusPollSeconds ignores a non-positive / non-number override', () => {
   });
 });
 
-// Tested via cfg injection, never the real file: writing taskMemoryEnabled:false
-// here (even transiently) races the claude/codex launch tests, which read the
-// live default in parallel `node --test` processes.
-test('taskMemoryEnabled defaults to on; only an explicit false disables', () => {
-  assert.equal(taskMemoryEnabled({}), true);
-  assert.equal(taskMemoryEnabled({ taskMemoryEnabled: true }), true);
-  assert.equal(taskMemoryEnabled({ taskMemoryEnabled: false }), false);
-});
-
-// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 test('subagentsExpandedByDefault defaults to off (collapsed); only an explicit true enables', () => {
   assert.equal(subagentsExpandedByDefault({}), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: false }), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: true }), true);
 });
 
-// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 test('trustCodexLaunchCwd defaults to on; only an explicit false disables', () => {
   assert.equal(trustCodexLaunchCwd({}), true);
   assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: true }), true);
   assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: false }), false);
 });
 
-// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 test('childFullViewByDefault defaults to off (compact); only an explicit true enables', () => {
   assert.equal(childFullViewByDefault({}), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: false }), false);
   assert.equal(childFullViewByDefault({ childFullViewByDefault: true }), true);
 });
 
-// Tested via cfg injection, never the real file — same reasoning as taskMemoryEnabled.
+// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 // Default OFF (unlike most of these): archive review spends real money per
 // archive and grows a task's memory.md unbounded, so it must be an explicit opt-in.
 test('archiveReviewEnabled defaults to off; only an explicit true enables', () => {
@@ -177,6 +168,11 @@ test('migrateRetiredFlags: an explicit extensions.checklist wins and siblings su
     migrateRetiredFlags({ checklistEnabled: false, extensions: { other: false } }).cfg,
     { extensions: { other: false, checklist: false } },
   );
+});
+
+test('migrateRetiredFlags: taskMemoryEnabled false disables the task-memory extension; true just drops the key', () => {
+  assert.deepEqual(migrateRetiredFlags({ taskMemoryEnabled: false }), { cfg: { extensions: { 'task-memory': false } }, changed: true });
+  assert.deepEqual(migrateRetiredFlags({ taskMemoryEnabled: true }), { cfg: {}, changed: true });
 });
 
 test('migrateRetiredFlags: idempotent, and a missing key is a no-op that reports no change', () => {

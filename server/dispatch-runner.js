@@ -6,7 +6,7 @@ import { slugFromIntent } from './worktree.js';
 // The shared "perform a dispatch" routine, extracted verbatim from the dispatch
 // control handler so the scheduler fires the EXACT same path — a scheduled
 // dispatch and a manual one can't drift. It mints the card id (via
-// sessionManager.dispatch, which runs bindMemory pre-launch), wraps the autopilot
+// sessionManager.dispatch, which collects the launch context pre-launch), wraps the autopilot
 // issue, forces an auto worktree for workflow runs, and assigns the task. It does
 // NOT rebuild or reply — callers (the /ws handler, the firing engine) own that.
 //
@@ -33,7 +33,7 @@ export function nestedParentError(sessionManager, parentSessionId) {
   return null;
 }
 
-export async function runDispatch(opts, { sessionManager, taskStore, memoryStore }, now = Date.now()) {
+export async function runDispatch(opts, { sessionManager, taskStore }, now = Date.now()) {
   const nestErr = nestedParentError(sessionManager, opts.parentSession);
   if (nestErr) throw new Error(nestErr);
   // Both callers can carry an agent/model this install doesn't offer, and both
@@ -81,10 +81,10 @@ export async function runDispatch(opts, { sessionManager, taskStore, memoryStore
     // (`ext.<extId>`), handed to each extension's onBeforeDispatch as its own
     // slice. A scheduled dispatch stores the payload whole, so it rides along.
     ext: opts.ext && typeof opts.ext === 'object' && !Array.isArray(opts.ext) ? opts.ext : undefined,
-    // Bind memory before the process launches, keyed on the chosen task
-    // (opts.taskId, before the assign below lands). Claude launches through the
-    // stable symlink; Codex consumes bindSession's returned real target.
-    bindMemory: (sid) => memoryStore.bindSession(sid, opts.taskId || null),
+    // The chosen task, handed to dispatch so the launch context
+    // (session.launchContext) sees it before the process launches — i.e. before
+    // the assign below lands.
+    taskId: opts.taskId || undefined,
   });
   // Optional task targeting: assign is a no-op if the task was deleted between
   // saving and firing, so the session just falls back to Ad hoc.

@@ -9,7 +9,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 function harness(result = { mode: 'live' }) {
   const calls = [];
-  const deps = { sessionManager: 'SM', memoryStore: 'MS', taskStore: 'TS', tmuxFor: 'T', socketFor: 'S' };
+  const deps = { sessionManager: 'SM', taskStore: 'TS', tmuxFor: 'T', socketFor: 'S' };
   const deliver = createExtDeliver(deps, {
     deliverMessage: (id, text, d, opts) => { calls.push({ id, text, d, opts }); return result; },
   });

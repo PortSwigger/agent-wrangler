@@ -19,7 +19,6 @@ test('each registered setting appears in exactly one tab', () => {
   assert.equal(settingIds.length, new Set(settingIds).size);
   assert.deepEqual(new Set(settingIds), new Set([
     'terminalSide',
-    'taskMemoryEnabled',
     'subagentsExpandedByDefault',
     'soundOnFinish',
     'childFullViewByDefault',

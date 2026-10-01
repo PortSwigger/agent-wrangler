@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import { codex } from './codex.js';
 import { adapterForContainerProcess } from './index.js';
 
-const memory = { memoryDir: '/memory/tasks/T1', memoryPath: '/memory/tasks/T1/memory.md' };
+// What the task-memory extension's session.launchContext hook answers for Codex
+// (the resolved real path — Codex 0.149+ rejects a symlinked writable root).
+const memory = { launchContext: { env: { AW_TASK_MEMORY: '/memory/tasks/T1/memory.md' }, addDirs: ['/memory/tasks/T1'] } };
 const base = { sessionId: 'BID', model: 'gpt-5.5-codex', ...memory };
 
 // NOTE: every arg is shell-quoted via shellQuote(), so flags AND the
 // resume/fork subcommands appear quoted, e.g. `'-m' 'gpt-5.5-codex'` and
 // `codex 'resume' 'ROLL-UUID'`. Env assignments quote only the value
-// (`AW_SESSION_ID='BID'`) and the `codex` binary name is unquoted. Codex receives
-// the resolved real task directory because 0.149+ rejects symlinked writable roots.
+// (`AW_SESSION_ID='BID'`) and the `codex` binary name is unquoted. Extension env
+// comes first and core's after, so core always wins a name collision.
 
 test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
-  // taskMemory pinned so the nudge/catalog assertions don't depend on the live
-  // config.json (the disabled path is covered in agent-skills.test.js).
-  const cmd = codex.buildLaunch({ ...base, intent: 'fix the bug', addDirs: [], taskMemory: true });
-  assert.match(cmd, /^AW_SESSION_ID='BID'/);
+  const cmd = codex.buildLaunch({ ...base, intent: 'fix the bug', addDirs: [] });
+  assert.match(cmd, /^AW_TASK_MEMORY='\/memory\/tasks\/T1\/memory.md' AW_SESSION_ID='BID'/);
   assert.match(cmd, /AW_TASK_MEMORY='\/memory\/tasks\/T1\/memory.md'/);
   assert.match(cmd, /(^|\s)codex /);
   assert.match(cmd, /'-m' 'gpt-5\.5-codex'/);
@@ -83,14 +83,14 @@ test('worktree guardrail is folded into developer_instructions only when launche
 });
 
 test('developer_instructions carries the mandatory-skill nudge and the skills catalog as a TOML string', () => {
-  const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: [], taskMemory: true });
+  const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: [] });
   assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
   assert.match(cmd, /You have wrangler-meta skills available/);
 });
 
 test('codex resume and fork also carry the nudge + skills catalog in developer_instructions', () => {
-  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', taskMemory: true, ...memory });
-  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', model: 'gpt-5.5', taskMemory: true, ...memory });
+  const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory });
+  const fork = codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', model: 'gpt-5.5', ...memory });
   for (const cmd of [resume, fork]) {
     assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
     assert.match(cmd, /You have wrangler-meta skills available/);

@@ -5,6 +5,7 @@ import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
+import { createEventBus } from '../events.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
@@ -21,8 +22,12 @@ function wiring(overrides = {}) {
         recordPriorLiveSessionId: () => true,
       },
       taskStore: { taskFor: () => null, snapshot: () => ({ tasks: [] }), assign: () => {} },
-      memoryStore: { read: () => '', hasMemory: () => false, append: () => {}, bindSession: () => {} },
     },
+    // `memory.*` is provided by the task-memory extension's store while it is
+    // active; the default wiring has one, a test passes `memoryProvider: () => null`
+    // for the disabled case.
+    memoryProvider: () => ({ read: () => 'md', hasMemory: () => true, append: () => {} }),
+    events: createEventBus(),
     deliver: () => {},
     rebuild: () => {},
     broadcast: () => {},
@@ -64,7 +69,7 @@ test('capabilities sharing a namespace merge into one object', () => {
 test('the facade and every nested sub-object are frozen', () => {
   const host = buildHostApi({ id: 'x', requires: [...CAPABILITIES], ...wiring() });
   assert.ok(Object.isFrozen(host));
-  for (const key of ['sessions', 'tasks', 'memory', 'mail', 'schedules', 'terminals', 'stores', 'settings']) {
+  for (const key of ['sessions', 'tasks', 'memory', 'events', 'mail', 'schedules', 'terminals', 'stores', 'settings']) {
     assert.ok(Object.isFrozen(host[key]), key);
   }
   assert.throws(() => { host.rebuild = () => {}; }, TypeError);
@@ -194,13 +199,10 @@ test('sessions:interrupt passes the card id straight to the composed interruptSe
 // does around it, so a test can assert the NAMES the options arrive under —
 // the whole point of the builder is that it is the translation layer.
 function spawnWiring() {
-  const seen = { dispatch: [], assigned: [], bound: [], autoFix: [] };
+  const seen = { dispatch: [], assigned: [], autoFix: [] };
   const w = wiring();
   w.core.sessionManager.dispatch = async (opts) => {
     seen.dispatch.push(opts);
-    // dispatch mints the card id, which is why a BINDER is passed rather than a
-    // path — call it here as the real one does, before the launch.
-    opts.bindMemory?.('NEWCARD');
     return { sessionId: 'NEWCARD', tmux: 'cc_new', cwd: opts.cwd || '/a' };
   };
   w.core.sessionManager.entryFor = (id) => (id === 'NEWCARD'
@@ -208,7 +210,6 @@ function spawnWiring() {
     : null);
   w.core.sessionManager.setAutoFixPrChecks = (sid, on) => seen.autoFix.push({ sid, on });
   w.core.taskStore.assign = (sid, taskId) => seen.assigned.push({ sid, taskId });
-  w.core.memoryStore.bindSession = (sid, taskId) => seen.bound.push({ sid, taskId, dispatched: seen.dispatch.length });
   return { seen, host: buildHostApi({ id: 'x', requires: ['sessions:spawn'], ...w }) };
 }
 
@@ -245,7 +246,8 @@ test('spawn with no worktree option asks dispatch for none', async () => {
   assert.equal(opts.worktree, undefined);
   assert.equal('addDirs' in opts, false);
   assert.equal('autoMergeOnPass' in opts, false);
-  assert.equal(opts.bindMemory, undefined);
+  assert.equal('taskId' in opts, false, 'no task asked for, none forwarded');
+  assert.equal(opts.launchReason, 'spawn');
 });
 
 test('spawn returns the resolved worktree summary beside the dispatch result', async () => {
@@ -258,13 +260,13 @@ test('spawn returns the resolved worktree summary beside the dispatch result', a
   assert.equal('createdAt' in res.worktree, false, 'a summary, not the stored record');
 });
 
-test('spawn taskId binds memory BEFORE launch and assigns the task after', async () => {
+test('spawn taskId rides dispatch (the launch context reads it BEFORE launch) and assigns the task after', async () => {
   const { seen, host } = spawnWiring();
   await host.sessions.spawn({ cwd: '/repo', taskId: 't1' });
-  // `dispatched: 0` is the assertion that matters: the binder ran inside
-  // dispatch, before the pane, which a tasks.assign afterwards cannot replace
-  // for Codex (it resolves its writable roots once, at launch).
-  assert.deepEqual(seen.bound, [{ sid: 'NEWCARD', taskId: 't1', dispatched: 1 }]);
+  // The task has to reach dispatch itself, before the pane: a tasks.assign
+  // afterwards cannot replace it for Codex (it resolves its writable roots once,
+  // at launch), so the launch context must already know the task.
+  assert.equal(seen.dispatch[0].taskId, 't1');
   assert.deepEqual(seen.assigned, [{ sid: 'NEWCARD', taskId: 't1' }]);
 });
 
@@ -394,4 +396,68 @@ test('tasks:read serves the Unassigned id, equal to the core ADHOC constant', as
   const host = buildHostApi({ id: 'x', requires: ['tasks:read'], ...wiring() });
   assert.equal(host.tasks.adhocId, ADHOC);
   assert.equal(host.tasks.adhocId, 'adhoc');
+});
+
+// -- memory (provided by the task-memory extension) -------------------------
+test('memory.* delegates to the provider while the task-memory extension is active', () => {
+  const calls = [];
+  const store = { read: (t) => `md:${t}`, hasMemory: (t) => t === 'has', append: (t, x) => calls.push([t, x]) };
+  const host = buildHostApi({ id: 'x', requires: ['memory:read', 'memory:append'], ...wiring({ memoryProvider: () => store }) });
+  assert.equal(host.memory.read('T1'), 'md:T1');
+  assert.equal(host.memory.has('has'), true);
+  assert.equal(host.memory.append('T1', 'hello'), true);
+  assert.deepEqual(calls, [['T1', 'hello']]);
+});
+
+test('memory.* is "not available" — null / false, plus a logged warning — when the extension is disabled', () => {
+  const logged = [];
+  const host = buildHostApi({ id: 'x', requires: ['memory:read', 'memory:append'], ...wiring({ memoryProvider: () => null, log: (m) => logged.push(m) }) });
+  assert.equal(host.memory.read('T1'), null);
+  assert.equal(host.memory.has('T1'), false);
+  assert.equal(host.memory.append('T1', 'x'), false);
+  assert.equal(logged.length, 3);
+  assert.match(logged[0], /\[ext:x\] memory\.read: the task-memory extension is not enabled/);
+});
+
+test('memory.* follows the provider LIVE: enabling the extension later makes it work without rebuilding the facade', () => {
+  let store = null;
+  const host = buildHostApi({ id: 'x', requires: ['memory:read'], ...wiring({ memoryProvider: () => store, log: () => {} }) });
+  assert.equal(host.memory.read('T1'), null);
+  store = { read: () => 'now', hasMemory: () => true };
+  assert.equal(host.memory.read('T1'), 'now');
+});
+
+// -- events -----------------------------------------------------------------
+test('events: on() subscribes under the extension id; emit() is FORCED under ext:<id>: and cannot forge a core event', () => {
+  const events = createEventBus();
+  const a = buildHostApi({ id: 'a', requires: ['events'], ...wiring({ events }) });
+  const b = buildHostApi({ id: 'b', requires: ['events'], ...wiring({ events }) });
+  const coreSeen = [];
+  const bSeen = [];
+  events.on('archive-review:completed', (p) => coreSeen.push(p));
+  b.events.on('ext:a:ping', (p) => bSeen.push(p));
+  assert.equal(a.events.emit('archive-review:completed', { forged: true }), 0, 'lands under ext:a:..., not the core name');
+  assert.deepEqual(coreSeen, []);
+  assert.equal(a.events.emit('ping', 1), 1);
+  assert.deepEqual(bSeen, [1]);
+  assert.throws(() => a.events.emit('', 1), /name must be a non-empty string/);
+  assert.throws(() => a.events.on('x', 'nope'), /handler must be a function/);
+});
+
+test('events: delivery to an extension stops when it is deactivated (offOwner) or reported inactive', () => {
+  const active = new Set(['a', 'b']);
+  const events = createEventBus({ isActive: (id) => active.has(id) });
+  const a = buildHostApi({ id: 'a', requires: ['events'], ...wiring({ events }) });
+  const b = buildHostApi({ id: 'b', requires: ['events'], ...wiring({ events }) });
+  const seen = [];
+  a.events.on('core:thing', () => seen.push('a'));
+  b.events.on('core:thing', () => seen.push('b'));
+  events.emit('core:thing');
+  assert.deepEqual(seen, ['a', 'b']);
+  active.delete('a'); // disabled, even before its subscriptions are dropped
+  events.emit('core:thing');
+  assert.deepEqual(seen, ['a', 'b', 'b']);
+  events.offOwner('b');
+  events.emit('core:thing');
+  assert.deepEqual(seen, ['a', 'b', 'b']);
 });

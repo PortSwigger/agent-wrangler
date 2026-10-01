@@ -40,14 +40,6 @@ export const SETTINGS = [
     default: false,
   },
   {
-    id: 'taskMemoryEnabled',
-    type: 'toggle',
-    scope: 'server',
-    label: 'Task memory / notes',
-    help: 'Shared per-task notes agents are asked to read at session start. Off hides the tile button and stops instructing agents to read the file; existing notes are kept.',
-    default: true,
-  },
-  {
     id: 'subagentsExpandedByDefault',
     type: 'toggle',
     scope: 'server',
@@ -121,7 +113,7 @@ export const SETTINGS_TABS = [
     id: 'sessions',
     label: 'Sessions',
     settingIds: [
-      'taskMemoryEnabled', 'subagentsExpandedByDefault', 'soundOnFinish',
+      'subagentsExpandedByDefault', 'soundOnFinish',
       'childFullViewByDefault', 'chatViewDefault',
     ],
   },

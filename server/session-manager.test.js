@@ -11,7 +11,6 @@ import {
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
 import { readBranch } from './state-reader.js';
-import { linkPathFor, addDirFor } from './memory-store.js';
 import { writeConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 
@@ -529,28 +528,46 @@ test('shouldReloadWorkflowSkill: false for a legacy pre-migration worker marker 
   assert.equal(shouldReloadWorkflowSkill({ parent: 'ORCH1' }), false);
 });
 
-test('buildInnerCommand injects identity + scoped memory access, intent trailing', () => {
+test('buildInnerCommand injects identity + the launch context\'s env and grants, intent trailing', () => {
   const sessionId = 'sid-123';
+  // What the task-memory extension's hook answers: memory.md inside the
+  // per-session symlink, and that same per-session dir as the one --add-dir
+  // (scoped — not the whole memory tree).
+  const launchContext = {
+    env: { AW_TASK_MEMORY: `/m/by-session/${sessionId}/memory.md` },
+    addDirs: [`/m/by-session/${sessionId}`],
+  };
   const cmd = buildInnerCommand({
     args: ['--session-id', sessionId, '--permission-mode', 'auto'],
     intent: 'fix the bug',
     sessionId,
-    taskMemory: true, // pin so the nudge assertion doesn't depend on the live config.json
+    launchContext,
   });
   assert.match(cmd, /AW_SESSION_ID='sid-123'/);
-  // AW_TASK_MEMORY is memory.md inside the per-session symlink; --add-dir is that
-  // same per-session dir (scoped — not the whole memory tree).
-  assert.ok(cmd.includes(`AW_TASK_MEMORY='${linkPathFor(sessionId)}'`));
-  assert.ok(cmd.includes(`'--add-dir' '${addDirFor(sessionId)}'`));
+  assert.ok(cmd.includes(`AW_TASK_MEMORY='/m/by-session/${sessionId}/memory.md'`));
+  assert.ok(cmd.includes(`'--add-dir' '/m/by-session/${sessionId}'`));
   // memory/links are wrangler-meta skills now, loaded via --plugin-dir; the
   // appended system prompt on a plain, non-worktree launch carries only the
   // task-memory mandatory-skill nudge, not the worktree guardrail.
   assert.match(cmd, /--append-system-prompt/);
   assert.doesNotMatch(cmd, /already running inside a dedicated git worktree/);
   assert.match(cmd, /'--plugin-dir' '[^']*\/agent-skills'/);
-  // Env assignments lead, the binary is `claude`, and the intent trails last.
-  assert.match(cmd, /^AW_SESSION_ID=.* AW_TASK_MEMORY=.* claude /);
+  // Env assignments lead — the extension's first, core's after, so core wins a
+  // collision — the binary is `claude`, and the intent trails last.
+  assert.match(cmd, /^AW_TASK_MEMORY=.* AW_SESSION_ID=.* claude /);
   assert.ok(cmd.trimEnd().endsWith(`'fix the bug'`));
+});
+
+test('buildInnerCommand with NO launch context carries no env var and no grant from any extension', () => {
+  const cmd = buildInnerCommand({ args: ['--permission-mode', 'auto'], sessionId: 'sid-1' });
+  assert.doesNotMatch(cmd, /AW_TASK_MEMORY='/);
+  assert.doesNotMatch(cmd, /--add-dir/);
+  assert.match(cmd, /^AW_SESSION_ID='sid-1' /);
+});
+
+test('buildInnerCommand: a launch-context env var cannot override core\'s AW_SESSION_ID (core assigns last)', () => {
+  const cmd = buildInnerCommand({ args: [], sessionId: 'real', launchContext: { env: { AW_SESSION_ID: 'forged' }, addDirs: [] } });
+  assert.ok(cmd.indexOf("AW_SESSION_ID='forged'") < cmd.indexOf("AW_SESSION_ID='real'"));
 });
 
 test('buildInnerCommand injects AW_SPAWNER_SESSION_ID when spawnedBy is set', () => {
@@ -627,7 +644,7 @@ test('fork: a devcontainer parent forks into a devcontainer-wrapped launch', asy
   sm.refreshAlive = async () => {};
   let captured;
   sm._newSession = async (_tmux, _dir, inner) => { captured = inner; };
-  await sm.fork({ sourceId: 'L0', parentId: 'p', parentEntry: { agent: 'claude', runtime: 'devcontainer' }, cwd: dir, bindMemory() {} });
+  await sm.fork({ sourceId: 'L0', parentId: 'p', parentEntry: { agent: 'claude', runtime: 'devcontainer' }, cwd: dir });
   assert.match(captured, /devcontainer up --workspace-folder/);
   assert.ok(captured.includes(dir));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1511,13 +1528,11 @@ test('dispatch stamps entry.workflow from the workflow opt', async () => {
 
 test('dispatch merges onto an entry an early setWorkflowPhase adopted, without clobbering it', async () => {
   const sm = smForDispatch();
-  // No workflow opt, but a phase is reported pre-map.set via the bindMemory hook
-  // (which fires before the entry is written) — it must survive the dispatch write,
-  // while the real launch fields win over the adopted stub's placeholders.
-  const { sessionId } = await sm.dispatch({
-    cwd: os.tmpdir(), intent: 'hello',
-    bindMemory: (sid) => sm.setWorkflowPhase(sid, { label: 'planning', kind: 'active' }),
-  });
+  // No workflow opt, but a phase is reported pre-map.set via the launch-context
+  // seam (which fires before the entry is written) — it must survive the dispatch
+  // write, while the real launch fields win over the adopted stub's placeholders.
+  sm._launchContext = async ({ sid }) => { sm.setWorkflowPhase(sid, { label: 'planning', kind: 'active' }); return { env: {}, addDirs: [] }; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'hello' });
   const e = sm.map.get(sessionId);
   assert.equal(e.workflow.phase.label, 'planning'); // adopted phase preserved
   assert.equal(e.intent, 'hello');
@@ -1527,10 +1542,8 @@ test('dispatch merges onto an entry an early setWorkflowPhase adopted, without c
 test('dispatch: the launch workflow opt wins over an early adopted phase', async () => {
   const sm = smForDispatch();
   const wf = { issue: 'ENT-9', phase: { label: 'starting', kind: 'active', at: 1 }, startedAt: 1 };
-  const { sessionId } = await sm.dispatch({
-    cwd: os.tmpdir(), intent: 'x', workflow: wf,
-    bindMemory: (sid) => sm.setWorkflowPhase(sid, { label: 'planning' }),
-  });
+  sm._launchContext = async ({ sid }) => { sm.setWorkflowPhase(sid, { label: 'planning' }); return { env: {}, addDirs: [] }; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', workflow: wf });
   assert.deepEqual(sm.map.get(sessionId).workflow, wf);
 });
 
@@ -1610,17 +1623,19 @@ test('dispatch rejects an invalid auto-compaction threshold before launching', a
   assert.equal(launched, false);
 });
 
-test('dispatch passes Codex the real task memory root, never the by-session symlink', async () => {
+test('dispatch builds the command from whatever the launch context answered, for Codex too', async () => {
   const sm = smForDispatch();
   sm._resolveLiveId = async () => 'codex-live';
   let captured = '';
   sm._newSession = async (_t, _d, inner) => { captured = inner; };
   const memoryDir = path.join(os.tmpdir(), 'aw-memory', 'tasks', 'T1');
   const memoryPath = path.join(memoryDir, 'memory.md');
-  await sm.dispatch({
-    cwd: os.tmpdir(), intent: 'x', agent: 'codex',
-    bindMemory: () => ({ memoryDir, memoryPath }),
-  });
+  // The extension's hook is told agent:'codex' and answers the resolved real path.
+  const asked = [];
+  sm._launchContext = async (ctx) => { asked.push(ctx); return { env: { AW_TASK_MEMORY: memoryPath }, addDirs: [memoryDir] }; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', taskId: 'T1' });
+  assert.equal(asked.length, 1);
+  assert.deepEqual({ ...asked[0], sid: undefined }, { sid: undefined, task: { id: 'T1' }, agent: 'codex', runtime: 'local', reason: 'dispatch' });
   assert.match(captured, new RegExp(`AW_TASK_MEMORY='${memoryPath}'`));
   assert.ok(captured.includes(`'--add-dir' '${memoryDir}'`));
   assert.doesNotMatch(captured, /by-session/);
@@ -2265,11 +2280,12 @@ test('syncNotesToContainer: docker cp -L notes for a live devcontainer session; 
   sm.map.clear();
   sm.map.set('d', { runtime: 'devcontainer', cwd: '/repo' });
   sm.map.set('h', { cwd: '/repo' }); // local (no runtime)
-  await sm.syncNotesToContainer('d', { run });
-  await sm.syncNotesToContainer('h', { run });
+  await sm.syncNotesToContainer('d', { run, addDirs: ['/host/notes'] });
+  await sm.syncNotesToContainer('h', { run, addDirs: ['/host/notes'] });
+  await sm.syncNotesToContainer('d', { run }); // nothing granted -> nothing to copy
   const cps = calls.filter((c) => c[0] === 'docker' && c[1] === 'cp');
   assert.equal(cps.length, 1);                       // only the devcontainer entry copies
-  assert.ok(cps[0].join(' ').includes(':/tmp/aw-d/notes')); // into the container's notes dir
+  assert.ok(cps[0].join(' ').includes('/host/notes cid1:/tmp/aw-d/launch-dirs/0')); // into the same place launch put it
 });
 
 // The git-dir grant keys off the LAUNCH CWD, not off a wrangler-made worktree
@@ -2360,4 +2376,79 @@ test('fork() grants the common git-dir from the fork cwd even without a parent w
   });
   assert.ok(captured.includes(`'--add-dir' '${gitDir}'`), captured);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ── the session.launchContext seam ───────────────────────────────────────────
+// Asked by dispatch/resume/fork BEFORE the command is built, with the reason,
+// the agent/runtime and the task; its answer is what lands in the command.
+
+function recordingContext(sm) {
+  const asked = [];
+  sm._launchContext = async (ctx) => { asked.push(ctx); return { env: { AW_X: 'from-ctx' }, addDirs: ['/granted'] }; };
+  return asked;
+}
+
+test('dispatch asks the launch context with the card id, the task, agent, runtime and the dispatch reason', async () => {
+  const sm = smForDispatch();
+  const asked = recordingContext(sm);
+  let inner = '';
+  sm._newSession = async (_t, _d, i) => { inner = i; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', taskId: 'T7' });
+  assert.deepEqual(asked, [{ sid: sessionId, task: { id: 'T7' }, agent: 'claude', runtime: 'local', reason: 'dispatch' }]);
+  assert.ok(inner.includes("AW_X='from-ctx'") && inner.includes("'--add-dir' '/granted'"));
+});
+
+test('dispatch without a task asks with task:null, and a spawn passes its own reason', async () => {
+  const sm = smForDispatch();
+  const asked = recordingContext(sm);
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', launchReason: 'spawn' });
+  assert.equal(asked[0].task, null);
+  assert.equal(asked[0].reason, 'spawn');
+});
+
+test('the launch context is awaited before the launch command is built', async () => {
+  const sm = smForDispatch();
+  const order = [];
+  sm._launchContext = async () => { await new Promise((r) => setTimeout(r, 10)); order.push('context'); return { env: {}, addDirs: [] }; };
+  sm._newSession = async () => { order.push('launch'); };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.deepEqual(order, ['context', 'launch']);
+});
+
+test('resume asks with the session\'s current task and the resume reason (message / snooze-wake pass through)', async () => {
+  for (const [reason, want] of [['message', 'message'], ['snooze-wake', 'snooze-wake'], ['schedule', 'resume'], [undefined, 'resume']]) {
+    const sm = resumableCodex('card-ctx');
+    sm.killForSession = async () => [];
+    sm._taskFor = (sid) => (sid === 'card-ctx' ? { id: 'T3', name: 'n' } : null);
+    const asked = recordingContext(sm);
+    let inner = '';
+    sm._newSession = async (_t, _d, i) => { inner = i; };
+    await sm.resume('card-ctx', os.tmpdir(), reason ? { reason } : {});
+    assert.deepEqual(asked, [{ sid: 'card-ctx', task: { id: 'T3', name: 'n' }, agent: 'codex', runtime: 'local', reason: want }]);
+    assert.ok(inner.includes("AW_X='from-ctx'") && inner.includes("'--add-dir' '/granted'"));
+  }
+});
+
+test('fork asks for the FORK\'s new card id but the PARENT\'s task, with reason fork', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ctx-fork-'));
+  const sm = smForDispatch();
+  sm._resolveLiveId = async () => 'live';
+  sm._taskFor = (sid) => (sid === 'parent' ? { id: 'TP', name: 'p' } : null);
+  const asked = recordingContext(sm);
+  const { sessionId } = await sm.fork({ sourceId: 'L0', parentId: 'parent', parentEntry: { agent: 'claude' }, cwd: dir });
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0], { sid: sessionId, task: { id: 'TP', name: 'p' }, agent: 'claude', runtime: 'local', reason: 'fork' });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('launchContext(): a non-launch ask (assign / adopt) resolves agent, runtime and task from the mapping', async () => {
+  const sm = smForDispatch();
+  sm.map.set('S1', { agent: 'codex', runtime: 'devcontainer', cwd: '/r' });
+  sm._taskFor = () => ({ id: 'T1', name: 'n' });
+  const asked = recordingContext(sm);
+  const out = await sm.launchContext('S1', 'assign');
+  assert.deepEqual(asked, [{ sid: 'S1', task: { id: 'T1', name: 'n' }, agent: 'codex', runtime: 'devcontainer', reason: 'assign' }]);
+  assert.deepEqual(out.addDirs, ['/granted']);
+  await sm.launchContext('S1', 'adopt', { task: null });
+  assert.equal(asked[1].task, null, 'an explicit task:null overrides the lookup');
 });

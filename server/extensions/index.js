@@ -7,6 +7,7 @@ import { normalizeCodexPolicy } from './codex-policy.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
 import adversarialReview from './builtin/adversarial-review/index.js';
+import taskMemory from './builtin/task-memory/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -41,9 +42,14 @@ import adversarialReview from './builtin/adversarial-review/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist`, `todos` and `adversarial-review` are the three so far. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review` and `task-memory` are the shipped set. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
-export const BUILTIN = [checklist, todos, adversarialReview];
+export const BUILTIN = [
+  checklist,
+  todos,
+  adversarialReview,
+  taskMemory,
+];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,
@@ -51,7 +57,7 @@ export const BUILTIN = [checklist, todos, adversarialReview];
 // run by index.js against the real stores once they exist).
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
-  'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
+  'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
   'quarantinedBuiltins',
 ]);
@@ -66,6 +72,7 @@ export const CAPABILITIES = new Set([
   'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:kill',
   'tasks:read', 'tasks:write',
   'memory:read', 'memory:append',
+  'events',
   'deliver',
   'board:rebuild', 'board:broadcast',
   'terminals:create',
@@ -114,6 +121,12 @@ export function hookPayloadFor(extId, payload) {
 }
 
 export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
+
+// Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
+// (the lifecycle hooks above are fire-and-forget and live under `session`).
+//   session.launchContext({ sid, task, agent, runtime, reason, host })
+//     -> { env?, addDirs? } | Promise of it — see server/launch-context.js.
+export const VALUE_HOOKS = ['session.launchContext'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -278,6 +291,20 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
   if (ext.onTaskDelete != null && typeof ext.onTaskDelete !== 'function') fail(ext, 'onTaskDelete must be a function');
+  if (ext.hooks != null) {
+    if (typeof ext.hooks !== 'object' || Array.isArray(ext.hooks)) fail(ext, 'hooks must be an object');
+    for (const [k, fn] of Object.entries(ext.hooks)) {
+      if (!VALUE_HOOKS.includes(k)) fail(ext, `unknown hook "${k}" (known: ${VALUE_HOOKS.join(', ')})`);
+      if (typeof fn !== 'function') fail(ext, `hooks["${k}"] must be a function`);
+    }
+  }
+  // Lifecycle: `activate({ host })` runs when the extension turns on (boot, an
+  // install, a settings flip) and `deactivate({ host })` when it turns off. Where
+  // a store or watcher is started and stopped. A throwing activate quarantines
+  // the extension; a throwing deactivate is logged and ignored.
+  for (const k of ['activate', 'deactivate']) {
+    if (ext[k] != null && typeof ext[k] !== 'function') fail(ext, `${k} must be a function`);
+  }
   if (ext.session != null) {
     if (typeof ext.session !== 'object') fail(ext, 'session must be an object of hooks');
     for (const [k, fn] of Object.entries(ext.session)) {
@@ -413,6 +440,8 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     disabledSkillIds: [],
     graphContributors: [],
     sessionHooks: Object.fromEntries(SESSION_HOOKS.map((k) => [k, []])),
+    // name -> [{ extId, fn }] for the VALUE_HOOKS (core uses their return).
+    hooks: Object.fromEntries(VALUE_HOOKS.map((k) => [k, []])),
     skillGates: [],
     taskDeleteHooks: [],
     codexPolicies: [],
@@ -596,14 +625,14 @@ function stageExtension(ext, { cfg, out, reg }) {
   }
   // A gate can only ever narrow THIS manifest's own declared skills (its
   // `skills` list is passed back to it and its answer is intersected below),
-  // so one extension can never silently suppress another's — nor task-memory's,
-  // which is not an extension at all and keeps its own flag.
+  // so one extension can never silently suppress another's.
   if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
   if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
   if (ext.onTaskDelete) out.taskDeleteHooks.push({ id: ext.id, fn: ext.onTaskDelete });
   for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
+  for (const [k, fn] of Object.entries(ext.hooks || {})) out.hooks[k].push({ extId: ext.id, fn });
   for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
   if (ext.dir) out.dirs[ext.id] = ext.dir;
   // Omitted rather than nulled when absent, so the announcement a stock
@@ -692,6 +721,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
   for (const name of entry?.storeNames || []) delete loaded.stores[name];
   for (const k of SESSION_HOOKS) loaded.sessionHooks[k] = loaded.sessionHooks[k].filter((h) => h.extId !== id);
+  for (const k of VALUE_HOOKS) loaded.hooks[k] = loaded.hooks[k].filter((h) => h.extId !== id);
   delete loaded.dirs[id];
   const skills = new Set(entry?.skills || []);
   loaded.skillIds = loaded.skillIds.filter((s) => !skills.has(s));
@@ -734,12 +764,11 @@ function extAssetUrl(id, rel) {
 // (a disabled extension's skills drop out of the nudge and the Codex catalog for
 // every session); a `skillsFor` gate is what makes the same call PER SESSION,
 // which is what a feature whose launches are of two kinds — an automation run
-// versus an ordinary one — needs, and what `taskMemoryEnabled`'s hand-threaded
-// boolean does for the one non-extension case.
+// versus an ordinary one — needs.
 //
 // Returns the skill names to suppress for THIS launch, which is the direction
 // that composes: `agent-skills.js` already filters a global disabled list, and a
-// per-launch value threaded alongside `taskMemory` adds nothing new to the
+// per-launch value threaded down as `disabledSkills` adds nothing new to the
 // adapters beyond one more array. A gate that throws suppresses nothing for its
 // own extension and never touches another's — a broken gate must not silently
 // strip an unrelated feature's skill out of a real launch.

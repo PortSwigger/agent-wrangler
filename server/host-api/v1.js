@@ -131,12 +131,14 @@ const sessionsSpawn = ({ core }) => ({
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option
-        // rather than a spawn followed by `tasks.assign`: the memory symlink
-        // must point at the task BEFORE the pane starts. Claude re-reads
-        // AW_TASK_MEMORY and follows a later repoint; Codex resolves the
-        // writable root once at launch and never sees it, so an assign after
-        // the fact leaves a Codex session writing into its own scratch memory.
-        ...(taskId ? { bindMemory: (sid) => core.memoryStore.bindSession(sid, taskId) } : {}),
+        // rather than a spawn followed by `tasks.assign`: the launch context
+        // (session.launchContext) must see the task BEFORE the pane starts. A
+        // memory extension's Claude re-reads its env path and follows a later
+        // repoint; Codex resolves the writable root once at launch and never
+        // sees it, so an assign after the fact would leave a Codex session
+        // writing into its own scratch memory.
+        ...(taskId ? { taskId } : {}),
+        launchReason: 'spawn',
       });
       // The other half of that binding, exactly as the spawn_* tools and the
       // board's own dispatch do it — a no-op if the task was archived meanwhile,
@@ -220,19 +222,50 @@ const tasksWrite = ({ core }) => ({
   },
 });
 
-const memoryRead = ({ core }) => ({
+// `memory.*` is PROVIDED by the task-memory extension: index.js wires
+// `memoryProvider` to that extension's store while it is active, and to null
+// otherwise. With the provider gone these answer "not available" — null for a
+// read, false for has/append — and say so in the log, so a third-party
+// extension written against memory degrades visibly instead of throwing.
+function memoryStoreFor({ id, memoryProvider, log }, what) {
+  const store = memoryProvider?.() ?? null;
+  if (!store) log?.(`[ext:${id}] memory.${what}: the task-memory extension is not enabled`);
+  return store;
+}
+
+const memoryRead = (dep) => ({
   memory: {
-    read: (taskId) => core.memoryStore.read(taskId),
-    has: (taskId) => core.memoryStore.hasMemory(taskId),
+    read: (taskId) => memoryStoreFor(dep, 'read')?.read(taskId) ?? null,
+    has: (taskId) => memoryStoreFor(dep, 'has')?.hasMemory(taskId) ?? false,
   },
 });
 
-const memoryAppend = ({ core }) => ({
+const memoryAppend = (dep) => ({
   memory: {
     // APPEND only, with no `write` anywhere in the vocabulary: memory.md is a
     // shared human-and-agent file and clobbering it is not an extension's call.
     // Adding a write needs a design discussion, not a follow-up commit.
-    append: (taskId, text) => core.memoryStore.append(taskId, text),
+    append: (taskId, text) => {
+      const store = memoryStoreFor(dep, 'append');
+      if (!store) return false;
+      store.append(taskId, text);
+      return true;
+    },
+  },
+});
+
+// The core event bus (server/events.js), tagged with the extension's id. `on`
+// subscribes (and is dropped when the extension deactivates, so a disabled
+// extension hears nothing); `emit` publishes under `ext:<id>:<name>` — FORCED,
+// like broadcast's type, so an extension can announce its own events but never
+// forge a core one (`archive-review:completed`) or another extension's.
+const eventsCap = ({ id, events }) => ({
+  events: {
+    on: (name, fn) => events.on(name, fn, id),
+    emit: (name, payload) => {
+      if (typeof name !== 'string' || !name) throw new TypeError('events.emit: name must be a non-empty string');
+      return events.emit(`ext:${id}:${name}`, payload);
+    },
   },
 });
 
@@ -330,6 +363,7 @@ export const V1_BUILDERS = {
   'tasks:write': tasksWrite,
   'memory:read': memoryRead,
   'memory:append': memoryAppend,
+  events: eventsCap,
   deliver: deliverCap,
   'board:rebuild': boardRebuild,
   'board:broadcast': boardBroadcast,

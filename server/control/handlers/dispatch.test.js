@@ -3,44 +3,42 @@ import assert from 'node:assert/strict';
 import { dispatchHandler } from './dispatch.js';
 
 // A ctx double recording the launch path. The fake dispatch mints a fresh card id
-// and runs the memory binder the way the real SessionManager does, so we can assert
-// memory is bound BEFORE the card is assigned (the load-bearing ordering).
+// and records the options it was given, so we can assert the chosen task is handed
+// to dispatch (for the launch context) BEFORE the card is assigned.
 function ctx(overrides = {}) {
-  const calls = { dispatch: [], assign: [], bind: [], rebuild: 0, sent: [] };
+  const calls = { dispatch: [], assign: [], rebuild: 0, sent: [] };
   return {
     calls,
     sessionManager: {
       dispatch: async (opts) => {
         calls.dispatch.push(opts);
-        opts.bindMemory?.('NEWCARD');
         return { sessionId: 'NEWCARD' };
       },
     },
     taskStore: { assign: (sid, taskId) => calls.assign.push({ sid, taskId }) },
-    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     rebuild: async () => { calls.rebuild += 1; },
     reply: (obj) => calls.sent.push(obj),
     ...overrides,
   };
 }
 
-test('dispatch binds memory pre-launch, assigns the task, then acks', async () => {
+test('dispatch hands the task to dispatch pre-launch, assigns it, then acks', async () => {
   const c = ctx();
   await dispatchHandler.handler({ type: 'dispatch', cwd: '/repo', intent: 'do it', taskId: 'T1' }, c);
 
   assert.equal(c.calls.dispatch.length, 1);
   assert.equal(c.calls.dispatch[0].agent, 'claude');
-  // Memory bound to the chosen task during dispatch (pre-launch), then assigned.
-  assert.deepEqual(c.calls.bind, [{ sid: 'NEWCARD', taskId: 'T1' }]);
+  // The task rides dispatch (the launch context reads it pre-launch), then assigned.
+  assert.equal(c.calls.dispatch[0].taskId, 'T1');
   assert.deepEqual(c.calls.assign, [{ sid: 'NEWCARD', taskId: 'T1' }]);
   assert.equal(c.calls.rebuild, 1);
   assert.deepEqual(c.calls.sent, [{ type: 'dispatched', sessionId: 'NEWCARD' }]);
 });
 
-test('dispatch with no taskId binds memory to scratch and skips assign', async () => {
+test('dispatch with no taskId passes none and skips assign', async () => {
   const c = ctx();
   await dispatchHandler.handler({ type: 'dispatch', cwd: '/repo', intent: 'x' }, c);
-  assert.deepEqual(c.calls.bind, [{ sid: 'NEWCARD', taskId: null }]);
+  assert.equal(c.calls.dispatch[0].taskId, undefined);
   assert.deepEqual(c.calls.assign, []);
 });
 

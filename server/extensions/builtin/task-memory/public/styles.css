@@ -1,0 +1,54 @@
+/* Task-memory extension styles (served at /ext/task-memory/public/styles.css).
+   The modal is built by index.js, so the overlay rule lives here too. */
+#memory-modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+#memory-modal.hidden { display: none; }
+.memory-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
+.memory-text { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; }
+
+/* Title + Write·Split·Preview toggle share the modal's first row. */
+.memory-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.memory-head h3 { margin: 0; }
+/* Segmented control: flush buttons (collapsed inner borders), active = accent —
+   the --accent/--accent-fg precedent from .suggest-item.active, not the --blue toggle. */
+.memory-mode { display: inline-flex; flex: 0 0 auto; }
+.memory-mode button {
+  padding: 4px 11px; font-size: 12px; border-radius: 0; border-right-width: 0;
+  background: var(--surface-2); color: var(--fg-muted);
+}
+.memory-mode button:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.memory-mode button:last-child { border-top-right-radius: 6px; border-bottom-right-radius: 6px; border-right-width: 1px; }
+.memory-mode button:hover { background: var(--border-muted); color: var(--fg); }
+.memory-mode button.active, .memory-mode button.active:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+/* Editor + preview live side by side; the mode-* class on #memory-card decides
+   which panes show and how wide the card is. Split needs the room, so it widens
+   past the default 560px (still under .modal-card's 92vw cap). */
+.memory-body { display: flex; gap: 14px; align-items: stretch; }
+#memory-card { transition: width 0.18s ease; }
+#memory-card.mode-split { width: 920px; }
+#memory-card.mode-write .memory-preview { display: none; }
+#memory-card.mode-preview .memory-text { display: none; }
+#memory-card.mode-write .memory-text,
+#memory-card.mode-preview .memory-preview { flex: 1 1 auto; width: 100%; }
+/* flex-basis 0 + min-width 0 so the two panes split evenly and can shrink. */
+#memory-card.mode-split .memory-text,
+#memory-card.mode-split .memory-preview { flex: 1 1 0; min-width: 0; width: auto; }
+@media (prefers-reduced-motion: reduce) { #memory-card { transition: none; } }
+
+/* Read-only render of the buffer. Bordered like the textarea (same field-bg) so
+   the two panes read as one surface; all colours via theme vars for dark/light. */
+.memory-preview {
+  min-height: 320px; max-height: 60vh; overflow: auto;
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 14px; color: var(--fg); font-size: 13px; line-height: 1.6; box-sizing: border-box;
+}
+/* The preview also carries .chat-prose (core) for the markdown element rules;
+   the id selector outranks its bubble-style font settings. */
+#memory-card .memory-preview { font-size: 13px; line-height: 1.6; overflow-wrap: normal; }
+#memory-card .memory-preview pre { white-space: pre; word-break: normal; }
+/* Disk-change warning while the buffer is dirty (replaces the old toast). */
+.memory-conflict { font-size: 12px; color: var(--red-fg); margin: 0 0 12px; }
+.memory-conflict.hidden { display: none; }

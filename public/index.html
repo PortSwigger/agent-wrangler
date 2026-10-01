@@ -406,31 +406,6 @@
     </div>
   </div>
 
-  <div id="memory-modal" class="hidden">
-    <div class="modal-card" id="memory-card">
-      <div class="memory-head" id="memory-head">
-        <h3 id="memory-title">Task memory</h3>
-        <!-- Write · Split · Preview: toggles a mode-* class on #memory-card; the
-             editor (textarea) stays the literal-markdown buffer, the preview is a
-             read-only render of it. Last choice persisted in localStorage. -->
-        <div class="memory-mode" id="memory-mode" role="tablist" aria-label="Memory view mode">
-          <button id="memory-mode-write" data-mode="write" type="button">Write</button>
-          <button id="memory-mode-split" data-mode="split" type="button">Split</button>
-          <button id="memory-mode-preview" data-mode="preview" type="button">Preview</button>
-        </div>
-      </div>
-      <p class="memory-note" id="memory-note">Shared with the agent — for context that spans the repos this task touches, not a session scratchpad. Repo-specific context belongs in that repo's own CLAUDE.md instead. Editable in your own editor too.</p>
-      <div class="memory-body" id="memory-body">
-        <textarea id="memory-text" class="memory-text" rows="16" placeholder="Cross-repo context for this task — shared with the agent."></textarea>
-        <div id="memory-preview" class="memory-preview" aria-live="polite"></div>
-      </div>
-      <div class="modal-actions" id="memory-actions">
-        <button id="memory-close" class="ghost">Close</button>
-        <button id="memory-save" class="primary">Save</button>
-      </div>
-    </div>
-  </div>
-
   <div id="file-modal" class="hidden">
     <div class="file-card" id="file-card">
       <div class="file-head">
@@ -443,7 +418,7 @@
           <button id="file-close" class="ghost" type="button">Close</button>
         </div>
       </div>
-      <div class="file-body memory-preview" id="file-body" aria-live="polite"></div>
+      <div class="file-body" id="file-body" aria-live="polite"></div>
     </div>
   </div>
 
@@ -564,7 +539,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
   <!-- Vendored (offline-safe, pinned) markdown-it UMD: sets window.markdownit for
-       the memory-preview renderer. Classic script so it's defined before app.js. -->
+       the markdown renderer. Classic script so it's defined before app.js. -->
   <script src="vendor/markdown-it.min.js"></script>
   <!-- Vendored (offline-safe, pinned) xterm web-links addon: its UMD global IS the
        class (window.WebLinksAddon = the constructor). Classic script so it's
