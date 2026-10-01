@@ -24,7 +24,7 @@ async function call(name, deps, args) {
 }
 
 test('TODO tools are registered and granted to launched sessions', () => {
-  const granted = allowedToolsArg({ checklist: false, ext: { allowedToolNames: [] } }).split(',');
+  const granted = allowedToolsArg({ ext: { allowedToolNames: [] } }).split(',');
   for (const tool of todoTools) {
     assert.ok(TOOLS.some((registered) => registered.name === tool.name), tool.name);
     assert.ok(granted.includes(allowedToolName(tool.name)), tool.name);

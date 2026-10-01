@@ -695,17 +695,41 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the DOM, since the caller has just rendered and `isConnected` would make the
   reconciliation untestable against an element stub. It hangs off
   `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
-  `renderFocusedTile`) already end with. **`BUILTIN` is EMPTY — this lands the
-  API and its seams, with nothing migrated onto it yet** (asserted, so a stray
-  manifest can't register tools and handlers on every install unnoticed), which
-  is also why nothing here is exercised end-to-end by a real feature: the first
-  manifest is the proof. **Migrating a flagged feature (checklist, task-memory,
-  archive-review) is: manifest + `BUILTIN` row + delete its accessor,
-  `set-<x>-enabled` handler and settings def** — never a fresh `if (id === …)`
-  rung in `app.js`, since `setExtensionDefs` renders the Extensions tab off
-  `graph.extensions`. A retired flag's stored value needs carrying over to
-  `extensions.<id>` at that point; there is no migration table yet, because
-  nothing has been retired.
+  `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
+  extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
+  exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
+  `skills/`, `public/` and its tests). **`checklist` is the first**, and
+  `index.test.js` asserts the exact id list so a stray manifest can't register
+  tools and handlers on every install unnoticed. **Migrating a flagged feature
+  (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
+  manifest + `BUILTIN` row, delete its accessor, `set-<x>-enabled` handler and
+  settings def, and add a `{ oldKey, extId }` row to `RETIRED_FLAGS`** — never a
+  fresh `if (id === …)` rung in `app.js`, since `setExtensionDefs` renders the
+  Extensions tab off `graph.extensions`.
+- **`RETIRED_FLAGS` (`server/config-store.js`) carries a retired core flag over to
+  `extensions.<id>` at boot.** `applyRetiredFlagMigrations()` runs in
+  `server/index.js` BEFORE `primeExtensions` reads config. Only an explicit
+  `false` moves (`extensions.<id> = false`); `true`/missing/garbage just drop the
+  old key, and an explicit existing `extensions.<id>` boolean wins. Idempotent;
+  rows stay forever. Current row: `checklistEnabled` → `checklist`.
+- **The checklist is the reference builtin.** Store, four MCP tools, four control
+  handlers, the `checklist` skill (plus its `WRANGLER.md` nudge), an `onPurge`
+  session hook (purge is the only thing that drops a list; archive keeps it), a
+  `graph` contributor for `checklists`, and a client half (`panel.section` for the
+  panel, `panel.metaChip` for the done/total chip). `requires` is just
+  `board:rebuild`. It still writes `<DATA_DIR>/checklists.json` — the store is
+  deliberately NOT under a per-extension directory, so existing data loads
+  unchanged — and its legacy `wrangler.checklistOpen` / `wrangler.checklistShowDone`
+  localStorage keys are kept through `api.storage.raw()`. Disabling it unregisters
+  the tools, grant, skill, handlers, panel and chip together through the loader.
+- **`api.claimDrag(el)` makes a drag extension-owned.** It sets `data-ext-drag="<extId>"`
+  on `el` and returns an unclaim function; `gridEditing()` in `public/app.js` returns
+  true while any such element exists, so the ~4s poll does not rebuild the grid
+  mid-drag. Call it on `dragstart`, unclaim on `drop`/`dragend`. A non-element is
+  reported and ignored, and `removeExtension` clears the extension's claims so a
+  disabled extension cannot freeze the board. Focus inside `#panel-sections` is
+  already covered generically by `gridEditing`, so a panel section's inline input
+  needs nothing extra.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default
@@ -757,8 +781,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
   that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
-  **`BUILTIN` stays empty** and its assertion stays: this is API only, and the
-  coverage is test fixtures.
+  That slot itself has no builtin user; its coverage is test fixtures.
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**
   `register` requires `items`/`cost` in place of `mount`. `slots.menuItems(s,

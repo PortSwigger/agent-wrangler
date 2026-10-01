@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { taskMemoryEnabled, checklistEnabled } from './config-store.js';
+import { taskMemoryEnabled } from './config-store.js';
 import { getExtensions } from './extensions/index.js';
 import { AGENT_SKILLS_PLUGIN_DIR, SKILLS_ROOT, skillsIn } from './skill-catalog.js';
 
@@ -42,17 +42,18 @@ export function allSkillEntries(skillsRoot = SKILLS_ROOT, ext = getExtensions())
 }
 
 // Three things can disable a skill (settings modal → config.json): the
-// task-memory and checklist flags (neither feature is an extension yet, so each
-// keeps its own flag) and an EXTENSION being off (`ext.disabledSkillIds`, the
-// skills declared by every disabled manifest in server/extensions/*). A disabled
-// install must never instruct an agent to read AW_TASK_MEMORY, or to keep a
-// checklist whose MCP tools aren't registered and whose panel isn't rendered —
-// so each drops out of BOTH always-on channels, the mandatory nudge and the
-// Codex catalog. Only those: the env/symlink plumbing and the stored checklists
-// stay intact, and Claude's --plugin-dir still lists an IN-REPO skill as
-// discoverable, which is inert without the nudge — an extension's own skill is
-// the one case where this filter reaches the plugin list too, see
-// extensionSkillPluginDirs. Both are options (defaulting to live
+// task-memory flag (not an extension yet, so it keeps its own flag), an
+// EXTENSION being off (`ext.disabledSkillIds`, the skills declared by every
+// disabled manifest, shipped or in-repo; this is the generic gate, and what
+// takes the checklist skill away with the checklist extension) and the
+// per-launch channel below. A disabled install must never instruct an agent to
+// read AW_TASK_MEMORY, or to keep a checklist whose MCP tools aren't registered
+// and whose panel isn't rendered, so each drops out of BOTH always-on channels,
+// the mandatory nudge and the Codex catalog. Only those: the env/symlink
+// plumbing and any stored data stay intact, and Claude's --plugin-dir still
+// lists an IN-REPO skill as discoverable, which is inert without the nudge; an
+// extension's own skill is the one case where this filter reaches the plugin
+// list too, see extensionSkillPluginDirs. Both are options (defaulting to live
 // config / the boot-loaded extensions) so tests never touch the shared
 // config.json or the loader's memo.
 //
@@ -61,9 +62,9 @@ export function allSkillEntries(skillsRoot = SKILLS_ROOT, ext = getExtensions())
 // for this one session, resolved by session-manager before it calls the adapter
 // and threaded down here beside `taskMemory`. Empty for every launch no gate
 // speaks for, which is all of them today.
-const DISABLEABLE = { 'task-memory': 'taskMemory', checklist: 'checklist' };
-function activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills = [] }) {
-  const flags = { taskMemory, checklist };
+const DISABLEABLE = { 'task-memory': 'taskMemory' };
+function activeSkillEntries(skillsRoot, { taskMemory, ext, disabledSkills = [] }) {
+  const flags = { taskMemory };
   return allSkillEntries(skillsRoot, ext).filter((e) => {
     const flag = DISABLEABLE[e.name];
     if (flag) return flags[flag];
@@ -80,8 +81,8 @@ function activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSk
 // always-on prompt (Claude's --append-system-prompt, Codex's
 // developer_instructions) alongside the on-demand catalog — most skills (links,
 // spawn-session) are genuinely optional and carry no nudge.
-export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), ext = getExtensions(), disabledSkills } = {}) {
-  const nudges = activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills }).map((e) => e.nudge).filter(Boolean);
+export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), ext = getExtensions(), disabledSkills } = {}) {
+  const nudges = activeSkillEntries(skillsRoot, { taskMemory, ext, disabledSkills }).map((e) => e.nudge).filter(Boolean);
   return nudges.join('\n\n');
 }
 
@@ -89,8 +90,8 @@ export function mandatorySkillPrompt(skillsRoot = SKILLS_ROOT, { taskMemory = ta
 // reads a SKILL.md on demand (its workspace-write sandbox allows reads outside
 // cwd), mirroring Claude's progressive disclosure: the catalog is cheap and
 // always-visible; bodies load only when a task matches a description.
-export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), ext = getExtensions(), disabledSkills } = {}) {
-  const lines = activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills }).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
+export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), ext = getExtensions(), disabledSkills } = {}) {
+  const lines = activeSkillEntries(skillsRoot, { taskMemory, ext, disabledSkills }).map((e) => `- ${e.name} — ${e.description} — ${e.path}`);
   return 'You have wrangler-meta skills available. When a task matches one of the '
     + 'descriptions below, read the corresponding SKILL.md file at the given absolute '
     + 'path for the full instructions before acting. The files are read-only.\n\n'
@@ -107,8 +108,8 @@ export function codexSkillCatalog(skillsRoot = SKILLS_ROOT, { taskMemory = taskM
 // mandatory, while most extension skills carry no WRANGLER.md at all — so
 // discovery IS their only channel and leaving a suppressed one on the command
 // line would make `skillsFor` decide nothing for Claude.
-export function extensionSkillPluginDirs(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), checklist = checklistEnabled(), ext = getExtensions(), disabledSkills } = {}) {
-  return activeSkillEntries(skillsRoot, { taskMemory, checklist, ext, disabledSkills })
+export function extensionSkillPluginDirs(skillsRoot = SKILLS_ROOT, { taskMemory = taskMemoryEnabled(), ext = getExtensions(), disabledSkills } = {}) {
+  return activeSkillEntries(skillsRoot, { taskMemory, ext, disabledSkills })
     .filter((e) => e.extId)
     .map((e) => e.dir);
 }
