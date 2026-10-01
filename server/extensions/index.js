@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
@@ -39,9 +40,9 @@ import todos from './builtin/todos/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. The directory name MUST equal the
+// pick the new entry up without edits. `checklist` and `todos` are the first two. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
-export const BUILTIN = [todos];
+export const BUILTIN = [checklist, todos];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,
@@ -49,7 +50,7 @@ export const BUILTIN = [todos];
 // run by index.js against the real stores once they exist).
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
-  'checklists', 'checklistEnabled', 'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
+  'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
   'quarantinedBuiltins',
 ]);

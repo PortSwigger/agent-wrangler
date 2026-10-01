@@ -23,6 +23,7 @@ otherwise it behaves exactly as a Claude-only board.
 - **A checklist you and the agent share** — each session gets a short checklist beside its terminal.
   You add, edit, tick, reorder and delete items from the board; the session writes to the same list
   through its own tools, so a glance tells you what it is working through without reading the pane.
+  It is the first builtin extension, so you can switch it off in Settings → Extensions.
   It starts collapsed to a small progress chip in the session's header — `2/5` — costing the
   terminal no height until you open it, and each session remembers whether you left it open. It is
   deliberately separate from the agent's own private planning tool — that stays internal scratch

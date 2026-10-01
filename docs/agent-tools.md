@@ -57,8 +57,8 @@ add more tools. A running session receives tool-registry changes after its next 
 | `update_checklist_item` | Reword or complete one checklist item. |
 | `remove_checklist_item` | Remove an item that is no longer relevant; completed work should be ticked instead. |
 
-Checklist tools are available only when **Per-session checklist** is enabled. They can access only the
-calling session's list.
+Checklist tools come from the builtin **Per-session checklist** extension and are available only while
+it is enabled in **Settings → Extensions**. They can access only the calling session's list.
 
 ## Board TODOs
 

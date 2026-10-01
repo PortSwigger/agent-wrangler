@@ -79,7 +79,7 @@ test('weight alone (exported) works off the last graph it was given', () => {
   assert.equal(weight('t1'), TODO_DIVIDER_PX + TODO_STRIDE_PX);
 });
 
-test('a host per tile: mount claims the drag, update draws the zone for ITS tile, unmount releases', () => {
+test('a host per tile: update draws the zone for ITS tile, unmount releases', () => {
   const { slots, document } = load();
   const hostA = document.make();
   const hostAdhoc = document.make();
@@ -91,12 +91,11 @@ test('a host per tile: mount claims the drag, update draws the zone for ITS tile
   ], {}, graph);
   const slotA = hostA.children[0];
   const slotAdhoc = hostAdhoc.children[0];
-  assert.ok('data-ext-drag' in slotA.attrs, 'host is drag-claimed');
+  assert.equal('data-ext-drag' in slotA.attrs, false, 'a drag is claimed only while a row is being dragged');
   assert.match(slotA.innerHTML, /alpha/);
   assert.doesNotMatch(slotA.innerHTML, /beta/);
   assert.match(slotAdhoc.innerHTML, /beta/);
   slots.syncHosts('task.body', [], {}, graph);
-  assert.equal('data-ext-drag' in slotA.attrs, false);
   assert.equal(hostA.children.length, 0);
 });
 

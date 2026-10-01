@@ -110,14 +110,6 @@ export const SETTINGS = [
     help: 'Which side of the board the selected session\'s terminal / chat pane sits on. Per-browser rather than shared, like the theme and the pane\'s own drag-resized width — which side of the screen it wants to be on is a property of the machine you are sitting at. The nav rail stays on the far left either way.',
     default: 'right',
   },
-  {
-    id: 'checklistEnabled',
-    type: 'toggle',
-    scope: 'server',
-    label: 'Per-session checklist',
-    help: 'A short list of what a session is working through, shown beside its terminal and editable by you and the agent (which gets four MCP tools for it). Turning it off hides the panel, drops those tools, and stops instructing agents to keep one — stored checklists are kept, so turning it back on restores them. An already-running session only gains or loses the tools when it is next resumed.',
-    default: true,
-  },
 ];
 
 // The Extensions tab's rows are not hand-listed: setExtensionDefs builds one
@@ -130,7 +122,7 @@ export const SETTINGS_TABS = [
     label: 'Sessions',
     settingIds: [
       'taskMemoryEnabled', 'subagentsExpandedByDefault', 'soundOnFinish',
-      'childFullViewByDefault', 'chatViewDefault', 'checklistEnabled',
+      'childFullViewByDefault', 'chatViewDefault',
     ],
   },
   {

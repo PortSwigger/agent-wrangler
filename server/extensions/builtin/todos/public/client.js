@@ -68,7 +68,7 @@ export function weight(taskId, graph) {
 
 function mount(el, api, ctx) {
   state.api = api;
-  const view = { el, key: ctx.taskId, adhocId: ctx.adhocId || 'adhoc', unclaim: api.claimDrag(el) };
+  const view = { el, key: ctx.taskId, adhocId: ctx.adhocId || 'adhoc' };
   state.views.set(el, view);
   state.byKey.set(view.key, view);
   el.classList.add('todo-ext');
@@ -91,7 +91,7 @@ function unmount(el) {
   if (!view) return;
   state.views.delete(el);
   if (state.byKey.get(view.key) === view) state.byKey.delete(view.key);
-  view.unclaim();
+  if (state.drag?.view === view) endDrag();
 }
 
 const send = (frame) => state.api.send(frame);
@@ -129,7 +129,7 @@ function wire(view) {
     e.stopPropagation();
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'todo', todoId: row.dataset.todoid }));
-    state.drag = { view, row, todoId: row.dataset.todoid, placeholder: null };
+    state.drag = { view, row, todoId: row.dataset.todoid, placeholder: null, unclaim: state.api.claimDrag(el) };
     setTimeout(() => {
       if (state.drag?.row !== row || !row.parentNode) return;
       const ph = document.createElement('div');
@@ -165,6 +165,7 @@ function endDrag() {
   if (!d) return;
   d.row.classList.remove('dragging-hidden');
   d.placeholder?.remove();
+  d.unclaim?.();
   state.drag = null;
   for (const c of document.querySelectorAll('.todo-drop-target')) c.classList.remove('todo-drop-target');
   redraw();

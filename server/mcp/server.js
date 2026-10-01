@@ -25,8 +25,8 @@ export function extractCaller(req) {
 // Build a fresh MCP server bound to one caller. Stateless: a new server per
 // request, so each request's tools act as that request's caller. Tool handlers
 // are closed over { deps, caller }; the SDK passes parsed args as the first
-// callback param. `tools` comes from activeTools() so a feature-flagged tool
-// (the checklist four) is genuinely absent from the listing when disabled; it's
+// callback param. `tools` comes from activeTools() so a disabled extension's
+// tools are genuinely absent from the listing; it's
 // injectable so a test can pin the set without writing config.json.
 export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });

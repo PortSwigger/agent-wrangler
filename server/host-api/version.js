@@ -143,9 +143,9 @@ import semver from 'semver';
 // 1.15.0 is what moving the board TODOs out of core needed, and it is mostly
 // the CLIENT half again plus one server hook. `task.body` is a slot with one host
 // per task tile (Unassigned included) whose contributions may carry
-// `weight(taskId, graph)` px, summed into tile sizing; `api.claimDrag(el)` marks
-// an extension-owned element so core's card and tile drag handlers ignore drags
-// that start in it; `api.openDispatch({ taskId, intent, lockTask })` opens the
+// `weight(taskId, graph)` px, summed into tile sizing; `api.claimDrag(el)` marks an element as carrying an extension-owned
+// drag, so the board holds its re-renders and cell highlight while it is claimed;
+// `api.openDispatch({ taskId, intent, lockTask })` opens the
 // dispatch modal and resolves with the `dispatched` ack (null on cancel);
 // `api.requestBoardRender()` asks for a board re-render. Server side: the
 // `onTaskDelete({ taskId, host })` manifest hook and `host.tasks.adhocId`

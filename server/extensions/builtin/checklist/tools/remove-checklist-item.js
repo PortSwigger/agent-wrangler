@@ -13,11 +13,11 @@ export const removeChecklistItemTool = {
   inputSchema: {
     id: z.string().min(1).describe('The item id, from list_checklist.'),
   },
-  async handler({ deps, caller }, args = {}) {
+  async handler({ host, caller }, args = {}) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to remove from.');
-    const removed = deps.checklistStore.remove(caller, args.id);
+    const removed = host.stores.checklist.remove(caller, args.id);
     if (!removed) return errorResult(`No checklist item with id ${args.id} on this session.`);
-    await deps.rebuild?.();
+    await host.rebuild();
     const structuredContent = { id: args.id, removed: true };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

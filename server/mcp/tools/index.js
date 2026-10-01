@@ -20,12 +20,6 @@ import { scheduleSessionTool } from './schedule-session.js';
 import { createTerminalTool } from './create-terminal.js';
 import { readMailTool } from './read-mail.js';
 import { listMailTool } from './list-mail.js';
-import { addChecklistItemTool } from './add-checklist-item.js';
-import { updateChecklistItemTool } from './update-checklist-item.js';
-import { removeChecklistItemTool } from './remove-checklist-item.js';
-import { listChecklistTool } from './list-checklist.js';
-import { CHECKLIST_TOOLS } from '../client-config.js';
-import { checklistEnabled } from '../../config-store.js';
 import { getExtensions } from '../../extensions/index.js';
 
 // The CORE MCP tool registry. Adding a core capability = adding a module here.
@@ -37,17 +31,15 @@ import { getExtensions } from '../../extensions/index.js';
 // EXTENSION's tools (server/extensions/*/index.js `tools`) are exempt from that
 // two-place rule: the loader derives their launch grant from the same list it
 // registers, so they exist in exactly one place.
-export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool, addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool];
+export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, listTasksTool, assignSessionTool, getSessionActivityTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, createTerminalTool, readMailTool, listMailTool];
 
-// The tools a request actually gets: the core set (less the four checklist tools
-// when `checklistEnabled: false` — the one core feature flag that can remove
-// some) plus every ENABLED extension's tools. Either way the removal is genuine
-// unregistration, not a mere un-grant, so a disabled install doesn't advertise a
-// capability its UI won't render. TOOLS itself stays the full, unfiltered core
-// registry — that is what client-config.test.js's two-place assertion reads.
-// `checklist` and `ext` are injectable (defaulting to the live read and the
-// boot-loaded extensions) so tests never touch config.json or the memo.
-export function activeTools({ checklist = checklistEnabled(), ext = getExtensions() } = {}) {
-  const core = checklist ? TOOLS : TOOLS.filter((t) => !CHECKLIST_TOOLS.includes(t.name));
-  return [...core, ...ext.tools];
+// The tools a request actually gets: the core set plus every ENABLED extension's
+// tools. A disabled extension's tools are genuinely unregistered, not merely
+// un-granted, so a disabled install doesn't advertise a capability its UI won't
+// render. TOOLS itself stays the full core registry — that is what
+// client-config.test.js's two-place assertion reads. `ext` is injectable
+// (defaulting to the boot-loaded extensions) so tests never touch config.json or
+// the memo.
+export function activeTools({ ext = getExtensions() } = {}) {
+  return [...TOOLS, ...ext.tools];
 }

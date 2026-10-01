@@ -40,7 +40,7 @@ test('skillEntries reads an optional nudge from a sidecar WRANGLER.md; defaults 
 
 test('mandatorySkillPrompt joins only the nudges of skills that declare one', () => {
   const root = fixture();
-  const prompt = mandatorySkillPrompt(root);
+  const prompt = mandatorySkillPrompt(root, { ext: { disabledSkillIds: [] } });
   assert.match(prompt, /Always check the alpha thing first\./);
   assert.doesNotMatch(prompt, /Last alphabetically/);
 });
@@ -49,12 +49,12 @@ test('mandatorySkillPrompt is empty when no skill declares a nudge', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-skills-'));
   fs.mkdirSync(path.join(root, 'plain'), { recursive: true });
   fs.writeFileSync(path.join(root, 'plain', 'SKILL.md'), '---\nname: plain\ndescription: no nudge here\n---\n\nBody.\n');
-  assert.equal(mandatorySkillPrompt(root), '');
+  assert.equal(mandatorySkillPrompt(root, { ext: { disabledSkillIds: [] } }), '');
 });
 
 test('codexSkillCatalog lists each skill as name — description — absolute path', () => {
   const root = fixture();
-  const catalog = codexSkillCatalog(root);
+  const catalog = codexSkillCatalog(root, { ext: { disabledSkillIds: [] } });
   assert.match(catalog, /alpha — First alphabetically — [^\n]*alpha\/SKILL\.md/);
   assert.match(catalog, /zebra — Last alphabetically — [^\n]*zebra\/SKILL\.md/);
   // Always-on preamble instructing on-demand reads.
@@ -69,7 +69,7 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'checklist', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
@@ -81,7 +81,7 @@ test('the archive-to-todo skill ships with the todos extension and is discoverab
   assert.ok(entry);
   assert.equal(entry.extId, 'todos');
   assert.match(entry.description, /current session/);
-  const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, checklist: true, ext });
+  const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, ext });
   assert.match(catalog, /- archive-to-todo —/);
   assert.doesNotMatch(catalog, /- park-session —/);
   assert.doesNotMatch(catalog, /- todo —/);
@@ -90,7 +90,7 @@ test('the archive-to-todo skill ships with the todos extension and is discoverab
 
 test('a disabled todos extension suppresses the archive-to-todo skill from the catalog and plugin dirs', () => {
   const row = { id: 'todos', dir: todosDir, skills: ['archive-to-todo'] };
-  const base = { taskMemory: true, checklist: true };
+  const base = { taskMemory: true };
   const on = { list: [row], disabledSkillIds: [] };
   const off = { list: [row], disabledSkillIds: ['archive-to-todo'] };
   assert.equal(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: on }).length, 1);
@@ -98,17 +98,13 @@ test('a disabled todos extension suppresses the archive-to-todo skill from the c
   assert.deepEqual(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: off }), []);
 });
 
-test('task-memory, mail and checklist are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
+test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
   const byName = Object.fromEntries(skillEntries().map((e) => [e.name, e]));
   assert.ok(byName['task-memory'].nudge.length > 0);
   // mail: discovery alone isn't reliable for the standing read-your-mail
   // instruction (CLAUDE.md), so it carries an always-on nudge too, on top of
   // the per-message footer (a separate, per-message control — see mail-format.js).
   assert.ok(byName.mail.nudge.length > 0);
-  // checklist: the panel is only useful if agents actually write to it, and a
-  // discoverable skill alone doesn't self-invoke — so a MINIMAL pointer rides
-  // the always-on prompt and the real guidance stays in the SKILL.md.
-  assert.ok(byName.checklist.nudge.length > 0);
   assert.equal(byName.links.nudge, '');
   assert.equal(byName['spawn-session'].nudge, '');
   assert.equal(byName['session-activity'].nudge, '');
@@ -123,33 +119,6 @@ test('task-memory, mail and checklist are mandatory (carry a nudge); links, spaw
   // built-in SendMessage (which can't resolve a card id — live incident).
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /send_message/);
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /built-in `SendMessage`/);
-  // The nudge is a POINTER, not the guidance: it must name the tool and the
-  // skill, and must say the checklist is separate from the agent's own planner
-  // (the one thing an agent would otherwise get wrong without reading further).
-  const nudge = mandatorySkillPrompt(SKILLS_ROOT, { checklist: true, taskMemory: true, ext: { disabledSkillIds: [] } });
-  assert.match(nudge, /add_checklist_item/);
-  assert.match(nudge, /`checklist` skill/);
-  assert.match(nudge, /never synced/);
-});
-
-test('checklist:false drops the checklist skill from the mandatory nudge and the Codex catalog — nothing else', () => {
-  const root = fixture();
-  const dir = path.join(root, 'checklist');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: checklist\ndescription: Keep a visible checklist\n---\n\nBody.\n');
-  fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Use add_checklist_item for visible progress.\n');
-
-  const off = { taskMemory: true, checklist: false, ext: { disabledSkillIds: [] } };
-  assert.doesNotMatch(mandatorySkillPrompt(root, off), /add_checklist_item/);
-  assert.match(mandatorySkillPrompt(root, off), /alpha thing/); // other nudges survive
-  assert.doesNotMatch(codexSkillCatalog(root, off), /checklist/);
-  assert.match(codexSkillCatalog(root, off), /alpha/);
-  // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
-  assert.ok(skillEntries(root).some((e) => e.name === 'checklist'));
-
-  const on = { taskMemory: true, checklist: true, ext: { disabledSkillIds: [] } };
-  assert.match(mandatorySkillPrompt(root, on), /add_checklist_item/);
-  assert.match(codexSkillCatalog(root, on), /checklist/);
 });
 
 // A disabled extension's skill ids (the loader's `disabledSkillIds`) drop from
@@ -158,7 +127,7 @@ test('checklist:false drops the checklist skill from the mandatory nudge and the
 // extension-shipped case is at the bottom of this file.
 test('a disabled extension\'s skill ids drop from the mandatory nudge and the Codex catalog — nothing else', () => {
   const root = fixture();
-  const base = { taskMemory: true, checklist: true };
+  const base = { taskMemory: true };
   const off = { ...base, ext: { disabledSkillIds: ['zebra'] } };
   assert.doesNotMatch(codexSkillCatalog(root, off), /- zebra —/);
   assert.match(codexSkillCatalog(root, off), /- alpha —/);
@@ -173,7 +142,7 @@ test('a disabled extension\'s skill ids drop from the mandatory nudge and the Co
 // the global one, but decided per session rather than per install.
 test('disabledSkills drops a skill from this launch only, leaving the install\'s own lists alone', () => {
   const root = fixture();
-  const base = { taskMemory: true, checklist: true, ext: { disabledSkillIds: [] } };
+  const base = { taskMemory: true, ext: { disabledSkillIds: [] } };
   const gated = { ...base, disabledSkills: ['alpha'] };
   assert.doesNotMatch(mandatorySkillPrompt(root, gated), /alpha thing/);
   assert.doesNotMatch(codexSkillCatalog(root, gated), /- alpha —/);
@@ -218,7 +187,7 @@ function extFixture(id, name, nudge = '') {
 }
 
 const registry = (...rows) => ({ list: rows, disabledSkillIds: [] });
-const BOTH_ON = { taskMemory: true, checklist: true };
+const BOTH_ON = { taskMemory: true };
 
 test('an extension\'s own skills/ joins the catalog, tagged with the extension that ships it', () => {
   const root = fixture();

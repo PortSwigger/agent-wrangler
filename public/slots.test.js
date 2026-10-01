@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SLOT_NAMES, DISPATCH_ANCHORS, createSlots, namespacedStorage } from './slots.js';
-import { claimDrag, isClaimedDrag } from './ext-drag.js';
 
 // A DOM stub sufficient for the mount/update bookkeeping — no jsdom, matching
 // the rest of public/'s tests.
@@ -1072,46 +1071,7 @@ test('task.body: a throwing mount removes the contribution, others carry on', ()
   assert.ok(errors.some((e) => /mount failed/.test(e)));
 });
 
-// ── claimDrag / openDispatch / requestBoardRender (1.15.0) ──────────────────
-
-function fakeEl(parent = null, attrs = {}) {
-  const el = {
-    nodeType: 1, parentNode: parent, attrs: { ...attrs },
-    setAttribute(k, v) { this.attrs[k] = v; },
-    removeAttribute(k) { delete this.attrs[k]; },
-    closest(sel) {
-      const key = sel.slice(1, -1);
-      for (let n = this; n; n = n.parentNode) if (key in n.attrs) return n;
-      return null;
-    },
-  };
-  return el;
-}
-
-test('claimDrag marks the element, descendants count as claimed, and unclaim restores', () => {
-  const host = fakeEl();
-  const child = fakeEl(host);
-  const other = fakeEl();
-  const unclaim = claimDrag(host, 'x');
-  assert.equal(isClaimedDrag(child), true);
-  assert.equal(isClaimedDrag(host), true);
-  assert.equal(isClaimedDrag(other), false);
-  unclaim();
-  assert.equal(isClaimedDrag(child), false);
-  assert.equal(isClaimedDrag(null), false);
-  assert.doesNotThrow(() => claimDrag(null)());
-});
-
-test('api.claimDrag works from any slot host and is bound to the extension id', () => {
-  const { slots } = harness();
-  let api;
-  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
-  const host = harness().document.make();
-  slots.mountInto('panel.section', host, {});
-  const el = fakeEl();
-  api.claimDrag(el);
-  assert.equal(el.attrs['data-ext-drag'], 'ext1');
-});
+// ── openDispatch / requestBoardRender (1.15.0) ──────────────────────────────
 
 test('api.openDispatch forwards validated options and resolves with the ack; rejects bad input or an absent base', async () => {
   const { slots } = harness();
@@ -1139,4 +1099,25 @@ test('api.requestBoardRender calls the base api and tolerates its absence', () =
   slots.mountInto('panel.section', harness().document.make(), { requestBoardRender: () => { n += 1; } });
   api.requestBoardRender();
   assert.equal(n, 1);
+});
+
+test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elements, and clears on removeExtension', () => {
+  const { slots, errors } = harness();
+  const attrs = () => {
+    const a = new Map();
+    return { a, setAttribute: (k, v) => a.set(k, v), removeAttribute: (k) => a.delete(k) };
+  };
+  const api = slots.forExtension('x', {}).api;
+  const el = attrs();
+  const unclaim = api.claimDrag(el);
+  assert.equal(el.a.get('data-ext-drag'), 'x');
+  unclaim();
+  assert.equal(el.a.has('data-ext-drag'), false);
+  const noop = api.claimDrag(null);
+  assert.equal(typeof noop, 'function');
+  assert.match(errors.at(-1), /claimDrag needs an element/);
+  const el2 = attrs();
+  api.claimDrag(el2);
+  slots.removeExtension('x');
+  assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
 });

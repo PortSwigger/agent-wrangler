@@ -5,20 +5,22 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   checklistAddHandler, checklistUpdateHandler, checklistRemoveHandler, checklistReorderHandler,
-} from './checklist.js';
-import { routeControlMessage } from '../router.js';
-import { ChecklistStore, MAX_TEXT_LENGTH } from '../../checklist-store.js';
+} from './handlers.js';
+import manifest from './index.js';
+import { loadExtensions } from '../../index.js';
+import { routeControlMessage } from '../../../control/router.js';
+import { ChecklistStore, MAX_TEXT_LENGTH } from './store.js';
 
 function ctx() {
   const calls = { add: [], update: [], remove: [], reorder: [], rebuild: 0, replies: [] };
   return {
     calls,
-    checklistStore: {
+    stores: { checklist: {
       add: (sessionId, text) => calls.add.push({ sessionId, text }),
       update: (sessionId, itemId, patch) => calls.update.push({ sessionId, itemId, patch }),
       remove: (sessionId, itemId) => calls.remove.push({ sessionId, itemId }),
       reorder: (sessionId, order) => calls.reorder.push({ sessionId, order }),
-    },
+    } },
     rebuild: async () => { calls.rebuild += 1; },
     reply: (obj) => calls.replies.push(obj),
   };
@@ -29,10 +31,18 @@ function realCtx() {
   const calls = { rebuild: 0, replies: [] };
   return {
     calls,
-    checklistStore: new ChecklistStore(file),
+    stores: { checklist: new ChecklistStore(file) },
     rebuild: async () => { calls.rebuild += 1; },
-    reply: (obj) => calls.replies.push(obj),
   };
+}
+
+// The router hands an EXTENSION's handler its own host façade, never ctx — so the
+// router test drives the real tagged handlers the loader produces from the
+// manifest, with `hostApiFor` standing in for the façade index.js builds.
+function route(raw, host) {
+  const handlers = loadExtensions({ cfg: {}, builtin: [manifest] }).handlers;
+  const routerCtx = { hostApiFor: () => host, reply: (obj) => host.calls.replies.push(obj) };
+  return routeControlMessage(raw, routerCtx, { handlers });
 }
 
 test('checklist-add adds to the given card id and rebuilds', async () => {
@@ -81,14 +91,14 @@ test('checklist-reorder passes the order through, coercing a missing/garbage ord
 
 test('the four types are routable end-to-end through the control router', async () => {
   const c = realCtx();
-  await routeControlMessage(JSON.stringify({ type: 'checklist-add', sessionId: 'CARD1', text: 'one' }), c);
-  await routeControlMessage(JSON.stringify({ type: 'checklist-add', sessionId: 'CARD1', text: 'two' }), c);
-  const [a, b] = c.checklistStore.list('CARD1');
-  await routeControlMessage(JSON.stringify({ type: 'checklist-update', sessionId: 'CARD1', itemId: a.id, done: true }), c);
-  await routeControlMessage(JSON.stringify({ type: 'checklist-reorder', sessionId: 'CARD1', order: [b.id, a.id] }), c);
-  assert.deepEqual(c.checklistStore.list('CARD1').map((i) => [i.text, i.done]), [['two', false], ['one', true]]);
-  await routeControlMessage(JSON.stringify({ type: 'checklist-remove', sessionId: 'CARD1', itemId: b.id }), c);
-  assert.deepEqual(c.checklistStore.list('CARD1').map((i) => i.text), ['one']);
+  await route(JSON.stringify({ type: 'checklist-add', sessionId: 'CARD1', text: 'one' }), c);
+  await route(JSON.stringify({ type: 'checklist-add', sessionId: 'CARD1', text: 'two' }), c);
+  const [a, b] = c.stores.checklist.list('CARD1');
+  await route(JSON.stringify({ type: 'checklist-update', sessionId: 'CARD1', itemId: a.id, done: true }), c);
+  await route(JSON.stringify({ type: 'checklist-reorder', sessionId: 'CARD1', order: [b.id, a.id] }), c);
+  assert.deepEqual(c.stores.checklist.list('CARD1').map((i) => [i.text, i.done]), [['two', false], ['one', true]]);
+  await route(JSON.stringify({ type: 'checklist-remove', sessionId: 'CARD1', itemId: b.id }), c);
+  assert.deepEqual(c.stores.checklist.list('CARD1').map((i) => i.text), ['one']);
   assert.deepEqual(c.calls.replies, [], 'no errors on the happy path');
 });
 
@@ -96,11 +106,11 @@ test('the four types are routable end-to-end through the control router', async 
 // that into a toast rather than a silently dropped click.
 test('a rejected add reaches the client as an error reply, not silence', async () => {
   const c = realCtx();
-  await routeControlMessage(JSON.stringify({
+  await route(JSON.stringify({
     type: 'checklist-add', sessionId: 'CARD1', text: 'x'.repeat(MAX_TEXT_LENGTH + 1),
   }), c);
   assert.equal(c.calls.replies.length, 1);
   assert.equal(c.calls.replies[0].type, 'error');
   assert.match(c.calls.replies[0].message, /too long/);
-  assert.deepEqual(c.checklistStore.list('CARD1'), []);
+  assert.deepEqual(c.stores.checklist.list('CARD1'), []);
 });

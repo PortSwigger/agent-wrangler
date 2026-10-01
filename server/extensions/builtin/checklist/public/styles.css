@@ -1,0 +1,98 @@
+/* Builtin checklist extension styles. Loaded with the module and removed with
+   it when the extension is toggled off. */
+.checklist-pill, .checklist-filter { padding-right: 6px; background: color-mix(in srgb, var(--surface-2) 88%, var(--fg) 12%); }
+.checklist-pill.showing, .checklist-filter.showing { color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 18%, var(--surface-2)); }
+
+/* Per-session Checklist panel — a #panel sibling inside #sidebar. Bordered and
+   sized to its content (never flex:1), so it takes only what it needs and the
+   terminal/chat pane below keeps the rest. Its own --card-bg matches #panel's
+   single-layer frosted backdrop over the wallpaper. */
+#checklist {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  border-bottom: 1px solid var(--border-muted); background: var(--card-bg);
+}
+/* An explicit display out-specifies the UA's default [hidden] { display: none },
+   so an element toggled via the hidden attribute needs its own override — same
+   fix as #term-wrap[hidden] / #chat-wrap[hidden] below. */
+#checklist[hidden] { display: none; }
+.ck-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 6px; border-bottom: 1px solid var(--border-muted);
+}
+.ck-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-subtle); }
+.ck-count { font-size: 10px; color: var(--fg-muted); }
+.checklist-filter { margin-left: auto; }
+.ck-add {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: transparent; color: var(--fg-muted);
+  border: 1px solid var(--border-muted); cursor: pointer;
+}
+.ck-add:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Capped so a long list scrolls inside the panel instead of pushing the terminal
+   off the bottom of the sidebar. The patch-in-place render is what keeps this
+   scroll position across the ~4s graph poll. A px cap, NOT a vh one: with `26vh`
+   the number of visible rows moved with the window height, so resizing the
+   window while scrolled shifted scrollTop out from under the reader (measured
+   live: 38.6 -> 25.5 on a 738 -> 789px window). The panel is opt-in (collapsed
+   by default), so a fixed budget is the predictable choice. */
+.ck-list {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; max-height: 190px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
+}
+.ck-list:empty { display: none; }
+.ck-empty { padding: 8px 10px 9px; color: var(--fg-muted); font-size: 11px; }
+.ck-empty[hidden] { display: none; }
+/* "More below" cue for the capped list — without it the clipped last row reads
+   as a rendering glitch. Short and low-opacity so it never obscures the row it
+   overlays, and only present while there IS more below (see
+   syncChecklistScrollHint), so it doesn't sit over the final row at the bottom
+   of the list. position: relative on the panel is what anchors it. */
+#checklist { position: relative; }
+#checklist.ck-more-below::after {
+  content: ""; position: absolute; left: 1px; right: 1px; bottom: 0; height: 14px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--card-bg));
+}
+.ck-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-muted);
+  cursor: grab;
+}
+.ck-row:active { cursor: grabbing; }
+.ck-dragging { opacity: 0.45; }
+.ck-check {
+  flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border-radius: 4px;
+  /* --border measured ~1.4:1 against the row fill; a --fg mix lightens in dark
+     mode and darkens in light mode, so one value strengthens both themes. */
+  border: 1px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  color: transparent; cursor: pointer;
+}
+.ck-check::before { content: "✓"; font-size: 10px; line-height: 1; }
+.ck-check:hover { border-color: var(--accent); color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.ck-row.done .ck-check { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); color: var(--fg); }
+/* Shrink-to-content (not flex:1) so the text cursor covers only the glyphs and
+   the rest of the row keeps its grab cursor — same reasoning as .todo-text. */
+.ck-text { flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.ck-row.done .ck-text { color: var(--fg-subtle); text-decoration: line-through; }
+/* Editing widens back to the full row — the shrink-to-content sizing above is
+   only for read-only display. */
+.ck-text:has(.ck-input) { flex: 1; }
+.ck-row.ck-editing { cursor: default; padding: 4px 8px; }
+.ck-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
+.ck-del {
+  flex: 0 0 auto; margin-left: auto; width: 18px; height: 18px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
+  background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px;
+}
+.ck-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
+/* An item added from the board but not yet echoed back by the server carries no
+   real id, so nothing can be done to it yet — shown as faint and inert rather
+   than as live controls whose clicks quietly revert a moment later. */
+.ck-row.pending { opacity: 0.55; cursor: default; }
+.ck-row.pending .ck-check, .ck-row.pending .ck-del, .ck-row.pending .ck-text { pointer-events: none; }
+

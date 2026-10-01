@@ -7,7 +7,7 @@ import { loadExtensions, BUILTIN } from '../extensions/index.js';
 const NO_EXT = { allowedToolNames: [] };
 import {
   MCP_SERVER_NAME, MCP_TOKEN_ENV, mcpUrl,
-  claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg, CHECKLIST_TOOLS,
+  claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg,
 } from './client-config.js';
 
 test('mcpUrl points at the loopback /mcp on the given port', () => {
@@ -91,47 +91,21 @@ test('allowedToolsArg grants read_mail and list_mail (the mailbox tools) — the
   }
 });
 
-// Same two-place registration rule as read_mail/list_mail above, for the four
-// per-session checklist tools. `checklist: true` is passed explicitly so this
-// asserts the grant itself rather than whatever the developer's own config.json
-// happens to say.
-test('allowedToolsArg grants the four checklist tools — the two-place registration pair', async () => {
-  const { TOOLS } = await import('./tools/index.js');
-  const names = allowedToolsArg({ checklist: true, ext: NO_EXT }).split(',');
-  assert.equal(CHECKLIST_TOOLS.length, 4);
-  for (const toolName of CHECKLIST_TOOLS) {
-    assert.ok(TOOLS.some((t) => t.name === toolName), `${toolName} must be registered in tools/index.js TOOLS`);
-    assert.ok(names.includes(allowedToolName(toolName)), `${toolName} must be allow-listed in client-config.js ALLOWED_TOOLS`);
-  }
-});
-
-// `checklistEnabled: false` must leave a launch with no grant for these tools at
-// all — a tool an agent can never get a permission prompt answered for is worse
-// than one that isn't there.
-test('allowedToolsArg drops ONLY the checklist tools when the feature is off', () => {
-  const on = allowedToolsArg({ checklist: true, ext: NO_EXT }).split(',');
-  const off = allowedToolsArg({ checklist: false, ext: NO_EXT }).split(',');
-  for (const toolName of CHECKLIST_TOOLS) assert.ok(!off.includes(allowedToolName(toolName)));
-  assert.deepEqual(off, on.filter((n) => !CHECKLIST_TOOLS.map(allowedToolName).includes(n)));
-  // Every other always-on tool survives — a bad filter here would silently
-  // un-grant the mailbox or spawn tools.
-  for (const toolName of ['list_sessions', 'spawn_session', 'send_message', 'read_mail']) {
-    assert.ok(off.includes(allowedToolName(toolName)));
-  }
-});
-
 // Extension tools are the one place the two-place rule is DERIVED rather than
 // hand-kept: allowedToolsArg grants exactly the names the loader registers, so
-// a manifest that adds a tool has granted it in the same edit. BUILTIN is empty
-// today, so a fake stands in for the first manifest that ships one.
+// a manifest that adds a tool has granted it in the same edit. A fake stands in
+// for a manifest here; the real checklist manifest is covered beside it.
 test('allowedToolsArg grants every enabled extension tool, derived from the loader', () => {
   const ext = { allowedToolNames: ['do_a_thing', 'do_another'] };
-  const names = allowedToolsArg({ checklist: true, ext }).split(',');
+  const names = allowedToolsArg({ ext }).split(',');
   for (const n of ext.allowedToolNames) {
     assert.ok(names.includes(allowedToolName(n)), `${n} must be granted by allowedToolsArg`);
   }
   // And a disabled extension (the loader hands back no names) grants none of
   // them, leaving the core list exactly as it was.
-  assert.deepEqual(allowedToolsArg({ checklist: true, ext: NO_EXT }).split(','), names.filter((n) => !ext.allowedToolNames.map(allowedToolName).includes(n)));
-  assert.deepEqual(allowedToolsArg({ checklist: true, ext: loadExtensions({ cfg: { extensions: Object.fromEntries(BUILTIN.map((e) => [e.id, false])) }, builtin: BUILTIN }) }), allowedToolsArg({ checklist: true, ext: NO_EXT }));
+  assert.deepEqual(allowedToolsArg({ ext: NO_EXT }).split(','), names.filter((n) => !ext.allowedToolNames.map(allowedToolName).includes(n)));
+  // Every builtin switched off contributes no grant at all (the checklist's four
+  // tools are granted by the loader, only while it is enabled).
+  const allOff = loadExtensions({ cfg: { extensions: Object.fromEntries(BUILTIN.map((b) => [b.id, false])) }, builtin: BUILTIN });
+  assert.deepEqual(allowedToolsArg({ ext: allOff }), allowedToolsArg({ ext: NO_EXT }));
 });

@@ -12,6 +12,9 @@ Open **Settings → Extensions**, paste a git URL, and review the identity, depe
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
+The tab lists **Core extensions** (they ship with the wrangler) and **External extensions** (from git
+URLs); check for updates, uninstall, and the install field live under External extensions.
+
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
@@ -308,7 +311,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   cleared by the next `config` frame, which is the first frame of every reconnect
   and therefore the only reliable "the restart happened" signal a client gets.
 - **The Extensions tab is ONE list, and every row is a `.setting-row` carrying
-  `data-id="ext:<id>"`.** Builtin and installed extensions used to render through two
+  `data-id="ext:<id>"`.** Rows are grouped into Core/External sections by
+  `entry.external`; the row markup and flip path are unchanged. Builtin and installed extensions used to render through two
   paths — `settings.js`'s `rowHtml` toggles above, the panel's installed rows below —
   which printed the same name and description twice. `setExtensionDefs` therefore
   registers its defs in `byId` but leaves the tab's `settingIds` **empty**: the defs
@@ -696,22 +700,33 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reconciliation untestable against an element stub. It hangs off
   `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
   `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
-  extensions (`todos` first; see the builtin entry below). Migrating a flagged feature (checklist, task-memory,
-  archive-review) is: manifest + `BUILTIN` row + delete its accessor,
-  `set-<x>-enabled` handler and settings def** — never a fresh `if (id === …)`
-  rung in `app.js`, since `setExtensionDefs` renders the Extensions tab off
-  `graph.extensions`. A retired flag's stored value needs carrying over to
-  `extensions.<id>` at that point; there is no migration table yet, because
-  nothing has been retired.
-- **Builtin extensions live in `server/extensions/builtin/<id>/` and are registered in
-  `BUILTIN` (`server/extensions/index.js`) — one import and one array row.** The
-  directory name must equal the manifest `id`, `dir` is exported from
-  `import.meta.url`, and `client`/`styles` resolve under the extension's own
-  `public/` (served at `/ext/<id>/`, so a client may import sibling modules there).
-  Shipped skills sit in `<dir>/skills/<name>/SKILL.md`. `index.test.js` asserts the
-  layout, clean loading, no name collisions and the leaf-import rule over whatever
-  `BUILTIN` holds, so a new builtin needs no test edits. **`todos` is the reference
-  builtin**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
+  extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
+  exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
+  `skills/`, `public/` and its tests). **`checklist` and `todos` are the two so far**, and
+  `index.test.js` asserts the exact id list so a stray manifest can't register
+  tools and handlers on every install unnoticed. **Migrating a flagged feature
+  (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
+  manifest + `BUILTIN` row, delete its accessor, `set-<x>-enabled` handler and
+  settings def, and add a `{ oldKey, extId }` row to `RETIRED_FLAGS`** — never a
+  fresh `if (id === …)` rung in `app.js`, since `setExtensionDefs` renders the
+  Extensions tab off `graph.extensions`.
+- **`RETIRED_FLAGS` (`server/config-store.js`) carries a retired core flag over to
+  `extensions.<id>` at boot.** `applyRetiredFlagMigrations()` runs in
+  `server/index.js` BEFORE `primeExtensions` reads config. Only an explicit
+  `false` moves (`extensions.<id> = false`); `true`/missing/garbage just drop the
+  old key, and an explicit existing `extensions.<id>` boolean wins. Idempotent;
+  rows stay forever. Current row: `checklistEnabled` → `checklist`.
+- **The checklist is a reference builtin.** Store, four MCP tools, four control
+  handlers, the `checklist` skill (plus its `WRANGLER.md` nudge), an `onPurge`
+  session hook (purge is the only thing that drops a list; archive keeps it), a
+  `graph` contributor for `checklists`, and a client half (`panel.section` for the
+  panel, `panel.metaChip` for the done/total chip). `requires` is just
+  `board:rebuild`. It still writes `<DATA_DIR>/checklists.json` — the store is
+  deliberately NOT under a per-extension directory, so existing data loads
+  unchanged — and its legacy `wrangler.checklistOpen` / `wrangler.checklistShowDone`
+  localStorage keys are kept through `api.storage.raw()`. Disabling it unregisters
+  the tools, grant, skill, handlers, panel and chip together through the loader.
+- **`todos` is the reference builtin for task-keyed data**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
   a shipped skill, a one-time migration from `tasks.json`, and a client that fills
   `task.body` (below). Disabling it removes the zone, tools and skill and tiles size as
   if there were no TODOs; `todos.json` is never deleted. The core `tasks.json` keeps
@@ -739,13 +754,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   snoozed rows. Core cannot know what a body drew, so an extension that fills a tile
   hides the empty-state hint itself (`.task-body:has(...) .cell-empty-body`).
   `api.requestBoardRender()` redraws (and re-sizes) the board for content changes.
-- **`api.claimDrag(el)` (1.15.0) is generic drag ownership, usable in any slot.** It
-  sets `[data-ext-drag]` on an extension-owned element and returns an unclaim
-  function (`public/ext-drag.js`). Core's card and tile `dragstart` handlers ignore a
-  drag whose source is inside a claimed element, and one capturing `dragstart`
-  listener in `app.js` records it so the cell `dragover`/`drop` highlight and the grid
-  re-render hold stand aside (`extDragActive`) — dragover/drop carry no record of
-  where a drag began. The extension owns preventDefault for its own targets.
+- **`api.claimDrag(el)` makes a drag extension-owned.** It sets `data-ext-drag="<extId>"`
+  on `el` and returns an unclaim function; `gridEditing()` in `public/app.js` returns
+  true while any such element exists, so the ~4s poll does not rebuild the grid
+  mid-drag. Call it on `dragstart`, unclaim on `drop`/`dragend`. A non-element is
+  reported and ignored, and `removeExtension` clears the extension's claims so a
+  disabled extension cannot freeze the board. Focus inside `#panel-sections` is
+  already covered generically by `gridEditing`, so a panel section's inline input
+  needs nothing extra.
+  The `todos` extension claims its host only for the length of a row drag (set in
+  its `dragstart`, released on `dragend`), so the cell highlight stands aside and
+  re-renders hold while a row is in flight.
 - **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
   modal and returns a promise: the `dispatched` ack once the human launches, `null` if
   the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
@@ -804,7 +823,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
   that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
-  
+  That slot itself has no builtin user; its coverage is test fixtures.
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**
   `register` requires `items`/`cost` in place of `mount`. `slots.menuItems(s,

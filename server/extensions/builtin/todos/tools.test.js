@@ -21,9 +21,9 @@ test('the six TODO tools keep their names and are granted via the loader, not th
   assert.deepEqual(todoTools.map((t) => t.name), ['list_todos', 'add_todo', 'edit_todo', 'delete_todo', 'move_todo', 'reorder_todos']);
   assert.equal(TOOLS.some((t) => byName[t.name]), false);
   const ext = loadExtensions({ cfg: {}, builtin: BUILTIN });
-  const granted = allowedToolsArg({ checklist: false, ext }).split(',');
+  const granted = allowedToolsArg({ ext }).split(',');
   for (const tool of todoTools) assert.ok(granted.includes(allowedToolName(tool.name)), tool.name);
-  assert.equal(allowedToolsArg({ checklist: false, ext: { allowedToolNames: [] } }).includes('list_todos'), false);
+  assert.equal(allowedToolsArg({ ext: { allowedToolNames: [] } }).includes('list_todos'), false);
 });
 
 test('list_todos reads task and Unassigned buckets in stored order', async () => {

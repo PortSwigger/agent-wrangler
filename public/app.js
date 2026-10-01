@@ -3,7 +3,6 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { isClaimedDrag } from './ext-drag.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
   MAX_ONSCREEN_ROWS,
@@ -28,13 +27,6 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
-import {
-  createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
-  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
-  visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
-  parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
-  checklistHiddenDoneLabel,
-} from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { extensionsPanelEl, extensionSettingRowsEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
@@ -149,9 +141,7 @@ let chatViewDefault = false; // server config flag, carried on every graph push
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
 // identity fields are fixed at server boot; `enabled` is live.
-let checklistEnabled = true; // server config flag, carried on every graph push
 let latestExtensions = [];
-let latestChecklists = {};
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
 // never learns those keys.
@@ -574,8 +564,6 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
-  checklistEnabled = graph.checklistEnabled !== false;
-  latestChecklists = graph.checklists || {};
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
@@ -980,28 +968,23 @@ function gridHidden() {
 // so background re-renders (the ~4s poll, the just-finished timer) don't rebuild
 // the grid and steal focus / abort the drag.
 function gridEditing() {
-  if (dragActive || taskDragActive || extDragActive) return true;
+  if (dragActive || taskDragActive) return true;
+  // An extension-owned drag (slots api.claimDrag) in progress.
+  if (document.querySelector('[data-ext-drag]')) return true;
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
+    // The todos extension's inline inputs live in `.task-body-ext`; only a text
+    // field there is mid-edit (a focused button or link is not).
     || (['INPUT', 'TEXTAREA'].includes(a.tagName) && Boolean(a.closest?.('.task-body-ext')))
-    // The checklist's inline input lives in the sidebar, not #grid — but the
-    // grid re-render is what steals focus from whatever is focused anywhere, so
-    // it has to be listed here like the todo inputs. Same for anything focused
-    // inside the extension panel host, generically: the core doesn't know an
-    // extension's classes.
-    || a.classList.contains('ck-input')
+    // Anything focused inside the extension panel host, generically: the core
+    // doesn't know an extension's classes, and a grid re-render steals focus.
     || Boolean(a.closest?.('#panel-sections'));
 }
 
-// A drag that started inside an element an extension claimed (api.claimDrag,
-// ext-drag.js) belongs to that extension: core's cell dragover/drop highlight and
-// card/tile handlers stand aside for it. Tracked from one capturing listener
-// because dragover/drop carry no record of where the drag began.
-let extDragActive = false;
-document.addEventListener('dragstart', (e) => { extDragActive = isClaimedDrag(e.target); }, true);
-document.addEventListener('dragend', () => { extDragActive = false; }, true);
-document.addEventListener('drop', () => { extDragActive = false; }, true);
+// An extension-owned drag (slots api.claimDrag, held for the gesture) is in
+// progress: core's cell dragover/drop highlight stands aside for it.
+const extDragActive = () => Boolean(document.querySelector('[data-ext-drag]'));
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
 // dispatches and never reused) are throwaway — never suggest one as a folder to
@@ -2324,8 +2307,7 @@ function openTaskMenu(cell, x, y) {
 }
 
 // HTML5 drag-and-drop. Sessions carry {kind:'session', sessionId}; task headers
-// carry {kind:'task', taskId} for reordering. Drags starting inside an element an
-// extension claimed (api.claimDrag) are the extension's own and ignored here.
+// carry {kind:'task', taskId} for reordering.
 function wireGridDnd(el) {
   // Task reordering is handled on the persistent #grid element, not per-cell:
   // each dragover re-renders the packed board (the swap preview reflows columns),
@@ -2378,7 +2360,6 @@ function wireGridDnd(el) {
   // the card stays snoozed (snooze lives on the mapping entry, untouched by assign).
   el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"]').forEach((card) => {
     card.addEventListener('dragstart', (e) => {
-      if (isClaimedDrag(e.target)) return;
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
@@ -2414,7 +2395,6 @@ function wireGridDnd(el) {
     const cell = head.closest('.task-cell');
     const id = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
     head.addEventListener('dragstart', (e) => {
-      if (isClaimedDrag(e.target)) return;
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
@@ -2450,7 +2430,7 @@ function wireGridDnd(el) {
     cell.addEventListener('dragover', (e) => {
       // An extension-owned drag (api.claimDrag): leave dragover to the extension —
       // no preventDefault, no drop-target highlight.
-      if (extDragActive) return;
+      if (extDragActive()) return;
       e.preventDefault();
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
@@ -2474,7 +2454,7 @@ function wireGridDnd(el) {
     });
     cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
     cell.addEventListener('drop', (e) => {
-      if (extDragActive) return;
+      if (extDragActive()) return;
       e.preventDefault();
       cell.classList.remove('drop-target');
       let p;
@@ -2683,278 +2663,6 @@ function wireTaskControls(el) {
   );
 }
 
-// --- per-session checklist panel ---
-// A session-scoped list written by BOTH the human (this panel) and the launched
-// agent (its four MCP tools) — deliberately not the task-level TODO list (that
-// one is task-scoped and human-only) and not a mirror of the agent's own private
-// planning tool. Rows are patched in place by checklist-dom.js rather than
-// rebuilt from a string, so the ~4s graph poll can't reset the list's scroll.
-const checklistDom = createChecklistDom({ document });
-// Two freeze flags, both load-bearing: a poll tick landing mid-gesture would
-// otherwise reorder rows out from under the cursor, or replace the very input
-// someone is typing into. Optimistic local mutation (below) is what keeps the
-// panel honest in the meantime — the server echo is up to a poll away.
-let checklistDragActive = false;
-let checklistDragRow = null;
-let checklistEditing = false;
-
-// Collapsed/expanded is per session and persisted per browser, exactly like the
-// panel's sub-agents zone (panelSubagentShownOverrides) — collapsing one
-// session's checklist must not touch another's, and the choice has to survive a
-// reload. Default collapsed; see isChecklistOpen for why there's no
-// server-side default to fall back to.
-const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
-const checklistOpenOverrides = (() => {
-  try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
-})();
-const CHECKLIST_SHOW_DONE_KEY = 'wrangler.checklistShowDone';
-const checklistShowDoneIds = (() => {
-  try { return parseChecklistShowDone(localStorage.getItem(CHECKLIST_SHOW_DONE_KEY)); } catch { return new Set(); }
-})();
-function checklistOpen(sessionId) {
-  return isChecklistOpen(checklistOpenOverrides, sessionId);
-}
-function toggleChecklist(sessionId) {
-  toggleChecklistOpen(checklistOpenOverrides, sessionId);
-  try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
-}
-function checklistShowDone(sessionId) {
-  return isChecklistShowDone(checklistShowDoneIds, sessionId);
-}
-function toggleChecklistDoneFilter(sessionId) {
-  toggleChecklistShowDone(checklistShowDoneIds, sessionId);
-  try { localStorage.setItem(CHECKLIST_SHOW_DONE_KEY, serializeChecklistShowDone(checklistShowDoneIds)); } catch {}
-}
-
-// The live array for a session (not a copy) — the optimistic mutations below
-// write straight into it, exactly like the todo flow writes into latestTasks.
-function checklistFor(sessionId) {
-  return latestChecklists[sessionId] || [];
-}
-
-function renderChecklist(sessionId) {
-  const el = document.getElementById('checklist');
-  if (!el) return;
-  const items = sessionId ? checklistFor(sessionId) : [];
-  // Patch the collapsed chip's count here rather than re-rendering the whole
-  // panel: renderPanel calls THIS function, so calling it back would recurse.
-  // It has to happen before the early return below — an optimistic local edit
-  // must move the chip immediately, and the chip is only on screen while the
-  // panel is shut, i.e. exactly when this function returns early.
-  const pillCount = document.querySelector('#panel-checklist-toggle .ck-pill-count');
-  if (pillCount) pillCount.lastChild.textContent = checklistPillLabel(items);
-  // Collapsed is the whole panel gone, not a shrunken one: the collapsed form is
-  // that chip in #panel's own meta row, which costs the terminal no height at
-  // all. Off by config or nothing selected hides it too.
-  if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
-  el.hidden = false;
-  document.getElementById('ck-count').textContent = checklistCountLabel(items);
-  const showDone = checklistShowDone(sessionId);
-  const filter = document.getElementById('ck-filter');
-  filter.classList.toggle('showing', showDone);
-  filter.setAttribute('aria-pressed', String(showDone));
-  filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
-  document.getElementById('ck-filter-label').textContent = showDone ? 'All' : 'Open';
-  const visibleItems = visibleChecklistItems(items, { showDone });
-  const empty = document.getElementById('ck-empty');
-  const emptyLabel = checklistHiddenDoneLabel(items, { showDone });
-  if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
-  empty.hidden = !emptyLabel;
-  if (checklistDragActive || checklistEditing) return;
-  const list = document.getElementById('ck-list');
-  checklistDom.patch(list, { sessionId, items: visibleItems, focusFallback: filter });
-  syncChecklistScrollHint(list);
-}
-
-// The list is height-capped, so a long checklist clips its last visible row —
-// with no cue, that reads as a rendering glitch rather than "more below". Marks
-// the panel while there is content further down (and only then, so the hint
-// never sits over the last row once you have reached the bottom).
-function syncChecklistScrollHint(list) {
-  if (!list) return;
-  const more = list.scrollHeight - list.clientHeight - list.scrollTop > 2;
-  document.getElementById('checklist').classList.toggle('ck-more-below', more);
-}
-
-// Belt-and-braces alongside the `pending` class the patch puts on such a row
-// (its controls are inert in CSS): a click that somehow lands must not send an
-// id the server has never heard of. See isPendingChecklistId.
-function toggleChecklistItem(itemId) {
-  const sid = selectedSessionId;
-  if (isPendingChecklistId(itemId)) return;
-  const item = checklistFor(sid).find((i) => i.id === itemId);
-  if (!item) return;
-  const done = !item.done;
-  send({ type: 'checklist-update', sessionId: sid, itemId, done });
-  item.done = done;
-  renderChecklist(sid);
-}
-
-function deleteChecklistItem(itemId) {
-  const sid = selectedSessionId;
-  if (isPendingChecklistId(itemId)) return;
-  send({ type: 'checklist-remove', sessionId: sid, itemId });
-  latestChecklists[sid] = checklistFor(sid).filter((i) => i.id !== itemId);
-  renderChecklist(sid);
-}
-
-// Inline add: an input appended as the last row. Enter/blur commits, Escape
-// cancels — same contract as the todo zone's inline add.
-function beginChecklistAdd() {
-  const sid = selectedSessionId;
-  if (!sid || checklistEditing) return;
-  const list = document.getElementById('ck-list');
-  if (!list || document.getElementById('checklist').hidden) return;
-  const holder = document.createElement('div');
-  holder.className = 'ck-row ck-editing';
-  const input = document.createElement('input');
-  input.className = 'ck-input';
-  input.placeholder = 'New checklist item…';
-  input.setAttribute('aria-label', 'New checklist item');
-  holder.appendChild(input);
-  list.appendChild(holder);
-  checklistEditing = true;
-  input.focus();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    checklistEditing = false;
-    const text = input.value.trim();
-    if (holder.parentNode) holder.parentNode.removeChild(holder);
-    if (save && text) {
-      send({ type: 'checklist-add', sessionId: sid, text });
-      // Optimistic: a tmp id the next graph replaces with the server's real one.
-      latestChecklists[sid] = [...checklistFor(sid), { id: `tmp_${Date.now()}`, text, done: false, createdAt: Date.now() }];
-    }
-    renderChecklist(sid);
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously removes this input, so a bubbling
-    // Enter would reach the window handler with the input already gone and the
-    // isTypingTarget guard would miss it (same reason as the todo inputs).
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-}
-
-// Click-to-edit one item's text. The input replaces the span's text node rather
-// than the span itself, so the row element (and its drag handle) survives.
-function beginChecklistEdit(row) {
-  const sid = selectedSessionId;
-  if (checklistEditing || isPendingChecklistId(row.dataset.ckid)) return;
-  const span = row.querySelector('.ck-text');
-  const itemId = row.dataset.ckid;
-  const current = span.textContent;
-  const input = document.createElement('input');
-  input.className = 'ck-input';
-  input.value = current;
-  input.setAttribute('aria-label', `Edit checklist item: ${current}`);
-  span.textContent = '';
-  span.appendChild(input);
-  checklistEditing = true;
-  input.focus();
-  input.select();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    checklistEditing = false;
-    const text = input.value.trim();
-    if (input.parentNode) input.parentNode.removeChild(input);
-    span.textContent = current;
-    if (save && text && text !== current) {
-      send({ type: 'checklist-update', sessionId: sid, itemId, text });
-      const item = checklistFor(sid).find((i) => i.id === itemId);
-      if (item) item.text = text;
-    }
-    renderChecklist(sid);
-  };
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-}
-
-// The row the dragged one should sit BEFORE for a given cursor Y (null = the
-// end). Scoped to the list's own rows, so it can never hit-test anything else in
-// the sidebar.
-function checklistDragBefore(list, y) {
-  for (const row of list.children) {
-    if (row === checklistDragRow) continue;
-    const r = row.getBoundingClientRect();
-    if (y < r.top + r.height / 2) return row;
-  }
-  return null;
-}
-
-// Idempotent: `drop` fires before `dragend`, and a drag can also end with no
-// drop at all, so both call this.
-function endChecklistDrag() {
-  if (checklistDragRow) checklistDragRow.classList.remove('ck-dragging');
-  checklistDragActive = false;
-  checklistDragRow = null;
-}
-
-// One delegated listener pair on the list, wired once — rows are created and
-// destroyed by the patch, so per-row wiring would have to be redone on every
-// tick and would miss any row the patch reused.
-function initChecklist() {
-  const list = document.getElementById('ck-list');
-  document.getElementById('ck-add').addEventListener('click', beginChecklistAdd);
-  document.getElementById('ck-filter').addEventListener('click', () => {
-    toggleChecklistDoneFilter(selectedSessionId);
-    renderChecklist(selectedSessionId);
-  });
-  list.addEventListener('click', (e) => {
-    const row = e.target.closest('.ck-row');
-    if (!row || !row.dataset.ckid) return;
-    if (e.target.closest('.ck-check')) { toggleChecklistItem(row.dataset.ckid); return; }
-    if (e.target.closest('.ck-del')) { deleteChecklistItem(row.dataset.ckid); return; }
-    if (e.target.closest('.ck-text')) beginChecklistEdit(row);
-  });
-  list.addEventListener('dragstart', (e) => {
-    const row = e.target.closest('.ck-row[draggable="true"]');
-    if (!row) return;
-    checklistDragRow = row;
-    checklistDragActive = true;
-    e.dataTransfer.effectAllowed = 'move';
-    // A payload is required for the drag to start at all in some browsers; the
-    // drop reads the resulting DOM order, not this.
-    e.dataTransfer.setData('text/plain', row.dataset.ckid);
-    row.classList.add('ck-dragging');
-  });
-  list.addEventListener('dragover', (e) => {
-    if (!checklistDragActive || !checklistDragRow) return;
-    e.preventDefault();
-    const before = checklistDragBefore(list, e.clientY);
-    if (before !== checklistDragRow) list.insertBefore(checklistDragRow, before);
-  });
-  list.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if (!checklistDragActive) return;
-    const sid = selectedSessionId;
-    const visibleOrder = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
-    // A `tmp_` id belongs to an add still in flight — the server has never heard
-    // of it, so sending it would just be ignored. Filter it out rather than
-    // skipping the whole round trip (skipping would let the next graph echo
-    // revert the drag). Reorder appends anything it isn't told about, and an
-    // optimistic item is always the last row anyway, so it lands where it was.
-    const items = checklistFor(sid);
-    const reordered = reorderVisibleChecklistItems(items, visibleOrder);
-    const order = reordered.map((item) => item.id);
-    send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
-    // Optimistic reorder of the local snapshot, so the next patch agrees with
-    // the DOM the drag already produced rather than snapping it back.
-    latestChecklists[sid] = reordered;
-    endChecklistDrag();
-    renderChecklist(sid);
-  });
-  list.addEventListener('dragend', endChecklistDrag);
-  list.addEventListener('scroll', () => syncChecklistScrollHint(list));
-}
 
 // Ask the server to create a task; awaitingNewTask makes the new tile open in
 // rename mode when it arrives. Optionally seed it with a session.
@@ -4346,11 +4054,7 @@ function togglePanelSubagentShowFinished(sessionId) {
 function renderPanel(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   if (!s) return;
-  // The Checklist panel is a #panel SIBLING, not part of its markup — rendered
-  // from here purely so there is one call site that can't drift out of sync with
-  // panel renders (selection, the ~4s poll, every pill toggle).
-  renderChecklist(sessionId);
-  // Extension panel sections (#panel-sections, the other #panel SIBLING) are
+  // Extension panel sections (#panel-sections, a #panel SIBLING) are
   // mounted once and updated from the same call site, for the same reason. The
   // meta-chip slot is mounted further down, once the chips row it lives in has
   // been rebuilt.
@@ -4383,17 +4087,6 @@ function renderPanel(sessionId) {
   if (compactPill) chips.push(compactPill);
   if (s.tasks?.running) chips.push(`<span class="card-tag">${esc(s.tasks.running)} running${s.tasks.kinds?.length ? ` (${s.tasks.kinds.map(esc).join(', ')})` : ''}</span>`);
   if (s.tasks?.queued) chips.push(`<span class="card-tag">${esc(s.tasks.queued)} queued</span>`);
-  // The checklist's COLLAPSED form: a disclosure chip in this row, styled and
-  // toggled exactly like the sub-agents pill below (icon + count + a +/- state
-  // icon, per-session and persisted). Collapsed therefore costs the terminal no
-  // height at all — the panel itself is simply not rendered. Shown even for an
-  // empty checklist (hence checklistPillLabel's "0/0"): while collapsed this
-  // chip is the only thing telling a human the feature exists on this session.
-  if (checklistEnabled) {
-    const open = checklistOpen(sessionId);
-    const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
-    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
-  }
   // Extension chips are mounted into this row AFTER it is written — see the
   // panel.metaChip slot below.
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
@@ -4467,8 +4160,6 @@ function renderPanel(sessionId) {
   if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
-  const ckToggle = panel.querySelector('#panel-checklist-toggle');
-  if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
   // The chips row above was just rebuilt via innerHTML, so its .sess-meta-ext
   // host (between the core chips and the right-aligned links) is a fresh
   // element every render: mountInto re-mounts each extension chip into it
@@ -5661,9 +5352,6 @@ function cancelModal() {
 }
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
-// One-time delegated wiring for the Checklist panel's rows (they are patched, so
-// per-row listeners would be lost/duplicated on every tick).
-initChecklist();
 // Seed --chat-font-size from the stored preference at startup. The terminal's
 // size needs no equivalent: it is read per-terminal at construction, whereas
 // this one is a CSS variable that has to exist before the chat view first
@@ -5913,7 +5601,6 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
-      if (id === 'checklistEnabled') return checklistEnabled;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
       // back off graph.extensions — one rung for all of them, no per-extension
       // branch. Undefined for an unknown id so settings.js falls back to its
@@ -5945,12 +5632,6 @@ initSettings({
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
-      } else if (id === 'checklistEnabled') {
-        checklistEnabled = Boolean(value);
-        send({ type: 'set-checklist-enabled', enabled: checklistEnabled });
-        // Show/hide at once rather than waiting for the rebuild echo — the panel
-        // is right beside the modal that just toggled it.
-        renderChecklist(selectedSessionId);
       } else if (id.startsWith(EXT_SETTING_PREFIX)) {
         // Nothing flips locally: the server fixed the extension's tools/handlers
         // at boot, so the toggle only records the choice (read back off the next

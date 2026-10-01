@@ -63,7 +63,6 @@
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
 export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body'];
 
-import { claimDrag } from './ext-drag.js';
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
 // CLIENT_CAPABILITIES) — carried on the announcement and graph.extensions as
@@ -255,9 +254,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
         settings: settingsApi(extId, baseApi),
-        // Mark an element this extension owns so core's board drag handlers
-        // ignore drags that start inside it (ext-drag.js). Returns unclaim.
-        claimDrag: (el) => claimDrag(el, extId),
+        // Mark `el` as carrying an extension-owned drag: the board treats any
+        // [data-ext-drag] element as "a drag is in progress" and holds its
+        // background re-renders (app.js gridEditing) so the gesture is not torn
+        // down. Returns the unclaim function; call it on drop/dragend.
+        claimDrag: (el) => claimDrag(extId, el),
         // Open the dispatch modal (1.15.0) and resolve with the `dispatched`
         // ack, or null when it is cancelled. See app.js openDispatchAcked for
         // the concurrency rule.
@@ -298,6 +299,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     if (sampleReported.has(key)) return;
     sampleReported.add(key);
     onError(`[ext:${c.extId}] ${c.id} ${what} failed on the sample card — skipped there`, err);
+  }
+
+  // extId -> Set<element> currently marked [data-ext-drag], so removing an
+  // extension (disable, uninstall, failed load) cannot leave the board frozen.
+  const dragClaims = new Map();
+  function claimDrag(extId, el) {
+    if (!el || typeof el.setAttribute !== 'function') {
+      onError(`[ext:${extId}] claimDrag needs an element, got ${typeof el}`);
+      return () => {};
+    }
+    el.setAttribute('data-ext-drag', extId);
+    if (!dragClaims.has(extId)) dragClaims.set(extId, new Set());
+    dragClaims.get(extId).add(el);
+    return () => {
+      dragClaims.get(extId)?.delete(el);
+      el.removeAttribute?.('data-ext-drag');
+    };
   }
 
   function cardsApi(extId, baseApi) {
@@ -579,6 +597,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
       apis.delete(extId);
+      for (const el of dragClaims.get(extId) || []) el.removeAttribute?.('data-ext-drag');
+      dragClaims.delete(extId);
       // A disabled, uninstalled or failed-to-load extension must stop HEARING
       // too, not just stop drawing: extensions.js calls this on unload, so the
       // subscription dies with the module that took it and a later re-enable
@@ -906,8 +926,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 // localStorage behind a key prefix, every access under try/catch: storage can be
 // absent (a test), full, or blocked (private mode), and an extension's remembered
 // preference is never worth a thrown error in a render. `raw(key)` deliberately
-// escapes the prefix for a key that predates the extensions API — the checklist's
-// `wrangler.checklistOpen` — so a migrated feature keeps its users' stored state;
+// escapes the prefix for a key that predates the extensions API (e.g. the builtin
+// checklist's `wrangler.checklistOpen`) — so a migrated feature keeps its users' stored state;
 // a NEW key has no reason to use it.
 export function namespacedStorage(prefix, storage = globalThis.localStorage) {
   const wrap = (key) => ({
