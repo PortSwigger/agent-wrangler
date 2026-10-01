@@ -16,7 +16,7 @@ Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for
 | `session-hierarchy` | Distinguishing board nesting from launch lineage, and finding a session's parent, spawner, or task. | “Which session spawned you, and where are you nested?” |
 | `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, and optional nesting. | “Spawn a Codex session to investigate the failing integration tests.” |
 | `task-memory` | Reading and maintaining context shared by every session assigned to the same task, including work across multiple repositories. | “Record that decision in task memory for future sessions.” |
-| `archive-to-todo` | Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:archive-to-todo` explicitly. For an ordinary TODO that leaves the session running, use `add_todo`. | “Archive this session to a TODO for later.” |
+| `archive-to-todo` | (Requires the `todos` extension.) Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:archive-to-todo` explicitly. For an ordinary TODO that leaves the session running, use `add_todo`. | “Archive this session to a TODO for later.” |
 
 New sessions receive the skill catalogue; running sessions pick up changes after resuming.
 
@@ -31,12 +31,12 @@ phase and switches to **needs-you** if blocked. Launch it from the dialog or wit
 - **Checklist:** the human and agent edit the same per-session list.
 - **Task memory:** durable Markdown shared across all sessions on a task.
 - **Links:** Jira and GitHub context displayed on cards and task headings.
-- **Mail:** durable peer-to-peer messages; dormant recipients are woken for delivery.
+- **Mail:** durable peer-to-peer messages; live idle recipients are prompted, while dormant recipients keep mail unread until explicitly resumed.
 - **Hierarchy:** sessions can be nested for presentation without changing who originally spawned them.
 
 Use these board-visible surfaces instead of burying coordination state in a transcript.
 
 ## Availability
 
-Extensions may add skills and tools while enabled. Disabling **Per-session checklist** in Settings
-removes its four tools after sessions resume.
+Extensions may add skills and tools while enabled. Disabling **Per-session checklist** in
+**Settings → Extensions** removes its four tools and the `checklist` skill after sessions resume.

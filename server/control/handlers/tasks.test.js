@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
-import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchiveHandler } from './tasks.js';
+import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchiveHandler, taskDeleteHandler } from './tasks.js';
 
 function ctx(overrides = {}) {
   const calls = {
@@ -212,4 +212,37 @@ test('task-unarchive: restoreSessions resumes exactly the sessions cascaded with
   await taskUnarchiveHandler.handler({ type: 'task-unarchive', taskId: 'T1', restoreSessions: true }, c);
   assert.deepEqual(c.calls.resume.map((r) => r.sid), ['S1', 'S4']);
   assert.deepEqual(c.calls.reply, [{ type: 'task-unarchived', taskId: 'T1' }]);
+});
+
+function deleteCtx({ unassigned = ['S1', 'S2'], fire } = {}) {
+  const calls = { del: [], bind: [], fired: [], order: [] };
+  return {
+    calls,
+    taskStore: { deleteTask: (id) => { calls.order.push('core'); calls.del.push(id); return unassigned; } },
+    memoryStore: { bindSession: (sid, t) => calls.bind.push([sid, t]) },
+    ext: { fireTaskDelete: fire ?? (async (id) => { calls.order.push('ext'); calls.fired.push(id); }) },
+    rebuild: async () => { calls.order.push('rebuild'); },
+  };
+}
+
+test('task-delete: core removes the task first, then extensions are told, then the board rebuilds', async () => {
+  const c = deleteCtx();
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
+  assert.deepEqual(c.calls.order, ['core', 'ext', 'rebuild']);
+  assert.deepEqual(c.calls.fired, ['T1']);
+  assert.deepEqual(c.calls.bind, [['S1', null], ['S2', null]]);
+});
+
+test('task-delete: an unknown task tells no extension', async () => {
+  const c = deleteCtx({ unassigned: null });
+  c.taskStore.deleteTask = () => null;
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'nope' }, c);
+  assert.deepEqual(c.calls.fired, []);
+});
+
+test('task-delete: works with no extension bag at all', async () => {
+  const c = deleteCtx();
+  delete c.ext;
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
+  assert.deepEqual(c.calls.del, ['T1']);
 });

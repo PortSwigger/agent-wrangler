@@ -12,13 +12,16 @@ Open **Settings → Extensions**, paste a git URL, and review the identity, depe
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
+The tab lists **Core extensions** (they ship with the wrangler) and **External extensions** (from git
+URLs); check for updates, uninstall, and the install field live under External extensions.
+
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
 ## Minimal external extension
 
-An installable repository needs `package.json`, `package-lock.json`, and an `index.js` with a default
-manifest export. Agent Wrangler reads the package declaration before executing extension code.
+An installable repository needs `package.json` and an `index.js` with a default manifest export, plus
+`package-lock.json` if it declares any runtime dependencies. Agent Wrangler reads the package declaration before executing extension code.
 
 ```json
 {
@@ -47,8 +50,10 @@ export default {
 ```
 
 The directory `<id>`, `wranglerExtension.id`, and runtime manifest `id` must agree. IDs begin with a
-lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required even with
-no dependencies; create one with `npm install --package-lock-only`.
+lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required only when
+`package.json` declares `dependencies`, `optionalDependencies`, `peerDependencies` or
+`bundleDependencies`; create one with `npm install --package-lock-only`. A dependency-free extension
+may omit it, and install then skips `npm ci`.
 
 Supported manifest contributions are:
 
@@ -157,9 +162,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reintroduce the hazard by interpolating a stored URL. The clone disables both
   protocols **in git itself** as well, because a clone can follow a submodule URL or
   a redirect nothing screened, and passes the URL after `--` as its own argv element
-  (`execFile`, never `shell: true`). `package-lock.json` is **mandatory** and its
-  absence refuses the install before the disclosure — an unpinned dependency set
-  cannot be disclosed honestly, so there is nothing to consent to. The subprocess
+  (`execFile`, never `shell: true`). `package-lock.json` is **mandatory whenever runtime
+  dependencies are declared** and its absence then refuses the install before the
+  disclosure — an unpinned dependency set cannot be disclosed honestly, so there is
+  nothing to consent to. With no runtime dependencies declared the set is provably
+  empty, so a missing lockfile is accepted and `npm ci` is skipped. The subprocess
   runners are a **module** seam, never an option on the incoming frame: a control
   frame is browser-supplied, so a `_clone` a client could set would be arbitrary
   code execution offered as an API.
@@ -304,7 +311,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   cleared by the next `config` frame, which is the first frame of every reconnect
   and therefore the only reliable "the restart happened" signal a client gets.
 - **The Extensions tab is ONE list, and every row is a `.setting-row` carrying
-  `data-id="ext:<id>"`.** Builtin and installed extensions used to render through two
+  `data-id="ext:<id>"`.** Rows are grouped into Core/External sections by
+  `entry.external`; the row markup and flip path are unchanged. Builtin and installed extensions used to render through two
   paths — `settings.js`'s `rowHtml` toggles above, the panel's installed rows below —
   which printed the same name and description twice. `setExtensionDefs` therefore
   registers its defs in `byId` but leaves the tab's `settingIds` **empty**: the defs
@@ -691,17 +699,79 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the DOM, since the caller has just rendered and `isConnected` would make the
   reconciliation untestable against an element stub. It hangs off
   `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
-  `renderFocusedTile`) already end with. **`BUILTIN` is EMPTY — this lands the
-  API and its seams, with nothing migrated onto it yet** (asserted, so a stray
-  manifest can't register tools and handlers on every install unnoticed), which
-  is also why nothing here is exercised end-to-end by a real feature: the first
-  manifest is the proof. **Migrating a flagged feature (checklist, task-memory,
-  archive-review) is: manifest + `BUILTIN` row + delete its accessor,
-  `set-<x>-enabled` handler and settings def** — never a fresh `if (id === …)`
-  rung in `app.js`, since `setExtensionDefs` renders the Extensions tab off
-  `graph.extensions`. A retired flag's stored value needs carrying over to
-  `extensions.<id>` at that point; there is no migration table yet, because
-  nothing has been retired.
+  `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
+  extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
+  exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
+  `skills/`, `public/` and its tests). **`checklist` and `todos` are the two so far**, and
+  `index.test.js` asserts the exact id list so a stray manifest can't register
+  tools and handlers on every install unnoticed. **Migrating a flagged feature
+  (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
+  manifest + `BUILTIN` row, delete its accessor, `set-<x>-enabled` handler and
+  settings def, and add a `{ oldKey, extId }` row to `RETIRED_FLAGS`** — never a
+  fresh `if (id === …)` rung in `app.js`, since `setExtensionDefs` renders the
+  Extensions tab off `graph.extensions`.
+- **`RETIRED_FLAGS` (`server/config-store.js`) carries a retired core flag over to
+  `extensions.<id>` at boot.** `applyRetiredFlagMigrations()` runs in
+  `server/index.js` BEFORE `primeExtensions` reads config. Only an explicit
+  `false` moves (`extensions.<id> = false`); `true`/missing/garbage just drop the
+  old key, and an explicit existing `extensions.<id>` boolean wins. Idempotent;
+  rows stay forever. Current row: `checklistEnabled` → `checklist`.
+- **The checklist is a reference builtin.** Store, four MCP tools, four control
+  handlers, the `checklist` skill (plus its `WRANGLER.md` nudge), an `onPurge`
+  session hook (purge is the only thing that drops a list; archive keeps it), a
+  `graph` contributor for `checklists`, and a client half (`panel.section` for the
+  panel, `panel.metaChip` for the done/total chip). `requires` is just
+  `board:rebuild`. It still writes `<DATA_DIR>/checklists.json` — the store is
+  deliberately NOT under a per-extension directory, so existing data loads
+  unchanged — and its legacy `wrangler.checklistOpen` / `wrangler.checklistShowDone`
+  localStorage keys are kept through `api.storage.raw()`. Disabling it unregisters
+  the tools, grant, skill, handlers, panel and chip together through the loader.
+- **`todos` is the reference builtin for task-keyed data**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
+  a shipped skill, a one-time migration from `tasks.json`, and a client that fills
+  `task.body` (below). Disabling it removes the zone, tools and skill and tiles size as
+  if there were no TODOs; `todos.json` is never deleted. The core `tasks.json` keeps
+  its legacy `todos` field as an opaque pass-through for one release (so a downgrade
+  or a failed migration retry still finds it); drop it afterwards.
+- **`onTaskDelete({ taskId, host })` (1.15.0) is a manifest hook for data keyed by
+  task id.** The `task-delete` control handler removes the task from core first
+  (`TaskStore.deleteTask`, which unassigns its sessions), then
+  `ctx.ext.fireTaskDelete` (`createTaskDeleteNotifier`) awaits each enabled
+  extension's hook sequentially with that extension's own façade. Errors are logged
+  and isolated per extension; disabled, uninstalled and quarantined extensions are
+  never asked (unregister removes the hook). **`host.tasks.adhocId`** (under
+  `tasks:read`) is the reserved id of the Unassigned tile (equal to core's `ADHOC`),
+  so nothing hard-codes `'adhoc'`.
+- **`task.body` (1.15.0) is a slot with one host PER TASK TILE, Unassigned included.**
+  `cards.js taskBodyHostHtml` draws `.task-body-ext[data-task-body]` and `app.js
+  mountTaskBodies` reconciles them with `syncHosts` from `wireGridEvents` (the card.pill
+  pattern). The per-host subject is `{ taskId, adhocId, container }`, passed as
+  `mount(el, api, ctx)` and `update(el, ctx, graph)`; `taskId` is the reserved
+  `adhocId` for Unassigned. A contribution may carry `weight(taskId, graph)`:
+  px of tile height, summed by `slots.taskBodyWeight` into `layout.tileSpan`'s
+  `bodyPx`. It runs per tile per layout pass, so it must be synchronous and cheap; a
+  throwing weight counts as 0 and is reported once, NOT removed (unlike mount/update,
+  it runs in a measurement pass). Weight reaches the capped secondary bucket, like
+  snoozed rows. Core cannot know what a body drew, so an extension that fills a tile
+  hides the empty-state hint itself (`.task-body:has(...) .cell-empty-body`).
+  `api.requestBoardRender()` redraws (and re-sizes) the board for content changes.
+- **`api.claimDrag(el)` makes a drag extension-owned.** It sets `data-ext-drag="<extId>"`
+  on `el` and returns an unclaim function; `gridEditing()` in `public/app.js` returns
+  true while any such element exists, so the ~4s poll does not rebuild the grid
+  mid-drag. Call it on `dragstart`, unclaim on `drop`/`dragend`. A non-element is
+  reported and ignored, and `removeExtension` clears the extension's claims so a
+  disabled extension cannot freeze the board. Focus inside `#panel-sections` is
+  already covered generically by `gridEditing`, so a panel section's inline input
+  needs nothing extra.
+  The `todos` extension claims its host only for the length of a row drag (set in
+  its `dragstart`, released on `dragend`), so the cell highlight stands aside and
+  re-renders hold while a row is in flight.
+- **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
+  modal and returns a promise: the `dispatched` ack once the human launches, `null` if
+  the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
+  second call while the first modal is merely open REPLACES it (the first resolves
+  null); while a launch awaits its ack the second call REJECTS, since two acks cannot
+  be told apart. An error reply to a launch whose modal is still open makes it
+  retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default
@@ -753,8 +823,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
   that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
-  **`BUILTIN` stays empty** and its assertion stays: this is API only, and the
-  coverage is test fixtures.
+  That slot itself has no builtin user; its coverage is test fixtures.
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**
   `register` requires `items`/`cost` in place of `mount`. `slots.menuItems(s,
@@ -783,6 +852,76 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   because `minimise()` silently refuses the last visible tile — an extension
   must be able to tell. `app.js` also refuses an id not in `currentOrder()`, or
   an archived task would sit in the minimised set until the next prune.
+- **`api.settings()`** (1.13.0) returns the extension's own current setting
+  values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
+  at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL
+  from Settings and send every value explicitly — before it, a server half had
+  to fill empty fields from settings, so a dispatch could never send `false`
+  for a toggle Settings had on. Since 1.14.0 it is a function WITH properties
+  (still callable bare): **`api.settings.set(key, value)`** → Promise sends
+  core's `ext-setting-set` with a `reqId` through the RAW base send (it is core's
+  handler, not the extension's own type — safe only because slots forces the id
+  and the server validates against that manifest's defs), resolving or rejecting
+  on the matching `ext-setting-result` reply (10s timeout; a failure replaces
+  the generic error toast); **`api.settings.onChange(fn)`** fires when a graph
+  carries different `settingValues` for that extension than the last one (the
+  existing rebuild is the broadcast — no new frame), with the same
+  report-and-keep rule as `onMessage`, and dies in `removeExtension`.
+- **Setting defs: `list`, `hidden`, `maxItems` (1.14.0).** A `list` value is an
+  array of distinct strings (each ≤ `MAX_TEXT_LENGTH`, at most `maxItems`, itself
+  ≤ 500 and legal on a list only); `ext-setting-set` copies it and rejects
+  anything else — never coerces. `hidden: true` (boolean, any type) keeps a def
+  off the dialog's rows: it is a value the extension manages itself. A visible
+  `list` draws a read-only item count; an editable list UI is deferred.
+- **`settings.panel` (1.14.0) is the extension's own block in its settings
+  dialog**, above the manifest rows (`app.js openExtSettings`). Single-host, via
+  `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
+  mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
+  **Done means save for panel contributions only**: `slots.savePanels` awaits
+  each `save` in turn and a rejection keeps the dialog open (the extension shows
+  its own error); Escape or the backdrop closes without saving; `unmountHost`
+  runs every `unmount` on close. The manifest rows still commit on change, and
+  the button stays "Done".
+- **`registrar.api` (1.14.0).** The registrar a module's `register(registrar)`
+  receives carries `api`, the SAME object (by identity) every contribution's
+  `mount(el, api)` gets, so a module can call `api.cards.hideChips(...)` or
+  `api.settings.onChange(fn)` at load time with nothing mounted. Capability
+  gates apply unchanged, and `removeExtension` (disable, uninstall, failed load)
+  drops its `onChange` subscriptions and hidden chips exactly as for a mounted
+  contribution. `extensions.js` passes app.js's base api through
+  `slots.forExtension(id, baseApi)`.
+- **The chip veto (1.14.0) is presentation-only, and scoped to the board
+  CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
+  `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,
+  `core:compact`, `core:subagents`, `core:restarting`, `core:automerge`,
+  `core:runtime`, `core:worktree`, `core:pr`, `core:jira` (cards.js
+  `CORE_CHIPS`, meta-row order; PR and Jira link chips keyed separately). A
+  `card.pill` contribution's key is `<extId>:<id>` (on its `.ext-slot` as
+  `data-chip`) and it may carry a `label` (fallback: its id). `api.cards`
+  (`chips()`, `hideChips(keys)`, `renderSample(el, { hidden })`) is gated on
+  **`cards:hideChips`, the first CLIENT-ONLY capability**: it rides `requires`
+  (and the connect announcement, for `handlerTypes`' fail-closed reason) and is
+  disclosed in the consent dialog, but lives in `CLIENT_CAPABILITIES`, disjoint
+  from `CAPABILITIES`, and `buildHostApi` skips it — there is no façade key. The
+  `cards` key is always on the client api; every call THROWS without the grant.
+  The board hides the **union** of every extension's `hideChips` set; a
+  `removeExtension` (disable, uninstall, failed load) clears that extension's
+  set and redraws, so its chips come back. A hidden core chip is still rendered
+  with `hidden` (`ctx.hiddenChips`); a hidden pill is simply not mounted in that
+  host (torn down if it was) but stays registered. The detail panel and task
+  tiles share the builders and carry `data-chip` too, but never apply the veto —
+  keep the `[hidden]` CSS scoped to `.card-meta`.
+- **Sample cards are reconciled with the board's in ONE `syncHosts` call.**
+  `renderSample` draws an inert `sessionCardHtml(SAMPLE_SESSION)`
+  (`public/sample-session.js`, every core chip populated, `sessionId:
+  '__sample__'`, `sample: true`) and registers its `.card-meta-ext` in
+  `app.js`'s `sampleHosts`, which `mountCardPills` appends to the board's
+  entries with that preview's own `hidden` set and `sample: true`. Reconciled
+  separately, each render would tear down the other's pills (`syncHosts` is
+  set-semantics over the whole slot). A pill that throws on a sample host is
+  reported once and skipped THERE only — never dropped from the board. **Pill
+  authors:** `session.sample === true` means a preview; render placeholder
+  content or nothing (a picker may then label it "not in preview").
 - **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
   half, and the namespace is FORCED.** `dispatchFields` puts it at
   `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and

@@ -118,7 +118,40 @@ import semver from 'semver';
 // every Codex launch keeps the core defaults. So a manifest declaring
 // `^1.12.0` refuses to boot against such a server, which is the only way a
 // human learns the policy they chose is not being applied.
-export const HOST_API_VERSION = '1.12.0';
+//
+// 1.13.0 is the CLIENT half: `api.settings()`, the extension's own current
+// setting values in the browser. Without it a dispatch.field could not prefill
+// from Settings, so the server half had to fill empty fields itself — which
+// meant a dispatch could never turn off a toggle Settings had on. An older
+// slots.js has no such method, so only the range can say so.
+//
+// 1.14.0 lets an extension choose which chips a board card shows. Every core
+// chip in a card's meta row carries a stable `data-chip` key (cards.js
+// CORE_CHIPS), a `card.pill` contribution's key is `<extId>:<id>` and it may
+// carry a `label`. `api.cards` (chips, hideChips, renderSample) is gated on
+// `cards:hideChips`, the first CLIENT-ONLY capability: it rides `requires` and
+// is disclosed like any other, but it has no server façade, so it lives in
+// CLIENT_CAPABILITIES rather than as a V1_BUILDERS key. Also the
+// `settings.panel` slot (an extension's own block in its settings dialog,
+// saved on Done), `api.settings.set(key, value)` → Promise and
+// `api.settings.onChange(fn)`, and the `list` setting type with the `hidden`
+// and `maxItems` def fields, and `registrar.api` (the contribution api, on the
+// registrar register() receives, for load-time use). An older slots.js throws on the slot name and an
+// older server quarantines `type: 'list'` and the unknown capability, so only
+// the range can say so.
+//
+// 1.15.0 is what moving the board TODOs out of core needed, and it is mostly
+// the CLIENT half again plus one server hook. `task.body` is a slot with one host
+// per task tile (Unassigned included) whose contributions may carry
+// `weight(taskId, graph)` px, summed into tile sizing; `api.claimDrag(el)` marks an element as carrying an extension-owned
+// drag, so the board holds its re-renders and cell highlight while it is claimed;
+// `api.openDispatch({ taskId, intent, lockTask })` opens the
+// dispatch modal and resolves with the `dispatched` ack (null on cancel);
+// `api.requestBoardRender()` asks for a board re-render. Server side: the
+// `onTaskDelete({ taskId, host })` manifest hook and `host.tasks.adhocId`
+// (under `tasks:read`). An older slots.js throws on the slot name and an older
+// server never calls the hook or serves the id, so only the range can say so.
+export const HOST_API_VERSION = '1.15.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

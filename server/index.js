@@ -13,8 +13,7 @@ import { TaskStore } from './task-store.js';
 import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { ChecklistStore } from './checklist-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -31,7 +30,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, readConfig, extensionSettings } from './config-store.js';
+import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, autoAttachPrEnabled, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, readConfig, extensionSettings, applyRetiredFlagMigrations } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -100,6 +99,10 @@ ensurePtyHelperExecutable();
 // through `quarantineFor` for the same reason. One bad extension must not take
 // the board down now that a manifest can come from outside the repo. The try
 // that remains is for a genuine LOADER bug, which is not something to limp past.
+// A retired core flag (checklistEnabled, ...) becomes its extension's
+// `extensions.<id>` BEFORE the loader reads config, or the first boot after the
+// upgrade would load the extension on for someone who had turned it off.
+applyRetiredFlagMigrations();
 let ext;
 try {
   ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
@@ -180,7 +183,6 @@ sessionManager._pruneMailOnArchive = (sessionId, now = Date.now()) => {
   mailStore.pruneOnArchive(sessionId);
   mailStore.expireStaleUnread(sessionId, now - UNREAD_TTL_MS);
 };
-const checklistStore = new ChecklistStore();
 const terminalRegistry = new TerminalRegistry();
 
 // A one-off missed during downtime fires once when overdue, UNLESS it's older than
@@ -201,6 +203,7 @@ const paneDeferral = createPaneDeferral({
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
+  statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
   sendText,
 });
 
@@ -422,6 +425,9 @@ const extBag = {
   // listing keeps its unfiltered identity in the common case. Re-derived on
   // every registry change, since a live install may add the first veto.
   hideTool: createToolFilter(ext, hostApiFor, logError),
+  // Announces a deleted task to every enabled extension's `onTaskDelete`. Reads
+  // the live hook list per call, so it never needs re-deriving on a registry change.
+  fireTaskDelete: createTaskDeleteNotifier(ext, hostApiFor, logError),
   // The loaded registry is deliberately NOT handed over whole: a handler gets
   // the four verbs and the manifest map, so nothing outside this file reaches
   // past `list` into `tools`/`_reg` and starts maintaining them by hand.
@@ -711,7 +717,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 const fireMailSettlesTick = createMailSettleSweeper({
   mailStore, sessionManager, tmuxFor, socketFor, memoryStore, taskStore, paneDeferral,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
-}, { onWoken: () => rebuild() });
+});
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
 // runs INSIDE the one session whose Bash tool ran `gh pr create` and posts the
@@ -795,14 +801,12 @@ const mcpRequestHandler = createMcpRequestHandler({
   // peer's terminal and archive_session can snapshot a target before stopping it.
   tmuxFor,
   socketFor,
+  sendText,
   sessionFromGraph,
   // Shared in-memory loop backstop for send_message; one instance for the process.
   messageThrottle: createMessageThrottle(),
   // The durable mailbox send_message/read_mail/list_mail all share.
   mailStore,
-  // The per-session checklist the four *_checklist* tools write, resolved from
-  // the caller's own card id — never a session argument.
-  checklistStore,
   // Core-owned reads over ALL extensions only (the list + the hideTool veto) —
   // see extBag. An extension's own tool is invoked with its façade instead.
   ext: extBag,
@@ -898,11 +902,6 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.chatViewDefault = chatViewDefault();
-  graph.checklistEnabled = checklistEnabled();
-  // Session-scoped, but carried as a whole-store snapshot rather than
-  // per-session enrichment inside buildGraph: the only consumer is the ONE
-  // selected session's Checklist panel, so there is nothing to enrich per card.
-  graph.checklists = checklistStore.snapshot();
   // Which extensions exist and whether each is on — what the settings toggles read
   // back, and what the client mounts/unmounts its slot contributions from. `enabled`
   // is re-read from config here, not taken from ext.list's boot snapshot: see
@@ -966,7 +965,6 @@ controlWss.on('connection', (ws) => {
     memoryStore,
     scheduleStore,
     mailStore,
-    checklistStore,
     // Same core-owned bag the MCP deps carry (list + hideTool); extension-enabled
     // reads ctx.ext.list. An extension's handler is invoked with its façade.
     ext: extBag,

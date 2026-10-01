@@ -93,11 +93,10 @@ test('archiveTask survives a reload', () => {
   assert.equal(reloaded.snapshot().tasks[0].archivedAt, 1000);
 });
 
-test('archiveTask leaves assignments, sessionOrder, todos, links, and order untouched', () => {
+test('archiveTask leaves assignments, sessionOrder, links, and order untouched', () => {
   const store = new TaskStore(tmpFile());
   const t = store.createTask({ name: 'Work' });
   store.assign('s1', t.id);
-  store.addTodo(t.id, 'do the thing');
   store.setLinks(t.id, [{ type: 'pr', url: 'https://x' }]);
   const before = store.snapshot();
 
@@ -105,7 +104,6 @@ test('archiveTask leaves assignments, sessionOrder, todos, links, and order unto
   const after = store.snapshot();
   assert.deepEqual(after.assignments, before.assignments);
   assert.deepEqual(after.sessionOrder, before.sessionOrder);
-  assert.deepEqual(after.todos, before.todos);
   assert.deepEqual(after.order, before.order);
   assert.deepEqual(store.getLinks(t.id), [{ type: 'pr', url: 'https://x' }]);
 });
@@ -357,157 +355,40 @@ test('updateLinkStatus writes unresolvedCount but excludes it from the changed c
   assert.equal(store.updateLinkStatus(t.id, 'https://github.com/a/b/pull/1', 'failing', false, 'z', 5), true);
 });
 
-// ── TODOs ──────────────────────────────────────────────────────────────────────
-
-test('addTodo appends {id,text,createdAt} per task and persists', () => {
+test('deleteTask removes the task, its order slot, its session order and unassigns its sessions', () => {
   const file = tmpFile();
   const store = new TaskStore(file);
-  const t = store.createTask({ name: 'Work' });
-  const td = store.addTodo(t.id, 'Wire the button', 1000);
-  assert.match(td.id, /^td_/);
-  assert.equal(td.text, 'Wire the button');
-  assert.equal(td.createdAt, 1000);
-  store.addTodo(t.id, 'Write the test', 2000);
-  assert.deepEqual(new TaskStore(file).snapshot().todos[t.id].map((x) => x.text), ['Wire the button', 'Write the test']);
+  const a = store.createTask({ name: 'Alpha', sessionId: 's1' });
+  const b = store.createTask({ name: 'Beta', sessionId: 's2' });
+  assert.deepEqual(store.deleteTask(a.id), ['s1']);
+  const snap = new TaskStore(file).snapshot();
+  assert.deepEqual(snap.tasks.map((t) => t.id), [b.id]);
+  assert.deepEqual(snap.order, ['adhoc', b.id]);
+  assert.equal(snap.assignments.s1, undefined);
+  assert.equal(snap.assignments.s2, b.id);
+  assert.equal(snap.sessionOrder[a.id], undefined);
 });
 
-test('addTodo accepts the adhoc bucket (string or null) and rejects blank text', () => {
+test('deleteTask on an unknown id is a null no-op', () => {
   const store = new TaskStore(tmpFile());
-  const td = store.addTodo(ADHOC, '  Jot this down  ', 1);
-  assert.equal(td.text, 'Jot this down');
-  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.text), ['Jot this down']);
-  // null is the wire form the handlers send for the unassigned tile
-  const td2 = store.addTodo(null, 'loose end', 2);
-  assert.equal(td2.text, 'loose end');
-  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.text), ['Jot this down', 'loose end']);
-  assert.equal(store.addTodo(ADHOC, '   '), null);
-  assert.equal(store.addTodo(ADHOC, ''), null);
+  assert.equal(store.deleteTask('t_nope'), null);
 });
 
-test('addTodo rejects an unknown task id', () => {
-  const store = new TaskStore(tmpFile());
-  assert.equal(store.addTodo('t_nope', 'x'), null);
+// Core no longer understands TODOs (the todos extension owns them), but it keeps
+// the raw `todos` value from the file as an opaque pass-through.
+test('snapshot() has no todos; a legacy todos value survives load/save unchanged', () => {
+  const file = tmpFile();
+  const legacy = { t_gone: [{ id: 'td_x', text: 'orphan', createdAt: 9 }], adhoc: [{ id: 'td_y', text: 'keep', createdAt: 1 }] };
+  fs.writeFileSync(file, JSON.stringify({ tasks: [], order: ['adhoc'], assignments: {}, sessionOrder: {}, todos: legacy }));
+  const store = new TaskStore(file);
+  assert.equal('todos' in store.snapshot(), false);
+  store.createTask({ name: 'Work' }); // forces a save
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).todos, legacy);
 });
 
-test('editTodo renames in place; no-op on blank/unchanged/unknown', () => {
+test('a file without todos is saved without a todos key', () => {
   const file = tmpFile();
   const store = new TaskStore(file);
-  const t = store.createTask({ name: 'Work' });
-  const td = store.addTodo(t.id, 'old', 1);
-  assert.equal(store.editTodo(t.id, td.id, 'new'), true);
-  assert.equal(store.snapshot().todos[t.id][0].text, 'new');
-  assert.equal(store.editTodo(t.id, td.id, 'new'), false);
-  assert.equal(store.editTodo(t.id, td.id, '  '), false);
-  assert.equal(store.editTodo(t.id, 'td_nope', 'x'), false);
-  assert.equal(store.editTodo('t_nope', td.id, 'x'), false);
-  assert.equal(new TaskStore(file).snapshot().todos[t.id][0].text, 'new');
-});
-
-test('TODO descriptions persist and can be edited without changing the title', () => {
-  const file = tmpFile();
-  const store = new TaskStore(file);
-  const task = store.createTask({ name: 'Project' });
-  const todo = store.addTodo(task.id, 'Investigate indexing', 1, 'Found a race.\n\nNext: reproduce it.');
-  assert.equal(todo.description, 'Found a race.\n\nNext: reproduce it.');
-  assert.equal(store.editTodo(task.id, todo.id, undefined, 'Next: add a regression test.'), true);
-  assert.equal(store.snapshot().todos[task.id][0].text, 'Investigate indexing');
-  assert.equal(new TaskStore(file).snapshot().todos[task.id][0].description, 'Next: add a regression test.');
-  assert.equal(store.editTodo(task.id, todo.id, undefined, ''), true);
-  assert.equal(store.snapshot().todos[task.id][0].description, undefined);
-});
-
-test('deleteTodo removes a todo; keeps map sparse (deletes key when empty); no-op on unknown', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Work' });
-  const a = store.addTodo(t.id, 'a', 1);
-  const b = store.addTodo(t.id, 'b', 2);
-  assert.equal(store.deleteTodo(t.id, a.id), true);
-  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.text), ['b']);
-  assert.equal(store.deleteTodo(t.id, a.id), false);
-  assert.equal(store.deleteTodo('t_nope', a.id), false);
-  assert.equal(store.deleteTodo(t.id, b.id), true);
-  assert.equal(store.snapshot().todos[t.id], undefined);
-});
-
-test('moveTodo reassigns across buckets; keeps map sparse; no-op for same/unknown', () => {
-  const file = tmpFile();
-  const store = new TaskStore(file);
-  const a = store.createTask({ name: 'A' });
-  const b = store.createTask({ name: 'B' });
-  const td = store.addTodo(a.id, 'shared work', 7);
-  assert.equal(store.moveTodo(td.id, a.id, b.id), true);
-  assert.equal(store.snapshot().todos[a.id], undefined);
-  assert.deepEqual(store.snapshot().todos[b.id].map((x) => x.text), ['shared work']);
-  assert.equal(store.moveTodo(td.id, b.id, null), true); // null wire form → ADHOC
-  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.id), [td.id]);
-  assert.equal(store.moveTodo(td.id, null, null), false); // same bucket (both → ADHOC)
-  assert.equal(store.moveTodo('td_nope', ADHOC, a.id), false);
-  assert.equal(store.moveTodo(td.id, ADHOC, 't_nope'), false);
-  assert.deepEqual(new TaskStore(file).snapshot().todos[ADHOC].map((x) => x.id), [td.id]);
-});
-
-test('reorderTodos sets a bucket\'s order verbatim; persists; no-op when unchanged', () => {
-  const file = tmpFile();
-  const store = new TaskStore(file);
-  const t = store.createTask({ name: 'Work' });
-  const a = store.addTodo(t.id, 'a', 1);
-  const b = store.addTodo(t.id, 'b', 2);
-  const c = store.addTodo(t.id, 'c', 3);
-  assert.equal(store.reorderTodos(t.id, [c.id, a.id, b.id]), true);
-  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.id), [c.id, a.id, b.id]);
-  assert.equal(store.reorderTodos(t.id, [c.id, a.id, b.id]), false);
-  assert.deepEqual(new TaskStore(file).snapshot().todos[t.id].map((x) => x.id), [c.id, a.id, b.id]);
-});
-
-test('reorderTodos appends any ids missing from the given order rather than dropping them', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Work' });
-  const a = store.addTodo(t.id, 'a', 1);
-  const b = store.addTodo(t.id, 'b', 2);
-  store.addTodo(t.id, 'c', 3);
-  assert.equal(store.reorderTodos(t.id, [b.id, a.id]), true);
-  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.text), ['b', 'a', 'c']);
-});
-
-test('reorderTodos ignores unknown ids in the given order; no-op for an unknown/empty bucket', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Work' });
-  const a = store.addTodo(t.id, 'a', 1);
-  const b = store.addTodo(t.id, 'b', 2);
-  assert.equal(store.reorderTodos(t.id, ['td_nope', b.id, a.id]), true);
-  assert.deepEqual(store.snapshot().todos[t.id].map((x) => x.id), [b.id, a.id]);
-  assert.equal(store.reorderTodos('t_nope', [a.id, b.id]), false);
-  assert.equal(store.reorderTodos(t.id, 'not-an-array'), false);
-});
-
-test('reorderTodos supports the adhoc bucket via the null wire form', () => {
-  const store = new TaskStore(tmpFile());
-  const a = store.addTodo(ADHOC, 'a', 1);
-  const b = store.addTodo(ADHOC, 'b', 2);
-  assert.equal(store.reorderTodos(null, [b.id, a.id]), true);
-  assert.deepEqual(store.snapshot().todos[ADHOC].map((x) => x.id), [b.id, a.id]);
-});
-
-test('snapshot().todos is a deep copy (mutating it does not mutate the store)', () => {
-  const store = new TaskStore(tmpFile());
-  const t = store.createTask({ name: 'Work' });
-  const td = store.addTodo(t.id, 'a');
-  const snap = store.snapshot();
-  snap.todos[t.id][0].text = 'mutated';
-  snap.todos[t.id].push({ id: 'td_x', text: 'extra', createdAt: 0 });
-  const fresh = store.snapshot();
-  assert.equal(fresh.todos[t.id][0].text, 'a');
-  assert.equal(fresh.todos[t.id].length, 1);
-});
-
-test('load drops todos for unknown buckets', () => {
-  const file = tmpFile();
-  const store = new TaskStore(file);
-  const t = store.createTask({ name: 'Work' });
-  store.addTodo(t.id, 'keep', 1);
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  raw.todos['t_gone'] = [{ id: 'td_x', text: 'orphan', createdAt: 9 }];
-  fs.writeFileSync(file, JSON.stringify(raw));
-  const reloaded = new TaskStore(file);
-  assert.deepEqual(Object.keys(reloaded.snapshot().todos), [t.id]);
+  store.createTask({ name: 'Work' });
+  assert.equal('todos' in JSON.parse(fs.readFileSync(file, 'utf8')), false);
 });

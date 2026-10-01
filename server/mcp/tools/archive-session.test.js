@@ -31,7 +31,7 @@ test('archive_session stops and archives a known target with the right snapshot'
   assert.equal(calls.archive.length, 1);
   assert.equal(calls.archive[0].id, 'CARD2');
   assert.deepEqual(calls.archive[0].snap, {
-    cwd: '/b', intent: 'do beta', label: 'Beta', task: { id: 'T1', name: 'Login' },
+    cwd: '/b', intent: 'do beta', label: 'Beta', reason: 'mcp', task: { id: 'T1', name: 'Login' },
   });
   assert.equal(calls.rebuild, 1);
 });

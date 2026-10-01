@@ -4,6 +4,8 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import checklist from './builtin/checklist/index.js';
+import todos from './builtin/todos/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -32,11 +34,15 @@ import { normalizeCodexPolicy } from './codex-policy.js';
 // module, so importing it breaches nothing: the leaf rule is about reaching back
 // into the server core, not about third-party code.
 //
-// Empty for now: this lands the API and its seams, with no feature migrated onto
-// it yet. Nothing here is dead — every consumer below already routes through the
-// loader's (currently empty) lists, so the first manifest is a one-line addition
-// to this array plus its own directory.
-export const BUILTIN = [];
+// BUILTIN is the shipped set: each entry is a manifest living in its own
+// directory, `server/extensions/builtin/<id>/` (index.js exporting `dir` from
+// import.meta.url and the manifest as default, an optional `public/` for
+// client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
+// single import plus a row in this array — everything below already routes
+// through the loader's lists, and the invariants over the real set (index.test.js)
+// pick the new entry up without edits. `checklist` and `todos` are the first two. The directory name MUST equal the
+// manifest id, the same rule an installed extension is held to (external.js).
+export const BUILTIN = [checklist, todos];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,
@@ -44,7 +50,7 @@ export const BUILTIN = [];
 // run by index.js against the real stores once they exist).
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
-  'checklists', 'checklistEnabled', 'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
+  'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
   'quarantinedBuiltins',
 ]);
@@ -68,6 +74,14 @@ export const CAPABILITIES = new Set([
   'sessions:bill',
   'sessions:interrupt',
 ]);
+
+// Capabilities with NO server façade: grants the BROWSER half checks (slots.js
+// apiFor) rather than anything buildHostApi binds. They share the manifest's
+// `requires` list, so the consent dialog discloses them like any other, but
+// buildHostApi skips them and V1_BUILDERS has no key for them — which is why
+// they are a separate set, disjoint from CAPABILITIES (host-api/index.test.js).
+//   cards:hideChips — hide chips in the board cards' meta row (api.cards).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own
@@ -127,7 +141,7 @@ const ID_RE = /^[a-z][a-z0-9-]*$/;
 // them onto the native input as an AFFORDANCE; the server write path is the
 // enforcement, and it rejects rather than clamps.
 const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
-const SETTING_TYPES = ['text', 'number', 'toggle', 'select'];
+const SETTING_TYPES = ['text', 'number', 'toggle', 'select', 'list'];
 
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
@@ -177,7 +191,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, 'requires must be an array of capability names');
     }
     for (const c of ext.requires) {
-      if (!CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES].sort().join(', ')})`);
+      if (!CAPABILITIES.has(c) && !CLIENT_CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES, ...CLIENT_CAPABILITIES].sort().join(', ')})`);
     }
   }
   // Which core dispatch-modal rows this extension's browser half may hide. The
@@ -223,6 +237,10 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       for (const k of ['help', 'placeholder']) {
         if (s[k] != null && typeof s[k] !== 'string') fail(ext, `settings.${s.key}.${k} must be a string`);
       }
+      // `hidden` keeps the def off the Extensions dialog's rows: a value the
+      // extension manages itself (a settings.panel, api.settings.set) and a
+      // human has no row-shaped way to edit. Any type may carry it.
+      if (s.hidden != null && typeof s.hidden !== 'boolean') fail(ext, `settings.${s.key}.hidden must be a boolean`);
       const badConstraint = validateSettingDef(s);
       if (badConstraint) fail(ext, `settings.${s.key}.${badConstraint}`);
     }
@@ -258,6 +276,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.codexPolicy != null && typeof ext.codexPolicy !== 'function') fail(ext, 'codexPolicy must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
+  if (ext.onTaskDelete != null && typeof ext.onTaskDelete !== 'function') fail(ext, 'onTaskDelete must be a function');
   if (ext.session != null) {
     if (typeof ext.session !== 'object') fail(ext, 'session must be an object of hooks');
     for (const [k, fn] of Object.entries(ext.session)) {
@@ -394,6 +413,7 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     graphContributors: [],
     sessionHooks: Object.fromEntries(SESSION_HOOKS.map((k) => [k, []])),
     skillGates: [],
+    taskDeleteHooks: [],
     codexPolicies: [],
     toolFilters: [],
     sweeps: [],
@@ -581,6 +601,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
+  if (ext.onTaskDelete) out.taskDeleteHooks.push({ id: ext.id, fn: ext.onTaskDelete });
   for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
   for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
   if (ext.dir) out.dirs[ext.id] = ext.dir;
@@ -610,6 +631,10 @@ function stageExtension(ext, { cfg, out, reg }) {
       // may veto — same two inputs, same reason, and omitted when empty so an
       // extension that hides nothing keeps a byte-identical entry.
       ...(listEntry.hideDispatchField.length ? { hideDispatchField: [...listEntry.hideDispatchField] } : {}),
+      // The capability grant, for the same fail-closed reason as handlerTypes:
+      // a client-only capability (cards:hideChips) is checked by slots.js, which
+      // must know the grant before the first graph. Omitted when empty.
+      ...(listEntry.requires.length ? { requires: [...listEntry.requires] } : {}),
     });
   }
 }
@@ -660,6 +685,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.sweeps = loaded.sweeps.filter((s) => s.extId !== id);
   loaded.graphContributors = loaded.graphContributors.filter((g) => g.id !== id);
   loaded.skillGates = loaded.skillGates.filter((g) => g.id !== id);
+  loaded.taskDeleteHooks = loaded.taskDeleteHooks.filter((h) => h.id !== id);
   loaded.codexPolicies = loaded.codexPolicies.filter((p) => p.id !== id);
   loaded.toolFilters = loaded.toolFilters.filter((f) => f.id !== id);
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
@@ -733,6 +759,31 @@ export function createSkillGate(ext, hostApiFor = () => undefined, onError = () 
       for (const name of skills) if (!kept.has(name)) out.push(name);
     }
     return out;
+  };
+}
+
+// The `onTaskDelete` fan-out: called by the task delete handler AFTER core has
+// removed the task, with `{ taskId, host }` where `host` is that extension's OWN
+// façade. It exists so an extension keyed by task id (todos, task memory) can
+// drop what it holds for a task that is gone, instead of discovering the orphan
+// on its next read. Hooks are read off the live registry on every call, so a
+// disabled, uninstalled or quarantined extension (unregisterExtension removes its
+// hook) is simply never asked; `hostApiFor(id)` returning nothing skips a hook
+// whose façade has gone in the same window. Sequential and awaited, and ERRORS
+// ARE ISOLATED PER EXTENSION: a throw is logged and the next extension is still
+// told, because a task is already deleted by the time this runs and there is
+// nothing left to abort.
+export function createTaskDeleteNotifier(ext, hostApiFor = () => undefined, onError = () => {}) {
+  return async function fireTaskDelete(taskId) {
+    for (const { id, fn } of [...ext.taskDeleteHooks]) {
+      const host = hostApiFor(id);
+      if (!host) continue;
+      try {
+        await fn({ taskId, host });
+      } catch (err) {
+        onError(`[ext:${id}] onTaskDelete failed`, err);
+      }
+    }
   };
 }
 

@@ -629,6 +629,10 @@ async function claudeDailyCached(file, since = 0) {
   return result;
 }
 
+// Bump when analyzeCodex's figures change for an unchanged rollout, so cached
+// results are recomputed rather than served stale (2: priced per model segment).
+const CODEX_ANALYSIS_VERSION = 2;
+
 async function codexFamilySignature(sessionId, family, codexSessionsDir, findRolloutChain) {
   const ids = [sessionId];
   const seen = new Set(ids);
@@ -649,7 +653,7 @@ async function codexFamilySignature(sessionId, family, codexSessionsDir, findRol
       }
     }
   }
-  return parts.join(',');
+  return parts.join(',') + `|v${CODEX_ANALYSIS_VERSION}`;
 }
 
 async function analyzeCodexCached(analyzeCodex, findRolloutChain, sessionKey, file, codexSessionsDir, index) {

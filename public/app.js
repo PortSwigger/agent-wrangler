@@ -3,7 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, todoLaunchIntent, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
+import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -17,7 +17,7 @@ import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actio
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
-  CHECK_ICON, SPAWN_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
+  CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
 } from './icons.js';
 import {
@@ -27,13 +27,6 @@ import {
   CHAT_FONT_SIZES, DEFAULT_CHAT_FONT_SIZE, normalizeChatFontSize,
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
-import {
-  createChecklistDom, checklistCountLabel, checklistPillLabel, isPendingChecklistId,
-  isChecklistOpen, toggleChecklistOpen, parseChecklistOpen, serializeChecklistOpen,
-  visibleChecklistItems, isChecklistShowDone, toggleChecklistShowDone,
-  parseChecklistShowDone, serializeChecklistShowDone, reorderVisibleChecklistItems,
-  checklistHiddenDoneLabel,
-} from './checklist-dom.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { extensionsPanelEl, extensionSettingRowsEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
@@ -44,7 +37,8 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
 
 } from './util.js';
-import { STATUS_WORDS, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
@@ -147,9 +141,7 @@ let chatViewDefault = false; // server config flag, carried on every graph push
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
 // identity fields are fixed at server boot; `enabled` is live.
-let checklistEnabled = true; // server config flag, carried on every graph push
 let latestExtensions = [];
-let latestChecklists = {};
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
 // never learns those keys.
@@ -176,6 +168,9 @@ const extHandlerTypes = new Map();
 // widen what the server half declared, and an extension the board has heard
 // nothing about hides nothing.
 const extHideDispatchFields = new Map();
+// And each extension's `requires` grant, for the client-only capabilities
+// slots.js checks (cards:hideChips). Same two inputs, same fail-closed default.
+const extRequires = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -185,6 +180,7 @@ function noteExtClientFacts(list) {
     if (!e || typeof e.id !== 'string') continue;
     if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
     if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
+    if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -194,8 +190,20 @@ const slots = createSlots({
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
+  requiresFor: (id) => extRequires.get(id) || [],
+  coreChips: CORE_CHIPS,
+  // An extension's hideChips (or its removal) changed the veto: redraw the
+  // board, which re-syncs the pills too (wireGridEvents → mountCardPills).
+  // Deferred a microtask so a burst of calls — and a call from inside a
+  // render — lands as one render after it.
+  onChipsChanged: () => {
+    if (chipsRenderQueued) return;
+    chipsRenderQueued = true;
+    queueMicrotask(() => { chipsRenderQueued = false; if (latestGraph) renderGrid(); });
+  },
   version: () => hostApiVersion,
 });
+let chipsRenderQueued = false;
 function openSessionInBoard(sessionId) {
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) { focusSession(sessionId); return; }
@@ -223,8 +231,87 @@ const extApi = {
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs slots' per-extension `api.settings()`, which binds the id.
+  settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
+  // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
+  // on purpose — ext-setting-set is core's handler, never an extension's own
+  // type — which is safe only because the id is forced by slots and the server
+  // validates against that manifest's defs.
+  setExtSetting: setExtSettingAcked,
+  // Backs `api.cards.renderSample`.
+  renderSampleCard,
+  // Backs `api.openDispatch`: the dispatch modal as a promise.
+  openDispatchAcked,
+  // Backs `api.requestBoardRender`: the task.body counterpart of
+  // requestPanelRender, for content that changes a tile's size.
+  requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
 };
-const clientExtensions = createClientExtensionLoader(slots);
+
+// api.openDispatch({ taskId, intent, lockTask }): open the dispatch modal as
+// openDispatch does; resolves with the `dispatched` ack once the human launches,
+// null if they cancel or a later call supersedes this one, and rejects when a
+// launch is already awaiting its ack (see dispatch-waiter.js).
+function openDispatchAcked({ taskId = null, intent = '', lockTask = false } = {}) {
+  return dispatchWaiter.open(() => openDispatch(taskId, { ...(intent ? { intent } : {}), lockTask }));
+}
+
+// Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
+const extSettingPending = new Map();
+let extSettingSeq = 0;
+function setExtSettingAcked(extId, key, value) {
+  const reqId = `s${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extSettingPending.delete(reqId);
+      reject(new Error('Saving the setting timed out'));
+    }, 10000);
+    extSettingPending.set(reqId, {
+      resolve: () => {
+        // Optimistic, like openExtSettings: the next graph carries the same value.
+        const live = latestExtensions.find((e) => e.id === extId);
+        if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
+        resolve();
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-setting-set', id: extId, key, value, reqId });
+  });
+}
+function settleExtSetting(msg) {
+  const p = extSettingPending.get(msg.reqId);
+  if (!p) return;
+  extSettingPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(); else p.reject(new Error(String(msg.error || 'Setting refused')));
+}
+
+// Live sample cards (api.cards.renderSample): host `.card-meta-ext` → the
+// fake session and that preview's own hidden set. mountCardPills reconciles
+// them in the SAME syncHosts call as the board's hosts — separately, each
+// render would tear down the other's pills.
+const sampleHosts = new Map();
+function pruneSampleHosts() {
+  for (const host of [...sampleHosts.keys()]) if (!host.isConnected) sampleHosts.delete(host);
+}
+function renderSampleCard(el, _extId, hidden) {
+  if (!el) return;
+  pruneSampleHosts();
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
+  // Inert: never wired (no wireGridEvents), not focusable, not clickable.
+  const card = el.querySelector('.session-card');
+  if (card) {
+    card.style.pointerEvents = 'none';
+    card.removeAttribute('tabindex');
+    card.removeAttribute('role');
+    card.setAttribute('draggable', 'false');
+    card.setAttribute('aria-hidden', 'true');
+  }
+  const host = el.querySelector('.card-meta-ext');
+  if (host) sampleHosts.set(host, { session: SAMPLE_SESSION, hidden });
+  mountCardPills(document);
+}
+const clientExtensions = createClientExtensionLoader(slots, { api: extApi });
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
 // server-side every rebuild) is what decides whether each one is actually
@@ -280,7 +367,8 @@ let parentSessionId = null;
 let wtValidation = null;   // last {ok, repoName, repoRoot, reason} for wtLastCwd
 let wtLastCwd = null;      // cwd wtValidation belongs to (stale once cwd changes)
 let wtPending = false;     // a worktree dispatch is awaiting ack
-let pendingTodoConsume = null; // {taskId, todoId, key} — set by spawnTodo, consumed on 'dispatched'
+// The promise behind api.openDispatch() (dispatch-waiter.js holds the rules).
+const dispatchWaiter = createDispatchWaiter();
 
 // Available agents + their models, replaced by the server's `agents` message.
 // Seeded with the Claude default so the dropdown is correct before that arrives.
@@ -476,10 +564,14 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
-  checklistEnabled = graph.checklistEnabled !== false;
-  latestChecklists = graph.checklists || {};
+  const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
+  // api.settings.onChange: only an extension whose values actually moved.
+  for (const e of latestExtensions) {
+    const was = prevSettingValues.get(e.id);
+    if (was !== undefined && was !== JSON.stringify(e.settingValues || {})) slots.settingsChanged(e.id, e.settingValues || {});
+  }
   setExtensionDefs(latestExtensions);
   // An open panel follows the list, but ONLY when the list itself changed: this
   // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
@@ -843,38 +935,6 @@ function removePlaceholder() {
   if (placeholderEl && placeholderEl.parentNode) placeholderEl.parentNode.removeChild(placeholderEl);
 }
 
-// TODO reorder drag-and-drop: confined to the task the drag started in — a drop
-// on any other tile's cell never gets `dragover`'s preventDefault, so the browser
-// shows "no-drop" and never fires `drop` there at all; nothing to guard server-side.
-// Same placeholder-slides-through pattern as the session reorder above, its own
-// state so the two drags never interfere.
-let todoDragActive = false;
-let draggedTodoRow = null;
-let todoPlaceholderEl = null;
-function ensureTodoPlaceholder() {
-  if (!todoPlaceholderEl) {
-    todoPlaceholderEl = document.createElement('div');
-    todoPlaceholderEl.className = 'todo-placeholder';
-  }
-  return todoPlaceholderEl;
-}
-function removeTodoPlaceholder() {
-  if (todoPlaceholderEl && todoPlaceholderEl.parentNode) todoPlaceholderEl.parentNode.removeChild(todoPlaceholderEl);
-}
-
-// The todo row the placeholder should sit *before* for a given cursor Y, scoped to
-// direct-child todo rows only (mirrors dragAfterElement, todo-row flavoured — a
-// task-body can hold both session cards and todo rows, and this must never hit-test
-// the former). null means past the last row.
-function todoDragAfterElement(body, y) {
-  const rows = [...body.querySelectorAll(':scope > .todo-row[draggable="true"]:not(.dragging-hidden)')];
-  for (const row of rows) {
-    const rect = row.getBoundingClientRect();
-    if (y < rect.top + rect.height / 2) return row;
-  }
-  return null;
-}
-
 // The card the placeholder should sit *before* for a given cursor Y — the first
 // card whose midpoint is below the cursor; null means past the last card (append
 // to the end). Continuous across cards and the gaps between them, so the
@@ -908,20 +968,23 @@ function gridHidden() {
 // so background re-renders (the ~4s poll, the just-finished timer) don't rebuild
 // the grid and steal focus / abort the drag.
 function gridEditing() {
-  if (dragActive || taskDragActive || todoDragActive) return true;
+  if (dragActive || taskDragActive) return true;
+  // An extension-owned drag (slots api.claimDrag) in progress.
+  if (document.querySelector('[data-ext-drag]')) return true;
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
-    || a.classList.contains('todo-add-input')
-    || a.classList.contains('todo-text-input')
-    // The checklist's inline input lives in the sidebar, not #grid — but the
-    // grid re-render is what steals focus from whatever is focused anywhere, so
-    // it has to be listed here like the todo inputs. Same for anything focused
-    // inside the extension panel host, generically: the core doesn't know an
-    // extension's classes.
-    || a.classList.contains('ck-input')
+    // The todos extension's inline inputs live in `.task-body-ext`; only a text
+    // field there is mid-edit (a focused button or link is not).
+    || (['INPUT', 'TEXTAREA'].includes(a.tagName) && Boolean(a.closest?.('.task-body-ext')))
+    // Anything focused inside the extension panel host, generically: the core
+    // doesn't know an extension's classes, and a grid re-render steals focus.
     || Boolean(a.closest?.('#panel-sections'));
 }
+
+// An extension-owned drag (slots api.claimDrag, held for the gesture) is in
+// progress: core's cell dragover/drop highlight stands aside for it.
+const extDragActive = () => Boolean(document.querySelector('[data-ext-drag]'));
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
 // dispatches and never reused) are throwaway — never suggest one as a folder to
@@ -1053,32 +1116,6 @@ function toggleWorkflowCollapse(sessionId) {
   else collapsedWorkflows.add(sessionId);
   try { localStorage.setItem(COLLAPSED_WF_KEY, JSON.stringify([...collapsedWorkflows])); } catch {}
   if (currentView === 'grid') renderGrid();
-}
-
-// A task's (or the Ad-hoc bucket's) TODO zone, collapsed by the user — keyed on
-// the same todoKey as todosFor (a task id, or ADHOC_ID). Open by default (issue
-// ask), so — unlike subagentShownOverrides, which tracks explicit overrides
-// against a movable global default — this is a plain "collapsed" Set exactly
-// like collapsedWorkflows: absence means open, membership means collapsed, and
-// there is no separate default setting to fall back to.
-const COLLAPSED_TODO_KEY = 'wrangler.collapsedTodoZones';
-const collapsedTodoZones = (() => {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_TODO_KEY)) || []); } catch { return new Set(); }
-})();
-function persistCollapsedTodoZones() {
-  try { localStorage.setItem(COLLAPSED_TODO_KEY, JSON.stringify([...collapsedTodoZones])); } catch {}
-}
-function toggleTodoZoneCollapse(key) {
-  if (collapsedTodoZones.has(key)) collapsedTodoZones.delete(key);
-  else collapsedTodoZones.add(key);
-  persistCollapsedTodoZones();
-  if (currentView === 'grid') renderGrid();
-}
-// Uncollapses a zone without re-rendering — used right before beginTodoAdd
-// injects its inline input, so a TODO typed into a closed zone doesn't vanish
-// back under the divider the moment the add commits and the grid re-renders.
-function expandTodoZone(key) {
-  if (collapsedTodoZones.delete(key)) persistCollapsedTodoZones();
 }
 
 // The set of buckets (task ids, or ADHOC_ID) sorted by last activity rather than the
@@ -1231,18 +1268,15 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones, activitySortedTasks, restoredTaskId,
-    justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
+    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
+    justFinished, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
+    hiddenChips: slots.hiddenChips(),
   };
-}
-
-function todosFor(bucketId) {
-  return (latestTasks.todos || {})[bucketId] || [];
 }
 
 // The combined display order (task ids + the Ad-hoc sentinel). Falls back to
@@ -1335,7 +1369,6 @@ function renderGrid() {
   }
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
-  const adhocTodoCount = ((latestTasks.todos || {})[ADHOC_ID] || []).length;
   // One tile per id in the stored display order; the Ad-hoc tile is an ordinary,
   // movable member of that order (no longer pinned). Pulled into a closure of
   // `perRow` so the self-consistency refinement below can repack against a
@@ -1345,18 +1378,19 @@ function renderGrid() {
       latestTasks.tasks.map((task) => {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
-        const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
-        const todoVisibleCount = collapsedTodoZones.has(task.id) ? 0 : todoCount;
+        // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
+        // when none is registered, which is also what a disabled one contributes.
+        const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, todoVisibleCount) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount) }];
       })
     );
     const {
       visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-    const adhocTodoVisibleCount = collapsedTodoZones.has(ADHOC_ID) ? 0 : adhocTodoCount;
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, adhocTodoVisibleCount) });
+    const adhocBodyPx = slots.taskBodyWeight(ADHOC_ID, latestGraph);
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
     return computeLayout(tiles, columnsForWidth(el));
   }
@@ -1524,7 +1558,25 @@ function mountCardPills(el) {
     const s = byId.get(host.closest('.session-card')?.dataset.sid);
     if (s) entries.push({ host, session: s });
   }
+  pruneSampleHosts();
+  for (const [host, { session, hidden }] of sampleHosts) {
+    if (!entries.some((e) => e.host === host)) entries.push({ host, session, hidden, sample: true });
+  }
   slots.syncHosts('card.pill', entries, extApi, latestGraph);
+}
+
+// The `task.body` slot's hosts: one `.task-body-ext` per rendered tile
+// (cards.js taskBodyHostHtml), Unassigned included, reconciled as a SET exactly
+// like the card pills — every host is a fresh element each render, and a tile
+// that has gone is torn down by omission. Each host's subject is its own tile's
+// `{ taskId, adhocId, container }`.
+function mountTaskBodies(el) {
+  const entries = [];
+  for (const host of el.querySelectorAll('.task-body-ext')) {
+    const taskId = host.dataset.taskBody;
+    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host } });
+  }
+  slots.syncHosts('task.body', entries, extApi, latestGraph);
 }
 
 function wireGridEvents(el) {
@@ -1532,6 +1584,7 @@ function wireGridEvents(el) {
   // the one place the freshly-built cards' extension pill hosts can be filled
   // without the two sites drifting apart.
   mountCardPills(el);
+  mountTaskBodies(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open
@@ -1615,14 +1668,6 @@ function wireGridEvents(el) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWorkflowCollapse(sid); }
     });
   });
-  // The TODO divider's pill (cards.js todoZoneHtml) folds its rows away (and
-  // back) — a real <button>, so Enter/Space activation comes for free (unlike
-  // .workflow-head above, which is a plain div and needs its own keydown).
-  el.querySelectorAll('.todo-pill').forEach((pill) => {
-    const key = pill.dataset.todoKey;
-    if (!key) return;
-    pill.addEventListener('click', () => toggleTodoZoneCollapse(key));
-  });
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1640,10 +1685,10 @@ function wireGridEvents(el) {
   });
   // Right-click anywhere on a task tile (but not on a card/row/button, which carry
   // their own menus) opens the task menu — a discoverable superset of the header
-  // icon buttons, plus the genuinely new "New TODO".
+  // icon buttons, plus whatever `task.action` extensions add (New TODO, from the todos extension).
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('contextmenu', (e) => {
-      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .workflow-head, button, input, .link-chip')) return;
+      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .task-body-ext [draggable], .workflow-head, button, input, .link-chip')) return;
       e.preventDefault();
       openTaskMenu(cell, e.clientX, e.clientY);
     });
@@ -1697,8 +1742,8 @@ function closeCardMenu() {
   // can't yank the menu closed mid-display; catch up once things settle. Deferred
   // to a microtask because mountMenu calls closeCardMenu() BEFORE it.run() — an
   // item's own handler runs right after this returns and may still need the
-  // pre-close DOM (New TODO/Rename capture their tile's todoZone/cell and focus a
-  // fresh input into it) or may open a new menu itself (Snooze…). Rendering here
+  // pre-close DOM (Rename, and an extension's New TODO, capture their tile's cell and
+  // focus a fresh input into it) or may open a new menu itself (Snooze…). Rendering here
   // synchronously would yank that DOM out from under it; by the time this
   // microtask runs, gridEditing()/cardMenuEl reflect whatever run() just did.
   queueMicrotask(() => {
@@ -2245,11 +2290,9 @@ export async function restoreTaskWithPrompt(taskId, name) {
 function openTaskMenu(cell, x, y) {
   const isNoTask = cell.dataset.entity === 'no-task';
   const taskId = isNoTask ? null : cell.dataset.taskid;
-  const todoZone = cell.querySelector('.todo-zone');
   const extItems = extTaskMenuItems(taskId, isNoTask);
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
-    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
@@ -2264,8 +2307,7 @@ function openTaskMenu(cell, x, y) {
 }
 
 // HTML5 drag-and-drop. Sessions carry {kind:'session', sessionId}; task headers
-// carry {kind:'task', taskId} for reordering; todo rows carry {kind:'todo',
-// todoId, fromTaskId} to move across tiles.
+// carry {kind:'task', taskId} for reordering.
 function wireGridDnd(el) {
   // Task reordering is handled on the persistent #grid element, not per-cell:
   // each dragover re-renders the packed board (the swap preview reflows columns),
@@ -2349,30 +2391,6 @@ function wireGridDnd(el) {
     // Placeholder positioning lives entirely in the cell dragover handler below,
     // which computes the slot from the cursor Y against the card midpoints.
   });
-  // A TODO row reorders within its own task tile only — same hide-source +
-  // slide-placeholder pattern as the session card reorder above, confined by
-  // todoDragActive/draggedTodoRow instead of dragActive/draggedCard.
-  el.querySelectorAll('.todo-row[draggable="true"]').forEach((row) => {
-    row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'todo', todoId: row.dataset.todoid }));
-      draggedTodoRow = row;
-      todoDragActive = true;
-      setTimeout(() => {
-        if (draggedTodoRow !== row || !row.parentNode) return;
-        const ph = ensureTodoPlaceholder();
-        ph.style.height = `${row.offsetHeight}px`;
-        row.parentNode.insertBefore(ph, row);
-        row.classList.add('dragging-hidden');
-      }, 0);
-    });
-    row.addEventListener('dragend', () => {
-      row.classList.remove('dragging-hidden');
-      removeTodoPlaceholder();
-      draggedTodoRow = null;
-      todoDragActive = false;
-      if (currentView === 'grid') renderGrid();
-    });
-  });
   el.querySelectorAll('.task-head[draggable="true"]').forEach((head) => {
     const cell = head.closest('.task-cell');
     const id = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
@@ -2410,27 +2428,9 @@ function wireGridDnd(el) {
 
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('dragover', (e) => {
-      // A TODO drag is confined to the tile it started in: a foreign cell never
-      // calls preventDefault, so the browser shows "no-drop" and drop never fires
-      // there at all — cross-task todo drops need no server-side guard.
-      if (todoDragActive) {
-        if (!cell.contains(draggedTodoRow)) return;
-        e.preventDefault();
-        // The placeholder is only created by dragstart's deferred setTimeout — a
-        // dragover that beats it (vanishingly rare with a real pointer) skips the
-        // preview rather than inserting a not-yet-existent node.
-        const body = todoPlaceholderEl && cell.querySelector('.task-body');
-        if (body) {
-          const after = todoDragAfterElement(body, e.clientY);
-          if (after) body.insertBefore(todoPlaceholderEl, after);
-          else {
-            const zone = body.querySelector('.todo-zone');
-            if (zone) body.insertBefore(todoPlaceholderEl, zone);
-            else body.appendChild(todoPlaceholderEl);
-          }
-        }
-        return;
-      }
+      // An extension-owned drag (api.claimDrag): leave dragover to the extension —
+      // no preventDefault, no drop-target highlight.
+      if (extDragActive()) return;
       e.preventDefault();
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
@@ -2454,23 +2454,7 @@ function wireGridDnd(el) {
     });
     cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
     cell.addEventListener('drop', (e) => {
-      if (todoDragActive) {
-        if (!cell.contains(draggedTodoRow)) return;
-        e.preventDefault();
-        const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
-        const beforeEl = todoPlaceholderEl?.nextElementSibling;
-        const beforeId = beforeEl?.classList.contains('todo-row') ? beforeEl.dataset.todoid : null;
-        const current = ((latestTasks.todos || {})[bucket] || []).map((td) => td.id);
-        const order = reorderedTodoIds(current, draggedTodoRow.dataset.todoid, beforeId);
-        // Optimistic update: reorder the actual todo objects to match, then
-        // re-render immediately (the server confirms on the next graph).
-        const todos = latestTasks.todos || (latestTasks.todos = {});
-        const byId = new Map((todos[bucket] || []).map((td) => [td.id, td]));
-        todos[bucket] = order.map((id) => byId.get(id)).filter(Boolean);
-        send({ type: 'todo-reorder', taskId: todoKeyToTaskId(bucket), order });
-        renderGrid();
-        return;
-      }
+      if (extDragActive()) return;
       e.preventDefault();
       cell.classList.remove('drop-target');
       let p;
@@ -2506,9 +2490,8 @@ function wireGridDnd(el) {
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
         } else send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
       }
-      // A TODO drop is handled entirely above (todoDragActive) — cross-task never
-      // reaches here at all (see the dragover guard). Task drops are handled by
-      // the #grid drop handler (commits at the current slot wherever the cursor lands).
+      // Task drops are handled by the #grid drop handler (commits at the current
+      // slot wherever the cursor lands).
     });
   });
 }
@@ -2678,475 +2661,8 @@ function wireTaskControls(el) {
   el.querySelectorAll('.task-cell:not(.no-task) .task-name').forEach((n) =>
     n.addEventListener('dblclick', (e) => { e.stopPropagation(); beginTaskRename(n.closest('.task-cell')); })
   );
-  el.querySelectorAll('.todo-text').forEach((n) => {
-    n.addEventListener('click', (e) => { e.stopPropagation(); beginTodoEdit(n); });
-    n.addEventListener('mouseenter', () => showTodoTooltip(n));
-    n.addEventListener('mouseleave', hideTodoTooltip);
-  });
-  el.querySelectorAll('.todo-spawn').forEach((b) =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); spawnTodo(b); })
-  );
-  el.querySelectorAll('.todo-details').forEach((b) =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); openTodoDetails(b); })
-  );
-  el.querySelectorAll('.todo-del').forEach((b) =>
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const row = b.closest('.todo-row');
-      const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-      send({ type: 'todo-delete', taskId: todoKeyToTaskId(key), todoId });
-      const arr = (latestTasks.todos || {})[key];
-      if (arr) {
-        latestTasks.todos[key] = arr.filter((x) => x.id !== todoId);
-        renderGrid();
-      }
-    })
-  );
 }
 
-// --- per-session checklist panel ---
-// A session-scoped list written by BOTH the human (this panel) and the launched
-// agent (its four MCP tools) — deliberately not the task-level TODO list (that
-// one is task-scoped and human-only) and not a mirror of the agent's own private
-// planning tool. Rows are patched in place by checklist-dom.js rather than
-// rebuilt from a string, so the ~4s graph poll can't reset the list's scroll.
-const checklistDom = createChecklistDom({ document });
-// Two freeze flags, both load-bearing: a poll tick landing mid-gesture would
-// otherwise reorder rows out from under the cursor, or replace the very input
-// someone is typing into. Optimistic local mutation (below) is what keeps the
-// panel honest in the meantime — the server echo is up to a poll away.
-let checklistDragActive = false;
-let checklistDragRow = null;
-let checklistEditing = false;
-
-// Collapsed/expanded is per session and persisted per browser, exactly like the
-// panel's sub-agents zone (panelSubagentShownOverrides) — collapsing one
-// session's checklist must not touch another's, and the choice has to survive a
-// reload. Default collapsed; see isChecklistOpen for why there's no
-// server-side default to fall back to.
-const CHECKLIST_OPEN_KEY = 'wrangler.checklistOpen';
-const checklistOpenOverrides = (() => {
-  try { return parseChecklistOpen(localStorage.getItem(CHECKLIST_OPEN_KEY)); } catch { return new Map(); }
-})();
-const CHECKLIST_SHOW_DONE_KEY = 'wrangler.checklistShowDone';
-const checklistShowDoneIds = (() => {
-  try { return parseChecklistShowDone(localStorage.getItem(CHECKLIST_SHOW_DONE_KEY)); } catch { return new Set(); }
-})();
-function checklistOpen(sessionId) {
-  return isChecklistOpen(checklistOpenOverrides, sessionId);
-}
-function toggleChecklist(sessionId) {
-  toggleChecklistOpen(checklistOpenOverrides, sessionId);
-  try { localStorage.setItem(CHECKLIST_OPEN_KEY, serializeChecklistOpen(checklistOpenOverrides)); } catch {}
-}
-function checklistShowDone(sessionId) {
-  return isChecklistShowDone(checklistShowDoneIds, sessionId);
-}
-function toggleChecklistDoneFilter(sessionId) {
-  toggleChecklistShowDone(checklistShowDoneIds, sessionId);
-  try { localStorage.setItem(CHECKLIST_SHOW_DONE_KEY, serializeChecklistShowDone(checklistShowDoneIds)); } catch {}
-}
-
-// The live array for a session (not a copy) — the optimistic mutations below
-// write straight into it, exactly like the todo flow writes into latestTasks.
-function checklistFor(sessionId) {
-  return latestChecklists[sessionId] || [];
-}
-
-function renderChecklist(sessionId) {
-  const el = document.getElementById('checklist');
-  if (!el) return;
-  const items = sessionId ? checklistFor(sessionId) : [];
-  // Patch the collapsed chip's count here rather than re-rendering the whole
-  // panel: renderPanel calls THIS function, so calling it back would recurse.
-  // It has to happen before the early return below — an optimistic local edit
-  // must move the chip immediately, and the chip is only on screen while the
-  // panel is shut, i.e. exactly when this function returns early.
-  const pillCount = document.querySelector('#panel-checklist-toggle .ck-pill-count');
-  if (pillCount) pillCount.lastChild.textContent = checklistPillLabel(items);
-  // Collapsed is the whole panel gone, not a shrunken one: the collapsed form is
-  // that chip in #panel's own meta row, which costs the terminal no height at
-  // all. Off by config or nothing selected hides it too.
-  if (!checklistEnabled || !sessionId || !checklistOpen(sessionId)) { el.hidden = true; return; }
-  el.hidden = false;
-  document.getElementById('ck-count').textContent = checklistCountLabel(items);
-  const showDone = checklistShowDone(sessionId);
-  const filter = document.getElementById('ck-filter');
-  filter.classList.toggle('showing', showDone);
-  filter.setAttribute('aria-pressed', String(showDone));
-  filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
-  document.getElementById('ck-filter-label').textContent = showDone ? 'All' : 'Open';
-  const visibleItems = visibleChecklistItems(items, { showDone });
-  const empty = document.getElementById('ck-empty');
-  const emptyLabel = checklistHiddenDoneLabel(items, { showDone });
-  if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
-  empty.hidden = !emptyLabel;
-  if (checklistDragActive || checklistEditing) return;
-  const list = document.getElementById('ck-list');
-  checklistDom.patch(list, { sessionId, items: visibleItems, focusFallback: filter });
-  syncChecklistScrollHint(list);
-}
-
-// The list is height-capped, so a long checklist clips its last visible row —
-// with no cue, that reads as a rendering glitch rather than "more below". Marks
-// the panel while there is content further down (and only then, so the hint
-// never sits over the last row once you have reached the bottom).
-function syncChecklistScrollHint(list) {
-  if (!list) return;
-  const more = list.scrollHeight - list.clientHeight - list.scrollTop > 2;
-  document.getElementById('checklist').classList.toggle('ck-more-below', more);
-}
-
-// Belt-and-braces alongside the `pending` class the patch puts on such a row
-// (its controls are inert in CSS): a click that somehow lands must not send an
-// id the server has never heard of. See isPendingChecklistId.
-function toggleChecklistItem(itemId) {
-  const sid = selectedSessionId;
-  if (isPendingChecklistId(itemId)) return;
-  const item = checklistFor(sid).find((i) => i.id === itemId);
-  if (!item) return;
-  const done = !item.done;
-  send({ type: 'checklist-update', sessionId: sid, itemId, done });
-  item.done = done;
-  renderChecklist(sid);
-}
-
-function deleteChecklistItem(itemId) {
-  const sid = selectedSessionId;
-  if (isPendingChecklistId(itemId)) return;
-  send({ type: 'checklist-remove', sessionId: sid, itemId });
-  latestChecklists[sid] = checklistFor(sid).filter((i) => i.id !== itemId);
-  renderChecklist(sid);
-}
-
-// Inline add: an input appended as the last row. Enter/blur commits, Escape
-// cancels — same contract as the todo zone's inline add.
-function beginChecklistAdd() {
-  const sid = selectedSessionId;
-  if (!sid || checklistEditing) return;
-  const list = document.getElementById('ck-list');
-  if (!list || document.getElementById('checklist').hidden) return;
-  const holder = document.createElement('div');
-  holder.className = 'ck-row ck-editing';
-  const input = document.createElement('input');
-  input.className = 'ck-input';
-  input.placeholder = 'New checklist item…';
-  input.setAttribute('aria-label', 'New checklist item');
-  holder.appendChild(input);
-  list.appendChild(holder);
-  checklistEditing = true;
-  input.focus();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    checklistEditing = false;
-    const text = input.value.trim();
-    if (holder.parentNode) holder.parentNode.removeChild(holder);
-    if (save && text) {
-      send({ type: 'checklist-add', sessionId: sid, text });
-      // Optimistic: a tmp id the next graph replaces with the server's real one.
-      latestChecklists[sid] = [...checklistFor(sid), { id: `tmp_${Date.now()}`, text, done: false, createdAt: Date.now() }];
-    }
-    renderChecklist(sid);
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously removes this input, so a bubbling
-    // Enter would reach the window handler with the input already gone and the
-    // isTypingTarget guard would miss it (same reason as the todo inputs).
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-}
-
-// Click-to-edit one item's text. The input replaces the span's text node rather
-// than the span itself, so the row element (and its drag handle) survives.
-function beginChecklistEdit(row) {
-  const sid = selectedSessionId;
-  if (checklistEditing || isPendingChecklistId(row.dataset.ckid)) return;
-  const span = row.querySelector('.ck-text');
-  const itemId = row.dataset.ckid;
-  const current = span.textContent;
-  const input = document.createElement('input');
-  input.className = 'ck-input';
-  input.value = current;
-  input.setAttribute('aria-label', `Edit checklist item: ${current}`);
-  span.textContent = '';
-  span.appendChild(input);
-  checklistEditing = true;
-  input.focus();
-  input.select();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    checklistEditing = false;
-    const text = input.value.trim();
-    if (input.parentNode) input.parentNode.removeChild(input);
-    span.textContent = current;
-    if (save && text && text !== current) {
-      send({ type: 'checklist-update', sessionId: sid, itemId, text });
-      const item = checklistFor(sid).find((i) => i.id === itemId);
-      if (item) item.text = text;
-    }
-    renderChecklist(sid);
-  };
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-}
-
-// The row the dragged one should sit BEFORE for a given cursor Y (null = the
-// end). Scoped to the list's own rows, so it can never hit-test anything else in
-// the sidebar.
-function checklistDragBefore(list, y) {
-  for (const row of list.children) {
-    if (row === checklistDragRow) continue;
-    const r = row.getBoundingClientRect();
-    if (y < r.top + r.height / 2) return row;
-  }
-  return null;
-}
-
-// Idempotent: `drop` fires before `dragend`, and a drag can also end with no
-// drop at all, so both call this.
-function endChecklistDrag() {
-  if (checklistDragRow) checklistDragRow.classList.remove('ck-dragging');
-  checklistDragActive = false;
-  checklistDragRow = null;
-}
-
-// One delegated listener pair on the list, wired once — rows are created and
-// destroyed by the patch, so per-row wiring would have to be redone on every
-// tick and would miss any row the patch reused.
-function initChecklist() {
-  const list = document.getElementById('ck-list');
-  document.getElementById('ck-add').addEventListener('click', beginChecklistAdd);
-  document.getElementById('ck-filter').addEventListener('click', () => {
-    toggleChecklistDoneFilter(selectedSessionId);
-    renderChecklist(selectedSessionId);
-  });
-  list.addEventListener('click', (e) => {
-    const row = e.target.closest('.ck-row');
-    if (!row || !row.dataset.ckid) return;
-    if (e.target.closest('.ck-check')) { toggleChecklistItem(row.dataset.ckid); return; }
-    if (e.target.closest('.ck-del')) { deleteChecklistItem(row.dataset.ckid); return; }
-    if (e.target.closest('.ck-text')) beginChecklistEdit(row);
-  });
-  list.addEventListener('dragstart', (e) => {
-    const row = e.target.closest('.ck-row[draggable="true"]');
-    if (!row) return;
-    checklistDragRow = row;
-    checklistDragActive = true;
-    e.dataTransfer.effectAllowed = 'move';
-    // A payload is required for the drag to start at all in some browsers; the
-    // drop reads the resulting DOM order, not this.
-    e.dataTransfer.setData('text/plain', row.dataset.ckid);
-    row.classList.add('ck-dragging');
-  });
-  list.addEventListener('dragover', (e) => {
-    if (!checklistDragActive || !checklistDragRow) return;
-    e.preventDefault();
-    const before = checklistDragBefore(list, e.clientY);
-    if (before !== checklistDragRow) list.insertBefore(checklistDragRow, before);
-  });
-  list.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if (!checklistDragActive) return;
-    const sid = selectedSessionId;
-    const visibleOrder = [...list.children].map((r) => r.dataset.ckid).filter(Boolean);
-    // A `tmp_` id belongs to an add still in flight — the server has never heard
-    // of it, so sending it would just be ignored. Filter it out rather than
-    // skipping the whole round trip (skipping would let the next graph echo
-    // revert the drag). Reorder appends anything it isn't told about, and an
-    // optimistic item is always the last row anyway, so it lands where it was.
-    const items = checklistFor(sid);
-    const reordered = reorderVisibleChecklistItems(items, visibleOrder);
-    const order = reordered.map((item) => item.id);
-    send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
-    // Optimistic reorder of the local snapshot, so the next patch agrees with
-    // the DOM the drag already produced rather than snapping it back.
-    latestChecklists[sid] = reordered;
-    endChecklistDrag();
-    renderChecklist(sid);
-  });
-  list.addEventListener('dragend', endChecklistDrag);
-  list.addEventListener('scroll', () => syncChecklistScrollHint(list));
-}
-
-// Inject an inline input into the todo zone. Enter/blur commits, Escape cancels.
-function beginTodoAdd(key, zone) {
-  if (!zone) return;
-  // Force the zone visible before injecting — it may be display:none when empty.
-  zone.style.display = 'flex';
-  zone.innerHTML = `<input class="todo-add-input" placeholder="New TODO…">`;
-  const input = zone.querySelector('.todo-add-input');
-  input.focus();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    const text = input.value.trim();
-    if (save && text) {
-      send({ type: 'todo-add', taskId: todoKeyToTaskId(key), text });
-      latestTasks.todos = latestTasks.todos || {};
-      (latestTasks.todos[key] || (latestTasks.todos[key] = [])).push({ id: `tmp_${Date.now()}`, text, createdAt: Date.now() });
-    }
-    renderGrid();
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously re-renders this input away, so a
-    // bubbling Enter would reach the window handler with the input already gone —
-    // the isTypingTarget guard would miss it and a selected "new session" slot
-    // would wrongly open the dispatch modal.
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-  input.addEventListener('click', (e) => e.stopPropagation());
-}
-
-let todoTooltipEl = null;
-function todoTooltip() {
-  if (!todoTooltipEl) {
-    todoTooltipEl = document.createElement('div');
-    todoTooltipEl.className = 'todo-tooltip';
-    document.body.appendChild(todoTooltipEl);
-  }
-  return todoTooltipEl;
-}
-function showTodoTooltip(span) {
-  if (span.scrollWidth <= span.clientWidth) return;
-  const tip = todoTooltip();
-  tip.textContent = span.textContent;
-  const r = span.getBoundingClientRect();
-  tip.style.left = `${Math.round(r.left)}px`;
-  tip.style.maxWidth = `${Math.max(160, Math.min(Math.round(r.width * 1.6), window.innerWidth - 2 * TOOLTIP_MARGIN_PX))}px`;
-  tip.classList.add('show');
-  const t = tip.getBoundingClientRect();
-  const { left, top } = tooltipPosition(r, t, { width: window.innerWidth, height: window.innerHeight });
-  tip.style.left = `${left}px`;
-  tip.style.top = `${top}px`;
-}
-function hideTodoTooltip() {
-  if (todoTooltipEl) todoTooltipEl.classList.remove('show');
-}
-
-// Click-to-edit a todo row's text. Swap span -> input; Enter/blur commits, Escape cancels.
-function beginTodoEdit(span) {
-  const row = span.closest('.todo-row');
-  if (!row) return;
-  hideTodoTooltip();
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const current = span.textContent;
-  span.innerHTML = `<input class="todo-text-input" value="${esc(current)}">`;
-  const input = span.querySelector('.todo-text-input');
-  input.focus();
-  input.select();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    const text = input.value.trim();
-    if (save && text && text !== current) {
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(key), todoId, text });
-      const td = ((latestTasks.todos || {})[key] || []).find((x) => x.id === todoId);
-      if (td) td.text = text;
-    }
-    renderGrid();
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously re-renders this input away, so a
-    // bubbling Enter would reach the window handler with the input already gone —
-    // the isTypingTarget guard would miss it and a selected "new session" slot
-    // would wrongly open the dispatch modal.
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-  input.addEventListener('click', (e) => e.stopPropagation());
-}
-
-function openTodoDetails(btn) {
-  const row = btn.closest('.todo-row');
-  if (!row) return;
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const td = todosFor(key).find((item) => item.id === todoId);
-  if (!td) return;
-  const overlay = document.createElement('div');
-  overlay.className = 'todo-editor-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-labelledby', 'todo-editor-heading');
-  overlay.innerHTML = `<div class="modal-card todo-editor-card">
-    <h3 id="todo-editor-heading">Edit TODO</h3>
-    <label for="todo-editor-title">Title</label>
-    <input id="todo-editor-title" autocomplete="off">
-    <label for="todo-editor-description">Description</label>
-    <textarea id="todo-editor-description" rows="10" placeholder="Findings, remaining work, next step…"></textarea>
-    <p class="todo-editor-error" role="alert" hidden></p>
-    <div class="modal-actions"><button class="ghost todo-editor-cancel">Cancel</button><button class="primary todo-editor-save">Save</button></div>
-  </div>`;
-  const title = overlay.querySelector('#todo-editor-title');
-  const description = overlay.querySelector('#todo-editor-description');
-  const error = overlay.querySelector('.todo-editor-error');
-  title.value = td.text;
-  description.value = td.description || '';
-  const close = () => overlay.remove();
-  overlay.querySelector('.todo-editor-cancel').addEventListener('click', close);
-  overlay.querySelector('.todo-editor-save').addEventListener('click', () => {
-    const text = title.value.trim();
-    if (!text) { title.focus(); return; }
-    const nextDescription = description.value.trim();
-    const textChanged = text !== td.text;
-    const descriptionChanged = nextDescription !== (td.description || '');
-    if (textChanged || descriptionChanged) {
-      const currentKey = Object.keys(latestTasks.todos || {}).find((bucket) => todosFor(bucket).some((item) => item.id === todoId));
-      if (!currentKey) {
-        error.textContent = 'This TODO no longer exists.';
-        error.hidden = false;
-        return;
-      }
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(currentKey), todoId,
-        ...(textChanged ? { text } : {}),
-        ...(descriptionChanged ? { description: nextDescription } : {}) });
-      const latestTodo = todosFor(currentKey).find((item) => item.id === todoId);
-      if (latestTodo) {
-        if (textChanged) latestTodo.text = text;
-        if (descriptionChanged) {
-          if (nextDescription) latestTodo.description = nextDescription;
-          else delete latestTodo.description;
-        }
-      }
-      renderGrid();
-    }
-    close();
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  overlay.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-  });
-  document.body.appendChild(overlay);
-  (td.description ? description : title).focus();
-}
-
-// Spawn a session from a TODO: open the dispatch modal pre-filled with the todo
-// text, task locked to the todo's own bucket. The todo is consumed (deleted) on
-// the 'dispatched' ack — pendingTodoConsume carries it there.
-function spawnTodo(btn) {
-  const row = btn.closest('.todo-row');
-  if (!row) return;
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const td = todosFor(key).find((x) => x.id === todoId);
-  if (!td) return;
-  const taskId = todoKeyToTaskId(key);
-  openDispatch(taskId, { intent: todoLaunchIntent(td), lockTask: true });
-  pendingTodoConsume = { taskId, todoId, key };
-}
 
 // Ask the server to create a task; awaitingNewTask makes the new tile open in
 // rename mode when it arrives. Optionally seed it with a session.
@@ -4538,11 +4054,7 @@ function togglePanelSubagentShowFinished(sessionId) {
 function renderPanel(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   if (!s) return;
-  // The Checklist panel is a #panel SIBLING, not part of its markup — rendered
-  // from here purely so there is one call site that can't drift out of sync with
-  // panel renders (selection, the ~4s poll, every pill toggle).
-  renderChecklist(sessionId);
-  // Extension panel sections (#panel-sections, the other #panel SIBLING) are
+  // Extension panel sections (#panel-sections, a #panel SIBLING) are
   // mounted once and updated from the same call site, for the same reason. The
   // meta-chip slot is mounted further down, once the chips row it lives in has
   // been rebuilt.
@@ -4575,17 +4087,6 @@ function renderPanel(sessionId) {
   if (compactPill) chips.push(compactPill);
   if (s.tasks?.running) chips.push(`<span class="card-tag">${esc(s.tasks.running)} running${s.tasks.kinds?.length ? ` (${s.tasks.kinds.map(esc).join(', ')})` : ''}</span>`);
   if (s.tasks?.queued) chips.push(`<span class="card-tag">${esc(s.tasks.queued)} queued</span>`);
-  // The checklist's COLLAPSED form: a disclosure chip in this row, styled and
-  // toggled exactly like the sub-agents pill below (icon + count + a +/- state
-  // icon, per-session and persisted). Collapsed therefore costs the terminal no
-  // height at all — the panel itself is simply not rendered. Shown even for an
-  // empty checklist (hence checklistPillLabel's "0/0"): while collapsed this
-  // chip is the only thing telling a human the feature exists on this session.
-  if (checklistEnabled) {
-    const open = checklistOpen(sessionId);
-    const icon = `<span class="subagent-toggle-icon">${open ? MINUS_ICON : PLUS_ICON}</span>`;
-    chips.push(`<button class="card-tag checklist-pill${open ? ' showing' : ''}" id="panel-checklist-toggle" title="${open ? 'Hide' : 'Show'} checklist" aria-expanded="${open}"><span class="ck-pill-count">${CHECK_ICON}${esc(checklistPillLabel(checklistFor(sessionId)))}</span>${icon}</button>`);
-  }
   // Extension chips are mounted into this row AFTER it is written — see the
   // panel.metaChip slot below.
   const saList = Array.isArray(s.subAgents) ? s.subAgents : [];
@@ -4659,8 +4160,6 @@ function renderPanel(sessionId) {
   if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
   if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
-  const ckToggle = panel.querySelector('#panel-checklist-toggle');
-  if (ckToggle) ckToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleChecklist(sessionId); renderPanel(sessionId); });
   // The chips row above was just rebuilt via innerHTML, so its .sess-meta-ext
   // host (between the core chips and the right-aligned links) is a fresh
   // element every render: mountInto re-mounts each extension chip into it
@@ -5104,6 +4603,14 @@ const modal = document.getElementById('modal');
 // Recency-ordered, de-duplicated recent folders for the dispatch dropdown. A
 // custom dropdown (not <datalist>) so we can anchor it below the input and cap it.
 let recentFolders = [];
+// Folders the user dismissed from the recents list, per browser.
+const HIDDEN_RECENTS_KEY = 'aw.hiddenRecentFolders';
+function hiddenRecents() { try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_RECENTS_KEY) || '[]')); } catch { return new Set(); } }
+function hideRecentFolder(path) {
+  const set = hiddenRecents(); set.add(path);
+  try { localStorage.setItem(HIDDEN_RECENTS_KEY, JSON.stringify([...set])); } catch {}
+  recentFolders = recentFolders.filter((p) => p !== path);
+}
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
 // control message. `fsProbed` is the exact input value the reply belongs to —
@@ -5176,7 +4683,8 @@ function refreshFolderList() {
   items.sort((a, b) => b.at - a.at);
   const seen = new Set();
   recentFolders = [];
-  for (const { cwd } of items) if (!seen.has(cwd)) { seen.add(cwd); recentFolders.push(cwd); }
+  const hidden = hiddenRecents();
+  for (const { cwd } of items) if (!seen.has(cwd) && !hidden.has(cwd)) { seen.add(cwd); recentFolders.push(cwd); }
   if (!document.getElementById('folder-suggest')?.classList.contains('hidden')) renderFolderSuggest();
 }
 // The folder field's canonical value. Picking a folder from the dropdown leaves a
@@ -5203,7 +4711,7 @@ function renderFolderSuggest() {
   if (suggestIndex >= matches.length) suggestIndex = matches.length - 1;
   if (!matches.length) { closeSuggestBox(box); return; } // nothing yet — stays wanted
   box.innerHTML = matches
-    .map((m, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(m.path)}">${esc(m.path)}${m.recent ? '<span class="suggest-tag">recent</span>' : ''}</div>`)
+    .map((m, i) => `<div class="suggest-item${i === suggestIndex ? ' active' : ''}" data-path="${esc(m.path)}">${esc(m.path)}${m.recent ? '<span class="suggest-remove" title="Remove from recents (Shift+Delete)">✕</span><span class="suggest-tag">recent</span>' : ''}</div>`)
     .join('');
   box.classList.remove('hidden');
 }
@@ -5665,8 +5173,10 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // Default the repo to the task's dominant cwd. Live sessions win; if the task
   // has none left on the board (e.g. all archived) fall back to its history —
   // archived entries keep their task assignment + cwd — so the repo isn't lost.
+  // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel));
+    const hidden = hiddenRecents();
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule
@@ -5711,7 +5221,6 @@ function defaultPicker() {
   return { cadence: 'once', at: toDatetimeLocalValue(Date.now() + 3600e3), time: '09:00', weekdaysOnly: false, days: [] };
 }
 function openDispatch(taskId = null, opts = {}) {
-  pendingTodoConsume = null;
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
   openModal({ mode: 'launch', taskId });
@@ -5796,6 +5305,7 @@ function submitDispatch() {
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return;
   send({ type: 'dispatch', ...fields });
+  dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
   if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return; }
@@ -5827,10 +5337,10 @@ function submitSchedule() {
 // the caller decides whether to reopen the panel.
 function closeModal() {
   modal.classList.add('hidden');
+  dispatchWaiter.close({ wasPending: wtPending });
   wtPending = false; setDispatchPending(false);
   modalMode = 'launch'; editingScheduleId = null;
   subagentModalReq = null;
-  pendingTodoConsume = null;
   document.getElementById('m-task').disabled = false;
 }
 // Dismiss (Cancel/Escape): drop back to the Schedules panel when we came from it,
@@ -5842,9 +5352,6 @@ function cancelModal() {
 }
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
-// One-time delegated wiring for the Checklist panel's rows (they are patched, so
-// per-row listeners would be lost/duplicated on every tick).
-initChecklist();
 // Seed --chat-font-size from the stored preference at startup. The terminal's
 // size needs no equivalent: it is read per-terminal at construction, whereas
 // this one is a CSS variable that has to exist before the chat view first
@@ -5977,6 +5484,13 @@ function openExtSettings(id) {
   const body = document.getElementById('ext-settings-body');
   document.getElementById('ext-settings-title').textContent = entry.label || entry.id;
   body.textContent = '';
+  // The extension's own `settings.panel` contributions, ABOVE the manifest
+  // rows. Only this extension's (onlyExt). Their `save` runs on Done.
+  const panelHost = document.createElement('div');
+  panelHost.className = 'ext-settings-panel';
+  body.append(panelHost);
+  const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
+  if (!panels) panelHost.remove();
   body.append(extensionSettingRowsEl(entry, {
     onSettingChange: ({ key, value }) => {
       send({ type: 'ext-setting-set', id: entry.id, key, value });
@@ -5991,18 +5505,51 @@ function openExtSettings(id) {
   const done = document.getElementById('ext-settings-done');
   modal.classList.remove('hidden');
   done.focus();
+  let saving = false;
   const close = () => {
     modal.classList.add('hidden');
-    done.removeEventListener('click', close);
+    done.removeEventListener('click', onDone);
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
+    // unmount runs for every panel contribution; its sample card goes too.
+    slots.unmountHost('settings.panel', panelHost);
+    panelHost.remove();
+    pruneSampleHosts();
   };
-  // Enter closes rather than approving anything: every control here has already
-  // committed on its own change, so there is no pending decision for a key to
-  // confirm — and Enter in a text field is one of the ways it commits.
-  const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); close(); } };
+  // Done means SAVE for panel contributions only — the manifest rows below
+  // have already committed on change. A rejecting save keeps the dialog open
+  // (the extension shows its own error); Escape/backdrop close without saving.
+  const onDone = async () => {
+    if (saving) return;
+    if (!panels) { close(); return; }
+    saving = true;
+    done.disabled = true;
+    try {
+      await slots.savePanels(panelHost);
+      close();
+    } catch (err) {
+      console.error(`[ext:${entry.id}] settings panel save failed`, err);
+    } finally {
+      saving = false;
+      done.disabled = false;
+    }
+  };
+  // Enter means Done, except inside a text input, where it is one of the ways a
+  // manifest row commits (and a panel's own field may want it).
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Enter') {
+      const t = e.target;
+      if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)))) {
+        if (!panels) { e.preventDefault(); close(); }
+        return;
+      }
+      e.preventDefault();
+      onDone();
+    }
+  };
   const onBackdrop = (e) => { if (e.target === modal) close(); };
-  done.addEventListener('click', close);
+  done.addEventListener('click', onDone);
   modal.addEventListener('keydown', onKey);
   modal.addEventListener('mousedown', onBackdrop);
 }
@@ -6054,7 +5601,6 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
-      if (id === 'checklistEnabled') return checklistEnabled;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
       // back off graph.extensions — one rung for all of them, no per-extension
       // branch. Undefined for an unknown id so settings.js falls back to its
@@ -6086,12 +5632,6 @@ initSettings({
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
-      } else if (id === 'checklistEnabled') {
-        checklistEnabled = Boolean(value);
-        send({ type: 'set-checklist-enabled', enabled: checklistEnabled });
-        // Show/hide at once rather than waiting for the rebuild echo — the panel
-        // is right beside the modal that just toggled it.
-        renderChecklist(selectedSessionId);
       } else if (id.startsWith(EXT_SETTING_PREFIX)) {
         // Nothing flips locally: the server fixed the extension's tools/handlers
         // at boot, so the toggle only records the choice (read back off the next
@@ -6179,28 +5719,38 @@ modal.addEventListener('keydown', (e) => {
   const box = document.getElementById('folder-suggest');
   input.addEventListener('focus', () => { suggestIndex = -1; suggestWanted = true; requestFolderBrowse(); renderFolderSuggest(); });
   input.addEventListener('input', () => { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); });
-  // Picking a folder leaves the caret inside it (trailing '/') and re-opens the
-  // list on its children, so a deep path is reachable by repeated selection.
+  // Picking a folder leaves the caret inside it (trailing '/') and prefetches its
+  // children, but closes the list so it doesn't cover the launch buttons. A click
+  // in the field, a keystroke or ArrowDown re-opens it on those children, so a deep
+  // path is still reachable by repeated selection.
   function pickFolder(path) {
     input.value = `${path.replace(/\/+$/, '')}/`;
-    fsProbed = null; fsFolders = []; suggestIndex = -1; suggestWanted = true;
+    fsProbed = null; fsFolders = [];
+    hideFolderSuggest();
     requestFolderBrowse();
     syncWorktreeFields();
-    renderFolderSuggest();
   }
+  function reopenFolderSuggest() { suggestIndex = -1; suggestWanted = true; renderFolderSuggest(); }
+  // Focus stays in the field after a pick, so a click there fires no focus event.
+  input.addEventListener('mousedown', () => { if (document.activeElement === input && !suggestWanted) reopenFolderSuggest(); });
   input.addEventListener('blur', () => setTimeout(hideFolderSuggest, 120)); // let a click land first
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !suggestWanted) { e.preventDefault(); reopenFolderSuggest(); return; }
     if (box.classList.contains('hidden')) return;
     const items = [...box.querySelectorAll('.suggest-item')];
     if (e.key === 'ArrowDown') { e.preventDefault(); suggestIndex = Math.min(suggestIndex + 1, items.length - 1); renderFolderSuggest(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); suggestIndex = Math.max(suggestIndex - 1, 0); renderFolderSuggest(); }
     else if (e.key === 'Enter' && suggestIndex >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickFolder(items[suggestIndex].dataset.path); }
+    else if (e.key === 'Delete' && e.shiftKey && items[suggestIndex]?.querySelector('.suggest-remove')) { e.preventDefault(); hideRecentFolder(items[suggestIndex].dataset.path); renderFolderSuggest(); }
+    // Tab completes to the highlighted folder (or the top one if none is highlighted).
+    else if (e.key === 'Tab' && !e.shiftKey && items.length) { e.preventDefault(); pickFolder(items[Math.max(suggestIndex, 0)].dataset.path); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideFolderSuggest(); } // first Esc closes the dropdown, not the dialog
   });
   box.addEventListener('mousedown', (e) => {
     const item = e.target.closest('.suggest-item');
     if (!item) return;
     e.preventDefault(); // keep focus; avoids the blur-hide race
+    if (e.target.closest('.suggest-remove')) { hideRecentFolder(item.dataset.path); renderFolderSuggest(); return; }
     pickFolder(item.dataset.path);
   });
 })();
@@ -6483,18 +6033,11 @@ function connect() {
         modal.classList.add('hidden');
         document.getElementById('m-intent').value = '';
       }
-      if (pendingTodoConsume) {
-        const { taskId, todoId, key } = pendingTodoConsume;
-        pendingTodoConsume = null;
-        send({ type: 'todo-delete', taskId, todoId });
-        const arr = (latestTasks.todos || {})[key];
-        if (arr) {
-          latestTasks.todos[key] = arr.filter((td) => td.id !== todoId);
-          renderGrid();
-        }
-      }
+      dispatchWaiter.ack(msg);
     }
+    else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
     else if (msg.type === 'error') {
+      dispatchWaiter.error({ modalOpen: wtPending });
       if (wtPending) {
         wtPending = false; setDispatchPending(false);
         // Workflow mode hides the worktree box, so its message slot is invisible —

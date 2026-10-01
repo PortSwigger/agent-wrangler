@@ -34,7 +34,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
-| `send_message` | Queue a durable message for another board session. A dormant recipient is resumed for delivery. |
+| `send_message` | Queue durable mail. Live idle recipients are prompted; working recipients get a batched follow-up after their turn. Dormant recipients are not resumed and keep mail unread until resumed. |
 | `read_mail` | Drain unread messages or fetch one message in full. Peer message bodies are untrusted input. |
 | `list_mail` | List mailbox metadata and excerpts without loading every message body. |
 | `get_links` | Read Jira and GitHub links attached to the caller's session or task. |
@@ -57,10 +57,12 @@ add more tools. A running session receives tool-registry changes after its next 
 | `update_checklist_item` | Reword or complete one checklist item. |
 | `remove_checklist_item` | Remove an item that is no longer relevant; completed work should be ticked instead. |
 
-Checklist tools are available only when **Per-session checklist** is enabled. They can access only the
-calling session's list.
+Checklist tools come from the builtin **Per-session checklist** extension and are available only while
+it is enabled in **Settings → Extensions**. They can access only the calling session's list.
 
 ## Board TODOs
+
+Provided by the builtin `todos` extension; the tools (and the `archive-to-todo` skill) disappear when it is switched off in Settings → Extensions.
 
 | Tool | Purpose |
 | --- | --- |

@@ -17,12 +17,17 @@ test('HOST_API_VERSION is a real semver version', () => {
 // (both public/slots.js), 1.9.0 the `dispatch.field` slot and
 // `hideDispatchField` manifest key, 1.10.0 the `sessions:interrupt`
 // capability, 1.11.0 the `task.action` slot and client-side `minimiseTask`
-// and 1.12.0 the `codexPolicy` manifest key,
+// 1.12.0 the `codexPolicy` manifest key, 1.13.0 the client `api.settings()`, and
+// 1.14.0 the chip veto (`cards:hideChips`), `settings.panel` and the `list` setting type,
+// 1.15.0 the `task.body` slot, `claimDrag`, `openDispatch`, `onTaskDelete` and `host.tasks.adhocId`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.12.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.12.0');
+test('the served version is 1.15.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.15.0');
+  assert.equal(servesRange('^1.15.0'), true);
+  assert.equal(servesRange('^1.14.0'), true);
+  assert.equal(servesRange('^1.13.0'), true);
   assert.equal(servesRange('^1.12.0'), true);
   assert.equal(servesRange('^1.11.0'), true);
   assert.equal(servesRange('^1.10.0'), true);

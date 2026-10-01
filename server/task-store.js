@@ -18,11 +18,15 @@ export const ADHOC = 'adhoc';
 // session count at render time, not stored here. On disk:
 //   { tasks: [{id, name}], order: [taskId | 'adhoc', …],
 //     assignments: {sessionId: taskId},
-//     sessionOrder: {taskId | 'adhoc': [sessionId, …]},
-//     todos: {taskId | 'adhoc': [{id, text, description?, createdAt}, …]} }
-// The 'adhoc' sessionOrder/todos key (when present) belongs to the unassigned tile.
-// A TODO is the cheapest tier of work — pure un-started intent that a spawn
-// consumes — so it is keyed by task exactly like sessionOrder, not linked to one.
+//     sessionOrder: {taskId | 'adhoc': [sessionId, …]} }
+// The 'adhoc' sessionOrder key (when present) belongs to the unassigned tile.
+//
+// Board TODOs used to live here as `todos`; the builtin todos extension owns
+// them now (todos.json). DECISION: the raw `todos` value read from the file is
+// kept as an opaque pass-through (`_legacyTodos`) and written back unchanged,
+// never read or mutated. A downgrade within a release still finds them, and a
+// migration that failed (the extension retries every boot until todos.json is
+// marked migrated) still has its source. Remove once that window has passed.
 export class TaskStore {
   constructor(file = TASKS_FILE) {
     this.file = file;
@@ -30,7 +34,7 @@ export class TaskStore {
     this.order = [ADHOC];
     this.assignments = {};
     this.sessionOrder = {};
-    this.todos = {};
+    this._legacyTodos = undefined;
     this._load();
   }
 
@@ -62,15 +66,7 @@ export class TaskStore {
     this.order = this._reconcileOrder(raw.order);
     this.assignments = raw.assignments && typeof raw.assignments === 'object' ? raw.assignments : {};
     this.sessionOrder = raw.sessionOrder && typeof raw.sessionOrder === 'object' ? raw.sessionOrder : {};
-    // Keep only todos under a still-valid bucket (a real task id or ADHOC) so an
-    // orphaned task's todos can't linger after the task is gone.
-    const validBuckets = new Set([...this.tasks.map((t) => t.id), ADHOC]);
-    this.todos = {};
-    if (raw.todos && typeof raw.todos === 'object') {
-      for (const [bucket, list] of Object.entries(raw.todos)) {
-        if (validBuckets.has(bucket) && Array.isArray(list)) this.todos[bucket] = list;
-      }
-    }
+    if (raw.todos !== undefined) this._legacyTodos = raw.todos;
   }
 
   _save() {
@@ -79,7 +75,7 @@ export class TaskStore {
       order: this.order,
       assignments: this.assignments,
       sessionOrder: this.sessionOrder,
-      todos: this.todos,
+      ...(this._legacyTodos !== undefined ? { todos: this._legacyTodos } : {}),
     });
   }
 
@@ -89,7 +85,6 @@ export class TaskStore {
       order: [...this.order],
       assignments: { ...this.assignments },
       sessionOrder: Object.fromEntries(Object.entries(this.sessionOrder).map(([k, v]) => [k, [...v]])),
-      todos: Object.fromEntries(Object.entries(this.todos).map(([k, v]) => [k, v.map((td) => ({ ...td }))])),
     };
   }
 
@@ -253,103 +248,27 @@ export class TaskStore {
     return true;
   }
 
-  // A todo bucket is a real task id or the ADHOC sentinel — never an arbitrary id,
-  // so a stale client can't write todos into a non-existent task.
-  _isBucket(id) {
-    return id === ADHOC || this.tasks.some((t) => t.id === id);
-  }
-
-  // Append a TODO to its bucket. Blank text is a no-op (returns null); an unknown
-  // bucket is rejected. createdAt is injectable for deterministic tests. The id is
-  // a fresh handle — a TODO carries no link to any session, so this is its only key.
-  // null taskId maps to ADHOC (the handlers coerce the unassigned tile's key to null).
-  addTodo(taskId, text, createdAt = Date.now(), description = '') {
-    const bucket = taskId || ADHOC;
-    const trimmed = (text || '').trim();
-    if (!trimmed || !this._isBucket(bucket)) return null;
-    const todo = { id: `td_${crypto.randomBytes(4).toString('hex')}`, text: trimmed, createdAt };
-    if (description?.trim()) todo.description = description.trim();
-    (this.todos[bucket] || (this.todos[bucket] = [])).push(todo);
+  // Remove a task outright: its entry, its slot in `order`, its session order, and
+  // every assignment pointing at it (those sessions fall back to Ad hoc). Returns
+  // the ids of the sessions it unassigned, or null for an unknown id. Everything
+  // else keyed by task id lives OUTSIDE this store (task memory, extension
+  // data), so the caller announces the deletion to extensions afterwards
+  // (control/handlers/tasks.js -> onTaskDelete) rather than this reaching for them.
+  deleteTask(id) {
+    const at = this.tasks.findIndex((t) => t.id === id);
+    if (at < 0) return null;
+    this.tasks.splice(at, 1);
+    this.order = this.order.filter((x) => x !== id);
+    delete this.sessionOrder[id];
+    const unassigned = Object.entries(this.assignments).filter(([, tid]) => tid === id).map(([sid]) => sid);
+    for (const sid of unassigned) delete this.assignments[sid];
     this._save();
-    return todo;
-  }
-
-  // Inline rename. No-op on blank, unchanged, or an unknown bucket/todo.
-  // null taskId maps to ADHOC.
-  editTodo(taskId, todoId, text, description) {
-    const bucket = taskId || ADHOC;
-    const todo = (this.todos[bucket] || []).find((td) => td.id === todoId);
-    if (!todo || (text === undefined && description === undefined)) return false;
-    const trimmed = text === undefined ? todo.text : (text || '').trim();
-    if (!trimmed) return false;
-    const nextDescription = description === undefined ? (todo.description || '') : description.trim();
-    if (trimmed === todo.text && nextDescription === (todo.description || '')) return false;
-    todo.text = trimmed;
-    if (nextDescription) todo.description = nextDescription;
-    else delete todo.description;
-    this._save();
-    return true;
-  }
-
-  // Remove a TODO. Consumed and deleted are the same end-state.
-  // Keeps the map sparse: deletes the key when the list empties.
-  // null taskId maps to ADHOC.
-  deleteTodo(taskId, todoId) {
-    const bucket = taskId || ADHOC;
-    const list = this.todos[bucket];
-    if (!list) return false;
-    const i = list.findIndex((td) => td.id === todoId);
-    if (i < 0) return false;
-    list.splice(i, 1);
-    if (!list.length) delete this.todos[bucket];
-    this._save();
-    return true;
-  }
-
-  // Reassign a TODO across buckets (drag-and-drop). Keeps the map sparse.
-  // No-op for same bucket, unknown todo, or unknown target.
-  // null taskIds map to ADHOC.
-  moveTodo(todoId, fromTaskId, toTaskId) {
-    const from = fromTaskId || ADHOC, to = toTaskId || ADHOC;
-    if (from === to || !this._isBucket(to)) return false;
-    const list = this.todos[from];
-    if (!list) return false;
-    const i = list.findIndex((td) => td.id === todoId);
-    if (i < 0) return false;
-    const [todo] = list.splice(i, 1);
-    if (!list.length) delete this.todos[from];
-    (this.todos[to] || (this.todos[to] = [])).push(todo);
-    this._save();
-    return true;
-  }
-
-  // Reorder a bucket's todos to the client-supplied `order` (drag-and-drop within a
-  // task). Unlike reorderSession, a todo not mentioned in `order` is appended rather
-  // than dropped — `todos[bucket]` is the data itself, not display metadata layered
-  // over a session partition. null taskId maps to ADHOC. Returns false on no-op /
-  // unknown bucket.
-  reorderTodos(taskId, order) {
-    const bucket = taskId || ADHOC;
-    const list = this.todos[bucket];
-    if (!list || !Array.isArray(order)) return false;
-    const byId = new Map(list.map((td) => [td.id, td]));
-    const seen = new Set();
-    const next = [];
-    for (const id of order) {
-      if (typeof id !== 'string' || seen.has(id) || !byId.has(id)) continue;
-      seen.add(id);
-      next.push(byId.get(id));
-    }
-    for (const td of list) if (!seen.has(td.id)) next.push(td);
-    if (next.length === list.length && next.every((td, i) => td === list[i])) return false;
-    this.todos[bucket] = next;
-    this._save();
-    return true;
+    return unassigned;
   }
 
   // Archive a task in place: stamp archivedAt so the live board (currentOrder in
   // app.js) filters it out. Everything else (assignments,
-  // sessionOrder, todos, links, its slot in `order`) stays untouched, so
+  // sessionOrder, links, its slot in `order`) stays untouched, so
   // unarchiveTask is an exact, instant revert with no snapshot bookkeeping.
   // No-op (false) for an unknown or already-archived id.
   archiveTask(id, archivedAt = Date.now()) {

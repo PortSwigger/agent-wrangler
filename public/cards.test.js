@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
-  workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
+  workflowBoxHtml, renderTileCards, snoozedRowHtml, taskBodyHostHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
-  subagentDividerHtml,
+  subagentDividerHtml, CORE_CHIPS,
 } from './cards.js';
+import { SAMPLE_SESSION } from './sample-session.js';
 
 // A render context matching app.js `cardCtx()`. Derived-status helpers are the real
 // shapes (a status word, a bar affordance, a snooze phase) so the builders exercise
@@ -24,7 +25,6 @@ function ctx(over = {}) {
     cardState: (s) => s.status || 'idle',
     barWord: (s) => (s.managed ? (STATUS_WORDS[s.status] || '?') : 'resume'),
     phaseOf: (s) => (s.snooze && s.snooze.until ? 'asleep' : 'awake-none'),
-    todosFor: () => [],
     ADHOC_ID: 'adhoc',
     isChildFullView: (s) => Boolean(s.childFullView),
     ...over,
@@ -117,7 +117,7 @@ test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
 test('sessionCardHtml: shows the short model label with a CPU icon only when resolved', () => {
   const known = sessionCardHtml(sess({ modelPill: { label: 'gpt-5.6 sol', title: 'gpt-5.6-sol' } }), ctx());
   const unknown = sessionCardHtml(sess({ modelPill: null }), ctx());
-  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol"><svg class="icon"[^>]*>[^]*<\/svg><span class="model-pill-label">gpt-5\.6 sol<\/span><\/span>/);
+  assert.match(known, /<span class="card-tag model-pill" title="gpt-5\.6-sol" data-chip="core:model"><svg class="icon"[^>]*>[^]*<\/svg><span class="model-pill-label">gpt-5\.6 sol<\/span><\/span>/);
   assert.doesNotMatch(unknown, /model-pill/);
 });
 
@@ -164,7 +164,7 @@ test('compactPillHtml: an explicit threshold wins over the inferred model window
 test('sessionCardHtml: two SEPARATE pills — the compaction ceiling shows even collapsed, the in/out breakdown only once expanded', () => {
   const s = sess({ autoCompactTokens: 500000, tokens: { input: 2000, output: 1000 } });
   const collapsed = sessionCardHtml(s, ctx());
-  assert.match(collapsed, /Auto-compaction ceiling[^"]*"><svg[^>]*>[^]*<\/svg>500k<\/span>/);
+  assert.match(collapsed, /Auto-compaction ceiling[^"]*" data-chip="core:compact"><svg[^>]*>[^]*<\/svg>500k<\/span>/);
   assert.doesNotMatch(collapsed, /in ·/);
   const expanded = sessionCardHtml(s, ctx(), { expanded: true });
   assert.match(expanded, /2\.0k in · 1\.0k out/);
@@ -264,10 +264,12 @@ test('sessionCardHtml: no mail badge when there is no unread mail', () => {
   assert.doesNotMatch(html, /mail-badge/);
 });
 
-test('workerRowHtml: a bare amber worker-mail-dot renders only when mail is stale — never for normal unread, never for none', () => {
-  assert.doesNotMatch(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx()), /worker-mail-dot/);
-  assert.doesNotMatch(workerRowHtml(sess({ mail: null }), ctx()), /worker-mail-dot/);
-  assert.match(workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: true } }), ctx()), /worker-mail-dot/);
+test('workerRowHtml: unread mail badge is visible for fresh and stale mail, absent when empty', () => {
+  const fresh = workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: false } }), ctx());
+  const stale = workerRowHtml(sess({ mail: { unread: 2, notifiedAt: Date.now(), amber: true } }), ctx());
+  assert.match(fresh, /class="mail-badge"[^>]*>.*2<\/span>/);
+  assert.match(stale, /class="mail-badge stale"[^>]*>.*2<\/span>/);
+  assert.doesNotMatch(workerRowHtml(sess({ mail: null }), ctx()), /mail-badge/);
 });
 
 test('snoozedRowHtml: never renders mail, even when the session has stale unread mail (an asleep session not reading mail is not news)', () => {
@@ -495,62 +497,29 @@ test('snoozedRowHtml: greyed name-only row with a wake button and data-sid', () 
   assert.match(html, /snooze-wake/);
 });
 
-test('todoRowHtml / todoZoneHtml: rows escape text; empty zone is just the anchor', () => {
-  const row = todoRowHtml({ id: 't1', text: '<b>do</b>' }, 'adhoc');
-  assert.match(row, /data-todoid="t1"/);
-  assert.match(row, /&lt;b&gt;do&lt;\/b&gt;/);
-  assert.equal(todoZoneHtml([], 'adhoc'), '<div class="todo-zone" data-todo-key="adhoc"></div>');
-  const zone = todoZoneHtml([{ id: 't1', text: 'x' }], 'adhoc');
-  assert.match(zone, /todo-divider/);
-  assert.match(zone, /data-todoid="t1"/);
-});
-
-test('todoRowHtml exposes a details editor for every TODO and marks described rows', () => {
-  const plain = todoRowHtml({ id: 'td_1', text: 'Plain' }, 'adhoc');
-  const rich = todoRowHtml({ id: 'td_2', text: 'Rich', description: 'Next: test <edge>' }, 'adhoc');
-  assert.match(plain, /todo-details/);
-  assert.doesNotMatch(plain, /has-description/);
-  assert.match(rich, /has-description/);
-  assert.doesNotMatch(rich, /Next: test <edge>/);
-});
-
-test('todoZoneHtml: the toggle pill shows the todo count, open by default (minus icon, "Hide" title)', () => {
-  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc');
-  assert.match(zone, /class="card-tag todo-pill"/);
-  assert.match(zone, />todo 2</);
-  assert.match(zone, /title="Hide TODOs"/);
-  assert.match(zone, /todo-toggle-icon/);
-  assert.match(zone, /data-todoid="t1"/);
-  assert.match(zone, /data-todoid="t2"/);
-});
-
-test('todoZoneHtml: collapsed hides the rows but keeps the pill + count + anchor (plus icon, "Show" title)', () => {
-  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc', true);
-  assert.match(zone, />todo 2</);
-  assert.match(zone, /title="Show TODOs"/);
-  assert.doesNotMatch(zone, /data-todoid/);
-  assert.match(zone, /<div class="todo-zone" data-todo-key="adhoc"><\/div>$/);
+test('taskBodyHostHtml: one empty, escaped host keyed by the tile id', () => {
+  assert.equal(taskBodyHostHtml('adhoc'), '<div class="task-body-ext" data-task-body="adhoc"></div>');
+  assert.match(taskBodyHostHtml('a"b'), /data-task-body="a&quot;b"/);
 });
 
 test('tileHtml: placeholder tile renders a bare placeholder div', () => {
   assert.match(tileHtml({ kind: 'placeholder', col: 0, rowStart: 0, span: 1 }, ctx()), /task-placeholder/);
 });
 
-test('tileHtml: notask tile is the Unassigned cell and reads todos from ADHOC_ID', () => {
-  let askedFor = null;
-  const c = ctx({ todosFor: (k) => { askedFor = k; return []; } });
-  const html = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, c);
-  assert.match(html, /task-cell no-task/);
-  assert.match(html, /Unassigned/);
-  assert.equal(askedFor, 'adhoc');
+test('tileHtml: every tile, Unassigned included, carries a task.body host keyed by its id, after the cards', () => {
+  const notask = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, ctx());
+  assert.match(notask, /task-cell no-task/);
+  assert.match(notask, /Unassigned/);
+  assert.match(notask, /<div class="task-body-ext" data-task-body="adhoc"><\/div>/);
+  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [sess()], task: { id: 'T1', name: 'T', links: [] } };
+  const html = tileHtml(tile, ctx());
+  assert.match(html, /data-task-body="T1"/);
+  assert.ok(html.indexOf('session-card') < html.indexOf('data-task-body'));
 });
 
-test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse the zone', () => {
-  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
-  const c = ctx({ todosFor: () => [{ id: 't1', text: 'x' }], collapsedTodoZones: new Set(['T1']) });
-  const html = tileHtml(tile, c);
-  assert.match(html, /title="Show TODOs"/);
-  assert.doesNotMatch(html, /data-todoid="t1"/);
+test('tileHtml: an empty tile keeps its empty-state hint (extensions hide it themselves)', () => {
+  const html = tileHtml({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } }, ctx());
+  assert.match(html, /cell-empty-body/);
 });
 
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {
@@ -713,4 +682,21 @@ test('sessionCardHtml: a card.cost ceiling reads $spent / $ceiling, even before 
   assert.doesNotMatch(sessionCardHtml(sess({ usd: 8.08 }), withCeiling({ usd: 50, reached: false })), /cost-limit-reached/);
   assert.match(sessionCardHtml(sess({ usd: 51 }), withCeiling({ usd: 50, reached: true })), /card-tag cost-limit-reached[^>]*spend limit \$50\.00 reached/);
   assert.doesNotMatch(sessionCardHtml(sess({ usd: 0 }), ctx()), /cost so far/);
+});
+
+const chipKeys = (html) => [...html.matchAll(/data-chip="([^"]+)"/g)].map((m) => m[1]);
+
+test('the sample session renders every core chip, each keyed, and CORE_CHIPS matches the markup', () => {
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx(), { expanded: true });
+  assert.deepEqual(chipKeys(html), CORE_CHIPS.map((c) => c.key));
+  assert.doesNotMatch(html, / hidden[ >]/);
+});
+
+test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys PR and Jira separately', () => {
+  const hiddenChips = new Set(['core:cost', 'core:pr']);
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ hiddenChips }), { expanded: true });
+  const hidden = [...html.matchAll(/data-chip="([^"]+)" hidden/g)].map((m) => m[1]);
+  assert.deepEqual(hidden, ['core:cost', 'core:pr']);
+  assert.match(html, /<span class="card-meta-ext"><\/span>/);
+  assert.match(html, /data-chip="core:jira">/);
 });

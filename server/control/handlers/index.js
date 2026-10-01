@@ -21,7 +21,6 @@ import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
-import { checklistEnabledHandler } from './checklist-enabled.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
@@ -31,24 +30,12 @@ import {
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
+  taskDeleteHandler,
   taskUnarchiveHandler,
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
 } from './tasks.js';
-import {
-  checklistAddHandler,
-  checklistUpdateHandler,
-  checklistRemoveHandler,
-  checklistReorderHandler,
-} from './checklist.js';
-import {
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
-} from './todos.js';
 import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
   scheduleCreateHandler,
@@ -102,7 +89,6 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
-  checklistEnabledHandler,
   extensionEnabledHandler,
   extSettingSetHandler,
   extInstallHandler,
@@ -114,19 +100,11 @@ export const CONTROL_HANDLERS = [
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
+  taskDeleteHandler,
   taskUnarchiveHandler,
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
-  checklistAddHandler,
-  checklistUpdateHandler,
-  checklistRemoveHandler,
-  checklistReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,

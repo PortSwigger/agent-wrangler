@@ -23,11 +23,12 @@ otherwise it behaves exactly as a Claude-only board.
 - **A checklist you and the agent share** — each session gets a short checklist beside its terminal.
   You add, edit, tick, reorder and delete items from the board; the session writes to the same list
   through its own tools, so a glance tells you what it is working through without reading the pane.
+  It is the first builtin extension, so you can switch it off in Settings → Extensions.
   It starts collapsed to a small progress chip in the session's header — `2/5` — costing the
   terminal no height until you open it, and each session remembers whether you left it open. It is
   deliberately separate from the agent's own private planning tool — that stays internal scratch
   work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
-- **TODOs that carry a handoff** — add a one-line TODO as before, then use its details button to
+- **TODOs that carry a handoff** (the optional, on-by-default `todos` extension; switch it off in Settings → Extensions) — add a one-line TODO as before, then use its details button to
   add a description. Agents can create and edit the same description through MCP. Starting the TODO
   passes both its title and description to the new session. To archive the current session as a TODO,
   use `/agent-skills:archive-to-todo` in Claude Code or invoke the `archive-to-todo` skill in Codex.
@@ -301,8 +302,9 @@ ones you want with a single click.
 
 Every card shows its running cost as a live dollar figure — including everything its sub-agents have
 spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
-computed from the actual transcript, not a rough estimate; the one exception is Codex, which only
-reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. Cost
+computed from the actual transcript, not a rough estimate; the one exception is Codex, whose token
+counts are priced at API-equivalent rates (each request at the model that ran it) rather than read from
+a bill, so its cost is shown with a `~` prefix. Cost
 history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
 cleanup.
 

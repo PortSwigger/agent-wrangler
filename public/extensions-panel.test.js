@@ -65,6 +65,7 @@ const walk = (node, out = []) => {
 
 const texts = (node) => walk(node).map((n) => n._text).filter((t) => t != null);
 const byClass = (node, cls) => walk(node).filter((n) => String(n.className).split(' ').includes(cls));
+const headLabels = (node) => byClass(node, 'ext-group-head').map((h) => byClass(h, 'setting-label')[0]._text);
 
 function withDom(fn) {
   const prior = globalThis.document;
@@ -182,6 +183,7 @@ test('the restart button sits beside Check for updates, and only while something
       const btn = byClass(head, 'ext-btn-warn')[0];
       assert.ok(btn, `${JSON.stringify(pending)} draws the button in the head`);
       assert.equal(btn._text, 'Restart now');
+      assert.equal(byClass(head, 'setting-label')[0]._text, 'External extensions');
       btn.fire('click');
     }
     assert.equal(restarts, 2);
@@ -200,9 +202,11 @@ test('no restart button where the server cannot restart itself — just the row\
   });
 });
 
-test('the panel is ONE list of builtins and installed extensions alike', () => {
+test('the panel is one row builder under Core and Installed headings', () => {
   withDom(() => {
     const empty = extensionsPanelEl({ entries: [] });
+    assert.deepEqual(headLabels(empty), ['External extensions']);
+    assert.ok(texts(empty).includes('No extensions installed yet.'));
     assert.equal(byClass(empty, 'ext-row').length, 1, 'just the install field');
     // Nothing to check against with no recorded origin anywhere.
     assert.equal(texts(empty).includes('Check for updates'), false);
@@ -210,6 +214,81 @@ test('the panel is ONE list of builtins and installed extensions alike', () => {
     assert.ok(texts(full).includes('Check for updates'));
     assert.equal(byClass(full, 'ext-row').length, 3, 'a builtin, an installed one, and the install field');
     assert.equal(byClass(full, 'setting-toggle').length, 2, 'both halves of the list carry their own toggle');
+  });
+});
+
+const BUILTIN_A = { id: 'a', label: 'Alpha', external: false };
+const BUILTIN_B = { id: 'b', label: 'Beta' };
+const EXT1 = { ...INSTALLED, id: 'ext1', label: 'One' };
+const EXT2 = { ...INSTALLED, id: 'ext2', label: 'Two' };
+// Extension rows only: the install field is an .ext-row with no data-id.
+const ids = (node) => byClass(node, 'ext-row').map((r) => r.dataset.id).filter(Boolean);
+
+test('rows are grouped by external, keeping order within each group', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, BUILTIN_B, EXT2] });
+    const groups = byClass(panel, 'ext-group');
+    assert.equal(groups.length, 2);
+    assert.deepEqual(headLabels(groups[0]), ['Core extensions']);
+    assert.deepEqual(headLabels(groups[1]), ['External extensions']);
+    assert.deepEqual(ids(groups[0]), ['ext:a', 'ext:b']);
+    assert.deepEqual(ids(groups[1]), ['ext:ext1', 'ext:ext2']);
+  });
+});
+
+test('an empty Core group is omitted entirely', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [INSTALLED] });
+    assert.equal(byClass(panel, 'ext-group').length, 1);
+    assert.deepEqual(headLabels(panel), ['External extensions']);
+    assert.equal(texts(panel).includes('Core extensions'), false);
+  });
+});
+
+test('the empty-Installed hint shows only with no installed extensions', () => {
+  withDom(() => {
+    const none = extensionsPanelEl({ entries: [BUILTIN_A] });
+    assert.ok(texts(none).includes('No extensions installed yet.'));
+    assert.equal(texts(none).includes('Check for updates'), false);
+    assert.equal(texts(extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED] })).includes('No extensions installed yet.'), false);
+  });
+});
+
+test('Check for updates and Restart now live in the Installed head, not Core', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED], canRestart: true, pendingRemoval: ['x'] });
+    const [coreGroup, installedGroup] = byClass(panel, 'ext-group');
+    const head = byClass(installedGroup, 'ext-group-head')[0];
+    for (const label of ['Check for updates', 'Restart now']) {
+      assert.ok(byClass(head, 'ext-btn').some((b) => b._text === label), `${label} in Installed head`);
+      assert.equal(byClass(coreGroup, 'ext-btn').some((b) => b._text === label), false, `${label} not in Core`);
+    }
+  });
+});
+
+test('the install field is the last thing in the Installed group', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, EXT2] });
+    const installedGroup = byClass(panel, 'ext-group')[1];
+    const kids = installedGroup.children;
+    const last = kids[kids.length - 1];
+    assert.equal(byClass(last, 'ext-install-url').length, 1);
+    const lastExt = Math.max(...kids.map((k, i) => (k.dataset?.id ? i : -1)));
+    assert.ok(lastExt < kids.length - 1, 'after every external row');
+    assert.deepEqual(ids(installedGroup), ['ext:ext1', 'ext:ext2']);
+  });
+});
+
+test('a quarantined builtin stays in Core; a pending-removal external row stays in Installed', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({
+      entries: [{ ...BUILTIN_A, quarantine: 'broken' }, EXT1], pendingRemoval: ['ext1'],
+    });
+    const [coreGroup, installedGroup] = byClass(panel, 'ext-group');
+    assert.ok(texts(coreGroup).includes('broken'));
+    assert.deepEqual(ids(coreGroup), ['ext:a']);
+    assert.deepEqual(ids(installedGroup), ['ext:ext1']);
+    assert.equal(byClass(installedGroup, 'ext-row-removed').length, 1);
   });
 });
 
@@ -593,5 +672,21 @@ test('an option label containing markup goes in as text, never innerHTML', () =>
     });
     assert.ok(texts(wrap).includes(evil));
     for (const node of walk(wrap)) assert.equal(node._html, null, `${node.className} must not use innerHTML`);
+  });
+});
+
+test('a hidden def draws no row; a visible list draws a read-only item count', () => {
+  withDom(() => {
+    const entry = {
+      id: 'chips', label: 'Chips', enabled: true,
+      settings: [
+        { key: 'hiddenChips', type: 'list', label: 'Hidden chips', hidden: true },
+        { key: 'tags', type: 'list', label: 'Tags' },
+      ],
+      settingValues: { hiddenChips: ['a'], tags: ['x', 'y'] },
+    };
+    const wrap = extensionSettingRowsEl(entry);
+    assert.deepEqual(byClass(wrap, 'ext-setting-row').map((r) => r.dataset.key), ['tags']);
+    assert.ok(texts(wrap).includes('2 items'));
   });
 });

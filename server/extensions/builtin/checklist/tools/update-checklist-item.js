@@ -18,7 +18,7 @@ export const updateChecklistItemTool = {
     text: z.string().min(1).optional().describe('New text for the item. Omit to leave it unchanged.'),
     done: z.boolean().optional().describe('Whether the item is complete. Omit to leave it unchanged.'),
   },
-  async handler({ deps, caller }, args = {}) {
+  async handler({ host, caller }, args = {}) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to update.');
     if (args.text === undefined && args.done === undefined) {
       return errorResult('Nothing to update — pass `text`, `done`, or both.');
@@ -31,17 +31,17 @@ export const updateChecklistItemTool = {
     if (args.done !== undefined) patch.done = args.done;
     let changed;
     try {
-      changed = deps.checklistStore.update(caller, args.id, patch);
+      changed = host.stores.checklist.update(caller, args.id, patch);
     } catch (err) {
       return errorResult(String(err.message || err));
     }
     if (!changed) {
       // Deliberately not an error: the id may be right and the values already
       // what was asked for, which is the state the caller wanted.
-      const exists = deps.checklistStore.list(caller).some((it) => it.id === args.id);
+      const exists = host.stores.checklist.list(caller).some((it) => it.id === args.id);
       if (!exists) return errorResult(`No checklist item with id ${args.id} on this session.`);
     }
-    if (changed) await deps.rebuild?.();
+    if (changed) await host.rebuild();
     const structuredContent = { id: args.id, changed };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

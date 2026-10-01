@@ -46,7 +46,28 @@
 // tile's right-click menu (taskMenuItems()). Its subject is the TILE, not a
 // session — `{ id, name, adhoc }`, the no-task tile being `adhoc` with the
 // reserved id — which is also what `api.minimiseTask` takes.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action'];
+//
+// `settings.panel` (1.14.0) is a single-host slot inside an extension's own
+// settings dialog (app.js openExtSettings): only the OWNING extension's
+// contributions mount there (mountInto's `onlyExt`), above the manifest rows.
+// A contribution may carry `save(el)` (may return a Promise), awaited when the
+// dialog's Done is pressed — see savePanels(); Escape closes without it.
+//
+// `task.body` (1.15.0) has one host PER TASK TILE, the Unassigned tile included
+// (app.js mountTaskBodies, cards.js taskBodyHostHtml), reconciled with syncHosts
+// like `card.pill`. Its per-host subject is `{ taskId, adhocId, container }` —
+// `taskId` is the tile's key (the reserved `adhocId` for Unassigned), `container`
+// the host element — handed to `mount(el, api, ctx)` and `update(el, ctx, graph)`.
+// A contribution may carry `weight(taskId, graph)`: the px of tile height its
+// content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
+// it. It must be cheap and synchronous; a throwing weight counts as 0.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body'];
+
+
+// The capability a client-only `api.cards` call is gated on (server/extensions
+// CLIENT_CAPABILITIES) — carried on the announcement and graph.extensions as
+// `requires`, read back through requiresFor.
+export const HIDE_CHIPS_CAPABILITY = 'cards:hideChips';
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
@@ -88,8 +109,17 @@ function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], version = null }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], onChipsChanged = () => {}, coreChips = [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
+  // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
+  // board hides the UNION (hiddenChips()); a removed extension's set goes with
+  // it (removeExtension), so disable/uninstall brings its hidden chips back.
+  const hiddenByExt = new Map();
+  // extId -> Set<fn>: api.settings.onChange subscribers, fed by settingsChanged().
+  const settingsListeners = new Map();
+  // Sample-card failures already reported, `extId:id`, so a pill that throws on
+  // the fake session prints once rather than once per render.
+  const sampleReported = new Set();
   const apis = new Map();
   // extId -> Set<fn>: the INBOUND half of the per-extension api, the mirror of
   // the bound `send` below. A server-side `host.broadcast` forces its frame's
@@ -104,6 +134,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const hideReported = new Set();
   // Colliding `card.cost` pairs already reported by costCeiling().
   const costReported = new Set();
+  // `extId:id` of task.body contributions whose weight() already threw.
+  const weightReported = new Set();
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -176,6 +208,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             refusal for a non-id argument. The base api returns whether the
   //             tile was actually minimised (an unknown id, or the last visible
   //             tile, is a no-op), and that answer is passed straight back.
+  //   settings — this extension's OWN current setting values (1.13.0), a fresh
+  //             copy per call so a caller cannot write through into board
+  //             state. Read live, never captured, so a dispatch.field can
+  //             prefill from what Settings holds right now. Unset keys are
+  //             absent, exactly as `host.settings` reads them server-side.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -216,15 +253,137 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
+        settings: settingsApi(extId, baseApi),
+        // Mark `el` as carrying an extension-owned drag: the board treats any
+        // [data-ext-drag] element as "a drag is in progress" and holds its
+        // background re-renders (app.js gridEditing) so the gesture is not torn
+        // down. Returns the unclaim function; call it on drop/dragend.
+        claimDrag: (el) => claimDrag(extId, el),
+        // Open the dispatch modal (1.15.0) and resolve with the `dispatched`
+        // ack, or null when it is cancelled. See app.js openDispatchAcked for
+        // the concurrency rule.
+        openDispatch: (opts = {}) => {
+          if (typeof baseApi.openDispatchAcked !== 'function') return Promise.reject(new Error(`[ext:${extId}] openDispatch is not available`));
+          const o = opts && typeof opts === 'object' ? opts : {};
+          if (o.taskId != null && (typeof o.taskId !== 'string' || !o.taskId)) return Promise.reject(new Error(`[ext:${extId}] openDispatch taskId must be a task id string or null`));
+          if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
+          return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
+        },
+        // Ask the board to re-render (and so re-size its tiles): the
+        // task.body counterpart of requestPanelRender.
+        requestBoardRender: () => { baseApi.requestBoardRender?.(); },
+        // Always present (the api is built once), but every call throws unless
+        // the manifest's `requires` granted cards:hideChips — see cardsApi.
+        cards: cardsApi(extId, baseApi),
       });
     }
     return apis.get(extId);
   }
 
+  function unionHidden() {
+    const out = new Set();
+    for (const set of hiddenByExt.values()) for (const k of set) out.add(k);
+    return out;
+  }
+
+  function chipsChanged() {
+    try { onChipsChanged(); } catch (err) { onError('[ext] chipsChanged failed', err); }
+  }
+
+  // A throw on a SAMPLE host (the settings dialog's preview card, whose session
+  // is made up) must not cost the contribution its place on the real board: it
+  // is reported once and skipped at that host only.
+  function sampleFailed(c, host, what, err) {
+    teardownAt(c, host);
+    const key = `${c.extId}:${c.id}`;
+    if (sampleReported.has(key)) return;
+    sampleReported.add(key);
+    onError(`[ext:${c.extId}] ${c.id} ${what} failed on the sample card — skipped there`, err);
+  }
+
+  // extId -> Set<element> currently marked [data-ext-drag], so removing an
+  // extension (disable, uninstall, failed load) cannot leave the board frozen.
+  const dragClaims = new Map();
+  function claimDrag(extId, el) {
+    if (!el || typeof el.setAttribute !== 'function') {
+      onError(`[ext:${extId}] claimDrag needs an element, got ${typeof el}`);
+      return () => {};
+    }
+    el.setAttribute('data-ext-drag', extId);
+    if (!dragClaims.has(extId)) dragClaims.set(extId, new Set());
+    dragClaims.get(extId).add(el);
+    return () => {
+      dragClaims.get(extId)?.delete(el);
+      el.removeAttribute?.('data-ext-drag');
+    };
+  }
+
+  function cardsApi(extId, baseApi) {
+    const gate = (name) => {
+      if (!(requiresFor(extId) || []).includes(HIDE_CHIPS_CAPABILITY)) {
+        throw new Error(`[ext:${extId}] cards.${name} requires the ${HIDE_CHIPS_CAPABILITY} capability`);
+      }
+    };
+    return Object.freeze({
+      chips: () => {
+        gate('chips');
+        return [
+          ...coreChips.map((c) => ({ key: c.key, label: c.label, source: 'core' })),
+          ...chipContributions().map((c) => ({ key: c.key, label: c.label, source: c.extId })),
+        ];
+      },
+      hideChips: (keys) => {
+        gate('hideChips');
+        if (!Array.isArray(keys) || keys.some((k) => typeof k !== 'string')) {
+          onError(`[ext:${extId}] cards.hideChips needs an array of chip keys, got ${JSON.stringify(keys)}`);
+          return;
+        }
+        hiddenByExt.set(extId, new Set(keys));
+        chipsChanged();
+      },
+      renderSample: (el, { hidden = [] } = {}) => {
+        gate('renderSample');
+        const keys = Array.isArray(hidden) ? hidden.filter((k) => typeof k === 'string') : [];
+        return baseApi.renderSampleCard?.(el, extId, new Set(keys));
+      },
+    });
+  }
+
+  function settingsApi(extId, baseApi) {
+    const read = () => ({ ...(baseApi.settingsFor?.(extId) || {}) });
+    return Object.assign(read, {
+      // The id is FORCED from the closed-over extId, so an extension can only
+      // ever write its own settings; the server validates against its defs.
+      set: (key, value) => {
+        if (typeof key !== 'string' || !key) return Promise.reject(new Error(`[ext:${extId}] settings.set needs a setting key`));
+        if (typeof baseApi.setExtSetting !== 'function') return Promise.reject(new Error(`[ext:${extId}] settings.set is not available`));
+        return Promise.resolve(baseApi.setExtSetting(extId, key, value));
+      },
+      onChange: (fn) => {
+        if (typeof fn !== 'function') {
+          onError(`[ext:${extId}] settings.onChange needs a function`);
+          return () => {};
+        }
+        if (!settingsListeners.has(extId)) settingsListeners.set(extId, new Set());
+        const set = settingsListeners.get(extId);
+        set.add(fn);
+        return () => { set.delete(fn); };
+      },
+    });
+  }
+
+  function chipContributions() {
+    return slotList('card.pill').map((c) => ({
+      key: `${c.extId}:${c.id}`,
+      label: typeof c.label === 'string' && c.label ? c.label : c.id,
+      extId: c.extId,
+    }));
+  }
+
   // Give `c` an element inside `host`, mounting only if it has none there yet.
   // Returns false when the contribution was dropped (its mount threw), which is
-  // the caller's signal to stop feeding it hosts.
-  function ensure(slotName, c, host, baseApi) {
+  // the caller's signal to stop feeding it hosts. `sample` hosts never drop.
+  function ensure(slotName, c, host, baseApi, sample = false, subject = null) {
     const existing = c.mounts.get(host);
     if (existing && existing.parentNode === host) return true;
     if (existing) teardownAt(c, host);
@@ -232,11 +391,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     el.className = 'ext-slot';
     el.dataset.ext = c.extId;
     el.dataset.contrib = c.id;
+    if (slotName === 'card.pill') el.dataset.chip = `${c.extId}:${c.id}`;
     host.appendChild(el);
     c.mounts.set(host, el);
     try {
-      c.mount(el, apiFor(c.extId, baseApi));
+      if (slotName === 'task.body') c.mount(el, apiFor(c.extId, baseApi), subject);
+      else c.mount(el, apiFor(c.extId, baseApi));
     } catch (err) {
+      if (sample) { sampleFailed(c, host, 'mount', err); return false; }
       onError(`[ext:${c.extId}] ${c.id} mount failed — contribution removed`, err);
       drop(slotName, c);
       return false;
@@ -244,12 +406,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return true;
   }
 
-  function updateAt(slotName, c, host, session, graph) {
+  function updateAt(slotName, c, host, session, graph, sample = false) {
     const el = c.mounts.get(host);
     if (!el || typeof c.update !== 'function') return true;
     try {
       c.update(el, session, graph);
     } catch (err) {
+      if (sample) { sampleFailed(c, host, 'update', err); return false; }
       onError(`[ext:${c.extId}] ${c.id} update failed — contribution removed`, err);
       drop(slotName, c);
       return false;
@@ -318,16 +481,27 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // conclusion is the same in both shapes — a host this contribution was not
   // addressed to is not one to tear it out of, it was never its. They stay two
   // filters; folding `at` into `only` would lose the group case.
+  //
+  // `ext` is a third filter (settings.panel): the host holds only that
+  // extension's contributions. And for `card.pill` the chip veto is one more:
+  // a contribution whose key is in the entry's `hidden` set (default: the union
+  // of every extension's hideChips) is simply not in that host — torn down if
+  // it was — while staying registered and live everywhere else. Board and
+  // sample hosts MUST arrive in one call: the keep-set is the whole slot's.
   function sync(slotName, entries, baseApi, withUpdate) {
+    const union = slotName === 'card.pill' ? unionHidden() : null;
     for (const c of [...slotList(slotName)]) {
+      const key = `${c.extId}:${c.id}`;
       const mine = entries.filter((e) =>
         (!e.only || (e.only.extId === c.extId && e.only.id === c.id))
-        && (!e.at || e.at === c.at));
+        && (!e.at || e.at === c.at)
+        && (!e.ext || e.ext === c.extId)
+        && !(union && (e.hidden || union).has(key)));
       const keep = new Set(mine.map((e) => e.host));
       for (const host of [...c.mounts.keys()]) if (!keep.has(host)) teardownAt(c, host);
-      for (const { host, session, graph } of mine) {
-        if (!ensure(slotName, c, host, baseApi)) break;
-        if (withUpdate && !updateAt(slotName, c, host, session, graph)) break;
+      for (const { host, session, graph, sample } of mine) {
+        if (!ensure(slotName, c, host, baseApi, sample, session)) { if (sample) continue; break; }
+        if (withUpdate && !updateAt(slotName, c, host, session, graph, sample)) { if (sample) continue; break; }
       }
     }
   }
@@ -382,6 +556,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
+      if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
@@ -391,6 +566,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           throw new Error(`[ext:${extId}] ${contribution.id} hides must be an array of dispatch field names`);
         }
       }
+      if (slotName === 'card.pill' && contribution.label != null && typeof contribution.label !== 'string') throw new Error(`[ext:${extId}] ${contribution.id} label must be a string`);
+      if (slotName === 'settings.panel' && contribution.save != null && typeof contribution.save !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} save must be a function`);
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
     },
@@ -401,10 +578,17 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // host: a module with no contribution at all (or one whose frames are not
     // any single contribution's business) has nowhere else to ask for one, and a
     // subscription taken here is taken exactly once per module load.
-    forExtension(extId) {
+    // `api` (1.14.0) is the SAME object apiFor() gives contributions (built once
+    // per extension, so identity holds), so a module can call e.g.
+    // api.cards.hideChips or api.settings.onChange from register() with no
+    // contribution mounted. Same capability gates; removeExtension clears
+    // whatever it took. A getter, so a registrar that never touches it builds
+    // nothing. `baseApi` is app.js's extApi, passed through extensions.js.
+    forExtension(extId, baseApi = {}) {
       return {
         register: (slotName, contribution) => this.register(slotName, extId, contribution),
         onMessage: (fn) => subscribe(extId, fn),
+        get api() { return apiFor(extId, baseApi); },
       };
     },
 
@@ -413,11 +597,57 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
       apis.delete(extId);
+      for (const el of dragClaims.get(extId) || []) el.removeAttribute?.('data-ext-drag');
+      dragClaims.delete(extId);
       // A disabled, uninstalled or failed-to-load extension must stop HEARING
       // too, not just stop drawing: extensions.js calls this on unload, so the
       // subscription dies with the module that took it and a later re-enable
       // re-imports and re-subscribes.
       listeners.delete(extId);
+      settingsListeners.delete(extId);
+      if (hiddenByExt.delete(extId)) chipsChanged();
+    },
+
+    // The union of every live extension's hideChips() keys, as a fresh Set —
+    // what app.js's cardCtx hands sessionCardHtml as ctx.hiddenChips.
+    hiddenChips() {
+      return unionHidden();
+    },
+
+    // Every live `card.pill` contribution as `{ key, label, extId }`, in
+    // registration order; `label` falls back to the contribution id.
+    chipContributions() {
+      return chipContributions();
+    },
+
+    // app.js calls this when a graph carries different settingValues for
+    // `extId` than the previous one. Each listener gets its own copy; a throwing
+    // listener is reported and KEPT, the same rule as dispatchMessage.
+    settingsChanged(extId, values) {
+      const set = settingsListeners.get(extId);
+      if (!set) return 0;
+      let called = 0;
+      for (const fn of [...set]) {
+        called += 1;
+        try { fn({ ...(values || {}) }); } catch (err) { onError(`[ext:${extId}] settings.onChange listener failed`, err); }
+      }
+      return called;
+    },
+
+    // Tear every contribution out of one host (the settings dialog closing), so
+    // each unmount runs.
+    unmountHost(slotName, hostEl) {
+      for (const c of [...slotList(slotName)]) teardownAt(c, hostEl);
+    },
+
+    // Await `save(el)` of every contribution mounted in `hostEl`, in
+    // registration order. A rejection (or throw) propagates, which is the
+    // dialog's cue to stay open — the extension shows its own error.
+    async savePanels(hostEl, slotName = 'settings.panel') {
+      for (const c of [...slotList(slotName)]) {
+        const el = c.mounts.get(hostEl);
+        if (el && typeof c.save === 'function') await c.save(el);
+      }
     },
 
     // Route one server frame to the extension it names. `frame.type` is
@@ -463,9 +693,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // single-host slot means this host is the ONLY one: an element left in a
     // previous host (an innerHTML-rebuilt chips row) is torn down. Returns the
     // number of contributions now mounted there.
-    mountInto(slotName, hostEl, baseApi = {}) {
+    // `onlyExt` restricts the host to one extension's contributions (the
+    // settings.panel dialog, which belongs to exactly one extension).
+    mountInto(slotName, hostEl, baseApi = {}, { onlyExt = null } = {}) {
       if (!hostEl) return 0;
-      sync(slotName, [{ host: hostEl }], baseApi, false);
+      sync(slotName, [{ host: hostEl, ext: onlyExt }], baseApi, false);
       return slotList(slotName).filter((c) => c.mounts.has(hostEl)).length;
     },
 
@@ -479,7 +711,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // handed the same `graph` every row carries, since a badge counts what the
     // BOARD says and not what one host's session does.
     syncHosts(slotName, entries, baseApi = {}, graph = null, onBadge = null) {
-      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({ host: e.host, session: e.session ?? null, only: e.only ?? null, at: e.at ?? null, graph }));
+      // `hidden` (a Set) overrides the chip-veto union for that entry, and
+      // `sample` marks a preview host whose failures never drop — see sync().
+      const rows = (entries || []).filter((e) => e && e.host).map((e) => ({
+        host: e.host, session: e.session ?? null, only: e.only ?? null, at: e.at ?? null, graph,
+        hidden: e.hidden instanceof Set ? e.hidden : null, sample: Boolean(e.sample),
+      }));
       sync(slotName, rows, baseApi, true);
       if (onBadge) reportBadges(slotName, graph, onBadge);
       return slotList(slotName).reduce((n, c) => n + c.mounts.size, 0);
@@ -603,6 +840,29 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a
     // contribution before it has a host at all — the view slot's rail button.
     // Both are undefined for the slots that need neither.
+    // Total px of tile height the live `task.body` contributions want for one
+    // tile (`weight(taskId, graph)`, summed). Synchronous and cheap by contract —
+    // it runs per tile per layout pass. A throwing weight counts as 0 and is
+    // reported once per contribution, NOT removed: it runs in a measurement pass,
+    // and a bad number must not cost the extension its UI. Anything that is not a
+    // finite positive number counts as 0.
+    taskBodyWeight(taskId, graph = null) {
+      let total = 0;
+      for (const c of slotList('task.body')) {
+        if (typeof c.weight !== 'function') continue;
+        let w;
+        try {
+          w = c.weight(taskId, graph);
+        } catch (err) {
+          const key = `${c.extId}:${c.id}`;
+          if (!weightReported.has(key)) { weightReported.add(key); onError(`[ext:${c.extId}] ${c.id} weight failed — counted as 0`, err); }
+          continue;
+        }
+        if (Number.isFinite(w) && w > 0) total += w;
+      }
+      return total;
+    },
+
     // The `card.action` items for one card, in registration order, for the
     // board to append to its right-click and Actions menus. Each is
     // `{ label, run, hint?, icon?, danger? }`: `label` and `hint` are TEXT
@@ -666,8 +926,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 // localStorage behind a key prefix, every access under try/catch: storage can be
 // absent (a test), full, or blocked (private mode), and an extension's remembered
 // preference is never worth a thrown error in a render. `raw(key)` deliberately
-// escapes the prefix for a key that predates the extensions API — the checklist's
-// `wrangler.checklistOpen` — so a migrated feature keeps its users' stored state;
+// escapes the prefix for a key that predates the extensions API (e.g. the builtin
+// checklist's `wrangler.checklistOpen`) — so a migrated feature keeps its users' stored state;
 // a NEW key has no reason to use it.
 export function namespacedStorage(prefix, storage = globalThis.localStorage) {
   const wrap = (key) => ({

@@ -7,8 +7,8 @@ export const listSessionsTool = {
   description:
     'List the Agent Wrangler sessions currently on the board (id, label, agent, status, '
     + 'managed, working dir, assigned task), flagging which one is you. `managed` is true when '
-    + 'the session has a live terminal; a session with managed:false can still receive a '
-    + 'send_message — it is dormant/suspended and gets woken to deliver it. `parentSession` and '
+    + 'the session has a live terminal. Mail-capable dormant sessions keep queued mail until '
+    + 'explicitly resumed; legacy recipients must have a live terminal. `parentSession` and '
     + '`spawnedBy` are two DIFFERENT, independently-nullable relations: `parentSession` is who '
     + 'this session is nested under on the board (opt-in, changeable later via attach_session/'
     + 'detach_session); `spawnedBy` is who actually called spawn_session/spawn_workflow to launch '

@@ -156,16 +156,45 @@ export function chatViewDefault(cfg = readConfig()) {
   return cfg.chatViewDefault === true;
 }
 
-// Whether the per-session checklist exists at all: the four MCP tools
-// (registration AND the launch --allowedTools grant), the always-on nudge
-// pointing at the `checklist` skill, and the board's Checklist panel. Default
-// ON — a feature nobody discovers might as well not exist, and the panel is
-// the whole point (see the design spec's Optionality section). Off is
-// deliberately shallow: checklists.json and every stored item stay intact, so
-// re-enabling restores every list. Takes cfg (like taskMemoryEnabled) so tests
-// never write the shared config.json.
-export function checklistEnabled(cfg = readConfig()) {
-  return cfg.checklistEnabled !== false;
+// Flags that were core config keys before their feature became an extension,
+// each carried over to `extensions.<extId>` at boot. A row is `{ oldKey, extId }`
+// and the key is `<feature>Enabled`-shaped: only an explicit boolean `false`
+// ever meant "off" (the old getters were `cfg.x !== false`), so only that moves
+// across. A row stays in this table forever: it is a no-op once the key is gone,
+// and an install that skipped several releases still needs it. Extracting a
+// feature adds a row here; nothing else.
+export const RETIRED_FLAGS = [
+  { oldKey: 'checklistEnabled', extId: 'checklist' },
+];
+
+// Pure: returns the migrated config (a new object) and whether anything moved.
+// An explicit `extensions.<extId>` boolean WINS over the old flag (the human
+// has already answered the new question) and the old key is deleted either way.
+// `true`, a missing key or garbage just drop the key and add nothing, because
+// the extension's own default already says what those meant. Idempotent.
+export function migrateRetiredFlags(cfg, table = RETIRED_FLAGS) {
+  const next = { ...cfg };
+  let changed = false;
+  for (const { oldKey, extId } of table) {
+    if (!Object.hasOwn(next, oldKey)) continue;
+    changed = true;
+    const old = next[oldKey];
+    delete next[oldKey];
+    const current = next.extensions && typeof next.extensions === 'object' && !Array.isArray(next.extensions) ? next.extensions : {};
+    if (old === false && typeof current[extId] !== 'boolean') {
+      next.extensions = { ...current, [extId]: false };
+    }
+  }
+  return { cfg: next, changed };
+}
+
+// The boot half: read, migrate, and write back only when something moved.
+// writeConfig is a shallow MERGE and cannot delete a key, so this writes the
+// whole object itself. Must run before the loader reads `extensions.<id>`.
+export function applyRetiredFlagMigrations(table = RETIRED_FLAGS) {
+  const { cfg, changed } = migrateRetiredFlags(readConfig(), table);
+  if (changed) writeJsonAtomic(CONFIG_FILE, cfg, { trailingNewline: true });
+  return changed;
 }
 
 // Whether an extension (server/extensions/index.js) is enabled on this install:

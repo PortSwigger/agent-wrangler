@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -462,6 +462,28 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   assert.deepEqual(h.errors, []);
 });
 
+// ── settings (1.13.0): the extension's own current values, read live ─────────
+test('settings reads this extension\'s own values live, as a copy', () => {
+  const h = harness();
+  let captured = null;
+  const values = { fake: { bypass: true } };
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, { settingsFor: (id) => values[id] });
+  assert.deepEqual(captured.settings(), { bypass: true });
+  captured.settings().bypass = false;
+  assert.equal(values.fake.bypass, true, 'a caller cannot write through');
+  values.fake = { bypass: false };
+  assert.deepEqual(captured.settings(), { bypass: false }, 'read at call time, not captured');
+});
+
+test('settings is an empty object when the base api has none', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, {});
+  assert.deepEqual(captured.settings(), {});
+});
+
 // ── minimiseTask (the tile-level counterpart to openSession) ─────────────────
 // The minimised set is app.js view state, not a control frame, so the base api
 // implements it; apiFor refuses a non-id and passes the base api's answer back.
@@ -798,4 +820,304 @@ test('costCeiling takes the first positive answer and reports a second one once'
   assert.deepEqual(slots.costCeiling({ sessionId: 'c2' }, {}), { usd: 10, reached: false });
   slots.costCeiling({ sessionId: 'c1' }, {});
   assert.equal(errors.filter((e) => /also set a cost ceiling/.test(e)).length, 1);
+});
+
+// ── cards:hideChips (1.14.0) ────────────────────────────────────────────────
+const CORE = [{ key: 'core:age', label: 'Age' }, { key: 'core:cost', label: 'Cost' }];
+function chipHarness(granted = ['a', 'b'], opts = {}) {
+  let changed = 0;
+  const h = harness({
+    coreChips: CORE,
+    requiresFor: (id) => (granted.includes(id) ? ['cards:hideChips'] : undefined),
+    onChipsChanged: () => { changed += 1; },
+    ...opts,
+  });
+  const apiOf = (extId, base = {}) => {
+    let api;
+    h.slots.register('card.action', extId, { id: `probe-${Math.random()}`, items: (_s, _g, a) => { api = a; return []; } });
+    h.slots.menuItems({}, {}, base);
+    return api;
+  };
+  return { ...h, apiOf, changed: () => changed };
+}
+
+test('cards.* throws without the capability, fails closed on undefined, and works with it', () => {
+  const h = chipHarness(['a']);
+  const denied = h.apiOf('x');
+  assert.ok(denied.cards, 'the key stays present');
+  assert.throws(() => denied.cards.chips(), /\[ext:x\] cards\.chips requires the cards:hideChips capability/);
+  assert.throws(() => denied.cards.hideChips([]), /requires the cards:hideChips capability/);
+  assert.throws(() => denied.cards.renderSample({}), /requires the cards:hideChips capability/);
+  const ok = h.apiOf('a');
+  ok.cards.hideChips(['core:age']);
+  assert.deepEqual([...h.slots.hiddenChips()], ['core:age']);
+  ok.cards.hideChips('core:age');
+  assert.match(h.errors.at(-1), /hideChips needs an array/);
+  assert.deepEqual([...h.slots.hiddenChips()], ['core:age'], 'a malformed call is ignored');
+});
+
+test('hideChips from two extensions is a union; removeExtension drops only its own and fires chipsChanged', () => {
+  const h = chipHarness();
+  h.apiOf('a').cards.hideChips(['core:age', 'b:pill']);
+  h.apiOf('b').cards.hideChips(['core:cost']);
+  assert.deepEqual([...h.slots.hiddenChips()].sort(), ['b:pill', 'core:age', 'core:cost']);
+  const before = h.changed();
+  h.slots.removeExtension('a');
+  assert.equal(h.changed(), before + 1);
+  assert.deepEqual([...h.slots.hiddenChips()], ['core:cost']);
+});
+
+test('chips() lists core then live pills, labels falling back to the id', () => {
+  const h = chipHarness();
+  h.slots.register('card.pill', 'b', { id: 'effort', label: 'Effort', mount() {} });
+  h.slots.register('card.pill', 'c', { id: 'plain', mount() {} });
+  assert.throws(() => h.slots.register('card.pill', 'c', { id: 'bad', label: 3, mount() {} }), /label must be a string/);
+  assert.deepEqual(h.apiOf('a').cards.chips(), [
+    { key: 'core:age', label: 'Age', source: 'core' },
+    { key: 'core:cost', label: 'Cost', source: 'core' },
+    { key: 'b:effort', label: 'Effort', source: 'b' },
+    { key: 'c:plain', label: 'plain', source: 'c' },
+  ]);
+});
+
+test('renderSample hands the base api the extension id and a Set', () => {
+  const h = chipHarness();
+  const calls = [];
+  const api = h.apiOf('a', { renderSampleCard: (el, id, hidden) => calls.push([el, id, [...hidden]]) });
+  api.cards.renderSample('EL', { hidden: ['core:age'] });
+  assert.deepEqual(calls, [['EL', 'a', ['core:age']]]);
+});
+
+test('syncHosts(card.pill) skips a hidden key and tears it down when it becomes hidden; data-chip is set', () => {
+  const h = chipHarness();
+  const log = [];
+  h.slots.register('card.pill', 'b', { id: 'pill', mount: () => log.push('mount'), unmount: () => log.push('unmount') });
+  const host = h.document.make();
+  h.slots.syncHosts('card.pill', [{ host }], {});
+  assert.equal(host.children.length, 1);
+  assert.equal(host.children[0].dataset.chip, 'b:pill');
+  h.apiOf('a').cards.hideChips(['b:pill']);
+  h.slots.syncHosts('card.pill', [{ host }], {});
+  assert.equal(host.children.length, 0);
+  assert.deepEqual(log, ['mount', 'unmount']);
+  // A per-entry `hidden` overrides the union (a sample card's draft).
+  h.slots.syncHosts('card.pill', [{ host, hidden: new Set() }], {});
+  assert.equal(host.children.length, 1);
+  assert.deepEqual(h.slots.contributions('card.pill').map((c) => c.id), ['pill'], 'never dropped');
+});
+
+test('a board entry and a sample entry in one syncHosts call are both mounted, neither tearing down the other', () => {
+  const h = chipHarness();
+  h.slots.register('card.pill', 'b', { id: 'pill', mount() {} });
+  const board = h.document.make();
+  const sample = h.document.make();
+  h.slots.syncHosts('card.pill', [{ host: board }, { host: sample, sample: true, hidden: new Set() }], {});
+  h.slots.syncHosts('card.pill', [{ host: board }, { host: sample, sample: true, hidden: new Set() }], {});
+  assert.equal(board.children.length, 1);
+  assert.equal(sample.children.length, 1);
+  // Hidden in the sample only.
+  h.slots.syncHosts('card.pill', [{ host: board }, { host: sample, sample: true, hidden: new Set(['b:pill']) }], {});
+  assert.equal(board.children.length, 1);
+  assert.equal(sample.children.length, 0);
+});
+
+test('a pill throwing on the sample card is skipped there only, not dropped from the board', () => {
+  const h = chipHarness();
+  h.slots.register('card.pill', 'b', { id: 'pill', mount() {}, update: (_el, s) => { if (s?.sample) throw new Error('boom'); } });
+  const board = h.document.make();
+  const sample = h.document.make();
+  h.slots.syncHosts('card.pill', [{ host: board, session: { sessionId: 's' } }, { host: sample, sample: true, session: { sample: true } }], {});
+  assert.equal(board.children.length, 1);
+  assert.equal(sample.children.length, 0);
+  assert.equal(h.slots.contributions('card.pill').length, 1);
+  assert.match(h.errors.join('\n'), /failed on the sample card/);
+});
+
+// ── settings.panel + settings.set/onChange (1.14.0) ──────────────────────────
+test('settings.panel mounts only the owning extension\'s contribution; save is awaited, unmountHost tears down', async () => {
+  const h = harness();
+  const log = [];
+  h.slots.register('settings.panel', 'a', { id: 'p', mount: () => log.push('mount a'), unmount: () => log.push('unmount a'), save: async () => { log.push('save a'); } });
+  h.slots.register('settings.panel', 'b', { id: 'p', mount: () => log.push('mount b') });
+  assert.throws(() => h.slots.register('settings.panel', 'c', { id: 'p', mount() {}, save: 1 }), /save must be a function/);
+  const host = h.document.make();
+  assert.equal(h.slots.mountInto('settings.panel', host, {}, { onlyExt: 'a' }), 1);
+  assert.deepEqual(log, ['mount a']);
+  await h.slots.savePanels(host);
+  assert.deepEqual(log, ['mount a', 'save a']);
+  h.slots.unmountHost('settings.panel', host);
+  assert.deepEqual(log, ['mount a', 'save a', 'unmount a']);
+  assert.equal(host.children.length, 0);
+});
+
+test('savePanels propagates a rejecting save', async () => {
+  const h = harness();
+  h.slots.register('settings.panel', 'a', { id: 'p', mount() {}, save: () => Promise.reject(new Error('nope')) });
+  const host = h.document.make();
+  h.slots.mountInto('settings.panel', host, {}, { onlyExt: 'a' });
+  await assert.rejects(() => h.slots.savePanels(host), /nope/);
+});
+
+test('settings() stays callable; set forwards to the base api with the forced id; onChange fires via settingsChanged', async () => {
+  const h = harness();
+  let api;
+  h.slots.register('card.action', 'a', { id: 'probe', items: (_s, _g, x) => { api = x; return []; } });
+  const writes = [];
+  h.slots.menuItems({}, {}, {
+    settingsFor: () => ({ hidden: ['x'] }),
+    setExtSetting: (id, key, value) => { writes.push([id, key, value]); return key === 'bad' ? Promise.reject(new Error('refused')) : Promise.resolve(); },
+  });
+  assert.deepEqual(api.settings(), { hidden: ['x'] });
+  await api.settings.set('hidden', ['y']);
+  assert.deepEqual(writes, [['a', 'hidden', ['y']]]);
+  await assert.rejects(() => api.settings.set('bad', 1), /refused/);
+  const got = [];
+  const off = api.settings.onChange((v) => { got.push(v); throw new Error('listener bug'); });
+  assert.equal(h.slots.settingsChanged('a', { hidden: ['z'] }), 1);
+  assert.deepEqual(got, [{ hidden: ['z'] }]);
+  assert.match(h.errors.at(-1), /onChange listener failed/);
+  assert.equal(h.slots.settingsChanged('a', {}), 1, 'kept after throwing');
+  off();
+  assert.equal(h.slots.settingsChanged('a', {}), 0);
+  api.settings.onChange(() => {});
+  h.slots.removeExtension('a');
+  assert.equal(h.slots.settingsChanged('a', {}), 0, 'subscriptions die with the extension');
+});
+
+// ── registrar.api (1.14.0) ──────────────────────────────────────────────────
+test('registrar.api is the contribution api, gated, and cleaned up by removeExtension', () => {
+  let chipsChanged = 0;
+  const h = harness({
+    requiresFor: (id) => (id === 'ok' ? ['cards:hideChips'] : undefined),
+    onChipsChanged: () => { chipsChanged += 1; },
+  });
+  const base = { settingsFor: () => ({ a: 1 }) };
+  const reg = h.slots.forExtension('ok', base);
+  const api = reg.api;
+  assert.equal(reg.api, api, 'built once');
+  let mountedApi = null;
+  reg.register('panel.section', { id: 'p', mount: (el, a) => { mountedApi = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), base);
+  assert.equal(mountedApi, api, 'same object a contribution gets');
+  assert.deepEqual(api.settings(), { a: 1 });
+
+  assert.throws(() => h.slots.forExtension('denied', base).api.cards.hideChips([]), /requires the cards:hideChips capability/);
+
+  const seen = [];
+  api.settings.onChange((v) => seen.push(v));
+  api.cards.hideChips(['core:age']);
+  assert.deepEqual([...h.slots.hiddenChips()], ['core:age']);
+  assert.equal(h.slots.settingsChanged('ok', { a: 2 }), 1);
+  const before = chipsChanged;
+  h.slots.removeExtension('ok');
+  assert.equal(chipsChanged, before + 1);
+  assert.deepEqual([...h.slots.hiddenChips()], []);
+  assert.equal(h.slots.settingsChanged('ok', { a: 3 }), 0);
+  assert.deepEqual(seen, [{ a: 2 }]);
+});
+
+// ── task.body (1.15.0) ──────────────────────────────────────────────────────
+
+test('task.body: a host per tile, mount gets (el, api, ctx), update gets (el, ctx, graph); a gone tile is torn down by omission', () => {
+  const { document, slots } = harness();
+  const calls = [];
+  slots.register('task.body', 'todos', {
+    id: 'zone',
+    mount: (el, api, ctx) => calls.push(['mount', ctx.taskId]),
+    update: (el, ctx, graph) => calls.push(['update', ctx.taskId, graph.g]),
+    unmount: () => calls.push(['unmount']),
+  });
+  const a = document.make(); const b = document.make(); const adhoc = document.make();
+  const ctxFor = (taskId, host) => ({ taskId, adhocId: 'adhoc', container: host });
+  slots.syncHosts('task.body', [
+    { host: a, session: ctxFor('t1', a) }, { host: b, session: ctxFor('t2', b) }, { host: adhoc, session: ctxFor('adhoc', adhoc) },
+  ], {}, { g: 1 });
+  assert.deepEqual(calls.filter((c) => c[0] === 'mount').map((c) => c[1]), ['t1', 't2', 'adhoc']);
+  assert.deepEqual(calls.filter((c) => c[0] === 'update').map((c) => c[1]), ['t1', 't2', 'adhoc']);
+  assert.equal(a.children.length, 1);
+  slots.syncHosts('task.body', [{ host: a, session: ctxFor('t1', a) }, { host: adhoc, session: ctxFor('adhoc', adhoc) }], {}, { g: 2 });
+  assert.equal(b.children.length, 0);
+  assert.equal(calls.filter((c) => c[0] === 'unmount').length, 1);
+});
+
+test('task.body: taskBodyWeight sums weights, ignores absent/invalid ones, and a throwing weight is 0 and reported once', () => {
+  const { slots, errors } = harness();
+  assert.equal(slots.taskBodyWeight('t1'), 0);
+  slots.register('task.body', 'a', { id: 'w', mount() {}, weight: (id, g) => (id === 't1' ? 30 + g.extra : 0) });
+  slots.register('task.body', 'b', { id: 'w', mount() {}, weight: () => 12 });
+  slots.register('task.body', 'c', { id: 'none', mount() {} });
+  slots.register('task.body', 'd', { id: 'bad', mount() {}, weight: () => NaN });
+  slots.register('task.body', 'e', { id: 'neg', mount() {}, weight: () => -5 });
+  slots.register('task.body', 'f', { id: 'boom', mount() {}, weight: () => { throw new Error('x'); } });
+  assert.equal(slots.taskBodyWeight('t1', { extra: 8 }), 50);
+  assert.equal(slots.taskBodyWeight('t2', { extra: 8 }), 12);
+  assert.equal(errors.filter((e) => /weight failed/.test(e)).length, 1);
+  // The throwing contribution is kept (a measurement pass must not cost it its UI).
+  assert.equal(slots.contributions('task.body').length, 6);
+});
+
+test('task.body: weight must be a function', () => {
+  const { slots } = harness();
+  assert.throws(() => slots.register('task.body', 'x', { id: 'a', mount() {}, weight: 3 }), /weight must be a function/);
+});
+
+test('task.body: a throwing mount removes the contribution, others carry on', () => {
+  const { document, slots, errors } = harness();
+  slots.register('task.body', 'bad', { id: 'a', mount() { throw new Error('no'); } });
+  slots.register('task.body', 'ok', { id: 'a', mount() {} });
+  const host = document.make();
+  slots.syncHosts('task.body', [{ host, session: { taskId: 't1', adhocId: 'adhoc', container: host } }], {}, {});
+  assert.equal(slots.contributions('task.body').length, 1);
+  assert.ok(errors.some((e) => /mount failed/.test(e)));
+});
+
+// ── openDispatch / requestBoardRender (1.15.0) ──────────────────────────────
+
+test('api.openDispatch forwards validated options and resolves with the ack; rejects bad input or an absent base', async () => {
+  const { slots } = harness();
+  let api; const seen = [];
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  const host = harness().document.make();
+  slots.mountInto('panel.section', host, { openDispatchAcked: async (o) => { seen.push(o); return { sessionId: 'S' }; } });
+  assert.deepEqual(await api.openDispatch({ taskId: 't1', intent: 'do', lockTask: true }), { sessionId: 'S' });
+  assert.deepEqual(seen[0], { taskId: 't1', intent: 'do', lockTask: true });
+  await api.openDispatch();
+  assert.deepEqual(seen[1], { taskId: null, intent: '', lockTask: false });
+  await assert.rejects(api.openDispatch({ taskId: 5 }), /taskId must be/);
+  await assert.rejects(api.openDispatch({ intent: 5 }), /intent must be/);
+  const { slots: s2 } = harness();
+  let api2;
+  s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
+  s2.mountInto('panel.section', harness().document.make(), {});
+  await assert.rejects(api2.openDispatch({}), /not available/);
+});
+
+test('api.requestBoardRender calls the base api and tolerates its absence', () => {
+  const { slots } = harness();
+  let api; let n = 0;
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), { requestBoardRender: () => { n += 1; } });
+  api.requestBoardRender();
+  assert.equal(n, 1);
+});
+
+test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elements, and clears on removeExtension', () => {
+  const { slots, errors } = harness();
+  const attrs = () => {
+    const a = new Map();
+    return { a, setAttribute: (k, v) => a.set(k, v), removeAttribute: (k) => a.delete(k) };
+  };
+  const api = slots.forExtension('x', {}).api;
+  const el = attrs();
+  const unclaim = api.claimDrag(el);
+  assert.equal(el.a.get('data-ext-drag'), 'x');
+  unclaim();
+  assert.equal(el.a.has('data-ext-drag'), false);
+  const noop = api.claimDrag(null);
+  assert.equal(typeof noop, 'function');
+  assert.match(errors.at(-1), /claimDrag needs an element/);
+  const el2 = attrs();
+  api.claimDrag(el2);
+  slots.removeExtension('x');
+  assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
 });

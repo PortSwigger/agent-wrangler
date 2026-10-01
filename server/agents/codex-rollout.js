@@ -347,35 +347,39 @@ function scanLine(line, state) {
   const kind = p.type || entry.type;
   if (kind === 'turn_context' && typeof p.model === 'string') {
     state.model = p.model;
+    state.firstModel ||= p.model;
     state.pendingModel = p.model;
   }
   if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
     state.currentModel = state.pendingModel;
   }
   if (entry.type === 'response_item' && (p.role === 'assistant' || p.type === 'reasoning')) state.sawModelResponse = true;
-  // total_token_usage is cumulative; the last token_count holds the grand total.
+  // Attribute each request to the model active when its token_count arrived.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) {
-    // A request whose prompt passes the long-context threshold is billed at the
-    // long rate in full, so tally those requests' own usage separately. Codex
-    // re-emits token_count without a new response, so a repeated snapshot
-    // alone must not be counted twice.
     const last = p.info.last_token_usage;
     const usage = p.info.total_token_usage;
     const baseline = state.usage || state.priorUsage;
-    const keys = ['input_tokens', 'cached_input_tokens', 'output_tokens'];
-    const validLast = last && keys.every((key) => Number.isFinite(last[key]) && last[key] >= 0);
+    const validLast = last && USAGE_KEYS.every((key) => Number.isFinite(last[key]) && last[key] >= 0);
     const firstResumedCall = !state.usage && state.priorUsage && state.sawModelResponse
-      && validLast && keys.some((key) => last[key] > 0);
-    const changed = !baseline || keys.some((key) => usage[key] !== baseline[key]) || firstResumedCall;
+      && validLast && USAGE_KEYS.some((key) => last[key] > 0);
+    const changed = !baseline || USAGE_KEYS.some((key) => usage[key] !== baseline[key]) || firstResumedCall;
     if (changed) {
-      const delta = validLast ? last : Object.fromEntries(keys.map((key) =>
-        [key, Math.max(0, (usage[key] || 0) - (baseline?.[key] || 0))]));
-      for (const key of keys) {
-        state.incrementalUsage[key] += delta[key] || 0;
+      const bucket = (state.byModel[state.model ?? ''] ||= { usage: blankUsage(), long: null });
+      const delta = blankUsage();
+      for (const key of USAGE_KEYS) {
+        // Continuations may reset the cumulative counter; the first file uses
+        // high-water deltas so an in-file dip and recovery is charged once.
+        if (state.priorUsage) {
+          delta[key] = validLast ? last[key] : Math.max(0, (usage[key] || 0) - (baseline?.[key] || 0));
+        } else {
+          delta[key] = Math.max(0, (usage[key] || 0) - state.peak[key]);
+          state.peak[key] += delta[key];
+        }
+        bucket.usage[key] += delta[key];
       }
-      if (delta.input_tokens > LONG_CONTEXT_TOKENS) {
-        const l = (state.longUsage ||= { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 });
-        for (const key of keys) l[key] += delta[key] || 0;
+      if ((validLast ? last.input_tokens : delta.input_tokens) > LONG_CONTEXT_TOKENS) {
+        const long = (bucket.long ||= blankUsage());
+        for (const key of USAGE_KEYS) long[key] += Math.min(validLast ? last[key] : delta[key], delta[key]);
       }
     }
     state.usage = usage;
@@ -411,10 +415,27 @@ function splitUsage(usage) {
   };
 }
 
-function totalsFor(model, usage, longUsage) {
-  const t = splitUsage(usage);
-  if (longUsage) t.long = splitUsage(longUsage);
-  return { [model]: t };
+const USAGE_KEYS = ['input_tokens', 'cached_input_tokens', 'output_tokens'];
+
+function blankUsage() {
+  return { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+}
+
+// Usage seen before the first turn_context (keyed '') goes to the first model
+// the rollout names, else the fallback.
+function totalsFor(byModel, fallbackModel) {
+  const totals = {};
+  for (const [model, b] of Object.entries(byModel)) {
+    const t = splitUsage(b.usage);
+    if (b.long) {
+      // Pricing treats long as a subset of t; anomalous counters mustn't break that.
+      const l = splitUsage(b.long);
+      t.long = { input: Math.min(l.input, t.input), output: Math.min(l.output, t.output), cacheRead: Math.min(l.cacheRead, t.cacheRead) };
+    }
+    mergeTotals(totals, { [model || fallbackModel]: t });
+  }
+  if (!Object.keys(totals).length) totals[fallbackModel] = splitUsage({});
+  return totals;
 }
 
 function mergeTotals(dest, src) {
@@ -484,7 +505,7 @@ export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
 }
 
 async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH, priorUsage = null) {
-  const state = { usage: null, priorUsage, incrementalUsage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
+  const state = { usage: null, priorUsage, peak: blankUsage(), byModel: {}, model: null, firstModel: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -495,7 +516,7 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     return null;
   }
   const model = state.model || 'gpt-5.5-codex';
-  const totals = totalsFor(model, state.usage || {}, state.longUsage);
+  const totals = totalsFor(state.byModel, state.firstModel || model);
   // Context occupancy — how full the window is RIGHT NOW — is deliberately NOT
   // derived from the cumulative `usage`/`totals` above (that only ever grows and
   // would read as ~100% almost immediately). `lastCallUsage.input_tokens` is the
@@ -515,7 +536,6 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     model,
     currentModel: state.currentModel || null,
     totals,
-    incrementalTotals: totalsFor(model, state.incrementalUsage, state.longUsage),
     rawUsage: state.usage,
     tokens: tokensFor(totals),
     summary: state.summary,
@@ -537,7 +557,7 @@ async function analyzeRolloutChain(files, meta, modelsCachePath) {
   for (const [index, file] of files.entries()) {
     const part = await analyzeRollout(file, index === files.length - 1 ? meta : null, modelsCachePath, previousUsage);
     if (!part) continue;
-    mergeTotals(totals, previousUsage ? part.incrementalTotals : part.totals);
+    mergeTotals(totals, part.totals);
     if (!first) first = part;
     latest = part;
     previousUsage = part.rawUsage || previousUsage;

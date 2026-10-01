@@ -2,11 +2,12 @@
 // builders with no app state, like toast.js and system-banner.js: settings.js
 // mounts what these return.
 //
-// ONE LIST, not two. Builtin and installed extensions used to be rendered by two
-// different code paths — settings.js's innerHTML toggle rows above, this module's
-// installed rows below — which showed the same extension's name and description
-// twice and made "is it on" and "where did it come from" look like questions
-// about different things. Every row here is now a `.setting-row` carrying
+// ONE ROW BUILDER, two headings. Builtin and installed extensions used to be
+// rendered by two different code paths — settings.js's innerHTML toggle rows
+// above, this module's installed rows below — which showed the same extension's
+// name and description twice. They are now grouped under "Core extensions" (builtin) and
+// "External extensions" (external) headings by `entry.external`, but every row is still built
+// by the same `extensionRowEl`. Every row here is a `.setting-row` carrying
 // `data-id="ext:<id>"` and a `.setting-toggle`, which is exactly what settings.js's
 // own delegated click handler already drives, so unifying the list cost no second
 // flip path and no second flip note.
@@ -52,10 +53,29 @@ function el(tag, className, text) {
   return node;
 }
 
+// Plain-language descriptions for capabilities a name alone does not explain,
+// shown as the chip's tooltip, and as a line under the chips in the consent dialog.
+export const CAPABILITY_DESCRIPTIONS = {
+  'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
+};
+
 function chipsEl(items, className) {
   const wrap = el('div', 'ext-chips');
-  for (const item of items) wrap.append(el('span', className, item));
+  for (const item of items) {
+    const chip = el('span', className, item);
+    if (CAPABILITY_DESCRIPTIONS[item]) chip.title = CAPABILITY_DESCRIPTIONS[item];
+    wrap.append(chip);
+  }
   return wrap;
+}
+
+// The requested chips plus, below them, a plain sentence for each capability
+// with a description.
+function capabilitiesEl(caps) {
+  const box = el('div');
+  box.append(chipsEl(caps, 'ext-chip'));
+  for (const c of caps) if (CAPABILITY_DESCRIPTIONS[c]) box.append(el('div', 'ext-consent-note', `${c}: ${CAPABILITY_DESCRIPTIONS[c]}`));
+  return box;
 }
 
 function section(parent, title, body) {
@@ -82,7 +102,7 @@ function originNode(origin) {
   return a;
 }
 
-// The restart affordance, which lives ONCE in the panel head beside "Check for
+// The restart affordance, which lives ONCE in the External extensions head beside "Check for
 // updates" rather than on each row: a restart is a whole-wrangler action, not a
 // per-extension one, and several pending rows would otherwise each draw a button
 // that does exactly the same thing. The rows still SAY what is waiting on it.
@@ -212,6 +232,8 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   const values = entry.settingValues || {};
   const frozen = Boolean(entry.quarantine);
   for (const def of entry.settings || []) {
+    // Managed by the extension itself (a settings.panel), never a row.
+    if (def.hidden) continue;
     const row = el('div', 'ext-setting-row');
     row.dataset.ext = entry.id;
     row.dataset.key = def.key;
@@ -220,6 +242,13 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     if (def.help) copy.append(el('div', 'setting-help', def.help));
     const current = values[def.key];
     const commit = (value) => onSettingChange?.({ id: entry.id, key: def.key, value });
+    if (def.type === 'list') {
+      // Read-only summary: an editable list UI is deferred.
+      const n = Array.isArray(current) ? current.length : 0;
+      row.append(copy, el('div', 'ext-row-actions', `${n} item${n === 1 ? '' : 's'}`));
+      wrap.append(row);
+      continue;
+    }
     if (def.type === 'toggle') {
       const actions = el('div', 'ext-row-actions');
       let on = Boolean(current);
@@ -328,11 +357,13 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   return wrap;
 }
 
-// The whole Extensions tab: every extension as one row, the on-demand "Check for
-// updates" button, the install field and the progress line. Built as one element
-// per modal open (settings.js's `extensionsBridge.mount`) rather than patched in
-// place — this panel is behind a modal nobody watches while an install runs, so
-// there is no scroll or drag state a re-render could eat.
+// The whole Extensions tab: a "Core extensions" group of builtin extensions and an
+// "External extensions" group of external ones (grouped by `entry.external`; one row builder
+// and one flip path for both), the on-demand "Check for updates" button, the
+// install field and the progress line. Built as one element per modal open
+// (settings.js's `extensionsBridge.mount`) rather than patched in place — this
+// panel is behind a modal nobody watches while an install runs, so there is no
+// scroll or drag state a re-render could eat.
 //
 // The install "prompt" is an inline field rather than a second modal: it lives
 // inside the settings modal that already has focus, and a URL is one line.
@@ -342,8 +373,29 @@ export function extensionsPanelEl({
   onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onOpenSettings,
 } = {}) {
   const wrap = el('div');
-  const head = el('div', 'ext-installed-head');
-  head.append(el('div', 'setting-label', 'Extensions'));
+  const removing = new Set(pendingRemoval);
+  const row = (entry) => extensionRowEl(entry, {
+    status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
+    pendingRemoval: removing.has(entry.id),
+    onUninstall,
+    onUpdate,
+    onOpenSettings,
+  });
+  const core = entries.filter((e) => !e.external);
+  const installed = entries.filter((e) => e.external);
+
+  if (core.length > 0) {
+    const coreGroup = el('div', 'ext-group');
+    const coreHead = el('div', 'ext-group-head');
+    coreHead.append(el('div', 'setting-label', 'Core extensions'));
+    coreGroup.append(coreHead);
+    for (const entry of core) coreGroup.append(row(entry));
+    wrap.append(coreGroup);
+  }
+
+  const group = el('div', 'ext-group');
+  const head = el('div', 'ext-group-head ext-installed-head');
+  head.append(el('div', 'setting-label', 'External extensions'));
   // Beside the check button, and only while something is actually waiting on it.
   if (canRestart && (pendingRemoval.length || pendingInstall)) {
     head.append(restartButtonEl({ restarting, onRestart }));
@@ -358,18 +410,9 @@ export function extensionsPanelEl({
     check.addEventListener('click', () => onCheckUpdates?.());
     head.append(check);
   }
-  wrap.append(head);
-
-  const removing = new Set(pendingRemoval);
-  for (const entry of entries) {
-    wrap.append(extensionRowEl(entry, {
-      status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
-      pendingRemoval: removing.has(entry.id),
-      onUninstall,
-      onUpdate,
-      onOpenSettings,
-    }));
-  }
+  group.append(head);
+  if (installed.length === 0) group.append(el('div', 'setting-help ext-group-empty', 'No extensions installed yet.'));
+  for (const entry of installed) group.append(row(entry));
 
   const form = el('div', 'setting-row ext-row');
   const copy = el('div', 'setting-copy');
@@ -402,7 +445,8 @@ export function extensionsPanelEl({
   const actions = el('div', 'ext-row-actions');
   actions.append(go);
   form.append(actions);
-  wrap.append(form);
+  group.append(form);
+  wrap.append(group);
   return wrap;
 }
 
@@ -459,7 +503,7 @@ export function consentBodyEl(payload) {
     section(wrap, 'Dependencies changed', dependencyDiffEl(payload));
   } else {
     section(wrap, 'Capabilities requested', (payload.capabilities || []).length
-      ? chipsEl(payload.capabilities, 'ext-chip')
+      ? capabilitiesEl(payload.capabilities)
       : el('div', 'ext-consent-none', 'None — it asks the wrangler for nothing.'));
     const deps = el('div');
     if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
