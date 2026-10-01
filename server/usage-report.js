@@ -518,7 +518,7 @@ const USAGE_CACHE_FILE = 'usage-scan-cache.json';
 const STAT_YIELD_EVERY = 100;
 
 let claudeFileCache = null; // Map<absPath, {size, subSig, result}> — result is claudeDaily(file)'s raw {daily, sub, failed}
-let codexFileCache = null; // Map<absPath, {mtimeMs, result}> — result is analyzeCodex(...)'s return
+let codexFileCache = null; // Map<absPath, {signature, result}> — result is analyzeCodex(...)'s return
 let usageFileCacheDirty = false; // set on any add/update/evict; gates the disk write so an all-unchanged scan writes nothing
 let usageFileCacheStats = { hits: 0, misses: 0 }; // test seam — real per-file cache effectiveness, not just correctness
 
@@ -633,7 +633,7 @@ async function claudeDailyCached(file, since = 0) {
 // results are recomputed rather than served stale (2: priced per model segment).
 const CODEX_ANALYSIS_VERSION = 2;
 
-function codexFamilySignature(sessionId, family) {
+async function codexFamilySignature(sessionId, family, codexSessionsDir, findRolloutChain) {
   const ids = [sessionId];
   const seen = new Set(ids);
   for (let i = 0; i < ids.length; i += 1) {
@@ -641,19 +641,24 @@ function codexFamilySignature(sessionId, family) {
       if (!seen.has(child)) { seen.add(child); ids.push(child); }
     }
   }
-  return ids.sort().map((id) => {
-    try {
-      const st = fs.statSync(family.files.get(id));
-      return `${id}:${st.size}:${st.mtimeMs}`;
-    } catch {
-      return `${id}:?`;
+  const parts = [];
+  for (const id of ids.sort()) {
+    const chain = await findRolloutChain(id, codexSessionsDir);
+    for (const file of chain.length ? chain : [family.files.get(id)]) {
+      try {
+        const st = fs.statSync(file);
+        parts.push(`${id}:${file}:${st.size}:${st.mtimeMs}`);
+      } catch {
+        parts.push(`${id}:${file}:?`);
+      }
     }
-  }).join(',') + `|v${CODEX_ANALYSIS_VERSION}`;
+  }
+  return parts.join(',') + `|v${CODEX_ANALYSIS_VERSION}`;
 }
 
-async function analyzeCodexCached(analyzeCodex, sessionKey, file, codexSessionsDir, index) {
+async function analyzeCodexCached(analyzeCodex, findRolloutChain, sessionKey, file, codexSessionsDir, index) {
   const run = () => analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index }).catch(() => null);
-  const signature = codexFamilySignature(sessionKey, index);
+  const signature = await codexFamilySignature(sessionKey, index, codexSessionsDir, findRolloutChain);
   if (!signature) return run();
   const cached = codexFileCache.get(file);
   if (cached && cached.signature === signature && cached.result?.subAgentUsd != null && cached.result?.costByType) {
@@ -693,7 +698,8 @@ export async function scanAllDaily({
 
   let analyzeCodex = null;
   let buildRolloutFamilyIndex = null;
-  try { ({ analyzeCodex, buildRolloutFamilyIndex } = await import('./agents/codex-rollout.js')); } catch { /* codex optional */ }
+  let findRolloutChain = null;
+  try { ({ analyzeCodex, buildRolloutFamilyIndex, findRolloutChain } = await import('./agents/codex-rollout.js')); } catch { /* codex optional */ }
   // Built once on the first Codex entry and reused for every subsequent one, so the
   // sessions tree is walked once per scan, not once per Codex id (was O(sessions²)).
   let codexIndex = null;
@@ -748,7 +754,7 @@ export async function scanAllDaily({
       const rolloutFile = rolloutIndex.files.get(sessionKey) || null;
       if (rolloutFile) seenCodexFiles.add(rolloutFile);
       const a = rolloutFile
-        ? await analyzeCodexCached(analyzeCodex, sessionKey, rolloutFile, codexSessionsDir, rolloutIndex)
+        ? await analyzeCodexCached(analyzeCodex, findRolloutChain, sessionKey, rolloutFile, codexSessionsDir, rolloutIndex)
         : await analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index: rolloutIndex }).catch(() => null);
       await maybeYield();
       if (!a || a.usd == null) continue;

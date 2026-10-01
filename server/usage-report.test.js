@@ -378,6 +378,42 @@ test('includes native Codex sub-agent spend in the parent bucket and breakout', 
   assert.equal(day.total.usd, day.total.estimatedUsd);
 });
 
+test('rescans a split Codex session cached with the old latest-file signature', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const uuid = '31313131-3131-3131-3131-313131313131';
+  const first = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
+  const latest = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-01-00-${uuid}_41414141-4141-4141-4141-414141414141.jsonl`);
+  const meta = { type: 'session_meta', payload: { session_id: uuid, id: uuid } };
+  const model = { type: 'turn_context', payload: { model: 'gpt-5.5-codex' } };
+  const count = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: total, cached_input_tokens: 0, output_tokens: 0 },
+    last_token_usage: { input_tokens: last, cached_input_tokens: 0, output_tokens: 0 },
+  } } });
+  fs.writeFileSync(first, [meta, model, count(100, 100), count(200, 100)].map(JSON.stringify).join('\n') + '\n');
+  fs.writeFileSync(latest, [meta, model, count(260, 60)].map(JSON.stringify).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: { cx: {
+    agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z',
+  } } });
+  const stat = fs.statSync(latest);
+  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify({
+    version: 3,
+    claude: {},
+    codex: { [latest]: {
+      signature: `${uuid}:${stat.size}:${stat.mtimeMs}`,
+      result: { usd: 0.0001, subAgentUsd: 0, costByType: {}, model: 'gpt-5.5-codex',
+        tokens: { input: 60, output: 0, cacheRead: 0 }, totals: { 'gpt-5.5-codex': { input: 60, output: 0, cacheRead: 0 } } },
+    } },
+  }));
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.tokens.input, 260);
+  assert.equal(_usageFileCacheStats().misses, 1);
+  fs.appendFileSync(first, JSON.stringify(count(250, 50)) + '\n');
+  const refreshed = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(refreshed.totals.tokens.input, 310);
+  assert.equal(_usageFileCacheStats().misses, 2);
+});
+
 // mappings.json stores createdAt as epoch ms (every write is Date.now()/launchedAt),
 // not the ISO string the sibling test above happens to use — and Date.parse of a
 // number is NaN, which silently dropped every Codex session from the report.
