@@ -1,3 +1,5 @@
+import { COPY_ICON, CHECK_ICON, SETTINGS_ICON } from './icons.js';
+
 // The Extensions settings tab and the install/update consent modal. Pure DOM
 // builders with no app state, like toast.js and system-banner.js: settings.js
 // mounts what these return.
@@ -178,8 +180,9 @@ export function extensionRowEl(entry, {
     // want" — hiding the cog would make a broken extension look like one with
     // nothing to configure.
     if (entry.settings?.length) {
-      const cog = el('button', 'ext-btn ext-btn-icon', '⚙');
+      const cog = el('button', 'ext-btn ext-btn-icon');
       cog.type = 'button';
+      cog.innerHTML = SETTINGS_ICON;
       cog.title = `Settings for ${entry.label || entry.id}`;
       cog.setAttribute('aria-label', `Settings for ${entry.label || entry.id}`);
       cog.addEventListener('click', () => onOpenSettings?.(entry));
@@ -360,7 +363,28 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
       // Beneath the label rather than out in the actions column, exactly like
       // the install field: a URL is long and a 38px-wide switch's slot is not
       // where one goes.
-      copy.append(input, error);
+      if (def.type === 'textarea' && def.placeholder) {
+        const box = el('div', 'ext-setting-copybox');
+        const btn = el('button', 'ext-setting-copy');
+        btn.type = 'button';
+        btn.innerHTML = COPY_ICON;
+        btn.setAttribute('aria-label', 'Copy default text');
+        btn.title = 'Copy the default text to the clipboard';
+        btn.addEventListener('click', () => {
+          const done = () => {
+            btn.innerHTML = CHECK_ICON;
+            setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
+          };
+          navigator.clipboard?.writeText(def.placeholder).then(done, () => {});
+        });
+        const sync = () => { btn.hidden = input.value !== ''; };
+        input.addEventListener('input', sync);
+        sync();
+        box.append(input, btn);
+        copy.append(box, error);
+      } else {
+        copy.append(input, error);
+      }
       row.append(copy);
     }
     wrap.append(row);

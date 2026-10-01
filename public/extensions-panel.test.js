@@ -711,6 +711,21 @@ test('a textarea renders a multi-line control, mirrors placeholder and maxLength
   });
 });
 
+test('a textarea with a placeholder gets a button that copies the default text', async () => {
+  await withDom(async () => {
+    let copied;
+    Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: (t) => { copied = t; return Promise.resolve(); } } }, configurable: true });
+    const wrap = extensionSettingRowsEl({ ...WITH_TEXTAREA, settingValues: {} });
+    const [btn] = byClass(wrap, 'ext-setting-copy');
+    btn.fire('click');
+    assert.equal(copied, 'Step one\nStep two');
+    assert.equal(btn.hidden, false, 'shown while blank');
+    const filled = byClass(extensionSettingRowsEl(WITH_TEXTAREA), 'ext-setting-copy')[0];
+    assert.equal(filled.hidden, true, 'hidden once there is text');
+    assert.equal(byClass(extensionSettingRowsEl({ ...WITH_TEXTAREA, settings: [{ key: 'p', type: 'textarea', label: 'P' }] }), 'ext-setting-copy').length, 0);
+  });
+});
+
 test('Enter in a textarea is a newline: it neither commits nor is swallowed; blur commits the text verbatim', () => {
   withDom(() => {
     const seen = [];
