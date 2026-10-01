@@ -6,9 +6,9 @@ import path from 'node:path';
 import { spawnWorkflowTool } from './spawn-workflow.js';
 
 // A deps double that records what the handler drove and fakes a dispatch that
-// mints a fresh card id (and runs the memory binder the way the real one does).
+// mints a fresh card id (and records the options it was given, as the real one would see them).
 function deps(overrides = {}) {
-  const calls = { assign: [], bind: [], dispatch: [], rebuild: 0 };
+  const calls = { assign: [], dispatch: [], rebuild: 0 };
   const tasks = overrides.tasks ?? [{ id: 'T1', name: 'Login' }];
   const assignments = overrides.assignments ?? { CARD1: 'T1' };
   const entries = overrides.entries ?? { CARD1: { agent: 'claude', model: 'sonnet' } };
@@ -27,10 +27,8 @@ function deps(overrides = {}) {
         return false;
       },
     },
-    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     dispatch: async (opts) => {
       calls.dispatch.push(opts);
-      opts.bindMemory?.('NEWCARD');
       return { sessionId: 'NEWCARD', cwd: opts.cwd || '/scratch/new', tmux: 'cc_dead' };
     },
     rebuild: async () => { calls.rebuild += 1; },
@@ -112,8 +110,7 @@ test('spawn_workflow joins the caller’s current task by default', async () => 
   const out = await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'ENT-42' });
 
   assert.equal(d.calls.dispatch.length, 1);
-  // Memory bound to the resolved task BEFORE launch, then the new card assigned.
-  assert.deepEqual(d.calls.bind, [{ sid: 'NEWCARD', taskId: 'T1' }]);
+  assert.equal(d.calls.dispatch[0].taskId, 'T1'); // the task rides dispatch so the launch context sees it BEFORE launch
   assert.deepEqual(d.calls.assign, [{ sid: 'NEWCARD', taskId: 'T1' }]);
   assert.equal(d.calls.rebuild, 1);
   assert.equal(out.structuredContent.sessionId, 'NEWCARD');
@@ -124,7 +121,7 @@ test('spawn_workflow lets `into` override the caller’s task', async () => {
   const d = deps({ tasks: [{ id: 'T1', name: 'Login' }, { id: 'T2', name: 'Billing' }] });
   const out = await spawnWorkflowTool.handler({ deps: d, caller: 'CARD1' }, { issue: 'ENT-42', into: 'T2' });
 
-  assert.deepEqual(d.calls.bind, [{ sid: 'NEWCARD', taskId: 'T2' }]);
+  assert.equal(d.calls.dispatch[0].taskId, 'T2'); // the task rides dispatch so the launch context sees it BEFORE launch
   assert.deepEqual(d.calls.assign, [{ sid: 'NEWCARD', taskId: 'T2' }]);
   assert.deepEqual(out.structuredContent.task, { id: 'T2', name: 'Billing' });
 });
@@ -133,7 +130,7 @@ test('spawn_workflow falls back to Ad-hoc for a null caller with no `into`', asy
   const d = deps({ assignments: {} });
   const out = await spawnWorkflowTool.handler({ deps: d, caller: null }, { issue: 'ENT-42' });
 
-  assert.deepEqual(d.calls.bind, [{ sid: 'NEWCARD', taskId: null }]);
+  assert.equal(d.calls.dispatch[0].taskId, undefined); // no task: the launch context sees none
   assert.deepEqual(d.calls.assign, []); // no task → no assignment
   assert.equal(out.structuredContent.task, null);
 });

@@ -72,22 +72,11 @@ export function autoAttachPrEnabled() {
   return readConfig().autoAttachPr !== false;
 }
 
-// Whether per-task memory/notes is surfaced at all: the tile's memory button and
-// the always-on "read AW_TASK_MEMORY" instruction injected into agent launches.
-// Default on; toggled from the board's settings modal (config.json
-// `taskMemoryEnabled: false`). Off is deliberately shallow — memory files and the
-// per-session symlink plumbing stay intact, so re-enabling restores everything.
-// Takes cfg (like suspendEnabled) so tests never write the shared config.json —
-// `node --test` runs files in parallel against the same real file.
-export function taskMemoryEnabled(cfg = readConfig()) {
-  return cfg.taskMemoryEnabled !== false;
-}
-
 // Whether a session's sub-agents zone (board card + panel) starts expanded or
 // collapsed for cards the user hasn't explicitly toggled either way. Default off
 // (collapsed) to preserve today's behaviour; toggled from the board's settings
 // modal (config.json `subagentsExpandedByDefault: true`). Takes cfg (like
-// taskMemoryEnabled) so tests never write the shared config.json.
+// archiveReviewEnabled) so tests never write the shared config.json.
 export function subagentsExpandedByDefault(cfg = readConfig()) {
   return cfg.subagentsExpandedByDefault === true;
 }
@@ -110,7 +99,7 @@ export function archiveReviewEnabled(cfg = readConfig()) {
 // (workspace-write + no approval), so the prompt is pure friction. Default on;
 // toggled from the board's settings modal (config.json
 // `trustCodexLaunchCwd: false` restores Codex's normal prompt). Takes cfg (like
-// taskMemoryEnabled) so tests never write the shared config.json.
+// archiveReviewEnabled) so tests never write the shared config.json.
 export function trustCodexLaunchCwd(cfg = readConfig()) {
   return cfg.trustCodexLaunchCwd !== false;
 }
@@ -141,7 +130,7 @@ export function childFullViewByDefault(cfg = readConfig()) {
 // never overrides a card someone has already set by hand. Default on, which is
 // exactly the behaviour before the setting existed; toggled from the board's
 // settings modal (config.json `autoFixPrChecksDefault: false` leaves
-// new/untouched sessions unnudged). Takes cfg (like taskMemoryEnabled) so tests
+// new/untouched sessions unnudged). Takes cfg (like archiveReviewEnabled) so tests
 // never write the shared config.json.
 export function autoFixPrChecksDefault(cfg = readConfig()) {
   return cfg.autoFixPrChecksDefault !== false;
@@ -165,6 +154,7 @@ export function chatViewDefault(cfg = readConfig()) {
 // feature adds a row here; nothing else.
 export const RETIRED_FLAGS = [
   { oldKey: 'checklistEnabled', extId: 'checklist' },
+  { oldKey: 'taskMemoryEnabled', extId: 'task-memory' },
 ];
 
 // Pure: returns the migrated config (a new object) and whether anything moved.
@@ -200,7 +190,7 @@ export function applyRetiredFlagMigrations(table = RETIRED_FLAGS) {
 // Whether an extension (server/extensions/index.js) is enabled on this install:
 // an explicit `extensions.<id>` boolean in config.json, else the manifest's own
 // default. Non-boolean values are ignored rather than coerced. Takes cfg (like
-// taskMemoryEnabled) so tests never write the shared config.json.
+// archiveReviewEnabled) so tests never write the shared config.json.
 export function extensionEnabled(id, defaultEnabled, cfg = readConfig()) {
   const v = cfg.extensions?.[id];
   return typeof v === 'boolean' ? v : Boolean(defaultEnabled);

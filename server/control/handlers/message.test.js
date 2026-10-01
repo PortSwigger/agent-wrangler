@@ -21,7 +21,6 @@ function ctx({ live = {}, entries = {} } = {}) {
       isResuming: () => false,
       resume: async (id, dir, opts) => { calls.resumed.push({ id, dir, opts }); return { tmux: 'cc_woken' }; },
     },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     rebuild: async () => { calls.rebuild += 1; },
     reply: (obj) => calls.reply.push(obj),

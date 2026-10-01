@@ -2,6 +2,11 @@ import { findTranscript, readLines, textOf, usageSince } from './transcript-read
 import { runHeadlessClaude } from './headless-claude.js';
 import { archiveReviewEnabled } from './config-store.js';
 
+// The core event a finished review is published as: `{ sid, taskId, markdown }`.
+// Nothing here knows where it ends up — the task-memory extension subscribes
+// and appends it to the task's memory.md.
+export const ARCHIVE_REVIEW_COMPLETED = 'archive-review:completed';
+
 // Best-effort, background enrichment of a task's memory.md, triggered from
 // SessionManager.archive() via the `_archiveReview` seam. When a Claude session
 // is archived, a headless `claude -p --model haiku` process reads that
@@ -130,11 +135,12 @@ function sectionFor(text, label) {
 //   'skipped' — a guard declined (feature off, non-Claude, no task, no
 //               transcript, or the bounded excerpt had nothing in it)
 //   'none'    — Haiku ran and found nothing durable (its own NONE guard)
-//   'written' — a section was appended to the task's memory.md
+//   'written' — a section was published as `archive-review:completed` (the
+//               task-memory extension appends it to the task's memory.md)
 //   'error'   — the subprocess failed or returned unparseable output
 export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   const {
-    memoryStore,
+    events,
     findTranscriptFn = findTranscript,
     readLinesFn = readLines,
     review = reviewExcerpt,
@@ -152,6 +158,11 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   if (!isEnabled()) return 'skipped';
   if ((entry?.agent || 'claude') !== 'claude') return 'skipped';
   if (!task?.id) return 'skipped';
+  // The result is delivered as an `archive-review:completed` event, and the
+  // task-memory extension is what writes it to memory.md. With nobody listening
+  // (that extension is off) the review would spend a model call on text that has
+  // nowhere to go, so don't run it.
+  if (!events?.hasListeners?.(ARCHIVE_REVIEW_COMPLETED)) return 'skipped';
 
   const liveId = entry?.liveSessionId || sessionId;
   const transcript = await findTranscriptFn(liveId);
@@ -168,7 +179,7 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
     onStamp({ reviewLiveSessionId: liveSessionId, advanceReviewedAt: success });
     if (!success) return 'error';
     if (!looksLikeBullets(text)) return 'none';
-    memoryStore.append(task.id, sectionFor(text, entry?.lastLabel || entry?.intent));
+    events.emit(ARCHIVE_REVIEW_COMPLETED, { sid: sessionId, taskId: task.id, markdown: sectionFor(text, entry?.lastLabel || entry?.intent) });
     return 'written';
   });
 }

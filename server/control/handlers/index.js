@@ -14,7 +14,6 @@ import { snoozeSetHandler, snoozeClearHandler } from './snooze.js';
 import { autoFixPrChecksHandler } from './auto-fix-pr-checks.js';
 import { autoFixPrChecksDefaultHandler } from './auto-fix-pr-checks-default.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
-import { taskMemoryEnabledHandler } from './task-memory-enabled.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
@@ -36,7 +35,6 @@ import {
   taskReorderHandler,
   taskReorderSessionsHandler,
 } from './tasks.js';
-import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
   scheduleCreateHandler,
   scheduleUpdateHandler,
@@ -59,7 +57,7 @@ import { getExtensions } from '../../extensions/index.js';
 
 // The control-WS handler registry, mirroring server/mcp/tools. Adding a message
 // type = adding a module here. Each handler: { type, handler(msg, ctx) }, where
-// ctx bundles sessionManager/taskStore/memoryStore/scheduleStore/rebuild/reply/graph
+// ctx bundles sessionManager/taskStore/scheduleStore/rebuild/reply/graph
 // + the graph-target resolvers (sessionFromGraph/tmuxFor/socketFor) and
 // runSchedule (the shared schedule-firing routine).
 export const CONTROL_HANDLERS = [
@@ -82,7 +80,6 @@ export const CONTROL_HANDLERS = [
   autoFixPrChecksHandler,
   autoFixPrChecksDefaultHandler,
   autoMergeOnPassHandler,
-  taskMemoryEnabledHandler,
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   archiveReviewEnabledHandler,
@@ -105,8 +102,6 @@ export const CONTROL_HANDLERS = [
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
-  getMemoryHandler,
-  setMemoryHandler,
   scheduleCreateHandler,
   scheduleUpdateHandler,
   scheduleDeleteHandler,

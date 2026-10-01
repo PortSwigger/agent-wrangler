@@ -93,7 +93,6 @@ function deps({ live = true } = {}) {
       isResuming: () => false,
       resume: async () => { calls.push({ verb: 'resume' }); return { tmux: 'cc_woken' }; },
     },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
   };
 }

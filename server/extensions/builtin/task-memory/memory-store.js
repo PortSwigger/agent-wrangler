@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import chokidar from 'chokidar';
-import { DATA_DIR } from './data-dir.js';
+import { DATA_DIR } from '../../../data-dir.js';
 
 // Per-task freeform markdown memory, edited interchangeably by the human (in the
 // dashboard or their own editor) and by the agent running under that task. Each
@@ -20,8 +20,8 @@ import { DATA_DIR } from './data-dir.js';
 export const MEMORY_DIR = path.join(DATA_DIR, 'memory');
 
 // The stable path injected as AW_TASK_MEMORY: memory.md inside the per-session
-// directory symlink. Pure (no instance) so session-manager can build the launch
-// command without a circular import.
+// directory symlink. Pure (no instance) so the launch-context hook can build it
+// without a store.
 export function linkPathFor(sessionId) {
   return path.join(MEMORY_DIR, 'by-session', sessionId, 'memory.md');
 }
@@ -169,6 +169,28 @@ export class MemoryStore {
     if (!isSafeSegment(sessionId)) return;
     try { fs.unlinkSync(this.linkPath(sessionId)); } catch { /* none */ }
     try { fs.rmSync(this.scratchDir(sessionId), { recursive: true, force: true }); } catch { /* none */ }
+  }
+
+  // Drop a deleted task's memory: the canonical task folder and every
+  // by-session symlink that points at it (a link left behind would dangle).
+  // Scratch folders belong to sessions, not the task, and stay. Returns whether
+  // a task folder existed.
+  deleteTask(taskId) {
+    if (!isSafeSegment(taskId)) return false;
+    const dir = this.taskDir(taskId);
+    const existed = fs.existsSync(dir);
+    const bySession = path.join(this.dir, 'by-session');
+    let names = [];
+    try { names = fs.readdirSync(bySession); } catch { /* none */ }
+    for (const name of names) {
+      const link = path.join(bySession, name);
+      try {
+        if (path.resolve(path.dirname(link), fs.readlinkSync(link)) === path.resolve(dir)) fs.unlinkSync(link);
+      } catch { /* not a link, or already gone */ }
+    }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+    this._hasMemory.delete(taskId);
+    return existed;
   }
 
   // Map a changed path under this.dir to its taskId iff it's a canonical

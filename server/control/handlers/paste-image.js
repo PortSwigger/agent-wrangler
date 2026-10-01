@@ -8,15 +8,16 @@ import { decodePasteImage, pasteFileName, prunePastes } from '../../paste-image.
 // put in the prompt. See paste-image.js for why a file is the only bridge from a
 // browser paste to an agent that reads the HOST clipboard.
 //
-// The destination is the session's memory dir, and that choice is the whole
-// reason this works without touching a launch: every Claude launch already passes
-// `--add-dir addDirFor(sessionId)`, so a file underneath it is readable with no
-// permission prompt and no relaunch — the same constraint that made
+// The destination is a `pastes/` subdir of the first directory the enabled
+// extensions granted this launch (task-memory's per-session notes dir; see
+// paste-store.js), and that choice is the whole reason this works without
+// touching a launch: the launch already passes that dir as `--add-dir`, so a
+// file underneath it is readable with no permission prompt and no relaunch — the same constraint that made
 // `entry.mailCapable` necessary for the mailbox does not bite here. Verified end
 // to end against a real pane, including through the by-session SYMLINK.
 //
-// A `pastes/` subdir is safe to create here: memoryStore.watchIgnored refuses
-// anything that is not `tasks/<id>/memory.md`, so chokidar neither watches these
+// A `pastes/` subdir is safe to create there: task-memory's store.watchIgnored
+// refuses anything that is not `tasks/<id>/memory.md`, so chokidar neither watches these
 // files nor descends into the folder. Widening that filter would reintroduce the
 // fd leak it exists to prevent, so do not "fix" it to see pastes.
 export const pasteImageHandler = {

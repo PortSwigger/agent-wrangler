@@ -90,8 +90,7 @@ test('buildMcpServer runs list_sessions with the bound caller', async () => {
 test('buildMcpServer runs spawn_session through the SDK schema boundary', async () => {
   const deps = {
     ...fakeDeps(),
-    dispatch: async (opts) => { opts.bindMemory?.('NEWCARD'); return { sessionId: 'NEWCARD', cwd: '/a' }; },
-    memoryStore: { bindSession: () => {} },
+    dispatch: async () => ({ sessionId: 'NEWCARD', cwd: '/a' }),
     rebuild: async () => {},
   };
   deps.taskStore = { ...deps.taskStore, assign: () => true };

@@ -15,9 +15,11 @@ function harness({ docs = [CLAUDE_DOC, CODEX_DOC], transcript = '/p/conv-claude.
   sm._save = () => {};
   const replies = [];
   const calls = { resume: [], rebuild: 0, forgot: [] };
+  // forget() fires the onPurge hook — how an extension (task-memory) drops the
+  // per-session state the failed resume made.
+  sm._extHooks.onPurge.push(({ sessionId }) => calls.forgot.push(sessionId));
   const ctx = {
     sessionManager: sm,
-    memoryStore: { forget: (id) => calls.forgot.push(id) },
     reply: (m) => replies.push(m),
     rebuild: async () => { calls.rebuild += 1; },
   };
@@ -127,7 +129,7 @@ test('a resume that refuses rolls the freshly-minted card back, so a failed adop
   const h = harness({ resumeThrows: 'nope' });
   await adoptConversation({ sessionId: 'conv-claude' }, h.ctx, h.deps);
   assert.equal(cards(h.sm).length, 0);
-  assert.equal(h.calls.forgot.length, 1); // the memory binding resume made goes too
+  assert.equal(h.calls.forgot.length, 1); // onPurge fires, so extension state the resume made goes too
   assert.deepEqual(h.replies, [{ type: 'adopt-failed', sessionId: 'conv-claude', message: 'nope' }]);
   assert.equal(h.calls.rebuild, 1); // the board must not keep showing the rolled-back card
 });

@@ -186,8 +186,8 @@ test('BUILTIN: every directory under builtin/ is registered', () => {
 // The real builtin set. Asserted by id so a stray extra manifest (which would
 // register tools and handlers on every install) is noticed, and so the
 // invariants below never quietly pass over an empty list.
-test('BUILTIN: the shipped set is exactly checklist, todos and adversarial-review', () => {
-  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'todos']);
+test('BUILTIN: the shipped set is exactly adversarial-review, checklist, task-memory and todos', () => {
+  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'task-memory', 'todos']);
 });
 
 const ownedBy = (id, xs) => xs.filter((x) => x.extId === id);
@@ -227,6 +227,34 @@ test('BUILTIN: the adversarial-review manifest loads, enabled by default, contri
   assert.deepEqual(entry.settings.map((s) => [s.key, s.type]), [['process', 'textarea']]);
 });
 
+test('BUILTIN: task-memory registers its handlers, store, hooks and client when enabled', () => {
+  assert.ok(BUILTIN.some((e) => e.id === 'task-memory'));
+  const out = loadExtensions({ cfg: {}, builtin: BUILTIN });
+  const tm = out.list.find((e) => e.id === 'task-memory');
+  assert.deepEqual([tm.enabled, tm.quarantine], [true, null]);
+  assert.ok(['get-memory', 'set-memory'].every((t) => out.handlers.some((h) => h.type === t)));
+  assert.ok(out.skillIds.includes('task-memory'));
+  assert.ok(!out.disabledSkillIds.includes('task-memory'));
+  assert.ok('taskMemory' in out.stores);
+  assert.deepEqual(out.hooks['session.launchContext'].map((h) => h.extId), ['task-memory']);
+  assert.deepEqual(out.taskDeleteHooks.map((h) => h.id), ['task-memory']);
+  assert.deepEqual(out.sessionHooks.onPurge.map((h) => h.extId), ['task-memory']);
+  assert.deepEqual(out.clientManifest.filter((c) => c.id === 'task-memory').map((c) => [c.id, c.client, c.styles]), [['task-memory', '/ext/task-memory/index.js', '/ext/task-memory/styles.css']]);
+});
+
+test('BUILTIN: disabling task-memory in config contributes nothing and suppresses its skill', () => {
+  const out = loadExtensions({ cfg: { extensions: { 'task-memory': false } }, builtin: BUILTIN });
+  assert.equal(out.list.find((e) => e.id === 'task-memory').enabled, false);
+  assert.deepEqual(out.handlers.map((h) => h.type).filter((t) => /memory/.test(t)), []);
+  assert.equal(out.stores.taskMemory, undefined);
+  assert.deepEqual(out.hooks['session.launchContext'], []);
+  assert.deepEqual(out.taskDeleteHooks, [], 'a disabled extension is not told about a deleted task');
+  assert.deepEqual(out.sessionHooks.onPurge, []);
+  assert.deepEqual(out.clientManifest.filter((c) => c.id === 'task-memory'), []);
+  assert.ok(!out.skillIds.includes('task-memory'));
+  assert.ok(out.disabledSkillIds.includes('task-memory'));
+});
+
 test('BUILTIN: no collisions with the core tool/handler registries, and every graph key is unreserved', () => {
   const out = loadExtensions({ cfg: {}, builtin: BUILTIN, coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
   const types = out.handlers.map((h) => h.type);
@@ -234,6 +262,24 @@ test('BUILTIN: no collisions with the core tool/handler registries, and every gr
   const stores = Object.fromEntries(Object.entries(out.stores).map(([k, f]) => [k, f({ id: k, settings: {}, log() {} })]));
   const host = { stores, tasks: { adhocId: 'adhoc', list: () => [], get: () => null } };
   for (const { id, contribute } of out.graphContributors) assertGraphKeys(id, contribute({ host, graph: {} }));
+});
+
+test('hooks: validated by name and type; unknown hook, non-function, bad lifecycle all fail', () => {
+  assert.ok(validateManifest(manifest({ hooks: { 'session.launchContext': () => ({}) } })));
+  assert.throws(() => validateManifest(manifest({ hooks: { 'session.nope': () => {} } })), /unknown hook "session.nope"/);
+  assert.throws(() => validateManifest(manifest({ hooks: { 'session.launchContext': 1 } })), /must be a function/);
+  assert.throws(() => validateManifest(manifest({ activate: 'x' })), /activate must be a function/);
+  assert.throws(() => validateManifest(manifest({ deactivate: {} })), /deactivate must be a function/);
+  assert.ok(validateManifest(manifest({ activate() {}, deactivate() {}, onTaskDelete() {} })));
+});
+
+test('hooks: staged per extension and released by unregisterExtension', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hooks: { 'session.launchContext': () => ({}) }, onTaskDelete() {} })] });
+  assert.equal(loaded.hooks['session.launchContext'].length, 1);
+  assert.equal(loaded.taskDeleteHooks.length, 1);
+  unregisterExtension(loaded, 'fake');
+  assert.equal(loaded.hooks['session.launchContext'].length, 0);
+  assert.equal(loaded.taskDeleteHooks.length, 0);
 });
 
 test('BUILTIN: every manifest exports an absolute dir under server/extensions and any client resolves inside its public/', () => {
@@ -337,7 +383,7 @@ test('extensionsForGraph defaults to the real config reader', () => {
 test('a store factory is handed the core deps bag rather than called bare', () => {
   let got = null;
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ stores: { s: (deps) => { got = deps; return { deps }; } } })] });
-  const core = { sessionManager: {}, taskStore: {}, memoryStore: {} };
+  const core = { sessionManager: {}, taskStore: {} };
   const built = Object.fromEntries(Object.entries(loaded.stores).map(([k, f]) => [k, f({ core })]));
   assert.equal(got.core, core, 'a runner-backed store cannot be constructed without them');
   assert.equal(built.s.deps.core, core);

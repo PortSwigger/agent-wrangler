@@ -65,10 +65,11 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       autoCompactTokens: args.auto_compact_tokens,
       ...buildDispatch({ caller, callerEntry }),
       spawnedBy: caller || undefined,
-      // Bind memory to the resolved task BEFORE launch. Claude uses the stable
-      // symlink; Codex uses bindSession's returned real target. dispatch mints the
-      // card id, so we hand in a binder rather than binding after it returns.
-      bindMemory: (sid) => deps.memoryStore.bindSession(sid, taskId),
+      // The resolved task, so the launch context (session.launchContext) sees it
+      // BEFORE launch — dispatch mints the card id, so the assign below can only
+      // land afterwards.
+      taskId: taskId || undefined,
+      launchReason: 'spawn',
     });
   } catch (e) {
     return errorResult(e?.message || 'Spawn failed');

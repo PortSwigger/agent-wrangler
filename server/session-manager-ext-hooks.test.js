@@ -25,7 +25,7 @@ function captureErrors(fn) {
 
 test('hooks default to empty arrays, so a bare SessionManager fires nothing', async () => {
   const sm = manager();
-  assert.deepEqual(Object.keys(sm._extHooks), ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume']);
+  assert.deepEqual(Object.keys(sm._extHooks), ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume', 'onTaskDelete']);
   for (const fns of Object.values(sm._extHooks)) assert.deepEqual(fns, []);
   sm.map.set('CARD1', { tmux: 'cc_a', cwd: os.tmpdir(), agent: 'claude' });
   sm.archive('CARD1');

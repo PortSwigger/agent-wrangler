@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolvedMemoryBindingFor } from '../memory-store.js';
+import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex } from './codex-rollout.js';
@@ -24,23 +24,20 @@ function tomlString(s) {
   return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-function launchMemory(sessionId, memoryDir, memoryPath) {
-  return memoryDir && memoryPath
-    ? { memoryDir, memoryPath }
-    : resolvedMemoryBindingFor(sessionId);
-}
-
 // Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
-// even for a fork (its own fresh board id). memoryPath is the launch-time real
-// task/scratch file, never the by-session symlink rejected by Codex 0.149+.
-function envPrefix(sessionId, spawnedBy, memoryPath) {
-  let env = `AW_SESSION_ID=${shellQuote(sessionId)} AW_TASK_MEMORY=${shellQuote(memoryPath)} `
-    + `${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
+// even for a fork (its own fresh board id). The extensions' env comes FIRST and
+// core's after, so an extension adds variables but can never override ours (the
+// last assignment of a name wins in a shell prefix). A path an extension hands
+// Codex (task-memory's) is already the launch-time REAL path: its hook is told
+// `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
+function envPrefix(sessionId, spawnedBy, launchContext) {
+  let env = launchEnvPrefix(launchContext, shellQuote)
+    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
 
-// Flags shared by launch/resume/fork: autonomy, network, memory write-grant, and
+// Flags shared by launch/resume/fork: autonomy, network, the extensions' directory grants, and
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
@@ -48,29 +45,24 @@ function envPrefix(sessionId, spawnedBy, memoryPath) {
 // --sandbox workspace-write --ask-for-approval never plus the workspace-write
 // network grant. Everything else is unconditional, bypass included.
 // Developer instructions are the verified equivalent of Claude's
-// --append-system-prompt; injected as a `developer`-role message). The session
-// manager passes the real memory target returned by bindSession; the adapter's
-// resolver fallback covers direct callers and legacy seams without ever choosing
-// the symlink as a writable root. Directory trust is NOT handled
+// --append-system-prompt; injected as a `developer`-role message). Directory trust is NOT handled
 // here: verified against the installed binary that Codex's interactive trust
 // dialog ignores a `-c projects.<path>.trust_level` CLI override entirely — only
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, taskMemory, memoryDir, disabledSkills, codexPolicy }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchContext, disabledSkills, codexPolicy }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
   // this always-on text too — the catalog alone doesn't guarantee it's read at
-  // session start. The worktree guardrail still appends when present. `taskMemory`
-  // is only threaded so tests can pin it; undefined (the production path) falls
-  // through to the live-config default inside both skill helpers.
+  // session start. The worktree guardrail still appends when present.
   const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
-  const base = [mandatorySkillPrompt(undefined, { taskMemory, disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { taskMemory, disabledSkills })].filter(Boolean).join('\n\n');
+  const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
-  args.push('--add-dir', memoryDir);
+  args.push(...launchAddDirArgs(launchContext));
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());
   return args;
@@ -132,35 +124,32 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
-    ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
+  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills, codexPolicy }) {
     const args = ['-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, taskMemory, memoryDir, disabledSkills, codexPolicy }));
-    let inner = `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    args.push(...commonFlags({ sessionId, addDirs, worktree, launchContext, disabledSkills, codexPolicy }));
+    let inner = `${envPrefix(sessionId, spawnedBy, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
-    ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, launchContext, disabledSkills, codexPolicy }) {
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills, codexPolicy }));
-    return `${envPrefix(sessionId, spawnedBy, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
+    return `${envPrefix(sessionId, spawnedBy, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], taskMemory, memoryDir, memoryPath, disabledSkills, codexPolicy }) {
-    ({ memoryDir, memoryPath } = launchMemory(sessionId, memoryDir, memoryPath));
+  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], launchContext, disabledSkills, codexPolicy }) {
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, taskMemory, memoryDir, disabledSkills, codexPolicy }));
-    let inner = `${envPrefix(sessionId, undefined, memoryPath)}codex ${args.map(shellQuote).join(' ')}`;
+    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
+    let inner = `${envPrefix(sessionId, undefined, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },

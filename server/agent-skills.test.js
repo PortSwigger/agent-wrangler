@@ -7,6 +7,7 @@ import {
   skillEntries, allSkillEntries, codexSkillCatalog, mandatorySkillPrompt,
   extensionSkillPluginDirs, extensionSkillDirs, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR,
 } from './agent-skills.js';
+import { getExtensions } from './extensions/index.js';
 import { dir as todosDir } from './extensions/builtin/todos/index.js';
 
 function fixture() {
@@ -69,7 +70,7 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
@@ -89,7 +90,7 @@ test('the archive-to-todo skill ships with the todos extension and is discoverab
   assert.ok(entry);
   assert.equal(entry.extId, 'todos');
   assert.match(entry.description, /current session/);
-  const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, ext });
+  const catalog = codexSkillCatalog(SKILLS_ROOT, { ext });
   assert.match(catalog, /- archive-to-todo —/);
   assert.doesNotMatch(catalog, /- park-session —/);
   assert.doesNotMatch(catalog, /- todo —/);
@@ -98,7 +99,7 @@ test('the archive-to-todo skill ships with the todos extension and is discoverab
 
 test('a disabled todos extension suppresses the archive-to-todo skill from the catalog and plugin dirs', () => {
   const row = { id: 'todos', dir: todosDir, skills: ['archive-to-todo'] };
-  const base = { taskMemory: true };
+  const base = {};
   const on = { list: [row], disabledSkillIds: [] };
   const off = { list: [row], disabledSkillIds: ['archive-to-todo'] };
   assert.equal(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: on }).length, 1);
@@ -107,7 +108,9 @@ test('a disabled todos extension suppresses the archive-to-todo skill from the c
 });
 
 test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
-  const byName = Object.fromEntries(skillEntries().map((e) => [e.name, e]));
+  // task-memory ships with its extension, so it comes from the whole catalog.
+  const byName = Object.fromEntries(allSkillEntries().map((e) => [e.name, e]));
+  assert.equal(byName['task-memory'].extId, 'task-memory');
   assert.ok(byName['task-memory'].nudge.length > 0);
   // mail: discovery alone isn't reliable for the standing read-your-mail
   // instruction (CLAUDE.md), so it carries an always-on nudge too, on top of
@@ -118,15 +121,15 @@ test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, 
   assert.equal(byName['session-activity'].nudge, '');
   assert.equal(byName['session-hierarchy'].nudge, '');
   assert.equal(byName.advisor.nudge, '');
-  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /AW_TASK_MEMORY/);
-  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /read_mail/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT), /AW_TASK_MEMORY/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT), /read_mail/);
   // The send-tool disambiguation must ride the always-on nudge, not just the
   // discoverable SKILL.md: it exists for the post-compaction case, where a
   // session's memory of having used mcp send_message is gone and only the
   // per-turn system prompt is left to steer it away from Claude Code's
   // built-in SendMessage (which can't resolve a card id — live incident).
-  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /send_message/);
-  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { taskMemory: true }), /built-in `SendMessage`/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT), /send_message/);
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT), /built-in `SendMessage`/);
 });
 
 // A disabled extension's skill ids (the loader's `disabledSkillIds`) drop from
@@ -135,7 +138,7 @@ test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, 
 // extension-shipped case is at the bottom of this file.
 test('a disabled extension\'s skill ids drop from the mandatory nudge and the Codex catalog — nothing else', () => {
   const root = fixture();
-  const base = { taskMemory: true };
+  const base = {};
   const off = { ...base, ext: { disabledSkillIds: ['zebra'] } };
   assert.doesNotMatch(codexSkillCatalog(root, off), /- zebra —/);
   assert.match(codexSkillCatalog(root, off), /- alpha —/);
@@ -146,11 +149,11 @@ test('a disabled extension\'s skill ids drop from the mandatory nudge and the Co
 });
 
 // The per-LAUNCH channel (an enabled extension's own `skillsFor` gate, resolved
-// by session-manager and threaded down beside taskMemory). Same two channels as
+// by session-manager and threaded down as `disabledSkills`). Same two channels as
 // the global one, but decided per session rather than per install.
 test('disabledSkills drops a skill from this launch only, leaving the install\'s own lists alone', () => {
   const root = fixture();
-  const base = { taskMemory: true, ext: { disabledSkillIds: [] } };
+  const base = { ext: { disabledSkillIds: [] } };
   const gated = { ...base, disabledSkills: ['alpha'] };
   assert.doesNotMatch(mandatorySkillPrompt(root, gated), /alpha thing/);
   assert.doesNotMatch(codexSkillCatalog(root, gated), /- alpha —/);
@@ -160,24 +163,33 @@ test('disabledSkills drops a skill from this launch only, leaving the install\'s
   assert.ok(skillEntries(root).some((e) => e.name === 'alpha'));
 });
 
-test('taskMemory:false drops task-memory from the mandatory nudge and the Codex catalog — nothing else', () => {
+// Generic gating: a skill an extension OWNS (ships) is offered only while that
+// extension is enabled and not quarantined. The fake registry rows are the
+// loader's list rows.
+test('an extension-owned skill is included or excluded by ITS extension\'s state', () => {
   const root = fixture();
-  const dir = path.join(root, 'task-memory');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: task-memory\ndescription: Read the shared memory file\n---\n\nBody.\n');
-  fs.writeFileSync(path.join(dir, 'WRANGLER.md'), 'Read AW_TASK_MEMORY at session start.\n');
+  const { row } = extFixture('owner', 'owned-skill', 'Use the owned thing.');
+  const listed = (state) => ({ list: [{ ...row, ...state }], disabledSkillIds: [] });
+  for (const [state, included] of [[{ enabled: true }, true], [{}, true], [{ enabled: false }, false], [{ enabled: true, quarantine: 'bad manifest' }, false]]) {
+    const opts = { ext: listed(state) };
+    assert.equal(/- owned-skill —/.test(codexSkillCatalog(root, opts)), included, JSON.stringify(state));
+    assert.equal(/owned thing/.test(mandatorySkillPrompt(root, opts)), included, JSON.stringify(state));
+    assert.equal(extensionSkillPluginDirs(root, opts).length, included ? 1 : 0, JSON.stringify(state));
+    // Other skills are untouched either way.
+    assert.match(codexSkillCatalog(root, opts), /- alpha —/);
+  }
+});
 
-  const off = { taskMemory: false };
-  assert.doesNotMatch(mandatorySkillPrompt(root, off), /AW_TASK_MEMORY/);
-  assert.match(mandatorySkillPrompt(root, off), /alpha thing/); // other nudges survive
-  assert.doesNotMatch(codexSkillCatalog(root, off), /task-memory/);
-  assert.match(codexSkillCatalog(root, off), /alpha/);
-  // skillEntries itself stays unfiltered — the plugin dir still ships the skill.
-  assert.ok(skillEntries(root).some((e) => e.name === 'task-memory'));
-
-  const on = { taskMemory: true };
-  assert.match(mandatorySkillPrompt(root, on), /AW_TASK_MEMORY/);
-  assert.match(codexSkillCatalog(root, on), /task-memory/);
+// The real thing: task-memory's nudge follows its extension.
+test('task-memory\'s skill and nudge drop out when its extension is disabled', () => {
+  const live = getExtensions();
+  const row = live.list.find((e) => e.id === 'task-memory');
+  assert.ok(row, 'task-memory is a builtin extension');
+  assert.match(mandatorySkillPrompt(SKILLS_ROOT, { ext: live }), /AW_TASK_MEMORY/);
+  const off = { ...live, list: live.list.map((e) => (e.id === 'task-memory' ? { ...e, enabled: false } : e)) };
+  assert.doesNotMatch(mandatorySkillPrompt(SKILLS_ROOT, { ext: off }), /AW_TASK_MEMORY/);
+  assert.doesNotMatch(codexSkillCatalog(SKILLS_ROOT, { ext: off }), /- task-memory —/);
+  assert.equal(extensionSkillPluginDirs(SKILLS_ROOT, { ext: off }).filter((d) => d.includes('task-memory')).length, 0);
 });
 
 // ── Extension-shipped skills ──────────────────────────────────────────────
@@ -195,7 +207,7 @@ function extFixture(id, name, nudge = '') {
 }
 
 const registry = (...rows) => ({ list: rows, disabledSkillIds: [] });
-const BOTH_ON = { taskMemory: true };
+const BOTH_ON = {};
 
 test('an extension\'s own skills/ joins the catalog, tagged with the extension that ships it', () => {
   const root = fixture();

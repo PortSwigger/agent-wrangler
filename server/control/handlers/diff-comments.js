@@ -97,9 +97,6 @@ export const diffCommentsHandler = {
         if (!dir || !fs.existsSync(dir)) {
           try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
         }
-        // Bind memory BEFORE relaunch so the resumed agent's AW_TASK_MEMORY resolves
-        // at boot, keyed on the stable card id (matches resume.js).
-        ctx.memoryStore?.bindSession(sessionId, ctx.taskStore?.taskFor(sessionId)?.id || null);
         await ctx.sessionManager.resume(sessionId, dir, { reason: 'diff-comment' });
         await ctx.rebuild?.();
         target = ctx.tmuxFor(sessionId);

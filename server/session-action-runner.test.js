@@ -13,17 +13,15 @@ function realDir() {
 
 // Deps double. `live` is the set of managed (attachable) card ids; `entries` maps
 // card id → mapping entry (a dormant session has an entry but isn't live).
-function deps({ live = {}, entries = {}, sent = [], resumed = [], bound = [] } = {}) {
+function deps({ live = {}, entries = {}, sent = [], resumed = [] } = {}) {
   return {
-    sent, resumed, bound,
+    sent, resumed,
     sessionManager: {
       entryFor: (id) => entries[id] || null,
       resume: async (id, dir, opts) => { resumed.push({ id, dir, opts }); },
     },
     tmuxFor: (id) => live[id]?.tmux ?? null,
     socketFor: (id) => live[id]?.socket ?? '',
-    memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
-    taskStore: { taskFor: (id) => (id === 'CARD_T' ? { id: 'T9' } : null) },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
   };
 }
@@ -44,12 +42,11 @@ test('session, live target + no message: no-op success (nothing delivered, not a
   assert.equal(d.resumed.length, 0);
 });
 
-test('session, dormant target + message: resumes, binds memory pre-launch, passes the message as the relaunch intent', async () => {
+test('session, dormant target + message: resumes, passes the message as the relaunch intent', async () => {
   const dir = realDir();
   const d = deps({ entries: { CARD_T: { cwd: dir } } }); // has an entry, not live
   const out = await runSessionAction({ kind: 'session', sessionId: 'CARD_T', message: 'check CI' }, d);
   assert.deepEqual(out, { sessionId: 'CARD_T' });
-  assert.deepEqual(d.bound, [{ id: 'CARD_T', taskId: 'T9' }]); // memory bound to the resolved task
   assert.equal(d.resumed.length, 1);
   assert.equal(d.resumed[0].id, 'CARD_T');
   assert.equal(d.resumed[0].dir, dir);

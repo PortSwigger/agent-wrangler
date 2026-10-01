@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillDirs } from '../agent-skills.js';
-import { addDirFor } from '../memory-store.js';
+import { launchAddDirsOf } from '../launch-context.js';
 import { analyzeLines, usageSince } from '../transcript-reader.js';
 import { statusOf } from '../claude-paths.js';
 
@@ -74,7 +74,17 @@ export function rewriteHostUrls(inner, hostAddr = DEFAULT_HOST_ADDR) {
 // Container-side destinations for the host dirs we docker cp in (Task 1.3). Under
 // /tmp, which managed-settings.json already grants as an additional directory.
 export function containerInputPaths(sessionId) {
-  return { skillsDir: `/tmp/aw-${sessionId}/skills`, notesDir: `/tmp/aw-${sessionId}/notes` };
+  return { skillsDir: `/tmp/aw-${sessionId}/skills` };
+}
+
+// Where the Nth directory an extension granted this launch
+// (`launchContext.addDirs`, e.g. task-memory's notes) lands in the container.
+// Index-based because the host path means nothing there; the order is the
+// launch context's, which is deterministic for a given set of enabled
+// extensions — which is also what lets syncNotesToContainer re-copy into the
+// same place after a reassignment.
+export function launchDirDest(sessionId, index) {
+  return `/tmp/aw-${sessionId}/launch-dirs/${index}`;
 }
 
 // The host paths a devcontainer Claude launch injects that must be copied into the
@@ -86,13 +96,16 @@ export function containerInputPaths(sessionId) {
 // PR-hook files preserve that scripts/ ↔ server/ relative layout; pr-hook.js is
 // dependency-free, so those two files are the whole hook. chmodX marks the .mjs so
 // its shebang stays executable after copy. issue-to-pr rides only workflow launches
-// (buildInnerCommand adds its --plugin-dir only then).
-export function launchInputs(sessionId, { workflow = false } = {}) {
+// (buildInnerCommand adds its --plugin-dir only then). Every directory the
+// extensions granted (`launchContext.addDirs`) is copied too, and substituted in
+// the inner command — which also rewrites any env value that points inside it
+// (AW_TASK_MEMORY), since the substitution is string-level.
+export function launchInputs(sessionId, { workflow = false, launchContext = null } = {}) {
   const base = `/tmp/aw-${sessionId}`;
-  const { skillsDir, notesDir } = containerInputPaths(sessionId);
+  const { skillsDir } = containerInputPaths(sessionId);
   const inputs = [
     { src: AGENT_SKILLS_PLUGIN_DIR, dest: skillsDir },
-    { src: addDirFor(sessionId), dest: notesDir },
+    ...launchAddDirsOf(launchContext).map((src, i) => ({ src, dest: launchDirDest(sessionId, i) })),
     { src: PR_HOOK_PATH, dest: `${base}/scripts/pr-attach-hook.mjs`, chmodX: true },
     { src: PR_HOOK_DEP_PATH, dest: `${base}/server/pr-hook.js`, substitute: false },
   ];
@@ -116,8 +129,8 @@ export function launchInputs(sessionId, { workflow = false } = {}) {
 // are mkdir'd because docker cp won't create the destination parent. The URL rewrite
 // (127.0.0.1 → host.docker.internal) runs last, over the already-path-translated inner.
 export function buildPaneScript({
-  inner, hostDir, sessionId, workflow = false, hostAddr = DEFAULT_HOST_ADDR,
-  inputs = launchInputs(sessionId, { workflow }),
+  inner, hostDir, sessionId, workflow = false, hostAddr = DEFAULT_HOST_ADDR, launchContext = null,
+  inputs = launchInputs(sessionId, { workflow, launchContext }),
 }) {
   const wf = shellQuote(hostDir);
   let translated = inner;
@@ -146,8 +159,8 @@ export function buildPaneScript({
 export const devcontainer = {
   id: 'devcontainer',
   skipsHostResumeGuard: true,
-  async wrapLaunch({ inner, cwd, sessionId, workflow = false }) {
-    return buildPaneScript({ inner, hostDir: cwd, sessionId, workflow });
+  async wrapLaunch({ inner, cwd, sessionId, workflow = false, launchContext = null }) {
+    return buildPaneScript({ inner, hostDir: cwd, sessionId, workflow, launchContext });
   },
   // Dispatch preflight: refuse when the target repo has no devcontainer config,
   // rather than let `devcontainer up` try to synthesize one and die with an opaque

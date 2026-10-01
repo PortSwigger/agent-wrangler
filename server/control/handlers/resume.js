@@ -82,9 +82,9 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   if (!ensureLaunchDir({ dir, recreateDir, reply: ctx.reply, sessionId })) {
     return;
   }
-  // Bind memory BEFORE relaunch so Claude's link and Codex's resolved real path
-  // both target the current task at boot. Keyed on the owner id (sessionId),
-  // stable across the fork, per the resume-fork invariant.
+  // (The launch context — per-task state like task-memory's symlink — is
+  // collected inside resume() itself, keyed on the owner id (sessionId), stable
+  // across the fork, per the resume-fork invariant.)
   // A session resumed on its own while its task is STILL archived (i.e. the
   // task wasn't restored in this same operation) falls back to Ad-hoc rather
   // than keeping a stale assignment — otherwise it would silently resurface
@@ -92,9 +92,6 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // having explicitly reassigned it back.
   if (ctx.taskStore.isAssignedToArchivedTask(sessionId)) {
     ctx.taskStore.unassign(sessionId);
-    ctx.memoryStore.bindSession(sessionId, null);
-  } else {
-    ctx.memoryStore.bindSession(sessionId, ctx.taskStore.taskFor(sessionId)?.id || null);
   }
   // Live restart with a background job running: nudge the agent to stop it FIRST,
   // then wait briefly before resume() kills the pane and relaunches. Shares

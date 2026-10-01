@@ -23,11 +23,10 @@ function deps({
 } = {}) {
   const sent = [];
   const resumed = [];
-  const bound = [];
   const ready = [];
   const submitted = [];
   return {
-    sent, resumed, bound, ready, submitted,
+    sent, resumed, ready, submitted,
     sessionManager: {
       entryFor: (id) => entries[id] || null,
       isResuming: () => resuming,
@@ -39,8 +38,6 @@ function deps({
     },
     tmuxFor: (id) => live[id]?.tmux ?? null,
     socketFor: (id) => live[id]?.socket ?? '',
-    memoryStore: { bindSession: (id, taskId) => bound.push({ id, taskId }) },
-    taskStore: { taskFor: () => null },
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
     // Default the pane gates to "ready, and the send became a turn" so every
     // existing test exercises the delivery it was written for; the tests that
@@ -64,7 +61,7 @@ test('live target: pastes into the pane on its socket, no resume', async () => {
   assert.equal(d.resumed.length, 0);
 });
 
-test('dormant Claude target (we OWN the resume): resumes with the message as the intent, memory bound, no fallback sendText', async () => {
+test('dormant Claude target (we OWN the resume): resumes with the message as the intent, no fallback sendText', async () => {
   const dir = realDir();
   const d = deps({ entries: { CARD1: { cwd: dir, agent: 'claude' } } });
   const result = await deliverMessage('CARD1', 'wake up please', d);
@@ -73,7 +70,6 @@ test('dormant Claude target (we OWN the resume): resumes with the message as the
   assert.equal(d.resumed[0].id, 'CARD1');
   assert.equal(d.resumed[0].dir, dir);
   assert.deepEqual(d.resumed[0].opts, { intent: 'wake up please', reason: 'message' });
-  assert.deepEqual(d.bound, [{ id: 'CARD1', taskId: null }]);
   assert.equal(d.sent.length, 0); // Claude + owned ⇒ intent carried the message
 });
 

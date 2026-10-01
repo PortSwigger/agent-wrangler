@@ -3,42 +3,40 @@ import assert from 'node:assert/strict';
 import { runDispatch } from './dispatch-runner.js';
 
 // Deps double recording the launch path (mirrors dispatch.test.js). The fake
-// dispatch mints a fresh card id and runs the memory binder the way the real
-// SessionManager does, so we can assert memory is bound BEFORE the card is
-// assigned (the load-bearing ordering).
+// dispatch mints a fresh card id and records the options it was given, so we can
+// assert the chosen task rides dispatch (the launch context reads it pre-launch)
+// BEFORE the card is assigned (the load-bearing ordering).
 function deps(overrides = {}) {
-  const calls = { dispatch: [], assign: [], bind: [] };
+  const calls = { dispatch: [], assign: [] };
   return {
     calls,
     sessionManager: {
       entryFor: (id) => overrides.entries?.[id] ?? null,
       dispatch: async (opts) => {
         calls.dispatch.push(opts);
-        opts.bindMemory?.('NEWCARD');
         return { sessionId: 'NEWCARD' };
       },
     },
     taskStore: { assign: (sid, taskId) => calls.assign.push({ sid, taskId }) },
-    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     ...overrides,
   };
 }
 
-test('plain dispatch: passes intent through, binds memory pre-launch, assigns the task', async () => {
+test('plain dispatch: passes intent and the task through, assigns the task', async () => {
   const d = deps();
   const { sessionId } = await runDispatch({ cwd: '/repo', intent: 'do it', taskId: 'T1' }, d);
   assert.equal(sessionId, 'NEWCARD');
   assert.equal(d.calls.dispatch[0].agent, 'claude');
   assert.equal(d.calls.dispatch[0].intent, 'do it');
   assert.equal(d.calls.dispatch[0].workflow, undefined);
-  assert.deepEqual(d.calls.bind, [{ sid: 'NEWCARD', taskId: 'T1' }]);
+  assert.equal(d.calls.dispatch[0].taskId, 'T1');
   assert.deepEqual(d.calls.assign, [{ sid: 'NEWCARD', taskId: 'T1' }]);
 });
 
-test('no taskId: binds memory to scratch and skips assign', async () => {
+test('no taskId: passes none and skips assign', async () => {
   const d = deps();
   await runDispatch({ cwd: '/repo', intent: 'x' }, d);
-  assert.deepEqual(d.calls.bind, [{ sid: 'NEWCARD', taskId: null }]);
+  assert.equal(d.calls.dispatch[0].taskId, undefined);
   assert.deepEqual(d.calls.assign, []);
 });
 

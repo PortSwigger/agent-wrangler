@@ -13,28 +13,33 @@ function ctx(overrides = {}) {
       assign: (sid, taskId) => calls.assign.push({ sid, taskId }),
       createTask: (opts) => { calls.createTask.push(opts); return overrides.createdTask ?? { id: 'T1' }; },
     },
-    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
-    sessionManager: { syncNotesToContainer: async (sid) => { calls.syncNotes.push(sid); } },
+    // The `assign` launch context is how extensions (task-memory) re-point their
+    // per-task state; what they granted is what a devcontainer session re-copies.
+    sessionManager: {
+      launchContext: async (sid, reason) => { calls.bind.push({ sid, reason }); return { env: {}, addDirs: [`/granted/${sid}`] }; },
+      syncNotesToContainer: async (sid, { addDirs }) => { calls.syncNotes.push(sid); calls.synced = [...(calls.synced || []), ...addDirs]; },
+    },
     graph: () => ({ sessions: overrides.sessions ?? [] }),
     rebuild: async () => { calls.rebuild += 1; },
     ...overrides.ctx,
   };
 }
 
-test('task-assign repoints the session memory link to the new task', async () => {
+test('task-assign fires the assign launch context for the session', async () => {
   const c = ctx();
   await taskAssignHandler.handler({ type: 'task-assign', sessionId: 'S1', taskId: 'T2' }, c);
   assert.deepEqual(c.calls.assign, [{ sid: 'S1', taskId: 'T2' }]);
-  assert.deepEqual(c.calls.bind, [{ sid: 'S1', taskId: 'T2' }]);
-  assert.deepEqual(c.calls.syncNotes, ['S1']); // re-copies notes into a devcontainer session's container, if any
+  assert.deepEqual(c.calls.bind, [{ sid: 'S1', reason: 'assign' }]);
+  assert.deepEqual(c.calls.syncNotes, ['S1']); // re-copies the granted dirs into a devcontainer session's container, if any
+  assert.deepEqual(c.calls.synced, ['/granted/S1']);
   assert.equal(c.calls.rebuild, 1);
 });
 
-test('task-assign with no taskId unassigns and points memory at scratch', async () => {
+test('task-assign with no taskId unassigns and still fires the assign context', async () => {
   const c = ctx();
   await taskAssignHandler.handler({ type: 'task-assign', sessionId: 'S1' }, c);
   assert.deepEqual(c.calls.assign, [{ sid: 'S1', taskId: null }]);
-  assert.deepEqual(c.calls.bind, [{ sid: 'S1', taskId: null }]);
+  assert.deepEqual(c.calls.bind, [{ sid: 'S1', reason: 'assign' }]);
 });
 
 test('task-assign moves a dragged parent\'s whole transitive family to the new task', async () => {
@@ -49,9 +54,7 @@ test('task-assign moves a dragged parent\'s whole transitive family to the new t
   assert.deepEqual(c.calls.assign, [
     { sid: 'S1', taskId: 'T2' }, { sid: 'C1', taskId: 'T2' }, { sid: 'GC1', taskId: 'T2' },
   ]);
-  assert.deepEqual(c.calls.bind, [
-    { sid: 'S1', taskId: 'T2' }, { sid: 'C1', taskId: 'T2' }, { sid: 'GC1', taskId: 'T2' },
-  ]);
+  assert.deepEqual(c.calls.bind.map((b) => b.sid), ['S1', 'C1', 'GC1']);
   assert.deepEqual(c.calls.syncNotes, ['S1', 'C1', 'GC1']);
   assert.equal(c.calls.rebuild, 1); // one rebuild for the whole family, not one per session
 });
@@ -192,7 +195,6 @@ function unarchiveCtx({ archivedEntries = [] } = {}) {
       clearSnooze: () => true,
       resume: async (sid, dir) => { calls.resume.push({ sid, dir }); return { tmux: 'cc_new' }; },
     },
-    memoryStore: { bindSession: (sid, taskId) => calls.bind.push({ sid, taskId }) },
     sessionFromGraph: () => null, // archived sessions are off the live graph
     rebuild: async () => { calls.rebuild += 1; },
     reply: (obj) => calls.reply.push(obj),

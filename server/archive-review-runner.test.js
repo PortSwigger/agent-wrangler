@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runArchiveReview, buildExcerpt } from './archive-review-runner.js';
+import { runArchiveReview, buildExcerpt, ARCHIVE_REVIEW_COMPLETED } from './archive-review-runner.js';
+import { createEventBus } from './events.js';
 
 const ENTRY = { agent: 'claude', liveSessionId: 'L1', createdAt: 0 };
 const TASK = { id: 'T1', name: 'Task one' };
@@ -19,8 +20,12 @@ function subprocessDep() {
 function deps(overrides = {}) {
   const appended = [];
   const stamps = [];
+  // A stand-in for the task-memory extension: the runner only publishes
+  // `archive-review:completed`, and whoever subscribes decides where it goes.
+  const events = createEventBus();
+  events.on(ARCHIVE_REVIEW_COMPLETED, ({ taskId, markdown }) => appended.push({ taskId, md: markdown }), 'task-memory');
   return {
-    memoryStore: { append: (taskId, md) => appended.push({ taskId, md }) },
+    events,
     appended,
     stamps,
     onStamp: (s) => stamps.push(s),
@@ -201,4 +206,33 @@ test('a Claude-only guard is not tripped by a missing agent field (defaults to c
   const { agent: _omit, ...noAgent } = ENTRY;
   const mode = await runArchiveReview('c1', noAgent, TASK, d);
   assert.equal(mode, 'written');
+});
+
+test('the event carries the session id, the task id and the markdown', async () => {
+  const d = deps(subprocessDep());
+  const seen = [];
+  d.events.on(ARCHIVE_REVIEW_COMPLETED, (p) => seen.push(p), 'other');
+  await runArchiveReview('c9', ENTRY, TASK, d);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].sid, 'c9');
+  assert.equal(seen[0].taskId, 'T1');
+  assert.match(seen[0].markdown, /- a durable fact/);
+});
+
+test('with no subscriber (the memory extension is off) nothing is reviewed or written', async () => {
+  const sp = subprocessDep();
+  const d = deps(sp);
+  d.events = createEventBus(); // nobody listening
+  const mode = await runArchiveReview('c1', ENTRY, TASK, d);
+  assert.equal(mode, 'skipped');
+  assert.equal(sp.calls.length, 0, 'no model call is spent on a result with nowhere to go');
+});
+
+test('a subscriber owned by an inactive extension does not count as listening', async () => {
+  const sp = subprocessDep();
+  const d = deps(sp);
+  d.events = createEventBus({ isActive: () => false });
+  d.events.on(ARCHIVE_REVIEW_COMPLETED, () => {}, 'task-memory');
+  assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'skipped');
+  assert.equal(sp.calls.length, 0);
 });

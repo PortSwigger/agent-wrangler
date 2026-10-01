@@ -24,7 +24,7 @@ process.on('exit', () => {
 });
 
 // Same problem, a different real file: data-dir.js resolves DATA_DIR from
-// AW_DATA_DIR at import time, and config-store.js/memory-store.js build on top
+// AW_DATA_DIR at import time, and config-store.js and the extension stores build on top
 // of it with no path injection of their own — config-store.test.js already
 // documents that it shares (and restores) the real ~/.agent-wrangler/config.json
 // for lack of an alternative. Redirecting AW_DATA_DIR here, before any of those

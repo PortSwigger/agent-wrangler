@@ -26,7 +26,7 @@ test('dueCommentedSnoozes: an archived session is never a wake candidate (archiv
 });
 
 function deps(overrides = {}) {
-  const calls = { sendText: [], resume: [], bind: [], clear: [] };
+  const calls = { sendText: [], resume: [], clear: [] };
   const entry = overrides.entry ?? { snooze: { until: NOW - 1, comment: 'the note' }, cwd: os.tmpdir() };
   return {
     calls,
@@ -35,8 +35,6 @@ function deps(overrides = {}) {
     tmuxFor: overrides.tmuxFor ?? (() => null),
     socketFor: () => 'sockA',
     sendText: async (name, text, socket) => { calls.sendText.push({ name, text, socket }); },
-    memoryStore: { bindSession: (sid, tid) => calls.bind.push({ sid, tid }) },
-    taskStore: { taskFor: () => ({ id: 'T9' }) },
     sessionManager: {
       entryFor: () => entry,
       resume: async (sid, dir, opts) => { calls.resume.push({ sid, dir, opts }); delete entry.snooze; return { tmux: 'cc_new' }; },
@@ -73,10 +71,9 @@ test('wake (live): CLAIMS the comment (clearSnooze) BEFORE sendText, so a concur
   assert.deepEqual(d.calls.sendText, [{ name: 'cc_live', text: 'the note', socket: 'sockA' }]); // still delivered from the local copy
 });
 
-test('wake (dormant): resumes with intent=comment, binds memory BEFORE resume, then clears', async () => {
+test('wake (dormant): resumes with intent=comment, then clears', async () => {
   const order = [];
   const d = deps({ tmuxFor: () => null });
-  d.memoryStore.bindSession = (sid, tid) => { order.push('bind'); d.calls.bind.push({ sid, tid }); };
   const origResume = d.sessionManager.resume;
   d.sessionManager.resume = async (...a) => { order.push('resume'); return origResume(...a); };
   const res = await wakeCommentedSnooze('S1', d);
@@ -84,8 +81,7 @@ test('wake (dormant): resumes with intent=comment, binds memory BEFORE resume, t
   // The comment IS the resume intent here (automated path auto-runs it).
   assert.equal(d.calls.resume.length, 1);
   assert.deepEqual(d.calls.resume[0].opts, { intent: 'the note', reason: 'snooze-wake' });
-  assert.deepEqual(order, ['bind', 'resume']); // memory bound before relaunch
-  assert.deepEqual(d.calls.bind, [{ sid: 'S1', tid: 'T9' }]);
+  assert.deepEqual(order, ['resume']);
   assert.deepEqual(d.calls.clear, ['S1']); // defensive clear after resume
   assert.deepEqual(d.calls.sendText, []);
 });
@@ -125,7 +121,6 @@ test('wake (dormant, manual wins): clearSnooze→false ⇒ skip entirely, no res
   assert.equal(res.mode, 'skip');
   assert.deepEqual(d.calls.clear, ['S1']);
   assert.deepEqual(d.calls.resume, []);   // no relaunch, no intent delivery
-  assert.deepEqual(d.calls.bind, []);     // never even bound memory for the relaunch
   assert.deepEqual(d.calls.sendText, []);
 });
 
@@ -160,7 +155,6 @@ test('fireDueSnoozeWakes: wakes a live commented snooze and reports one woken; i
     tmuxFor: (id) => `cc_${id}`,
     socketFor: () => '',
     sendText: async (name, text) => { calls.sendText.push({ name, text }); },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     sessionManager: {
       entryFor: (id) => byId[id],
@@ -190,7 +184,6 @@ test('fireDueSnoozeWakes: a failing wake surfaces an error, clears the snooze (n
     // ordering means clearSnooze already ran before sendText threw — we then also clear
     // in the catch (idempotent), and either way A's snooze is gone.
     sendText: async (name) => { if (name === 'cc_A') throw new Error('tmux gone'); },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     onWakeError: (id, err) => errors.push({ id, message: err.message }),
     sessionManager: {
@@ -223,7 +216,6 @@ test('createSnoozeWakeSweeper: a tick arriving mid-sweep is skipped — no concu
     tmuxFor: () => 'cc_live',
     socketFor: () => '',
     sendText: async () => { sendCount += 1; await gate; },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     sessionManager: {
       entryFor: () => entry,

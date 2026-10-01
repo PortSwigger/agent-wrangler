@@ -12,7 +12,7 @@
 //
 // TERMINATE rather than skip, for correctness rather than memory. Skipping is
 // only safe for full-snapshot messages, and `broadcast` also carries one-shot
-// events (`auto-archived`, `memory-changed`, `fd-warning`, `styles`) that
+// events (`auto-archived`, `fd-warning`, `styles`) that
 // nothing ever re-sends — a skip-based guard would quietly stop delivering
 // those to a slow client, trading an OOM for a subtler bug in the same
 // function. A terminated client reconnects and the connect path already

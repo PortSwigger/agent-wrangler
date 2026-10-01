@@ -47,7 +47,7 @@ export function dueCommentedSnoozes(entries, now) {
 // also short-circuits to skip before the claim.
 // Deps injected (no session-manager import), like runSessionAction.
 export async function wakeCommentedSnooze(sessionId, deps) {
-  const { sessionManager, tmuxFor, socketFor, memoryStore, taskStore } = deps;
+  const { sessionManager, tmuxFor, socketFor } = deps;
   const sendText = deps.sendText ?? defaultSendText;
 
   const entry = sessionManager.entryFor(sessionId);
@@ -79,8 +79,6 @@ export async function wakeCommentedSnooze(sessionId, deps) {
   if (!dir || !fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
   }
-  // Bind memory BEFORE the relaunch, keyed on the stable card id (matches resume.js).
-  memoryStore.bindSession(sessionId, taskStore.taskFor(sessionId)?.id || null);
   // Already CLAIMED above (clearSnooze before either branch) — deliver via the resume
   // intent so it auto-runs unattended.
   await sessionManager.resume(sessionId, dir, { intent: comment, reason: 'snooze-wake' });

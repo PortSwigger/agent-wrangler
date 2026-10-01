@@ -99,7 +99,7 @@ function scanStyles(dir, editable) {
   return styles;
 }
 
-// Reject anything that isn't a single safe path segment (same guard memory-store
+// Reject anything that isn't a single safe path segment (same guard task-memory's store
 // uses), so an id can never escape the custom-styles dir.
 function isSafeSegment(s) {
   return typeof s === 'string' && s.length > 0 && s !== '.' && s !== '..' &&

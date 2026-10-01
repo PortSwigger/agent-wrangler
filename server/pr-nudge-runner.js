@@ -23,7 +23,7 @@ import { adapterFor } from './agents/index.js';
 //     left the board — the same `!archivedAt` exclusion activeEntries() and
 //     dueCommentedSnoozes() enforce.
 //
-// This is self-contained (its own resolveResumeDir/bindSession/resume block, mirroring
+// This is self-contained (its own resolveResumeDir/resume block, mirroring
 // snooze-wake-runner rather than delegating to runSessionAction) so the two
 // concurrency guards below can sit SYNCHRONOUSLY immediately before resume() — the
 // only place they close their windows. Deps injected (no session-manager import).
@@ -31,7 +31,7 @@ import { adapterFor } from './agents/index.js';
 // failed). Only 'dormant' warrants the caller's rebuild(); 'error' must NOT rebuild
 // (nothing woke) and is surfaced via onError instead.
 export async function deliverPrNudge(ev, entry, deps) {
-  const { message, tmuxFor, socketFor, sessionManager, memoryStore, taskStore, onError, paneDeferral } = deps;
+  const { message, tmuxFor, socketFor, sessionManager, onError, paneDeferral } = deps;
   const id = ev.ownerId;
 
   const target = tmuxFor(id);
@@ -42,8 +42,7 @@ export async function deliverPrNudge(ev, entry, deps) {
 
   // Not live: archived (entry with archivedAt), snoozed (entry with snooze), or gone
   // (no entry) is board-toast-only. Snooze short-circuits here alongside archived so a
-  // snoozed card never runs resolveResumeDir/bindSession below (mutating its memory
-  // binding) — a PR transition must not touch a card the user has snoozed.
+  // snoozed card never runs resolveResumeDir/resume below — a PR transition must not touch a card the user has snoozed.
   if (!entry || entry.archivedAt || entry.snooze) return 'skip';
 
   // Resolve the launch dir — the LAST await before resume(). A wrangler-created
@@ -53,9 +52,6 @@ export async function deliverPrNudge(ev, entry, deps) {
   if (!dir || !fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
   }
-  // Bind memory BEFORE the relaunch (fully synchronous — all fs.*Sync), keyed on the
-  // stable card id (matches resume.js / session-action-runner.js).
-  memoryStore.bindSession(id, taskStore.taskFor(id)?.id || null);
 
   // ---- SYNCHRONOUS COMMIT BLOCK: NO await from here through resume() initiation. ----
   // FIX 1 — Archive-races-wake TOCTOU. resolveResumeDir above yielded; during that

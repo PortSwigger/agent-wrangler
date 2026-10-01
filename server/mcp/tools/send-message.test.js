@@ -18,7 +18,6 @@ function deps(sent) {
     socketFor: (id) => live[id]?.socket ?? '',
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
     sessionManager: { entryFor: () => null, isResuming: () => false, resume: async () => ({}) },
-    memoryStore: { bindSession: () => {} },
     taskStore: { taskFor: () => null },
     rebuild: async () => {},
   };
