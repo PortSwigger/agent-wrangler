@@ -8,6 +8,7 @@
 // textContent — no chart dependency, and task/model text (agent-generated) never
 // goes in via innerHTML (the CodeQL DOM gate).
 import { send } from './app.js';
+import { closeTaskFilterOnOutsideClick } from './search-filter.js';
 import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, rankProviderAwareModels, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
 import {
   RANGE_PRESETS, DEFAULT_RANGE, resolvePreset, allowedGranularities, coerceGranularity,
@@ -196,6 +197,25 @@ function coerceGranularityForRange() {
   if (next !== state.granularity) { state.granularity = next; persistGranularity(); }
 }
 
+document.addEventListener('pointerdown', (e) => {
+  for (const id of ['usage-range-dd', 'usage-provider-dd']) closeTaskFilterOnOutsideClick(document.getElementById(id), e.target);
+});
+
+function renderDropdown(id, options, current, onPick) {
+  const details = el(id);
+  const label = details.querySelector('.search-select-label');
+  const panel = details.querySelector('.search-dd-panel');
+  label.textContent = (options.find((o) => o.v === current) || options[0]).label;
+  panel.replaceChildren(...options.map((o) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'search-dd-option' + (o.v === current ? ' on' : '');
+    row.textContent = o.label;
+    row.addEventListener('click', () => { details.open = false; onPick(o.v); });
+    return row;
+  }));
+}
+
 function onRangeSelectChange(sel) {
   state.rangeSel = sel;
   if (sel !== 'custom') { state.from = null; state.to = null; }
@@ -246,29 +266,13 @@ function renderControls() {
     return b;
   }));
 
-  const rangeSelect = el('usage-range-select');
-  rangeSelect.replaceChildren(...RANGE_PRESETS.map((o) => {
-    const opt = document.createElement('option');
-    opt.value = o.v;
-    opt.textContent = o.label;
-    return opt;
-  }));
-  rangeSelect.value = state.rangeSel;
-  rangeSelect.onchange = () => onRangeSelectChange(rangeSelect.value);
-
-  const providerSelect = el('usage-provider-select');
-  providerSelect.replaceChildren(...PROVIDERS.map((o) => {
-    const opt = document.createElement('option');
-    opt.value = o.v; opt.textContent = o.label;
-    return opt;
-  }));
-  providerSelect.value = state.provider;
-  providerSelect.onchange = () => {
-    state.provider = providerSelect.value;
+  renderDropdown('usage-range-dd', RANGE_PRESETS, state.rangeSel, onRangeSelectChange);
+  renderDropdown('usage-provider-dd', PROVIDERS, state.provider, (v) => {
+    state.provider = v;
     state.filter = null;
     persistProvider();
     renderAll();
-  };
+  });
 
   const customRow = el('usage-custom-row');
   customRow.classList.toggle('hidden', state.rangeSel !== 'custom');
@@ -564,7 +568,13 @@ function closeUsagePanel() { el('usage-modal').classList.add('hidden'); hideTip(
 function wire() {
   el('usage-close').addEventListener('click', closeUsagePanel);
   const modal = el('usage-modal');
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeUsagePanel(); } });
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    const open = modal.querySelector('.search-dd[open]');
+    if (open) open.open = false;
+    else closeUsagePanel();
+  });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) closeUsagePanel(); });
   // Redraw on resize so the SVG tracks the panel width while it's open.
   window.addEventListener('resize', () => { if (!modal.classList.contains('hidden') && state.data) renderChart(); });

@@ -452,27 +452,37 @@
     <div class="modal-card usage-card">
       <div class="usage-head" id="usage-head">
         <h3 id="usage-title">Usage &amp; spend</h3>
+        <div class="usage-controls">
         <div class="usage-toggles" id="usage-toggles">
           <div class="seg" id="usage-granularity" role="group" aria-label="Time granularity"></div>
           <div class="seg" id="usage-metric" role="group" aria-label="Metric"></div>
           <div class="seg" id="usage-slice" role="group" aria-label="Slice by"></div>
         </div>
-      </div>
       <div class="usage-range-row" id="usage-range-row">
-        <div class="usage-select-control">
-          <label for="usage-range-select" id="usage-range-label">Range</label>
-          <select id="usage-range-select" class="usage-range-select"></select>
-        </div>
-        <div class="usage-select-control">
-          <label for="usage-provider-select" id="usage-provider-label">Provider</label>
-          <select id="usage-provider-select" class="usage-range-select"></select>
-        </div>
+        <details class="search-dd" id="usage-range-dd">
+          <summary class="search-select">
+            <span class="search-select-prefix">Range</span>
+            <span class="search-select-label"></span>
+            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="search-dd-panel"></div>
+        </details>
+        <details class="search-dd" id="usage-provider-dd">
+          <summary class="search-select">
+            <span class="search-select-prefix">Provider</span>
+            <span class="search-select-label"></span>
+            <svg class="search-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="search-dd-panel"></div>
+        </details>
         <div class="usage-custom-row hidden" id="usage-custom-row">
           <label for="usage-date-from" id="usage-date-from-label">From</label>
           <input type="date" id="usage-date-from" class="usage-date-input">
           <label for="usage-date-to" id="usage-date-to-label">To</label>
           <input type="date" id="usage-date-to" class="usage-date-input">
         </div>
+      </div>
+      </div>
       </div>
       <div class="usage-summary" id="usage-summary"></div>
       <div class="usage-chart" id="usage-chart"></div>
