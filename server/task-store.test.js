@@ -511,3 +511,22 @@ test('load drops todos for unknown buckets', () => {
   const reloaded = new TaskStore(file);
   assert.deepEqual(Object.keys(reloaded.snapshot().todos), [t.id]);
 });
+
+test('deleteTask removes the task, its order slot, its session order and unassigns its sessions', () => {
+  const file = tmpFile();
+  const store = new TaskStore(file);
+  const a = store.createTask({ name: 'Alpha', sessionId: 's1' });
+  const b = store.createTask({ name: 'Beta', sessionId: 's2' });
+  assert.deepEqual(store.deleteTask(a.id), ['s1']);
+  const snap = new TaskStore(file).snapshot();
+  assert.deepEqual(snap.tasks.map((t) => t.id), [b.id]);
+  assert.deepEqual(snap.order, ['adhoc', b.id]);
+  assert.equal(snap.assignments.s1, undefined);
+  assert.equal(snap.assignments.s2, b.id);
+  assert.equal(snap.sessionOrder[a.id], undefined);
+});
+
+test('deleteTask on an unknown id is a null no-op', () => {
+  const store = new TaskStore(tmpFile());
+  assert.equal(store.deleteTask('t_nope'), null);
+});

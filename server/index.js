@@ -14,7 +14,7 @@ import { MemoryStore } from './memory-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { ChecklistStore } from './checklist-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -423,6 +423,9 @@ const extBag = {
   // listing keeps its unfiltered identity in the common case. Re-derived on
   // every registry change, since a live install may add the first veto.
   hideTool: createToolFilter(ext, hostApiFor, logError),
+  // Announces a deleted task to every enabled extension's `onTaskDelete`. Reads
+  // the live hook list per call, so it never needs re-deriving on a registry change.
+  fireTaskDelete: createTaskDeleteNotifier(ext, hostApiFor, logError),
   // The loaded registry is deliberately NOT handed over whole: a handler gets
   // the four verbs and the manifest map, so nothing outside this file reaches
   // past `list` into `tools`/`_reg` and starts maintaining them by hand.

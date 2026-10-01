@@ -8,7 +8,7 @@ import {
   hookPayloadFor,
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
-  createSkillGate, createCodexPolicyResolver, createToolFilter, quarantineExtension, registerExtension, unregisterExtension,
+  createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension,
   primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
@@ -157,23 +157,30 @@ test('assertGraphKeys refuses a reserved core graph key and a non-object contrib
 
 // --- invariants over the REAL builtin set ---
 
-// BUILTIN is empty in this PoC: the API lands with its seams, no feature
-// migrated onto it yet. Asserted rather than assumed — an accidental manifest
-// would otherwise silently register tools and handlers on every install, and
-// the two tests below (collisions, manifest shape) would quietly pass over an
-// empty list without saying so.
-test('BUILTIN: ships empty, so every loader output is empty too', () => {
-  assert.deepEqual(BUILTIN, []);
+// BUILTIN is the shipped set, one `server/extensions/builtin/<id>/` directory
+// each. These invariants run over whatever is registered, so a new builtin is
+// covered by adding it to the array and nothing else. The set is allowed to be
+// empty (nothing asserts a count), but a directory present under builtin/ that
+// is not registered is a forgotten row, which the last assertion catches.
+test('BUILTIN: every entry loads clean from its own builtin/<id> directory, enabled per defaultEnabled', () => {
   const out = loadExtensions({ cfg: {}, builtin: BUILTIN });
-  assert.deepEqual(out.list, []);
-  assert.deepEqual(out.tools, []);
-  assert.deepEqual(out.handlers, []);
-  assert.deepEqual(out.skillIds, []);
-  assert.deepEqual(out.disabledSkillIds, []);
-  assert.deepEqual(out.graphContributors, []);
-  assert.deepEqual(out.clientManifest, []);
-  assert.deepEqual(out.stores, {});
-  assert.deepEqual(out.dirs, {});
+  assert.equal(out.list.length, BUILTIN.length);
+  for (const e of out.list) {
+    assert.equal(e.quarantine, null, `${e.id} quarantined: ${e.quarantine}`);
+    assert.equal(e.external, false);
+    assert.equal(e.enabled, e.defaultEnabled);
+  }
+  for (const ext of BUILTIN) {
+    assert.equal(ext.dir, path.join(HERE, 'builtin', ext.id), `${ext.id} must live in builtin/${ext.id}`);
+  }
+  const ids = BUILTIN.map((e) => e.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('BUILTIN: every directory under builtin/ is registered', () => {
+  const root = path.join(HERE, 'builtin');
+  const dirs = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [];
+  assert.deepEqual([...dirs].sort(), BUILTIN.map((e) => e.id).sort());
 });
 
 test('BUILTIN: no collisions with the core tool/handler registries, and every graph key is unreserved', () => {
@@ -941,4 +948,50 @@ test('a client-only capability is accepted in requires and rides the announcemen
   rejects(manifest({ requires: ['cards:teleport'] }), /unknown capability "cards:teleport" \(known: .*cards:hideChips/);
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [], requires: ['cards:hideChips'] })] });
   assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', requires: ['cards:hideChips'] }]);
+});
+
+// --- onTaskDelete ---
+
+test('onTaskDelete must be a function', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ onTaskDelete: 'nope' })] });
+  assert.match(out.list[0].quarantine, /onTaskDelete must be a function/);
+});
+
+test('onTaskDelete: each enabled extension is told with its own host, after the call, and a throw is isolated', async () => {
+  const seen = [];
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [
+    manifest({ id: 'a', tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [], onTaskDelete: ({ taskId, host }) => { seen.push(['a', taskId, host.id]); } }),
+    manifest({ id: 'b', tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [], onTaskDelete: () => { throw new Error('boom'); } }),
+    manifest({ id: 'c', tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [], onTaskDelete: async ({ taskId, host }) => { seen.push(['c', taskId, host.id]); } }),
+  ] });
+  const fire = createTaskDeleteNotifier(loaded, (id) => ({ id }), (...a) => errs.push(a));
+  await fire('t_1');
+  assert.deepEqual(seen, [['a', 't_1', 'a'], ['c', 't_1', 'c']]);
+  assert.equal(errs.length, 1);
+  assert.match(errs[0][0], /\[ext:b\] onTaskDelete failed/);
+});
+
+test('onTaskDelete: disabled and quarantined extensions are never asked, and unregister takes the hook back', async () => {
+  const seen = [];
+  const hook = (id) => ({ taskId }) => { seen.push([id, taskId]); };
+  const base = { tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [] };
+  const loaded = loadExtensions({ cfg: { extensions: { off: false } }, builtin: [
+    manifest({ ...base, id: 'on', onTaskDelete: hook('on') }),
+    manifest({ ...base, id: 'off', onTaskDelete: hook('off') }),
+    manifest({ ...base, id: 'bad', label: '', onTaskDelete: hook('bad') }),
+  ] });
+  const fire = createTaskDeleteNotifier(loaded, (id) => ({ id }));
+  await fire('t_1');
+  assert.deepEqual(seen, [['on', 't_1']]);
+  unregisterExtension(loaded, 'on');
+  await fire('t_2');
+  assert.deepEqual(seen, [['on', 't_1']]);
+});
+
+test('onTaskDelete: an extension with no façade at fire time is skipped', async () => {
+  const seen = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [], onTaskDelete: ({ taskId }) => { seen.push(taskId); } })] });
+  await createTaskDeleteNotifier(loaded, () => undefined)('t_1');
+  assert.deepEqual(seen, []);
 });

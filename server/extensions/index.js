@@ -32,10 +32,14 @@ import { normalizeCodexPolicy } from './codex-policy.js';
 // module, so importing it breaches nothing: the leaf rule is about reaching back
 // into the server core, not about third-party code.
 //
-// Empty for now: this lands the API and its seams, with no feature migrated onto
-// it yet. Nothing here is dead — every consumer below already routes through the
-// loader's (currently empty) lists, so the first manifest is a one-line addition
-// to this array plus its own directory.
+// BUILTIN is the shipped set: each entry is a manifest living in its own
+// directory, `server/extensions/builtin/<id>/` (index.js exporting `dir` from
+// import.meta.url and the manifest as default, an optional `public/` for
+// client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
+// single import plus a row in this array — everything below already routes
+// through the loader's lists, and the invariants over the real set (index.test.js)
+// pick the new entry up without edits. The directory name MUST equal the
+// manifest id, the same rule an installed extension is held to (external.js).
 export const BUILTIN = [];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
@@ -270,6 +274,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.codexPolicy != null && typeof ext.codexPolicy !== 'function') fail(ext, 'codexPolicy must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
+  if (ext.onTaskDelete != null && typeof ext.onTaskDelete !== 'function') fail(ext, 'onTaskDelete must be a function');
   if (ext.session != null) {
     if (typeof ext.session !== 'object') fail(ext, 'session must be an object of hooks');
     for (const [k, fn] of Object.entries(ext.session)) {
@@ -406,6 +411,7 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     graphContributors: [],
     sessionHooks: Object.fromEntries(SESSION_HOOKS.map((k) => [k, []])),
     skillGates: [],
+    taskDeleteHooks: [],
     codexPolicies: [],
     toolFilters: [],
     sweeps: [],
@@ -593,6 +599,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
+  if (ext.onTaskDelete) out.taskDeleteHooks.push({ id: ext.id, fn: ext.onTaskDelete });
   for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
   for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
   if (ext.dir) out.dirs[ext.id] = ext.dir;
@@ -676,6 +683,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.sweeps = loaded.sweeps.filter((s) => s.extId !== id);
   loaded.graphContributors = loaded.graphContributors.filter((g) => g.id !== id);
   loaded.skillGates = loaded.skillGates.filter((g) => g.id !== id);
+  loaded.taskDeleteHooks = loaded.taskDeleteHooks.filter((h) => h.id !== id);
   loaded.codexPolicies = loaded.codexPolicies.filter((p) => p.id !== id);
   loaded.toolFilters = loaded.toolFilters.filter((f) => f.id !== id);
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
@@ -749,6 +757,31 @@ export function createSkillGate(ext, hostApiFor = () => undefined, onError = () 
       for (const name of skills) if (!kept.has(name)) out.push(name);
     }
     return out;
+  };
+}
+
+// The `onTaskDelete` fan-out: called by the task delete handler AFTER core has
+// removed the task, with `{ taskId, host }` where `host` is that extension's OWN
+// façade. It exists so an extension keyed by task id (todos, task memory) can
+// drop what it holds for a task that is gone, instead of discovering the orphan
+// on its next read. Hooks are read off the live registry on every call, so a
+// disabled, uninstalled or quarantined extension (unregisterExtension removes its
+// hook) is simply never asked; `hostApiFor(id)` returning nothing skips a hook
+// whose façade has gone in the same window. Sequential and awaited, and ERRORS
+// ARE ISOLATED PER EXTENSION: a throw is logged and the next extension is still
+// told, because a task is already deleted by the time this runs and there is
+// nothing left to abort.
+export function createTaskDeleteNotifier(ext, hostApiFor = () => undefined, onError = () => {}) {
+  return async function fireTaskDelete(taskId) {
+    for (const { id, fn } of [...ext.taskDeleteHooks]) {
+      const host = hostApiFor(id);
+      if (!host) continue;
+      try {
+        await fn({ taskId, host });
+      } catch (err) {
+        onError(`[ext:${id}] onTaskDelete failed`, err);
+      }
+    }
   };
 }
 

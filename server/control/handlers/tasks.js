@@ -119,3 +119,21 @@ export const taskReorderSessionsHandler = {
     await ctx.rebuild();
   },
 };
+
+// Permanently delete a task. Core removes it first (taskStore.deleteTask also
+// unassigns its sessions), then every enabled extension that declares
+// `onTaskDelete` is told — after the fact, errors isolated per extension (see
+// createTaskDeleteNotifier) — so data keyed by the task id can be dropped.
+export const taskDeleteHandler = {
+  type: 'task-delete',
+  async handler(msg, ctx) {
+    const unassigned = ctx.taskStore.deleteTask(msg.taskId);
+    if (!unassigned) {
+      await ctx.rebuild();
+      return;
+    }
+    for (const sid of unassigned) ctx.memoryStore.bindSession(sid, null);
+    await ctx.ext?.fireTaskDelete?.(msg.taskId);
+    await ctx.rebuild();
+  },
+};

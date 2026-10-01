@@ -347,6 +347,24 @@ export class TaskStore {
     return true;
   }
 
+  // Remove a task outright: its entry, its slot in `order`, its session order, and
+  // every assignment pointing at it (those sessions fall back to Ad hoc). Returns
+  // the ids of the sessions it unassigned, or null for an unknown id. Everything
+  // else keyed by task id lives OUTSIDE this store (task memory, extension
+  // data), so the caller announces the deletion to extensions afterwards
+  // (control/handlers/tasks.js -> onTaskDelete) rather than this reaching for them.
+  deleteTask(id) {
+    const at = this.tasks.findIndex((t) => t.id === id);
+    if (at < 0) return null;
+    this.tasks.splice(at, 1);
+    this.order = this.order.filter((x) => x !== id);
+    delete this.sessionOrder[id];
+    const unassigned = Object.entries(this.assignments).filter(([, tid]) => tid === id).map(([sid]) => sid);
+    for (const sid of unassigned) delete this.assignments[sid];
+    this._save();
+    return unassigned;
+  }
+
   // Archive a task in place: stamp archivedAt so the live board (currentOrder in
   // app.js) filters it out. Everything else (assignments,
   // sessionOrder, todos, links, its slot in `order`) stays untouched, so

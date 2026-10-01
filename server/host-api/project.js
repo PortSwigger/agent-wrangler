@@ -63,9 +63,9 @@ export function projectSession(entry, id, { taskId = null } = {}) {
   });
 }
 
-// Same allow-list shape for a task. `todos` and `links` are omitted: both are
-// lists an extension would only want in order to write them back, and neither
-// has a capability method behind it.
+// Same allow-list shape for a task. `links` is omitted: a list an extension
+// would only want in order to write it back, and nothing has a capability
+// method behind it.
 export function projectTask(task, id) {
   const t = task || {};
   return deepFreeze({
