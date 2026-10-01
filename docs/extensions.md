@@ -695,17 +695,64 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the DOM, since the caller has just rendered and `isConnected` would make the
   reconciliation untestable against an element stub. It hangs off
   `wireGridEvents`, the one function BOTH render paths (`renderGrid`,
-  `renderFocusedTile`) already end with. **`BUILTIN` is EMPTY — this lands the
-  API and its seams, with nothing migrated onto it yet** (asserted, so a stray
-  manifest can't register tools and handlers on every install unnoticed), which
-  is also why nothing here is exercised end-to-end by a real feature: the first
-  manifest is the proof. **Migrating a flagged feature (checklist, task-memory,
+  `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
+  extensions (`todos` first; see the builtin entry below). Migrating a flagged feature (checklist, task-memory,
   archive-review) is: manifest + `BUILTIN` row + delete its accessor,
   `set-<x>-enabled` handler and settings def** — never a fresh `if (id === …)`
   rung in `app.js`, since `setExtensionDefs` renders the Extensions tab off
   `graph.extensions`. A retired flag's stored value needs carrying over to
   `extensions.<id>` at that point; there is no migration table yet, because
   nothing has been retired.
+- **Builtin extensions live in `server/extensions/builtin/<id>/` and are registered in
+  `BUILTIN` (`server/extensions/index.js`) — one import and one array row.** The
+  directory name must equal the manifest `id`, `dir` is exported from
+  `import.meta.url`, and `client`/`styles` resolve under the extension's own
+  `public/` (served at `/ext/<id>/`, so a client may import sibling modules there).
+  Shipped skills sit in `<dir>/skills/<name>/SKILL.md`. `index.test.js` asserts the
+  layout, clean loading, no name collisions and the leaf-import rule over whatever
+  `BUILTIN` holds, so a new builtin needs no test edits. **`todos` is the reference
+  builtin**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
+  a shipped skill, a one-time migration from `tasks.json`, and a client that fills
+  `task.body` (below). Disabling it removes the zone, tools and skill and tiles size as
+  if there were no TODOs; `todos.json` is never deleted. The core `tasks.json` keeps
+  its legacy `todos` field as an opaque pass-through for one release (so a downgrade
+  or a failed migration retry still finds it); drop it afterwards.
+- **`onTaskDelete({ taskId, host })` (1.15.0) is a manifest hook for data keyed by
+  task id.** The `task-delete` control handler removes the task from core first
+  (`TaskStore.deleteTask`, which unassigns its sessions), then
+  `ctx.ext.fireTaskDelete` (`createTaskDeleteNotifier`) awaits each enabled
+  extension's hook sequentially with that extension's own façade. Errors are logged
+  and isolated per extension; disabled, uninstalled and quarantined extensions are
+  never asked (unregister removes the hook). **`host.tasks.adhocId`** (under
+  `tasks:read`) is the reserved id of the Unassigned tile (equal to core's `ADHOC`),
+  so nothing hard-codes `'adhoc'`.
+- **`task.body` (1.15.0) is a slot with one host PER TASK TILE, Unassigned included.**
+  `cards.js taskBodyHostHtml` draws `.task-body-ext[data-task-body]` and `app.js
+  mountTaskBodies` reconciles them with `syncHosts` from `wireGridEvents` (the card.pill
+  pattern). The per-host subject is `{ taskId, adhocId, container }`, passed as
+  `mount(el, api, ctx)` and `update(el, ctx, graph)`; `taskId` is the reserved
+  `adhocId` for Unassigned. A contribution may carry `weight(taskId, graph)`:
+  px of tile height, summed by `slots.taskBodyWeight` into `layout.tileSpan`'s
+  `bodyPx`. It runs per tile per layout pass, so it must be synchronous and cheap; a
+  throwing weight counts as 0 and is reported once, NOT removed (unlike mount/update,
+  it runs in a measurement pass). Weight reaches the capped secondary bucket, like
+  snoozed rows. Core cannot know what a body drew, so an extension that fills a tile
+  hides the empty-state hint itself (`.task-body:has(...) .cell-empty-body`).
+  `api.requestBoardRender()` redraws (and re-sizes) the board for content changes.
+- **`api.claimDrag(el)` (1.15.0) is generic drag ownership, usable in any slot.** It
+  sets `[data-ext-drag]` on an extension-owned element and returns an unclaim
+  function (`public/ext-drag.js`). Core's card and tile `dragstart` handlers ignore a
+  drag whose source is inside a claimed element, and one capturing `dragstart`
+  listener in `app.js` records it so the cell `dragover`/`drop` highlight and the grid
+  re-render hold stand aside (`extDragActive`) — dragover/drop carry no record of
+  where a drag began. The extension owns preventDefault for its own targets.
+- **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
+  modal and returns a promise: the `dispatched` ack once the human launches, `null` if
+  the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
+  second call while the first modal is merely open REPLACES it (the first resolves
+  null); while a launch awaits its ack the second call REJECTS, since two acks cannot
+  be told apart. An error reply to a launch whose modal is still open makes it
+  retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default
@@ -757,8 +804,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
   that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
-  **`BUILTIN` stays empty** and its assertion stays: this is API only, and the
-  coverage is test fixtures.
+  
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**
   `register` requires `items`/`cost` in place of `mount`. `slots.menuItems(s,

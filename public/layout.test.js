@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import {
   MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
   MIN_COL_PX, GRID_CHROME_X_PX,
-  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan, tileWeightWithBody,
+  CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
 } from './layout.js';
-import { tileWeight } from './snooze.js';
+import { tileWeight, SNOOZE_DIVIDER_PX, SNOOZE_STRIDE_PX } from './snooze.js';
 
 // A stand-in for app.js's Date.now()-backed phaseOf: a session is asleep iff we
 // tag it so, keeping these tests time-independent.
@@ -458,23 +459,23 @@ function columnHeights(placed, cols) {
   return h;
 }
 
-// The bug this guards against: light secondary content (asleep sessions, todos)
+// The bug this guards against: light secondary content (asleep sessions, extension body rows)
 // used to add its full fractional weight straight into the ceil() that decides
 // row-span, so a handful of it could tip a tile just past a row boundary and
-// cost a whole extra (mostly-empty) grid row. 2 active + 2 snoozed + 2 todos at
+// cost a whole extra (mostly-empty) grid row. 2 active + 2 snoozed + 2 body rows at
 // perRow=2 used to hit the MAX_SPAN cap (3 rows) even though 2 active alone only
 // needs 1 — the secondary content should cost at most one extra row, not two.
-test('tileSpan: 2 active + 2 snoozed + 2 todos does not max out at MAX_SPAN', () => {
+test('tileSpan: 2 active + 2 snoozed + 2 body rows does not max out at MAX_SPAN', () => {
   const perRow = 2;
   const sessions = [
     sess('a1'), sess('a2'),
     sess('s1', { asleep: true, snooze: { until: 1 } }),
     sess('s2', { asleep: true, snooze: { until: 1 } }),
   ];
-  assert.equal(tileSpan(sessions, perRow, 2, phaseOf), 2);
+  assert.equal(tileSpan(sessions, perRow, 2 * 34 + 42, phaseOf), 2);
 });
 
-test('tileSpan: secondary (asleep + todo) weight is capped at one row-equivalent', () => {
+test('tileSpan: secondary (asleep + body) weight is capped at one row-equivalent', () => {
   const perRow = 2;
   const activeOnly = [sess('a1'), sess('a2')];
   // Piling on far more secondary content than one row's worth still only costs
@@ -491,14 +492,14 @@ test('tileSpan: secondary (asleep + todo) weight is capped at one row-equivalent
 
 // childRowCount (a workflow's absorbed workers, or any other nested child —
 // computed in app.js via workflow.js's computeAbsorption, since deciding what's
-// absorbed needs the whole tile's session set) weighs like a todo/snoozed row,
+// absorbed needs the whole tile's session set) weighs like a snoozed row,
 // not a full active card — a task with one orchestrator + several workers should
 // read as roughly "1 card plus a light spine", not "N full cards".
 test('tileSpan: child-session rows weigh light, not full active-card weight', () => {
   const perRow = 2;
   const soloOrch = [sess('orch')];
   assert.equal(tileSpan(soloOrch, perRow, 0, phaseOf, 0), 1);
-  // 2 children add only a fraction of a row, same order of magnitude as 2 todos.
+  // 2 children add only a fraction of a row, same order of magnitude as 2 body rows.
   assert.equal(tileSpan(soloOrch, perRow, 0, phaseOf, 2), 1);
 });
 
@@ -619,7 +620,7 @@ test('tileSpan: a full-view absorbed child weighs at least as much as an equal-c
 });
 
 // Regression: full-view children were originally folded into the SAME capped
-// secondary bucket as light rows/todos/chrome (Math.min(..., perRow)) — enough
+// secondary bucket as light rows/body/chrome (Math.min(..., perRow)) — enough
 // of them alone could saturate that cap and clip a fully-drawn `.session-card`
 // into `.task-body` scroll, exactly the failure this function's own opening
 // invariant says never happens to a session rendered as its own card. A
@@ -633,27 +634,73 @@ test('tileSpan: full-view children are NOT subject to the secondary-weight cap �
   assert.equal(span, MAX_SPAN);
 });
 
-// The fix must not also exempt genuinely light secondary content (todos, plain
-// compact child rows, sub-agent zones) from the cap — only childFullViewCount
-// moves to the uncapped bucket.
-test('tileSpan: ordinary secondary content (todos) is still capped, unaffected by the full-view fix', () => {
+// The fix must not also exempt genuinely light secondary content (extension
+// body, plain compact child rows, sub-agent zones) from the cap.
+test('tileSpan: ordinary secondary content (extension body) is still capped, unaffected by the full-view fix', () => {
   const perRow = 4;
-  const span = tileSpan([sess('parent')], perRow, 50, phaseOf, 0, 0, 0, 0, 0, 0);
+  const span = tileSpan([sess('parent')], perRow, 50 * 34, phaseOf, 0, 0, 0, 0, 0, 0);
   assert.ok(span <= MAX_SPAN);
 });
 
-// Collapsing a task's todo zone (app.js collapsedTodoZones) must shrink the
-// tile the same way collapsing a workflow spine does — todoVisibleCount 0
-// drops the per-row stride while todoCount alone still charges the divider.
-// Enough sessions/todos that the secondary-weight cap pushes the expanded
-// case into a second row while the collapsed case (divider-only overhead)
-// stays within the first — a small todoCount would round to the same ceil()'d
-// span either way and mask the difference tileWeightWithTodos already proves.
-test('tileSpan: a collapsed todo zone (todoVisibleCount 0) shrinks the tile vs. all rows shown', () => {
+// An extension that reports less body weight (a collapsed list) must shrink the
+// tile. Enough sessions/body that the secondary-weight cap pushes the larger
+// case into a second row while the smaller stays within the first.
+test('tileSpan: a smaller bodyPx shrinks the tile vs. a larger one', () => {
   const perRow = 10;
   const sessions = Array.from({ length: 9 }, (_, i) => sess(`s${i}`));
-  const expanded = tileSpan(sessions, perRow, 60, phaseOf, 0, 0, 0, 0, 0, 0, 60);
-  const collapsed = tileSpan(sessions, perRow, 60, phaseOf, 0, 0, 0, 0, 0, 0, 0);
+  const expanded = tileSpan(sessions, perRow, 60 * 34, phaseOf);
+  const collapsed = tileSpan(sessions, perRow, 42, phaseOf);
   assert.ok(collapsed < expanded);
 });
 
+// --- tileWeightWithBody: the px composition ---
+
+test('tileWeightWithBody: no body weight adds nothing over the snooze weight', () => {
+  const base = { activeCount: 2, snoozedCount: 1, cardStride: 80 };
+  assert.equal(tileWeightWithBody(base), tileWeight(base));
+  assert.equal(tileWeightWithBody({ ...base, bodyPx: 0 }), tileWeight(base));
+});
+
+test('tileWeightWithBody: bodyPx adds exactly that many px over the snooze composition, even with no sessions', () => {
+  const stride = 80;
+  const base = { activeCount: 2, snoozedCount: 3, cardStride: stride };
+  const snoozePx = (2 * stride + SNOOZE_DIVIDER_PX + 3 * SNOOZE_STRIDE_PX);
+  assert.equal(tileWeightWithBody({ ...base, bodyPx: 150 }), (snoozePx + 150) / stride);
+  assert.equal(tileWeightWithBody({ activeCount: 0, snoozedCount: 0, cardStride: stride, bodyPx: 110 }), 110 / stride);
+});
+
+test('tileWeightWithBody: N child rows add N*STRIDE px, no divider', () => {
+  const stride = 96;
+  const base = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride });
+  const withChildren = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride, childRowCount: 3 });
+  assert.ok(Math.abs((withChildren - base) * stride - 3 * CHILD_STRIDE_PX) < 1e-9);
+});
+
+test('tileWeightWithBody: N workflow boxes add N*WORKFLOW_BOX_CHROME_PX px, independent of child rows', () => {
+  const stride = 96;
+  const base = tileWeightWithBody({ activeCount: 2, snoozedCount: 0, cardStride: stride });
+  const withBoxes = tileWeightWithBody({ activeCount: 2, snoozedCount: 0, cardStride: stride, workflowBoxCount: 2 });
+  assert.ok(Math.abs((withBoxes - base) * stride - 2 * WORKFLOW_BOX_CHROME_PX) < 1e-9);
+});
+
+test('tileWeightWithBody: N sub-agent rows across Z zones add N*ROW_STRIDE + Z*ZONE_BASE px', () => {
+  const stride = 96;
+  const base = tileWeightWithBody({ activeCount: 2, snoozedCount: 0, cardStride: stride });
+  const withZones = tileWeightWithBody({ activeCount: 2, snoozedCount: 0, cardStride: stride, subagentRowCount: 3, subagentZoneCount: 2 });
+  assert.ok(Math.abs((withZones - base) * stride - (3 * SUBAGENT_ROW_STRIDE_PX + 2 * SUBAGENT_ZONE_BASE_PX)) < 1e-9);
+});
+
+test('tileWeightWithBody: N full-view children add N*cardStride px, not N*CHILD_STRIDE_PX', () => {
+  const stride = 96;
+  const base = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride });
+  const withFullView = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride, childFullViewCount: 2 });
+  assert.ok(Math.abs((withFullView - base) * stride - 2 * stride) < 1e-9);
+});
+
+test('tileSpan: body weight is added to the tile when present, and an absent weight changes nothing', () => {
+  const perRow = 2;
+  const sessions = [sess('a'), sess('b')];
+  assert.equal(tileSpan(sessions, perRow, 0, phaseOf), 1);
+  assert.equal(tileSpan(sessions, perRow, 0, phaseOf), tileSpan(sessions, perRow, undefined, phaseOf));
+  assert.ok(tileSpan(sessions, perRow, 200, phaseOf) > 1);
+});

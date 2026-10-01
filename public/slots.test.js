@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SLOT_NAMES, DISPATCH_ANCHORS, createSlots, namespacedStorage } from './slots.js';
+import { claimDrag, isClaimedDrag } from './ext-drag.js';
 
 // A DOM stub sufficient for the mount/update bookkeeping — no jsdom, matching
 // the rest of public/'s tests.
@@ -33,7 +34,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1014,4 +1015,128 @@ test('registrar.api is the contribution api, gated, and cleaned up by removeExte
   assert.deepEqual([...h.slots.hiddenChips()], []);
   assert.equal(h.slots.settingsChanged('ok', { a: 3 }), 0);
   assert.deepEqual(seen, [{ a: 2 }]);
+});
+
+// ── task.body (1.15.0) ──────────────────────────────────────────────────────
+
+test('task.body: a host per tile, mount gets (el, api, ctx), update gets (el, ctx, graph); a gone tile is torn down by omission', () => {
+  const { document, slots } = harness();
+  const calls = [];
+  slots.register('task.body', 'todos', {
+    id: 'zone',
+    mount: (el, api, ctx) => calls.push(['mount', ctx.taskId]),
+    update: (el, ctx, graph) => calls.push(['update', ctx.taskId, graph.g]),
+    unmount: () => calls.push(['unmount']),
+  });
+  const a = document.make(); const b = document.make(); const adhoc = document.make();
+  const ctxFor = (taskId, host) => ({ taskId, adhocId: 'adhoc', container: host });
+  slots.syncHosts('task.body', [
+    { host: a, session: ctxFor('t1', a) }, { host: b, session: ctxFor('t2', b) }, { host: adhoc, session: ctxFor('adhoc', adhoc) },
+  ], {}, { g: 1 });
+  assert.deepEqual(calls.filter((c) => c[0] === 'mount').map((c) => c[1]), ['t1', 't2', 'adhoc']);
+  assert.deepEqual(calls.filter((c) => c[0] === 'update').map((c) => c[1]), ['t1', 't2', 'adhoc']);
+  assert.equal(a.children.length, 1);
+  slots.syncHosts('task.body', [{ host: a, session: ctxFor('t1', a) }, { host: adhoc, session: ctxFor('adhoc', adhoc) }], {}, { g: 2 });
+  assert.equal(b.children.length, 0);
+  assert.equal(calls.filter((c) => c[0] === 'unmount').length, 1);
+});
+
+test('task.body: taskBodyWeight sums weights, ignores absent/invalid ones, and a throwing weight is 0 and reported once', () => {
+  const { slots, errors } = harness();
+  assert.equal(slots.taskBodyWeight('t1'), 0);
+  slots.register('task.body', 'a', { id: 'w', mount() {}, weight: (id, g) => (id === 't1' ? 30 + g.extra : 0) });
+  slots.register('task.body', 'b', { id: 'w', mount() {}, weight: () => 12 });
+  slots.register('task.body', 'c', { id: 'none', mount() {} });
+  slots.register('task.body', 'd', { id: 'bad', mount() {}, weight: () => NaN });
+  slots.register('task.body', 'e', { id: 'neg', mount() {}, weight: () => -5 });
+  slots.register('task.body', 'f', { id: 'boom', mount() {}, weight: () => { throw new Error('x'); } });
+  assert.equal(slots.taskBodyWeight('t1', { extra: 8 }), 50);
+  assert.equal(slots.taskBodyWeight('t2', { extra: 8 }), 12);
+  assert.equal(errors.filter((e) => /weight failed/.test(e)).length, 1);
+  // The throwing contribution is kept (a measurement pass must not cost it its UI).
+  assert.equal(slots.contributions('task.body').length, 6);
+});
+
+test('task.body: weight must be a function', () => {
+  const { slots } = harness();
+  assert.throws(() => slots.register('task.body', 'x', { id: 'a', mount() {}, weight: 3 }), /weight must be a function/);
+});
+
+test('task.body: a throwing mount removes the contribution, others carry on', () => {
+  const { document, slots, errors } = harness();
+  slots.register('task.body', 'bad', { id: 'a', mount() { throw new Error('no'); } });
+  slots.register('task.body', 'ok', { id: 'a', mount() {} });
+  const host = document.make();
+  slots.syncHosts('task.body', [{ host, session: { taskId: 't1', adhocId: 'adhoc', container: host } }], {}, {});
+  assert.equal(slots.contributions('task.body').length, 1);
+  assert.ok(errors.some((e) => /mount failed/.test(e)));
+});
+
+// ── claimDrag / openDispatch / requestBoardRender (1.15.0) ──────────────────
+
+function fakeEl(parent = null, attrs = {}) {
+  const el = {
+    nodeType: 1, parentNode: parent, attrs: { ...attrs },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    closest(sel) {
+      const key = sel.slice(1, -1);
+      for (let n = this; n; n = n.parentNode) if (key in n.attrs) return n;
+      return null;
+    },
+  };
+  return el;
+}
+
+test('claimDrag marks the element, descendants count as claimed, and unclaim restores', () => {
+  const host = fakeEl();
+  const child = fakeEl(host);
+  const other = fakeEl();
+  const unclaim = claimDrag(host, 'x');
+  assert.equal(isClaimedDrag(child), true);
+  assert.equal(isClaimedDrag(host), true);
+  assert.equal(isClaimedDrag(other), false);
+  unclaim();
+  assert.equal(isClaimedDrag(child), false);
+  assert.equal(isClaimedDrag(null), false);
+  assert.doesNotThrow(() => claimDrag(null)());
+});
+
+test('api.claimDrag works from any slot host and is bound to the extension id', () => {
+  const { slots } = harness();
+  let api;
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  const host = harness().document.make();
+  slots.mountInto('panel.section', host, {});
+  const el = fakeEl();
+  api.claimDrag(el);
+  assert.equal(el.attrs['data-ext-drag'], 'ext1');
+});
+
+test('api.openDispatch forwards validated options and resolves with the ack; rejects bad input or an absent base', async () => {
+  const { slots } = harness();
+  let api; const seen = [];
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  const host = harness().document.make();
+  slots.mountInto('panel.section', host, { openDispatchAcked: async (o) => { seen.push(o); return { sessionId: 'S' }; } });
+  assert.deepEqual(await api.openDispatch({ taskId: 't1', intent: 'do', lockTask: true }), { sessionId: 'S' });
+  assert.deepEqual(seen[0], { taskId: 't1', intent: 'do', lockTask: true });
+  await api.openDispatch();
+  assert.deepEqual(seen[1], { taskId: null, intent: '', lockTask: false });
+  await assert.rejects(api.openDispatch({ taskId: 5 }), /taskId must be/);
+  await assert.rejects(api.openDispatch({ intent: 5 }), /intent must be/);
+  const { slots: s2 } = harness();
+  let api2;
+  s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
+  s2.mountInto('panel.section', harness().document.make(), {});
+  await assert.rejects(api2.openDispatch({}), /not available/);
+});
+
+test('api.requestBoardRender calls the base api and tolerates its absence', () => {
+  const { slots } = harness();
+  let api; let n = 0;
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), { requestBoardRender: () => { n += 1; } });
+  api.requestBoardRender();
+  assert.equal(n, 1);
 });

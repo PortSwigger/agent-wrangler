@@ -146,8 +146,9 @@ test('every tool description says this is independent of the agent\'s own planni
 });
 
 test('activeTools drops exactly the four checklist tools when the feature is off', () => {
-  const on = activeTools({ checklist: true }).map((t) => t.name);
-  const off = activeTools({ checklist: false }).map((t) => t.name);
+  const ext = { tools: [], allowedToolNames: [] };
+  const on = activeTools({ checklist: true, ext }).map((t) => t.name);
+  const off = activeTools({ checklist: false, ext }).map((t) => t.name);
   assert.deepEqual(on, TOOLS.map((t) => t.name));
   for (const name of CHECKLIST_TOOLS) {
     assert.ok(on.includes(name), `${name} must be registered when the feature is on`);

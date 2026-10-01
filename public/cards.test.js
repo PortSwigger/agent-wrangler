@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
-  workflowBoxHtml, renderTileCards, snoozedRowHtml, todoRowHtml, todoZoneHtml,
+  workflowBoxHtml, renderTileCards, snoozedRowHtml, taskBodyHostHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml, CORE_CHIPS,
@@ -25,7 +25,6 @@ function ctx(over = {}) {
     cardState: (s) => s.status || 'idle',
     barWord: (s) => (s.managed ? (STATUS_WORDS[s.status] || '?') : 'resume'),
     phaseOf: (s) => (s.snooze && s.snooze.until ? 'asleep' : 'awake-none'),
-    todosFor: () => [],
     ADHOC_ID: 'adhoc',
     isChildFullView: (s) => Boolean(s.childFullView),
     ...over,
@@ -498,62 +497,29 @@ test('snoozedRowHtml: greyed name-only row with a wake button and data-sid', () 
   assert.match(html, /snooze-wake/);
 });
 
-test('todoRowHtml / todoZoneHtml: rows escape text; empty zone is just the anchor', () => {
-  const row = todoRowHtml({ id: 't1', text: '<b>do</b>' }, 'adhoc');
-  assert.match(row, /data-todoid="t1"/);
-  assert.match(row, /&lt;b&gt;do&lt;\/b&gt;/);
-  assert.equal(todoZoneHtml([], 'adhoc'), '<div class="todo-zone" data-todo-key="adhoc"></div>');
-  const zone = todoZoneHtml([{ id: 't1', text: 'x' }], 'adhoc');
-  assert.match(zone, /todo-divider/);
-  assert.match(zone, /data-todoid="t1"/);
-});
-
-test('todoRowHtml exposes a details editor for every TODO and marks described rows', () => {
-  const plain = todoRowHtml({ id: 'td_1', text: 'Plain' }, 'adhoc');
-  const rich = todoRowHtml({ id: 'td_2', text: 'Rich', description: 'Next: test <edge>' }, 'adhoc');
-  assert.match(plain, /todo-details/);
-  assert.doesNotMatch(plain, /has-description/);
-  assert.match(rich, /has-description/);
-  assert.doesNotMatch(rich, /Next: test <edge>/);
-});
-
-test('todoZoneHtml: the toggle pill shows the todo count, open by default (minus icon, "Hide" title)', () => {
-  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc');
-  assert.match(zone, /class="card-tag todo-pill"/);
-  assert.match(zone, />todo 2</);
-  assert.match(zone, /title="Hide TODOs"/);
-  assert.match(zone, /todo-toggle-icon/);
-  assert.match(zone, /data-todoid="t1"/);
-  assert.match(zone, /data-todoid="t2"/);
-});
-
-test('todoZoneHtml: collapsed hides the rows but keeps the pill + count + anchor (plus icon, "Show" title)', () => {
-  const zone = todoZoneHtml([{ id: 't1', text: 'a' }, { id: 't2', text: 'b' }], 'adhoc', true);
-  assert.match(zone, />todo 2</);
-  assert.match(zone, /title="Show TODOs"/);
-  assert.doesNotMatch(zone, /data-todoid/);
-  assert.match(zone, /<div class="todo-zone" data-todo-key="adhoc"><\/div>$/);
+test('taskBodyHostHtml: one empty, escaped host keyed by the tile id', () => {
+  assert.equal(taskBodyHostHtml('adhoc'), '<div class="task-body-ext" data-task-body="adhoc"></div>');
+  assert.match(taskBodyHostHtml('a"b'), /data-task-body="a&quot;b"/);
 });
 
 test('tileHtml: placeholder tile renders a bare placeholder div', () => {
   assert.match(tileHtml({ kind: 'placeholder', col: 0, rowStart: 0, span: 1 }, ctx()), /task-placeholder/);
 });
 
-test('tileHtml: notask tile is the Unassigned cell and reads todos from ADHOC_ID', () => {
-  let askedFor = null;
-  const c = ctx({ todosFor: (k) => { askedFor = k; return []; } });
-  const html = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, c);
-  assert.match(html, /task-cell no-task/);
-  assert.match(html, /Unassigned/);
-  assert.equal(askedFor, 'adhoc');
+test('tileHtml: every tile, Unassigned included, carries a task.body host keyed by its id, after the cards', () => {
+  const notask = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, ctx());
+  assert.match(notask, /task-cell no-task/);
+  assert.match(notask, /Unassigned/);
+  assert.match(notask, /<div class="task-body-ext" data-task-body="adhoc"><\/div>/);
+  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [sess()], task: { id: 'T1', name: 'T', links: [] } };
+  const html = tileHtml(tile, ctx());
+  assert.match(html, /data-task-body="T1"/);
+  assert.ok(html.indexOf('session-card') < html.indexOf('data-task-body'));
 });
 
-test('tileHtml: reads ctx.collapsedTodoZones by the tile\'s todo key to collapse the zone', () => {
-  const tile = { kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } };
-  const c = ctx({ todosFor: () => [{ id: 't1', text: 'x' }], collapsedTodoZones: new Set(['T1']) });
-  const html = tileHtml(tile, c);
-  assert.match(html, /title="Show TODOs"/);
-  assert.doesNotMatch(html, /data-todoid="t1"/);
+test('tileHtml: an empty tile keeps its empty-state hint (extensions hide it themselves)', () => {
+  const html = tileHtml({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } }, ctx());
+  assert.match(html, /cell-empty-body/);
 });
 
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {

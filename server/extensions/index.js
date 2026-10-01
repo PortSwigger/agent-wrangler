@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import todos from './builtin/todos/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -40,7 +41,7 @@ import { normalizeCodexPolicy } from './codex-policy.js';
 // through the loader's lists, and the invariants over the real set (index.test.js)
 // pick the new entry up without edits. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
-export const BUILTIN = [];
+export const BUILTIN = [todos];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,

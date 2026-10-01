@@ -3,7 +3,8 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
-import { todoKeyToTaskId, todoLaunchIntent, tooltipPosition, TOOLTIP_MARGIN_PX, reorderedTodoIds } from './todo.js';
+import { isClaimedDrag } from './ext-drag.js';
+import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -17,7 +18,7 @@ import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actio
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, MEMORY_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
-  CHECK_ICON, SPAWN_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
+  CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
 } from './icons.js';
 import {
@@ -249,7 +250,20 @@ const extApi = {
   setExtSetting: setExtSettingAcked,
   // Backs `api.cards.renderSample`.
   renderSampleCard,
+  // Backs `api.openDispatch`: the dispatch modal as a promise.
+  openDispatchAcked,
+  // Backs `api.requestBoardRender`: the task.body counterpart of
+  // requestPanelRender, for content that changes a tile's size.
+  requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
 };
+
+// api.openDispatch({ taskId, intent, lockTask }): open the dispatch modal as
+// openDispatch does; resolves with the `dispatched` ack once the human launches,
+// null if they cancel or a later call supersedes this one, and rejects when a
+// launch is already awaiting its ack (see dispatch-waiter.js).
+function openDispatchAcked({ taskId = null, intent = '', lockTask = false } = {}) {
+  return dispatchWaiter.open(() => openDispatch(taskId, { ...(intent ? { intent } : {}), lockTask }));
+}
 
 // Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
 const extSettingPending = new Map();
@@ -363,7 +377,8 @@ let parentSessionId = null;
 let wtValidation = null;   // last {ok, repoName, repoRoot, reason} for wtLastCwd
 let wtLastCwd = null;      // cwd wtValidation belongs to (stale once cwd changes)
 let wtPending = false;     // a worktree dispatch is awaiting ack
-let pendingTodoConsume = null; // {taskId, todoId, key} — set by spawnTodo, consumed on 'dispatched'
+// The promise behind api.openDispatch() (dispatch-waiter.js holds the rules).
+const dispatchWaiter = createDispatchWaiter();
 
 // Available agents + their models, replaced by the server's `agents` message.
 // Seeded with the Claude default so the dropdown is correct before that arrives.
@@ -932,38 +947,6 @@ function removePlaceholder() {
   if (placeholderEl && placeholderEl.parentNode) placeholderEl.parentNode.removeChild(placeholderEl);
 }
 
-// TODO reorder drag-and-drop: confined to the task the drag started in — a drop
-// on any other tile's cell never gets `dragover`'s preventDefault, so the browser
-// shows "no-drop" and never fires `drop` there at all; nothing to guard server-side.
-// Same placeholder-slides-through pattern as the session reorder above, its own
-// state so the two drags never interfere.
-let todoDragActive = false;
-let draggedTodoRow = null;
-let todoPlaceholderEl = null;
-function ensureTodoPlaceholder() {
-  if (!todoPlaceholderEl) {
-    todoPlaceholderEl = document.createElement('div');
-    todoPlaceholderEl.className = 'todo-placeholder';
-  }
-  return todoPlaceholderEl;
-}
-function removeTodoPlaceholder() {
-  if (todoPlaceholderEl && todoPlaceholderEl.parentNode) todoPlaceholderEl.parentNode.removeChild(todoPlaceholderEl);
-}
-
-// The todo row the placeholder should sit *before* for a given cursor Y, scoped to
-// direct-child todo rows only (mirrors dragAfterElement, todo-row flavoured — a
-// task-body can hold both session cards and todo rows, and this must never hit-test
-// the former). null means past the last row.
-function todoDragAfterElement(body, y) {
-  const rows = [...body.querySelectorAll(':scope > .todo-row[draggable="true"]:not(.dragging-hidden)')];
-  for (const row of rows) {
-    const rect = row.getBoundingClientRect();
-    if (y < rect.top + rect.height / 2) return row;
-  }
-  return null;
-}
-
 // The card the placeholder should sit *before* for a given cursor Y — the first
 // card whose midpoint is below the cursor; null means past the last card (append
 // to the end). Continuous across cards and the gaps between them, so the
@@ -997,12 +980,11 @@ function gridHidden() {
 // so background re-renders (the ~4s poll, the just-finished timer) don't rebuild
 // the grid and steal focus / abort the drag.
 function gridEditing() {
-  if (dragActive || taskDragActive || todoDragActive) return true;
+  if (dragActive || taskDragActive || extDragActive) return true;
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
-    || a.classList.contains('todo-add-input')
-    || a.classList.contains('todo-text-input')
+    || Boolean(a.closest?.('.task-body-ext'))
     // The checklist's inline input lives in the sidebar, not #grid — but the
     // grid re-render is what steals focus from whatever is focused anywhere, so
     // it has to be listed here like the todo inputs. Same for anything focused
@@ -1011,6 +993,15 @@ function gridEditing() {
     || a.classList.contains('ck-input')
     || Boolean(a.closest?.('#panel-sections'));
 }
+
+// A drag that started inside an element an extension claimed (api.claimDrag,
+// ext-drag.js) belongs to that extension: core's cell dragover/drop highlight and
+// card/tile handlers stand aside for it. Tracked from one capturing listener
+// because dragover/drop carry no record of where the drag began.
+let extDragActive = false;
+document.addEventListener('dragstart', (e) => { extDragActive = isClaimedDrag(e.target); }, true);
+document.addEventListener('dragend', () => { extDragActive = false; }, true);
+document.addEventListener('drop', () => { extDragActive = false; }, true);
 
 // Per-session scratch dirs (sessionsDir/<timestamp>, minted for folderless
 // dispatches and never reused) are throwaway — never suggest one as a folder to
@@ -1142,32 +1133,6 @@ function toggleWorkflowCollapse(sessionId) {
   else collapsedWorkflows.add(sessionId);
   try { localStorage.setItem(COLLAPSED_WF_KEY, JSON.stringify([...collapsedWorkflows])); } catch {}
   if (currentView === 'grid') renderGrid();
-}
-
-// A task's (or the Ad-hoc bucket's) TODO zone, collapsed by the user — keyed on
-// the same todoKey as todosFor (a task id, or ADHOC_ID). Open by default (issue
-// ask), so — unlike subagentShownOverrides, which tracks explicit overrides
-// against a movable global default — this is a plain "collapsed" Set exactly
-// like collapsedWorkflows: absence means open, membership means collapsed, and
-// there is no separate default setting to fall back to.
-const COLLAPSED_TODO_KEY = 'wrangler.collapsedTodoZones';
-const collapsedTodoZones = (() => {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_TODO_KEY)) || []); } catch { return new Set(); }
-})();
-function persistCollapsedTodoZones() {
-  try { localStorage.setItem(COLLAPSED_TODO_KEY, JSON.stringify([...collapsedTodoZones])); } catch {}
-}
-function toggleTodoZoneCollapse(key) {
-  if (collapsedTodoZones.has(key)) collapsedTodoZones.delete(key);
-  else collapsedTodoZones.add(key);
-  persistCollapsedTodoZones();
-  if (currentView === 'grid') renderGrid();
-}
-// Uncollapses a zone without re-rendering — used right before beginTodoAdd
-// injects its inline input, so a TODO typed into a closed zone doesn't vanish
-// back under the divider the moment the add commits and the grid re-renders.
-function expandTodoZone(key) {
-  if (collapsedTodoZones.delete(key)) persistCollapsedTodoZones();
 }
 
 // The set of buckets (task ids, or ADHOC_ID) sorted by last activity rather than the
@@ -1320,8 +1285,8 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones, activitySortedTasks, restoredTaskId,
-    justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID,
+    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
+    justFinished, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, taskMemoryEnabled, now: Date.now(),
@@ -1329,10 +1294,6 @@ function cardCtx() {
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     hiddenChips: slots.hiddenChips(),
   };
-}
-
-function todosFor(bucketId) {
-  return (latestTasks.todos || {})[bucketId] || [];
 }
 
 // The combined display order (task ids + the Ad-hoc sentinel). Falls back to
@@ -1425,7 +1386,6 @@ function renderGrid() {
   }
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
-  const adhocTodoCount = ((latestTasks.todos || {})[ADHOC_ID] || []).length;
   // One tile per id in the stored display order; the Ad-hoc tile is an ordinary,
   // movable member of that order (no longer pinned). Pulled into a closure of
   // `perRow` so the self-consistency refinement below can repack against a
@@ -1435,18 +1395,19 @@ function renderGrid() {
       latestTasks.tasks.map((task) => {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
-        const todoCount = ((latestTasks.todos || {})[task.id] || []).length;
-        const todoVisibleCount = collapsedTodoZones.has(task.id) ? 0 : todoCount;
+        // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
+        // when none is registered, which is also what a disabled one contributes.
+        const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, todoCount, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, todoVisibleCount) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount) }];
       })
     );
     const {
       visible: adhocChildRowCount, absorbed: adhocAbsorbedChildCount, workflowBoxCount: adhocWorkflowBoxCount,
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
-    const adhocTodoVisibleCount = collapsedTodoZones.has(ADHOC_ID) ? 0 : adhocTodoCount;
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocTodoCount, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, adhocTodoVisibleCount) });
+    const adhocBodyPx = slots.taskBodyWeight(ADHOC_ID, latestGraph);
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
     return computeLayout(tiles, columnsForWidth(el));
   }
@@ -1621,11 +1582,26 @@ function mountCardPills(el) {
   slots.syncHosts('card.pill', entries, extApi, latestGraph);
 }
 
+// The `task.body` slot's hosts: one `.task-body-ext` per rendered tile
+// (cards.js taskBodyHostHtml), Unassigned included, reconciled as a SET exactly
+// like the card pills — every host is a fresh element each render, and a tile
+// that has gone is torn down by omission. Each host's subject is its own tile's
+// `{ taskId, adhocId, container }`.
+function mountTaskBodies(el) {
+  const entries = [];
+  for (const host of el.querySelectorAll('.task-body-ext')) {
+    const taskId = host.dataset.taskBody;
+    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host } });
+  }
+  slots.syncHosts('task.body', entries, extApi, latestGraph);
+}
+
 function wireGridEvents(el) {
   // Both render paths (renderGrid and renderFocusedTile) end here, so this is
   // the one place the freshly-built cards' extension pill hosts can be filled
   // without the two sites drifting apart.
   mountCardPills(el);
+  mountTaskBodies(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open
@@ -1709,14 +1685,6 @@ function wireGridEvents(el) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWorkflowCollapse(sid); }
     });
   });
-  // The TODO divider's pill (cards.js todoZoneHtml) folds its rows away (and
-  // back) — a real <button>, so Enter/Space activation comes for free (unlike
-  // .workflow-head above, which is a plain div and needs its own keydown).
-  el.querySelectorAll('.todo-pill').forEach((pill) => {
-    const key = pill.dataset.todoKey;
-    if (!key) return;
-    pill.addEventListener('click', () => toggleTodoZoneCollapse(key));
-  });
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1734,10 +1702,10 @@ function wireGridEvents(el) {
   });
   // Right-click anywhere on a task tile (but not on a card/row/button, which carry
   // their own menus) opens the task menu — a discoverable superset of the header
-  // icon buttons, plus the genuinely new "New TODO".
+  // icon buttons, plus whatever `task.action` extensions add (New TODO, from the todos extension).
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('contextmenu', (e) => {
-      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .todo-row, .workflow-head, button, input, .link-chip')) return;
+      if (e.target.closest('.session-card, .worker-row, .subagent-row, .snoozed-row, .task-body-ext [draggable], .workflow-head, button, input, .link-chip')) return;
       e.preventDefault();
       openTaskMenu(cell, e.clientX, e.clientY);
     });
@@ -1791,8 +1759,8 @@ function closeCardMenu() {
   // can't yank the menu closed mid-display; catch up once things settle. Deferred
   // to a microtask because mountMenu calls closeCardMenu() BEFORE it.run() — an
   // item's own handler runs right after this returns and may still need the
-  // pre-close DOM (New TODO/Rename capture their tile's todoZone/cell and focus a
-  // fresh input into it) or may open a new menu itself (Snooze…). Rendering here
+  // pre-close DOM (Rename, and an extension's New TODO, capture their tile's cell and
+  // focus a fresh input into it) or may open a new menu itself (Snooze…). Rendering here
   // synchronously would yank that DOM out from under it; by the time this
   // microtask runs, gridEditing()/cardMenuEl reflect whatever run() just did.
   queueMicrotask(() => {
@@ -2339,11 +2307,9 @@ export async function restoreTaskWithPrompt(taskId, name) {
 function openTaskMenu(cell, x, y) {
   const isNoTask = cell.dataset.entity === 'no-task';
   const taskId = isNoTask ? null : cell.dataset.taskid;
-  const todoZone = cell.querySelector('.todo-zone');
   const extItems = extTaskMenuItems(taskId, isNoTask);
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
-    { label: 'New TODO', icon: CHECK_ICON, run: () => { if (todoZone) { expandTodoZone(todoZone.dataset.todoKey); beginTodoAdd(todoZone.dataset.todoKey, todoZone); } } },
     ...(!isNoTask ? [
       ...(taskMemoryEnabled ? [{ label: 'Open memory', icon: MEMORY_ICON, run: () => openMemory(taskId) }] : []),
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
@@ -2358,8 +2324,8 @@ function openTaskMenu(cell, x, y) {
 }
 
 // HTML5 drag-and-drop. Sessions carry {kind:'session', sessionId}; task headers
-// carry {kind:'task', taskId} for reordering; todo rows carry {kind:'todo',
-// todoId, fromTaskId} to move across tiles.
+// carry {kind:'task', taskId} for reordering. Drags starting inside an element an
+// extension claimed (api.claimDrag) are the extension's own and ignored here.
 function wireGridDnd(el) {
   // Task reordering is handled on the persistent #grid element, not per-cell:
   // each dragover re-renders the packed board (the swap preview reflows columns),
@@ -2412,6 +2378,7 @@ function wireGridDnd(el) {
   // the card stays snoozed (snooze lives on the mapping entry, untouched by assign).
   el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"]').forEach((card) => {
     card.addEventListener('dragstart', (e) => {
+      if (isClaimedDrag(e.target)) return;
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
@@ -2443,34 +2410,11 @@ function wireGridDnd(el) {
     // Placeholder positioning lives entirely in the cell dragover handler below,
     // which computes the slot from the cursor Y against the card midpoints.
   });
-  // A TODO row reorders within its own task tile only — same hide-source +
-  // slide-placeholder pattern as the session card reorder above, confined by
-  // todoDragActive/draggedTodoRow instead of dragActive/draggedCard.
-  el.querySelectorAll('.todo-row[draggable="true"]').forEach((row) => {
-    row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'todo', todoId: row.dataset.todoid }));
-      draggedTodoRow = row;
-      todoDragActive = true;
-      setTimeout(() => {
-        if (draggedTodoRow !== row || !row.parentNode) return;
-        const ph = ensureTodoPlaceholder();
-        ph.style.height = `${row.offsetHeight}px`;
-        row.parentNode.insertBefore(ph, row);
-        row.classList.add('dragging-hidden');
-      }, 0);
-    });
-    row.addEventListener('dragend', () => {
-      row.classList.remove('dragging-hidden');
-      removeTodoPlaceholder();
-      draggedTodoRow = null;
-      todoDragActive = false;
-      if (currentView === 'grid') renderGrid();
-    });
-  });
   el.querySelectorAll('.task-head[draggable="true"]').forEach((head) => {
     const cell = head.closest('.task-cell');
     const id = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
     head.addEventListener('dragstart', (e) => {
+      if (isClaimedDrag(e.target)) return;
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
@@ -2504,27 +2448,9 @@ function wireGridDnd(el) {
 
   el.querySelectorAll('.task-cell').forEach((cell) => {
     cell.addEventListener('dragover', (e) => {
-      // A TODO drag is confined to the tile it started in: a foreign cell never
-      // calls preventDefault, so the browser shows "no-drop" and drop never fires
-      // there at all — cross-task todo drops need no server-side guard.
-      if (todoDragActive) {
-        if (!cell.contains(draggedTodoRow)) return;
-        e.preventDefault();
-        // The placeholder is only created by dragstart's deferred setTimeout — a
-        // dragover that beats it (vanishingly rare with a real pointer) skips the
-        // preview rather than inserting a not-yet-existent node.
-        const body = todoPlaceholderEl && cell.querySelector('.task-body');
-        if (body) {
-          const after = todoDragAfterElement(body, e.clientY);
-          if (after) body.insertBefore(todoPlaceholderEl, after);
-          else {
-            const zone = body.querySelector('.todo-zone');
-            if (zone) body.insertBefore(todoPlaceholderEl, zone);
-            else body.appendChild(todoPlaceholderEl);
-          }
-        }
-        return;
-      }
+      // An extension-owned drag (api.claimDrag): leave dragover to the extension —
+      // no preventDefault, no drop-target highlight.
+      if (extDragActive) return;
       e.preventDefault();
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
@@ -2548,23 +2474,7 @@ function wireGridDnd(el) {
     });
     cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
     cell.addEventListener('drop', (e) => {
-      if (todoDragActive) {
-        if (!cell.contains(draggedTodoRow)) return;
-        e.preventDefault();
-        const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
-        const beforeEl = todoPlaceholderEl?.nextElementSibling;
-        const beforeId = beforeEl?.classList.contains('todo-row') ? beforeEl.dataset.todoid : null;
-        const current = ((latestTasks.todos || {})[bucket] || []).map((td) => td.id);
-        const order = reorderedTodoIds(current, draggedTodoRow.dataset.todoid, beforeId);
-        // Optimistic update: reorder the actual todo objects to match, then
-        // re-render immediately (the server confirms on the next graph).
-        const todos = latestTasks.todos || (latestTasks.todos = {});
-        const byId = new Map((todos[bucket] || []).map((td) => [td.id, td]));
-        todos[bucket] = order.map((id) => byId.get(id)).filter(Boolean);
-        send({ type: 'todo-reorder', taskId: todoKeyToTaskId(bucket), order });
-        renderGrid();
-        return;
-      }
+      if (extDragActive) return;
       e.preventDefault();
       cell.classList.remove('drop-target');
       let p;
@@ -2600,9 +2510,8 @@ function wireGridDnd(el) {
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
         } else send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
       }
-      // A TODO drop is handled entirely above (todoDragActive) — cross-task never
-      // reaches here at all (see the dragover guard). Task drops are handled by
-      // the #grid drop handler (commits at the current slot wherever the cursor lands).
+      // Task drops are handled by the #grid drop handler (commits at the current
+      // slot wherever the cursor lands).
     });
   });
 }
@@ -2771,30 +2680,6 @@ function wireTaskControls(el) {
   );
   el.querySelectorAll('.task-cell:not(.no-task) .task-name').forEach((n) =>
     n.addEventListener('dblclick', (e) => { e.stopPropagation(); beginTaskRename(n.closest('.task-cell')); })
-  );
-  el.querySelectorAll('.todo-text').forEach((n) => {
-    n.addEventListener('click', (e) => { e.stopPropagation(); beginTodoEdit(n); });
-    n.addEventListener('mouseenter', () => showTodoTooltip(n));
-    n.addEventListener('mouseleave', hideTodoTooltip);
-  });
-  el.querySelectorAll('.todo-spawn').forEach((b) =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); spawnTodo(b); })
-  );
-  el.querySelectorAll('.todo-details').forEach((b) =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); openTodoDetails(b); })
-  );
-  el.querySelectorAll('.todo-del').forEach((b) =>
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const row = b.closest('.todo-row');
-      const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-      send({ type: 'todo-delete', taskId: todoKeyToTaskId(key), todoId });
-      const arr = (latestTasks.todos || {})[key];
-      if (arr) {
-        latestTasks.todos[key] = arr.filter((x) => x.id !== todoId);
-        renderGrid();
-      }
-    })
   );
 }
 
@@ -3069,177 +2954,6 @@ function initChecklist() {
   });
   list.addEventListener('dragend', endChecklistDrag);
   list.addEventListener('scroll', () => syncChecklistScrollHint(list));
-}
-
-// Inject an inline input into the todo zone. Enter/blur commits, Escape cancels.
-function beginTodoAdd(key, zone) {
-  if (!zone) return;
-  // Force the zone visible before injecting — it may be display:none when empty.
-  zone.style.display = 'flex';
-  zone.innerHTML = `<input class="todo-add-input" placeholder="New TODO…">`;
-  const input = zone.querySelector('.todo-add-input');
-  input.focus();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    const text = input.value.trim();
-    if (save && text) {
-      send({ type: 'todo-add', taskId: todoKeyToTaskId(key), text });
-      latestTasks.todos = latestTasks.todos || {};
-      (latestTasks.todos[key] || (latestTasks.todos[key] = [])).push({ id: `tmp_${Date.now()}`, text, createdAt: Date.now() });
-    }
-    renderGrid();
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously re-renders this input away, so a
-    // bubbling Enter would reach the window handler with the input already gone —
-    // the isTypingTarget guard would miss it and a selected "new session" slot
-    // would wrongly open the dispatch modal.
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-  input.addEventListener('click', (e) => e.stopPropagation());
-}
-
-let todoTooltipEl = null;
-function todoTooltip() {
-  if (!todoTooltipEl) {
-    todoTooltipEl = document.createElement('div');
-    todoTooltipEl.className = 'todo-tooltip';
-    document.body.appendChild(todoTooltipEl);
-  }
-  return todoTooltipEl;
-}
-function showTodoTooltip(span) {
-  if (span.scrollWidth <= span.clientWidth) return;
-  const tip = todoTooltip();
-  tip.textContent = span.textContent;
-  const r = span.getBoundingClientRect();
-  tip.style.left = `${Math.round(r.left)}px`;
-  tip.style.maxWidth = `${Math.max(160, Math.min(Math.round(r.width * 1.6), window.innerWidth - 2 * TOOLTIP_MARGIN_PX))}px`;
-  tip.classList.add('show');
-  const t = tip.getBoundingClientRect();
-  const { left, top } = tooltipPosition(r, t, { width: window.innerWidth, height: window.innerHeight });
-  tip.style.left = `${left}px`;
-  tip.style.top = `${top}px`;
-}
-function hideTodoTooltip() {
-  if (todoTooltipEl) todoTooltipEl.classList.remove('show');
-}
-
-// Click-to-edit a todo row's text. Swap span -> input; Enter/blur commits, Escape cancels.
-function beginTodoEdit(span) {
-  const row = span.closest('.todo-row');
-  if (!row) return;
-  hideTodoTooltip();
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const current = span.textContent;
-  span.innerHTML = `<input class="todo-text-input" value="${esc(current)}">`;
-  const input = span.querySelector('.todo-text-input');
-  input.focus();
-  input.select();
-  let settled = false;
-  const finish = (save) => {
-    if (settled) return;
-    settled = true;
-    const text = input.value.trim();
-    if (save && text && text !== current) {
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(key), todoId, text });
-      const td = ((latestTasks.todos || {})[key] || []).find((x) => x.id === todoId);
-      if (td) td.text = text;
-    }
-    renderGrid();
-  };
-  input.addEventListener('keydown', (e) => {
-    // stopPropagation: finish() synchronously re-renders this input away, so a
-    // bubbling Enter would reach the window handler with the input already gone —
-    // the isTypingTarget guard would miss it and a selected "new session" slot
-    // would wrongly open the dispatch modal.
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(true));
-  input.addEventListener('click', (e) => e.stopPropagation());
-}
-
-function openTodoDetails(btn) {
-  const row = btn.closest('.todo-row');
-  if (!row) return;
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const td = todosFor(key).find((item) => item.id === todoId);
-  if (!td) return;
-  const overlay = document.createElement('div');
-  overlay.className = 'todo-editor-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-labelledby', 'todo-editor-heading');
-  overlay.innerHTML = `<div class="modal-card todo-editor-card">
-    <h3 id="todo-editor-heading">Edit TODO</h3>
-    <label for="todo-editor-title">Title</label>
-    <input id="todo-editor-title" autocomplete="off">
-    <label for="todo-editor-description">Description</label>
-    <textarea id="todo-editor-description" rows="10" placeholder="Findings, remaining work, next step…"></textarea>
-    <p class="todo-editor-error" role="alert" hidden></p>
-    <div class="modal-actions"><button class="ghost todo-editor-cancel">Cancel</button><button class="primary todo-editor-save">Save</button></div>
-  </div>`;
-  const title = overlay.querySelector('#todo-editor-title');
-  const description = overlay.querySelector('#todo-editor-description');
-  const error = overlay.querySelector('.todo-editor-error');
-  title.value = td.text;
-  description.value = td.description || '';
-  const close = () => overlay.remove();
-  overlay.querySelector('.todo-editor-cancel').addEventListener('click', close);
-  overlay.querySelector('.todo-editor-save').addEventListener('click', () => {
-    const text = title.value.trim();
-    if (!text) { title.focus(); return; }
-    const nextDescription = description.value.trim();
-    const textChanged = text !== td.text;
-    const descriptionChanged = nextDescription !== (td.description || '');
-    if (textChanged || descriptionChanged) {
-      const currentKey = Object.keys(latestTasks.todos || {}).find((bucket) => todosFor(bucket).some((item) => item.id === todoId));
-      if (!currentKey) {
-        error.textContent = 'This TODO no longer exists.';
-        error.hidden = false;
-        return;
-      }
-      send({ type: 'todo-edit', taskId: todoKeyToTaskId(currentKey), todoId,
-        ...(textChanged ? { text } : {}),
-        ...(descriptionChanged ? { description: nextDescription } : {}) });
-      const latestTodo = todosFor(currentKey).find((item) => item.id === todoId);
-      if (latestTodo) {
-        if (textChanged) latestTodo.text = text;
-        if (descriptionChanged) {
-          if (nextDescription) latestTodo.description = nextDescription;
-          else delete latestTodo.description;
-        }
-      }
-      renderGrid();
-    }
-    close();
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  overlay.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-  });
-  document.body.appendChild(overlay);
-  (td.description ? description : title).focus();
-}
-
-// Spawn a session from a TODO: open the dispatch modal pre-filled with the todo
-// text, task locked to the todo's own bucket. The todo is consumed (deleted) on
-// the 'dispatched' ack — pendingTodoConsume carries it there.
-function spawnTodo(btn) {
-  const row = btn.closest('.todo-row');
-  if (!row) return;
-  const key = row.dataset.todoKey, todoId = row.dataset.todoid;
-  const td = todosFor(key).find((x) => x.id === todoId);
-  if (!td) return;
-  const taskId = todoKeyToTaskId(key);
-  openDispatch(taskId, { intent: todoLaunchIntent(td), lockTask: true });
-  pendingTodoConsume = { taskId, todoId, key };
 }
 
 // Ask the server to create a task; awaitingNewTask makes the new tile open in
@@ -5816,7 +5530,6 @@ function defaultPicker() {
   return { cadence: 'once', at: toDatetimeLocalValue(Date.now() + 3600e3), time: '09:00', weekdaysOnly: false, days: [] };
 }
 function openDispatch(taskId = null, opts = {}) {
-  pendingTodoConsume = null;
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
   openModal({ mode: 'launch', taskId });
@@ -5901,6 +5614,7 @@ function submitDispatch() {
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return;
   send({ type: 'dispatch', ...fields });
+  dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
   if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return; }
@@ -5932,10 +5646,10 @@ function submitSchedule() {
 // the caller decides whether to reopen the panel.
 function closeModal() {
   modal.classList.add('hidden');
+  dispatchWaiter.close({ wasPending: wtPending });
   wtPending = false; setDispatchPending(false);
   modalMode = 'launch'; editingScheduleId = null;
   subagentModalReq = null;
-  pendingTodoConsume = null;
   document.getElementById('m-task').disabled = false;
 }
 // Dismiss (Cancel/Escape): drop back to the Schedules panel when we came from it,
@@ -6638,19 +6352,11 @@ function connect() {
         modal.classList.add('hidden');
         document.getElementById('m-intent').value = '';
       }
-      if (pendingTodoConsume) {
-        const { taskId, todoId, key } = pendingTodoConsume;
-        pendingTodoConsume = null;
-        send({ type: 'todo-delete', taskId, todoId });
-        const arr = (latestTasks.todos || {})[key];
-        if (arr) {
-          latestTasks.todos[key] = arr.filter((td) => td.id !== todoId);
-          renderGrid();
-        }
-      }
+      dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
     else if (msg.type === 'error') {
+      dispatchWaiter.error({ modalOpen: wtPending });
       if (wtPending) {
         wtPending = false; setDispatchPending(false);
         // Workflow mode hides the worktree box, so its message slot is invisible —

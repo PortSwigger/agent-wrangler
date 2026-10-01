@@ -27,7 +27,7 @@ otherwise it behaves exactly as a Claude-only board.
   terminal no height until you open it, and each session remembers whether you left it open. It is
   deliberately separate from the agent's own private planning tool — that stays internal scratch
   work and is never mirrored here. Turn the whole thing off in Settings if you'd rather not have it.
-- **TODOs that carry a handoff** — add a one-line TODO as before, then use its details button to
+- **TODOs that carry a handoff** (the optional, on-by-default `todos` extension; switch it off in Settings → Extensions) — add a one-line TODO as before, then use its details button to
   add a description. Agents can create and edit the same description through MCP. Starting the TODO
   passes both its title and description to the new session. To archive the current session as a TODO,
   use `/agent-skills:archive-to-todo` in Claude Code or invoke the `archive-to-todo` skill in Codex.

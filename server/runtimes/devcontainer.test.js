@@ -64,10 +64,13 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
 test('launchInputs: base = skills + notes + PR-hook (2 files); workflow adds issue-to-pr', () => {
   const base = launchInputs('abc');
   const dests = base.map((i) => i.dest);
-  assert.deepEqual(dests, [
+  // Past the four core inputs come the installed extensions' skill dirs (the
+  // builtin todos extension ships one), namespaced under ext-skills/.
+  assert.deepEqual(dests.slice(0, 4), [
     '/tmp/aw-abc/skills', '/tmp/aw-abc/notes',
     '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
   ]);
+  assert.ok(dests.slice(4).every((d) => d.startsWith('/tmp/aw-abc/ext-skills/')));
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);

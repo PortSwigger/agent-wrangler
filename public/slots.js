@@ -52,7 +52,18 @@
 // contributions mount there (mountInto's `onlyExt`), above the manifest rows.
 // A contribution may carry `save(el)` (may return a Promise), awaited when the
 // dialog's Done is pressed — see savePanels(); Escape closes without it.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel'];
+//
+// `task.body` (1.15.0) has one host PER TASK TILE, the Unassigned tile included
+// (app.js mountTaskBodies, cards.js taskBodyHostHtml), reconciled with syncHosts
+// like `card.pill`. Its per-host subject is `{ taskId, adhocId, container }` —
+// `taskId` is the tile's key (the reserved `adhocId` for Unassigned), `container`
+// the host element — handed to `mount(el, api, ctx)` and `update(el, ctx, graph)`.
+// A contribution may carry `weight(taskId, graph)`: the px of tile height its
+// content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
+// it. It must be cheap and synchronous; a throwing weight counts as 0.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body'];
+
+import { claimDrag } from './ext-drag.js';
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
 // CLIENT_CAPABILITIES) — carried on the announcement and graph.extensions as
@@ -124,6 +135,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const hideReported = new Set();
   // Colliding `card.cost` pairs already reported by costCeiling().
   const costReported = new Set();
+  // `extId:id` of task.body contributions whose weight() already threw.
+  const weightReported = new Set();
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -242,6 +255,22 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
         settings: settingsApi(extId, baseApi),
+        // Mark an element this extension owns so core's board drag handlers
+        // ignore drags that start inside it (ext-drag.js). Returns unclaim.
+        claimDrag: (el) => claimDrag(el, extId),
+        // Open the dispatch modal (1.15.0) and resolve with the `dispatched`
+        // ack, or null when it is cancelled. See app.js openDispatchAcked for
+        // the concurrency rule.
+        openDispatch: (opts = {}) => {
+          if (typeof baseApi.openDispatchAcked !== 'function') return Promise.reject(new Error(`[ext:${extId}] openDispatch is not available`));
+          const o = opts && typeof opts === 'object' ? opts : {};
+          if (o.taskId != null && (typeof o.taskId !== 'string' || !o.taskId)) return Promise.reject(new Error(`[ext:${extId}] openDispatch taskId must be a task id string or null`));
+          if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
+          return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
+        },
+        // Ask the board to re-render (and so re-size its tiles): the
+        // task.body counterpart of requestPanelRender.
+        requestBoardRender: () => { baseApi.requestBoardRender?.(); },
         // Always present (the api is built once), but every call throws unless
         // the manifest's `requires` granted cards:hideChips — see cardsApi.
         cards: cardsApi(extId, baseApi),
@@ -336,7 +365,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // Give `c` an element inside `host`, mounting only if it has none there yet.
   // Returns false when the contribution was dropped (its mount threw), which is
   // the caller's signal to stop feeding it hosts. `sample` hosts never drop.
-  function ensure(slotName, c, host, baseApi, sample = false) {
+  function ensure(slotName, c, host, baseApi, sample = false, subject = null) {
     const existing = c.mounts.get(host);
     if (existing && existing.parentNode === host) return true;
     if (existing) teardownAt(c, host);
@@ -348,7 +377,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     host.appendChild(el);
     c.mounts.set(host, el);
     try {
-      c.mount(el, apiFor(c.extId, baseApi));
+      if (slotName === 'task.body') c.mount(el, apiFor(c.extId, baseApi), subject);
+      else c.mount(el, apiFor(c.extId, baseApi));
     } catch (err) {
       if (sample) { sampleFailed(c, host, 'mount', err); return false; }
       onError(`[ext:${c.extId}] ${c.id} mount failed — contribution removed`, err);
@@ -452,7 +482,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       const keep = new Set(mine.map((e) => e.host));
       for (const host of [...c.mounts.keys()]) if (!keep.has(host)) teardownAt(c, host);
       for (const { host, session, graph, sample } of mine) {
-        if (!ensure(slotName, c, host, baseApi, sample)) { if (sample) continue; break; }
+        if (!ensure(slotName, c, host, baseApi, sample, session)) { if (sample) continue; break; }
         if (withUpdate && !updateAt(slotName, c, host, session, graph, sample)) { if (sample) continue; break; }
       }
     }
@@ -508,6 +538,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
+      if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
@@ -789,6 +820,29 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a
     // contribution before it has a host at all — the view slot's rail button.
     // Both are undefined for the slots that need neither.
+    // Total px of tile height the live `task.body` contributions want for one
+    // tile (`weight(taskId, graph)`, summed). Synchronous and cheap by contract —
+    // it runs per tile per layout pass. A throwing weight counts as 0 and is
+    // reported once per contribution, NOT removed: it runs in a measurement pass,
+    // and a bad number must not cost the extension its UI. Anything that is not a
+    // finite positive number counts as 0.
+    taskBodyWeight(taskId, graph = null) {
+      let total = 0;
+      for (const c of slotList('task.body')) {
+        if (typeof c.weight !== 'function') continue;
+        let w;
+        try {
+          w = c.weight(taskId, graph);
+        } catch (err) {
+          const key = `${c.extId}:${c.id}`;
+          if (!weightReported.has(key)) { weightReported.add(key); onError(`[ext:${c.extId}] ${c.id} weight failed — counted as 0`, err); }
+          continue;
+        }
+        if (Number.isFinite(w) && w > 0) total += w;
+      }
+      return total;
+    },
+
     // The `card.action` items for one card, in registration order, for the
     // board to append to its right-click and Actions menus. Each is
     // `{ label, run, hint?, icon?, danger? }`: `label` and `hint` are TEXT

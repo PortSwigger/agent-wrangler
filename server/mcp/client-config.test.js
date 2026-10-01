@@ -133,5 +133,5 @@ test('allowedToolsArg grants every enabled extension tool, derived from the load
   // And a disabled extension (the loader hands back no names) grants none of
   // them, leaving the core list exactly as it was.
   assert.deepEqual(allowedToolsArg({ checklist: true, ext: NO_EXT }).split(','), names.filter((n) => !ext.allowedToolNames.map(allowedToolName).includes(n)));
-  assert.deepEqual(allowedToolsArg({ checklist: true, ext: loadExtensions({ cfg: {}, builtin: BUILTIN }) }), allowedToolsArg({ checklist: true, ext: NO_EXT }));
+  assert.deepEqual(allowedToolsArg({ checklist: true, ext: loadExtensions({ cfg: { extensions: Object.fromEntries(BUILTIN.map((e) => [e.id, false])) }, builtin: BUILTIN }) }), allowedToolsArg({ checklist: true, ext: NO_EXT }));
 });

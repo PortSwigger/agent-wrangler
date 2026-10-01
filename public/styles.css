@@ -59,7 +59,6 @@
   /* Container-runtime chip hue — teal/cyan, its own role distinct from
      --wt(purple)/automerge(green)/--wf(violet)/--snooze(amber)/--red(needs). */
   --rt:#39c5cf; --rt-fg:#56d4dd;
-  --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
   /* Ink for text sitting ON a filled status bar. Dark theme state colours are
      bright, so the label is near-black; the light theme flips it to white. */
   --bar-on:#0d1117;
@@ -106,7 +105,6 @@ body.light {
   --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
-  --todo: var(--border-muted); --todo-fg: var(--fg-subtle);
   --bar-on:#ffffff;
   --overlay:rgba(0,0,0,0.35);
   --shadow:rgba(0,0,0,0.18);
@@ -1252,9 +1250,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    an inline list, not stray grid cells. */
 #grid.focus-mode .snooze-divider,
 #grid.focus-mode .snoozed-row { grid-column: 1 / -1; }
-#grid.focus-mode .todo-divider,
-#grid.focus-mode .todo-row,
-#grid.focus-mode .todo-zone { grid-column: 1 / -1; }
+/* A task.body host (an extension's rows) spans the full width too. */
+#grid.focus-mode .task-body-ext { grid-column: 1 / -1; }
 /* Bottom switcher strip: one-click jump to another task without leaving focus.
    Wraps onto multiple rows, scrolling once it exceeds tray-pills' max-height. */
 .focus-switcher {
@@ -1493,7 +1490,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   .team-row.working .team-dot { animation: none; }
 }
 /* Sub-agents attach to a card (and, identically, the panel — see app.js renderPanel)
-   as a zone: a faint divider (mirrors .todo-divider, robot icon instead of the todo
+   as a zone: a faint divider (mirrors the snooze divider, robot icon instead of a plain
    zone's plain text pill) followed by plain flat rows — deliberately NOT the
    .worker-row elbow-connector spine used by workflow/child sessions, so a read-only
    artifact reads as a simple list rather than something that could be mistaken for
@@ -1840,76 +1837,6 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .snooze-wake:hover .wake-sun { display: inline-flex; }
 .snooze-wake:hover { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, transparent); }
 
-/* ── TODO zone: below the snoozed rows — a faint divider, dashed compact rows,
-   and a "+ todo" add affordance. Mirrors the snooze block but lighter. ── */
-.todo-divider {
-  display: flex; align-items: center; gap: 8px;
-  margin: 2px 2px 0;
-}
-.todo-divider::before, .todo-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
-/* The collapse toggle itself: a .card-tag pill (same base as every other card
-   chip — subagentPillHtml, model/cost/time chips, the panel's own disclosure
-   toggle) rather than a bare label + a separately-floating count, so the
-   count reads as part of one control instead of adjacent, disconnected text.
-   Colour is the original translucent wash (color: var(--purple) on a 35% tint,
-   not solid) — kept from the pre-pill `.todo-label`, deliberately not the
-   solid `.card-tag.wt` recipe: a solid fill read as too heavy/opaque for a
-   toggle that's open (i.e. visible) most of the time, unlike .wt's one-off
-   worktree marker. Compound selector, like every other .card-tag colour
-   variant, so it isn't shadowed by `.card-tag`'s own same-specificity rule. */
-.card-tag.todo-pill {
-  text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--purple); background: color-mix(in srgb, var(--purple) 35%, transparent);
-  cursor: pointer;
-}
-.card-tag.todo-pill:hover { background: color-mix(in srgb, var(--purple) 45%, transparent); }
-.todo-toggle-icon { display: inline-flex; }
-.todo-row {
-  position: relative; display: flex; align-items: center; gap: 7px;
-  padding: 5px 10px 5px 30px; border-radius: 8px;
-  background: var(--surface); border: 1px solid var(--border-muted);
-  cursor: grab;
-}
-.todo-row:active { cursor: grabbing; }
-/* Shrink-to-content, not flex:1 — so the text cursor only covers the actual
-   glyphs and the rest of the row (the empty space after short text) keeps the
-   row's own grab cursor. Still shrinks below its natural width on overflow
-   (min-width: 0 + flex-shrink), so the ellipsis still kicks in for long text. */
-.todo-row .todo-text { flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
-/* Editing widens back to the full row — the shrink-to-content sizing above is
-   only for the read-only display; the input still wants the whole width. */
-.todo-row .todo-text:has(.todo-text-input) { flex: 1; }
-.todo-details { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
-.todo-details svg { width: 12px; height: 12px; }
-.todo-details.has-description { color: var(--purple); }
-.todo-details:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.todo-editor-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 30; }
-.todo-editor-card textarea { min-height: 180px; line-height: 1.5; }
-.todo-editor-error { color: var(--red-fg); margin: 0; font-size: 0.85em; }
-.todo-editor-error[hidden] { display: none; }
-.todo-text-input, .todo-add-input { width: 100%; box-sizing: border-box; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; outline: none; }
-.todo-tooltip {
-  position: fixed; z-index: 60; display: none; pointer-events: none;
-  font-size: 12px; line-height: 1.4; color: var(--fg);
-  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 5px 8px; box-shadow: 0 4px 16px var(--shadow);
-  white-space: normal; overflow-wrap: anywhere;
-}
-.todo-tooltip.show { display: block; }
-.todo-spawn { position: absolute; left: 6px; width: 16px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; padding: 1px 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
-.todo-spawn svg { width: 13px; height: 13px; }
-.todo-spawn .todo-tick, .todo-spawn .todo-play { display: inline-flex; }
-.todo-spawn .todo-play { display: none; }
-.todo-spawn:hover .todo-tick { display: none; }
-.todo-spawn:hover .todo-play { display: inline-flex; }
-.todo-spawn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-/* The details button pushes both actions to the row's right edge. */
-.todo-del { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: none; color: var(--fg-subtle); cursor: pointer; border-radius: 5px; }
-.todo-del svg { width: 13px; height: 13px; }
-.todo-del:hover { color: var(--danger-strong); background: var(--danger-bg); }
-.todo-zone { display: flex; margin: 2px 2px 0; }
-.todo-zone:empty { display: none; }
-
 /* The detail-header bar now carries a status word (like the card's .card-bar), so
    it throbs via BRIGHTNESS (keeping the word legible) rather than the old opacity
    pulse — reusing the card's bar-throb keyframes so panel and card breathe alike.
@@ -1971,7 +1898,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 /* While reordering, the dragged card is hidden and a single dashed placeholder
    (sized to the card) slides to the slot it would land in. */
-.session-card.dragging-hidden, .snoozed-row.dragging-hidden, .todo-row.dragging-hidden,
+.session-card.dragging-hidden, .snoozed-row.dragging-hidden,
 .workflow-box.dragging-hidden, .child-group.dragging-hidden { display: none; }
 .session-placeholder {
   border: 1px dashed var(--blue);
@@ -1979,14 +1906,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   background: color-mix(in srgb, var(--blue) 10%, transparent);
   flex: 0 0 auto;
 }
-/* Row-sized counterpart for TODO reordering — same dashed-gap language as
-   .session-placeholder, sized to a .todo-row's own height by the drag code. */
-.todo-placeholder {
-  border: 1px dashed var(--blue);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--blue) 10%, transparent);
-  flex: 0 0 auto;
-}
+/* The task.body slot host: one per tile, its children laid out like the other
+   .task-body rows (same 8px rhythm); collapses to nothing when empty. */
+.task-body-ext { display: flex; flex-direction: column; gap: 8px; }
+.task-body-ext:empty { display: none; }
 /* Tile-sized counterpart for task reordering: the dragged tile is pulled from
    the grid and this dashed gap shows where it will land as the board repacks. */
 .task-placeholder {

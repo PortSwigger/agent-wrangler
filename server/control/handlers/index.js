@@ -43,13 +43,6 @@ import {
   checklistRemoveHandler,
   checklistReorderHandler,
 } from './checklist.js';
-import {
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
-} from './todos.js';
 import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
   scheduleCreateHandler,
@@ -120,11 +113,6 @@ export const CONTROL_HANDLERS = [
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
   checklistAddHandler,
   checklistUpdateHandler,
   checklistRemoveHandler,

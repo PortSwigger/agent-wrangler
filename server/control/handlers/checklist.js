@@ -1,5 +1,5 @@
 // Per-session checklist mutators — the human half of a list the launched agent
-// also writes through its own MCP tools. Mirrors todos.js: mutate the store,
+// also writes through its own MCP tools. Mirrors the todos extension handlers: mutate the store,
 // then rebuild so every open board re-renders. Keyed on the CARD ID
 // (msg.sessionId), never liveSessionId. No memory binding — a checklist item has
 // no session-launch side effect.

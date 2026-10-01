@@ -187,8 +187,9 @@ test('BUILTIN: no collisions with the core tool/handler registries, and every gr
   const out = loadExtensions({ cfg: {}, builtin: BUILTIN, coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
   const types = out.handlers.map((h) => h.type);
   assert.equal(new Set(types).size, types.length);
-  const stores = Object.fromEntries(Object.entries(out.stores).map(([k, f]) => [k, f()]));
-  for (const { id, contribute } of out.graphContributors) assertGraphKeys(id, contribute({ stores, graph: {} }));
+  const stores = Object.fromEntries(Object.entries(out.stores).map(([k, f]) => [k, f({ id: k, settings: {}, log() {} })]));
+  const host = { stores, tasks: { adhocId: 'adhoc', list: () => [], get: () => null } };
+  for (const { id, contribute } of out.graphContributors) assertGraphKeys(id, contribute({ host, graph: {} }));
 });
 
 test('BUILTIN: every manifest exports an absolute dir under server/extensions and any client resolves inside its public/', () => {
