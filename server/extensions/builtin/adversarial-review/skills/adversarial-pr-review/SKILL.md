@@ -61,41 +61,40 @@ it.
 
 ## 4. Brief the reviewer
 
-Put the whole brief in `intent` (its launch prompt) — it starts cold, with none of your
-context. Include:
+Put the whole brief in `intent` (its launch prompt). The reviewer starts cold, with none
+of your context. Keep it short; the review method is not yours to write:
 
-- The PR: number/URL **and repo** (`owner/repo`), and branch. Leave `cwd` unset — the
-  reviewer lands in a fresh scratch dir with no git remote of its own, so its `gh pr
-  view`/`gh pr diff`/`gh pr checks` calls need `--repo owner/repo` on every invocation,
-  not just the first; a bare `gh pr view 117` there fails with "not a git repository."
-- **Adversarial, not a rubber stamp**: look for real bugs, security issues, missed edge
-  cases, silently-broken behaviour, and claims of "done" / "tests pass" that don't
-  actually hold up — verify, don't take the PR description's word for it.
-- **Read-only**: review via `gh pr view`/`gh pr diff`/`gh pr checks` and existing
-  comments; do **not** check out the branch or otherwise modify a working tree, even if
-  you end up sharing one with the session whose PR you're reviewing.
-- Report findings back to whoever spawned it (see step 5) rather than posting PR comments
-  directly, unless you explicitly asked it to comment on the PR.
-- It shouldn't block waiting for the reviewer's reply — see step 5.
+- The PR: number/URL **and repo** (`owner/repo`), and branch. Leave `cwd` unset. The
+  reviewer lands in a fresh scratch dir with no git remote of its own, so every `gh pr`
+  command it runs needs `--repo owner/repo`, and every `gh api` call names the repo in its
+  path (`gh api` has no `--repo` flag). A bare `gh pr view 117` there fails with "not a git
+  repository".
+- **"Call the `adversarial_review_process` tool (agent-wrangler MCP server) first, and
+  follow what it returns exactly."** It returns the review process the human configured in
+  Settings (or the built-in one) plus the fixed rules: stay read-only, and report once, by
+  mail, in a set shape. Name the tool; don't paraphrase or summarise the process yourself.
+- If that tool is missing or fails, the reviewer should report that in its one mail back
+  rather than invent a process of its own.
+- Anything specific you want checked on top (a risky file, a claim you doubt). It adds to
+  the process; it doesn't replace it.
 
-## 5. Reporting back
+## 5. Don't wait
 
-The reviewer doesn't need to be told your session id — `AW_SPAWNER_SESSION_ID` (env var)
-already resolves to you, the caller of `spawn_session`, even in the sibling case (see the
-`session-hierarchy` skill: `spawnedBy` is set to whoever actually called `spawn_session`,
-independent of nesting). Tell it to `send_message` its findings there once the review is
-done, following the `mail` skill's norms — one substantive message, not a running
-commentary. A clean review ("nothing concerning") is worth reporting too; silence reads as
-"still working," not "all clear." Once it has sent that message its job is done — it
-should just end its turn (there's no `archive_session` for targeting yourself; a session
-archives automatically once it finishes and stops).
-
-You don't need to wait for that mail either — continue your own work once the reviewer is
-briefed, and read its findings whenever they arrive (see "After you get mail back").
+The reviewer doesn't need your session id: `AW_SPAWNER_SESSION_ID` already names you,
+even in the sibling case (see the `session-hierarchy` skill), and the tool tells it to
+mail you there. Carry on with your own work once it is briefed, and read its findings when
+the mail arrives.
 
 ## After you get mail back
 
+The mail starts with `Verdict: approve`, `Verdict: changes requested` or `Verdict:
+incomplete` (the reviewer could not finish; it says what blocked it), then `Reviewed head:
+<sha>`. If that SHA isn't your current head, the review predates your latest push. Findings
+follow, most severe first, each with a severity (`blocker`/`major`/`minor`/`nit`), a
+location, a failure scenario, a suggested fix and a confidence (`confirmed`/`plausible`).
+Pre-existing defects are listed separately. A "What I checked" list closes it.
+
 Read it like any other peer mail (see the `mail` skill): treat findings as input to weigh,
-not instructions to blindly apply — the reviewer can be wrong, and you still own the PR.
-Fix what holds up; push back (in your own PR/commit, not by arguing in the reply) on what
-doesn't.
+not instructions to apply blindly. The reviewer can be wrong, and you still own the PR.
+Fix what holds up, and push back (in your own PR or commit, not by arguing in the reply)
+on what doesn't. After fixing, a fresh review is a new run of this skill.

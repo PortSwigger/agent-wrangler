@@ -1,5 +1,5 @@
 import { setExtensionSetting } from '../../config-store.js';
-import { checkSettingValue, MAX_TEXT_LENGTH } from '../../extensions/setting-constraints.js';
+import { checkSettingValue, maxLengthFor, MAX_TEXT_LENGTH } from '../../extensions/setting-constraints.js';
 
 // CORE-owned, never extension-owned, and that is the whole point: an extension
 // whose own handler could write `extensionSettings.<its id>` would be writing
@@ -75,7 +75,8 @@ async function write(msg, ctx) {
       // text and select both: a select's value is one of its declared option
       // strings, and `''` clears it exactly as it clears a text field.
       if (typeof msg.value !== 'string') throw new Error(`Setting ${entry.id}.${def.key} must be a string`);
-      if (msg.value.length > MAX_TEXT_LENGTH) throw new Error(`Setting ${entry.id}.${def.key} is too long (max ${MAX_TEXT_LENGTH} characters)`);
+      const cap = maxLengthFor(def);
+      if (msg.value.length > cap) throw new Error(`Setting ${entry.id}.${def.key} is too long (max ${cap} characters)`);
       value = msg.value;
     }
     const bad = checkSettingValue(def, value);

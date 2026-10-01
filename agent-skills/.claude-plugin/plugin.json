@@ -1,6 +1,6 @@
 {
   "name": "agent-skills",
-  "description": "Wrangler-meta skills and commands available to every launched session — mail, spawn/attach helpers, task memory, and cross-provider adversarial PR review.",
+  "description": "Wrangler-meta skills and commands available to every launched session — mail, spawn/attach helpers, task memory, advisor consultations, and session activity.",
   "version": "0.1.0",
   "author": {
     "name": "James Hargreaves"

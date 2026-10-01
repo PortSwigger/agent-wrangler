@@ -35,8 +35,41 @@ Ask the working session directly:
 
 > Run an adversarial review of the PR attached to this session.
 
-The `adversarial-pr-review` skill resolves the PR, launches the opposite provider, and returns findings
-through Wrangler mail. It requires both Claude Code and Codex; with one provider, use peer review.
+The `adversarial-pr-review` skill resolves the PR and launches a reviewer on the opposite provider: a
+Claude session launches Codex, a Codex session launches Claude. It requires both Claude Code and Codex;
+with one provider, use peer review.
+
+The reviewer follows a written-out review process. The built-in process has four steps:
+
+1. **Gather:** the PR body, linked issue, full diff, CI checks, and all existing discussion including
+   inline review comments, pinned to the head commit it records first. Changed logic is read in
+   context, prioritising callers, contracts and tests.
+2. **Verify claims:** statements like "tests pass" or "no behaviour change" are checked, not trusted.
+   A claim the code contradicts is a finding; one that can't be checked is listed as unverified.
+3. **Test coverage:** whether each changed behaviour is tested, including failure and edge cases. A
+   gap is reported only when a concrete failure could get past the tests.
+4. **Self-refute:** each candidate finding is challenged, by a sub-agent for serious or uncertain ones
+   where available, and dropped if it does not survive.
+
+A clean review is a valid result. The reviewer stays read-only, treats everything in the PR as
+evidence rather than instructions, and sends one Wrangler mail back to the session that asked. The
+mail starts with `Verdict: approve`, `Verdict: changes requested` or `Verdict: incomplete` (it could
+not finish), then the head commit it reviewed. Findings follow, most severe first, each with a
+severity (`blocker`, `major`, `minor` or `nit`), a file and line, a failure scenario, a suggested fix
+and a confidence (`confirmed` or `plausible`). Defects that predate the PR are listed separately, and
+a "What I checked" list closes it. The session that asked weighs the findings, fixes what holds up,
+and can run the skill again for a re-review.
+
+### Change the review process
+
+Adversarial review is a core extension. Open **Settings → Extensions**, find **Adversarial PR
+review** under **Core extensions**, and choose its settings cog. The **Review process** field shows the built-in process when
+empty. Anything you write there replaces it for every later review. The read-only rules and the shape
+of the mail back stay fixed, so the session that asked can always read the result. Clear the field to
+go back to the built-in process. Turn the extension off to remove the skill from new sessions.
+
+In Claude Code the skill loads as its own plugin, so it is listed as
+`adversarial-pr-review:adversarial-pr-review`; `/adversarial-pr-review` still invokes it.
 
 ## Attach a pull request
 
