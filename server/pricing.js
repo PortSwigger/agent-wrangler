@@ -56,8 +56,9 @@ export function costUsdByType(totals) {
 
 // OpenAI / Codex pricing — USD per 1M tokens (developers.openai.com/api/docs/pricing,
 // Standard tier, verified 2026-09; gpt-5.6-sol is on promotional pricing).
-// Codex usually bills via a ChatGPT plan, so this yields an
-// *estimated* API-equivalent cost, not real spend; the UI marks it with `~`.
+// These are API list rates. Under API-key auth they approximate the bill (contracts,
+// discounts and later adjustments can still differ); under ChatGPT auth nothing is
+// billed per token, so the same figure is only an API-rate equivalent.
 // Matched by substring, so the more specific row must precede the prefix it
 // extends (gpt-5.4-mini before gpt-5.4). Cached input is 10% of input. Unknown
 // models fall back to the first (flagship) row.
@@ -75,12 +76,69 @@ const OPENAI_TABLE = [
   { match: 'gpt-5.4-mini', input: 0.75, output: 4.5, cacheRead: 0.075 },
   { match: 'gpt-5.4', input: 2.5, output: 15, cacheRead: 0.25, long: { input: 5, output: 22.5, cacheRead: 0.5 } },
 ];
-const OPENAI_DEFAULT = OPENAI_TABLE[0];
+// Rate tables by the date they took effect, newest first. Usage is priced at the
+// table in force at its own timestamp, so adding a dated table reprices nothing
+// before it. `from: null` is the oldest known table, applied to all earlier history.
+const OPENAI_RATE_VERSIONS = [
+  { from: null, rows: OPENAI_TABLE },
+];
 
-function openaiRateFor(model) {
-  if (!model) return OPENAI_DEFAULT;
+// ChatGPT-plan Codex credits per 1M tokens (learn.chatgpt.com/docs/pricing, Standard
+// speed, verified 2026-10-01). Only models the page lists: anything else has no
+// published credit rate and is reported as uncredited rather than guessed. The page
+// gives no USD price per credit; what a credit costs depends on purchase terms.
+const CODEX_CREDIT_TABLE = [
+  { match: 'gpt-6-astra', input: 250, cacheRead: 25, output: 1250 },
+  { match: 'gpt-6.1-sol', input: 50, cacheRead: 2.5, output: 250 },
+  { match: 'gpt-6-sol', input: 50, cacheRead: 5, output: 250 },
+  { match: 'gpt-6-luna', input: 2.5, cacheRead: 0.25, output: 12.5 },
+  { match: 'gpt-5.6-sol', input: 100, cacheRead: 10, output: 500 },
+  { match: 'gpt-5.6-terra', input: 50, cacheRead: 5, output: 300 },
+  { match: 'gpt-5.6-luna', input: 5, cacheRead: 0.5, output: 30 },
+];
+const CODEX_CREDIT_VERSIONS = [
+  { from: null, rows: CODEX_CREDIT_TABLE },
+];
+const STANDARD_TIERS = new Set(['default', 'standard', 'auto']);
+
+function versionAt(versions, ms) {
+  for (const v of versions) {
+    if (v.from == null || (ms != null && ms >= Date.parse(`${v.from}T00:00:00.000Z`))) return v.rows;
+  }
+  return versions[versions.length - 1].rows;
+}
+
+function openaiRateFor(model, ms = null) {
+  const rows = versionAt(OPENAI_RATE_VERSIONS, ms);
+  if (!model) return rows[0];
   const m = model.toLowerCase();
-  return OPENAI_TABLE.find((t) => m.includes(t.match)) || OPENAI_DEFAULT;
+  return rows.find((t) => m.includes(t.match)) || rows[0];
+}
+
+// One ledger delta priced at the rates in force at its own time: API-rate USD split
+// by type, and ChatGPT credits (null when the model or speed has no published rate).
+// Net-new input is input minus cached input; reasoning tokens are already inside
+// output. A request whose prompt passed LONG_CONTEXT_TOKENS is billed long in full.
+export function codexEntryCost(entry) {
+  const d = entry.d || {};
+  const net = Math.max(0, (d.input || 0) - (d.cached || 0));
+  const cached = d.cached || 0;
+  const output = d.output || 0;
+  const r = openaiRateFor(entry.model, entry.ts);
+  const rate = entry.reqIn != null && entry.reqIn > LONG_CONTEXT_TOKENS && r.long ? r.long : r;
+  const usd = {
+    input: (net * rate.input) / 1_000_000,
+    output: (output * rate.output) / 1_000_000,
+    cacheWrite: 0,
+    cacheRead: (cached * rate.cacheRead) / 1_000_000,
+  };
+  let credits = null;
+  const m = (entry.model || '').toLowerCase();
+  const c = m && (!entry.tier || STANDARD_TIERS.has(entry.tier))
+    ? versionAt(CODEX_CREDIT_VERSIONS, entry.ts).find((t) => m.includes(t.match))
+    : null;
+  if (c) credits = (net * c.input + cached * c.cacheRead + output * c.output) / 1_000_000;
+  return { usd: usd.input + usd.output + usd.cacheRead, usdByType: usd, credits };
 }
 
 // Cost of one model's tokens split by type. `t.long` is the share of t's tokens

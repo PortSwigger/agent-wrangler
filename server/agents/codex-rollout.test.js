@@ -80,17 +80,19 @@ test('analyzeCodex prices each request at the model in force when it ran', async
   ];
   fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   const r = await analyzeCodex(uuid, { sessionsDir: root });
-  // Pre-turn_context usage goes to the first model named.
+  // Pre-turn_context usage stays unknown rather than borrowing a later model.
   assert.deepEqual(r.totals, {
-    'gpt-6-sol': { input: 7_000, output: 500, cacheRead: 4_000 },
+    unknown: { input: 1_000, output: 0, cacheRead: 0 },
+    'gpt-6-sol': { input: 6_000, output: 500, cacheRead: 4_000 },
     'gpt-6-luna': { input: 50_000, output: 2_000, cacheRead: 50_000 },
   });
   assert.equal(r.model, 'gpt-6-luna');
+  // Unknown prices at the flagship (gpt-6-sol) row.
   const expected = (7_000 * 2 + 500 * 10 + 4_000 * 0.2 + 50_000 * 0.1 + 2_000 * 0.5 + 50_000 * 0.01) / 1_000_000;
   assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
 });
 
-test('analyzeCodex gives pre-context usage to the first model named, even one with no usage of its own', async () => {
+test('analyzeCodex keeps pre-context usage unknown and charges each later delta to its own model', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
   const day = path.join(root, '2026', '06', '10');
   fs.mkdirSync(day, { recursive: true });
@@ -105,7 +107,8 @@ test('analyzeCodex gives pre-context usage to the first model named, even one wi
   ];
   fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   const r = await analyzeCodex(uuid, { sessionsDir: root });
-  assert.equal(r.totals['gpt-6-sol'].input, 100);
+  assert.equal(r.totals.unknown.input, 100);
+  assert.equal(r.totals['gpt-6-sol'], undefined);
   assert.equal(r.totals['gpt-6-luna'].input, 10);
 });
 
@@ -131,26 +134,10 @@ test('analyzeCodex never double-counts or goes negative when a counter dips acro
   fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   const r = await analyzeCodex(uuid, { sessionsDir: root });
   assert.deepEqual(r.tokens, { input: 400_000, output: 110, cacheWrite: 0, cacheRead: 0 });
-  assert.deepEqual(r.totals['gpt-6-luna'], { input: 0, output: 0, cacheRead: 0 });
-  assert.deepEqual(r.totals['gpt-6-sol'].long, { input: 400_000, output: 110, cacheRead: 0 });
-});
-
-test('analyzeCodex keeps long-context usage within its bucket when input dips as cache rises', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
-  const day = path.join(root, '2026', '06', '10');
-  fs.mkdirSync(day, { recursive: true });
-  const uuid = '55555555-2222-3333-4444-555555555555';
-  const tc = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
-  const lines = [
-    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
-    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
-    tc({ input_tokens: 300_001, cached_input_tokens: 0, output_tokens: 100 }, { input_tokens: 300_001, cached_input_tokens: 0, output_tokens: 100 }),
-    tc({ input_tokens: 200_000, cached_input_tokens: 100_000, output_tokens: 200 }, { input_tokens: 100_000, cached_input_tokens: 100_000, output_tokens: 100 }),
-  ];
-  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  const r = await analyzeCodex(uuid, { sessionsDir: root });
-  const t = r.totals['gpt-6-sol'];
-  for (const k of ['input', 'output', 'cacheRead']) assert.ok(t.long[k] <= t[k], `${k}: long ${t.long[k]} > ${t[k]}`);
+  assert.equal(r.totals['gpt-6-luna'], undefined, 'a dip charges nothing');
+  // Both charged requests had prompts past 272K, so both bill at the long rate.
+  const expected = (300_000 * 4 + 100 * 15 + 100_000 * 4 + 10 * 15) / 1_000_000;
+  assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
 });
 
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
@@ -675,4 +662,46 @@ test('findRollout: ignores files that are not named like a rollout', async () =>
 test('findRollout: a missing sessions dir is null, never a throw', async () => {
   const root = path.join(os.tmpdir(), 'cxr-does-not-exist-', String(Date.now()));
   assert.equal(await findRollout('77777777-7777-7777-7777-777777777777', root), null);
+});
+
+test('analyzeCodex charges a fork only for usage after the history it replayed', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '08', '05');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '019fd1bc-284e-7b22-9c8c-9f5d01078d63';
+  const usage = (i, o) => ({ input_tokens: i, cached_input_tokens: 0, output_tokens: o, total_tokens: i + o });
+  const tc = (ts, total, last) => ({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
+  const at = '2026-08-05T11:43:17.290Z';
+  fs.writeFileSync(path.join(day, `rollout-2026-08-05T12-43-17-${uuid}.jsonl`), [
+    { timestamp: at, type: 'session_meta', payload: { id: uuid, forked_from_id: 'source' } },
+    { timestamp: at, type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(at, usage(50_000, 500), usage(50_000, 500)),
+    { timestamp: '2026-08-05T11:43:26.000Z', type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc('2026-08-05T11:43:40.000Z', usage(60_000, 700), usage(10_000, 200)),
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.deepEqual(r.tokens, { input: 10_000, output: 200, cacheWrite: 0, cacheRead: 0 });
+});
+
+test('analyzeCodex sums every file of a resumed thread, including usage the original made after the branch', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '09', '28');
+  fs.mkdirSync(day, { recursive: true });
+  const thread = '01a0c473-2740-7970-8667-e6f359444905';
+  const resume = '01a0e819-57a8-7823-b332-3a6efe7548d3';
+  const usage = (i, o) => ({ input_tokens: i, cached_input_tokens: 0, output_tokens: o, total_tokens: i + o });
+  const tc = (ord, total, last) => ({ ordinal: ord, timestamp: '2026-09-28T10:00:00.000Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
+  fs.writeFileSync(path.join(day, `rollout-2026-09-28T09-00-00-${thread}.jsonl`), [
+    { ordinal: 0, type: 'session_meta', payload: { id: thread } },
+    { ordinal: 1, type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(2, usage(1_000, 10), usage(1_000, 10)),
+    tc(3, usage(3_000, 30), usage(2_000, 20)),
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  fs.writeFileSync(path.join(day, `rollout-2026-09-28T13-59-30-${thread}_${resume}.jsonl`), [
+    { ordinal: 3, type: 'session_meta', payload: { id: thread, history_base: { thread_id: thread, end_ordinal_exclusive: 3 } } },
+    { ordinal: 4, type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(5, usage(1_500, 15), usage(500, 5)),
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(thread, { sessionsDir: root });
+  assert.deepEqual(r.tokens, { input: 3_500, output: 35, cacheWrite: 0, cacheRead: 0 });
 });

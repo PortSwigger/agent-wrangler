@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellValue, dimensionMap, providerBucket, rankMembers, rankProviderAwareModels, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow } from './usage-data.js';
+import { cellValue, dimensionMap, providerBucket, rankMembers, rankProviderAwareModels, displaySlots, bucketSegments, niceTicks, fmtTokens, fmtUsd, replyMatchesWindow, codexNotes } from './usage-data.js';
 
 const CATS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const OTHER = 'cO';
@@ -162,4 +162,35 @@ test('token/usd formatters', () => {
   assert.equal(fmtTokens(950), '950');
   assert.equal(fmtTokens(1500), '2k');
   assert.equal(fmtTokens(2_400_000), '2.4M');
+});
+
+const zt = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+const codexTotals = (over = {}) => ({ usdByAuth: { chatgpt: 0, apikey: 0, unknown: 0 }, credits: 0, uncreditedTokens: 0, degradedTokens: zt, ...over });
+
+test('codexNotes: ChatGPT-plan dollars are an equivalent with credits, never spend', () => {
+  const notes = codexNotes(codexTotals({ usdByAuth: { chatgpt: 3.5, apikey: 0, unknown: 0 }, credits: 1234.4, uncreditedTokens: 5000 }), null, 'usd');
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].text, 'includes ~$3.50 API-rate equivalent of ChatGPT-plan Codex usage (not billed per token) · ~1,234 credits');
+  assert.doesNotMatch(notes[0].text, /spend/);
+  assert.match(notes[0].title, /no published credit rate/);
+});
+
+test('codexNotes: API-key and unknown-auth dollars are qualified separately', () => {
+  const texts = codexNotes(codexTotals({ usdByAuth: { chatgpt: 0, apikey: 2, unknown: 1 } }), null, 'usd').map((n) => n.text);
+  assert.deepEqual(texts, [
+    'includes ~$2.00 Codex API-key usage at list rates (invoice may differ)',
+    'includes ~$1.00 Codex usage at API rates, auth route unknown (not actual spend)',
+  ]);
+});
+
+test('codexNotes: reconciled Codex tokens carry no estimate note; unreconciled ones do', () => {
+  assert.deepEqual(codexNotes(codexTotals({ usdByAuth: { chatgpt: 5, apikey: 0, unknown: 0 } }), null, 'tokens'), []);
+  const notes = codexNotes(codexTotals({ degradedTokens: { ...zt, input: 1500 } }), null, 'tokens');
+  assert.match(notes[0].text, /Codex tokens that didn't reconcile/);
+});
+
+test('codexNotes: unknown-time tokens are disclosed, and nothing is said for Anthropic only', () => {
+  const health = { unattributedTokens: { ...zt, input: 2000 } };
+  assert.match(codexNotes(codexTotals(), health, 'tokens').at(-1).text, /with no known time aren't shown/);
+  assert.deepEqual(codexNotes(codexTotals({ usdByAuth: { chatgpt: 5, apikey: 0, unknown: 0 } }), health, 'usd', 'anthropic'), []);
 });

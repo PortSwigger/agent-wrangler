@@ -12,7 +12,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | --- | --- |
 | `list_sessions` | List sessions currently on the board, including status, provider, task, working directory, parent, spawner, and context budget. |
 | `get_session_info` | Return the caller's own identity, task, nesting chain, launch lineage, and context budget. |
-| `get_session_cost` | Return the caller's board-card spend, tokens, and sub-agent/advisor breakouts. Codex values are estimates. |
+| `get_session_cost` | Return the caller's board-card spend, tokens, and sub-agent/advisor breakouts. Codex dollars are API-rate estimates, with `costBasis` saying what they mean for the session's sign-in. |
 | `list_tasks` | List active board tasks, session counts, and the best launch folder for each task. |
 | `get_session_activity` | Scan Claude and Codex transcripts for work performed on a local date or date range, including archived sessions. |
 

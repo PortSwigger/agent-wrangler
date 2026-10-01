@@ -125,3 +125,38 @@ export function niceTicks(max) {
   for (let t = 0; t < max - 1e-9; ) { t += step; out.push(t); }
   return out;
 }
+
+const tokenSum = (t = {}) => (t.input || 0) + (t.output || 0) + (t.cacheWrite || 0) + (t.cacheRead || 0);
+
+// What the Codex share of the summary means, as note lines. Two separate questions:
+// Codex TOKENS are exact once its ledger reconciles, so the Tokens view only ever
+// notes the part that failed to; Codex DOLLARS are always a local conversion at API
+// list rates, and under ChatGPT auth only an equivalent — never "spend".
+// `totals` carries usdByAuth / credits / uncreditedTokens / degradedTokens for the
+// selected provider; `health` is the reply's all-time codex block.
+export function codexNotes(totals, health, metric, provider = '') {
+  const notes = [];
+  if (!totals || provider === 'anthropic') return notes;
+  const auth = totals.usdByAuth || {};
+  if (metric === 'usd') {
+    if (auth.chatgpt > 0) {
+      const credits = totals.credits > 0 ? ` · ~${Math.round(totals.credits).toLocaleString('en-US')} credits` : '';
+      const uncredited = totals.uncreditedTokens > 0
+        ? `${fmtTokens(totals.uncreditedTokens)} tokens ran on models with no published credit rate.`
+        : '';
+      notes.push({
+        text: `includes ~${fmtUsd(auth.chatgpt)} API-rate equivalent of ChatGPT-plan Codex usage (not billed per token)${credits}`,
+        title: uncredited,
+      });
+    }
+    if (auth.apikey > 0) notes.push({ text: `includes ~${fmtUsd(auth.apikey)} Codex API-key usage at list rates (invoice may differ)`, title: '' });
+    if (auth.unknown > 0) notes.push({ text: `includes ~${fmtUsd(auth.unknown)} Codex usage at API rates, auth route unknown (not actual spend)`, title: '' });
+  } else if (tokenSum(totals.degradedTokens) > 0) {
+    notes.push({ text: `includes ${fmtTokens(tokenSum(totals.degradedTokens))} Codex tokens that didn't reconcile with Codex's counters — may be incomplete`, title: '' });
+  }
+  const unattributed = tokenSum(health?.unattributedTokens);
+  if (unattributed > 0) {
+    notes.push({ text: `${fmtTokens(unattributed)} Codex tokens with no known time aren't shown on the chart`, title: 'Recorded by Codex before a point the ledger can date: an unexplained starting counter, or a resumed session whose earlier file was never seen.' });
+  }
+  return notes;
+}

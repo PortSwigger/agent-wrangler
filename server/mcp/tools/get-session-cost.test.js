@@ -28,7 +28,7 @@ test('get_session_cost reports the caller\'s own card figures, with sub-agents s
     caller: 'S1',
   });
   assert.deepEqual(out.structuredContent, {
-    sessionId: 'S1', usd: 1.5, estimated: false, subAgentUsd: 0.5, advisorUsd: 0.25,
+    sessionId: 'S1', usd: 1.5, estimated: false, costBasis: 'billed', subAgentUsd: 0.5, advisorUsd: 0.25,
     tokens: { input: 10, output: 20, cacheWrite: 30, cacheRead: 40 },
   });
 });
@@ -36,6 +36,12 @@ test('get_session_cost reports the caller\'s own card figures, with sub-agents s
 test('get_session_cost marks a Codex figure estimated and tolerates an uncosted row', async () => {
   const out = await getSessionCostTool.handler({ deps: deps([{ sessionId: 'S1', agent: 'codex', usd: null }]), caller: 'S1' });
   assert.deepEqual(out.structuredContent, {
-    sessionId: 'S1', usd: null, estimated: true, subAgentUsd: 0, advisorUsd: 0, tokens: null,
+    sessionId: 'S1', usd: null, estimated: true, costBasis: 'api-rate-estimate', subAgentUsd: 0, advisorUsd: 0, tokens: null,
   });
+});
+
+test('get_session_cost names what a Codex figure means for its auth route', async () => {
+  const basis = async (codexAuth) => (await getSessionCostTool.handler({ deps: deps([{ sessionId: 'S1', agent: 'codex', usd: 1, codexAuth }]), caller: 'S1' })).structuredContent.costBasis;
+  assert.equal(await basis('chatgpt'), 'api-rate-equivalent');
+  assert.equal(await basis('apikey'), 'api-list-rate');
 });

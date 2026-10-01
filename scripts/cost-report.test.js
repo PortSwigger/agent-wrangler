@@ -25,7 +25,7 @@ function runReport(month, { dataDir, homeDir }) {
   return JSON.parse(out);
 }
 
-test('attributes Codex spend when createdAt is epoch ms, as mappings.json stores it', () => {
+test('gates Codex usage into the month by checkpoint time and marks its money estimated', () => {
   const dataDir = tmp('aw-cr-data-');
   const homeDir = tmp('aw-cr-home-');
   fs.mkdirSync(path.join(homeDir, '.claude', 'projects'), { recursive: true });
@@ -53,6 +53,9 @@ test('attributes Codex spend when createdAt is epoch ms, as mappings.json stores
   assert.ok(report.totals.estimatedCostIncluded > 0, 'codex is the only estimated source — 0 means it was skipped');
   assert.equal(report.topSessions.length, 1);
   assert.equal(report.topSessions[0].estimated, true);
+  assert.ok(report.totals.codexUsdByAuth.unknown > 0, 'no launch record or plan type: auth unknown, not spend');
+  assert.equal(report.totals.codexUnreconciledSessions, 0);
+  assert.equal(fs.existsSync(path.join(dataDir, 'codex-usage-ledger.jsonl')), false, 'the CLI never writes the server ledger');
 });
 
 test('breaks native Codex sub-agent spend out while retaining it in the parent total', () => {
@@ -64,14 +67,14 @@ test('breaks native Codex sub-agent spend out while retaining it in the parent t
   const parent = '99999999-9999-4999-8999-999999999999';
   const child = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   fs.writeFileSync(path.join(sessionsDir, `rollout-2026-07-11T10-00-00-${parent}.jsonl`), [
-    { type: 'session_meta', payload: { id: parent } },
-    { payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 100 } } } },
+    { timestamp: '2026-07-11T10:00:00.000Z', type: 'session_meta', payload: { id: parent } },
+    { timestamp: '2026-07-11T10:00:01.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:00:05.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 100 } } } },
   ].map((line) => JSON.stringify(line)).join('\n') + '\n');
   fs.writeFileSync(path.join(sessionsDir, `rollout-2026-07-11T10-01-00-${child}.jsonl`), [
-    { type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_path: '/root/inspect', agent_role: 'worker' } },
-    { payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 500, output_tokens: 50 } } } },
+    { timestamp: '2026-07-11T10:01:00.000Z', type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_path: '/root/inspect', agent_role: 'worker' } },
+    { timestamp: '2026-07-11T10:01:01.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:01:05.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 500, output_tokens: 50 } } } },
   ].map((line) => JSON.stringify(line)).join('\n') + '\n');
   fs.writeFileSync(path.join(dataDir, 'mappings.json'), JSON.stringify({ sessions: {
     cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T09:59:00.000Z') },
@@ -86,7 +89,7 @@ test('breaks native Codex sub-agent spend out while retaining it in the parent t
   assert.equal(report.byModel[0].name, 'gpt-5.5-codex');
 });
 
-test('skips a Codex session with no usable createdAt without crashing', () => {
+test('a Codex card with no rollout reports nothing without crashing', () => {
   const dataDir = tmp('aw-cr-data-');
   const homeDir = tmp('aw-cr-home-');
   fs.mkdirSync(path.join(homeDir, '.claude', 'projects'), { recursive: true });
@@ -100,7 +103,7 @@ test('skips a Codex session with no usable createdAt without crashing', () => {
 
   const report = runReport('2026-07', { dataDir, homeDir });
 
-  assert.equal(report.totals.unresolved, 0, 'skipped for lacking a bucketable month, not counted as unresolved');
+  assert.equal(report.totals.unresolved, 0);
   assert.equal(report.totals.estimatedCostIncluded, 0);
   assert.equal(report.topSessions.length, 0);
 });

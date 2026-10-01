@@ -1145,7 +1145,9 @@ async function main() {
   // Keep the Usage dashboard's per-file scan cache populated even if nobody ever opens
   // the panel: Claude Code deletes its transcripts past ~30 days and a costed day only
   // outlives that deletion if it was cached first (usage-report.js
-  // resolveClaudeTranscript). Daily is well inside that window. Unlike prPoll there is
+  // resolveClaudeTranscript). The same scan syncs the Codex usage ledger, so its
+  // first run is also the one-time backfill of every rollout already on disk (with
+  // a sync lock of its own in codex-usage-ledger.js). Daily is well inside that window. Unlike prPoll there is
   // no in-flight guard and none is needed — a sweep overlapping a panel-triggered scan
   // is a no-op by construction (both walk the same mappings, so both build a complete
   // seen-set before the eviction loop). The first run is a few minutes after listen,

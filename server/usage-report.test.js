@@ -333,84 +333,207 @@ test('every scan row names the card it was resolved from, and dedup keeps the su
   assert.deepEqual(scan.sessions.map((r) => r.cardId), ['owner']);
 });
 
-test('attributes Codex spend to its createdAt day and flags it estimated', async () => {
+// Codex rollout lines for the ledger: cumulative token_count checkpoints, each stamped.
+const cxUsage = (input, cached, output) => ({ input_tokens: input, cached_input_tokens: cached, output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output });
+const cxCheckpoint = (ts, total, last, extra = {}) => ({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last }, ...extra } });
+const cxContext = (ts, model, effort = 'high') => ({ timestamp: ts, type: 'turn_context', payload: { model, effort } });
+function cxRollout(dir, name, lines) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return path.join(dir, name);
+}
+
+test('reports Codex usage on the days it happened, not the card createdAt day', async () => {
+  _resetUsageFileCache();
   const d = makeDirs();
   const uuid = '44444444-4444-4444-4444-444444444444';
-  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
-  fs.writeFileSync(roll, [
-    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, cached_input_tokens: 500, output_tokens: 1000 } } } },
-  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T23-50-00-${uuid}.jsonl`, [
+    { timestamp: '2026-07-11T23:50:00.000Z', type: 'session_meta', payload: { id: uuid } },
+    cxContext('2026-07-11T23:50:01.000Z', 'gpt-6-sol'),
+    cxCheckpoint('2026-07-11T23:55:00.000Z', cxUsage(2000, 500, 1000), cxUsage(2000, 500, 1000)),
+    cxCheckpoint('2026-07-12T00:05:00.000Z', cxUsage(5000, 1500, 1200), cxUsage(3000, 1000, 200)),
+  ]);
   writeStores(d.dataDir, { entries: {
-    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: Date.parse('2026-07-01T09:59:00.000Z') },
   } });
 
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  const day1 = r.buckets.find((b) => b.key === '2026-07-11');
+  const day2 = r.buckets.find((b) => b.key === '2026-07-12');
+  assert.deepEqual([day1.total.tokens.input, day1.total.tokens.cacheRead, day1.total.tokens.output], [1500, 500, 1000]);
+  assert.deepEqual([day2.total.tokens.input, day2.total.tokens.cacheRead, day2.total.tokens.output], [2000, 1000, 200]);
+  assert.equal(r.buckets.find((b) => b.key === '2026-07-01').total.usd, 0);
+  // Money is a local conversion; reconciled tokens are not an estimate.
   assert.equal(r.estimatedIncluded, true);
-  const day = r.buckets.find((b) => b.key === '2026-07-11');
-  assert.ok(day, 'codex bucketed at createdAt day');
-  assert.ok(day.total.estimatedUsd > 0);
-  assert.equal(day.total.estimatedUsd, day.total.usd, 'all codex spend is estimated');
+  assert.equal(day1.total.estimatedUsd, day1.total.usd);
+  assert.equal(r.tokensEstimatedIncluded, false);
+  assert.equal(r.codex.degradedSessions, 0);
+  assert.deepEqual(r.dimensions.model.map((m) => m.key), ['gpt-6-sol']);
 });
 
-test('includes native Codex sub-agent spend in the parent bucket and breakout', async () => {
+test('a Codex card with no createdAt is still reported at its usage time', async () => {
+  _resetUsageFileCache();
   const d = makeDirs();
+  const uuid = '55555555-5555-5555-5555-555555555555';
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`, [
+    cxContext('2026-07-11T10:00:00.000Z', 'gpt-5.5'),
+    cxCheckpoint('2026-07-11T10:05:00.000Z', cxUsage(10, 0, 10), cxUsage(10, 0, 10)),
+  ]);
+  writeStores(d.dataDir, { entries: { cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj' } } });
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.buckets.find((b) => b.key === '2026-07-11').total.tokens.input, 10);
+});
+
+function codexFamily(d) {
   const parent = '10101010-1010-1010-1010-101010101010';
   const child = '20202020-2020-2020-2020-202020202020';
-  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${parent}.jsonl`), [
-    { type: 'session_meta', payload: { id: parent } },
-    { type: 'turn_context', payload: { model: 'gpt-5.5-codex' } },
-    { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 100 } } } },
-  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
-  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-01-00-${child}.jsonl`), [
-    { type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_path: '/root/inspect', agent_role: 'worker' } },
-    { type: 'turn_context', payload: { model: 'gpt-5.5-codex' } },
-    { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 500, output_tokens: 50 } } } },
-  ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${parent}.jsonl`, [
+    { timestamp: '2026-07-11T10:00:00.000Z', type: 'session_meta', payload: { id: parent } },
+    cxContext('2026-07-11T10:00:01.000Z', 'gpt-6-sol'),
+    cxCheckpoint('2026-07-11T10:00:05.000Z', cxUsage(1000, 0, 100), cxUsage(1000, 0, 100)),
+  ]);
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-01-00-${child}.jsonl`, [
+    { timestamp: '2026-07-11T10:01:00.000Z', type: 'session_meta', payload: { id: child, parent_thread_id: parent, thread_source: 'subagent', agent_role: 'worker' } },
+    cxContext('2026-07-11T10:01:01.000Z', 'gpt-6-luna'),
+    cxCheckpoint('2026-07-11T10:01:05.000Z', cxUsage(500, 0, 50), cxUsage(500, 0, 50)),
+  ]);
+  return { parent, child };
+}
+
+test('folds native Codex sub-agent usage into its parent, once, even when the child has its own card', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const { parent, child } = codexFamily(d);
   writeStores(d.dataDir, { entries: {
-    cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+    cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj' },
+    kid: { agent: 'codex', liveSessionId: child, cwd: '/work/proj' },
   } });
+
+  const scan = await scanAllDaily(d);
+  assert.deepEqual(scan.sessions.map((s) => s.cardId), ['cx']);
+  const r = rollup(scan, { granularity: 'day', now: NOW });
+  const day = r.buckets.find((b) => b.key === '2026-07-11');
+  assert.equal(day.total.tokens.input, 1500);
+  assert.ok(r.totals.subAgentUsd > 0);
+  assert.ok(r.totals.subAgentUsd < r.totals.usd);
+  assert.deepEqual(Object.keys(day.byModel).sort(), ['gpt-6-luna', 'gpt-6-sol']);
+});
+
+test('Codex history survives deletion of both the rollout and the card mapping', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const { parent } = codexFamily(d);
+  writeStores(d.dataDir, {
+    entries: { cx: { agent: 'codex', liveSessionId: parent, cwd: '/work/proj' } },
+    tasks: [{ id: 't1', name: 'Ship it' }], assignments: { cx: 't1' },
+  });
+  await scanAllDaily(d);
+  fs.rmSync(d.codexSessionsDir, { recursive: true, force: true });
+  writeStores(d.dataDir, { entries: {} });
+  _resetUsageFileCache();
 
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
   const day = r.buckets.find((b) => b.key === '2026-07-11');
   assert.equal(day.total.tokens.input, 1500);
-  assert.ok(r.totals.subAgentUsd > 0);
-  assert.equal(day.total.usd, day.total.estimatedUsd);
+  assert.deepEqual(r.dimensions.task.map((t) => t.name), ['Ship it']);
 });
 
-// mappings.json stores createdAt as epoch ms (every write is Date.now()/launchedAt),
-// not the ISO string the sibling test above happens to use — and Date.parse of a
-// number is NaN, which silently dropped every Codex session from the report.
-test('attributes Codex spend when createdAt is epoch ms, as mappings.json stores it', async () => {
+test('a resumed Codex thread counts both rollout files without the carried-over baseline', async () => {
+  _resetUsageFileCache();
   const d = makeDirs();
-  const uuid = '66666666-6666-4666-8666-666666666666';
-  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
-  fs.writeFileSync(roll, [
-    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, cached_input_tokens: 500, output_tokens: 1000 } } } },
-  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const thread = '30303030-3030-7030-8030-303030303030';
+  const resume = '40404040-4040-7040-8040-404040404040';
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${thread}.jsonl`, [
+    { timestamp: '2026-07-11T10:00:00.000Z', ordinal: 0, type: 'session_meta', payload: { id: thread } },
+    { ...cxContext('2026-07-11T10:00:01.000Z', 'gpt-6-sol'), ordinal: 1 },
+    { ...cxCheckpoint('2026-07-11T10:00:05.000Z', cxUsage(1000, 0, 100), cxUsage(1000, 0, 100)), ordinal: 2 },
+  ]);
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-12T10-00-00-${thread}_${resume}.jsonl`, [
+    { timestamp: '2026-07-12T10:00:00.000Z', ordinal: 3, type: 'session_meta', payload: { id: thread, history_base: { thread_id: thread, end_ordinal_exclusive: 3 } } },
+    { ...cxContext('2026-07-12T10:00:01.000Z', 'gpt-6-sol'), ordinal: 4 },
+    { ...cxCheckpoint('2026-07-12T10:00:05.000Z', cxUsage(1400, 0, 150), cxUsage(400, 0, 50)), ordinal: 5 },
+  ]);
+  writeStores(d.dataDir, { entries: { cx: { agent: 'codex', liveSessionId: thread, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.buckets.find((b) => b.key === '2026-07-11').total.tokens.input, 1000);
+  assert.equal(r.buckets.find((b) => b.key === '2026-07-12').total.tokens.input, 400);
+  assert.equal(r.tokensEstimatedIncluded, false);
+});
+
+test('a Codex thread that fails to reconcile marks its tokens degraded and reports unknown-time usage', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const thread = '50505050-5050-7050-8050-505050505050';
+  const resume = '60606060-6060-7060-8060-606060606060';
+  // Only the resumed file exists: its carried-over baseline has no earlier segment.
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-12T10-00-00-${thread}_${resume}.jsonl`, [
+    { timestamp: '2026-07-12T10:00:00.000Z', ordinal: 3, type: 'session_meta', payload: { id: thread, history_base: { thread_id: thread, end_ordinal_exclusive: 3 } } },
+    { ...cxContext('2026-07-12T10:00:01.000Z', 'gpt-6-sol'), ordinal: 4 },
+    { ...cxCheckpoint('2026-07-12T10:00:05.000Z', cxUsage(1400, 0, 150), cxUsage(400, 0, 50)), ordinal: 5 },
+  ]);
+  writeStores(d.dataDir, { entries: { cx: { agent: 'codex', liveSessionId: thread, cwd: '/work/proj' } } });
+
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.tokensEstimatedIncluded, true);
+  assert.equal(r.codex.degradedSessions, 1);
+  assert.equal(r.codex.unattributedSessions, 1);
+  assert.equal(r.codex.unattributedTokens.input, 1000);
+  assert.equal(r.totals.degradedTokens.input, 400);
+});
+
+test('separates ChatGPT-plan Codex usage (credits) from API-key usage by the auth route at the time', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const plan = '70707070-7070-7070-8070-707070707070';
+  const key = '80808080-8080-7080-8080-808080808080';
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${plan}.jsonl`, [
+    cxContext('2026-07-11T10:00:01.000Z', 'gpt-6-sol'),
+    cxCheckpoint('2026-07-11T10:00:05.000Z', cxUsage(200_000, 0, 0), cxUsage(200_000, 0, 0), { rate_limits: { plan_type: 'business' } }),
+  ]);
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T11-00-00-${key}.jsonl`, [
+    cxContext('2026-07-11T11:00:01.000Z', 'gpt-6-sol'),
+    cxCheckpoint('2026-07-11T11:00:05.000Z', cxUsage(200_000, 0, 0), cxUsage(200_000, 0, 0)),
+  ]);
   writeStores(d.dataDir, { entries: {
-    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: Date.parse('2026-07-11T09:59:00.000Z') },
+    a: { agent: 'codex', liveSessionId: plan, cwd: '/work/proj' },
+    b: { agent: 'codex', liveSessionId: key, cwd: '/work/proj', codexAuthLaunches: [{ at: Date.parse('2026-07-11T10:59:00.000Z'), mode: 'apikey' }] },
   } });
 
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
-  assert.equal(r.estimatedIncluded, true, 'codex is the only estimated source — false means it was skipped');
-  const day = r.buckets.find((b) => b.key === '2026-07-11');
-  assert.ok(day, 'codex bucketed at its createdAt day');
-  assert.ok(day.total.estimatedUsd > 0);
+  assert.ok(Math.abs(r.totals.usdByAuth.chatgpt - 0.4) < 1e-9);
+  assert.ok(Math.abs(r.totals.usdByAuth.apikey - 0.4) < 1e-9);
+  assert.equal(r.totals.usdByAuth.unknown, 0);
+  assert.equal(r.totals.credits, 10, 'only the ChatGPT-plan usage earns credits');
 });
 
-test('skips a Codex session with no usable createdAt without crashing', async () => {
+test('credits are only counted for ChatGPT usage, never unknown-auth usage', async () => {
+  _resetUsageFileCache();
   const d = makeDirs();
-  const uuid = '55555555-5555-5555-5555-555555555555';
-  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
-  fs.writeFileSync(roll, [
-    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10, output_tokens: 10 } } } },
-  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
-  writeStores(d.dataDir, { entries: { cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj' } } });
-
+  const unknown = 'a1a1a1a1-a1a1-7a1a-8a1a-a1a1a1a1a1a1';
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${unknown}.jsonl`, [
+    cxContext('2026-07-11T10:00:01.000Z', 'gpt-6-sol'),
+    cxCheckpoint('2026-07-11T10:00:05.000Z', cxUsage(200_000, 0, 0), cxUsage(200_000, 0, 0)),
+  ]);
+  writeStores(d.dataDir, { entries: { a: { agent: 'codex', liveSessionId: unknown, cwd: '/work/proj' } } });
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
-  assert.equal(r.totals.usd, 0);
+  assert.ok(r.totals.usdByAuth.unknown > 0);
+  assert.equal(r.totals.credits, 0);
+  assert.equal(r.totals.uncreditedTokens, 0);
+});
+
+test('ChatGPT usage on a model with no published credit rate is counted as uncredited, not guessed', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const uuid = '90909090-9090-7090-8090-909090909091';
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`, [
+    cxContext('2026-07-11T10:00:01.000Z', 'gpt-5.5'),
+    cxCheckpoint('2026-07-11T10:00:05.000Z', cxUsage(1000, 0, 100), cxUsage(1000, 0, 100), { rate_limits: { plan_type: 'plus' } }),
+  ]);
+  writeStores(d.dataDir, { entries: { a: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj' } } });
+  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
+  assert.equal(r.totals.credits, 0);
+  assert.equal(r.totals.uncreditedTokens, 1100);
 });
 
 test('slices spend by model, labels ids, and orders models by spend', async () => {
@@ -478,15 +601,15 @@ test('slices by token type: $ uses costUsdByType and sums to the bucket total', 
 });
 
 test('Codex carries a model bucket and estimated per-type spend', async () => {
+  _resetUsageFileCache();
   const d = makeDirs();
   const uuid = '88888888-8888-8888-8888-888888888888';
-  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
-  fs.writeFileSync(roll, [
-    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, cached_input_tokens: 500, output_tokens: 1000 } } } },
-  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  cxRollout(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`, [
+    cxContext('2026-07-11T10:00:00.000Z', 'gpt-5.5-codex'),
+    cxCheckpoint('2026-07-11T10:05:00.000Z', cxUsage(2000, 500, 1000), cxUsage(2000, 500, 1000)),
+  ]);
   writeStores(d.dataDir, { entries: {
-    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
+    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj' },
   } });
 
   const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
@@ -495,31 +618,6 @@ test('Codex carries a model bucket and estimated per-type spend', async () => {
   assert.ok(day.byModel['gpt-5.5-codex'].estimatedUsd > 0, 'codex model spend is flagged estimated');
   const typeSum = ['input', 'output', 'cacheWrite', 'cacheRead'].reduce((a, k) => a + day.byType[k].usd, 0);
   assert.ok(Math.abs(typeSum - day.total.usd) < 1e-9, 'codex $ across types sums to the bucket total');
-});
-
-test('rebuilds stale Codex cache entries so their cost appears in token-type chart segments', async () => {
-  _resetUsageFileCache();
-  const d = makeDirs();
-  const uuid = '89898989-8989-8989-8989-898989898989';
-  const roll = path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${uuid}.jsonl`);
-  fs.writeFileSync(roll, [
-    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
-    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, output_tokens: 1000 } } } },
-  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
-  writeStores(d.dataDir, { entries: {
-    cx: { agent: 'codex', liveSessionId: uuid, cwd: '/work/proj', createdAt: '2026-07-11T09:59:00.000Z' },
-  } });
-
-  await scanAllDaily(d);
-  const cache = readCache(d.dataDir);
-  delete cache.codex[roll].result.costByType;
-  fs.writeFileSync(path.join(d.dataDir, 'usage-scan-cache.json'), JSON.stringify(cache));
-  _resetUsageFileCache();
-
-  const r = await buildUsage({ ...d, granularity: 'day', now: NOW });
-  const day = r.buckets.find((b) => b.key === '2026-07-11');
-  assert.ok(day.byType.input.usd > 0, 'a legacy cache result is rescanned instead of rendering $0 token-type segments');
-  assert.equal(_usageFileCacheStats().misses, 1, 'the missing cost breakdown makes the old cache entry ineligible');
 });
 
 test('provides provider-specific usage for the chart filter', async () => {

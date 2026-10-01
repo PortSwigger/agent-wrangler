@@ -18,7 +18,9 @@ import fsp from 'node:fs/promises';
 import readline from 'node:readline';
 import os from 'node:os';
 import path from 'node:path';
-import { costUsd, costUsdByType, codexCostUsd } from './pricing.js';
+import { costUsd, costUsdByType, codexEntryCost } from './pricing.js';
+import { syncCodexLedger, flushCodexLedger, _resetCodexLedger } from './codex-usage-ledger.js';
+import { codexAuthAt } from './agents/codex-auth.js';
 import { CLAUDE_DIR } from './claude-paths.js';
 import { usageSince } from './transcript-reader.js';
 import { DATA_DIR as DEFAULT_DATA_DIR } from './data-dir.js';
@@ -518,7 +520,6 @@ const USAGE_CACHE_FILE = 'usage-scan-cache.json';
 const STAT_YIELD_EVERY = 100;
 
 let claudeFileCache = null; // Map<absPath, {size, subSig, result}> — result is claudeDaily(file)'s raw {daily, sub, failed}
-let codexFileCache = null; // Map<absPath, {mtimeMs, result}> — result is analyzeCodex(...)'s return
 let usageFileCacheDirty = false; // set on any add/update/evict; gates the disk write so an all-unchanged scan writes nothing
 let usageFileCacheStats = { hits: 0, misses: 0 }; // test seam — real per-file cache effectiveness, not just correctness
 
@@ -531,14 +532,12 @@ function usageCacheFilePath(dataDir) {
 // trusting a stale-shaped result — cheap insurance against a future change to
 // claudeDaily/analyzeCodex's return shape tripping on the very next restart.
 function loadUsageFileCaches(dataDir) {
-  if (claudeFileCache && codexFileCache) return;
+  if (claudeFileCache) return;
   const disk = readJsonOrLoud(usageCacheFilePath(dataDir), USAGE_CACHE_FILE);
   if (disk && READABLE_CACHE_VERSIONS.has(disk.version)) {
     claudeFileCache = new Map(Object.entries(disk.claude || {}));
-    codexFileCache = new Map(Object.entries(disk.codex || {}));
   } else {
     claudeFileCache = new Map();
-    codexFileCache = new Map();
   }
   usageFileCacheDirty = false;
 }
@@ -552,7 +551,6 @@ function persistUsageFileCachesIfDirty(dataDir) {
     writeJsonAtomic(usageCacheFilePath(dataDir), {
       version: USAGE_CACHE_VERSION,
       claude: Object.fromEntries(claudeFileCache),
-      codex: Object.fromEntries(codexFileCache),
     });
   } catch { /* best-effort — a failed write must not break the live dashboard */ }
   usageFileCacheDirty = false;
@@ -563,8 +561,8 @@ function persistUsageFileCachesIfDirty(dataDir) {
 // than just clearing data the lazy-load guard would otherwise skip re-reading.
 export function _resetUsageFileCache() {
   claudeFileCache = null;
-  codexFileCache = null;
   usageFileCacheDirty = false;
+  _resetCodexLedger();
   usageFileCacheStats = { hits: 0, misses: 0 };
 }
 export function _usageFileCacheStats() {
@@ -629,44 +627,156 @@ async function claudeDailyCached(file, since = 0) {
   return result;
 }
 
-// Bump when analyzeCodex's figures change for an unchanged rollout, so cached
-// results are recomputed rather than served stale (2: priced per model segment).
-const CODEX_ANALYSIS_VERSION = 2;
-
-function codexFamilySignature(sessionId, family) {
-  const ids = [sessionId];
-  const seen = new Set(ids);
-  for (let i = 0; i < ids.length; i += 1) {
-    for (const child of family.childrenByParent?.get(ids[i]) || []) {
-      if (!seen.has(child)) { seen.add(child); ids.push(child); }
-    }
-  }
-  return ids.sort().map((id) => {
-    try {
-      const st = fs.statSync(family.files.get(id));
-      return `${id}:${st.size}:${st.mtimeMs}`;
-    } catch {
-      return `${id}:?`;
-    }
-  }).join(',') + `|v${CODEX_ANALYSIS_VERSION}`;
+// ---- Codex: rows from the durable usage ledger -----------------------------
+// Codex usage comes from codex-usage-ledger.js: one raw-token delta per cumulative
+// checkpoint, stamped with its own time, model and effort. Tokens are exact to Codex's
+// counters for a thread whose ledger reconciles; dollars are always a local API-rate
+// conversion (moneyEstimated), and under ChatGPT auth only an equivalent, never spend.
+// Codex moves old rollouts from sessions/ to a sibling archived_sessions/.
+export function codexRootsFor(sessionsDir, archivedDir = null) {
+  if (archivedDir) return [sessionsDir, archivedDir];
+  if (path.basename(sessionsDir) === 'sessions') return [sessionsDir, path.join(path.dirname(sessionsDir), 'archived_sessions')];
+  return [sessionsDir];
 }
 
-async function analyzeCodexCached(analyzeCodex, sessionKey, file, codexSessionsDir, index) {
-  const run = () => analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index }).catch(() => null);
-  const signature = codexFamilySignature(sessionKey, index);
-  if (!signature) return run();
-  const cached = codexFileCache.get(file);
-  if (cached && cached.signature === signature && cached.result?.subAgentUsd != null && cached.result?.costByType) {
-    usageFileCacheStats.hits += 1;
-    return cached.result;
+const blankAuthUsd = () => ({ chatgpt: 0, apikey: 0, unknown: 0 });
+
+
+function codexTokensOf(d) {
+  return {
+    input: Math.max(0, (d.input || 0) - (d.cached || 0)),
+    output: d.output || 0,
+    cacheWrite: d.cacheWrite || 0,
+    cacheRead: d.cached || 0,
+  };
+}
+
+function blankCodexBag() {
+  return {
+    provider: 'openai',
+    usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(),
+    tokens: blankTokens(),
+    byModel: {},
+    costByType: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+    usdByAuth: blankAuthUsd(),
+    credits: 0,
+    uncreditedTokens: 0,
+    tokensEstimated: false,
+  };
+}
+
+function addCodexEntry(bag, e, { sub, auth }) {
+  const cost = codexEntryCost(e);
+  const tokens = codexTokensOf(e.d);
+  bag.usd += cost.usd;
+  bag.estimatedUsd += cost.usd;
+  if (sub) bag.subAgentUsd += cost.usd;
+  addTokens(bag.tokens, tokens);
+  for (const t of TYPES) bag.costByType[t] += cost.usdByType[t] || 0;
+  bag.usdByAuth[auth] += cost.usd;
+  // Credits describe ChatGPT-plan consumption, so only ChatGPT usage gets them.
+  if (auth === 'chatgpt') {
+    if (cost.credits != null) bag.credits += cost.credits;
+    else bag.uncreditedTokens += e.d.total || 0;
   }
-  usageFileCacheStats.misses += 1;
-  const result = await run();
-  if (result && result.usd != null) {
-    codexFileCache.set(file, { signature, result });
-    usageFileCacheDirty = true;
+  const key = e.model || 'unknown';
+  const m = (bag.byModel[key] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
+  m.usd += cost.usd;
+  m.estimatedUsd += cost.usd;
+  addTokens(m.tokens, tokens);
+}
+
+function codexIdsOf(cardId, entry) {
+  return [entry.liveSessionId, cardId, ...(entry.priorLiveSessionIds || [])].filter(Boolean);
+}
+
+// One row per board-attached Codex thread, sub-agent threads folded in. A thread is
+// attached the first time a card is seen owning it, and the attachment is kept in the
+// ledger, so the row survives the card's mapping and the rollout both being deleted.
+export async function codexUsageRows({ dataDir, codexRoots, cards, persist = true }) {
+  const ledger = await syncCodexLedger({ dataDir, roots: codexRoots, persist });
+  const { threads, aliases, children } = ledger.threadIndex();
+
+  const claims = new Map(); // threadId -> { cardId, task, launches, owner }
+  for (const { cardId, entry, task } of cards) {
+    codexIdsOf(cardId, entry).forEach((id, i) => {
+      const th = aliases.get(id);
+      if (!th) return;
+      const claim = { cardId, task, launches: entry.codexAuthLaunches, owner: i === 0 || id === cardId };
+      const cur = claims.get(th);
+      const better = !cur
+        || (claim.owner && !cur.owner)
+        || (!cur.owner && cur.task.key === 'adhoc' && claim.task.key !== 'adhoc');
+      if (better) claims.set(th, claim);
+    });
   }
-  return result;
+  for (const [th, c] of claims) ledger.attach(th, { cardId: c.cardId, task: c.task, launches: c.launches });
+  flushCodexLedger(ledger);
+
+  const attached = ledger.attachments;
+  const ancestorAttached = (th) => {
+    const seen = new Set([th]);
+    for (let p = threads.get(th)?.parent; p && !seen.has(p); p = threads.get(p)?.parent) {
+      if (attached.has(p)) return true;
+      seen.add(p);
+    }
+    return false;
+  };
+  const descendants = (th) => {
+    const out = [];
+    const seen = new Set([th]);
+    const queue = [...(children.get(th) || [])];
+    while (queue.length) {
+      const id = queue.shift();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      queue.push(...(children.get(id) || []));
+    }
+    return out;
+  };
+
+  const rows = [];
+  let failedFiles = 0;
+  for (const [th, att] of attached) {
+    const thread = threads.get(th);
+    if (!thread || ancestorAttached(th)) continue;
+    const claim = claims.get(th);
+    const task = claim?.task || att.task || { key: 'adhoc', name: '(unassigned)' };
+    const launches = claim?.launches || att.launches;
+    const family = [th, ...descendants(th)].map((id) => threads.get(id)).filter(Boolean);
+    const days = {};
+    const unattributed = blankDelta6();
+    const reasons = new Set();
+    for (const member of family) {
+      const health = ledger.threadHealth(member);
+      health.reasons.forEach((r) => reasons.add(r));
+      addDelta6(unattributed, health.unattributed);
+      const sub = member.id !== th;
+      for (const name of member.rollouts) {
+        if (ledger.failed.has(name)) failedFiles += 1;
+        for (const e of ledger.rolloutEntries(name)) {
+          if (e.ts == null) continue;
+          const bag = (days[dayKeyOf(e.ts)] ||= blankCodexBag());
+          addCodexEntry(bag, e, { sub, auth: codexAuthAt(launches, e.ts, e.plan) });
+        }
+      }
+    }
+    const status = reasons.has('mismatch') || reasons.has('resume-base-mismatch') ? 'mismatch'
+      : reasons.size ? 'incomplete' : 'ok';
+    if (status !== 'ok') for (const bag of Object.values(days)) bag.tokensEstimated = true;
+    if (!Object.keys(days).length && !unattributed.total) continue;
+    rows.push({
+      file: null, cardId: claim?.cardId || att.cardId, owner: true, task, days,
+      codex: { thread: th, status, reasons: [...reasons], unattributedTokens: codexTokensOf(unattributed) },
+    });
+  }
+  return { rows, failedFiles };
+}
+
+const blankDelta6 = () => ({ input: 0, cached: 0, output: 0, reasoning: 0, total: 0, cacheWrite: 0 });
+function addDelta6(dest, d) {
+  for (const k of Object.keys(dest)) dest[k] += d[k] || 0;
 }
 
 // ---- the expensive all-history scan (cached by the caller) ----------------
@@ -679,25 +789,17 @@ export async function scanAllDaily({
   dataDir = DEFAULT_DATA_DIR,
   projectsDir = DEFAULT_PROJECTS_DIR,
   codexSessionsDir = DEFAULT_CODEX_SESSIONS_DIR,
+  codexArchivedDir = null,
 } = {}) {
   const mappings = readJson(path.join(dataDir, 'mappings.json'), {});
   const tasks = readJson(path.join(dataDir, 'tasks.json'), {});
   const entries = mappings.sessions || mappings;
   const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
   const assignments = tasks.assignments || {};
-  const codexSessionIds = new Set(Object.entries(entries)
-    .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
-    .map(([cardId, entry]) => entry.liveSessionId || cardId));
   const index = buildClaudeIndex(projectsDir);
   loadUsageFileCaches(dataDir);
 
-  let analyzeCodex = null;
-  let buildRolloutFamilyIndex = null;
-  try { ({ analyzeCodex, buildRolloutFamilyIndex } = await import('./agents/codex-rollout.js')); } catch { /* codex optional */ }
-  // Built once on the first Codex entry and reused for every subsequent one, so the
-  // sessions tree is walked once per scan, not once per Codex id (was O(sessions²)).
-  let codexIndex = null;
-  const codexRolloutIndex = async () => (codexIndex ||= buildRolloutFamilyIndex ? await buildRolloutFamilyIndex(codexSessionsDir) : { files: new Map(), childrenByParent: new Map() });
+  const codexCards = [];
 
   // Files that read/parse partially or not at all — surfaced so the UI can note the
   // total may be understated, rather than a broken transcript vanishing as a silent $0.
@@ -711,7 +813,6 @@ export async function scanAllDaily({
   // deleted transcript, a mapping that's gone) gets evicted below rather than
   // lingering forever.
   const seenClaudeFiles = new Set();
-  const seenCodexFiles = new Set();
   let statTick = 0;
   const maybeYield = async () => { if ((statTick += 1) % STAT_YIELD_EVERY === 0) await new Promise((r) => setImmediate(r)); };
 
@@ -733,53 +834,17 @@ export async function scanAllDaily({
         const owner = entry.liveSessionId === uuid || cardId === uuid;
         raw.push({ file, cardId, owner, task, days });
       }
-    } else if (agent === 'codex' && analyzeCodex) {
-      // Codex rollouts aren't reliably line-stamped for cost, so attribute the whole
-      // (estimated, ChatGPT-plan-equivalent) session to its createdAt day — sub-monthly
-      // Codex is approximate. A session with no usable createdAt is skipped, not crashed.
-      // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
-      // silently drop every Codex session. new Date() takes both that and an ISO string.
-      const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
-      if (!Number.isFinite(created)) continue;
-      const sessionKey = entry.liveSessionId || cardId;
-      const rolloutIndex = await codexRolloutIndex();
-      const parentId = rolloutIndex.metaById?.get(sessionKey)?.parentId;
-      if (parentId && codexSessionIds.has(parentId)) continue;
-      const rolloutFile = rolloutIndex.files.get(sessionKey) || null;
-      if (rolloutFile) seenCodexFiles.add(rolloutFile);
-      const a = rolloutFile
-        ? await analyzeCodexCached(analyzeCodex, sessionKey, rolloutFile, codexSessionsDir, rolloutIndex)
-        : await analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index: rolloutIndex }).catch(() => null);
-      await maybeYield();
-      if (!a || a.usd == null) continue;
-      const tok = a.tokens || blankTokens();
-      const codexTokens = { input: tok.input || 0, output: tok.output || 0, cacheWrite: tok.cacheWrite || 0, cacheRead: tok.cacheRead || 0 };
-      const model = a.model || 'gpt-5.5-codex';
-      const byModel = {};
-      for (const [modelId, modelTotals] of Object.entries(a.totals || { [model]: codexTokens })) {
-        const modelTokens = { input: modelTotals.input || 0, output: modelTotals.output || 0, cacheWrite: 0, cacheRead: modelTotals.cacheRead || 0 };
-        const modelUsd = codexCostUsd({ [modelId]: modelTotals });
-        byModel[modelId] = { usd: modelUsd, estimatedUsd: modelUsd, tokens: modelTokens };
-      }
-      raw.push({
-        file: null, cardId, owner: true, task,
-        days: { [dayKeyOf(created)]: {
-          provider: 'openai',
-          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: a.subAgentUsd || 0, advisorUsd: 0, advisorTokens: blankTokens(),
-          tokens: codexTokens,
-          // Codex $ is estimated, so its per-model and per-type breakdowns are too.
-          byModel,
-          costByType: a.costByType || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
-        } },
-      });
+    } else if (agent === 'codex') {
+      codexCards.push({ cardId, entry, task });
     }
   }
 
+  const codex = await codexUsageRows({ dataDir, codexRoots: codexRootsFor(codexSessionsDir, codexArchivedDir), cards: codexCards });
+  raw.push(...codex.rows);
+  failedFiles += codex.failedFiles;
+
   for (const key of [...claudeFileCache.keys()]) {
     if (!seenClaudeFiles.has(key)) { claudeFileCache.delete(key); usageFileCacheDirty = true; }
-  }
-  for (const key of [...codexFileCache.keys()]) {
-    if (!seenCodexFiles.has(key)) { codexFileCache.delete(key); usageFileCacheDirty = true; }
   }
   persistUsageFileCachesIfDirty(dataDir);
 
@@ -846,7 +911,7 @@ export function rollup(scan, opts = {}) {
   const { start, end, buckets, clamped } = win;
   const blankByType = () => Object.fromEntries(TYPES.map((t) => [t, { usd: 0, tokens: blankTokens() }]));
   const blankUsageBucket = () => ({
-    total: { usd: 0, estimatedUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() },
+    total: { usd: 0, estimatedUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens(), ...blankCodexTotals() },
     byTask: {},
     byModel: {},
     byType: blankByType(),
@@ -861,8 +926,9 @@ export function rollup(scan, opts = {}) {
   const taskSpend = new Map();
   const modelNames = new Map();
   const modelSpend = new Map();
-  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() };
+  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens(), ...blankCodexTotals() };
   let estimatedIncluded = false;
+  const degradedSessions = new Set();
 
   const addBag = (target, task, bag) => {
     const cell = (target.byTask[task.key] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
@@ -879,6 +945,7 @@ export function rollup(scan, opts = {}) {
     target.total.usd += bag.usd; target.total.estimatedUsd += bag.estimatedUsd; addTokens(target.total.tokens, bag.tokens);
     target.total.advisorUsd += bag.advisorUsd || 0;
     addTokens(target.total.advisorTokens, bag.advisorTokens || blankTokens());
+    addCodexTotals(target.total, bag);
   };
 
   for (const s of scan.sessions) {
@@ -904,7 +971,9 @@ export function rollup(scan, opts = {}) {
       totals.advisorUsd += bag.advisorUsd || 0;
       addTokens(totals.advisorTokens, bag.advisorTokens || blankTokens());
       addTokens(totals.tokens, bag.tokens);
+      addCodexTotals(totals, bag);
       if (bag.estimatedUsd > 0) estimatedIncluded = true;
+      if (bag.tokensEstimated) degradedSessions.add(s);
     }
   }
 
@@ -934,9 +1003,40 @@ export function rollup(scan, opts = {}) {
     dimensions,
     tasks: taskDim, // back-compat alias for the Task dimension (dimensions.task)
     totals,
+    // Money: some figure in range is a local conversion (every Codex dollar is).
     estimatedIncluded,
+    // Tokens: only Codex threads whose ledger failed to reconcile or is missing input.
+    tokensEstimatedIncluded: degradedSessions.size > 0,
+    codex: codexHealthOf(scan.sessions, degradedSessions),
     failedFiles: scan.failedFiles || 0,
   };
+}
+
+// Codex-only money and accounting fields, kept beside the shared ones so a Claude bag
+// (which has none of them) adds zero.
+function blankCodexTotals() {
+  return { credits: 0, uncreditedTokens: 0, usdByAuth: blankAuthUsd(), degradedTokens: blankTokens() };
+}
+function addCodexTotals(dest, bag) {
+  if (bag.provider !== 'openai') return;
+  dest.credits += bag.credits || 0;
+  dest.uncreditedTokens += bag.uncreditedTokens || 0;
+  for (const k of Object.keys(dest.usdByAuth)) dest.usdByAuth[k] += bag.usdByAuth?.[k] || 0;
+  if (bag.tokensEstimated) addTokens(dest.degradedTokens, bag.tokens);
+}
+
+// Usage with no known time can't sit in any bucket, so it is reported on its own,
+// across all time, rather than silently left out or dropped on an arbitrary day.
+function codexHealthOf(sessions, degradedInRange) {
+  const unattributedTokens = blankTokens();
+  let unattributedSessions = 0;
+  for (const s of sessions) {
+    const u = s.codex?.unattributedTokens;
+    if (!u || !(u.input || u.output || u.cacheRead || u.cacheWrite)) continue;
+    unattributedSessions += 1;
+    addTokens(unattributedTokens, u);
+  }
+  return { degradedSessions: degradedInRange.size, unattributedSessions, unattributedTokens };
 }
 
 // Convenience: scan (uncached) + rollup. The CLI uses this; the live server caches

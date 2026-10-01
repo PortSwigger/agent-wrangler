@@ -8,7 +8,7 @@
 // textContent — no chart dependency, and task/model text (agent-generated) never
 // goes in via innerHTML (the CodeQL DOM gate).
 import { send } from './app.js';
-import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, rankProviderAwareModels, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow } from './usage-data.js';
+import { fmtUsd, fmtTokens, fmtValue as fmtValueOf, cellValue as cellValueOf, dimensionMap as dimensionMapOf, providerBucket, rankMembers as rankMembersOf, rankProviderAwareModels, displaySlots as displaySlotsOf, bucketSegments as bucketSegmentsOf, niceTicks, replyMatchesWindow, codexNotes } from './usage-data.js';
 import {
   RANGE_PRESETS, DEFAULT_RANGE, resolvePreset, allowedGranularities, coerceGranularity,
   parseStoredRange, serialiseRange,
@@ -307,26 +307,30 @@ function renderSummary() {
   const scope = state.filter ? (members().find((m) => m.key === state.filter)?.name || 'segment') : `all ${sliceLabel}s`;
   sub.textContent = `${metricDef().axis} · ${scope} · ${rangeLabel()}`;
   box.replaceChildren(big, sub);
-  // Codex usage is an estimate — flag it. On $ show the estimated dollar amount; on
-  // token metrics the token counts are Codex-derived too (whole-lifetime, dumped on
-  // createdAt), so note them estimated rather than implying parity with Claude's
-  // line-stamped exact tokens.
   const selectedTotals = state.provider
     ? d.buckets.reduce((out, b) => {
       const t = selectedBucket(b).total || {};
-      out.estimatedUsd += t.estimatedUsd || 0;
       out.advisorUsd += t.advisorUsd || 0;
       addTokens(out.advisorTokens, t.advisorTokens);
+      out.credits += t.credits || 0;
+      out.uncreditedTokens += t.uncreditedTokens || 0;
+      for (const k of Object.keys(out.usdByAuth)) out.usdByAuth[k] += t.usdByAuth?.[k] || 0;
+      addTokens(out.degradedTokens, t.degradedTokens);
       return out;
-    }, { estimatedUsd: 0, advisorUsd: 0, advisorTokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } })
+    }, {
+      advisorUsd: 0, advisorTokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+      credits: 0, uncreditedTokens: 0, usdByAuth: { chatgpt: 0, apikey: 0, unknown: 0 },
+      degradedTokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+    })
     : d.totals;
-  if (selectedTotals.estimatedUsd > 0 && !state.filter) {
-    const est = document.createElement('div');
-    est.className = 'usage-est';
-    est.textContent = state.metric === 'usd'
-      ? `includes ~${fmtUsd(selectedTotals.estimatedUsd)} estimated Codex spend`
-      : 'includes estimated Codex usage';
-    box.appendChild(est);
+  if (!state.filter) {
+    for (const note of codexNotes(selectedTotals, d.codex, state.metric, state.provider)) {
+      const est = document.createElement('div');
+      est.className = 'usage-est';
+      est.textContent = note.text;
+      if (note.title) est.title = note.title;
+      box.appendChild(est);
+    }
   }
   // Advisor consults are already inside the total above (real spend, never
   // dropped) — this just breaks out how much of it was the native advisor tool,
@@ -334,9 +338,6 @@ function renderSummary() {
   if (selectedTotals.advisorUsd > 0 && !state.filter) {
     const adv = document.createElement('div');
     adv.className = 'usage-est';
-    // Real token counts either way — advisorTokens isn't an estimate the way Codex's
-    // estimatedUsd note above is, so the Tokens branch gets an actual number too,
-    // not the placeholder text the Codex note falls back to.
     adv.textContent = state.metric === 'usd'
       ? `Includes ${fmtUsd(selectedTotals.advisorUsd)} spent on advisor consultations`
       : `Includes ${fmtTokens(cellValueOf({ tokens: selectedTotals.advisorTokens }, 'tokens'))} tokens from advisor consultations`;

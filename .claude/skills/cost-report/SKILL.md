@@ -28,7 +28,7 @@ Output sections: headline total + per-session averages; **by task** (cost,
 sessions, avg/session, tokens); **by model** (cost, sessions, token breakdown:
 input / output / cache-write / cache-read); **by token type** (the dollar cost
 split across input / output / cache-write / cache-read, each as a share of total
-— Claude only; estimated Codex spend is excluded and noted); and the **top-N
+— Claude only; Codex's API-rate estimates are excluded and noted); and the **top-N
 most expensive sessions**. `--json` emits the same data as a structured object
 for further processing (including a `byType` block).
 
@@ -37,9 +37,12 @@ for further processing (including a `byType` block).
 - **Month attribution is per transcript line.** Usage is counted only for lines
   whose `timestamp` falls in `[monthStart, monthEnd)` (UTC), so a session that
   spans a month boundary is split correctly — it is *not* a whole-session total
-  stamped to `createdAt`. (Codex rollouts are the exception: they're attributed
-  whole to their `createdAt` month, with estimated ChatGPT-plan pricing, marked
-  `~`.)
+  stamped to `createdAt`. Codex works the same way, read from the server's
+  durable usage ledger (`codex-usage-ledger.jsonl`, read-only from the CLI): each
+  token checkpoint is gated by its own timestamp. Codex token counts are exact
+  where the ledger reconciles (the report notes any session that doesn't); Codex
+  dollars are API-rate estimates, marked `~`, and split by sign-in: ChatGPT-plan
+  usage is an API-rate equivalent with estimated credits, never spend.
 - **Transcript resolution mirrors the board, plus a fallback.** Agent-wrangler's
   card id is decoupled from Claude's conversation uuid, so the transcript is
   found by `entry.liveSessionId` first, then the card id (legacy, when they

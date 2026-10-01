@@ -17,6 +17,7 @@ import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { ensureCodexTrust } from './codex-trust.js';
+import { readCodexAuthMode, withCodexAuthLaunch } from './agents/codex-auth.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -182,6 +183,14 @@ export function suspendableSessions(candidates, { idleMs, now }) {
   });
 }
 
+// Record which auth route a Codex launch used (see agents/codex-auth.js), so its
+// usage keeps the meaning it had at the time. Mutates and returns `entry`.
+function withLaunchAuth(entry) {
+  if (entry.agent !== 'codex') return entry;
+  entry.codexAuthLaunches = withCodexAuthLaunch(entry.codexAuthLaunches, readCodexAuthMode(), Date.now());
+  return entry;
+}
+
 // Pure: the mapping entry for a forked session. Inherits the parent's intent,
 // model, and name; an explicit title (from the fork dialog) overrides the
 // inherited name. The board shows a fork as `[FORK] <name>` (see withForkMark).
@@ -299,6 +308,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     // dropping them here would take that spend off the card's cost AND out of the
     // usage scan cache that outlives the transcript itself.
     priorLiveSessionIds: prev?.priorLiveSessionIds,
+    codexAuthLaunches: prev?.codexAuthLaunches,
     socket,
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
@@ -1070,9 +1080,9 @@ export class SessionManager {
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this
     // install's socket — so a legacy default-socket session migrates here.
-    this.map.set(sessionId, resumeEntry(prev, {
+    this.map.set(sessionId, withLaunchAuth(resumeEntry(prev, {
       short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now(),
-    }));
+    })));
     this._save();
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
     // in-flight promise, so a hook there would fire twice for one relaunch (the
@@ -1139,7 +1149,7 @@ export class SessionManager {
     }
     entry.liveSessionId = liveSessionId || undefined;
     entry.socket = this.socket;
-    this.map.set(sessionId, entry);
+    this.map.set(sessionId, withLaunchAuth(entry));
     this._save();
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     await this.refreshAlive();
@@ -1643,7 +1653,7 @@ export class SessionManager {
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
-    this.map.set(sessionId, entry);
+    this.map.set(sessionId, withLaunchAuth(entry));
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     await this.refreshAlive();

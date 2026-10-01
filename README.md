@@ -302,11 +302,24 @@ ones you want with a single click.
 
 Every card shows its running cost as a live dollar figure — including everything its sub-agents have
 spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
-computed from the actual transcript, not a rough estimate; the one exception is Codex, whose token
-counts are priced at API-equivalent rates (each request at the model that ran it) rather than read from
-a bill, so its cost is shown with a `~` prefix. Cost
-history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
-cleanup.
+computed from the actual transcript, not a rough estimate. Cost history for a session also outlives
+Claude Code's own transcript retention, so nothing is lost to cleanup.
+
+Codex is handled a little differently, because its token counts are exact but its dollars aren't:
+
+- **Tokens** come from Codex's own running counters, recorded checkpoint by checkpoint in a durable
+  usage ledger (`codex-usage-ledger.jsonl` in the data directory). Each step is dated and tagged with
+  the model and reasoning effort that ran it, so a session spanning several days is reported on the
+  days the work happened. Resumed sessions, forks and native sub-agents are counted once each. The
+  ledger keeps the history after Codex or the board forgets the session.
+- **Dollars** are a local conversion of those tokens at OpenAI's API list rates, so they carry a `~`.
+  What they mean depends on how Codex was signed in when the session launched. Under a ChatGPT plan,
+  nothing is billed per token: the figure is an API-rate equivalent, and the Usage panel also shows
+  estimated plan credits. Under an API key it is an estimate of the API bill, which your invoice can
+  still differ from.
+
+If a Codex session's ledger doesn't add up to Codex's own final counter, the Usage panel flags those
+tokens as possibly incomplete rather than hiding the gap.
 
 The **Usage & spend** button on the nav rail opens a longer view than the board's per-card figures —
 daily/weekly/monthly spend, sliced by task, model, or token type.

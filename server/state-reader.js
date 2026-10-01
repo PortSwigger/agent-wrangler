@@ -17,6 +17,13 @@ import { autoFixPrChecksDefault } from './config-store.js';
 
 const execp = promisify(execFile);
 
+// The auth route of a Codex card's latest launch ('chatgpt' | 'apikey' | null), so the
+// card can say what its dollar figure means (agents/codex-auth.js).
+const codexAuthOf = (entry) => {
+  const launches = entry?.codexAuthLaunches;
+  return Array.isArray(launches) && launches.length ? launches[launches.length - 1].mode || null : null;
+};
+
 // pid -> { tty, cpu } for every process, from one `ps` call. A real `ttysNNN`
 // means the session lives in an open terminal window; `??` means background.
 async function procInfo() {
@@ -515,6 +522,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       socket: tmux ? (sessionManager?.socketOf?.(tmux) ?? '') : null,
       exitOutput,
       usd: enrichment?.usd ?? null,
+      codexAuth: codexAuthOf(mapEntry),
       advisorUsd: enrichment?.advisorUsd ?? null,
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],
@@ -678,6 +686,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       tmux: d.tmuxName,
       socket: d.socket || '',
       usd: enr?.usd ?? null,
+      codexAuth: codexAuthOf(appEntry),
       advisorUsd: enr?.advisorUsd ?? null,
       tokens: enr?.tokens ?? null,
       subAgents: enr?.subAgents ?? [],
@@ -776,6 +785,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = run
       exitOutput,
       dormant: true,
       usd: enrichment?.usd ?? null,
+      codexAuth: codexAuthOf(entry),
       advisorUsd: enrichment?.advisorUsd ?? null,
       tokens: enrichment?.tokens ?? null,
       subAgents: enrichment?.subAgents ?? [],

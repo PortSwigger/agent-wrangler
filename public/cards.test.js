@@ -110,6 +110,13 @@ test('sessionCardHtml: dormant (unmanaged) session gets the dormant class', () =
   assert.match(sessionCardHtml(sess({ managed: false }), ctx()), /session-card [^"]*dormant/);
 });
 
+test('sessionCardHtml: codex cost tooltip says what the dollars mean for its auth route', () => {
+  assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5, codexAuth: 'chatgpt' }), ctx()), /API-rate equivalent so far \(ChatGPT plan usage, not billed per token\)/);
+  assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5, codexAuth: 'apikey' }), ctx()), /estimated API cost so far at list rates/);
+  assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5 }), ctx()), /API-rate estimate so far \(not actual spend\)/);
+  assert.doesNotMatch(sessionCardHtml(sess({ agent: 'codex', usd: 1.5, codexAuth: 'chatgpt' }), ctx()), /title="[^"]*spend[^"]*"/);
+});
+
 test('sessionCardHtml: codex cost is prefixed with ~, claude is not', () => {
   assert.match(sessionCardHtml(sess({ agent: 'codex', usd: 1.5 }), ctx()), /~1\.50/);
   assert.match(sessionCardHtml(sess({ agent: 'claude', usd: 1.5 }), ctx()), /(?<!~)1\.50/);

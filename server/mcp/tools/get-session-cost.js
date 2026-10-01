@@ -10,8 +10,11 @@ export const getSessionCostTool = {
     'Get YOUR OWN spend so far, in USD — the same figure your Agent Wrangler board card shows. '
     + 'Covers your current conversation, sub-agents included (a fork excludes the history it '
     + 'inherited; a /clear starts a fresh count). `usd` is the total; `subAgentUsd` and `advisorUsd` '
-    + 'are "of which" breakouts, not additions. `estimated: true` means the figure is priced from '
-    + 'token counts the agent reports rather than exact billing (Codex). `usd` is null when no '
+    + 'are "of which" breakouts, not additions. `estimated: true` means the dollars are a local '
+    + 'conversion of the agent\'s own token counts at API list rates rather than billing (Codex); '
+    + '`costBasis` says what they mean: `api-rate-equivalent` (ChatGPT plan, not billed per token), '
+    + '`api-list-rate` (API key; the invoice may differ) or `api-rate-estimate` (auth route unknown). '
+    + 'The token counts themselves are exact either way. `usd` is null when no '
     + 'transcript has been costed yet. Refreshed every few seconds, so it may trail your latest '
     + 'turn slightly. Read-only.',
   inputSchema: {},
@@ -25,6 +28,7 @@ export const getSessionCostTool = {
       sessionId: caller,
       usd: row.usd ?? null,
       estimated: row.agent === 'codex',
+      costBasis: costBasisOf(row),
       subAgentUsd,
       advisorUsd: row.advisorUsd ?? 0,
       tokens: row.tokens ?? null,
@@ -35,6 +39,13 @@ export const getSessionCostTool = {
     };
   },
 };
+
+function costBasisOf(row) {
+  if (row.agent !== 'codex') return 'billed';
+  if (row.codexAuth === 'chatgpt') return 'api-rate-equivalent';
+  if (row.codexAuth === 'apikey') return 'api-list-rate';
+  return 'api-rate-estimate';
+}
 
 function errorResult(message) {
   return { content: [{ type: 'text', text: message }], isError: true };

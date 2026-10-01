@@ -171,11 +171,10 @@ export const codex = {
   // classify(). readLive only resolves the live rollout id for enrichment.
   readLive() { return null; },
 
-  // No `since` bound (the fork double-count fix Claude gets): a Codex rollout carries
-  // no per-turn usage to filter — analyzeCodex reads the CUMULATIVE
-  // total_token_usage off the last token_count event — so bounding a `codex fork` by
-  // time is impossible without also knowing the parent's cumulative total at the fork
-  // instant. Codex cost is already an explicit estimate (shown with `~`).
+  // No `since` bound (the fork double-count fix Claude gets): analyzeCodex charges
+  // each cumulative token_count delta separately and treats the history a fork
+  // replays from its source as an inherited baseline (agents/codex-usage.js), so a
+  // fork is never charged for its parent's usage in the first place.
   analyze(liveSid) { return analyzeCodex(liveSid); },
   listResumable(excludeIds, opts) { return listResumableCodex(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRangeCodex(liveSid, startMs, endMs, dir); },

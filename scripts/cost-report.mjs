@@ -18,7 +18,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { costUsd, costUsdByType, codexCostUsd } from '../server/pricing.js';
+import { costUsd, costUsdByType } from '../server/pricing.js';
+import { codexUsageRows } from '../server/usage-report.js';
+import { DEFAULT_CODEX_ROOTS } from '../server/codex-usage-ledger.js';
 
 const HOME = os.homedir();
 const DATA_DIR = process.env.AW_DATA_DIR || path.join(HOME, '.agent-wrangler');
@@ -48,9 +50,6 @@ const tasks = readJson(path.join(DATA_DIR, 'tasks.json'), {});
 const entries = mappings.sessions || mappings;
 const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
 const assignments = tasks.assignments || {};
-const codexSessionIds = new Set(Object.entries(entries)
-  .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
-  .map(([cardId, entry]) => entry.liveSessionId || cardId));
 function taskNameFor(cardId) {
   const tid = assignments[cardId];
   if (!tid || tid === 'adhoc') return '(unassigned)';
@@ -252,18 +251,17 @@ function tokensOf(totals) {
 }
 
 // ---- collect per-session ------------------------------------------------
-let analyzeCodex = null;
-let buildRolloutFamilyIndex = null;
-try { ({ analyzeCodex, buildRolloutFamilyIndex } = await import('../server/agents/codex-rollout.js')); } catch { /* codex optional */ }
-const codexIndex = buildRolloutFamilyIndex ? await buildRolloutFamilyIndex() : null;
-
 const sessions = [];
+const codexCards = [];
 let unresolved = 0;
+const labelFor = (cardId, entry = {}) => {
+  const intent = (entry.intent || '').replace(/\s+/g, ' ').trim();
+  return (intent && intent !== '(resumed)' ? intent.slice(0, 50) : '')
+    || entry.name || (entry.cwd ? path.basename(entry.cwd) : '') || cardId.slice(0, 8);
+};
 for (const [cardId, entry] of Object.entries(entries)) {
   const agent = entry.agent || 'claude';
-  const intent = (entry.intent || '').replace(/\s+/g, ' ').trim();
-  const label = (intent && intent !== '(resumed)' ? intent.slice(0, 50) : '')
-    || entry.name || (entry.cwd ? path.basename(entry.cwd) : '') || cardId.slice(0, 8);
+  const label = labelFor(cardId, entry);
   if (agent === 'claude') {
     const files = resolveClaudeTranscripts(cardId, entry);
     if (!files.length) { unresolved++; continue; }
@@ -278,27 +276,38 @@ for (const [cardId, entry] of Object.entries(entries)) {
       const owner = entry.liveSessionId === uuid || cardId === uuid; // true conversation owner vs a re-pointed resume
       sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, advisorUsd, tokens, estimated: false, file, owner });
     }
-  } else if (agent === 'codex' && analyzeCodex) {
-    // Codex rollouts aren't line-stamped the same way; attribute the whole
-    // session to its createdAt month (estimated ChatGPT-plan pricing).
-    // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
-    // silently drop every Codex session. new Date() takes both that and an ISO string.
-    const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
-    if (!Number.isFinite(created) || created < monthStart || created >= monthEnd) continue;
-    const sessionKey = entry.liveSessionId || cardId;
-    const parentId = codexIndex?.metaById.get(sessionKey)?.parentId;
-    if (parentId && codexSessionIds.has(parentId)) continue;
-    const a = await analyzeCodex(sessionKey, { index: codexIndex }).catch(() => null);
-    if (!a || a.usd == null) { unresolved++; continue; }
-    const tok = a.tokens || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
-    sessions.push({
-      cardId, agent, label, task: taskNameFor(cardId),
-      totals: a.totals || {}, usd: a.usd,
-      subAgentUsd: a.subAgentUsd || 0,
-      tokens: { ...tok, total: tok.input + tok.output + tok.cacheWrite + tok.cacheRead },
-      estimated: true,
-    });
+  } else if (agent === 'codex') {
+    const name = taskNameFor(cardId);
+    codexCards.push({ cardId, entry, task: { key: name, name } });
   }
+}
+
+// Codex comes from the server's durable usage ledger (read-only here: the server owns
+// its appends), each checkpoint gated into the month by its own timestamp. Tokens are
+// exact where the ledger reconciles; dollars are always an API-rate estimate.
+const codex = await codexUsageRows({ dataDir: DATA_DIR, codexRoots: DEFAULT_CODEX_ROOTS, cards: codexCards, persist: false });
+let codexUnreconciled = 0;
+for (const row of codex.rows) {
+  const s = {
+    cardId: row.cardId, agent: 'codex', label: labelFor(row.cardId, entries[row.cardId]), task: row.task.name,
+    totals: {}, codexByModel: {}, usd: 0, subAgentUsd: 0, usdByAuth: { chatgpt: 0, apikey: 0, unknown: 0 }, credits: 0,
+    tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 }, estimated: true,
+  };
+  for (const [day, bag] of Object.entries(row.days)) {
+    const ms = Date.parse(`${day}T00:00:00.000Z`);
+    if (ms < monthStart || ms >= monthEnd) continue;
+    s.usd += bag.usd; s.subAgentUsd += bag.subAgentUsd; s.credits += bag.credits;
+    for (const kk of Object.keys(s.usdByAuth)) s.usdByAuth[kk] += bag.usdByAuth[kk];
+    for (const kk of ['input', 'output', 'cacheWrite', 'cacheRead']) { s.tokens[kk] += bag.tokens[kk]; s.tokens.total += bag.tokens[kk]; }
+    for (const [model, mb] of Object.entries(bag.byModel)) {
+      const m = (s.codexByModel[model] ||= { usd: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } });
+      m.usd += mb.usd;
+      for (const kk of Object.keys(m.tokens)) m.tokens[kk] += mb.tokens[kk];
+    }
+  }
+  if (s.tokens.total === 0) continue;
+  if (row.codex.status !== 'ok') codexUnreconciled += 1;
+  sessions.push(s);
 }
 
 // ---- dedup by transcript ------------------------------------------------
@@ -331,8 +340,10 @@ function addAgg(agg, s) {
 const byTask = new Map();
 const byModel = new Map();
 const grand = blankAgg();
-const byType = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }; // Claude only — Codex cost is estimated and not split by type
+const byType = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }; // Claude only — Codex money is an estimate, kept out of the exact split
 let estimatedCost = 0;
+const codexUsdByAuth = { chatgpt: 0, apikey: 0, unknown: 0 };
+let codexCredits = 0;
 let subAgentCost = 0; // portion of the (Claude) total spent by dispatched sub-agents
 let advisorCost = 0; // portion of the (Claude) total spent on native advisor-tool consults
 for (const s of sessions) {
@@ -341,18 +352,32 @@ for (const s of sessions) {
   addAgg(grand, s);
   subAgentCost += s.subAgentUsd || 0;
   advisorCost += s.advisorUsd || 0;
-  if (s.estimated) estimatedCost += s.usd;
+  if (s.estimated) {
+    estimatedCost += s.usd;
+    for (const kk of Object.keys(codexUsdByAuth)) codexUsdByAuth[kk] += s.usdByAuth[kk];
+    codexCredits += s.credits;
+  }
   else {
     const bt = costUsdByType(s.totals);
     for (const kk of ['input', 'output', 'cacheWrite', 'cacheRead']) byType[kk] += bt[kk];
   }
-  const models = Object.keys(s.totals).length ? s.totals : { [s.agent === 'codex' ? 'gpt (codex est.)' : 'unknown']: null };
+  if (s.codexByModel) {
+    for (const [model, m] of Object.entries(s.codexByModel)) {
+      if (!byModel.has(model)) byModel.set(model, blankAgg());
+      const agg = byModel.get(model);
+      agg.cost += m.usd;
+      for (const kk of ['input', 'output', 'cacheWrite', 'cacheRead']) { agg.tokens[kk] += m.tokens[kk]; agg.tokens.total += m.tokens[kk]; }
+      agg.sessions += 1;
+    }
+    continue;
+  }
+  const models = Object.keys(s.totals).length ? s.totals : { unknown: null };
   for (const model of Object.keys(models)) {
     if (!byModel.has(model)) byModel.set(model, blankAgg());
     const agg = byModel.get(model);
     // Cost/tokens per model from this session's per-model split when available.
     if (s.totals[model]) {
-      agg.cost += s.agent === 'codex' ? codexCostUsd({ [model]: s.totals[model] }) : costUsd({ [model]: s.totals[model] });
+      agg.cost += costUsd({ [model]: s.totals[model] });
       const t = s.totals[model];
       agg.tokens.input += t.input; agg.tokens.output += t.output;
       agg.tokens.cacheWrite += (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0); agg.tokens.cacheRead += t.cacheRead || 0;
@@ -370,7 +395,7 @@ const topSessions = [...sessions].sort((a, b) => b.usd - a.usd).slice(0, TOP);
 // ---- output -------------------------------------------------------------
 const report = {
   month, generatedAt: new Date().toISOString(),
-  totals: { ...grand, estimatedCostIncluded: estimatedCost, subAgentCostIncluded: subAgentCost, advisorCostIncluded: advisorCost, sessionsConsidered: Object.keys(entries).length, unresolved },
+  totals: { ...grand, estimatedCostIncluded: estimatedCost, codexUsdByAuth, codexCredits, codexUnreconciledSessions: codexUnreconciled, subAgentCostIncluded: subAgentCost, advisorCostIncluded: advisorCost, sessionsConsidered: Object.keys(entries).length, unresolved },
   byTask: [...byTask.entries()].map(([name, a]) => ({ name, ...a })).sort((x, y) => y.cost - x.cost),
   byModel: [...byModel.entries()].map(([name, a]) => ({ name, ...a })).filter((m) => m.cost > 0 || m.tokens.total > 0).sort((x, y) => y.cost - x.cost),
   byType,
@@ -387,7 +412,10 @@ const lpad = (s, w) => String(s).padStart(w);
 console.log(`\n  agent-wrangler cost report — ${month} (UTC)\n  ${'='.repeat(52)}`);
 console.log(`  Total: ${usd(grand.cost)}  across ${grand.sessions} active sessions  ·  ${k(grand.tokens.total)} tokens`);
 console.log(`  Avg/session: ${usd(grand.cost / (grand.sessions || 1))}  ·  ${k(Math.round(grand.tokens.total / (grand.sessions || 1)))} tokens`);
-if (estimatedCost > 0) console.log(`  (includes ${usd(estimatedCost)} estimated Codex/ChatGPT-plan spend)`);
+if (codexUsdByAuth.chatgpt > 0) console.log(`  (includes ~${usd(codexUsdByAuth.chatgpt)} API-rate equivalent of ChatGPT-plan Codex usage, not billed per token${codexCredits > 0 ? ` · ~${Math.round(codexCredits)} credits` : ''})`);
+if (codexUsdByAuth.apikey > 0) console.log(`  (includes ~${usd(codexUsdByAuth.apikey)} Codex API-key usage at list rates — invoice may differ)`);
+if (codexUsdByAuth.unknown > 0) console.log(`  (includes ~${usd(codexUsdByAuth.unknown)} Codex usage at API rates, auth route unknown — not actual spend)`);
+if (codexUnreconciled > 0) console.log(`  (${codexUnreconciled} Codex session(s) didn't reconcile with Codex's own counters — their tokens may be incomplete)`);
 if (subAgentCost > 0) console.log(`  (includes ${usd(subAgentCost)} spent by dispatched sub-agents, folded into the totals above)`);
 // Deliberately NOT disjoint from the sub-agent figure above — a sub-agent's own
 // advisor consult counts in both (each is an independent "of which" slice of the
@@ -417,7 +445,7 @@ for (const [label, key] of [['input (fresh)', 'input'], ['output', 'output'], ['
   const share = claudeCost > 0 ? `${((100 * v) / claudeCost).toFixed(1)}%` : '—';
   console.log(`  ${pad(label, 19)}${lpad(usd(v), 8)}${lpad(share, 10)}`);
 }
-if (estimatedCost > 0) console.log(`  (excludes ${usd(estimatedCost)} estimated Codex spend — not split by type)`);
+if (estimatedCost > 0) console.log(`  (excludes ~${usd(estimatedCost)} of Codex API-rate estimates)`);
 
 console.log(`\n  Top ${TOP} most expensive sessions`);
 console.log(`  ${'-'.repeat(72)}`);

@@ -271,6 +271,14 @@ export function compactPillHtml(s) {
   return `<span class="card-tag" title="${esc(title)}">${COMPACT_ICON}${explicitMax ? '' : '~'}${formatAutoCompactTokens(maxTokens)}</span>`;
 }
 
+// Codex dollars are a local conversion of exact token counts at API list rates. Under
+// ChatGPT auth nothing is billed per token, so the figure is an equivalent, not spend.
+export function codexCostTitle(auth) {
+  if (auth === 'chatgpt') return 'API-rate equivalent so far (ChatGPT plan usage, not billed per token)';
+  if (auth === 'apikey') return 'estimated API cost so far at list rates (your invoice may differ)';
+  return 'API-rate estimate so far (not actual spend)';
+}
+
 // The `$` cost tag, shared by the card and the session panel's chip row.
 // `ceiling` is a `card.cost` extension's `{ usd, reached }` (slots.js
 // costCeiling) or null: with one, the tag reads `$8.08 / $50.00` — drawn even
@@ -282,7 +290,7 @@ export function costTagHtml(s, ceiling, { titleNote = '', showZero = false } = {
   const spent = typeof s.usd === 'number' ? s.usd : 0;
   if (!ceiling && !(spent > 0) && !(showZero && typeof s.usd === 'number')) return '';
   const cost = `${estimated ? '~' : ''}${spent.toFixed(2)}${ceiling ? ` / $${ceiling.usd.toFixed(2)}` : ''}`;
-  const title = `${estimated ? 'estimated cost so far' : 'cost so far'}${titleNote}${ceiling ? ` · spend limit $${ceiling.usd.toFixed(2)}${ceiling.reached ? ' reached' : ''}` : ''}`;
+  const title = `${estimated ? codexCostTitle(s.codexAuth) : 'cost so far'}${titleNote}${ceiling ? ` · spend limit $${ceiling.usd.toFixed(2)}${ceiling.reached ? ' reached' : ''}` : ''}`;
   return `<span class="card-tag${ceiling?.reached ? ' cost-limit-reached' : ''}" title="${esc(title)}">${DOLLAR_ICON}${esc(cost)}</span>`;
 }
 
