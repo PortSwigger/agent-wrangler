@@ -173,8 +173,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now agent-wrangler.service
 ```
 
-Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm, pins a UTF-8 locale so
-tmux renders Unicode correctly, and auto-installs after a dependency change.
+Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm and auto-installs after a
+dependency change, then runs `bin/agent-wrangler`, which pins a UTF-8 locale so tmux renders
+Unicode correctly.
 
 ## Snags
 

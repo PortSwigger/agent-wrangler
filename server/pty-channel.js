@@ -37,11 +37,22 @@ function ensureHyperlinksFeature(tmuxBin, tmuxSocket) {
   } catch { /* leave links un-clickable rather than fail the attach */ }
 }
 
+function isExecutable(file) {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // npm sometimes drops the execute bit when extracting node-pty's prebuilt
 // `spawn-helper`, which makes every PTY spawn fail with "posix_spawnp failed".
 // Restore it at startup AND before each attach: a reinstall against a long-lived
 // server strips the bit out from under us, and re-running this idempotent guard
-// per `/pty` connection lets attach self-heal without a restart.
+// per `/pty` connection lets attach self-heal without a restart. Only an actually
+// missing bit is chmodded: an install dir that is read-only (a Homebrew keg, a
+// locked-down copy) would otherwise log a failure on every attach.
 export function ensurePtyHelperExecutable() {
   try {
     const require = createRequire(import.meta.url);
@@ -53,7 +64,7 @@ export function ensurePtyHelperExecutable() {
       path.join(pkgRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
     ];
     for (const helper of candidates) {
-      if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
+      if (fs.existsSync(helper) && !isExecutable(helper)) fs.chmodSync(helper, 0o755);
     }
   } catch (err) {
     logError('[pty helper]', err.message);
