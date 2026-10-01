@@ -73,6 +73,58 @@ test('analyzeCodex ignores a resumed file re-emitting the previous token snapsho
   assert.equal(r.tokens.input, 260);
 });
 
+test('analyzeCodex counts a resumed call whose cumulative total collides with the previous snapshot', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: {
+    type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'New response after rewind' }],
+  } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex counts a resumed collision when the call only emitted reasoning', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', summary: [] } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex floors missing and empty last usage at the prior cumulative baseline', async () => {
+  for (const last of [undefined, {}]) {
+    const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], []);
+    const usage = { input_tokens: 240, cached_input_tokens: 0, output_tokens: 0, total_tokens: 240 };
+    fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+      total_token_usage: usage, ...(last === undefined ? {} : { last_token_usage: last }),
+    } } }) + '\n');
+    const r = await analyzeCodex(uuid, { sessionsDir: root });
+    assert.equal(r.tokens.input, 240);
+  }
+});
+
+test('analyzeCodex does not add a reset cumulative total when last usage is missing', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], []);
+  fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 140, cached_input_tokens: 0, output_tokens: 0, total_tokens: 140 },
+  } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 200);
+});
+
+test('analyzeCodex prices a long call from the cumulative delta when last usage is empty', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100_000, 100_000]], []);
+  fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 0, total_tokens: 400_000 },
+    last_token_usage: {},
+  } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 400_000);
+  assert.ok(Math.abs(r.usd - (100_000 * 2 + 300_000 * 4) / 1_000_000) < 1e-9);
+});
+
 test('analyzeCodex includes spend before a rewind that resets the cumulative counter', async () => {
   const { root, uuid, oldFile, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[140, 40], [190, 50]]);
   const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-6-sol', contextWindow: 200 }]);

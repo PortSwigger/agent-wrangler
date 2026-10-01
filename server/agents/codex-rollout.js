@@ -352,35 +352,34 @@ function scanLine(line, state) {
   if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
     state.currentModel = state.pendingModel;
   }
+  if (entry.type === 'response_item' && (p.role === 'assistant' || p.type === 'reasoning')) state.sawModelResponse = true;
   // total_token_usage is cumulative; the last token_count holds the grand total.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) {
     // A request whose prompt passes the long-context threshold is billed at the
     // long rate in full, so tally those requests' own usage separately. Codex
-    // re-emits token_count when only rate limits change; an unchanged running
-    // total means no new request, so it isn't counted twice.
+    // re-emits token_count without a new response, so a repeated snapshot
+    // alone must not be counted twice.
     const last = p.info.last_token_usage;
     const usage = p.info.total_token_usage;
     const baseline = state.usage || state.priorUsage;
-    const changed = !baseline || ['input_tokens', 'cached_input_tokens', 'output_tokens'].some((key) => usage[key] !== baseline[key]);
+    const keys = ['input_tokens', 'cached_input_tokens', 'output_tokens'];
+    const validLast = last && keys.every((key) => Number.isFinite(last[key]) && last[key] >= 0);
+    const firstResumedCall = !state.usage && state.priorUsage && state.sawModelResponse
+      && validLast && keys.some((key) => last[key] > 0);
+    const changed = !baseline || keys.some((key) => usage[key] !== baseline[key]) || firstResumedCall;
     if (changed) {
-      // A resumed file may inherit cumulative counters from the old file or
-      // reset them after a rewind. Only its own calls are new spend. Codex's
-      // last_token_usage records those calls; repeated token_count lines with
-      // unchanged totals are rate-limit updates, not another billable call.
-      const delta = last || (baseline && ['input_tokens', 'cached_input_tokens', 'output_tokens'].every((key) => (usage[key] || 0) >= (baseline[key] || 0))
-        ? Object.fromEntries(['input_tokens', 'cached_input_tokens', 'output_tokens'].map((key) => [key, (usage[key] || 0) - (baseline[key] || 0)]))
-        : usage);
-      for (const key of ['input_tokens', 'cached_input_tokens', 'output_tokens']) {
+      const delta = validLast ? last : Object.fromEntries(keys.map((key) =>
+        [key, Math.max(0, (usage[key] || 0) - (baseline?.[key] || 0))]));
+      for (const key of keys) {
         state.incrementalUsage[key] += delta[key] || 0;
       }
-    }
-    if (last && changed && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
-      const l = (state.longUsage ||= { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 });
-      l.input_tokens += last.input_tokens || 0;
-      l.cached_input_tokens += last.cached_input_tokens || 0;
-      l.output_tokens += last.output_tokens || 0;
+      if (delta.input_tokens > LONG_CONTEXT_TOKENS) {
+        const l = (state.longUsage ||= { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 });
+        for (const key of keys) l[key] += delta[key] || 0;
+      }
     }
     state.usage = usage;
+    state.sawModelResponse = false;
   }
   // A DIFFERENT top-level shape from `token_count` above (both appear in the same
   // real rollout) whose `usage` is this ONE call's actual size, not a running
