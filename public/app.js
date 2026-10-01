@@ -984,7 +984,7 @@ function gridEditing() {
   const a = document.activeElement;
   if (!a || !a.classList) return false;
   return a.classList.contains('task-name-input')
-    || Boolean(a.closest?.('.task-body-ext'))
+    || (['INPUT', 'TEXTAREA'].includes(a.tagName) && Boolean(a.closest?.('.task-body-ext')))
     // The checklist's inline input lives in the sidebar, not #grid — but the
     // grid re-render is what steals focus from whatever is focused anywhere, so
     // it has to be listed here like the todo inputs. Same for anything focused
