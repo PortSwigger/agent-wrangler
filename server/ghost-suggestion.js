@@ -24,8 +24,15 @@ const ESC = '\x1b';
 // The composer's prompt marker (U+276F). Everything before it on the line is
 // frame; the suggestion, when there is one, follows it.
 const PROMPT_MARK = '❯';
-const CODEX_PROMPT_MARK = `${ESC}[1m›${ESC}[0m`;
-const CODEX_EMPTY_COMPOSER = `${CODEX_PROMPT_MARK} ${ESC}[2mAsk Codex to do anything${ESC}[0m`;
+// Codex draws its composer as a bold `›` followed, when empty, by a faint
+// placeholder. Judged by the style each character is RENDERED in, never by the
+// escape bytes in front of it: `capture-pane -e` writes each SGR as a diff from
+// the previous cell, carried across line breaks, so the same bold mark arrives
+// as `1m`, `0;1m` (after a dim line, verified on a live pane), or no escape at
+// all (after a bold one). Past prompts echoed into the scrollback carry the same
+// mark drawn bold AND faint, which is what keeps them out.
+const CODEX_PROMPT_MARK = '›';
+const CODEX_PLACEHOLDER = 'Ask Codex to do anything';
 
 // Ghost text is drawn with SGR 2 (faint) and closed by a reset. Matched exactly
 // rather than by "any sequence containing a 2" — SGR 2 is what the TUI emits,
@@ -49,6 +56,49 @@ const MAX_COMPOSER_DRAFT = 4000;
 
 const visible = (s) => s.replace(ANSI, '').trim();
 
+const STYLED_TOKEN = new RegExp(`${ESC}\\[[0-9;:?]*[ -/]*[@-~]|\\n|[^${ESC}\\n]`, 'gu');
+
+// The pane as lines of characters, each tagged with the bold/faint state it was
+// drawn in. The capture starts in the default state, so replaying every SGR from
+// the top is exact. Colour parameters are skipped whole, so the `2` in a
+// truecolour `38;2;r;g;b` is never mistaken for faint.
+function styledLines(paneText) {
+  let bold = false;
+  let dim = false;
+  const lines = [[]];
+  for (const [token] of paneText.matchAll(STYLED_TOKEN)) {
+    if (token === '\n') { lines.push([]); continue; }
+    if (token[0] !== ESC) { lines.at(-1).push({ ch: token, bold, dim }); continue; }
+    if (!token.endsWith('m') || token.includes('?')) continue;
+    const params = token.slice(2, -1).split(';');
+    for (let i = 0; i < params.length; i += 1) {
+      const p = params[i];
+      if (p.includes(':')) continue;
+      const n = p === '' ? 0 : Number(p);
+      if (n === 0) { bold = false; dim = false; }
+      else if (n === 1) bold = true;
+      else if (n === 2) dim = true;
+      else if (n === 22) { bold = false; dim = false; }
+      else if (n === 38 || n === 48 || n === 58) {
+        if (params[i + 1] === '5') i += 2;
+        else if (params[i + 1] === '2') i += 4;
+      }
+    }
+  }
+  return lines;
+}
+
+// Fail-safe like the rest: the LAST line opening with the mark is the composer,
+// whatever its style, so anything drawn under the real composer that starts with
+// the mark (a selection list, say) blocks rather than being skipped over.
+function codexComposerIsEmpty(paneText) {
+  const line = styledLines(paneText).filter((cells) => cells[0]?.ch === CODEX_PROMPT_MARK).pop();
+  if (!line || !line[0].bold || line[0].dim) return false;
+  const rest = line.slice(1);
+  if (rest.some((cell) => !cell.dim && cell.ch.trim())) return false;
+  return rest.map((cell) => cell.ch).join('').trim() === CODEX_PLACEHOLDER;
+}
+
 // Whether the pane's composer is CONFIRMED empty — nothing typed and no
 // suggestion accepted into it. Its own function rather than a negation of
 // parseGhostSuggestion, because the two ask different questions: that one wants
@@ -64,8 +114,7 @@ export function paneComposerIsEmpty(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   if (agent === 'codex') {
     if (paneHasWorkingStatus(paneText)) return false;
-    const line = paneText.split('\n').filter((candidate) => candidate.includes(CODEX_PROMPT_MARK)).pop();
-    return line === CODEX_EMPTY_COMPOSER;
+    return codexComposerIsEmpty(paneText);
   }
   const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
   if (!line) return false;

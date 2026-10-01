@@ -43,7 +43,7 @@ test('live recipient: delivers into the pane without resuming it', async () => {
 test('dormant recipient keeps its mail unread without being resumed', async () => {
   const d = deps({ entries: { CARD1: { cwd: '/tmp/session' } } });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
-  assert.deepEqual(mode, { mode: 'deferred' });
+  assert.deepEqual(mode, { mode: 'deferred', reason: 'no tmux target' });
   assert.equal(d.resumed.length, 0);
   assert.deepEqual(d.sent, []);
 });
@@ -100,4 +100,16 @@ test('live recipient mid-prompt leaves mail unread for a durable retry', async (
   assert.equal(res.mode, 'deferred');
   assert.deepEqual(pasted, []);
   assert.deepEqual(d.paneDeferral.pending('CARD1'), []);
+});
+
+test('a live recipient whose pane is not ready reports why delivery was deferred', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } }, entries: { CARD1: {} } });
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor,
+    statusFor: () => 'working',
+    capture: async () => '',
+    sendText: async () => { throw new Error('must not paste'); },
+  });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'deferred', reason: 'board status working' });
 });

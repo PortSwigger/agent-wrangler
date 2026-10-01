@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { createPaneDeferral, MAX_PENDING_PER_CARD } from './pane-deferral.js';
 
 const E = '\x1b';
@@ -266,4 +267,46 @@ test('queues are per card', async () => {
 
   assert.deepEqual(pd.pending('c1'), ['for one']);
   assert.deepEqual(pd.pending('c2'), ['for two']);
+});
+
+test('mail reaches an idle Codex pane whose prompt mark arrives as reset+bold', async () => {
+  const pane = fs.readFileSync(new URL('./fixtures/codex-idle-pane-reset-bold-prompt.txt', import.meta.url), 'utf8');
+  const d = deps({ pane, agent: 'codex' });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'idle' });
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false }), 'sent');
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'New mail', socket: '' }]);
+});
+
+test('a deferred delivery tells the caller which check held it back', async () => {
+  const reasonFor = async (overrides, opts = {}) => {
+    const d = { ...deps(), ...overrides };
+    const reasons = [];
+    const pd = createPaneDeferral(d);
+    const res = await pd.deliverOrDefer({
+      id: 'c1', text: 'New mail', deferWhileWorking: true, queueOnDefer: false,
+      onDefer: (r) => reasons.push(r), ...opts,
+    });
+    assert.equal(res, 'deferred');
+    assert.equal(reasons.length, 1);
+    return reasons[0];
+  };
+
+  assert.equal(await reasonFor({ tmuxFor: () => null }), 'no tmux target');
+  assert.equal(await reasonFor({ statusFor: () => 'needs-you' }), 'board status needs-you');
+  assert.equal(await reasonFor({ capture: async () => '' }), 'pane capture empty');
+  assert.equal(await reasonFor({ capture: async () => { throw new Error('gone'); } }), 'pane check failed: gone');
+  assert.equal(await reasonFor({ classify: () => ({ status: 'working' }) }), 'pane classified working');
+  assert.equal(await reasonFor({ capture: async () => composer('half a prompt') }), 'composer not confirmed empty');
+  assert.equal(await reasonFor({}, { beforeSend: async () => false }), 'beforeSend declined');
+  assert.equal(await reasonFor({}, { beforeSend: async () => { throw new Error('mcp'); } }), 'beforeSend failed: mcp');
+  assert.equal(await reasonFor({ sendText: async () => { throw new Error('tmux gone'); } }), 'paste failed: tmux gone');
+  assert.equal(await reasonFor({}, { deferWhileWorking: false, tmux: 'cc_one', beforeSend: async () => false }), 'beforeSend declined');
+});
+
+test('a throwing onDefer hook does not change the delivery outcome', async () => {
+  const d = deps({ pane: composer('typing') });
+  const pd = createPaneDeferral(d);
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'x', onDefer: () => { throw new Error('boom'); } }), 'deferred');
+  assert.deepEqual(pd.pending('c1'), ['x']);
 });
