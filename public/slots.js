@@ -213,6 +213,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             state. Read live, never captured, so a dispatch.field can
   //             prefill from what Settings holds right now. Unset keys are
   //             absent, exactly as `host.settings` reads them server-side.
+  //   ui      — rendering helpers the board owns (frozen). `markdownPreview(md)`
+  //             returns sanitised HTML for a markdown string, from the same
+  //             renderer as the chat view and file preview; a non-string is
+  //             reported and gives ''. Style the result with `.chat-prose` or
+  //             the extension's own CSS.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -253,6 +258,15 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
+        ui: Object.freeze({
+          markdownPreview: (md) => {
+            if (typeof md !== 'string') {
+              onError(`[ext:${extId}] ui.markdownPreview refused: expected a string, got ${typeof md}`);
+              return '';
+            }
+            return String(baseApi.markdownPreview?.(md) ?? '');
+          },
+        }),
         settings: settingsApi(extId, baseApi),
         // Mark `el` as carrying an extension-owned drag: the board treats any
         // [data-ext-drag] element as "a drag is in progress" and holds its

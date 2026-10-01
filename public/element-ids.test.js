@@ -30,13 +30,18 @@ const MODULE_SCOPE_LOOKUP = /^(?:const|let|var)\s+[\w$]+\s*=\s*document\.getElem
 // would register its tests twice) — change both together.
 function frontendModules() {
   const out = readdirSync(PUBLIC_DIR).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).map((f) => join(PUBLIC_DIR, f));
-  const extRoot = join(PUBLIC_DIR, '..', 'server', 'extensions');
-  for (const ext of readdirSync(extRoot, { withFileTypes: true })) {
-    if (!ext.isDirectory()) continue;
-    const pub = join(extRoot, ext.name, 'public');
-    let files = [];
-    try { files = readdirSync(pub); } catch { continue; }
-    out.push(...files.filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).map((f) => join(pub, f)));
+  // Third-party extensions live in server/extensions/<id>/, builtin ones one
+  // level down in server/extensions/builtin/<id>/.
+  for (const extRoot of [join(PUBLIC_DIR, '..', 'server', 'extensions'), join(PUBLIC_DIR, '..', 'server', 'extensions', 'builtin')]) {
+    let exts = [];
+    try { exts = readdirSync(extRoot, { withFileTypes: true }); } catch { continue; }
+    for (const ext of exts) {
+      if (!ext.isDirectory()) continue;
+      const pub = join(extRoot, ext.name, 'public');
+      let files = [];
+      try { files = readdirSync(pub); } catch { continue; }
+      out.push(...files.filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).map((f) => join(pub, f)));
+    }
   }
   return out;
 }
