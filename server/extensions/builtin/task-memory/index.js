@@ -80,12 +80,12 @@ export default {
   handlers: [getMemoryHandler, setMemoryHandler],
   skills: ['task-memory'],
   hooks: { 'session.launchContext': launchContext },
+  // A permanently removed session drops its by-session link and scratch folder.
   session: {
-    // A permanently removed session drops its by-session link and scratch folder.
     onPurge: ({ sessionId, host }) => { host.stores.taskMemory.forget(sessionId); },
-    // A deleted task drops its memory file and any session links pointing at it.
-    onTaskDelete: ({ taskId, host }) => { host.stores.taskMemory.deleteTask(taskId); },
   },
+  // A deleted task drops its memory file and any session links pointing at it.
+  onTaskDelete: ({ taskId, host }) => { host.stores.taskMemory.deleteTask(taskId); },
   graph,
   activate,
   deactivate,

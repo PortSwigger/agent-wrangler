@@ -120,11 +120,7 @@ export function hookPayloadFor(extId, payload) {
   return { ...payload, ext: Object.hasOwn(bag, extId) ? bag[extId] : null };
 }
 
-// `onTaskDelete({ taskId, host })` fires when a TASK is deleted (as opposed to
-// `onPurge`, which is a session). It is the hook for an extension that keeps
-// per-task data (task-memory's memory.md) to clean it up. Errors are isolated
-// per extension, like every session hook.
-export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume', 'onTaskDelete'];
+export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurge', 'onDispatch', 'onResume'];
 
 // Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
 // (the lifecycle hooks above are fire-and-forget and live under `session`).

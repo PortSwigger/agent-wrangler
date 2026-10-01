@@ -1099,6 +1099,8 @@ test('api.requestBoardRender calls the base api and tolerates its absence', () =
   slots.mountInto('panel.section', harness().document.make(), { requestBoardRender: () => { n += 1; } });
   api.requestBoardRender();
   assert.equal(n, 1);
+});
+
 
 // ── api.ui.markdownPreview ───────────────────────────────────────────────────
 function uiHarness(base) {

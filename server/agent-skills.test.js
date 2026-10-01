@@ -186,10 +186,12 @@ test('task-memory\'s skill and nudge drop out when its extension is disabled', (
   const row = live.list.find((e) => e.id === 'task-memory');
   assert.ok(row, 'task-memory is a builtin extension');
   assert.match(mandatorySkillPrompt(SKILLS_ROOT, { ext: live }), /AW_TASK_MEMORY/);
-  const off = { ...live, list: live.list.map((e) => (e.id === 'task-memory' ? { ...e, enabled: false } : e)) };
+  const off = { ...live, list: live.list.map((e) => (e.id === 'task-memory' ? { ...e, enabled: false } : e)), disabledSkillIds: [...live.disabledSkillIds, 'task-memory'] };
   assert.doesNotMatch(mandatorySkillPrompt(SKILLS_ROOT, { ext: off }), /AW_TASK_MEMORY/);
   assert.doesNotMatch(codexSkillCatalog(SKILLS_ROOT, { ext: off }), /- task-memory —/);
-  assert.equal(extensionSkillPluginDirs(SKILLS_ROOT, { ext: off }).filter((d) => d.includes('task-memory')).length, 0);
+  const dirs = (ext) => extensionSkillPluginDirs(SKILLS_ROOT, { ext }).filter((d) => /builtin\/task-memory(\/|$)/.test(d));
+  assert.equal(dirs(off).length, 0);
+  assert.equal(dirs(live).length, 1);
 });
 
 // ── Extension-shipped skills ──────────────────────────────────────────────

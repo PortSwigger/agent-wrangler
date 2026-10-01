@@ -398,7 +398,7 @@ export class SessionManager {
     // every existing test stays inert. Fired sequentially and never abort the
     // core operation: a hook throw is logged (event-only — these run on
     // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
-    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [], onTaskDelete: [] };
+    this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
     // Seam (same mould) for the `session.launchContext` hook
     // (server/launch-context.js): asked by dispatch/resume/fork BEFORE the launch
     // command is built, answering the `{ env, addDirs }` the enabled extensions
@@ -427,13 +427,6 @@ export class SessionManager {
     for (const fn of this._extHooks[name] || []) {
       try { await fn(payload); } catch (err) { logError(`[ext-hook:${name}]`, err); }
     }
-  }
-
-  // A task was deleted: tell the extensions that keep per-task data. Errors are
-  // isolated per hook (see _fireExtHooks), so a throwing extension never blocks
-  // the delete the caller is in the middle of.
-  async fireTaskDelete(taskId) {
-    await this._fireExtHooks('onTaskDelete', { taskId });
   }
 
   // The launch context for a session that is NOT being launched through this

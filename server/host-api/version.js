@@ -155,7 +155,16 @@ import semver from 'semver';
 // 1.16.0 is the `textarea` setting type: multi-line prose with its own larger
 // length cap. A vocabulary widening with no façade key — an older server
 // quarantines a manifest declaring it, so only the range can say so.
-export const HOST_API_VERSION = '1.16.0';
+//
+// 1.17.0 is what moving task memory out of core needed: the `hooks` manifest
+// object (value hooks core uses the return of, starting with
+// `session.launchContext` for env vars and extra directory grants), the
+// `activate`/`deactivate` lifecycle functions, the `events` capability
+// (`host.events.on/emit`, extension events forced under `ext:<id>:`) and
+// `memory:read`/`memory:append` (`host.memory`, provided by the task-memory
+// extension). An older server ignores the manifest keys and refuses the
+// capabilities, so only the range can say so.
+export const HOST_API_VERSION = '1.17.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

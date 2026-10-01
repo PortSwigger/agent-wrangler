@@ -6,6 +6,7 @@ import path from 'node:path';
 import extension, { launchContext, graph, activate, deactivate } from './index.js';
 import { MemoryStore, MEMORY_DIR, linkPathFor, addDirFor } from './memory-store.js';
 import { createEventBus } from '../../../events.js';
+import { loadExtensions, createTaskDeleteNotifier } from '../../index.js';
 
 // A façade double carrying what the manifest `requires` (rebuild, broadcast,
 // events) and its own store. The store is the real MemoryStore on a throwaway
@@ -30,7 +31,7 @@ test('manifest: first builtin shape — enabled by default, owns its handlers, s
   assert.deepEqual(extension.skills, ['task-memory']);
   assert.deepEqual(extension.requires, ['board:rebuild', 'board:broadcast', 'events']);
   assert.equal(typeof extension.hooks['session.launchContext'], 'function');
-  assert.equal(typeof extension.session.onTaskDelete, 'function');
+  assert.equal(typeof extension.onTaskDelete, 'function');
   assert.equal(typeof extension.session.onPurge, 'function');
   assert.ok(extension.stores.taskMemory() instanceof MemoryStore);
   assert.ok(fs.existsSync(path.join(extension.dir, 'skills', 'task-memory', 'SKILL.md')));
@@ -78,25 +79,41 @@ test('graph: stamps hasMemory on each task, and tolerates the boot-time empty gr
   assert.deepEqual(graph({ host: hostFor(store), graph: {} }), {}); // assertGraphKeys passes `graph: {}`
 });
 
-test('onTaskDelete: removes the task\'s memory file and the session links pointing at it', () => {
+test('onTaskDelete (via the loader and notifier): removes the task\'s memory file and session links when enabled', async () => {
   const store = tmpStore();
-  const host = hostFor(store);
   store.bindSession('s1', 'T1');
   store.bindSession('s2', 'T2');
   store.write('T1', 'gone soon');
   store.write('T2', 'stays');
-  extension.session.onTaskDelete({ taskId: 'T1', host });
+  const loaded = loadExtensions({ cfg: {}, builtin: [extension] });
+  await createTaskDeleteNotifier(loaded, () => hostFor(store))('T1');
   assert.equal(fs.existsSync(store.taskDir('T1')), false);
   assert.equal(store.read('T1'), '');
-  assert.equal(fs.existsSync(store.linkPath('s1')) || fs.lstatSync(store.linkPath('s1'), { throwIfNoEntry: false }) != null, false, 'no dangling link left');
+  assert.equal(fs.lstatSync(store.linkPath('s1'), { throwIfNoEntry: false }), undefined, 'no dangling link left');
   assert.equal(store.read('T2'), 'stays', 'another task is untouched');
   assert.equal(fs.readlinkSync(store.linkPath('s2')), path.join('..', 'tasks', 'T2'));
+});
+
+test('onTaskDelete (via the notifier): nothing is removed when the extension is disabled', async () => {
+  const store = tmpStore();
+  store.write('T1', 'keep');
+  const loaded = loadExtensions({ cfg: { extensions: { 'task-memory': false } }, builtin: [extension] });
+  await createTaskDeleteNotifier(loaded, () => hostFor(store))('T1');
+  assert.equal(store.read('T1'), 'keep');
+});
+
+test('onTaskDelete: a throwing hook does not block the delete (error logged)', async () => {
+  const store = tmpStore();
+  const errs = [];
+  const loaded = loadExtensions({ cfg: {}, builtin: [extension] });
+  await createTaskDeleteNotifier(loaded, () => ({ stores: { taskMemory: { deleteTask() { throw new Error('boom'); } } } }), (...a) => errs.push(a))('T1');
+  assert.match(errs[0][0], /\[ext:task-memory\] onTaskDelete failed/);
 });
 
 test('onTaskDelete: an unsafe task id deletes nothing', () => {
   const store = tmpStore();
   store.write('T1', 'keep');
-  extension.session.onTaskDelete({ taskId: '../tasks/T1', host: hostFor(store) });
+  extension.onTaskDelete({ taskId: '../tasks/T1', host: hostFor(store) });
   assert.equal(store.read('T1'), 'keep');
 });
 

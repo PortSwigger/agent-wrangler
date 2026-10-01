@@ -2452,11 +2452,3 @@ test('launchContext(): a non-launch ask (assign / adopt) resolves agent, runtime
   await sm.launchContext('S1', 'adopt', { task: null });
   assert.equal(asked[1].task, null, 'an explicit task:null overrides the lookup');
 });
-
-test('fireTaskDelete runs every onTaskDelete hook with the task id; a throwing hook never blocks the rest', async () => {
-  const sm = smForDispatch();
-  const seen = [];
-  sm._extHooks.onTaskDelete.push(() => { throw new Error('boom'); }, ({ taskId }) => { seen.push(taskId); });
-  await sm.fireTaskDelete('T9');
-  assert.deepEqual(seen, ['T9']);
-});
