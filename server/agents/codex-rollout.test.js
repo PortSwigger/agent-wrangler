@@ -135,6 +135,24 @@ test('analyzeCodex never double-counts or goes negative when a counter dips acro
   assert.deepEqual(r.totals['gpt-6-sol'].long, { input: 400_000, output: 110, cacheRead: 0 });
 });
 
+test('analyzeCodex keeps long-context usage within its bucket when input dips as cache rises', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '06', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '55555555-2222-3333-4444-555555555555';
+  const tc = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc({ input_tokens: 300_001, cached_input_tokens: 0, output_tokens: 100 }, { input_tokens: 300_001, cached_input_tokens: 0, output_tokens: 100 }),
+    tc({ input_tokens: 200_000, cached_input_tokens: 100_000, output_tokens: 200 }, { input_tokens: 100_000, cached_input_tokens: 100_000, output_tokens: 100 }),
+  ];
+  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  const t = r.totals['gpt-6-sol'];
+  for (const k of ['input', 'output', 'cacheRead']) assert.ok(t.long[k] <= t[k], `${k}: long ${t.long[k]} > ${t[k]}`);
+});
+
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
   const { root, uuid } = fixtureSessions();
   const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';

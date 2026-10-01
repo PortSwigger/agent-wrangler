@@ -343,7 +343,11 @@ function totalsFor(byModel, fallbackModel) {
   const totals = {};
   for (const [model, b] of Object.entries(byModel)) {
     const t = splitUsage(b.usage);
-    if (b.long) t.long = splitUsage(b.long);
+    if (b.long) {
+      // Pricing treats long as a subset of t; anomalous counters mustn't break that.
+      const l = splitUsage(b.long);
+      t.long = { input: Math.min(l.input, t.input), output: Math.min(l.output, t.output), cacheRead: Math.min(l.cacheRead, t.cacheRead) };
+    }
     mergeTotals(totals, { [model || fallbackModel]: t });
   }
   if (!Object.keys(totals).length) totals[fallbackModel] = splitUsage({});
