@@ -85,3 +85,9 @@ Board TODOs are separate from session checklists. Their descriptions can be pass
   original user request.
 - `set_links` replaces a complete list; use the `links` skill or read the current list first.
 - `create_terminal` only prefills a command. The human decides whether to run it.
+
+## Tools from built-in extensions
+
+| Tool | Extension | Purpose |
+| --- | --- | --- |
+| `adversarial_review_process` | Adversarial PR review | Return the review process an adversarial PR reviewer follows (the one configured in Settings, or the built-in default) and the fixed rules for reporting back. The `adversarial-pr-review` skill tells the reviewer to call it first. |

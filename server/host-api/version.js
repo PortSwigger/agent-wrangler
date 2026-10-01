@@ -151,7 +151,11 @@ import semver from 'semver';
 // `onTaskDelete({ taskId, host })` manifest hook and `host.tasks.adhocId`
 // (under `tasks:read`). An older slots.js throws on the slot name and an older
 // server never calls the hook or serves the id, so only the range can say so.
-export const HOST_API_VERSION = '1.15.0';
+//
+// 1.16.0 is the `textarea` setting type: multi-line prose with its own larger
+// length cap. A vocabulary widening with no façade key — an older server
+// quarantines a manifest declaring it, so only the range can say so.
+export const HOST_API_VERSION = '1.16.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

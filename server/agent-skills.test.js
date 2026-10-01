@@ -69,8 +69,16 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
+});
+
+test('adversarial-pr-review ships from its built-in extension, not the in-repo root', () => {
+  const entry = allSkillEntries().find((e) => e.name === 'adversarial-pr-review');
+  assert.equal(entry?.extId, 'adversarial-review');
+  assert.match(entry.path, /server\/extensions\/builtin\/adversarial-review\/skills\/adversarial-pr-review\/SKILL\.md$/);
+  assert.ok(extensionSkillPluginDirs().includes(entry.dir), 'Claude gets it as a plugin dir of its own');
+  assert.match(codexSkillCatalog(), /- adversarial-pr-review — .*server\/extensions\/builtin\/adversarial-review\//);
 });
 
 test('the archive-to-todo skill ships with the todos extension and is discoverable for session handoffs', () => {

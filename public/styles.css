@@ -3028,6 +3028,9 @@ a.ext-row-origin { color: var(--blue-fg); }
 }
 /* Quarantined: the rows still say what the extension would want, but nothing
    here can be stored against a feature that is not running. */
+/* Written-out prose (a process, a prompt): tall enough to read a paragraph,
+   and resizable because nobody can guess how long someone's process is. */
+.modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.55; cursor: default; }
 .ext-setting-input:disabled { background: var(--surface-2); color: var(--fg-muted); }
 /* The browser's own validation message for a rejected setting value. Empty

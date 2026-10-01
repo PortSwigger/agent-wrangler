@@ -16,6 +16,11 @@
 
 export const MAX_TEXT_LENGTH = 2048;
 
+// A `textarea` holds written-out prose — a process, a prompt — that the
+// one-line cap would truncate. Still bounded: the value rides on every graph
+// broadcast through `settingValues`.
+export const MAX_TEXTAREA_LENGTH = 20000;
+
 // A declared `pattern` is compiled with `new RegExp` and run against a human's
 // typed value on the server. An extension already runs in-process with full
 // access to the machine, so this is not a security boundary and does not
@@ -27,15 +32,23 @@ export const MAX_PATTERN_LENGTH = 200;
 // type. A field on the wrong type is a def ERROR, not something silently
 // ignored — a `min` on a text setting is a manifest author believing in an
 // enforcement that would never run.
+// `pattern` stays text-only: a full-string regex over multi-line prose is not a
+// constraint anyone means.
 const FIELD_TYPES = {
-  min: 'number', max: 'number', step: 'number',
-  maxLength: 'text', pattern: 'text',
-  options: 'select',
-  maxItems: 'list',
+  min: ['number'], max: ['number'], step: ['number'],
+  maxLength: ['text', 'textarea'], pattern: ['text'],
+  options: ['select'],
+  maxItems: ['list'],
 };
 
 // A `list` value's hard ceiling on items, and the most a def's maxItems may ask.
 export const MAX_LIST_ITEMS = 500;
+
+// The hard ceiling on a string value of this type, whether or not the def
+// declares a maxLength of its own.
+export function maxLengthFor(def) {
+  return def.type === 'textarea' ? MAX_TEXTAREA_LENGTH : MAX_TEXT_LENGTH;
+}
 
 const isFinite_ = (v) => typeof v === 'number' && Number.isFinite(v);
 
@@ -44,8 +57,8 @@ const isFinite_ = (v) => typeof v === 'number' && Number.isFinite(v);
 // validateManifest. Reasons that are not field-prefixed are worded so the
 // prefixed sentence still reads.
 export function validateSettingDef(def) {
-  for (const [field, type] of Object.entries(FIELD_TYPES)) {
-    if (def[field] != null && def.type !== type) return `${field} is only valid on a ${type} setting`;
+  for (const [field, types] of Object.entries(FIELD_TYPES)) {
+    if (def[field] != null && !types.includes(def.type)) return `${field} is only valid on a ${types.join(' or ')} setting`;
   }
   if (def.type === 'number') {
     for (const field of ['min', 'max', 'step']) {
@@ -54,11 +67,13 @@ export function validateSettingDef(def) {
     if (def.step != null && def.step <= 0) return 'step must be greater than zero';
     if (def.min != null && def.max != null && def.min > def.max) return 'min must not be greater than max';
   }
-  if (def.type === 'text') {
+  if (def.type === 'text' || def.type === 'textarea') {
     if (def.maxLength != null) {
       if (!Number.isInteger(def.maxLength) || def.maxLength < 1) return 'maxLength must be a positive integer';
-      if (def.maxLength > MAX_TEXT_LENGTH) return `maxLength must not exceed ${MAX_TEXT_LENGTH}`;
+      if (def.maxLength > maxLengthFor(def)) return `maxLength must not exceed ${maxLengthFor(def)}`;
     }
+  }
+  if (def.type === 'text') {
     if (def.pattern != null) {
       if (typeof def.pattern !== 'string') return 'pattern must be a string';
       if (def.pattern.length > MAX_PATTERN_LENGTH) return `pattern must be at most ${MAX_PATTERN_LENGTH} characters`;
@@ -118,7 +133,7 @@ export function checkSettingValue(def, value) {
     }
     return null;
   }
-  if (def.type === 'text') {
+  if (def.type === 'text' || def.type === 'textarea') {
     if (def.maxLength != null && value.length > def.maxLength) return `is too long (max ${def.maxLength} characters)`;
     if (def.pattern != null && !compile(def.pattern).test(value)) return `does not match the required format (${def.pattern})`;
     return null;

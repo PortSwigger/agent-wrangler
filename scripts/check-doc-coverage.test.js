@@ -39,6 +39,18 @@ test('accepts documented skills, tools, and valid relative links', () => {
   assert.deepEqual(checkDocCoverage(root), []);
 });
 
+test('a skill shipped by a built-in extension is covered like an in-repo one', () => {
+  const root = fixture();
+  fs.appendFileSync(path.join(root, 'docs/agent-capabilities.md'), '\n`example`\n');
+  fs.appendFileSync(path.join(root, 'docs/agent-tools.md'), '\n`example_tool`\n');
+  const skill = path.join(root, 'server/extensions/builtin/demo/skills/shipped');
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: shipped\ndescription: Use when testing.\n---\n');
+  assert.deepEqual(checkDocCoverage(root), ['docs/agent-capabilities.md does not mention skill `shipped`']);
+  fs.appendFileSync(path.join(root, 'docs/agent-capabilities.md'), '\n`shipped`\n');
+  assert.deepEqual(checkDocCoverage(root), []);
+});
+
 test('reports broken relative Markdown links', () => {
   const root = fixture();
   fs.appendFileSync(path.join(root, 'docs/agent-capabilities.md'), '\n`example`\n[Missing](missing.md)\n');

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extSettingSetHandler, MAX_TEXT_LENGTH } from './ext-setting-set.js';
+import { MAX_TEXTAREA_LENGTH } from '../../extensions/setting-constraints.js';
 import { routeControlMessage } from '../router.js';
 import { readConfig } from '../../config-store.js';
 import { loadExtensions, quarantineExtension } from '../../extensions/index.js';
@@ -126,6 +127,34 @@ test('the DEF\'s type decides how value is read — never anything off the brows
     );
     await set(c, { id: 'demo', key: 'registryUrl', value: '' });
     assert.equal(readConfig().extensionSettings.demo.registryUrl, '', 'an empty string is how text is cleared');
+  });
+});
+
+test('a textarea keeps its newlines and whitespace verbatim, is bounded by its own cap, and clears with an empty string', async () => {
+  await withConfig({}, async () => {
+    const c = ctx([manifest('demo', { settings: [{ key: 'process', type: 'textarea', label: 'Process' }] })]);
+    const prose = '  1. Gather.\n\n2. Verify.\n   - indented\n';
+    await set(c, { id: 'demo', key: 'process', value: prose });
+    assert.equal(readConfig().extensionSettings.demo.process, prose);
+    const long = 'x'.repeat(MAX_TEXT_LENGTH + 1);
+    await set(c, { id: 'demo', key: 'process', value: long });
+    assert.equal(readConfig().extensionSettings.demo.process, long, 'the one-line cap does not apply');
+    await assert.rejects(
+      () => set(c, { id: 'demo', key: 'process', value: 'x'.repeat(MAX_TEXTAREA_LENGTH + 1) }),
+      new RegExp(`Setting demo.process is too long \\(max ${MAX_TEXTAREA_LENGTH} characters\\)`),
+    );
+    await assert.rejects(() => set(c, { id: 'demo', key: 'process', value: 7 }), /Setting demo.process must be a string/);
+    await set(c, { id: 'demo', key: 'process', value: '' });
+    assert.equal(readConfig().extensionSettings.demo.process, '');
+  });
+});
+
+test('a textarea\'s declared maxLength is enforced below the cap', async () => {
+  await withConfig({}, async () => {
+    const c = ctx([manifest('demo', { settings: [{ key: 'process', type: 'textarea', label: 'Process', maxLength: 10 }] })]);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'process', value: 'x'.repeat(11) }), /Setting demo.process is too long \(max 10 characters\)/);
+    await set(c, { id: 'demo', key: 'process', value: 'a\nb' });
+    assert.equal(readConfig().extensionSettings.demo.process, 'a\nb');
   });
 });
 

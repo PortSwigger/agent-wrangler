@@ -12,12 +12,23 @@ const REQUIRED_DOC_PATHS = [
   '.claude/skills/maintain-product-docs/SKILL.md',
 ];
 
-function skillNames(root) {
-  const dir = path.join(root, 'agent-skills/skills');
+function skillFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(dir, entry.name, 'SKILL.md'))
-    .filter((file) => fs.existsSync(file))
+    .filter((file) => fs.existsSync(file));
+}
+
+// In-repo skills plus those each built-in extension ships from its own
+// server/extensions/builtin/<id>/skills/ dir.
+function skillNames(root) {
+  const builtin = path.join(root, 'server/extensions/builtin');
+  const builtinDirs = fs.existsSync(builtin)
+    ? fs.readdirSync(builtin, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(builtin, e.name, 'skills'))
+    : [];
+  return [path.join(root, 'agent-skills/skills'), ...builtinDirs]
+    .flatMap(skillFiles)
     .map((file) => fs.readFileSync(file, 'utf8').match(/^name:\s*([^\s]+)\s*$/m)?.[1])
     .filter(Boolean)
     .sort();

@@ -37,6 +37,10 @@ export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full 
 // note is accompanied by the button that does it — an uninstall that visibly
 // changes nothing until some unexplained later restart is the single worst
 // thing this panel did.
+// The server's textarea cap (server/extensions/setting-constraints.js),
+// mirrored so the field stops at it rather than the write failing.
+export const MAX_TEXTAREA_LENGTH = 20000;
+
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
 
 // An uninstall gets its OWN note, because "to finish" would be a lie there: the
@@ -298,6 +302,10 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
           opt.textContent = o.label;
           input.append(opt);
         }
+      } else if (def.type === 'textarea') {
+        input = el('textarea', 'ext-setting-input ext-setting-textarea');
+        input.placeholder = def.placeholder || '';
+        input.maxLength = def.maxLength ?? MAX_TEXTAREA_LENGTH;
       } else {
         input = el('input', 'ext-setting-input');
         input.type = def.type === 'number' ? 'number' : 'text';
@@ -345,7 +353,10 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
         commit(def.type === 'number' ? (last === '' ? null : Number(last)) : last);
       };
       input.addEventListener('change', send);
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); send(); } });
+      // A textarea commits on `change` alone: Enter is a newline there.
+      if (def.type !== 'textarea') {
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); send(); } });
+      }
       // Beneath the label rather than out in the actions column, exactly like
       // the install field: a URL is long and a 38px-wide switch's slot is not
       // where one goes.
@@ -355,6 +366,27 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     wrap.append(row);
   }
   return wrap;
+}
+
+// What a keydown in one extension's settings dialog (app.js openExtSettings)
+// does: 'done', 'close' or 'none'. Enter means Done, except in a text input,
+// where it is one of the ways a manifest row commits (the dialog then just
+// closes, unless a panel may want the key), and in a textarea, where it is a
+// newline. Escape closes without saving panels.
+export function extSettingsKeyAction(e, { hasPanels }) {
+  const t = e.target;
+  if (e.key === 'Escape') return 'close';
+  if (e.key !== 'Enter' || t?.tagName === 'TEXTAREA') return 'none';
+  if (t?.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)) return hasPanels ? 'none' : 'close';
+  return 'done';
+}
+
+// Run by the dialog's close, whatever closed it (Escape, the backdrop, Done):
+// a textarea commits on blur only, and hiding the dialog does not reliably
+// blur it first, so an edit would otherwise be lost.
+export function commitFocusedField(modal, doc = document) {
+  const active = doc.activeElement;
+  if (active && modal.contains(active)) active.blur();
 }
 
 // The whole Extensions tab: a "Core extensions" group of builtin extensions and an

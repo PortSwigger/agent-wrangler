@@ -6,6 +6,7 @@ import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
+import adversarialReview from './builtin/adversarial-review/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -40,9 +41,9 @@ import todos from './builtin/todos/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist` and `todos` are the first two. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos` and `adversarial-review` are the three so far. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
-export const BUILTIN = [checklist, todos];
+export const BUILTIN = [checklist, todos, adversarialReview];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,
@@ -141,7 +142,7 @@ const ID_RE = /^[a-z][a-z0-9-]*$/;
 // them onto the native input as an AFFORDANCE; the server write path is the
 // enforcement, and it rejects rather than clamps.
 const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
-const SETTING_TYPES = ['text', 'number', 'toggle', 'select', 'list'];
+const SETTING_TYPES = ['text', 'number', 'toggle', 'select', 'list', 'textarea'];
 
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
