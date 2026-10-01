@@ -388,6 +388,37 @@ test('resumeEntry drops archivedAt, snooze, suspendedAt, and suspendPending — 
   assert.equal(e.suspendPending, undefined);
 });
 
+test('archive() records snapshot.reason as archiveReason; a re-archive without one clears it; resumeEntry drops it', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm.archive('s1', { cwd: '/repo', reason: 'clean-exit' });
+  assert.equal(sm.entryFor('s1').archiveReason, 'clean-exit');
+  sm.archive('s1', { cwd: '/repo' });
+  assert.equal('archiveReason' in sm.entryFor('s1'), false);
+  const e = resumeEntry({ intent: 'x', archivedAt: 5, archiveReason: 'ui' }, { short: 's', tmux: 'cc_s', cwd: '/w', agent: 'claude', resumeId: 'L', socket: '', now: 9 });
+  assert.equal(e.archiveReason, undefined);
+});
+
+test('reconcileExitedSessions logs the auto-archive, stores reason clean-exit, and kills with reason=auto-archive-exit', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm.dead = new Set(['cc_s']);
+  sm.deadStatus = new Map([['cc_s', 0]]);
+  const kills = [];
+  sm.killForSession = async (id, opts) => { kills.push([id, opts]); return ['cc_s']; };
+  const logs = [];
+  const orig = console.log;
+  console.log = (msg) => logs.push(msg);
+  let ids;
+  try { ids = await sm.reconcileExitedSessions(); } finally { console.log = orig; }
+  assert.deepEqual(ids, ['s1']);
+  assert.equal(sm.entryFor('s1').archiveReason, 'clean-exit');
+  assert.deepEqual(kills, [['s1', { reason: 'auto-archive-exit' }]]);
+  assert.ok(logs.some((l) => l.includes('[session] auto-archived s1 (tmux cc_s) — clean exit (status 0)')));
+});
+
 // viaTaskArchive is archive-only bookkeeping (see SessionManager.archive) — like
 // archivedAt/task/lastLabel, it must not survive a resume, or a session resumed
 // on its own would still look cascade-linked to a task it's no longer archived

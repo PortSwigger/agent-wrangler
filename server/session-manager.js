@@ -527,6 +527,8 @@ export class SessionManager {
       this.map.set(sessionId, entry);
     }
     entry.archivedAt = Date.now();
+    if (snapshot.reason) entry.archiveReason = snapshot.reason;
+    else delete entry.archiveReason;
     // Drop a deferred-suspend intent: an archived session leaves the board, so a
     // pending teardown is moot (and would otherwise linger in the JSON).
     delete entry.suspendPending;
@@ -1458,8 +1460,10 @@ export class SessionManager {
     });
     const toArchive = archivableExits(deadEntries);
     for (const { sessionId } of toArchive) {
-      this.archive(sessionId, snapshotFor(sessionId) || {});
-      await this.killForSession(sessionId);
+      const tmux = this.map.get(sessionId)?.tmux;
+      this.archive(sessionId, { ...(snapshotFor(sessionId) || {}), reason: 'clean-exit' });
+      log(`[session] auto-archived ${sessionId} (tmux ${tmux}) — clean exit (status 0)`);
+      await this.killForSession(sessionId, { reason: 'auto-archive-exit' });
     }
     return toArchive.map((d) => d.sessionId);
   }
