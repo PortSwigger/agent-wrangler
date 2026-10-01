@@ -183,7 +183,7 @@ test('the restart button sits beside Check for updates, and only while something
       const btn = byClass(head, 'ext-btn-warn')[0];
       assert.ok(btn, `${JSON.stringify(pending)} draws the button in the head`);
       assert.equal(btn._text, 'Restart now');
-      assert.equal(byClass(head, 'setting-label')[0]._text, 'Installed');
+      assert.equal(byClass(head, 'setting-label')[0]._text, 'External extensions');
       btn.fire('click');
     }
     assert.equal(restarts, 2);
@@ -205,7 +205,7 @@ test('no restart button where the server cannot restart itself — just the row\
 test('the panel is one row builder under Core and Installed headings', () => {
   withDom(() => {
     const empty = extensionsPanelEl({ entries: [] });
-    assert.deepEqual(headLabels(empty), ['Installed']);
+    assert.deepEqual(headLabels(empty), ['External extensions']);
     assert.ok(texts(empty).includes('No extensions installed yet.'));
     assert.equal(byClass(empty, 'ext-row').length, 1, 'just the install field');
     // Nothing to check against with no recorded origin anywhere.
@@ -229,8 +229,8 @@ test('rows are grouped by external, keeping order within each group', () => {
     const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, BUILTIN_B, EXT2] });
     const groups = byClass(panel, 'ext-group');
     assert.equal(groups.length, 2);
-    assert.deepEqual(headLabels(groups[0]), ['Core']);
-    assert.deepEqual(headLabels(groups[1]), ['Installed']);
+    assert.deepEqual(headLabels(groups[0]), ['Core extensions']);
+    assert.deepEqual(headLabels(groups[1]), ['External extensions']);
     assert.deepEqual(ids(groups[0]), ['ext:a', 'ext:b']);
     assert.deepEqual(ids(groups[1]), ['ext:ext1', 'ext:ext2']);
   });
@@ -240,16 +240,8 @@ test('an empty Core group is omitted entirely', () => {
   withDom(() => {
     const panel = extensionsPanelEl({ entries: [INSTALLED] });
     assert.equal(byClass(panel, 'ext-group').length, 1);
-    assert.deepEqual(headLabels(panel), ['Installed']);
-    assert.equal(texts(panel).includes('Core'), false);
-    assert.equal(texts(panel).some((t) => /Ships with the wrangler/.test(t)), false);
-  });
-});
-
-test('Core carries its subtitle', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [BUILTIN_A] });
-    assert.ok(texts(panel).includes("Ships with the wrangler. Turn off what you don't use."));
+    assert.deepEqual(headLabels(panel), ['External extensions']);
+    assert.equal(texts(panel).includes('Core extensions'), false);
   });
 });
 

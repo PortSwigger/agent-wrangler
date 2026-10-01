@@ -5,8 +5,8 @@
 // ONE ROW BUILDER, two headings. Builtin and installed extensions used to be
 // rendered by two different code paths — settings.js's innerHTML toggle rows
 // above, this module's installed rows below — which showed the same extension's
-// name and description twice. They are now grouped under "Core" (builtin) and
-// "Installed" (external) headings by `entry.external`, but every row is still built
+// name and description twice. They are now grouped under "Core extensions" (builtin) and
+// "External extensions" (external) headings by `entry.external`, but every row is still built
 // by the same `extensionRowEl`. Every row here is a `.setting-row` carrying
 // `data-id="ext:<id>"` and a `.setting-toggle`, which is exactly what settings.js's
 // own delegated click handler already drives, so unifying the list cost no second
@@ -102,7 +102,7 @@ function originNode(origin) {
   return a;
 }
 
-// The restart affordance, which lives ONCE in the Installed head beside "Check for
+// The restart affordance, which lives ONCE in the External extensions head beside "Check for
 // updates" rather than on each row: a restart is a whole-wrangler action, not a
 // per-extension one, and several pending rows would otherwise each draw a button
 // that does exactly the same thing. The rows still SAY what is waiting on it.
@@ -357,8 +357,8 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   return wrap;
 }
 
-// The whole Extensions tab: a "Core" group of builtin extensions and an
-// "Installed" group of external ones (grouped by `entry.external`; one row builder
+// The whole Extensions tab: a "Core extensions" group of builtin extensions and an
+// "External extensions" group of external ones (grouped by `entry.external`; one row builder
 // and one flip path for both), the on-demand "Check for updates" button, the
 // install field and the progress line. Built as one element per modal open
 // (settings.js's `extensionsBridge.mount`) rather than patched in place — this
@@ -387,16 +387,15 @@ export function extensionsPanelEl({
   if (core.length > 0) {
     const coreGroup = el('div', 'ext-group');
     const coreHead = el('div', 'ext-group-head');
-    coreHead.append(el('div', 'setting-label', 'Core'));
+    coreHead.append(el('div', 'setting-label', 'Core extensions'));
     coreGroup.append(coreHead);
-    coreGroup.append(el('div', 'setting-help', "Ships with the wrangler. Turn off what you don't use."));
     for (const entry of core) coreGroup.append(row(entry));
     wrap.append(coreGroup);
   }
 
   const group = el('div', 'ext-group');
   const head = el('div', 'ext-group-head ext-installed-head');
-  head.append(el('div', 'setting-label', 'Installed'));
+  head.append(el('div', 'setting-label', 'External extensions'));
   // Beside the check button, and only while something is actually waiting on it.
   if (canRestart && (pendingRemoval.length || pendingInstall)) {
     head.append(restartButtonEl({ restarting, onRestart }));

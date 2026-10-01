@@ -3154,7 +3154,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .ext-group-head .setting-label { flex: 1; }
 .ext-group + .ext-group { margin-top: 18px; }
-.ext-group-head + .setting-help, .ext-group-empty { margin-bottom: 6px; }
+.ext-group-empty { margin-bottom: 6px; }
 /* An extension row IS a .setting-row — one list, the toggle and the provenance
    in the same row — so padding, border and the toggle come from there; this only
    top-aligns it, because these rows are several lines tall. */
