@@ -56,6 +56,7 @@ export function enhanceSelect(select) {
         select.value = item.value;
         details.open = false;
         select.dispatchEvent(new Event('change', { bubbles: true }));
+        summary.focus();
       });
       panel.appendChild(row);
     }
@@ -80,6 +81,25 @@ export function enhanceSelect(select) {
     details.classList.toggle('up', room < Math.min(panel.scrollHeight, 240) + 16);
   });
   summary.addEventListener('click', (e) => { if (select.disabled) e.preventDefault(); });
+  details.addEventListener('keydown', (e) => {
+    if (select.disabled || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+    e.preventDefault();
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    if (details.open) {
+      const rows = [...panel.querySelectorAll('button:not(:disabled)')];
+      const at = rows.indexOf(document.activeElement);
+      const next = at < 0 ? (step > 0 ? 0 : rows.length - 1) : at + step;
+      rows[Math.max(0, Math.min(rows.length - 1, next))]?.focus();
+      return;
+    }
+    const options = [...select.options];
+    for (let i = select.selectedIndex + step; i >= 0 && i < options.length; i += step) {
+      if (options[i].disabled) continue;
+      select.selectedIndex = i;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      break;
+    }
+  });
   paint();
 }
 
