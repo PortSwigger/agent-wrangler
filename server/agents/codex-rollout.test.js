@@ -63,6 +63,33 @@ test('analyzeCodex bills requests over 272K prompt tokens at the long-context ra
   assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
 });
 
+test('analyzeCodex prices each request at the model in force when it ran', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '06', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '88888888-2222-3333-4444-555555555555';
+  const usage = (i, c, o) => ({ input_tokens: i, cached_input_tokens: c, output_tokens: o, total_tokens: i + o });
+  const tc = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    tc(usage(1_000, 0, 0), usage(1_000, 0, 0)),
+    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(usage(11_000, 4_000, 500), usage(10_000, 4_000, 500)),
+    { type: 'turn_context', payload: { model: 'gpt-6-luna' } },
+    tc(usage(111_000, 54_000, 2_500), usage(100_000, 50_000, 2_000)),
+  ];
+  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  // Pre-turn_context usage goes to the first model named.
+  assert.deepEqual(r.totals, {
+    'gpt-6-sol': { input: 7_000, output: 500, cacheRead: 4_000 },
+    'gpt-6-luna': { input: 50_000, output: 2_000, cacheRead: 50_000 },
+  });
+  assert.equal(r.model, 'gpt-6-luna');
+  const expected = (7_000 * 2 + 500 * 10 + 4_000 * 0.2 + 50_000 * 0.1 + 2_000 * 0.5 + 50_000 * 0.01) / 1_000_000;
+  assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
+});
+
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
   const { root, uuid } = fixtureSessions();
   const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';

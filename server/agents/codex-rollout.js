@@ -271,21 +271,26 @@ function scanLine(line, state) {
   if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
     state.currentModel = state.pendingModel;
   }
-  // total_token_usage is cumulative; the last token_count holds the grand total.
+  // total_token_usage is cumulative. Each change in it is one request's usage,
+  // billed at the model in force at that point, so a session that switches
+  // models mid-way is priced per segment rather than wholly at its last model.
+  // Codex re-emits token_count when only rate limits change; an unchanged
+  // running total means no new request, so it isn't counted twice.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) {
-    // A request whose prompt passes the long-context threshold is billed at the
-    // long rate in full, so tally those requests' own usage separately. Codex
-    // re-emits token_count when only rate limits change; an unchanged running
-    // total means no new request, so it isn't counted twice.
-    const last = p.info.last_token_usage;
-    const total = p.info.total_token_usage.total_tokens;
-    if (last && total !== state.usage?.total_tokens && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
-      const l = (state.longUsage ||= { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 });
-      l.input_tokens += last.input_tokens || 0;
-      l.cached_input_tokens += last.cached_input_tokens || 0;
-      l.output_tokens += last.output_tokens || 0;
+    const cur = p.info.total_token_usage;
+    const prev = state.usage || {};
+    if (USAGE_KEYS.some((k) => (cur[k] || 0) !== (prev[k] || 0))) {
+      const bucket = (state.byModel[state.model ?? ''] ||= { usage: blankUsage(), long: null });
+      for (const k of USAGE_KEYS) bucket.usage[k] += Math.max(0, (cur[k] || 0) - (prev[k] || 0));
+      // A request whose prompt passes the long-context threshold is billed at
+      // the long rate in full, so tally those requests' own usage separately.
+      const last = p.info.last_token_usage;
+      if (last && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
+        const l = (bucket.long ||= blankUsage());
+        for (const k of USAGE_KEYS) l[k] += last[k] || 0;
+      }
     }
-    state.usage = p.info.total_token_usage;
+    state.usage = cur;
   }
   // A DIFFERENT top-level shape from `token_count` above (both appear in the same
   // real rollout) whose `usage` is this ONE call's actual size, not a running
@@ -317,10 +322,23 @@ function splitUsage(usage) {
   };
 }
 
-function totalsFor(model, usage, longUsage) {
-  const t = splitUsage(usage);
-  if (longUsage) t.long = splitUsage(longUsage);
-  return { [model]: t };
+const USAGE_KEYS = ['input_tokens', 'cached_input_tokens', 'output_tokens'];
+
+function blankUsage() {
+  return { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+}
+
+// Usage seen before the first turn_context (keyed '') goes to the first model
+// the rollout names, else the fallback.
+function totalsFor(byModel, fallbackModel) {
+  const totals = {};
+  for (const [model, b] of Object.entries(byModel)) {
+    const t = splitUsage(b.usage);
+    if (b.long) t.long = splitUsage(b.long);
+    mergeTotals(totals, { [model || fallbackModel]: t });
+  }
+  if (!Object.keys(totals).length) totals[fallbackModel] = splitUsage({});
+  return totals;
 }
 
 function mergeTotals(dest, src) {
@@ -390,7 +408,7 @@ export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
 }
 
 async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH) {
-  const state = { usage: null, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
+  const state = { usage: null, byModel: {}, model: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -401,7 +419,8 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     return null;
   }
   const model = state.model || 'gpt-5.5-codex';
-  const totals = totalsFor(model, state.usage || {}, state.longUsage);
+  const firstModel = Object.keys(state.byModel).find(Boolean) || model;
+  const totals = totalsFor(state.byModel, firstModel);
   // Context occupancy — how full the window is RIGHT NOW — is deliberately NOT
   // derived from the cumulative `usage`/`totals` above (that only ever grows and
   // would read as ~100% almost immediately). `lastCallUsage.input_tokens` is the

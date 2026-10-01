@@ -301,8 +301,9 @@ ones you want with a single click.
 
 Every card shows its running cost as a live dollar figure — including everything its sub-agents have
 spent — so a fleet with a lot going on is never a mystery about what it's costing you. Costs are
-computed from the actual transcript, not a rough estimate; the one exception is Codex, which only
-reports a cumulative total rather than itemized turns, so its cost is shown with a `~` prefix. Cost
+computed from the actual transcript, not a rough estimate; the one exception is Codex, whose token
+counts are priced at API-equivalent rates (each request at the model that ran it) rather than read from
+a bill, so its cost is shown with a `~` prefix. Cost
 history for a session also outlives Claude Code's own transcript retention, so nothing is lost to
 cleanup.
 
