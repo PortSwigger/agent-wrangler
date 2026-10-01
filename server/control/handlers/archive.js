@@ -91,7 +91,7 @@ export function descendantsOf(target, sessions) {
 // board's cascade ("Archive all") so both callers tear down a tree identically.
 // (The board's SOLO archive path is deliberately separate — see archiveHandler
 // below — because there a human already confirmed via the 3-way dialog.)
-export async function archiveCascade(ids, ctx, { viaTaskArchive, skipJobNudgeIds = [] } = {}) {
+export async function archiveCascade(ids, ctx, { viaTaskArchive, skipJobNudgeIds = [], reason } = {}) {
   let unclean = false;
   for (const id of ids) {
     const node = ctx.sessionFromGraph?.(id) ?? null;
@@ -113,6 +113,7 @@ export async function archiveCascade(ids, ctx, { viaTaskArchive, skipJobNudgeIds
       cwd: node?.cwd,
       intent: node?.intent || node?.label,
       label: node?.label,
+      reason: reason || (viaTaskArchive ? 'task-archive' : 'cascade'),
       task: ctx.taskStore.taskFor(id),
       // Only present for a task-archive cascade — omitted (not just falsy) for a
       // plain descendant cascade, so the snapshot shape is unchanged everywhere
@@ -218,6 +219,7 @@ export const archiveHandler = {
       cwd: s?.cwd,
       intent: s?.intent || s?.label,
       label: s?.label,
+      reason: 'ui',
       task: ctx.taskStore.taskFor(msg.sessionId),
     });
     // Keep the task assignment: while archived the session is off the board (so no
