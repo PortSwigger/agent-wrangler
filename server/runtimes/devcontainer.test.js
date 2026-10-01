@@ -61,7 +61,7 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
   assert.match(s, /docker exec -u root "\$CID" chmod \+x '\/tmp\/aw-abc\/scripts\/pr-attach-hook\.mjs'/);
 });
 
-test('launchInputs: base = skills + notes + PR-hook (2 files); workflow adds issue-to-pr', () => {
+test('launchInputs: base = skills + notes + PR-hook (2 files) + each extension skill; workflow adds issue-to-pr', () => {
   const base = launchInputs('abc');
   // Extension-shipped skills ride along under ext-skills/<extId>/<name> (the
   // builtin checklist and todos ship one each), so they are asserted apart from the fixed four.
@@ -72,6 +72,7 @@ test('launchInputs: base = skills + notes + PR-hook (2 files); workflow adds iss
   ]);
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/checklist/checklist'), 'the checklist extension\'s skill dir is copied in');
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/todos/archive-to-todo'), 'the todos extension\'s skill dir is copied in');
+  assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/adversarial-review/adversarial-pr-review'), 'the adversarial-review extension\'s skill dir is copied in');
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);

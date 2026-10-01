@@ -76,7 +76,7 @@ work, reviewing changes, managing tasks, and automating pull requests.
 | [Agent capabilities](docs/agent-capabilities.md) | The skills you can ask an agent to use, including adversarial PR review, advisor consultations, session spawning, mail, links, and activity summaries |
 | [Reviews and pull requests](docs/reviews-and-prs.md) | Peer-review sessions, adversarial PR reviews, the diff reviewer, PR status, auto-fix, and auto-merge |
 | [Agent tools](docs/agent-tools.md) | Reference for the MCP tools available to Agent Wrangler sessions |
-| [Extensions](docs/extensions.md) | Installing extensions and building one with server, browser, tool, setting, and skill contributions |
+| [Extensions](docs/extensions.md) | The core extensions, installing more, and building one with server, browser, tool, setting, and skill contributions |
 
 If you are unsure what to ask for, start with [Agent capabilities](docs/agent-capabilities.md): it
 includes example prompts for every built-in Wrangler skill.

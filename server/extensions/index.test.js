@@ -12,7 +12,7 @@ import {
   primeExtensions, extensionsPrimed, _resetExtensionsForTests,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
-import { MAX_TEXT_LENGTH, MAX_PATTERN_LENGTH } from './setting-constraints.js';
+import { MAX_TEXT_LENGTH, MAX_TEXTAREA_LENGTH, MAX_PATTERN_LENGTH } from './setting-constraints.js';
 import { TOOLS } from '../mcp/tools/index.js';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
 
@@ -183,22 +183,23 @@ test('BUILTIN: every directory under builtin/ is registered', () => {
   assert.deepEqual([...dirs].sort(), BUILTIN.map((e) => e.id).sort());
 });
 
-test('BUILTIN: the shipped set is exactly checklist and todos', () => {
-  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['checklist', 'todos']);
+// The real builtin set. Asserted by id so a stray extra manifest (which would
+// register tools and handlers on every install) is noticed, and so the
+// invariants below never quietly pass over an empty list.
+test('BUILTIN: the shipped set is exactly checklist, todos and adversarial-review', () => {
+  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'todos']);
 });
 
-// The real builtin set: `checklist` and `todos`. Asserted by
-// id so a stray extra manifest (which would register tools and handlers on every
-// install) is noticed, and so the invariants below never quietly pass over an
-// empty list.
+const ownedBy = (id, xs) => xs.filter((x) => x.extId === id);
+
 test('BUILTIN: the checklist manifest loads, enabled by default, contributing its parts', () => {
   const out = loadExtensions({ cfg: {}, builtin: BUILTIN.filter((e) => e.id === 'checklist') });
   const entry = out.list.find((e) => e.id === 'checklist');
   assert.equal(entry.quarantine, null);
   assert.equal(entry.enabled, true);
-  assert.deepEqual(out.tools.map((t) => t.name).sort(), ['add_checklist_item', 'list_checklist', 'remove_checklist_item', 'update_checklist_item']);
+  assert.deepEqual(ownedBy('checklist', out.tools).map((t) => t.name).sort(), ['add_checklist_item', 'list_checklist', 'remove_checklist_item', 'update_checklist_item']);
   assert.deepEqual(out.handlers.map((h) => h.type).sort(), ['checklist-add', 'checklist-remove', 'checklist-reorder', 'checklist-update']);
-  assert.deepEqual(out.skillIds, ['checklist']);
+  assert.ok(out.skillIds.includes('checklist'));
   assert.deepEqual(Object.keys(out.stores), ['checklist']);
   assert.equal(out.graphContributors.length, 1);
   assert.equal(out.sessionHooks.onPurge.length, 1);
@@ -211,10 +212,19 @@ test('BUILTIN: switching checklist off unregisters every contribution', () => {
   assert.equal(out.list[0].enabled, false);
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.handlers, []);
-  assert.deepEqual(out.skillIds, []);
+  assert.equal(out.skillIds.includes('checklist'), false);
   assert.deepEqual(out.disabledSkillIds, ['checklist']);
   assert.deepEqual(out.clientManifest, []);
   assert.deepEqual(out.stores, {});
+});
+
+test('BUILTIN: the adversarial-review manifest loads, enabled by default, contributing its parts', () => {
+  const out = loadExtensions({ cfg: {}, builtin: BUILTIN, coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
+  const entry = out.list.find((e) => e.id === 'adversarial-review');
+  assert.deepEqual([entry.enabled, entry.quarantine ?? null, entry.external ?? false], [true, null, false]);
+  assert.deepEqual(ownedBy('adversarial-review', out.tools).map((t) => t.name), ['adversarial_review_process']);
+  assert.ok(out.skillIds.includes('adversarial-pr-review'));
+  assert.deepEqual(entry.settings.map((s) => [s.key, s.type]), [['process', 'textarea']]);
 });
 
 test('BUILTIN: no collisions with the core tool/handler registries, and every graph key is unreserved', () => {
@@ -533,7 +543,7 @@ test('a settings array is validated per def, and every rejection quarantines nam
     rejects(manifest({ settings: [{ ...SETTING, key }] }), /Extension fake: settings\[0\].key must match/);
   }
   rejects(manifest({ settings: [SETTING, { ...SETTING }] }), /Extension fake: duplicate setting key "registryUrl"/);
-  rejects(manifest({ settings: [{ ...SETTING, type: 'secret' }] }), /Extension fake: settings.registryUrl.type must be one of text, number, toggle, select/);
+  rejects(manifest({ settings: [{ ...SETTING, type: 'secret' }] }), /Extension fake: settings.registryUrl.type must be one of text, number, toggle, select, list, textarea/);
   rejects(manifest({ settings: [{ ...SETTING, type: undefined }] }), /settings.registryUrl.type must be one of/);
   rejects(manifest({ settings: [{ ...SETTING, label: '' }] }), /Extension fake: settings.registryUrl.label must be a non-empty string/);
   rejects(manifest({ settings: [{ ...SETTING, label: 7 }] }), /settings.registryUrl.label must be a non-empty string/);
@@ -582,6 +592,17 @@ test('an illegal constraint quarantines the extension, naming the setting', () =
   rejects(settings({ ...NUM, pattern: 'x' }), /settings.pollSeconds.pattern is only valid on a text setting/);
   rejects(settings({ key: 'auto', type: 'toggle', label: 'Auto', step: 1 }), /settings.auto.step is only valid on a number setting/);
   rejects(settings({ ...NUM, options: [{ value: 'a', label: 'A' }] }), /settings.pollSeconds.options is only valid on a select setting/);
+});
+
+test('a textarea takes maxLength up to its own larger cap, and never a pattern', () => {
+  const AREA = { key: 'process', type: 'textarea', label: 'Process', placeholder: 'line one\nline two' };
+  assert.ok(validateManifest(settings(AREA, { ...AREA, key: 'capped', maxLength: MAX_TEXTAREA_LENGTH })));
+  assert.ok(MAX_TEXTAREA_LENGTH > MAX_TEXT_LENGTH, 'a written-out process does not fit the one-line cap');
+  rejects(settings({ ...AREA, maxLength: MAX_TEXTAREA_LENGTH + 1 }), new RegExp(`settings.process.maxLength must not exceed ${MAX_TEXTAREA_LENGTH}`));
+  rejects(settings({ ...AREA, maxLength: 0 }), /settings.process.maxLength must be a positive integer/);
+  rejects(settings({ ...AREA, pattern: 'x' }), /settings.process.pattern is only valid on a text setting/);
+  rejects(settings({ ...AREA, min: 1 }), /settings.process.min is only valid on a number setting/);
+  rejects(settings({ ...NUM, maxLength: 5 }), /settings.pollSeconds.maxLength is only valid on a text or textarea setting/);
 });
 
 test('the defs land on the list entry as a COPY of the manifest\'s own array', () => {

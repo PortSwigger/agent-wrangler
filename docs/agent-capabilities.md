@@ -7,7 +7,7 @@ Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for
 
 | Skill | Use it for | Example request |
 | --- | --- | --- |
-| `adversarial-pr-review` | A second opinion on a pull request from the opposite agent provider. A Claude session launches Codex; a Codex session launches Claude. It requires both providers to be installed and reports concerns through Wrangler mail. | “Run an adversarial review of the PR attached to this session.” |
+| `adversarial-pr-review` | A second opinion on a pull request from the opposite agent provider. A Claude session launches Codex; a Codex session launches Claude. The reviewer follows a written-out review process, which you can replace in the **Adversarial PR review** extension's settings, and sends one verdict with ranked findings through Wrangler mail. It requires both providers to be installed. Ships as a built-in extension; in Claude Code it is listed as `adversarial-pr-review:adversarial-pr-review`, and `/adversarial-pr-review` still invokes it. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | “Run an adversarial review of the PR attached to this session.” |
 | `advisor` | Consulting a stronger model before a difficult decision, when stuck, or before declaring substantial work complete. | “Ask an advisor to challenge this design before I commit to it.” |
 | `checklist` | Keeping a short, human-visible progress list on the session card. It is deliberately separate from the agent's private plan. | “Keep the Wrangler checklist updated while you do this.” |
 | `links` | Attaching Jira issues and GitHub pull requests to a session or task so they appear on the board and drive PR automation. | “Attach PR 123 to this session.” |

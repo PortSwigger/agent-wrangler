@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   extensionRowEl, extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
-  uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
+  uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT, extSettingsKeyAction,
+  commitFocusedField, MAX_TEXTAREA_LENGTH,
 } from './extensions-panel.js';
+import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
 
 // A DOM stub rather than jsdom, matching how the rest of public/ stays DOM-free
 // (checklist-dom.test.js's). It records innerHTML writes so the "third-party
@@ -689,4 +691,88 @@ test('a hidden def draws no row; a visible list draws a read-only item count', (
     assert.deepEqual(byClass(wrap, 'ext-setting-row').map((r) => r.dataset.key), ['tags']);
     assert.ok(texts(wrap).includes('2 items'));
   });
+});
+
+const WITH_TEXTAREA = {
+  id: 'notes', label: 'Session notes', external: true,
+  settings: [{ key: 'process', type: 'textarea', label: 'Review process', placeholder: 'Step one\nStep two', maxLength: 500 }],
+  settingValues: { process: '1. Gather.\n2. Verify.' },
+};
+
+test('a textarea renders a multi-line control, mirrors placeholder and maxLength, and never a pattern', () => {
+  withDom(() => {
+    const [area] = byClass(extensionSettingRowsEl(WITH_TEXTAREA), 'ext-setting-input');
+    assert.equal(area.tagName, 'TEXTAREA');
+    assert.equal(area.value, '1. Gather.\n2. Verify.');
+    assert.equal(area.placeholder, 'Step one\nStep two');
+    assert.equal(area.maxLength, 500);
+    assert.equal(area.attrs.pattern, undefined);
+    assert.equal(area.type, undefined, 'a textarea has no input type');
+  });
+});
+
+test('Enter in a textarea is a newline: it neither commits nor is swallowed; blur commits the text verbatim', () => {
+  withDom(() => {
+    const seen = [];
+    const wrap = extensionSettingRowsEl(WITH_TEXTAREA, { onSettingChange: (c) => seen.push(c) });
+    const [area] = byClass(wrap, 'ext-setting-input');
+    let prevented = 0;
+    area.value = '1. Gather.\n2. Verify.\n';
+    area.fire('keydown', { key: 'Enter', preventDefault: () => { prevented += 1; } });
+    assert.deepEqual(seen, []);
+    assert.equal(prevented, 0, 'the newline must reach the textarea');
+    area.value = '  1. Gather.\n\n2. Verify.\n';
+    area.fire('change');
+    assert.deepEqual(seen, [{ id: 'notes', key: 'process', value: '  1. Gather.\n\n2. Verify.\n' }], 'not trimmed');
+  });
+});
+
+test('the settings dialog: Enter in a textarea is a newline, with or without a settings panel', () => {
+  const area = { tagName: 'TEXTAREA' };
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: area }, { hasPanels: false }), 'none');
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: area }, { hasPanels: true }), 'none', 'must not save the panel');
+});
+
+test('the settings dialog: Escape closes without saving panels, from anywhere', () => {
+  for (const hasPanels of [false, true]) {
+    for (const target of [{ tagName: 'TEXTAREA' }, { tagName: 'INPUT', type: 'text' }, { tagName: 'BUTTON' }]) {
+      assert.equal(extSettingsKeyAction({ key: 'Escape', target }, { hasPanels }), 'close');
+    }
+  }
+});
+
+test('closing the dialog first blurs a focused field inside it, so a blur-committed edit is not lost', () => {
+  const calls = [];
+  const area = { blur: () => calls.push('blur') };
+  const modal = { contains: (n) => n === area };
+  commitFocusedField(modal, { activeElement: area });
+  assert.deepEqual(calls, ['blur'], 'Escape, the backdrop and Done all close through here');
+  const outside = { blur: () => calls.push('outside') };
+  commitFocusedField(modal, { activeElement: outside });
+  commitFocusedField(modal, { activeElement: null });
+  assert.deepEqual(calls, ['blur'], 'focus outside the dialog is left alone');
+});
+
+test('a textarea with no declared maxLength still gets the server\'s cap natively', () => {
+  assert.equal(MAX_TEXTAREA_LENGTH, SERVER_MAX_TEXTAREA_LENGTH, 'the browser mirror must match the server enforcement');
+  withDom(() => {
+    const entry = { id: 'x', settingValues: {}, settings: [{ key: 'process', type: 'textarea', label: 'Process' }] };
+    const [area] = byClass(extensionSettingRowsEl(entry), 'ext-setting-input');
+    assert.equal(area.maxLength, MAX_TEXTAREA_LENGTH);
+  });
+});
+
+test('the settings dialog: Enter in a text input commits its row and closes only when there is no panel to save', () => {
+  const input = { tagName: 'INPUT', type: 'text' };
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: input }, { hasPanels: false }), 'close');
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: input }, { hasPanels: true }), 'none');
+  for (const type of ['checkbox', 'radio', 'button']) {
+    assert.equal(extSettingsKeyAction({ key: 'Enter', target: { tagName: 'INPUT', type } }, { hasPanels: true }), 'done');
+  }
+});
+
+test('the settings dialog: Enter anywhere else means Done; other keys do nothing', () => {
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: { tagName: 'BUTTON' } }, { hasPanels: true }), 'done');
+  assert.equal(extSettingsKeyAction({ key: 'Enter', target: null }, { hasPanels: false }), 'done');
+  assert.equal(extSettingsKeyAction({ key: 'a', target: { tagName: 'TEXTAREA' } }, { hasPanels: false }), 'none');
 });

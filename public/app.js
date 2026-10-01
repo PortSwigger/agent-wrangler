@@ -29,7 +29,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { extensionsPanelEl, extensionSettingRowsEl, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, extSettingsKeyAction, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -5507,6 +5507,7 @@ function openExtSettings(id) {
   done.focus();
   let saving = false;
   const close = () => {
+    commitFocusedField(modal);
     modal.classList.add('hidden');
     done.removeEventListener('click', onDone);
     modal.removeEventListener('keydown', onKey);
@@ -5534,19 +5535,12 @@ function openExtSettings(id) {
       done.disabled = false;
     }
   };
-  // Enter means Done, except inside a text input, where it is one of the ways a
-  // manifest row commits (and a panel's own field may want it).
   const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
-    if (e.key === 'Enter') {
-      const t = e.target;
-      if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)))) {
-        if (!panels) { e.preventDefault(); close(); }
-        return;
-      }
-      e.preventDefault();
-      onDone();
-    }
+    const action = extSettingsKeyAction(e, { hasPanels: Boolean(panels) });
+    if (action === 'none') return;
+    e.preventDefault();
+    if (action === 'done') onDone();
+    else close();
   };
   const onBackdrop = (e) => { if (e.target === modal) close(); };
   done.addEventListener('click', onDone);

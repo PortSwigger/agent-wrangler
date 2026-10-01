@@ -18,6 +18,18 @@ URLs); check for updates, uninstall, and the install field live under External e
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
+## Core extensions
+
+Some extensions ship inside Agent Wrangler itself. They are listed under **Core extensions** in the same
+tab, are on by default, and can be turned off or configured like any other, but they have no origin to
+update from and cannot be uninstalled.
+
+| Extension | What it adds | Settings |
+| --- | --- | --- |
+| **Per-session checklist** | The session checklist panel and chip, its four MCP tools and the `checklist` skill. See [Board and sessions](board-and-sessions.md). | None. |
+| **TODOs** | Board TODOs for each task and the Unassigned tile, their MCP tools and the `archive-to-todo` skill. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). | None. |
+| **Adversarial PR review** | The `adversarial-pr-review` skill and its reviewer's `adversarial_review_process` tool. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | **Review process**: what the reviewer checks and how. Empty uses the built-in process; anything written replaces it. |
+
 ## Minimal external extension
 
 An installable repository needs `package.json` and an `index.js` with a default manifest export, plus
@@ -65,7 +77,7 @@ Supported manifest contributions are:
 | Session lifecycle | `session` hooks |
 | Periodic work | `sweeps` |
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
-| Extension settings | `settings`, read through `host.settings` |
+| Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
 
@@ -346,7 +358,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `enabled` — or for a hand-edit — to make the toggle and a value the same key;
   values are config, so they survive an uninstall/reinstall, which an extension's
   own store does not. A def may DECLARE CONSTRAINTS — `min`/`max`/`step` on a
-  number, `maxLength`/`pattern` on text, `options` on the `select` type — and
+  number, `maxLength`/`pattern` on text, `maxLength` alone on a `textarea`,
+  `options` on the `select` type — and
   both halves of that live in `server/extensions/setting-constraints.js`
   (`validateSettingDef` for a def, `checkSettingValue` for a value) so a
   constraint nobody enforces cannot be declared and an enforced one cannot go
@@ -365,6 +378,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   fix is swallowed. The vocabulary widening is what makes it a MINOR
   (`HOST_API_VERSION` 1.5.0): an older server QUARANTINES a manifest declaring
   `select` or a `min`, and the declared range is the only thing that can say so.
+  **`textarea` (1.16.0) is multi-line prose, and it differs from `text` in three
+  deliberate ways**: its cap is `MAX_TEXTAREA_LENGTH` (20000, via `maxLengthFor`)
+  because a written-out process does not fit a URL-sized field; it takes no
+  `pattern`, since a full-string regex over paragraphs is not a constraint anyone
+  means; and it commits on `change` (blur) ONLY — Enter is a newline, so neither
+  the row's Enter-commit nor the dialog's Enter-means-Done (`openExtSettings`) may
+  fire from inside one. Because blur is its only commit, the dialog's `close`
+  blurs whatever field has focus inside it first (`commitFocusedField`) — Escape,
+  the backdrop and Done all hide the dialog before the browser would move focus
+  on its own. With no declared `maxLength` the field still carries the server's
+  cap (`MAX_TEXTAREA_LENGTH`, mirrored in `extensions-panel.js` and asserted
+  equal by its test). The value is stored verbatim, untrimmed.
   There is no `default` on a def (an unset setting reads
   `undefined` and the extension supplies its own fallback, which is also what lets
   one be deliberately inert until configured) and no `secret` type (a masked input
@@ -702,7 +727,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
   extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
   exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
-  `skills/`, `public/` and its tests). **`checklist` and `todos` are the two so far**, and
+  `skills/`, `public/` and its tests). **`checklist`, `todos` and `adversarial-review` are the three so far**, and
   `index.test.js` asserts the exact id list so a stray manifest can't register
   tools and handlers on every install unnoticed. **Migrating a flagged feature
   (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
@@ -950,3 +975,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   inside `worktree` included: dispatch is forgiving, so a mistyped option
   silently launches something subtly different (no grants, no worktree, the
   wrong base commit) and the extension author has no stack into core to read.
+- **`adversarial-review`'s shape is a SKILL plus a
+  TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
+  configured process; Claude's `` !`cmd` `` injection would, but Codex reads
+  SKILL.md as a plain file, and the reviewer is usually Codex. MCP tools are the
+  one channel both providers fully support. Measured on 2026-09-30 (3 Claude +
+  3 Codex runs per condition): a stub skill naming a tool was followed 6/6, the
+  same as a static skill, while the tool alone with a skill-style description
+  was called 0/6. So the skill stays the discoverable entry point and names
+  `adversarial_review_process` in the reviewer's brief; never rely on a tool's
+  description for discovery. The tool returns the `process` setting when it is
+  non-blank (else `default-process.md`) followed by `report-contract.md`, which
+  is NOT configurable: the initiator, and any fix/re-review loop around it,
+  waits on exactly one mail in that shape. There is still no `default` on a
+  def; the setting's `placeholder` is the default text, so an empty field shows
+  what will run. A generic `read_skill` for any extension is deferred until a
+  second skill needs settings-rendered content.

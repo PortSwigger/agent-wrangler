@@ -108,4 +108,6 @@ test('allowedToolsArg grants every enabled extension tool, derived from the load
   // tools are granted by the loader, only while it is enabled).
   const allOff = loadExtensions({ cfg: { extensions: Object.fromEntries(BUILTIN.map((b) => [b.id, false])) }, builtin: BUILTIN });
   assert.deepEqual(allowedToolsArg({ ext: allOff }), allowedToolsArg({ ext: NO_EXT }));
+  const enabled = allowedToolsArg({ ext: loadExtensions({ cfg: {}, builtin: BUILTIN }) }).split(',');
+  assert.ok(enabled.includes(allowedToolName('adversarial_review_process')), 'the adversarial-review builtin\'s tool is granted');
 });
