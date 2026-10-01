@@ -300,9 +300,20 @@ test('mail arriving after a read_mail drain starts a fresh deferral episode', as
 test('a batch read before its log does not hand its start time to the next batch', () => {
   const logs = [];
   const t = createDeferralTracker({ log: (line) => logs.push(line) });
-  t.deferred('CARD1', 'pane classified working', 0, 'mail_a');
-  t.deferred('CARD1', 'pane classified working', 50_000, 'mail_a');
-  t.deferred('CARD1', 'pane classified working', 60_000, 'mail_b');
-  t.deferred('CARD1', 'pane classified working', 70_000, 'mail_b');
+  t.deferred('CARD1', 'pane classified working', 0, ['mail_a']);
+  t.deferred('CARD1', 'pane classified working', 25_000, ['mail_a']);
+  t.deferred('CARD1', 'pane classified working', 50_000, ['mail_b']);
+  t.deferred('CARD1', 'pane classified working', 70_000, ['mail_b']);
   assert.deepEqual(logs, []);
+});
+
+test('reading part of a held batch keeps its deferral episode running', () => {
+  const logs = [];
+  const t = createDeferralTracker({ log: (line) => logs.push(line) });
+  t.deferred('CARD1', 'pane classified working', 0, ['mail_a', 'mail_b']);
+  t.deferred('CARD1', 'pane classified working', 25_000, ['mail_a', 'mail_b']);
+  t.deferred('CARD1', 'pane classified working', 50_000, ['mail_b', 'mail_c']);
+  assert.deepEqual(logs, []);
+  t.deferred('CARD1', 'pane classified working', 60_000, ['mail_c']);
+  assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: pane classified working']);
 });

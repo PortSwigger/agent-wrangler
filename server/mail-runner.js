@@ -11,19 +11,23 @@ export const DEFER_LOG_AFTER_MS = 60_000;
 const DEFER_EPISODE_GAP_MS = 30_000;
 
 // Per-recipient deferral episodes, logged once each when they outlast
-// DEFER_LOG_AFTER_MS. An episode belongs to one unread batch, named by its
-// oldest message: a read_mail drain followed by fresh mail is a new batch, while
-// mail joining a held batch is not. In memory: a restart starts the clock again,
-// which only delays a log line.
+// DEFER_LOG_AFTER_MS. An episode lasts while ANY message it has seen is still
+// unread: mail joining a held batch, or a read_mail({id}) of part of it, keeps
+// it going; a drain to zero followed by fresh mail starts a new one. In memory:
+// a restart starts the clock again, which only delays a log line.
 export function createDeferralTracker({ log = defaultLog } = {}) {
   const episodes = new Map();
   return {
-    deferred(to, reason, now, batch = null) {
+    deferred(to, reason, now, unreadIds = []) {
       let ep = episodes.get(to);
-      if (!ep || ep.batch !== batch || now - ep.lastAt > DEFER_EPISODE_GAP_MS) {
-        ep = { batch, since: now, lastAt: now, logged: false };
+      const sameBatch = ep && (unreadIds.length
+        ? unreadIds.some((id) => ep.unread.has(id))
+        : ep.unread.size === 0);
+      if (!sameBatch || now - ep.lastAt > DEFER_EPISODE_GAP_MS) {
+        ep = { since: now, logged: false };
         episodes.set(to, ep);
       }
+      ep.unread = new Set(unreadIds);
       ep.lastAt = now;
       if (!ep.logged && now - ep.since >= DEFER_LOG_AFTER_MS) {
         ep.logged = true;
@@ -64,7 +68,7 @@ export async function sweepDueSettles(deps, now = Date.now()) {
         onError?.(to, new Error(mode.error || 'mail delivery failed'));
       } else if (mode.mode === 'deferred') {
         reopen.add(to);
-        deferrals?.deferred(to, mode.reason, now, pending[0].id);
+        deferrals?.deferred(to, mode.reason, now, pending.map((m) => m.id));
       } else {
         mailStore.markNotified(to, now);
         deferrals?.resolved(to);
