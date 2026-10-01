@@ -358,8 +358,8 @@ export function flashSettingsSaved() {
   savedTimer = setTimeout(() => tag.classList.remove('show'), 1600);
 }
 
-function endDetail() {
-  if (!detail) return;
+function endDetail(force = false) {
+  if (!detail || (detail.finishing && !force)) return;
   const { el, onLeave } = detail;
   detail = null;
   onLeave?.();
@@ -385,7 +385,7 @@ export function openSettingsDetail({ title, backLabel, node, saves = false, onDo
   back.type = 'button';
   back.className = 'settings-detail-back';
   back.textContent = `\u2190 ${backLabel}`;
-  back.addEventListener('click', endDetail);
+  back.addEventListener('click', () => endDetail());
   const heading = document.createElement('h4');
   heading.className = 'settings-detail-title';
   heading.textContent = title;
@@ -401,11 +401,11 @@ export function openSettingsDetail({ title, backLabel, node, saves = false, onDo
     cancel.id = 'settings-cancel';
     cancel.className = 'ghost';
     cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', endDetail);
+    cancel.addEventListener('click', () => endDetail());
     done.before(cancel);
   }
   done?.focus();
-  return { finish: finishDetail, leave: endDetail };
+  return { finish: finishDetail, leave: () => endDetail() };
 }
 
 async function finishDetail() {
@@ -414,19 +414,23 @@ async function finishDetail() {
   current.finishing = true;
   const done = document.getElementById('settings-close');
   if (done) done.disabled = true;
+  document.getElementById('settings-cancel')?.setAttribute('disabled', '');
   try {
     await current.onDone?.();
+    current.finishing = false;
     if (detail === current) endDetail();
   } catch {
     // The owner reports its own failure; the view stays open to retry.
   } finally {
     current.finishing = false;
     if (done) done.disabled = false;
+    document.getElementById('settings-cancel')?.removeAttribute('disabled');
   }
 }
 
 function selectTab(body, tabId, focus = false) {
   endDetail();
+  if (detail) return;
   body.querySelectorAll('.settings-tab').forEach((tab) => {
     const selected = tab.dataset.tab === tabId;
     tab.classList.toggle('active', selected);
@@ -469,7 +473,11 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };
-  const close = () => { endDetail(); modal.classList.add('hidden'); };
+  const close = () => {
+    if (detail?.finishing) return;
+    endDetail();
+    modal.classList.add('hidden');
+  };
 
   if (btn) btn.addEventListener('click', open);
   closeBtn?.addEventListener('click', () => { if (detail) finishDetail(); else close(); });
@@ -486,7 +494,7 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
   modal.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     e.preventDefault();
-    if (detail) { endDetail(); closeBtn?.focus(); } else close();
+    if (detail) { if (!detail.finishing) { endDetail(); closeBtn?.focus(); } } else close();
   });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
 
