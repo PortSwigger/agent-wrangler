@@ -2,11 +2,12 @@
 // builders with no app state, like toast.js and system-banner.js: settings.js
 // mounts what these return.
 //
-// ONE LIST, not two. Builtin and installed extensions used to be rendered by two
-// different code paths — settings.js's innerHTML toggle rows above, this module's
-// installed rows below — which showed the same extension's name and description
-// twice and made "is it on" and "where did it come from" look like questions
-// about different things. Every row here is now a `.setting-row` carrying
+// ONE ROW BUILDER, two headings. Builtin and installed extensions used to be
+// rendered by two different code paths — settings.js's innerHTML toggle rows
+// above, this module's installed rows below — which showed the same extension's
+// name and description twice. They are now grouped under "Core extensions" (builtin) and
+// "External extensions" (external) headings by `entry.external`, but every row is still built
+// by the same `extensionRowEl`. Every row here is a `.setting-row` carrying
 // `data-id="ext:<id>"` and a `.setting-toggle`, which is exactly what settings.js's
 // own delegated click handler already drives, so unifying the list cost no second
 // flip path and no second flip note.
@@ -101,7 +102,7 @@ function originNode(origin) {
   return a;
 }
 
-// The restart affordance, which lives ONCE in the panel head beside "Check for
+// The restart affordance, which lives ONCE in the External extensions head beside "Check for
 // updates" rather than on each row: a restart is a whole-wrangler action, not a
 // per-extension one, and several pending rows would otherwise each draw a button
 // that does exactly the same thing. The rows still SAY what is waiting on it.
@@ -356,11 +357,13 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   return wrap;
 }
 
-// The whole Extensions tab: every extension as one row, the on-demand "Check for
-// updates" button, the install field and the progress line. Built as one element
-// per modal open (settings.js's `extensionsBridge.mount`) rather than patched in
-// place — this panel is behind a modal nobody watches while an install runs, so
-// there is no scroll or drag state a re-render could eat.
+// The whole Extensions tab: a "Core extensions" group of builtin extensions and an
+// "External extensions" group of external ones (grouped by `entry.external`; one row builder
+// and one flip path for both), the on-demand "Check for updates" button, the
+// install field and the progress line. Built as one element per modal open
+// (settings.js's `extensionsBridge.mount`) rather than patched in place — this
+// panel is behind a modal nobody watches while an install runs, so there is no
+// scroll or drag state a re-render could eat.
 //
 // The install "prompt" is an inline field rather than a second modal: it lives
 // inside the settings modal that already has focus, and a URL is one line.
@@ -370,8 +373,29 @@ export function extensionsPanelEl({
   onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onOpenSettings,
 } = {}) {
   const wrap = el('div');
-  const head = el('div', 'ext-installed-head');
-  head.append(el('div', 'setting-label', 'Extensions'));
+  const removing = new Set(pendingRemoval);
+  const row = (entry) => extensionRowEl(entry, {
+    status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
+    pendingRemoval: removing.has(entry.id),
+    onUninstall,
+    onUpdate,
+    onOpenSettings,
+  });
+  const core = entries.filter((e) => !e.external);
+  const installed = entries.filter((e) => e.external);
+
+  if (core.length > 0) {
+    const coreGroup = el('div', 'ext-group');
+    const coreHead = el('div', 'ext-group-head');
+    coreHead.append(el('div', 'setting-label', 'Core extensions'));
+    coreGroup.append(coreHead);
+    for (const entry of core) coreGroup.append(row(entry));
+    wrap.append(coreGroup);
+  }
+
+  const group = el('div', 'ext-group');
+  const head = el('div', 'ext-group-head ext-installed-head');
+  head.append(el('div', 'setting-label', 'External extensions'));
   // Beside the check button, and only while something is actually waiting on it.
   if (canRestart && (pendingRemoval.length || pendingInstall)) {
     head.append(restartButtonEl({ restarting, onRestart }));
@@ -386,18 +410,9 @@ export function extensionsPanelEl({
     check.addEventListener('click', () => onCheckUpdates?.());
     head.append(check);
   }
-  wrap.append(head);
-
-  const removing = new Set(pendingRemoval);
-  for (const entry of entries) {
-    wrap.append(extensionRowEl(entry, {
-      status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
-      pendingRemoval: removing.has(entry.id),
-      onUninstall,
-      onUpdate,
-      onOpenSettings,
-    }));
-  }
+  group.append(head);
+  if (installed.length === 0) group.append(el('div', 'setting-help ext-group-empty', 'No extensions installed yet.'));
+  for (const entry of installed) group.append(row(entry));
 
   const form = el('div', 'setting-row ext-row');
   const copy = el('div', 'setting-copy');
@@ -430,7 +445,8 @@ export function extensionsPanelEl({
   const actions = el('div', 'ext-row-actions');
   actions.append(go);
   form.append(actions);
-  wrap.append(form);
+  group.append(form);
+  wrap.append(group);
   return wrap;
 }
 

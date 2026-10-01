@@ -12,6 +12,9 @@ Open **Settings → Extensions**, paste a git URL, and review the identity, depe
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
+The tab lists **Core extensions** (they ship with the wrangler) and **External extensions** (from git
+URLs); check for updates, uninstall, and the install field live under External extensions.
+
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
@@ -308,7 +311,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   cleared by the next `config` frame, which is the first frame of every reconnect
   and therefore the only reliable "the restart happened" signal a client gets.
 - **The Extensions tab is ONE list, and every row is a `.setting-row` carrying
-  `data-id="ext:<id>"`.** Builtin and installed extensions used to render through two
+  `data-id="ext:<id>"`.** Rows are grouped into Core/External sections by
+  `entry.external`; the row markup and flip path are unchanged. Builtin and installed extensions used to render through two
   paths — `settings.js`'s `rowHtml` toggles above, the panel's installed rows below —
   which printed the same name and description twice. `setExtensionDefs` therefore
   registers its defs in `byId` but leaves the tab's `settingIds` **empty**: the defs
