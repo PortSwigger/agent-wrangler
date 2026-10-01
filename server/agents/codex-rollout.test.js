@@ -90,6 +90,44 @@ test('analyzeCodex prices each request at the model in force when it ran', async
   assert.ok(Math.abs(r.usd - expected) < 1e-9, `${r.usd} !== ${expected}`);
 });
 
+test('analyzeCodex gives pre-context usage to the first model named, even one with no usage of its own', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '06', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '77777777-2222-3333-4444-555555555555';
+  const tc = (i) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: i, cached_input_tokens: 0, output_tokens: 0 } } } });
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    tc(100),
+    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    { type: 'turn_context', payload: { model: 'gpt-6-luna' } },
+    tc(110),
+  ];
+  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.totals['gpt-6-sol'].input, 100);
+  assert.equal(r.totals['gpt-6-luna'].input, 10);
+});
+
+test('analyzeCodex keeps per-model totals summing to the final cumulative total when a counter dips', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
+  const day = path.join(root, '2026', '06', '10');
+  fs.mkdirSync(day, { recursive: true });
+  const uuid = '66666666-2222-3333-4444-555555555555';
+  const tc = (i) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: i, cached_input_tokens: 0, output_tokens: 0 } } } });
+  const lines = [
+    { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
+    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
+    tc(100),
+    tc(90),
+    { type: 'turn_context', payload: { model: 'gpt-6-luna' } },
+    tc(110),
+  ];
+  fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 110);
+});
+
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
   const { root, uuid } = fixtureSessions();
   const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';
