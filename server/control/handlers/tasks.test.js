@@ -217,11 +217,10 @@ test('task-unarchive: restoreSessions resumes exactly the sessions cascaded with
 });
 
 function deleteCtx({ unassigned = ['S1', 'S2'], fire } = {}) {
-  const calls = { del: [], bind: [], fired: [], order: [] };
+  const calls = { del: [], fired: [], order: [] };
   return {
     calls,
     taskStore: { deleteTask: (id) => { calls.order.push('core'); calls.del.push(id); return unassigned; } },
-    memoryStore: { bindSession: (sid, t) => calls.bind.push([sid, t]) },
     ext: { fireTaskDelete: fire ?? (async (id) => { calls.order.push('ext'); calls.fired.push(id); }) },
     rebuild: async () => { calls.order.push('rebuild'); },
   };
@@ -232,7 +231,6 @@ test('task-delete: core removes the task first, then extensions are told, then t
   await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
   assert.deepEqual(c.calls.order, ['core', 'ext', 'rebuild']);
   assert.deepEqual(c.calls.fired, ['T1']);
-  assert.deepEqual(c.calls.bind, [['S1', null], ['S2', null]]);
 });
 
 test('task-delete: an unknown task tells no extension', async () => {

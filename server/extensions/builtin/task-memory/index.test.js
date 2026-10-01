@@ -89,7 +89,7 @@ test('onTaskDelete (via the loader and notifier): removes the task\'s memory fil
   await createTaskDeleteNotifier(loaded, () => hostFor(store))('T1');
   assert.equal(fs.existsSync(store.taskDir('T1')), false);
   assert.equal(store.read('T1'), '');
-  assert.equal(fs.lstatSync(store.linkPath('s1'), { throwIfNoEntry: false }), undefined, 'no dangling link left');
+  assert.equal(fs.readlinkSync(store.linkPath('s1')), path.join('..', 'scratch', 's1'), 'the session falls back to scratch, no dangling link');
   assert.equal(store.read('T2'), 'stays', 'another task is untouched');
   assert.equal(fs.readlinkSync(store.linkPath('s2')), path.join('..', 'tasks', 'T2'));
 });

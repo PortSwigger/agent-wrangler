@@ -172,7 +172,8 @@ export class MemoryStore {
   }
 
   // Drop a deleted task's memory: the canonical task folder and every
-  // by-session symlink that points at it (a link left behind would dangle).
+  // by-session symlink that points at it is repointed at its session's scratch
+  // folder (a link left behind would dangle).
   // Scratch folders belong to sessions, not the task, and stay. Returns whether
   // a task folder existed.
   deleteTask(taskId) {
@@ -182,13 +183,22 @@ export class MemoryStore {
     const bySession = path.join(this.dir, 'by-session');
     let names = [];
     try { names = fs.readdirSync(bySession); } catch { /* none */ }
+    const orphaned = [];
     for (const name of names) {
       const link = path.join(bySession, name);
       try {
-        if (path.resolve(path.dirname(link), fs.readlinkSync(link)) === path.resolve(dir)) fs.unlinkSync(link);
+        if (path.resolve(path.dirname(link), fs.readlinkSync(link)) === path.resolve(dir)) {
+          fs.unlinkSync(link);
+          orphaned.push(name);
+        }
       } catch { /* not a link, or already gone */ }
     }
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+    // The sessions that were on this task fall back to their scratch folder, so
+    // a live agent's AW_TASK_MEMORY link still resolves to a writable directory.
+    for (const name of orphaned) {
+      try { this.bindSession(name, null); } catch { /* best effort */ }
+    }
     this._hasMemory.delete(taskId);
     return existed;
   }

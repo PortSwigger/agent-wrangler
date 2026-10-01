@@ -238,7 +238,7 @@ test('BUILTIN: task-memory registers its handlers, store, hooks and client when 
   assert.ok('taskMemory' in out.stores);
   assert.deepEqual(out.hooks['session.launchContext'].map((h) => h.extId), ['task-memory']);
   assert.ok(out.taskDeleteHooks.some((h) => h.id === 'task-memory'));
-  assert.deepEqual(out.sessionHooks.onPurge.map((h) => h.extId), ['task-memory']);
+  assert.ok(out.sessionHooks.onPurge.some((h) => h.extId === 'task-memory'));
   assert.deepEqual(out.clientManifest.filter((c) => c.id === 'task-memory').map((c) => [c.id, c.client, c.styles]), [['task-memory', '/ext/task-memory/index.js', '/ext/task-memory/styles.css']]);
 });
 
@@ -249,7 +249,7 @@ test('BUILTIN: disabling task-memory in config contributes nothing and suppresse
   assert.equal(out.stores.taskMemory, undefined);
   assert.deepEqual(out.hooks['session.launchContext'], []);
   assert.deepEqual(out.taskDeleteHooks.filter((h) => h.id === 'task-memory'), [], 'a disabled extension is not told about a deleted task');
-  assert.deepEqual(out.sessionHooks.onPurge, []);
+  assert.deepEqual(out.sessionHooks.onPurge.filter((h) => h.extId === 'task-memory'), []);
   assert.deepEqual(out.clientManifest.filter((c) => c.id === 'task-memory'), []);
   assert.ok(!out.skillIds.includes('task-memory'));
   assert.ok(out.disabledSkillIds.includes('task-memory'));

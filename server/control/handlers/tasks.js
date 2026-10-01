@@ -135,7 +135,6 @@ export const taskDeleteHandler = {
       await ctx.rebuild();
       return;
     }
-    for (const sid of unassigned) ctx.memoryStore.bindSession(sid, null);
     await ctx.ext?.fireTaskDelete?.(msg.taskId);
     await ctx.rebuild();
   },
