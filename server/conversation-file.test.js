@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findConversationFile } from './conversation-file.js';
+import { findConversationFile, findConversationFiles } from './conversation-file.js';
 
 // The two agents keep their conversations in different trees, and resolving one
 // with the other's finder degrades SILENTLY to an empty view rather than to an
@@ -57,4 +57,26 @@ test('a Codex id with no rollout is null rather than being answered from the Cla
   const other = '99999999-9999-9999-9999-999999999999';
   fs.writeFileSync(path.join(t.projectsDir, '-Users-someone-repo', `${other}.jsonl`), '');
   assert.equal(await findConversationFile(other, 'codex', t), null);
+});
+
+test('chat resolution returns an ordered Codex chain while Claude stays one transcript', async () => {
+  const t = trees();
+  fs.writeFileSync(t.rollout, JSON.stringify({ type: 'session_meta', payload: { session_id: UUID, id: UUID, thread_source: 'user' } }) + '\n');
+  const day = path.join(t.sessionsDir, '2026', '09', '07');
+  fs.mkdirSync(day, { recursive: true });
+  const resumed = path.join(day, `rollout-2026-09-07T09-00-00-${UUID}_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl`);
+  fs.writeFileSync(resumed, JSON.stringify({ type: 'session_meta', payload: { session_id: UUID, id: UUID, thread_source: 'user' } }) + '\n');
+  assert.deepEqual(await findConversationFiles(UUID, 'codex', t), [t.rollout, resumed]);
+  assert.deepEqual(await findConversationFiles(UUID, 'claude', t), [t.transcript]);
+});
+
+test('chat resolution keeps a legacy Codex rollout without verified session metadata', async () => {
+  const t = trees();
+  assert.deepEqual(await findConversationFiles(UUID, 'codex', t), [t.rollout]);
+});
+
+test('chat resolution rejects a rollout whose metadata names another session', async () => {
+  const t = trees();
+  fs.writeFileSync(t.rollout, JSON.stringify({ type: 'session_meta', payload: { session_id: '99999999-9999-9999-9999-999999999999' } }) + '\n');
+  assert.deepEqual(await findConversationFiles(UUID, 'codex', t), []);
 });

@@ -76,6 +76,89 @@ export async function findRollout(sessionId, sessionsDir = CODEX_SESSIONS) {
   return found;
 }
 
+// A resumed Codex conversation keeps its original session id but writes each
+// continuation to a new rollout. Cache the ordered paths with the same five-
+// second discovery window as findRollout: chat polls must not walk the sessions
+// tree or reread metadata every two seconds, yet a later resume must appear.
+const chainCache = new Map();
+const MAX_CACHED_CHAINS = 50;
+// Usage scans resolve many ids from one sessions tree. Share the filename walk
+// for five seconds, while an id absent from the map still re-walks immediately
+// so a just-created rollout is never held behind a negative cache entry.
+const candidateCache = new Map();
+const MAX_CACHED_CANDIDATE_DIRS = 4;
+
+async function rolloutCandidates(sessionsDir, sessionId, forceWalk) {
+  const hit = candidateCache.get(sessionsDir);
+  if (!forceWalk && hit && Date.now() - hit.at < PATH_CACHE_TTL_MS && hit.byId.has(sessionId)) return hit.byId.get(sessionId);
+  const byId = new Map();
+  for (const file of await rolloutPaths(sessionsDir)) {
+    const id = uuidFromName(path.basename(file));
+    if (!id) continue;
+    const files = byId.get(id) || [];
+    files.push(file);
+    byId.set(id, files);
+  }
+  candidateCache.delete(sessionsDir);
+  candidateCache.set(sessionsDir, { at: Date.now(), byId });
+  if (candidateCache.size > MAX_CACHED_CANDIDATE_DIRS) candidateCache.delete(candidateCache.keys().next().value);
+  return byId.get(sessionId) || [];
+}
+
+export async function firstSessionId(file) {
+  let handle;
+  try {
+    handle = await fsp.open(file, 'r');
+    const chunks = [];
+    let total = 0;
+    while (total < 1024 * 1024) {
+      const buf = Buffer.alloc(Math.min(4096, 1024 * 1024 - total));
+      const { bytesRead } = await handle.read(buf, 0, buf.length, total);
+      if (!bytesRead) return null;
+      const nl = buf.subarray(0, bytesRead).indexOf(0x0a);
+      chunks.push(buf.subarray(0, nl < 0 ? bytesRead : nl));
+      if (nl >= 0) {
+        const entry = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (entry.type !== 'session_meta') return null;
+        const meta = entry.payload;
+        return meta?.thread_source === 'subagent' ? meta.id ?? null : meta?.session_id ?? meta?.id ?? null;
+      }
+      total += bytesRead;
+    }
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+  return null;
+}
+
+export async function findRolloutChain(sessionId, sessionsDir = CODEX_SESSIONS) {
+  const key = `${sessionsDir}\0${sessionId}`;
+  const hit = chainCache.get(key);
+  let forceWalk = false;
+  if (hit) {
+    if (Date.now() - hit.at < PATH_CACHE_TTL_MS && hit.files.every((file) => fs.existsSync(file))) {
+      chainCache.delete(key);
+      chainCache.set(key, hit);
+      return hit.files;
+    }
+    chainCache.delete(key);
+    forceWalk = true;
+  }
+  const candidates = (await rolloutCandidates(sessionsDir, sessionId, forceWalk))
+    .sort((a, b) => path.basename(a) < path.basename(b) ? -1 : path.basename(a) > path.basename(b) ? 1 : 0);
+  const files = [];
+  for (const file of candidates) {
+    if (await firstSessionId(file) === sessionId) files.push(file);
+  }
+  if (files.length) {
+    chainCache.set(key, { files, at: Date.now() });
+    if (chainCache.size > MAX_CACHED_CHAINS) chainCache.delete(chainCache.keys().next().value);
+  }
+  return files;
+}
+
 // One sessionId -> rollout-file map for the whole tree, so a caller resolving many
 // ids (the usage scan) walks the sessions dir ONCE instead of re-walking per id
 // (O(sessions²)). Pick the latest filename for a duplicate uuid, as findRollout
@@ -272,34 +355,40 @@ function scanLine(line, state) {
   if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
     state.currentModel = state.pendingModel;
   }
-  // total_token_usage is cumulative. Each change in it is one request's usage,
-  // billed at the model in force at that point, so a session that switches
-  // models mid-way is priced per segment rather than wholly at its last model.
-  // Codex re-emits token_count when only rate limits change; an unchanged
-  // running total means no new request, so it isn't counted twice.
+  if (entry.type === 'response_item' && (p.role === 'assistant' || p.type === 'reasoning' || (typeof p.type === 'string' && p.type.endsWith('_call')))) state.sawModelResponse = true;
+  // Attribute each request to the model active when its token_count arrived.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) {
-    const cur = p.info.total_token_usage;
-    const prev = state.usage || {};
-    if (USAGE_KEYS.some((k) => (cur[k] || 0) !== (prev[k] || 0))) {
+    const last = p.info.last_token_usage;
+    const usage = p.info.total_token_usage;
+    const baseline = state.usage || state.priorUsage;
+    const validLast = last && USAGE_KEYS.every((key) => Number.isFinite(last[key]) && last[key] >= 0);
+    const firstResumedCall = state.needsResumeBaseline && state.sawModelResponse
+      && validLast && USAGE_KEYS.some((key) => last[key] > 0);
+    const changed = !baseline || USAGE_KEYS.some((key) => usage[key] !== baseline[key]) || firstResumedCall;
+    if (changed) {
       const bucket = (state.byModel[state.model ?? ''] ||= { usage: blankUsage(), long: null });
-      // Measured against each field's high-water mark, so a counter that dips
-      // and recovers isn't counted twice and no model's bucket goes negative.
-      const delta = {};
-      for (const k of USAGE_KEYS) {
-        delta[k] = Math.max(0, (cur[k] || 0) - state.peak[k]);
-        state.peak[k] += delta[k];
-        bucket.usage[k] += delta[k];
+      const delta = blankUsage();
+      const firstContinuationCall = state.needsResumeBaseline;
+      for (const key of USAGE_KEYS) {
+        if (firstContinuationCall) {
+          delta[key] = validLast ? last[key] : Math.max(0, (usage[key] || 0) - (baseline?.[key] || 0));
+        } else {
+          delta[key] = Math.max(0, (usage[key] || 0) - state.peak[key]);
+          state.peak[key] += delta[key];
+        }
+        bucket.usage[key] += delta[key];
       }
-      // A request whose prompt passes the long-context threshold is billed at
-      // the long rate in full, so tally those requests' own usage separately,
-      // capped at what this checkpoint added so it stays a subset of the bucket.
-      const last = p.info.last_token_usage;
-      if (last && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
-        const l = (bucket.long ||= blankUsage());
-        for (const k of USAGE_KEYS) l[k] += Math.min(last[k] || 0, delta[k]);
+      if (firstContinuationCall) {
+        for (const key of USAGE_KEYS) state.peak[key] = usage[key] || 0;
+        state.needsResumeBaseline = false;
+      }
+      if ((validLast ? last.input_tokens : delta.input_tokens) > LONG_CONTEXT_TOKENS) {
+        const long = (bucket.long ||= blankUsage());
+        for (const key of USAGE_KEYS) long[key] += Math.min(validLast ? last[key] : delta[key], delta[key]);
       }
     }
-    state.usage = cur;
+    state.usage = usage;
+    state.sawModelResponse = false;
   }
   // A DIFFERENT top-level shape from `token_count` above (both appear in the same
   // real rollout) whose `usage` is this ONE call's actual size, not a running
@@ -420,8 +509,8 @@ export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
   return loadCodexModelsCache(cachePath)?.get(modelSlug) ?? null;
 }
 
-async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH) {
-  const state = { usage: null, peak: blankUsage(), byModel: {}, model: null, firstModel: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
+async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH, priorUsage = null, priorModel = null) {
+  const state = { usage: null, priorUsage, needsResumeBaseline: Boolean(priorUsage), peak: blankUsage(), byModel: {}, model: priorModel, firstModel: priorModel, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -450,8 +539,10 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     usd: codexCostUsd(totals),
     costByType: codexCostUsdByType(totals),
     model,
+    recordedModel: state.model,
     currentModel: state.currentModel || null,
     totals,
+    rawUsage: state.usage,
     tokens: tokensFor(totals),
     summary: state.summary,
     lastActivity,
@@ -461,21 +552,53 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
   };
 }
 
-async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null, modelsCachePath = MODELS_CACHE_PATH } = {}) {
+async function analyzeRolloutChain(files, meta, modelsCachePath) {
+  // The oldest available cumulative total is the baseline. Later files may
+  // carry that counter forward or reset it at a rewind, so add only their own
+  // per-call usage. The latest file still supplies live model/context state.
+  const totals = {};
+  let first = null;
+  let latest = null;
+  let previousUsage = null;
+  let previousModel = null;
+  for (const [index, file] of files.entries()) {
+    const part = await analyzeRollout(file, index === files.length - 1 ? meta : null, modelsCachePath, previousUsage, previousModel);
+    if (!part) continue;
+    mergeTotals(totals, part.totals);
+    if (!first) first = part;
+    latest = part;
+    previousUsage = part.rawUsage || previousUsage;
+    previousModel = part.recordedModel;
+  }
+  if (!latest) return null;
+  return {
+    ...latest,
+    totals,
+    usd: codexCostUsd(totals),
+    costByType: codexCostUsdByType(totals),
+    tokens: tokensFor(totals),
+    summary: first.summary || latest.summary,
+    startedAt: first.startedAt || latest.startedAt,
+  };
+}
+
+async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, index = null, modelsCachePath = MODELS_CACHE_PATH, chains = null } = {}) {
   const family = index?.files ? index : index
     ? { files: index, metaById: new Map(), childrenByParent: new Map() }
     : await cachedFamilyIndex(sessionsDir);
   const files = family.files;
   const file = files?.get(sessionId) || null;
   if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
-  const own = await analyzeRollout(file, family.metaById?.get(sessionId), modelsCachePath);
+  const ownFiles = chains?.get(sessionId) || await findRolloutChain(sessionId, sessionsDir);
+  const own = await analyzeRolloutChain(ownFiles.length ? ownFiles : [file], family.metaById?.get(sessionId), modelsCachePath);
   if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
   const totals = {};
   mergeTotals(totals, own.totals);
   const subTotals = {};
   const subAgents = [];
   for (const id of descendantsOf(sessionId, family.childrenByParent || new Map())) {
-    const child = await analyzeRollout(files.get(id), family.metaById.get(id));
+    const childChain = chains?.get(id) || await findRolloutChain(id, sessionsDir);
+    const child = await analyzeRolloutChain(childChain.length ? childChain : [files.get(id)], family.metaById.get(id), modelsCachePath);
     if (!child) continue;
     mergeTotals(totals, child.totals);
     mergeTotals(subTotals, child.totals);
@@ -515,16 +638,25 @@ export async function analyzeCodex(sessionId, opts = {}) {
   const sessionsDir = opts.sessionsDir || CODEX_SESSIONS;
   const modelsCachePath = opts.modelsCachePath || MODELS_CACHE_PATH;
   const family = await cachedFamilyIndex(sessionsDir);
+  const ids = [sessionId, ...descendantsOf(sessionId, family.childrenByParent || new Map())];
+  const chains = new Map();
+  for (const id of ids) chains.set(id, await findRolloutChain(id, sessionsDir));
   // Folds in the models-cache file's own mtime, not just the rollout family's —
   // contextPercent's denominator lives there, and nothing about the rollout
   // family changes when Codex refreshes a model's cached context_window. Without
   // this, a stale contextPercent would sit in the cache indefinitely (until some
   // unrelated rollout activity happened to bump the signature for other reasons).
-  const signature = familySignature(sessionId, family) + '\0' + modelsCacheMtime(modelsCachePath);
+  const chainSignature = ids.flatMap((id) => (chains.get(id) || []).map((file) => {
+    try {
+      const stat = fs.statSync(file);
+      return `${file}:${stat.size}:${stat.mtimeMs}`;
+    } catch { return `${file}:?`; }
+  })).join(',');
+  const signature = familySignature(sessionId, family) + '\0' + chainSignature + '\0' + modelsCacheMtime(modelsCachePath);
   const key = sessionsDir + '\0' + sessionId;
   const cached = analysisCache.get(key);
   if (cached?.signature === signature) return cached.result;
-  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, modelsCachePath, index: family });
+  const result = await analyzeCodexUncached(sessionId, { ...opts, sessionsDir, modelsCachePath, index: family, chains });
   if (result.usd != null) analysisCache.set(key, { signature, result });
   return result;
 }

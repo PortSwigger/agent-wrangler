@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { analyzeCodex, codexSubagentDetail, listResumableCodex, activityInRangeCodex, findRollout, buildRolloutIndex, uuidFromName } from './codex-rollout.js';
+import { analyzeCodex, codexSubagentDetail, listResumableCodex, activityInRangeCodex, findRollout, findRolloutChain, buildRolloutIndex, uuidFromName } from './codex-rollout.js';
 
 test('uuidFromName returns the leading conversation id from a resumed rollout name', () => {
   assert.equal(uuidFromName('rollout-2026-09-28T13-59-30-01a0c473-2740-7970-8667-e6f359444905_01a0e819-57a8-7823-b332-3a6efe7548d3.jsonl'), '01a0c473-2740-7970-8667-e6f359444905');
@@ -39,6 +39,161 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.ok(r.usd > 0);
   assert.equal(r.summary, 'Fix the parser bug');
   assert.deepEqual(r.subAgents, []);
+});
+
+function resumedUsageFixture(oldCounts, newCounts, kind = 'rewind') {
+  const interrupt = kind === 'interrupt';
+  const uuid = interrupt ? '01a0c473-2740-7970-8667-e6f359444905' : '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { root } = rolloutTree([]);
+  const oldDay = path.join(root, '2026', '09', interrupt ? '21' : '28');
+  const newDay = path.join(root, '2026', '09', interrupt ? '28' : '29');
+  fs.mkdirSync(oldDay, { recursive: true });
+  fs.mkdirSync(newDay, { recursive: true });
+  const oldFile = path.join(oldDay, `rollout-${interrupt ? '2026-09-21T15-51-16' : '2026-09-28T21-28-30'}-${uuid}.jsonl`);
+  const newFile = path.join(newDay, `rollout-${interrupt ? '2026-09-28T13-59-30' : '2026-09-29T09-52-14'}-${uuid}_${interrupt ? '01a0e819-57a8-7823-b332-3a6efe7548d3' : '01a0ec5d-555a-7f10-abc5-35aa3badf9e4'}.jsonl`);
+  const meta = { type: 'session_meta', payload: { session_id: uuid, id: uuid, thread_source: 'user' } };
+  const usage = (input) => ({ input_tokens: input, cached_input_tokens: 0, output_tokens: 0, total_tokens: input });
+  const tokenCount = (total, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: usage(total), last_token_usage: usage(last) } } });
+  const lines = (counts) => [meta, { type: 'turn_context', payload: { model: 'gpt-6-sol' } }, ...counts.map(([total, last]) => tokenCount(total, last))];
+  fs.writeFileSync(oldFile, lines(oldCounts).map((line) => JSON.stringify(line)).join('\n') + '\n');
+  fs.writeFileSync(newFile, lines(newCounts).map((line) => JSON.stringify(line)).join('\n') + '\n');
+  return { root, uuid, oldFile, newFile };
+}
+
+test('analyzeCodex counts each new call when an interrupt resume carries the old cumulative counter', async () => {
+  const { root, uuid } = resumedUsageFixture([[100, 100], [200, 100], [200, 100]], [[260, 60], [310, 50]], 'interrupt');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 310);
+  assert.ok(Math.abs(r.usd - 310 * 2 / 1_000_000) < 1e-12);
+});
+
+test('analyzeCodex prices a resumed call under its new model', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[260, 60]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines[1] = JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-luna' } });
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.totals['gpt-6-sol'].input, 200);
+  assert.equal(r.totals['gpt-6-luna'].input, 60);
+  assert.ok(Math.abs(r.usd - (200 * 2 + 60 * 0.1) / 1_000_000) < 1e-12);
+});
+
+test('analyzeCodex keeps the previous model until a continuation changes it', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100]], [[160, 60]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(1, 1);
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.deepEqual(r.totals, { 'gpt-6-sol': { input: 160, output: 0, cacheRead: 0 } });
+});
+
+test('analyzeCodex does not carry a fallback model into a continuation', async () => {
+  const { root, uuid, oldFile, newFile } = resumedUsageFixture([[100, 100]], [[130, 30], [170, 40]]);
+  const oldLines = fs.readFileSync(oldFile, 'utf8').trimEnd().split('\n');
+  oldLines.splice(1, 1);
+  fs.writeFileSync(oldFile, oldLines.join('\n') + '\n');
+  const newLines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  const model = newLines.splice(1, 1)[0];
+  newLines.splice(2, 0, model);
+  fs.writeFileSync(newFile, newLines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.totals['gpt-5.5-codex'].input, 100);
+  assert.equal(r.totals['gpt-6-sol'].input, 70);
+});
+
+test('analyzeCodex does not rebill a dip and recovery within a continuation', async () => {
+  const { root, uuid } = resumedUsageFixture([[100, 100]], [[160, 60], [150, 60], [160, 60]]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 160);
+});
+
+test('analyzeCodex ignores a resumed file re-emitting the previous token snapshot', async () => {
+  const { root, uuid } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100], [260, 60]]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 260);
+});
+
+test('analyzeCodex counts a resumed call whose cumulative total collides with the previous snapshot', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: {
+    type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'New response after rewind' }],
+  } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex counts a resumed collision when the call only emitted reasoning', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', summary: [] } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex counts a resumed collision when the call only emitted a tool request', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{}' } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex floors missing and empty last usage at the prior cumulative baseline', async () => {
+  for (const last of [undefined, {}]) {
+    const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], []);
+    const usage = { input_tokens: 240, cached_input_tokens: 0, output_tokens: 0, total_tokens: 240 };
+    fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+      total_token_usage: usage, ...(last === undefined ? {} : { last_token_usage: last }),
+    } } }) + '\n');
+    const r = await analyzeCodex(uuid, { sessionsDir: root });
+    assert.equal(r.tokens.input, 240);
+  }
+});
+
+test('analyzeCodex does not add a reset cumulative total when last usage is missing', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], []);
+  fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 140, cached_input_tokens: 0, output_tokens: 0, total_tokens: 140 },
+  } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 200);
+});
+
+test('analyzeCodex prices a long call from the cumulative delta when last usage is empty', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100_000, 100_000]], []);
+  fs.appendFileSync(newFile, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 0, total_tokens: 400_000 },
+    last_token_usage: {},
+  } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 400_000);
+  assert.ok(Math.abs(r.usd - (100_000 * 2 + 300_000 * 4) / 1_000_000) < 1e-9);
+});
+
+test('analyzeCodex includes spend before a rewind that resets the cumulative counter', async () => {
+  const { root, uuid, oldFile, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[140, 40], [190, 50]]);
+  const modelsCachePath = fixtureModelsCache([{ slug: 'gpt-6-sol', contextWindow: 200 }]);
+  fs.appendFileSync(oldFile, JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 180 } } }) + '\n');
+  fs.appendFileSync(newFile, JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 50 } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root, modelsCachePath });
+  assert.equal(r.tokens.input, 290);
+  assert.ok(Math.abs(r.usd - 290 * 2 / 1_000_000) < 1e-12);
+  assert.equal(r.contextPercent, 25);
+});
+
+test('analyzeCodex keeps the unsplit cumulative total when a rate-limit update repeats the last call', async () => {
+  const { root, uuid } = fixtureSessions();
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-00-00-${uuid}.jsonl`);
+  fs.appendFileSync(file, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 1500, cached_input_tokens: 200, output_tokens: 300, total_tokens: 1800 },
+    last_token_usage: { input_tokens: 500, cached_input_tokens: 200, output_tokens: 100, total_tokens: 600 },
+  } } }) + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.deepEqual(r.tokens, { input: 1300, output: 300, cacheWrite: 0, cacheRead: 200 });
 });
 
 test('analyzeCodex bills requests over 272K prompt tokens at the long-context rate', async () => {
@@ -184,6 +339,40 @@ test('analyzeCodex folds native sub-agent usage into its parent and exposes a co
     endedAt: Date.parse('2026-06-10T09:07:00.000Z'),
     usd: own.usd,
   }]);
+});
+
+test('analyzeCodex includes a resumed sub-agent rollout in parent and child spend', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '66666666-7777-8888-9999-aaaaaaaaaaaa';
+  const day = path.join(root, '2026', '06', '10');
+  const oldFile = path.join(day, `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  const newFile = path.join(day, `rollout-2026-06-10T09-10-00-${child}_01a0ec5d-555a-7f10-abc5-35aa3badf9e4.jsonl`);
+  const meta = { type: 'session_meta', payload: { id: child, session_id: child, parent_thread_id: uuid, thread_source: 'subagent' } };
+  const model = { type: 'turn_context', payload: { model: 'gpt-5.5' } };
+  const count = (input) => ({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 0, total_tokens: input },
+    last_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 0, total_tokens: input },
+  } } });
+  fs.writeFileSync(oldFile, [meta, model, count(100)].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  fs.writeFileSync(newFile, [meta, model, count(30)].map((line) => JSON.stringify(line)).join('\n') + '\n');
+  const own = await analyzeCodex(child, { sessionsDir: root });
+  const parent = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(own.tokens.input, 130);
+  assert.equal(parent.tokens.input, 1430);
+  assert.equal(parent.subAgents[0].usd, own.usd);
+  fs.appendFileSync(oldFile, JSON.stringify(count(150)) + '\n');
+  const refreshed = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(refreshed.tokens.input, 1480, 'a change in an older child file invalidates the parent cost cache');
+});
+
+test('findRolloutChain uses a sub-agent metadata id when session_id names its parent', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '62626262-7777-8888-9999-aaaaaaaaaaaa';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: {
+    id: child, session_id: uuid, thread_source: 'subagent', parent_thread_id: uuid,
+  } }) + '\n');
+  assert.deepEqual(await findRolloutChain(child, root), [file]);
 });
 
 test('codexSubagentDetail reads prompt, tool calls, and result from a child rollout', async () => {
@@ -592,6 +781,114 @@ test('findRollout: a resumed rollout uses its leading conversation id and supers
   assert.equal(await findRollout(uuid, root), liveFile);
   assert.equal((await buildRolloutIndex(root)).get(uuid), liveFile);
   assert.equal(await findRollout(suffix, root), null);
+});
+
+test('findRolloutChain: includes both interrupt and rewind resumes in filename order, verifying metadata', async () => {
+  const uuid = '01a0c473-2740-7970-8667-e6f359444905';
+  const suffix = '01a0e819-57a8-7823-b332-3a6efe7548d3';
+  const { root } = rolloutTree([]);
+  const names = [
+    `rollout-2026-09-21T15-51-16-${uuid}.jsonl`,
+    `rollout-2026-09-28T13-59-30-${uuid}_${suffix}.jsonl`,
+    `rollout-2026-09-29T09-52-14-${uuid}_01a0ec5d-555a-7f10-abc5-35aa3badf9e4.jsonl`,
+  ];
+  const files = names.map((name, i) => {
+    const day = path.join(root, '2026', '09', String(21 + i).padStart(2, '0'));
+    fs.mkdirSync(day, { recursive: true });
+    const file = path.join(day, name);
+    fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { session_id: uuid, id: uuid, thread_source: 'user' } }) + '\n');
+    return file;
+  });
+  const impostor = path.join(root, '2026', '09', '23', `rollout-2026-09-30T00-00-00-${uuid}_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl`);
+  fs.writeFileSync(impostor, JSON.stringify({ type: 'session_meta', payload: { id: uuid, session_id: suffix, thread_source: 'user' } }) + '\n');
+  assert.deepEqual(await findRolloutChain(uuid, root), files);
+  assert.deepEqual(await findRolloutChain(suffix, root), []);
+});
+
+test('findRolloutChain: cached chain discovers a later resume after the path TTL', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { root } = rolloutTree([]);
+  const day = path.join(root, '2026', '09', '29');
+  const oldFile = path.join(day, `rollout-2026-09-28T21-28-30-${uuid}.jsonl`);
+  const nextFile = path.join(day, `rollout-2026-09-29T09-52-14-${uuid}_01a0ec5d-555a-7f10-abc5-35aa3badf9e4.jsonl`);
+  const meta = JSON.stringify({ type: 'session_meta', payload: { session_id: uuid, id: uuid, thread_source: 'user' } }) + '\n';
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(oldFile, meta);
+  assert.deepEqual(await findRolloutChain(uuid, root), [oldFile]);
+  fs.writeFileSync(nextFile, meta);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 6000;
+  try {
+    assert.deepEqual(await findRolloutChain(uuid, root), [oldFile, nextFile]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('findRolloutChain: a repeat chat poll does not rewalk or reread rollout headers', async () => {
+  const uuid = '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
+  const { root } = rolloutTree([]);
+  const day = path.join(root, '2026', '09', '29');
+  const file = path.join(day, `rollout-2026-09-29T09-52-14-${uuid}.jsonl`);
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { session_id: uuid, base_instructions: 'x'.repeat(20_000) } }) + '\n');
+  const realReaddir = fsp.readdir;
+  const realOpen = fsp.open;
+  let walks = 0;
+  let opens = 0;
+  fsp.readdir = (...args) => { walks += 1; return realReaddir(...args); };
+  fsp.open = (...args) => { opens += 1; return realOpen(...args); };
+  try {
+    assert.deepEqual(await findRolloutChain(uuid, root), [file]);
+    const firstWalks = walks;
+    const firstOpens = opens;
+    assert.ok(firstWalks > 0 && firstOpens > 0);
+    assert.deepEqual(await findRolloutChain(uuid, root), [file]);
+    assert.equal(walks, firstWalks);
+    assert.equal(opens, firstOpens);
+  } finally {
+    fsp.readdir = realReaddir;
+    fsp.open = realOpen;
+  }
+});
+
+test('findRolloutChain: resolving many ids shares one candidate-tree walk', async () => {
+  const ids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
+  const { root, files } = rolloutTree(ids);
+  for (const id of ids) fs.writeFileSync(files[id], JSON.stringify({ type: 'session_meta', payload: { session_id: id } }) + '\n');
+  const realReaddir = fsp.readdir;
+  let walks = 0;
+  fsp.readdir = (...args) => { walks += 1; return realReaddir(...args); };
+  try {
+    await findRolloutChain(ids[0], root);
+    const afterFirst = walks;
+    await findRolloutChain(ids[1], root);
+    assert.equal(walks, afterFirst);
+  } finally {
+    fsp.readdir = realReaddir;
+  }
+});
+
+test('findRolloutChain: evicts old conversations instead of retaining paths forever', async () => {
+  const { root } = rolloutTree([]);
+  const day = path.join(root, '2026', '09', '29');
+  fs.mkdirSync(day, { recursive: true });
+  const ids = Array.from({ length: 51 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  for (const id of ids) {
+    fs.writeFileSync(path.join(day, `rollout-2026-09-29T09-52-14-${id}.jsonl`),
+      JSON.stringify({ type: 'session_meta', payload: { session_id: id } }) + '\n');
+  }
+  const realOpen = fsp.open;
+  let opens = 0;
+  fsp.open = (...args) => { opens += 1; return realOpen(...args); };
+  try {
+    for (const id of ids) assert.equal((await findRolloutChain(id, root)).length, 1);
+    const before = opens;
+    await findRolloutChain(ids[0], root);
+    assert.ok(opens > before, 'the oldest chain is revalidated after the cache fills');
+  } finally {
+    fsp.open = realOpen;
+  }
 });
 
 test('findRollout: an already cached old rollout gives way to a later resume', async () => {
