@@ -335,7 +335,98 @@ function render(body) {
     <div class="settings-panels">${panels}</div>`;
 }
 
+let settingsBody = null;
+let detail = null;
+let savedTimer = null;
+
+// Settings apply the moment they change, so the footer says so: a brief
+// "Saved" beside Done, since there is no Save button to imply it.
+export function flashSettingsSaved() {
+  const actions = document.querySelector('#settings-modal .modal-actions');
+  if (!actions) return;
+  let tag = document.getElementById('settings-saved');
+  if (!tag) {
+    tag = document.createElement('span');
+    tag.id = 'settings-saved';
+    tag.className = 'settings-saved';
+    tag.setAttribute('role', 'status');
+    actions.prepend(tag);
+  }
+  tag.textContent = 'Saved';
+  tag.classList.add('show');
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => tag.classList.remove('show'), 1600);
+}
+
+function endDetail() {
+  if (!detail) return;
+  const { el, onLeave } = detail;
+  detail = null;
+  onLeave?.();
+  el.remove();
+  settingsBody?.classList.remove('in-detail');
+  document.getElementById('settings-cancel')?.remove();
+  const done = document.getElementById('settings-close');
+  if (done) done.textContent = 'Done';
+}
+
+// Drill-in view inside the open Settings card: hides the tab panels and shows
+// `node` under a back link, so a sub-page never needs a second dialog stacked
+// over this one. `saves` relabels Done as Save and adds Cancel, for views that
+// hold unsaved edits. `onDone` runs when Done/Save is pressed and may reject to keep the
+// view open; `onLeave` runs however the view ends (back, Escape, tab switch,
+// Done, Settings closing).
+export function openSettingsDetail({ title, backLabel, node, saves = false, onDone, onLeave }) {
+  endDetail();
+  const body = settingsBody;
+  const el = document.createElement('div');
+  el.className = 'settings-detail';
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = 'settings-detail-back';
+  back.textContent = `\u2190 ${backLabel}`;
+  back.addEventListener('click', endDetail);
+  const heading = document.createElement('h4');
+  heading.className = 'settings-detail-title';
+  heading.textContent = title;
+  el.append(back, heading, node);
+  body.append(el);
+  body.classList.add('in-detail');
+  detail = { el, onDone, onLeave, finishing: false };
+  const done = document.getElementById('settings-close');
+  if (saves && done) {
+    done.textContent = 'Save';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.id = 'settings-cancel';
+    cancel.className = 'ghost';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', endDetail);
+    done.before(cancel);
+  }
+  done?.focus();
+  return { finish: finishDetail, leave: endDetail };
+}
+
+async function finishDetail() {
+  const current = detail;
+  if (!current || current.finishing) return;
+  current.finishing = true;
+  const done = document.getElementById('settings-close');
+  if (done) done.disabled = true;
+  try {
+    await current.onDone?.();
+    if (detail === current) endDetail();
+  } catch {
+    // The owner reports its own failure; the view stays open to retry.
+  } finally {
+    current.finishing = false;
+    if (done) done.disabled = false;
+  }
+}
+
 function selectTab(body, tabId, focus = false) {
+  endDetail();
   body.querySelectorAll('.settings-tab').forEach((tab) => {
     const selected = tab.dataset.tab === tabId;
     tab.classList.toggle('active', selected);
@@ -362,12 +453,14 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
   if (!modal || !body) return;
+  settingsBody = body;
 
   const closeBtn = document.getElementById('settings-close');
   // Land focus on Done so the modal-scoped Escape handler below fires on a fresh
   // open (a click-opened modal otherwise leaves focus on <body>) — same trick the
   // file-preview / schedule modals use.
   const open = () => {
+    endDetail();
     render(body);
     // After render, because the mount point only exists once the panels are in
     // the DOM. Every open rebuilds it, so a quarantine reason or a SHA that
@@ -376,10 +469,10 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };
-  const close = () => modal.classList.add('hidden');
+  const close = () => { endDetail(); modal.classList.add('hidden'); };
 
   if (btn) btn.addEventListener('click', open);
-  closeBtn?.addEventListener('click', close);
+  closeBtn?.addEventListener('click', () => { if (detail) finishDetail(); else close(); });
   window.addEventListener('keydown', (e) => {
     if (!isOpenSettingsKey(e)) return;
     if (!modal.classList.contains('hidden')) {
@@ -390,7 +483,11 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
     e.preventDefault();
     open();
   }, true);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    if (detail) { endDetail(); closeBtn?.focus(); } else close();
+  });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
 
   body.addEventListener('click', (e) => {

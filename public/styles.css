@@ -520,11 +520,11 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    is what attaches them). That is exactly how #ext-consent-modal shipped, which
    is why modal-overlay.test.js now asserts the two selectors cover every
    `class="hidden"` modal in index.html. */
-#modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal, #ext-settings-modal {
+#modal, #confirm-modal, #snooze-modal, #file-modal, #settings-modal, #ext-consent-modal {
   position: fixed; inset: 0; background: var(--overlay);
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
-#modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden, #ext-settings-modal.hidden { display: none; }
+#modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden { display: none; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
@@ -754,6 +754,13 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .settings-panels { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .settings-panel.hidden { display: none; }
+.settings-body.in-detail .settings-panels { display: none; }
+.settings-saved { align-self: center; margin-right: auto; font-size: 12px; color: var(--fg-muted); opacity: 0; transition: opacity 0.25s; }
+.settings-saved.show { opacity: 1; }
+.settings-detail { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.settings-detail-back { background: none; border: 0; padding: 0; margin: 0 0 8px; color: var(--blue-fg); font: inherit; font-size: 12px; cursor: pointer; }
+.settings-detail-back:hover { text-decoration: underline; }
+.settings-detail-title { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--fg); }
 .settings-list { display: flex; flex-direction: column; gap: 4px; }
 .settings-empty { color: var(--fg-subtle); font-size: 13px; padding: 10px 2px; }
 .setting-row {

@@ -384,10 +384,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   because a written-out process does not fit a URL-sized field; it takes no
   `pattern`, since a full-string regex over paragraphs is not a constraint anyone
   means; and it commits on `change` (blur) ONLY — Enter is a newline, so neither
-  the row's Enter-commit nor the dialog's Enter-means-Done (`openExtSettings`) may
-  fire from inside one. Because blur is its only commit, the dialog's `close`
+  the row's Enter-commit nor view's Enter-means-Done (`openExtSettings`) may
+  fire from inside one. Because blur is its only commit, the view's `onLeave`
   blurs whatever field has focus inside it first (`commitFocusedField`) — Escape,
-  the backdrop and Done all hide the dialog before the browser would move focus
+  the back link and Done all remove the view before the browser would move focus
   on its own. With no declared `maxLength` the field still carries the server's
   cap (`MAX_TEXTAREA_LENGTH`, mirrored in `extensions-panel.js` and asserted
   equal by its test). The value is stored verbatim, untrimmed.
@@ -420,7 +420,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   under it buried that, so a row draws a **cog** (only when it declares
   settings, making the cog's presence the disclosure that there is anything to
   configure) and `app.js`'s `openExtSettings` puts that one extension's rows in
-  their own dialog, built fresh per open from `latestExtensions` — never from
+  a drill-in view inside the Settings card (`settings.js openSettingsDetail`: tab
+  panels hidden, a back link, no second dialog and so no second backdrop), built fresh per open from `latestExtensions` — never from
   the entry the row was drawn with, which may be several graphs old by the time
   the cog is clicked. A QUARANTINED extension keeps its cog and gets its rows
   DISABLED, which says "this is what it would want" where a hidden cog would
@@ -900,14 +901,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   off the dialog's rows: it is a value the extension manages itself. A visible
   `list` draws a read-only item count; an editable list UI is deferred.
 - **`settings.panel` (1.14.0) is the extension's own block in its settings
-  dialog**, above the manifest rows (`app.js openExtSettings`). Single-host, via
+  view**, above the manifest rows (`app.js openExtSettings`). Single-host, via
   `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
   mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
-  **Done means save for panel contributions only**: `slots.savePanels` awaits
-  each `save` in turn and a rejection keeps the dialog open (the extension shows
-  its own error); Escape or the backdrop closes without saving; `unmountHost`
-  runs every `unmount` on close. The manifest rows still commit on change, and
-  the button stays "Done".
+  **Save writes panel contributions only**: when an extension has a panel the
+  footer's Done becomes **Save** with a **Cancel** beside it. `slots.savePanels`
+  awaits each `save` in turn and a rejection keeps the view open (the extension
+  shows its own error); Cancel, the back link, Escape and switching tab leave
+  without saving; `unmountHost` runs every `unmount` on leaving. Manifest rows
+  commit on change and flash "Saved" beside the footer buttons
+  (`flashSettingsSaved`). An extension should use manifest rows or a panel, not
+  both: the view would carry two save models at once. Escape leaves the view
+  for the Extensions list rather than closing Settings.
 - **`registrar.api` (1.14.0).** The registrar a module's `register(registrar)`
   receives carries `api`, the SAME object (by identity) every contribution's
   `mount(el, api)` gets, so a module can call `api.cards.hideChips(...)` or
