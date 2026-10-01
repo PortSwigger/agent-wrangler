@@ -568,7 +568,13 @@ function closeUsagePanel() { el('usage-modal').classList.add('hidden'); hideTip(
 function wire() {
   el('usage-close').addEventListener('click', closeUsagePanel);
   const modal = el('usage-modal');
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeUsagePanel(); } });
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    const open = modal.querySelector('.search-dd[open]');
+    if (open) open.open = false;
+    else closeUsagePanel();
+  });
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) closeUsagePanel(); });
   // Redraw on resize so the SVG tracks the panel width while it's open.
   window.addEventListener('resize', () => { if (!modal.classList.contains('hidden') && state.data) renderChart(); });
