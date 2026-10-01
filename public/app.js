@@ -51,7 +51,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
+import { initSettings, openSettingsDetail, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
@@ -5468,9 +5468,11 @@ function mountExtensionsPanel(host) {
   }));
 }
 
-// One extension's settings, behind the cog on its row. Its own dialog rather
-// than rows in the tab: the Extensions tab answers "what have I got", and every
-// extension's fields laid out flat under it answered that far worse.
+// One extension's settings, behind the cog on its row. A drill-in view inside
+// the Settings card rather than rows in the tab or a second dialog: the
+// Extensions tab answers "what have I got", every extension's fields laid out
+// flat under it answered that far worse, and a dialog stacked over Settings
+// showed two backdrops.
 //
 // Built fresh per open from `latestExtensions` — never from the entry the row
 // was drawn with, which may be several graphs old by the time the cog is
@@ -5481,72 +5483,61 @@ function mountExtensionsPanel(host) {
 function openExtSettings(id) {
   const entry = latestExtensions.find((e) => e.id === id);
   if (!entry) return;
-  const modal = document.getElementById('ext-settings-modal');
-  const body = document.getElementById('ext-settings-body');
-  document.getElementById('ext-settings-title').textContent = entry.label || entry.id;
-  body.textContent = '';
+  const content = document.createElement('div');
   // The extension's own `settings.panel` contributions, ABOVE the manifest
   // rows. Only this extension's (onlyExt). Their `save` runs on Done.
   const panelHost = document.createElement('div');
   panelHost.className = 'ext-settings-panel';
-  body.append(panelHost);
+  content.append(panelHost);
   const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
   if (!panels) panelHost.remove();
-  body.append(extensionSettingRowsEl(entry, {
+  content.append(extensionSettingRowsEl(entry, {
     onSettingChange: ({ key, value }) => {
       send({ type: 'ext-setting-set', id: entry.id, key, value });
+      flashSettingsSaved();
       // Written back into our own copy as well as sent, so re-opening the
-      // dialog before the confirming graph arrives shows what was just set
+      // view before the confirming graph arrives shows what was just set
       // rather than the old value. The next graph carries the same value and
       // overwrites this wholesale.
       const live = latestExtensions.find((e) => e.id === entry.id);
       if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
     },
   }));
-  const done = document.getElementById('ext-settings-done');
-  modal.classList.remove('hidden');
-  done.focus();
-  let saving = false;
-  const close = () => {
-    commitFocusedField(modal);
-    modal.classList.add('hidden');
-    done.removeEventListener('click', onDone);
-    modal.removeEventListener('keydown', onKey);
-    modal.removeEventListener('mousedown', onBackdrop);
-    // unmount runs for every panel contribution; its sample card goes too.
-    slots.unmountHost('settings.panel', panelHost);
-    panelHost.remove();
-    pruneSampleHosts();
-  };
-  // Done means SAVE for panel contributions only — the manifest rows below
-  // have already committed on change. A rejecting save keeps the dialog open
-  // (the extension shows its own error); Escape/backdrop close without saving.
-  const onDone = async () => {
-    if (saving) return;
-    if (!panels) { close(); return; }
-    saving = true;
-    done.disabled = true;
-    try {
-      await slots.savePanels(panelHost);
-      close();
-    } catch (err) {
-      console.error(`[ext:${entry.id}] settings panel save failed`, err);
-    } finally {
-      saving = false;
-      done.disabled = false;
-    }
-  };
-  const onKey = (e) => {
+  // Save (shown only when there are panel contributions) writes them — the
+  // manifest rows have already committed on change. A rejecting save keeps the
+  // view open (the extension shows its own error); Cancel, back and Escape
+  // leave without saving.
+  const view = openSettingsDetail({
+    title: entry.label || entry.id,
+    backLabel: 'Extensions',
+    node: content,
+    saves: Boolean(panels),
+    onDone: async () => {
+      if (!panels) return;
+      try {
+        await slots.savePanels(panelHost);
+      } catch (err) {
+        console.error(`[ext:${entry.id}] settings panel save failed`, err);
+        throw err;
+      }
+    },
+    // A textarea commits on blur only, and removing the view does not reliably
+    // blur it first, so an edit would otherwise be lost.
+    onLeave: () => {
+      commitFocusedField(content);
+      slots.unmountHost('settings.panel', panelHost);
+      panelHost.remove();
+      pruneSampleHosts();
+    },
+  });
+  content.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') return;
     const action = extSettingsKeyAction(e, { hasPanels: Boolean(panels) });
     if (action === 'none') return;
     e.preventDefault();
-    if (action === 'done') onDone();
-    else close();
-  };
-  const onBackdrop = (e) => { if (e.target === modal) close(); };
-  done.addEventListener('click', onDone);
-  modal.addEventListener('keydown', onKey);
-  modal.addEventListener('mousedown', onBackdrop);
+    if (action === 'done') view.finish();
+    else view.leave();
+  });
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
