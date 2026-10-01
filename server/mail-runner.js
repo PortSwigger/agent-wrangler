@@ -11,15 +11,17 @@ export const DEFER_LOG_AFTER_MS = 60_000;
 const DEFER_EPISODE_GAP_MS = 30_000;
 
 // Per-recipient deferral episodes, logged once each when they outlast
-// DEFER_LOG_AFTER_MS. In memory: a restart starts the clock again, which only
-// delays a log line.
+// DEFER_LOG_AFTER_MS. An episode belongs to one unread batch, named by its
+// oldest message: a read_mail drain followed by fresh mail is a new batch, while
+// mail joining a held batch is not. In memory: a restart starts the clock again,
+// which only delays a log line.
 export function createDeferralTracker({ log = defaultLog } = {}) {
   const episodes = new Map();
   return {
-    deferred(to, reason, now) {
+    deferred(to, reason, now, batch = null) {
       let ep = episodes.get(to);
-      if (!ep || now - ep.lastAt > DEFER_EPISODE_GAP_MS) {
-        ep = { since: now, lastAt: now, logged: false };
+      if (!ep || ep.batch !== batch || now - ep.lastAt > DEFER_EPISODE_GAP_MS) {
+        ep = { batch, since: now, lastAt: now, logged: false };
         episodes.set(to, ep);
       }
       ep.lastAt = now;
@@ -62,7 +64,7 @@ export async function sweepDueSettles(deps, now = Date.now()) {
         onError?.(to, new Error(mode.error || 'mail delivery failed'));
       } else if (mode.mode === 'deferred') {
         reopen.add(to);
-        deferrals?.deferred(to, mode.reason, now);
+        deferrals?.deferred(to, mode.reason, now, pending[0].id);
       } else {
         mailStore.markNotified(to, now);
         deferrals?.resolved(to);
