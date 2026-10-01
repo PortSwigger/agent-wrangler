@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import checklist from './builtin/checklist/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -32,11 +33,11 @@ import { normalizeCodexPolicy } from './codex-policy.js';
 // module, so importing it breaches nothing: the leaf rule is about reaching back
 // into the server core, not about third-party code.
 //
-// Empty for now: this lands the API and its seams, with no feature migrated onto
-// it yet. Nothing here is dead — every consumer below already routes through the
-// loader's (currently empty) lists, so the first manifest is a one-line addition
-// to this array plus its own directory.
-export const BUILTIN = [];
+// Shipped extensions live in `builtin/<id>/` (manifest `index.js` exporting its
+// absolute `dir`, plus its own tools/, skills/, public/ and tests) and are one
+// import and one row here. `checklist` is the first; the rest of the flagged
+// features migrate the same way.
+export const BUILTIN = [checklist];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
 // colliding with one would silently overwrite core state on every ~4s tick,
@@ -44,7 +45,7 @@ export const BUILTIN = [];
 // run by index.js against the real stores once they exist).
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
-  'checklists', 'checklistEnabled', 'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
+  'taskMemoryEnabled', 'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault',
   'quarantinedBuiltins',
 ]);

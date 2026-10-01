@@ -19,16 +19,16 @@ export const addChecklistItemTool = {
   inputSchema: {
     text: z.string().min(1).describe('The item, as a short imperative phrase (e.g. "Migrate the auth middleware"). One step per call.'),
   },
-  async handler({ deps, caller }, args = {}) {
+  async handler({ host, caller }, args = {}) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to add to.');
     let item;
     try {
-      item = deps.checklistStore.add(caller, args.text);
+      item = host.stores.checklist.add(caller, args.text);
     } catch (err) {
       return errorResult(String(err.message || err));
     }
     if (!item) return errorResult('Checklist item text cannot be empty.');
-    await deps.rebuild?.();
+    await host.rebuild();
     const structuredContent = { id: item.id };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],

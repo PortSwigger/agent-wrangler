@@ -10,9 +10,9 @@ export const listChecklistTool = {
     + 'reads the session you are running in — there is no session parameter, and you cannot '
     + 'list another session\'s checklist.',
   inputSchema: {},
-  async handler({ deps, caller }) {
+  async handler({ host, caller }) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no checklist to list.');
-    const structuredContent = { items: deps.checklistStore.list(caller) };
+    const structuredContent = { items: host.stores.checklist.list(caller) };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
       structuredContent,

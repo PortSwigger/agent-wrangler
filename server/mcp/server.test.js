@@ -50,20 +50,9 @@ async function connect(deps, caller, opts) {
 // The tool set is feature-flag and extension dependent (activeTools), so pin both
 // rather than inheriting whatever this developer's config.json says.
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
-  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: true, ext: NO_EXT }) });
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ ext: NO_EXT }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['add_checklist_item', 'add_todo', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'delete_todo', 'detach_session', 'edit_todo', 'get_links', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_checklist', 'list_mail', 'list_sessions', 'list_tasks', 'list_todos', 'move_todo', 'name_branch', 'read_mail', 'remove_checklist_item', 'remove_links', 'rename_session', 'reorder_todos', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_checklist_item', 'workflow_phase']);
-  await server.close();
-});
-
-test('checklistEnabled:false leaves the four checklist tools out of tools/list entirely', async () => {
-  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ checklist: false, ext: NO_EXT }) });
-  const { tools } = await client.listTools();
-  const names = tools.map((t) => t.name);
-  for (const n of ['add_checklist_item', 'update_checklist_item', 'remove_checklist_item', 'list_checklist']) {
-    assert.ok(!names.includes(n), `${n} must not be advertised when the feature is off`);
-  }
-  assert.ok(names.includes('list_sessions'), 'everything else still is');
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['add_todo', 'archive_session', 'assign_session', 'attach_session', 'create_terminal', 'delete_todo', 'detach_session', 'edit_todo', 'get_links', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'list_todos', 'move_todo', 'name_branch', 'read_mail', 'remove_links', 'rename_session', 'reorder_todos', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
   await server.close();
 });
 
@@ -84,7 +73,7 @@ test('deps.ext.hideTool drops a tool from one caller\'s listing only', async () 
 });
 
 test('no hideTool at all leaves the tool list untouched by identity', async () => {
-  const tools = activeTools({ checklist: true, ext: NO_EXT });
+  const tools = activeTools({ ext: NO_EXT });
   const { client, server } = await connect({ ...fakeDeps(), ext: { hideTool: null } }, 'CARD1', { tools });
   assert.equal((await client.listTools()).tools.length, tools.length);
   await server.close();

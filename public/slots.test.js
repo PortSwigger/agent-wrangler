@@ -1015,3 +1015,24 @@ test('registrar.api is the contribution api, gated, and cleaned up by removeExte
   assert.equal(h.slots.settingsChanged('ok', { a: 3 }), 0);
   assert.deepEqual(seen, [{ a: 2 }]);
 });
+
+test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elements, and clears on removeExtension', () => {
+  const { slots, errors } = harness();
+  const attrs = () => {
+    const a = new Map();
+    return { a, setAttribute: (k, v) => a.set(k, v), removeAttribute: (k) => a.delete(k) };
+  };
+  const api = slots.forExtension('x', {}).api;
+  const el = attrs();
+  const unclaim = api.claimDrag(el);
+  assert.equal(el.a.get('data-ext-drag'), 'x');
+  unclaim();
+  assert.equal(el.a.has('data-ext-drag'), false);
+  const noop = api.claimDrag(null);
+  assert.equal(typeof noop, 'function');
+  assert.match(errors.at(-1), /claimDrag needs an element/);
+  const el2 = attrs();
+  api.claimDrag(el2);
+  slots.removeExtension('x');
+  assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
+});

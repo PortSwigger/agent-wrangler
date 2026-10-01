@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, checklistEnabled, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, taskMemoryEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -155,13 +155,40 @@ test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
   assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
 });
 
-test('checklistEnabled defaults to ON; only an explicit false disables', () => {
-  // Default-on is deliberate (see the design spec's Optionality section): a
-  // feature nobody discovers might as well not exist.
-  assert.equal(checklistEnabled({}), true);
-  assert.equal(checklistEnabled({ checklistEnabled: true }), true);
-  assert.equal(checklistEnabled({ checklistEnabled: false }), false);
-  assert.equal(checklistEnabled({ checklistEnabled: 'no' }), true, 'only a real boolean false opts out');
+// The retired-flag table: a core `<x>Enabled` flag that became an extension is
+// carried over to `extensions.<id>` once, at boot, and the old key is deleted.
+test('migrateRetiredFlags: checklistEnabled false disables the extension; the old key is gone', () => {
+  const { cfg, changed } = migrateRetiredFlags({ tmuxSocket: 's', checklistEnabled: false });
+  assert.equal(changed, true);
+  assert.deepEqual(cfg, { tmuxSocket: 's', extensions: { checklist: false } });
+});
+
+test('migrateRetiredFlags: checklistEnabled true (or garbage) just drops the key and adds nothing', () => {
+  assert.deepEqual(migrateRetiredFlags({ checklistEnabled: true }), { cfg: {}, changed: true });
+  assert.deepEqual(migrateRetiredFlags({ checklistEnabled: 'no' }), { cfg: {}, changed: true }, 'only a real boolean false opted out');
+});
+
+test('migrateRetiredFlags: an explicit extensions.checklist wins and siblings survive', () => {
+  assert.deepEqual(
+    migrateRetiredFlags({ checklistEnabled: false, extensions: { checklist: true, other: false } }).cfg,
+    { extensions: { checklist: true, other: false } },
+  );
+  assert.deepEqual(
+    migrateRetiredFlags({ checklistEnabled: false, extensions: { other: false } }).cfg,
+    { extensions: { other: false, checklist: false } },
+  );
+});
+
+test('migrateRetiredFlags: idempotent, and a missing key is a no-op that reports no change', () => {
+  const once = migrateRetiredFlags({ checklistEnabled: false }).cfg;
+  const twice = migrateRetiredFlags(once);
+  assert.deepEqual(twice, { cfg: once, changed: false });
+  assert.deepEqual(migrateRetiredFlags({}), { cfg: {}, changed: false });
+});
+
+test('migrateRetiredFlags: any {oldKey, extId} row works, not just the checklist', () => {
+  const table = [{ oldKey: 'fooEnabled', extId: 'foo' }];
+  assert.deepEqual(migrateRetiredFlags({ fooEnabled: false }, table).cfg, { extensions: { foo: false } });
 });
 
 test('extensionEnabled: the manifest default applies until an explicit boolean overrides it', () => {

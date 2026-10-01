@@ -242,6 +242,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           return Boolean(baseApi.minimiseTask?.(taskId));
         },
         settings: settingsApi(extId, baseApi),
+        // Mark `el` as carrying an extension-owned drag: the board treats any
+        // [data-ext-drag] element as "a drag is in progress" and holds its
+        // background re-renders (app.js gridEditing) so the gesture is not torn
+        // down. Returns the unclaim function; call it on drop/dragend.
+        claimDrag: (el) => claimDrag(extId, el),
         // Always present (the api is built once), but every call throws unless
         // the manifest's `requires` granted cards:hideChips — see cardsApi.
         cards: cardsApi(extId, baseApi),
@@ -269,6 +274,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     if (sampleReported.has(key)) return;
     sampleReported.add(key);
     onError(`[ext:${c.extId}] ${c.id} ${what} failed on the sample card — skipped there`, err);
+  }
+
+  // extId -> Set<element> currently marked [data-ext-drag], so removing an
+  // extension (disable, uninstall, failed load) cannot leave the board frozen.
+  const dragClaims = new Map();
+  function claimDrag(extId, el) {
+    if (!el || typeof el.setAttribute !== 'function') {
+      onError(`[ext:${extId}] claimDrag needs an element, got ${typeof el}`);
+      return () => {};
+    }
+    el.setAttribute('data-ext-drag', extId);
+    if (!dragClaims.has(extId)) dragClaims.set(extId, new Set());
+    dragClaims.get(extId).add(el);
+    return () => {
+      dragClaims.get(extId)?.delete(el);
+      el.removeAttribute?.('data-ext-drag');
+    };
   }
 
   function cardsApi(extId, baseApi) {
@@ -548,6 +570,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
       apis.delete(extId);
+      for (const el of dragClaims.get(extId) || []) el.removeAttribute?.('data-ext-drag');
+      dragClaims.delete(extId);
       // A disabled, uninstalled or failed-to-load extension must stop HEARING
       // too, not just stop drawing: extensions.js calls this on unload, so the
       // subscription dies with the module that took it and a later re-enable
@@ -852,8 +876,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 // localStorage behind a key prefix, every access under try/catch: storage can be
 // absent (a test), full, or blocked (private mode), and an extension's remembered
 // preference is never worth a thrown error in a render. `raw(key)` deliberately
-// escapes the prefix for a key that predates the extensions API — the checklist's
-// `wrangler.checklistOpen` — so a migrated feature keeps its users' stored state;
+// escapes the prefix for a key that predates the extensions API (e.g. the builtin
+// checklist's `wrangler.checklistOpen`) — so a migrated feature keeps its users' stored state;
 // a NEW key has no reason to use it.
 export function namespacedStorage(prefix, storage = globalThis.localStorage) {
   const wrap = (key) => ({

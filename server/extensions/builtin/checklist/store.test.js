@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ChecklistStore, MAX_ITEMS, MAX_TEXT_LENGTH } from './checklist-store.js';
+import { ChecklistStore, MAX_ITEMS, MAX_TEXT_LENGTH } from './store.js';
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-checklist-')), 'checklists.json');
