@@ -282,14 +282,21 @@ function scanLine(line, state) {
     const prev = state.usage || {};
     if (USAGE_KEYS.some((k) => (cur[k] || 0) !== (prev[k] || 0))) {
       const bucket = (state.byModel[state.model ?? ''] ||= { usage: blankUsage(), long: null });
-      // Signed, so the buckets always sum to the final cumulative total.
-      for (const k of USAGE_KEYS) bucket.usage[k] += (cur[k] || 0) - (prev[k] || 0);
+      // Measured against each field's high-water mark, so a counter that dips
+      // and recovers isn't counted twice and no model's bucket goes negative.
+      const delta = {};
+      for (const k of USAGE_KEYS) {
+        delta[k] = Math.max(0, (cur[k] || 0) - state.peak[k]);
+        state.peak[k] += delta[k];
+        bucket.usage[k] += delta[k];
+      }
       // A request whose prompt passes the long-context threshold is billed at
-      // the long rate in full, so tally those requests' own usage separately.
+      // the long rate in full, so tally those requests' own usage separately,
+      // capped at what this checkpoint added so it stays a subset of the bucket.
       const last = p.info.last_token_usage;
       if (last && (last.input_tokens || 0) > LONG_CONTEXT_TOKENS) {
         const l = (bucket.long ||= blankUsage());
-        for (const k of USAGE_KEYS) l[k] += last[k] || 0;
+        for (const k of USAGE_KEYS) l[k] += Math.min(last[k] || 0, delta[k]);
       }
     }
     state.usage = cur;
@@ -410,7 +417,7 @@ export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
 }
 
 async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH) {
-  const state = { usage: null, byModel: {}, model: null, firstModel: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
+  const state = { usage: null, peak: blankUsage(), byModel: {}, model: null, firstModel: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);

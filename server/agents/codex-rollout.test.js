@@ -109,23 +109,30 @@ test('analyzeCodex gives pre-context usage to the first model named, even one wi
   assert.equal(r.totals['gpt-6-luna'].input, 10);
 });
 
-test('analyzeCodex keeps per-model totals summing to the final cumulative total when a counter dips', async () => {
+test('analyzeCodex never double-counts or goes negative when a counter dips across a model switch', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxr-'));
   const day = path.join(root, '2026', '06', '10');
   fs.mkdirSync(day, { recursive: true });
   const uuid = '66666666-2222-3333-4444-555555555555';
-  const tc = (i) => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: i, cached_input_tokens: 0, output_tokens: 0 } } } });
+  const tc = (i, o, last) => ({ type: 'event_msg', payload: { type: 'token_count', info: {
+    total_token_usage: { input_tokens: i, cached_input_tokens: 0, output_tokens: o },
+    last_token_usage: last || { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+  } } });
+  const ctx = (model) => ({ type: 'turn_context', payload: { model } });
   const lines = [
     { type: 'session_meta', payload: { id: uuid, cwd: '/work/proj' } },
-    { type: 'turn_context', payload: { model: 'gpt-6-sol' } },
-    tc(100),
-    tc(90),
-    { type: 'turn_context', payload: { model: 'gpt-6-luna' } },
-    tc(110),
+    ctx('gpt-6-sol'),
+    tc(300_000, 100, { input_tokens: 300_000, cached_input_tokens: 0, output_tokens: 100 }),
+    ctx('gpt-6-luna'),
+    tc(200_000, 90),
+    ctx('gpt-6-sol'),
+    tc(400_000, 110, { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 20 }),
   ];
   fs.writeFileSync(path.join(day, `rollout-2026-06-10T09-00-00-${uuid}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   const r = await analyzeCodex(uuid, { sessionsDir: root });
-  assert.equal(r.tokens.input, 110);
+  assert.deepEqual(r.tokens, { input: 400_000, output: 110, cacheWrite: 0, cacheRead: 0 });
+  assert.deepEqual(r.totals['gpt-6-luna'], { input: 0, output: 0, cacheRead: 0 });
+  assert.deepEqual(r.totals['gpt-6-sol'].long, { input: 400_000, output: 110, cacheRead: 0 });
 });
 
 test('analyzeCodex folds native sub-agent usage into its parent and exposes a completed row', async () => {
