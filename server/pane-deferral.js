@@ -59,55 +59,62 @@ export function createPaneDeferral({
     }
   }
 
-  async function paneIsReadyToNotify(id, tmux, socket) {
+  // Why the pane is not ready for a notification, or null when it is. The
+  // reason is for a log line only; every non-null answer defers.
+  async function notifyBlocker(id, tmux, socket) {
     try {
       const status = statusFor(id);
-      if (status != null && status !== 'idle') return false;
+      if (status != null && status !== 'idle') return `board status ${status}`;
       const pane = await capture(tmux, CAPTURE_LINES, socket);
-      return classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status === 'idle'
-        && paneComposerIsEmpty(pane, agentFor(id));
-    } catch {
-      return false;
+      if (!pane) return 'pane capture empty';
+      const paneStatus = classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status;
+      if (paneStatus !== 'idle') return `pane classified ${paneStatus}`;
+      if (!paneComposerIsEmpty(pane, agentFor(id))) return 'composer not confirmed empty';
+      return null;
+    } catch (err) {
+      return `pane check failed: ${err?.message || err}`;
     }
+  }
+
+  async function blocker(id, tmux, socket, deferWhileWorking) {
+    if (deferWhileWorking) return notifyBlocker(id, tmux, socket);
+    return (await composerIsClear(id, tmux, socket)) ? null : 'composer not confirmed empty';
   }
 
   // Paste `text` into the card's pane if its composer is confirmed empty,
   // otherwise queue it for the next drain. `tmux`/`socket` override the lookup
   // for a pane the caller already holds (deliverPrNudge's post-resume handle,
-  // which tmuxFor may not report yet). Returns 'sent' | 'deferred'.
-  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, queueOnDefer = true, beforeSend }) {
-    const defer = () => {
+  // which tmuxFor may not report yet). `onDefer(reason)` hears why a delivery
+  // was held back. Returns 'sent' | 'deferred'.
+  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, queueOnDefer = true, beforeSend, onDefer }) {
+    const defer = (reason) => {
       if (queueOnDefer) enqueue(id, text);
+      try { onDefer?.(reason); } catch { /* a reporting hook must never change delivery */ }
       return 'deferred';
     };
     const name = tmux ?? tmuxFor?.(id) ?? null;
     // No pane means no draft to protect and nothing to paste into: queue it and
     // let the drain deliver once the card is live again. Deliberately no
     // capture here — a dormant card must cost zero tmux execs.
-    if (!name) return defer();
+    if (!name) return defer('no tmux target');
     const sock = socket ?? socketFor?.(id) ?? '';
-    if (deferWhileWorking) {
-      if (!(await paneIsReadyToNotify(id, name, sock))) return defer();
-    } else if (!(await composerIsClear(id, name, sock))) {
-      return defer();
-    }
+    const before = await blocker(id, name, sock, deferWhileWorking);
+    if (before) return defer(before);
     if (beforeSend) {
       try {
-        if (await beforeSend() === false) return defer();
-      } catch {
-        return defer();
+        if (await beforeSend() === false) return defer('beforeSend declined');
+      } catch (err) {
+        return defer(`beforeSend failed: ${err?.message || err}`);
       }
-      const stillSafe = deferWhileWorking
-        ? await paneIsReadyToNotify(id, name, sock)
-        : await composerIsClear(id, name, sock);
-      if (!stillSafe) return defer();
+      const after = await blocker(id, name, sock, deferWhileWorking);
+      if (after) return defer(`${after} (after beforeSend)`);
     }
     try {
       await sendText(name, text, sock);
-    } catch {
+    } catch (err) {
       // The pane died between capture and paste. Persistent mail retries from
       // its mailbox; other callers keep the notification in this queue.
-      return defer();
+      return defer(`paste failed: ${err?.message || err}`);
     }
     return 'sent';
   }

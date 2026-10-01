@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { parseGhostSuggestion, paneComposerIsEmpty } from './ghost-suggestion.js';
 
@@ -134,6 +135,61 @@ test('a long-running Codex status with background-terminal text is not an empty 
 test('quoted working text in Codex pane history does not block an empty composer', () => {
   const quoted = `${E}[39mgrep result: esc to interrupt\n${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
   assert.equal(paneComposerIsEmpty(quoted, 'codex'), true);
+});
+
+// A live idle Codex pane whose mail sat undelivered. tmux's `capture-pane -e`
+// writes each SGR as a diff from the previous cell, across line breaks: the dim
+// "Worked for" line leaves dim on, so the bold prompt mark arrives as `0;1m`.
+const codexIdleAfterDim = fs.readFileSync(
+  new URL('./fixtures/codex-idle-pane-reset-bold-prompt.txt', import.meta.url), 'utf8',
+);
+
+test('an idle Codex pane whose prompt mark arrives as reset+bold is an empty composer', () => {
+  assert.equal(paneComposerIsEmpty(codexIdleAfterDim, 'codex'), true);
+});
+
+test('the Codex prompt mark is judged by its rendered style, not the SGR bytes before it', () => {
+  assert.equal(paneComposerIsEmpty(`${E}[22;1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`, 'codex'), true);
+  assert.equal(paneComposerIsEmpty(`${E}[1;38;2;1;2;3m›${E}[0m ${E}[0;2mAsk Codex to do anything${E}[0m`, 'codex'), true);
+  const inheritedBold = `${E}[1mbold tail\n›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(inheritedBold, 'codex'), true);
+});
+
+test('a reset+bold Codex prompt holding typed text is not empty', () => {
+  const pane = codexIdleAfterDim.replace(`${E}[2mAsk Codex to do anything${E}[0m`, 'explain this failure');
+  assert.notEqual(pane, codexIdleAfterDim);
+  assert.equal(paneComposerIsEmpty(pane, 'codex'), false);
+});
+
+test('the placeholder text typed for real is not an empty Codex composer', () => {
+  assert.equal(paneComposerIsEmpty(`${E}[0;1m›${E}[0m Ask Codex to do anything`, 'codex'), false);
+  assert.equal(paneComposerIsEmpty(`${E}[0;1m›${E}[0m ${E}[2mAsk Codex${E}[0m to do anything`, 'codex'), false);
+  assert.equal(paneComposerIsEmpty(`${E}[0;1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m!`, 'codex'), false);
+});
+
+test('a dim echoed prompt in Codex history is never taken for the composer', () => {
+  const echoed = `${E}[1;2m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(echoed, 'codex'), false);
+  const inheritedDim = `${E}[2mdim tail\n${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(inheritedDim, 'codex'), false);
+});
+
+test('a placeholder above a real Codex draft never masks it', () => {
+  const pane = [codexPlaceholder, `${E}[0;1m›${E}[0m explain this failure`].join('\n');
+  assert.equal(paneComposerIsEmpty(pane, 'codex'), false);
+});
+
+test('non-SGR escapes around the Codex composer are not read as typed text', () => {
+  const placeholder = `${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(`${E}]8;;https://x${E}\\${E}[1m›${E}[0m ${placeholder}${E}]8;;\x07`, 'codex'), true);
+  assert.equal(paneComposerIsEmpty(`${E}(B${E}[1m›${E}[0m ${placeholder}`, 'codex'), true);
+  assert.equal(paneComposerIsEmpty(`${E}[1m›${E}[0m ${E}]8;;u\x07typed${E}]8;;\x07`, 'codex'), false);
+  assert.equal(paneComposerIsEmpty(`${E}[1m›${E}[0m ${E}]8;;unterminated ${placeholder}`, 'codex'), false);
+});
+
+test('a reset+bold empty Codex composer under a working status is not safe', () => {
+  const working = `${E}[1m•${E}[0m Working ${E}[2m(12s · esc to interrupt)${E}[0m`;
+  assert.equal(paneComposerIsEmpty([working, codexIdleAfterDim].join('\n'), 'codex'), false);
 });
 
 // Fail-safe: anything unreadable must answer "not empty" so no paste happens.

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MailboxStore, SETTLE_MS } from './mailbox-store.js';
-import { sweepDueSettles, createMailSettleSweeper } from './mail-runner.js';
+import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS } from './mail-runner.js';
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-mailrunner-')), 'mailbox.json');
@@ -224,4 +224,96 @@ test('restart safety: a settle window whose deadline passed while the process wa
   const d = deps({ mailStore: reloaded, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
   await sweepDueSettles(d, SETTLE_MS + 60 * 60 * 1000); // long down
   assert.equal(d.sent.length, 1);
+});
+
+test('a mail notification held past a minute is logged once with its reason', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'hi' }, 0);
+  const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
+  const logs = [];
+  d.log = (line) => logs.push(line);
+  let delivery = 'deferred';
+  d.paneDeferral.deliverOrDefer = async ({ text, tmux, socket, onDefer }) => {
+    if (delivery === 'sent') { d.sent.push({ name: tmux, text, socket }); return 'sent'; }
+    onDefer('composer not confirmed empty');
+    return 'deferred';
+  };
+  const sweep = createMailSettleSweeper(d);
+
+  let now = SETTLE_MS;
+  for (; now < SETTLE_MS + DEFER_LOG_AFTER_MS; now += SETTLE_MS) await sweep(now);
+  assert.deepEqual(logs, []);
+
+  await sweep(now);
+  assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: composer not confirmed empty']);
+  for (let i = 0; i < 6; i += 1) { now += SETTLE_MS; await sweep(now); }
+  assert.equal(logs.length, 1);
+
+  delivery = 'sent';
+  now += SETTLE_MS;
+  await sweep(now);
+  assert.equal(d.sent.length, 1);
+
+  store.append('CARD1', { from: 'sess_a', body: 'again' }, now);
+  delivery = 'deferred';
+  const restart = now + SETTLE_MS;
+  for (now = restart; now <= restart + DEFER_LOG_AFTER_MS; now += SETTLE_MS) await sweep(now);
+  assert.equal(logs.length, 2);
+  assert.match(logs[1], /deferred 60s: composer not confirmed empty/);
+});
+
+test('a deferral tracker starts a fresh episode after a quiet gap', () => {
+  const logs = [];
+  const t = createDeferralTracker({ log: (line) => logs.push(line) });
+  t.deferred('CARD1', 'no tmux target', 0);
+  t.deferred('CARD1', 'no tmux target', 20_000);
+  t.deferred('CARD1', 'no tmux target', 60_000);
+  t.deferred('CARD1', 'no tmux target', 70_000);
+  assert.deepEqual(logs, [], 'the 40s gap before 60s started a new episode');
+  t.deferred('CARD1', 'pane classified working', 95_000);
+  t.deferred('CARD1', 'pane classified working', 120_000);
+  assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: pane classified working']);
+});
+
+test('mail arriving after a read_mail drain starts a fresh deferral episode', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'first' }, 0);
+  const d = deps({ mailStore: store, live: { CARD1: { tmux: 'cc_one', socket: '/s' } } });
+  const logs = [];
+  d.log = (line) => logs.push(line);
+  d.paneDeferral.deliverOrDefer = async ({ onDefer }) => { onDefer('pane classified working'); return 'deferred'; };
+  const sweep = createMailSettleSweeper(d);
+
+  let now = SETTLE_MS;
+  for (; now <= SETTLE_MS + DEFER_LOG_AFTER_MS; now += SETTLE_MS) await sweep(now);
+  assert.equal(logs.length, 1);
+
+  store.drain('CARD1', now);
+  store.append('CARD1', { from: 'sess_a', body: 'second' }, now);
+  for (let i = 0; i < 6; i += 1) { await sweep(now); now += SETTLE_MS; }
+  assert.equal(logs.length, 1, 'the new batch has only been held 50s');
+  await sweep(now);
+  assert.equal(logs.length, 2);
+  assert.match(logs[1], /deferred 60s: pane classified working/);
+});
+
+test('a batch read before its log does not hand its start time to the next batch', () => {
+  const logs = [];
+  const t = createDeferralTracker({ log: (line) => logs.push(line) });
+  t.deferred('CARD1', 'pane classified working', 0, ['mail_a']);
+  t.deferred('CARD1', 'pane classified working', 25_000, ['mail_a']);
+  t.deferred('CARD1', 'pane classified working', 50_000, ['mail_b']);
+  t.deferred('CARD1', 'pane classified working', 70_000, ['mail_b']);
+  assert.deepEqual(logs, []);
+});
+
+test('reading part of a held batch keeps its deferral episode running', () => {
+  const logs = [];
+  const t = createDeferralTracker({ log: (line) => logs.push(line) });
+  t.deferred('CARD1', 'pane classified working', 0, ['mail_a', 'mail_b']);
+  t.deferred('CARD1', 'pane classified working', 25_000, ['mail_a', 'mail_b']);
+  t.deferred('CARD1', 'pane classified working', 50_000, ['mail_b', 'mail_c']);
+  assert.deepEqual(logs, []);
+  t.deferred('CARD1', 'pane classified working', 60_000, ['mail_c']);
+  assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: pane classified working']);
 });

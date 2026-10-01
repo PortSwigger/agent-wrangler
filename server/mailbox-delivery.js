@@ -11,7 +11,7 @@ export async function deliverMailNotification(to, text, deps) {
   if (!entry || entry.archivedAt) return { mode: 'skip' };
 
   const target = tmuxFor(to);
-  if (!target) return { mode: 'deferred' };
+  if (!target) return { mode: 'deferred', reason: 'no tmux target' };
 
   const beforeSend = async () => {
     const relaunchedAt = entry.relaunchedAt;
@@ -21,8 +21,10 @@ export async function deliverMailNotification(to, text, deps) {
       await waitForMcpReady(to, relaunchedAt, mcpSeenAt, mcpReadyTimeoutMs, mcpReadyPollMs);
     }
   };
-  const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral, beforeSend);
-  return delivery === 'deferred' ? { mode: 'deferred' } : { mode: 'live' };
+  let reason = null;
+  const onDefer = (r) => { reason = r; };
+  const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral, beforeSend, onDefer);
+  return delivery === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
 }
 
 // Today's only live transport: paste into the pane, gated by paneDeferral so it
@@ -31,9 +33,9 @@ export async function deliverMailNotification(to, text, deps) {
 // Phase 1 — see the spec's "Claude Code cross-session messaging" section); that
 // swap would make the gate unnecessary for Claude, since a socket message does
 // not go through the composer at all.
-function liveTransport(id, tmux, text, socket, paneDeferral, beforeSend) {
+function liveTransport(id, tmux, text, socket, paneDeferral, beforeSend, onDefer) {
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false, beforeSend,
+    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false, beforeSend, onDefer,
   });
 }
 
