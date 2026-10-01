@@ -106,6 +106,22 @@ npm start          # serves http://localhost:7878
 need to remember `npm install`. That's the fastest way to try it out, but for everyday use we'd
 recommend running it as a background service instead (below) so it survives restarts and reboots.
 
+`npm start` runs `bin/agent-wrangler`, which you can also run directly (or put on your PATH with
+`npm link`). It takes flags for the common settings; `agent-wrangler --help` lists them:
+
+```bash
+bin/agent-wrangler --port 7999 --data-dir ~/aw-scratch --open
+```
+
+- `--port <n>` — same as `AW_PORT`
+- `--data-dir <path>` — same as `AW_DATA_DIR`
+- `--open` — same as `AW_OPEN_BROWSER=1`
+- `--host <addr>` — same as `AW_BIND_HOST` (see the exposure warning below)
+- `-v`/`--version`, `-h`/`--help`
+
+A flag overrides its environment variable. Running the launcher directly never auto-installs
+dependencies; only `npm start` and the service start script do.
+
 Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port to listen on (default `7878`)

@@ -1,0 +1,65 @@
+#!/bin/sh
+# The one way to start agent-wrangler: `npm start`, scripts/wrangler-start.sh
+# (launchd/systemd), `npm link` and a Homebrew install all exec this. It owns the
+# process environment so every start path behaves identically, then hands the
+# arguments to server/cli.js. It never installs dependencies — a Homebrew install
+# dir is immutable, so the self-healing `npm ci` stays in npm's prestart hook and
+# wrangler-start.sh, which only ever run from a git checkout.
+
+# Resolve this file through symlinks (`npm link`, a symlink on PATH) to find the
+# app root. Only the file itself is resolved, and `pwd` is not `-P`, so a
+# directory symlink in the path (Homebrew's stable opt/ prefix) survives intact.
+self="$0"
+while [ -h "$self" ]; do
+  target="$(readlink "$self")"
+  case "$target" in
+    /*) self="$target" ;;
+    *) self="$(dirname "$self")/$target" ;;
+  esac
+done
+ROOT="$(cd "$(dirname "$self")/.." && pwd)" || exit 1
+
+# launchd doesn't inherit the login locale; without a UTF-8 locale tmux renders
+# Unicode (⏺, box-drawing, em-dash) as "_" in attached terminals.
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-$LANG}"
+
+# Pin the open-file limit so every launch path behaves identically. This is a
+# blast-radius backstop, not a leak canary — that job is server/fd-watchdog.js,
+# because Node self-raises its own soft fd limit to the hard limit at startup
+# regardless of what this ulimit sets, so a low ceiling here only ever capped
+# everything in the tree uniformly (including one-shot MCP children like
+# chrome-devtools-mcp, which needs a ~270-fd burst at startup and was dying to
+# EMFILE against the old 256 default). Set well above any legitimate peak so it
+# only ever fires to contain a truly runaway leak — override with AW_MAX_FILES.
+ulimit -n "${AW_MAX_FILES:-16384}" 2>/dev/null || true
+
+# Every tmux pane inherits this PATH, and a supervisor (launchd, brew services)
+# starts us with a bare /usr/bin:/bin one — without ~/.local/bin, where Claude
+# Code's native installer puts `claude`, dispatch and resume exit 127. Prepended
+# only when the directory exists and isn't already on PATH.
+if [ -d "$HOME/.local/bin" ]; then
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$HOME/.local/bin:$PATH" ;;
+  esac
+fi
+
+# Devcontainer sessions run `devcontainer up`/`exec` in a pane, and
+# @devcontainers/cli installs to node_modules/.bin. Appended (not prepended) so
+# system binaries still win. Built from AW_INSTALL_ROOT when set: the tmux server
+# keeps the environment it was started with across wrangler restarts, so a
+# versioned install path here would go stale after an upgrade removes it.
+PATH="$PATH:${AW_INSTALL_ROOT:-$ROOT}/node_modules/.bin"
+export PATH
+
+# AW_NODE names the interpreter explicitly (a Homebrew install points it at
+# brew's node) instead of putting that node on PATH, where every session would
+# inherit it in place of the user's own.
+node_bin="${AW_NODE:-node}"
+if ! command -v "$node_bin" >/dev/null 2>&1; then
+  echo "agent-wrangler: Node.js not found (looked for '$node_bin'). Install Node.js >= 20 or set AW_NODE to its path." >&2
+  exit 127
+fi
+
+exec "$node_bin" "$ROOT/server/cli.js" "$@"
