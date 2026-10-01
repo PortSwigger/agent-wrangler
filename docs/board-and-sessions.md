@@ -29,7 +29,7 @@ nested descendants.
 Each task also has:
 
 - **TODOs:** add, complete, reorder, and collapse task-level work items. TODOs are an optional builtin extension (`todos`, on by default); turning it off in Settings → Extensions removes the zone, tools, and skill without deleting stored TODOs.
-- **Task memory:** shared Markdown that humans and agents can update across sessions or repositories.
+- **Task memory:** shared Markdown that humans and agents can update across sessions or repositories. It is the built-in `task-memory` extension (Settings > Extensions); turning it off removes the memory button, the `AW_TASK_MEMORY` variable, the extra directory grant and the skill, and keeps the notes on disk.
 - **Links:** Jira issues and pull requests shared by the task.
 - **Focus, minimise, and activity sort:** controls for a busy board.
 - **Archive task:** removes the task and live sessions while preserving resumable history.
@@ -90,7 +90,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 **Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
-- Task memory, child-card and Chat defaults, and completion sounds.
+- Child-card and Chat defaults, and completion sounds.
 - PR auto-fix, Codex folder trust, and optional extraction of archive learnings into task memory.
 - Extension installation, enablement, updates, and extension-specific settings. The per-session
   checklist is a builtin extension, so its on/off switch lives here (an older `checklistEnabled: false`
