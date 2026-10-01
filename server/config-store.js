@@ -45,18 +45,6 @@ export function resolveInstanceSocket() {
   return socket;
 }
 
-// Jira URL prefix a bare key appends to. No org is assumed by default — a
-// public build must not point at any one company's Jira. AW_JIRA_BASE_URL in
-// the launch environment sets an org-wide default (e.g. a company's own
-// deployment); config.json `jiraBaseUrl` overrides that per-install, including
-// explicitly opting out with '' even when AW_JIRA_BASE_URL is set. Trailing
-// slash is intentional — a bare key is appended directly.
-export function jiraBaseUrl(env = process.env) {
-  const v = readConfig().jiraBaseUrl;
-  if (typeof v === 'string') return v;
-  return env.AW_JIRA_BASE_URL || '';
-}
-
 // How often (seconds) the server re-polls GitHub PR check status for every PR
 // link on the board. Defaults to 60; a positive-number override wins, anything
 // else falls back to the default.
@@ -157,14 +145,40 @@ export const RETIRED_FLAGS = [
   { oldKey: 'taskMemoryEnabled', extId: 'task-memory' },
 ];
 
+// Config keys that became an extension's own setting, carried to
+// `extensionSettings.<extId>.<key>` at boot. A row is `{ oldKey, extId, key,
+// envKey? }`. A string old value moves across unless the setting is already set
+// (the human's answer to the new question wins); `envKey` names an environment
+// variable that seeds the setting when neither exists, so an install that only
+// ever used the env var ends up with the value in Settings and can drop the
+// variable. A blank old value just drops the key. Rows stay forever, like
+// RETIRED_FLAGS.
+export const RETIRED_SETTINGS = [
+  { oldKey: 'jiraBaseUrl', extId: 'jira', key: 'baseUrl', envKey: 'AW_JIRA_BASE_URL' },
+];
+
 // Pure: returns the migrated config (a new object) and whether anything moved.
 // An explicit `extensions.<extId>` boolean WINS over the old flag (the human
 // has already answered the new question) and the old key is deleted either way.
 // `true`, a missing key or garbage just drop the key and add nothing, because
 // the extension's own default already says what those meant. Idempotent.
-export function migrateRetiredFlags(cfg, table = RETIRED_FLAGS) {
+export function migrateRetiredFlags(cfg, table = RETIRED_FLAGS, settingsTable = RETIRED_SETTINGS, env = {}) {
   const next = { ...cfg };
   let changed = false;
+  for (const { oldKey, extId, key, envKey } of settingsTable) {
+    const had = Object.hasOwn(next, oldKey);
+    const block = next.extensionSettings?.[extId];
+    const current = block && typeof block === 'object' && !Array.isArray(block) ? block : {};
+    const old = had && typeof next[oldKey] === 'string' ? next[oldKey].trim() : '';
+    const seed = old || (envKey && typeof env[envKey] === 'string' ? env[envKey].trim() : '');
+    if (had) delete next[oldKey];
+    if (seed && current[key] === undefined) {
+      next.extensionSettings = { ...next.extensionSettings, [extId]: { ...current, [key]: seed } };
+      changed = true;
+    } else if (had) {
+      changed = true;
+    }
+  }
   for (const { oldKey, extId } of table) {
     if (!Object.hasOwn(next, oldKey)) continue;
     changed = true;
@@ -181,8 +195,8 @@ export function migrateRetiredFlags(cfg, table = RETIRED_FLAGS) {
 // The boot half: read, migrate, and write back only when something moved.
 // writeConfig is a shallow MERGE and cannot delete a key, so this writes the
 // whole object itself. Must run before the loader reads `extensions.<id>`.
-export function applyRetiredFlagMigrations(table = RETIRED_FLAGS) {
-  const { cfg, changed } = migrateRetiredFlags(readConfig(), table);
+export function applyRetiredFlagMigrations(table = RETIRED_FLAGS, settingsTable = RETIRED_SETTINGS, env = process.env) {
+  const { cfg, changed } = migrateRetiredFlags(readConfig(), table, settingsTable, env);
   if (changed) writeJsonAtomic(CONFIG_FILE, cfg, { trailingNewline: true });
   return changed;
 }

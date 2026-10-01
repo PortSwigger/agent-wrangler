@@ -112,7 +112,7 @@ Environment variables:
 - `AW_DATA_DIR` — state directory (default `~/.agent-wrangler`); set it with a distinct `AW_PORT` to run an isolated instance
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
-- `AW_JIRA_BASE_URL` — Jira browse URL prefix a bare issue key is appended to (e.g. `https://yourcompany.atlassian.net/browse/`); unset by default, so a bare key renders as plain text until this or the per-install `jiraBaseUrl` config value is set
+- `AW_JIRA_BASE_URL` — default for the Jira extension's **Jira base URL** setting (e.g. `https://yourcompany.atlassian.net/browse/`), used while that setting is empty; at boot it is copied into the setting when none is set, after which the variable can be dropped. Unset by default, so a bare key renders as plain text until a base URL is set in Settings → Extensions → Jira
 - `AW_DEVCONTAINER_HOST_ADDR` — host address a devcontainer session uses to reach the wrangler's
   own server; defaults to `host.docker.internal`, which Docker Desktop (macOS/Windows) resolves
   automatically but native Docker Engine on Linux does not. On Linux, either run the Docker daemon

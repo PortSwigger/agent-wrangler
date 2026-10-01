@@ -1,37 +1,43 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseLink, normaliseLinks, linkMatches } from './links.js';
+import { normaliseLink, normaliseLinks, linkMatches, createLinkNormaliser } from './links.js';
 
-const base = () => 'https://co.atlassian.net/browse/';
+const claimJira = (link) => (link.type === 'jira' ? { type: 'jira', key: link.key, url: `https://co/browse/${link.key}` } : undefined);
 
-test('explicit url wins over base+key', () => {
-  const out = normaliseLink({ type: 'jira', key: 'ENT-1', url: 'https://x/y' }, base());
-  assert.deepEqual(out, { type: 'jira', key: 'ENT-1', url: 'https://x/y' });
+test('a type nothing claims is rejected', () => {
+  assert.throws(() => normaliseLink({ type: 'github', url: 'https://x' }), /unknown link type/i);
+  assert.throws(() => normaliseLink({ type: 'jira', key: 'ENT-1' }, { claim: () => undefined }), /unknown link type/i);
 });
 
-test('base + key builds the url when no explicit url', () => {
-  const out = normaliseLink({ type: 'jira', key: 'ENT-1' }, base());
-  assert.deepEqual(out, { type: 'jira', key: 'ENT-1', url: 'https://co.atlassian.net/browse/ENT-1' });
+test('a claiming extension normalises its own type', () => {
+  assert.deepEqual(normaliseLink({ type: 'jira', key: 'ENT-1' }, { claim: claimJira }), { type: 'jira', key: 'ENT-1', url: 'https://co/browse/ENT-1' });
 });
 
-test('key only, no base, leaves url absent', () => {
-  const out = normaliseLink({ type: 'jira', key: 'ENT-1' }, '');
-  assert.deepEqual(out, { type: 'jira', key: 'ENT-1' });
-});
-
-test('unknown type is rejected', () => {
-  assert.throws(() => normaliseLink({ type: 'github', url: 'https://x' }, ''), /unknown link type/i);
-});
-
-test('neither key nor url is rejected', () => {
-  assert.throws(() => normaliseLink({ type: 'jira' }, ''), /key or url/i);
+test('an unclaimed link already stored passes through unchanged, so a full-list set_links survives an extension being off', () => {
+  const stored = { type: 'jira', key: 'ENT-1', url: 'https://old/ENT-1' };
+  assert.deepEqual(normaliseLink({ type: 'jira', key: 'ent-1' }, { existing: [stored] }), stored);
+  assert.deepEqual(normaliseLinks([{ type: 'jira', key: 'ENT-1' }, { type: 'pr', url: 'https://github.com/a/b/pull/1' }], { existing: [stored] }).map((l) => l.type), ['jira', 'pr']);
+  assert.throws(() => normaliseLink({ type: 'jira', key: 'ENT-2' }, { existing: [stored] }), /unknown link type/i);
 });
 
 test('normaliseLinks maps a list and rejects a non-array', () => {
-  const out = normaliseLinks([{ type: 'jira', key: 'ENT-1' }], base());
+  const out = normaliseLinks([{ type: 'jira', key: 'ENT-1' }], { claim: claimJira });
   assert.equal(out.length, 1);
-  assert.equal(out[0].url, 'https://co.atlassian.net/browse/ENT-1');
-  assert.throws(() => normaliseLinks('nope', ''), /must be an array/i);
+  assert.equal(out[0].url, 'https://co/browse/ENT-1');
+  assert.throws(() => normaliseLinks('nope'), /must be an array/i);
+});
+
+test('createLinkNormaliser asks each enabled extension in turn and skips one with no façade', () => {
+  const ext = { hooks: { 'links.normalise': [
+    { extId: 'off', fn: () => { throw new Error('must not run'); } },
+    { extId: 'a', fn: ({ link }) => (link.type === 'x' ? { type: 'x', via: 'a' } : undefined) },
+    { extId: 'b', fn: ({ link, host }) => (link.type === 'y' ? { type: 'y', via: host.id } : undefined) },
+  ] } };
+  const claim = createLinkNormaliser(ext, (id) => (id === 'off' ? undefined : { id }));
+  assert.deepEqual(claim({ type: 'x' }), { type: 'x', via: 'a' });
+  assert.deepEqual(claim({ type: 'y' }), { type: 'y', via: 'b' });
+  assert.equal(claim({ type: 'z' }), undefined);
+  assert.equal(createLinkNormaliser({}, () => ({}))({ type: 'x' }), undefined);
 });
 
 test('pr link derives repo and number from a github pull url', () => {

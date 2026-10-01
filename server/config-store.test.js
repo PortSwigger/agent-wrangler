@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, jiraBaseUrl, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -26,7 +26,7 @@ test('shouldOpenBrowser: legacy AW_NO_OPEN still suppresses, taking precedence',
 
 // These tests share (and mutate) the install's real config.json — there is no
 // path injection in config-store. Snapshot it up front and restore after each,
-// so a test never leaves a stray jiraBaseUrl behind in a real ~/.agent-wrangler.
+// so a test never leaves a stray key behind in a real ~/.agent-wrangler.
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 function withConfigRestored(fn) {
   let saved;
@@ -42,43 +42,6 @@ function withConfigRestored(fn) {
     else fs.writeFileSync(CONFIG_PATH, saved);
   }
 }
-
-test('jiraBaseUrl is empty when unset and no env override', () => {
-  withConfigRestored(() => {
-    const { jiraBaseUrl: _unused, ...cleaned } = readConfig();
-    writeJsonAtomic(CONFIG_PATH, cleaned, { trailingNewline: true });
-    assert.equal(jiraBaseUrl({}), '');
-  });
-});
-
-test('AW_JIRA_BASE_URL provides an org-wide default when config.json has no override', () => {
-  withConfigRestored(() => {
-    const { jiraBaseUrl: _unused, ...cleaned } = readConfig();
-    writeJsonAtomic(CONFIG_PATH, cleaned, { trailingNewline: true });
-    assert.equal(jiraBaseUrl({ AW_JIRA_BASE_URL: 'https://co.atlassian.net/browse/' }), 'https://co.atlassian.net/browse/');
-  });
-});
-
-test('jiraBaseUrl returns the configured value, overriding the env default', () => {
-  withConfigRestored(() => {
-    writeConfig({ jiraBaseUrl: 'https://co.atlassian.net/browse/' });
-    assert.equal(jiraBaseUrl({ AW_JIRA_BASE_URL: 'https://other.atlassian.net/browse/' }), 'https://co.atlassian.net/browse/');
-  });
-});
-
-test('an explicit empty string opts out even when AW_JIRA_BASE_URL is set', () => {
-  withConfigRestored(() => {
-    writeConfig({ jiraBaseUrl: '' });
-    assert.equal(jiraBaseUrl({ AW_JIRA_BASE_URL: 'https://co.atlassian.net/browse/' }), '');
-  });
-});
-
-test('jiraBaseUrl falls back to the env default for a non-string config value', () => {
-  withConfigRestored(() => {
-    writeConfig({ jiraBaseUrl: 123 });
-    assert.equal(jiraBaseUrl({ AW_JIRA_BASE_URL: 'https://co.atlassian.net/browse/' }), 'https://co.atlassian.net/browse/');
-  });
-});
 
 test('prStatusPollSeconds defaults to 60', () => {
   withConfigRestored(() => {
@@ -246,3 +209,32 @@ test('setExtensionSetting creates the block for an extension that has never had 
   });
 });
 
+
+const JIRA_ROW = [{ oldKey: 'jiraBaseUrl', extId: 'jira', key: 'baseUrl', envKey: 'AW_JIRA_BASE_URL' }];
+const migrateJira = (cfg, env = {}) => migrateRetiredFlags(cfg, [], JIRA_ROW, env);
+
+test('migrateRetiredFlags: jiraBaseUrl moves to the jira extension setting and the old key is dropped', () => {
+  const { cfg, changed } = migrateJira({ tmuxSocket: 's', jiraBaseUrl: ' https://co.atlassian.net/browse/ ' });
+  assert.equal(changed, true);
+  assert.deepEqual(cfg, { tmuxSocket: 's', extensionSettings: { jira: { baseUrl: 'https://co.atlassian.net/browse/' } } });
+});
+
+test('migrateRetiredFlags: an existing jira setting wins over the old key; siblings survive', () => {
+  const { cfg } = migrateJira({ jiraBaseUrl: 'https://old/', extensionSettings: { jira: { baseUrl: 'https://new/' }, other: { a: 1 } } });
+  assert.deepEqual(cfg, { extensionSettings: { jira: { baseUrl: 'https://new/' }, other: { a: 1 } } });
+});
+
+test('migrateRetiredFlags: with no config value, AW_JIRA_BASE_URL seeds the setting so the variable can be dropped', () => {
+  const env = { AW_JIRA_BASE_URL: 'https://co.atlassian.net/browse/' };
+  const first = migrateJira({}, env);
+  assert.equal(first.changed, true);
+  assert.equal(first.cfg.extensionSettings.jira.baseUrl, 'https://co.atlassian.net/browse/');
+  assert.equal(migrateJira(first.cfg, env).changed, false, 'idempotent once seeded');
+  assert.equal(migrateJira({ jiraBaseUrl: 'https://mine/' }, env).cfg.extensionSettings.jira.baseUrl, 'https://mine/', 'the config value beats the env');
+});
+
+test('migrateRetiredFlags: a blank or non-string old value just drops the key; no env means nothing is added', () => {
+  assert.deepEqual(migrateJira({ jiraBaseUrl: '' }), { cfg: {}, changed: true });
+  assert.deepEqual(migrateJira({ jiraBaseUrl: 123 }), { cfg: {}, changed: true });
+  assert.deepEqual(migrateJira({ tmuxSocket: 's' }), { cfg: { tmuxSocket: 's' }, changed: false });
+});

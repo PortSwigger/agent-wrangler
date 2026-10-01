@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   STATUS_WORDS, PR_DOT_TITLE,
-  linkChipsHtml, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
+  linkChipsHtml, drawableLinks, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, taskBodyHostHtml,
   tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml, CORE_CHIPS,
 } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
+import { chip as jiraChip } from '../server/extensions/builtin/jira/public/index.js';
 
 // A render context matching app.js `cardCtx()`. Derived-status helpers are the real
 // shapes (a status word, a bar affordance, a snooze phase) so the builders exercise
@@ -27,6 +28,10 @@ function ctx(over = {}) {
     phaseOf: (s) => (s.snooze && s.snooze.until ? 'asleep' : 'awake-none'),
     ADHOC_ID: 'adhoc',
     isChildFullView: (s) => Boolean(s.childFullView),
+    linkChip: (l) => {
+      const c = jiraChip(l, null, { settings: () => ({}) });
+      return c && { key: 'jira:jira', href: '', icon: '', ...c };
+    },
     ...over,
   };
 }
@@ -74,6 +79,15 @@ test('linkChipsHtml: jira link uses its key; a non-http url renders as a span, n
   const unsafe = linkChipsHtml([{ type: 'jira', key: 'ENT-9', url: 'javascript:alert(1)' }], ctx());
   assert.match(unsafe, /<span class="link-chip"/);
   assert.doesNotMatch(unsafe, /<a /);
+});
+
+test('linkChipsHtml: a non-pr link nothing answers for draws no chip, and drawableLinks drops it', () => {
+  const links = [{ type: 'jira', key: 'ENT-9' }, { type: 'pr', number: 7, url: 'https://x/pull/7' }];
+  const off = ctx({ linkChip: () => null });
+  assert.doesNotMatch(linkChipsHtml(links, off), /ENT-9/);
+  assert.match(linkChipsHtml(links, off), /#7/);
+  assert.deepEqual(drawableLinks(links, off).map((l) => l.type), ['pr']);
+  assert.deepEqual(drawableLinks(links, ctx()).map((l) => l.type), ['jira', 'pr']);
 });
 
 test('sessionCardHtml: escapes label, carries data-sid, marks selection', () => {
@@ -687,16 +701,16 @@ test('sessionCardHtml: a card.cost ceiling reads $spent / $ceiling, even before 
 const chipKeys = (html) => [...html.matchAll(/data-chip="([^"]+)"/g)].map((m) => m[1]);
 
 test('the sample session renders every core chip, each keyed, and CORE_CHIPS matches the markup', () => {
-  const html = sessionCardHtml(SAMPLE_SESSION, ctx(), { expanded: true });
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ linkChip: () => null }), { expanded: true });
   assert.deepEqual(chipKeys(html), CORE_CHIPS.map((c) => c.key));
   assert.doesNotMatch(html, / hidden[ >]/);
 });
 
-test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys PR and Jira separately', () => {
+test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys the PR and extension link chips separately', () => {
   const hiddenChips = new Set(['core:cost', 'core:pr']);
   const html = sessionCardHtml(SAMPLE_SESSION, ctx({ hiddenChips }), { expanded: true });
   const hidden = [...html.matchAll(/data-chip="([^"]+)" hidden/g)].map((m) => m[1]);
   assert.deepEqual(hidden, ['core:cost', 'core:pr']);
   assert.match(html, /<span class="card-meta-ext"><\/span>/);
-  assert.match(html, /data-chip="core:jira">/);
+  assert.match(html, /data-chip="jira:jira">/);
 });

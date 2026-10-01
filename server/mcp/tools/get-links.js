@@ -6,7 +6,7 @@ export const getLinksTool = {
   name: 'get_links',
   description:
     'Read the links recorded on your current task and/or your session. Returns each '
-    + 'link as {type:"jira", key, url}. Call this before set_links/remove_links so you '
+    + 'link as {type, key?, url?} (e.g. type "jira" or "pr"). Call this before set_links/remove_links so you '
     + 'replace the full list without dropping links you did not know about. scope: '
     + '"task", "session", or omit for both.',
   inputSchema: {

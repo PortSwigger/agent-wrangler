@@ -47,6 +47,12 @@
 // session — `{ id, name, adhoc }`, the no-task tile being `adhoc` with the
 // reserved id — which is also what `api.minimiseTask` takes.
 //
+// `link.chip` (1.18.0) is a VALUE slot too: the chip a board link of the
+// extension's own type draws (linkChip()). `chip(link, graph, api)` answers
+// `{ label, href?, icon? }` for its type and null for any other; core draws the
+// markup, so `label` and `href` stay text and `icon` is held to a strict SVG
+// subset. Core draws `pr` itself; a link nothing answers for draws no chip.
+//
 // `settings.panel` (1.14.0) is a single-host slot inside an extension's own
 // settings dialog (app.js openExtSettings): only the OWNING extension's
 // contributions mount there (mountInto's `onlyExt`), above the manifest rows.
@@ -61,7 +67,7 @@
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body'];
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -71,7 +77,15 @@ export const HIDE_CHIPS_CAPABILITY = 'cards:hideChips';
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip' };
+
+// The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
+// presentation attributes. Anything else (scripts, handlers, urls, foreign
+// elements) is dropped to no icon rather than interpolated into the board.
+const SAFE_ICON_RE = /^<svg(?:\s+[A-Za-z-]+="[^"<>]*")*\s*>(?:<path(?:\s+[A-Za-z-]+="[^"<>]*")*\s*\/>)+<\/svg>$/;
+export function safeChipIcon(icon) {
+  return typeof icon === 'string' && SAFE_ICON_RE.test(icon) && !/\son[a-z]+\s*=|javascript:|url\(/i.test(icon) ? icon : '';
+}
 
 // Where inside the dispatch modal a `dispatch.field` contribution may land.
 // `top` is above the folder field, `model` is beside the model selector, and
@@ -387,7 +401,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   }
 
   function chipContributions() {
-    return slotList('card.pill').map((c) => ({
+    return [...slotList('card.pill'), ...slotList('link.chip')].map((c) => ({
       key: `${c.extId}:${c.id}`,
       label: typeof c.label === 'string' && c.label ? c.label : c.id,
       extId: c.extId,
@@ -925,6 +939,34 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         found = { usd, reached: Boolean(got.reached), by: `${c.extId}:${c.id}` };
       }
       return found && { usd: found.usd, reached: found.reached };
+    },
+
+    // The chip for one link: `{ key, label, href, icon }` from the first
+    // `link.chip` contribution that answers for it, or null. `key` is the chip
+    // veto key (`<extId>:<id>`). A throwing `chip()` removes the contribution.
+    linkChip(link, graph, baseApi) {
+      for (const c of [...slotList('link.chip')]) {
+        let got;
+        try {
+          got = c.chip(link, graph, apiFor(c.extId, baseApi));
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} chip failed — contribution removed`, err);
+          drop('link.chip', c);
+          continue;
+        }
+        if (got == null) continue;
+        if (typeof got.label !== 'string' || !got.label) {
+          onError(`[ext:${c.extId}] ${c.id} returned a link chip without a label`);
+          continue;
+        }
+        return {
+          key: `${c.extId}:${c.id}`,
+          label: got.label,
+          href: typeof got.href === 'string' ? got.href : '',
+          icon: safeChipIcon(got.icon),
+        };
+      }
+      return null;
     },
 
     contributions(slotName) {

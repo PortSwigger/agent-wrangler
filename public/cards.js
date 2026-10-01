@@ -8,7 +8,7 @@ import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   ROBOT_ICON, KEBAB_ICON,
   PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON, TOKENS_ICON, COMPACT_ICON,
-  agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
+  agentIcon, PR_ICON, MERGE_ICON,
 } from './icons.js';
 import {
   esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl, displayStatus,
@@ -133,9 +133,22 @@ export const PR_DOT_TITLE = {
   'changes-requested': 'changes requested',
 };
 
-// Read-only link chips for a task tile / session card / panel: jira (key, links
-// to the issue) and pr (#number, links to the PR, with a CI status dot the
-// server polls). All mutation is via MCP — there's deliberately no add/remove
+// The chip an extension's `link.chip` slot draws for a link, or null. Core draws
+// `pr` itself; a link nothing answers for (its extension is off) draws nothing.
+function extLinkChip(l, ctx) {
+  return l.type === 'pr' ? null : ctx.linkChip?.(l) || null;
+}
+
+// Links that actually draw a chip. Task tiles size and overflow their chip list
+// by index, so they must not count a link that renders nothing.
+export function drawableLinks(links, ctx = {}) {
+  return (Array.isArray(links) ? links : []).filter((l) => l.type === 'pr' || extLinkChip(l, ctx));
+}
+
+// Read-only link chips for a task tile / session card / panel: pr (#number,
+// links to the PR, with a CI status dot the server polls) and whatever an
+// extension's `link.chip` slot draws for its own type (jira: key, links to the
+// issue). All mutation is via MCP — there's deliberately no add/remove
 // affordance here. Reads ctx.flashingPr so the one-shot failure flash survives
 // re-renders.
 export function linkChipsHtml(links, ctx = {}) {
@@ -143,8 +156,10 @@ export function linkChipsHtml(links, ctx = {}) {
   const flashingPr = ctx.flashingPr || new Set();
   return links.map((l) => {
     const isPr = l.type === 'pr';
-    const icon = isPr ? PR_ICON : (l.type === 'jira' ? JIRA_ICON : '');
-    const label = esc(isPr ? (l.number != null ? `#${l.number}` : l.url) : (l.key || l.url || 'link'));
+    const ext = extLinkChip(l, ctx);
+    if (!isPr && !ext) return '';
+    const icon = isPr ? PR_ICON : ext.icon;
+    const label = esc(isPr ? (l.number != null ? `#${l.number}` : l.url) : ext.label);
     // `dirty` (merge conflicts) takes precedence over checkStatus in the dot: a
     // dirty PR can't be merged regardless of CI, and dirty is orthogonal to
     // checkStatus's own vocabulary (a DIRTY PR often still shows `pending`).
@@ -154,7 +169,7 @@ export function linkChipsHtml(links, ctx = {}) {
       ? `<span class="pr-dot pr-${esc(l.checkStatus)}${flashingPr.has(l.url) ? ' pr-dot--alert' : ''}" title="${esc(PR_DOT_TITLE[l.checkStatus] || l.checkStatus)}"></span>`
       : '';
     const inner = `${icon}${label}${dot}`;
-    const href = l.url ? safeHttpUrl(l.url) : null;
+    const href = (isPr ? l.url : ext.href) ? safeHttpUrl(isPr ? l.url : ext.href) : null;
     const cls = `link-chip${l._muted ? ' link-chip--muted' : ''}`;
     return href
       ? `<a class="${cls}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`
@@ -303,7 +318,6 @@ export const CORE_CHIPS = Object.freeze([
   { key: 'core:runtime', label: 'Runtime' },
   { key: 'core:worktree', label: 'Worktree' },
   { key: 'core:pr', label: 'Pull request' },
-  { key: 'core:jira', label: 'Jira' },
 ].map((c) => Object.freeze(c)));
 
 // Tag a chip's markup (its first element) with its key, plus `hidden` when the
@@ -349,10 +363,11 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // Card ring yields to the "new session" slot's ring while the keyboard selection
   // sits on a slot — the terminal stays open underneath, but only one thing is lit.
   const selected = s.sessionId === ctx.selectedSessionId && ctx.selectedNewSlot == null ? ' selected' : '';
-  // Each link chip keyed by its own type (core:pr / core:jira), so the two can
-  // be hidden separately; the wrapper stays even when every chip is hidden.
+  // Each link chip keyed by its own owner (core:pr, or the extension's
+  // <extId>:<id>), so they can be hidden separately; the wrapper stays even when
+  // every chip is hidden.
   const metaLinks = s.links?.length
-    ? `<span class="card-meta-links">${s.links.map((l) => keyChip(linkChipsHtml([l], ctx), `core:${l.type}`, ctx)).join('')}</span>`
+    ? `<span class="card-meta-links">${s.links.map((l) => keyChip(linkChipsHtml([l], ctx), l.type === 'pr' ? 'core:pr' : extLinkChip(l, ctx)?.key, ctx)).join('')}</span>`
     : '';
   const modelPill = modelPillHtml(s.modelPill);
   const compactPill = compactPillHtml(s);
@@ -656,7 +671,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
       <div class="task-body">${body('or drag sessions here to unassign')}</div>
     </div>`;
   }
-  const taskLinks = tile.task.links || [];
+  const taskLinks = drawableLinks(tile.task.links, ctx);
   const linkBadge = taskLinks.length
     ? `<span class="task-link-list" data-task-links="${esc(JSON.stringify(taskLinks))}">`
       + linkChipsHtml(taskLinks, ctx)

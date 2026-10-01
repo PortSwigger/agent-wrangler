@@ -18,7 +18,7 @@ import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
   CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
-  agentIcon, JIRA_ICON, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
+  agentIcon, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
 } from './icons.js';
 import {
   TERM_FONT_SIZES, DEFAULT_TERM_FONT_SIZE, normalizeFontSize,
@@ -1088,10 +1088,8 @@ export function taskForSession(sessionId) {
   return id ? latestTasks.tasks.find((t) => t.id === id) || null : null;
 }
 
-// Read-only link chips for a task tile / session card / panel: jira (key, links
-// to the issue) and pr (#number, links to the PR, with a CI status dot the
-// server polls). All mutation is via MCP — there's deliberately no add/remove
-// affordance here.
+// Read-only link chips are drawn by cards.js linkChipsHtml. All mutation is via
+// MCP — there's deliberately no add/remove affordance here.
 // PR urls whose dot is mid one-shot failure flash. Module-scope like
 // justFinished so linkChipsHtml reads it on every render — the flash survives
 // re-renders and we re-render again when the window closes (flashPr).
@@ -1278,6 +1276,7 @@ function cardCtx() {
     subagentShown: { has: isSubagentShown }, now: Date.now(),
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
+    linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
   };
 }

@@ -186,8 +186,8 @@ test('BUILTIN: every directory under builtin/ is registered', () => {
 // The real builtin set. Asserted by id so a stray extra manifest (which would
 // register tools and handlers on every install) is noticed, and so the
 // invariants below never quietly pass over an empty list.
-test('BUILTIN: the shipped set is exactly adversarial-review, checklist, task-memory and todos', () => {
-  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'task-memory', 'todos']);
+test('BUILTIN: the shipped set is exactly adversarial-review, checklist, jira, task-memory and todos', () => {
+  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'jira', 'task-memory', 'todos']);
 });
 
 const ownedBy = (id, xs) => xs.filter((x) => x.extId === id);

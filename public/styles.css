@@ -1844,7 +1844,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .card-tag.cost-limit-reached { color: var(--red-fg); background: color-mix(in srgb, var(--red) 18%, var(--surface-2)); }
 .card-tag.restarting { color: var(--blue-fg); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); }
 
-/* Read-only Jira-link chip on a task tile head and the session panel. Accent
+/* Read-only link chip on a task tile head and the session panel. Accent
    tint (the actionable/link colour) so it reads as clickable in both themes;
    --accent + --surface-2 both resolve on :root and body.light. */
 .link-chip {
@@ -1861,9 +1861,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   color: var(--accent-fg);
   text-decoration: none;
 }
-/* On the solid accent pill the Jira mark's brand blue would vanish, so override
-   its fill to the on-accent colour — the diamond shape still reads as Jira.
-   Sized to the chip's cap height, not a full .icon glyph. */
+/* On the solid accent pill a brand-coloured mark would vanish, so override its
+   fill to the on-accent colour. Sized to the chip's cap height, not a full .icon
+   glyph. */
 .link-chip .icon { width: 12px; height: 12px; flex: 0 0 auto; fill: var(--accent-fg); }
 .link-chip:hover { background: color-mix(in srgb, var(--accent) 80%, var(--fg)); }
 /* CI status dot inside a pr chip. green/red/amber on the accent pill all read
