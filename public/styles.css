@@ -869,6 +869,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .usage-card { width: 820px; max-width: 94vw; }
 .usage-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .usage-head h3 { margin: 0; }
+.usage-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .usage-toggles { display: flex; gap: 10px; flex-wrap: wrap; }
 /* Segmented control: a bordered row of buttons, the active one accent-filled. */
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
@@ -884,21 +885,18 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .seg button:disabled { color: var(--fg-subtle); cursor: default; }
 .seg button:disabled:hover { background: transparent; color: var(--fg-subtle); }
 /* The range selector row: two primary selects plus (only for Custom) two date inputs. */
-.usage-range-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; align-items: center; gap: 8px 16px; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
+.usage-range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--fg-muted); }
 .usage-range-row label { color: var(--fg-muted); }
-.usage-select-control { display: grid; gap: 4px; }
-.usage-range-select, .usage-date-input {
+.usage-date-input {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
   color: var(--fg); font-family: inherit; font-size: 12px; padding: 3px 8px;
 }
-.usage-select-control .usage-range-select { width: 100%; }
-.usage-range-select:hover, .usage-date-input:hover { border-color: var(--accent); }
-.usage-custom-row { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; flex-wrap: wrap; }
+.usage-date-input:hover { border-color: var(--accent); }
+.usage-range-row .search-select { border-color: var(--border); border-radius: 7px; }
+.usage-range-row .search-select-prefix, .usage-range-row .search-select-label { padding-top: 5px; padding-bottom: 5px; }
+.usage-custom-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .usage-custom-row.hidden { display: none; }
-@media (max-width: 480px) {
-  .usage-range-row { grid-template-columns: 1fr; }
-  .usage-custom-row { grid-column: 1; }
-}
+
 .usage-summary { margin: 14px 0 6px; }
 .usage-total { font-size: 28px; font-weight: 700; color: var(--fg); line-height: 1.1; }
 .usage-sub { font-size: 12px; color: var(--fg-muted); margin-top: 3px; }
