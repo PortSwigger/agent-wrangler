@@ -3,10 +3,7 @@
 // with variable-width unicode/emoji looked ragged). Pure strings — this module
 // imports nothing, so every view can pull from it without a cycle.
 
-// Lucide "play" — the spawn affordance on a todo row (turn intent into a session).
-export const SPAWN_ICON =
-  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
-// Lucide "plus" — the "+ todo" add affordance and the New TODO menu item.
+// Lucide "plus" — an add affordance, and the +/- of a disclosure toggle.
 export const PLUS_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
 // Lucide "minus" — pairs with PLUS_ICON as an unambiguous expand/collapse toggle
@@ -120,7 +117,7 @@ export const MOON_ICON =
 // a compact dot column rather than three rings at this size.
 export const KEBAB_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
-// Check mark (Lucide) — marks the active item in a menu (e.g. New TODO).
+// Check mark (Lucide) — marks the active item in a menu (e.g. a checked menu entry).
 export const CHECK_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 // Agent identity marks (simple-icons): Claude's sunburst, the OpenAI mark for

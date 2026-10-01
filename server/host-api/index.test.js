@@ -388,3 +388,10 @@ test('CLIENT_CAPABILITIES is disjoint from CAPABILITIES and builds no façade ke
   assert.equal('cards' in host, false);
   assert.deepEqual(Object.keys(host).sort(), ['id', 'log', 'settings', 'stores', 'version']);
 });
+
+test('tasks:read serves the Unassigned id, equal to the core ADHOC constant', async () => {
+  const { ADHOC } = await import('../task-store.js');
+  const host = buildHostApi({ id: 'x', requires: ['tasks:read'], ...wiring() });
+  assert.equal(host.tasks.adhocId, ADHOC);
+  assert.equal(host.tasks.adhocId, 'adhoc');
+});

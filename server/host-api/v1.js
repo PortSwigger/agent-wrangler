@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
 import { cachedScan } from '../usage-scan-memo.js';
+import { ADHOC } from '../task-store.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -193,6 +194,11 @@ const sessionsBill = ({ core }) => ({
 
 const tasksRead = ({ core }) => ({
   tasks: {
+    // The reserved id of the Unassigned (ad hoc) tile, which participates in
+    // task order and in any per-task bucketing as if it were a task. Exposed so
+    // an extension keyed by task never hard-codes the literal (it is also the
+    // `adhocId` in a `task.body` ctx on the browser side).
+    adhocId: ADHOC,
     list: () => core.taskStore.snapshot().tasks.map((t) => projectTask(t, t.id)),
     get: (taskId) => {
       const t = core.taskStore.snapshot().tasks.find((x) => x.id === taskId);

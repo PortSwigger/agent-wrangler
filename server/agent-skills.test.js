@@ -7,6 +7,7 @@ import {
   skillEntries, allSkillEntries, codexSkillCatalog, mandatorySkillPrompt,
   extensionSkillPluginDirs, extensionSkillDirs, SKILLS_ROOT, AGENT_SKILLS_PLUGIN_DIR,
 } from './agent-skills.js';
+import { dir as todosDir } from './extensions/builtin/todos/index.js';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-skills-'));
@@ -68,19 +69,33 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'archive-to-todo', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
+  assert.deepEqual(names, ['adversarial-pr-review', 'advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session', 'task-memory']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
-test('the archive-to-todo skill is discoverable for session handoffs', () => {
-  const entry = skillEntries().find((item) => item.name === 'archive-to-todo');
+test('the archive-to-todo skill ships with the todos extension and is discoverable for session handoffs', () => {
+  assert.equal(skillEntries().some((item) => item.name === 'archive-to-todo'), false);
+  const row = { id: 'todos', dir: todosDir, skills: ['archive-to-todo'] };
+  const ext = { list: [row], disabledSkillIds: [] };
+  const entry = allSkillEntries(SKILLS_ROOT, ext).find((item) => item.name === 'archive-to-todo');
   assert.ok(entry);
+  assert.equal(entry.extId, 'todos');
   assert.match(entry.description, /current session/);
-  const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, ext: { list: [], disabledSkillIds: [] } });
+  const catalog = codexSkillCatalog(SKILLS_ROOT, { taskMemory: true, ext });
   assert.match(catalog, /- archive-to-todo —/);
   assert.doesNotMatch(catalog, /- park-session —/);
   assert.doesNotMatch(catalog, /- todo —/);
   assert.doesNotMatch(catalog, /- todoify —/);
+});
+
+test('a disabled todos extension suppresses the archive-to-todo skill from the catalog and plugin dirs', () => {
+  const row = { id: 'todos', dir: todosDir, skills: ['archive-to-todo'] };
+  const base = { taskMemory: true };
+  const on = { list: [row], disabledSkillIds: [] };
+  const off = { list: [row], disabledSkillIds: ['archive-to-todo'] };
+  assert.equal(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: on }).length, 1);
+  assert.doesNotMatch(codexSkillCatalog(SKILLS_ROOT, { ...base, ext: off }), /archive-to-todo/);
+  assert.deepEqual(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: off }), []);
 });
 
 test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {

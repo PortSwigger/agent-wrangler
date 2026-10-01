@@ -28,7 +28,7 @@ nested descendants.
 
 Each task also has:
 
-- **TODOs:** add, complete, reorder, and collapse task-level work items.
+- **TODOs:** add, complete, reorder, and collapse task-level work items. TODOs are an optional builtin extension (`todos`, on by default); turning it off in Settings → Extensions removes the zone, tools, and skill without deleting stored TODOs.
 - **Task memory:** shared Markdown that humans and agents can update across sessions or repositories.
 - **Links:** Jira issues and pull requests shared by the task.
 - **Focus, minimise, and activity sort:** controls for a busy board.

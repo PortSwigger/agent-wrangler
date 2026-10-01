@@ -702,7 +702,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `renderFocusedTile`) already end with. **`BUILTIN` holds the shipped
   extensions, each in `server/extensions/builtin/<id>/`** (manifest `index.js`
   exporting its absolute `dir`, plus `store.js`, `tools/`, `handlers.js`,
-  `skills/`, `public/` and its tests). **`checklist` is the first**, and
+  `skills/`, `public/` and its tests). **`checklist` and `todos` are the two so far**, and
   `index.test.js` asserts the exact id list so a stray manifest can't register
   tools and handlers on every install unnoticed. **Migrating a flagged feature
   (task-memory, archive-review) is: move its code under `builtin/<id>/`, a
@@ -716,7 +716,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `false` moves (`extensions.<id> = false`); `true`/missing/garbage just drop the
   old key, and an explicit existing `extensions.<id>` boolean wins. Idempotent;
   rows stay forever. Current row: `checklistEnabled` → `checklist`.
-- **The checklist is the reference builtin.** Store, four MCP tools, four control
+- **The checklist is a reference builtin.** Store, four MCP tools, four control
   handlers, the `checklist` skill (plus its `WRANGLER.md` nudge), an `onPurge`
   session hook (purge is the only thing that drops a list; archive keeps it), a
   `graph` contributor for `checklists`, and a client half (`panel.section` for the
@@ -726,6 +726,34 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   unchanged — and its legacy `wrangler.checklistOpen` / `wrangler.checklistShowDone`
   localStorage keys are kept through `api.storage.raw()`. Disabling it unregisters
   the tools, grant, skill, handlers, panel and chip together through the loader.
+- **`todos` is the reference builtin for task-keyed data**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
+  a shipped skill, a one-time migration from `tasks.json`, and a client that fills
+  `task.body` (below). Disabling it removes the zone, tools and skill and tiles size as
+  if there were no TODOs; `todos.json` is never deleted. The core `tasks.json` keeps
+  its legacy `todos` field as an opaque pass-through for one release (so a downgrade
+  or a failed migration retry still finds it); drop it afterwards.
+- **`onTaskDelete({ taskId, host })` (1.15.0) is a manifest hook for data keyed by
+  task id.** The `task-delete` control handler removes the task from core first
+  (`TaskStore.deleteTask`, which unassigns its sessions), then
+  `ctx.ext.fireTaskDelete` (`createTaskDeleteNotifier`) awaits each enabled
+  extension's hook sequentially with that extension's own façade. Errors are logged
+  and isolated per extension; disabled, uninstalled and quarantined extensions are
+  never asked (unregister removes the hook). **`host.tasks.adhocId`** (under
+  `tasks:read`) is the reserved id of the Unassigned tile (equal to core's `ADHOC`),
+  so nothing hard-codes `'adhoc'`.
+- **`task.body` (1.15.0) is a slot with one host PER TASK TILE, Unassigned included.**
+  `cards.js taskBodyHostHtml` draws `.task-body-ext[data-task-body]` and `app.js
+  mountTaskBodies` reconciles them with `syncHosts` from `wireGridEvents` (the card.pill
+  pattern). The per-host subject is `{ taskId, adhocId, container }`, passed as
+  `mount(el, api, ctx)` and `update(el, ctx, graph)`; `taskId` is the reserved
+  `adhocId` for Unassigned. A contribution may carry `weight(taskId, graph)`:
+  px of tile height, summed by `slots.taskBodyWeight` into `layout.tileSpan`'s
+  `bodyPx`. It runs per tile per layout pass, so it must be synchronous and cheap; a
+  throwing weight counts as 0 and is reported once, NOT removed (unlike mount/update,
+  it runs in a measurement pass). Weight reaches the capped secondary bucket, like
+  snoozed rows. Core cannot know what a body drew, so an extension that fills a tile
+  hides the empty-state hint itself (`.task-body:has(...) .cell-empty-body`).
+  `api.requestBoardRender()` redraws (and re-sizes) the board for content changes.
 - **`api.claimDrag(el)` makes a drag extension-owned.** It sets `data-ext-drag="<extId>"`
   on `el` and returns an unclaim function; `gridEditing()` in `public/app.js` returns
   true while any such element exists, so the ~4s poll does not rebuild the grid
@@ -734,6 +762,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   disabled extension cannot freeze the board. Focus inside `#panel-sections` is
   already covered generically by `gridEditing`, so a panel section's inline input
   needs nothing extra.
+  The `todos` extension claims its host only for the length of a row drag (set in
+  its `dragstart`, released on `dragend`), so the cell highlight stands aside and
+  re-renders hold while a row is in flight.
+- **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
+  modal and returns a promise: the `dispatched` ack once the human launches, `null` if
+  the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
+  second call while the first modal is merely open REPLACES it (the first resolves
+  null); while a launch awaits its ack the second call REJECTS, since two acks cannot
+  be told apart. An error reply to a launch whose modal is still open makes it
+  retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default

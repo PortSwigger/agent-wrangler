@@ -55,7 +55,7 @@ export function allowedToolName(tool) {
 // (itself a leaf — see server/extensions/index.js), derived from the very list
 // the loader registers, so an extension tool is granted in the same place it is
 // declared.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'list_tasks', 'list_todos', 'add_todo', 'edit_todo', 'delete_todo', 'move_todo', 'reorder_todos', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'rename_session', 'read_mail', 'list_mail'];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'assign_session', 'rename_session', 'read_mail', 'list_mail'];
 
 // `ext` is injectable (defaulting to the boot-loaded extensions) so tests never
 // touch the memo or the shared config.json.

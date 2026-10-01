@@ -62,6 +62,8 @@ it is enabled in **Settings → Extensions**. They can access only the calling s
 
 ## Board TODOs
 
+Provided by the builtin `todos` extension; the tools (and the `archive-to-todo` skill) disappear when it is switched off in Settings → Extensions.
+
 | Tool | Purpose |
 | --- | --- |
 | `list_todos` | List a task's board TODOs, including any descriptions. |

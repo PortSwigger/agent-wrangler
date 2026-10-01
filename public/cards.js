@@ -1,13 +1,12 @@
-// Pure HTML builders for the board's cards, tiles, workflow boxes, snoozed rows and
-// TODO zones. Every function returns a string and has no side effects — the view
+// Pure HTML builders for the board's cards, tiles, workflow boxes and snoozed rows. Every function returns a string and has no side effects — the view
 // state each one reads (selection, flash sets, collapse set, the derived status
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
 // app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
-//   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedTodoZones,
-//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, todosFor, ADHOC_ID }
+//   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
+//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, ADHOC_ID }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
-  CHECK_ICON, SPAWN_ICON, X_ICON, ROBOT_ICON, KEBAB_ICON, PENCIL_ICON,
+  ROBOT_ICON, KEBAB_ICON,
   PLUS_ICON, MINUS_ICON, MAIL_ICON, MAIL_FILLED_ICON, CPU_ICON, TOKENS_ICON, COMPACT_ICON,
   agentIcon, JIRA_ICON, PR_ICON, MERGE_ICON,
 } from './icons.js';
@@ -45,7 +44,7 @@ export function visibleSubAgents(subAgents, { showFinished, now }) {
   return [...filtered].sort((a, b) => subAgentRecency(b) - subAgentRecency(a));
 }
 
-// One sub-agent as a plain flat row (no connector line — see the todo zone, whose
+// One sub-agent as a plain flat row (no connector line — like the snoozed rows, whose
 // divider/row visual language this mirrors). NOT a session: carries
 // data-subagent-id (+ its owning card id), never data-sid, so a click opens the
 // detail modal rather than selecting a session. A robot icon (agentType tooltip)
@@ -71,8 +70,8 @@ export function subagentRowHtml(sa, sid) {
   </div>`;
 }
 
-// The zone's divider, matching .todo-divider's visual language (a faint rule +
-// label pill) but with the robot icon in place of the todo zone's plain text pill,
+// The zone's divider, matching the snooze divider's visual language (a faint rule +
+// label pill) but with the robot icon in place of a plain text pill,
 // and an optional extra control (the panel's own Recent/All pill) after it.
 export function subagentDividerHtml(extra = '') {
   return `<div class="subagent-divider"><span class="subagent-label">${ROBOT_ICON}sub-agents</span>${extra}</div>`;
@@ -613,39 +612,11 @@ export function snoozedRowHtml(s) {
   </div>`;
 }
 
-export function todoRowHtml(td, key) {
-  const spawn = `<button class="todo-spawn" title="Start a session from this TODO"><span class="todo-tick">${CHECK_ICON}</span><span class="todo-play">${SPAWN_ICON}</span></button>`;
-  const details = `<button class="todo-details${td.description ? ' has-description' : ''}" title="Edit TODO details" aria-label="Edit TODO details">${PENCIL_ICON}</button>`;
-  const del = `<button class="todo-del" title="Delete TODO">${X_ICON}</button>`;
-  return `<div class="todo-row" data-todoid="${esc(td.id)}" data-todo-key="${esc(key)}" draggable="true">
-    ${spawn}<span class="todo-text">${esc(td.text)}</span>${details}${del}
-  </div>`;
-}
-
-// The todo zone: a collapsible divider + rows when todos exist and it isn't
-// collapsed, plus an empty anchor div the context-menu's inline-add injects
-// into (always rendered, even collapsed — beginTodoAdd forces it visible
-// directly, and app.js expands the zone before adding so a freshly-typed TODO
-// doesn't vanish back under a closed divider on the next render). Open by
-// default (`collapsed` false/undefined) — unlike the sub-agent zone's
-// default-off pill, a task's own TODOs are primary content the user is
-// expected to see, not read-only chrome.
-//
-// The toggle itself is a `.card-tag` pill — same composition as the card's
-// own subagentPillHtml and the session panel's disclosure toggle
-// (renderPanel's `#panel-sa-toggle`, app.js): count + a +/- icon, never a
-// rotating chevron (icons.js: "a rotating chevron reads as 'which way is
-// open?'; +/- doesn't"). A bare unicode chevron floating next to a separate
-// plain-text count read as visually disconnected — one pill with the count
-// baked in reads as a single control, consistent with every other
-// show/hide toggle in the app.
-export function todoZoneHtml(todos, key, collapsed = false) {
-  if (!todos.length) return `<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
-  const toggleIcon = `<span class="todo-toggle-icon">${collapsed ? PLUS_ICON : MINUS_ICON}</span>`;
-  const pill = `<button class="card-tag todo-pill" data-todo-key="${esc(key)}" title="${collapsed ? 'Show TODOs' : 'Hide TODOs'}">todo ${todos.length}${toggleIcon}</button>`;
-  const divider = `<div class="todo-divider">${pill}</div>`;
-  const rows = collapsed ? '' : todos.map((td) => todoRowHtml(td, key)).join('');
-  return `${divider}${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
+// The `task.body` slot's host: one per task tile (Unassigned included), always
+// rendered so an extension can mount into an empty tile. `key` is the tile's id
+// (the reserved ADHOC_ID for Unassigned). Reconciled by app.js mountTaskBodies.
+export function taskBodyHostHtml(key) {
+  return `<div class="task-body-ext" data-task-body="${esc(key)}"></div>`;
 }
 
 export function tileHtml(tile, ctx, { focusMode } = {}) {
@@ -657,24 +628,24 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
   const cards = renderTileCards(active, ctx, { focusMode })
     + (asleep.length ? `<div class="snooze-divider"><span class="snooze-label">snoozed</span></div>${asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
-  const todoKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
-  const todos = ctx.todosFor(todoKey);
-  const todoZone = todoZoneHtml(todos, todoKey, ctx.collapsedTodoZones?.has(todoKey));
+  const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
+  const bodyHost = taskBodyHostHtml(tileKey);
   // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
   // The lit target must sit where nav lands it — the *end* of the body — so on a
   // truly-empty tile we ring its big empty-state CTA, otherwise we append a compact
   // highlighted row after the cards (the small header button stays a plain mouse
   // affordance: ringing it read as nothing, since it sits at the top, not the end).
-  const showEmpty = !cards && !todos.length;
-  const slotSel = ctx.selectedNewSlot === todoKey;
+  const showEmpty = !cards;
+  const slotSel = ctx.selectedNewSlot === tileKey;
   const newSess = `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
   const emptyBody = (hint) =>
     `<div class="cell-empty-body"><button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button><span class="empty-hint">${hint}</span></div>`;
   const slotRow = slotSel && !showEmpty
     ? `<button class="new-sess-row selected" title="New session in this task">${ROBOT_ICON}<span>New session</span></button>`
     : '';
-  // Hide the empty-body hint when there are only todos — the tile is not truly empty.
-  const body = (hint) => (cards || (todos.length ? '' : emptyBody(hint))) + slotRow + todoZone;
+  // An extension's `task.body` content is not known here, so an extension that
+  // fills a tile hides the empty-state hint itself (:has() in its styles).
+  const body = (hint) => (cards || emptyBody(hint)) + slotRow + bodyHost;
   if (tile.kind === 'notask') {
     return `<div class="task-cell no-task" data-entity="no-task" style="${pos}">
       <div class="task-head" draggable="true">

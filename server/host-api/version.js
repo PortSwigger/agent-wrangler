@@ -139,7 +139,19 @@ import semver from 'semver';
 // registrar register() receives, for load-time use). An older slots.js throws on the slot name and an
 // older server quarantines `type: 'list'` and the unknown capability, so only
 // the range can say so.
-export const HOST_API_VERSION = '1.14.0';
+//
+// 1.15.0 is what moving the board TODOs out of core needed, and it is mostly
+// the CLIENT half again plus one server hook. `task.body` is a slot with one host
+// per task tile (Unassigned included) whose contributions may carry
+// `weight(taskId, graph)` px, summed into tile sizing; `api.claimDrag(el)` marks an element as carrying an extension-owned
+// drag, so the board holds its re-renders and cell highlight while it is claimed;
+// `api.openDispatch({ taskId, intent, lockTask })` opens the
+// dispatch modal and resolves with the `dispatched` ack (null on cancel);
+// `api.requestBoardRender()` asks for a board re-render. Server side: the
+// `onTaskDelete({ taskId, host })` manifest hook and `host.tasks.adhocId`
+// (under `tasks:read`). An older slots.js throws on the slot name and an older
+// server never calls the hook or serves the id, so only the range can say so.
+export const HOST_API_VERSION = '1.15.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

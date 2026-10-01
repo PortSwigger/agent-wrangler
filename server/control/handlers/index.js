@@ -30,18 +30,12 @@ import {
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
+  taskDeleteHandler,
   taskUnarchiveHandler,
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
 } from './tasks.js';
-import {
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
-} from './todos.js';
 import { getMemoryHandler, setMemoryHandler } from './memory.js';
 import {
   scheduleCreateHandler,
@@ -106,15 +100,11 @@ export const CONTROL_HANDLERS = [
   taskCreateHandler,
   taskRenameHandler,
   taskArchiveHandler,
+  taskDeleteHandler,
   taskUnarchiveHandler,
   taskAssignHandler,
   taskReorderHandler,
   taskReorderSessionsHandler,
-  todoAddHandler,
-  todoEditHandler,
-  todoDeleteHandler,
-  todoMoveHandler,
-  todoReorderHandler,
   getMemoryHandler,
   setMemoryHandler,
   scheduleCreateHandler,

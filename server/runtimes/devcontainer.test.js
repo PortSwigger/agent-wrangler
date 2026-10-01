@@ -64,13 +64,14 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
 test('launchInputs: base = skills + notes + PR-hook (2 files); workflow adds issue-to-pr', () => {
   const base = launchInputs('abc');
   // Extension-shipped skills ride along under ext-skills/<extId>/<name> (the
-  // builtin checklist ships one), so they are asserted apart from the fixed four.
+  // builtin checklist and todos ship one each), so they are asserted apart from the fixed four.
   const dests = base.map((i) => i.dest).filter((d) => !d.includes('/ext-skills/'));
   assert.deepEqual(dests, [
     '/tmp/aw-abc/skills', '/tmp/aw-abc/notes',
     '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
   ]);
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/checklist/checklist'), 'the checklist extension\'s skill dir is copied in');
+  assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/todos/archive-to-todo'), 'the todos extension\'s skill dir is copied in');
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);
