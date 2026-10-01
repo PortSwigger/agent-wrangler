@@ -40,7 +40,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 #Environment=AW_BIND_HOST=0.0.0.0
 
 # fd-limit hardening: the systemd-native equivalent of the `ulimit -n`
-# wrangler-start.sh sets for the launchd/shell path — LimitNOFILE is enforced
+# bin/agent-wrangler sets for every other start path — LimitNOFILE is enforced
 # by systemd itself before the process starts, rather than by a shell builtin
 # inside it. Generous ceiling, not a leak canary (see server/fd-watchdog.js):
 # a one-shot MCP child like chrome-devtools-mcp needs a burst of ~270 fds at

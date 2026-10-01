@@ -90,7 +90,8 @@ Success is `state = running` **and** `http 200`. Report both. If the state is
 - **Exit 127 in the log** — `~/.local/bin` missing from `PATH`. Check the
   `PATH` string in the plist matches the template.
 - **Terminals render Unicode as `_`** — the server's locale isn't UTF-8.
-  `wrangler-start.sh` pins `LANG`/`LC_CTYPE`; confirm with `ps eww <pid>`.
+  `bin/agent-wrangler` (exec'd by `wrangler-start.sh`) pins `LANG`/`LC_CTYPE`;
+  confirm with `ps eww <pid>`.
 - **Job won't load ("Bootstrap failed: 5: Input/output error")** — usually a
   malformed plist. Validate with `plutil -lint "$PLIST"`.
 
@@ -101,7 +102,7 @@ as the launchd plist, just systemd's shape: a `[Service]` `ExecStart=` in
 place of `ProgramArguments`, `Environment=` lines in place of the
 `EnvironmentVariables` dict, and `LimitNOFILE=` for the fd-limit hardening
 that the macOS path instead sets via a shell `ulimit -n` inside
-`wrangler-start.sh` — systemd enforces it before the process even starts,
+`bin/agent-wrangler` — systemd enforces it before the process even starts,
 so the Linux unit doesn't need (and mustn't rely on) that shell `ulimit`.
 
 ### Step 1 — resolve the substitution
