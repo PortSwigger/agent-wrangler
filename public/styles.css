@@ -3023,9 +3023,10 @@ a.ext-row-origin { color: var(--blue-fg); }
    and resizable because nobody can guess how long someone's process is. */
 .modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ext-setting-copybox { position: relative; }
-.ext-setting-copy { position: absolute; top: 14px; right: 8px; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; opacity: 0; transition: opacity 0.12s; }
-.ext-setting-copybox:hover .ext-setting-copy, .ext-setting-copy:focus-visible { opacity: 1; }
-.ext-setting-copy .icon { width: 14px; height: 14px; }
+.ext-setting-copy { position: absolute; top: 14px; right: 8px; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.ext-setting-copybox:hover .ext-setting-copy, .ext-setting-copy:focus-visible { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .ext-setting-copy { opacity: 1; pointer-events: auto; } }
+.ext-setting-copy svg { width: 14px; height: 14px; }
 .ext-setting-copy:hover { color: var(--fg); }
 .ext-setting-copy[hidden] { display: none; }
 .ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.55; cursor: default; }
