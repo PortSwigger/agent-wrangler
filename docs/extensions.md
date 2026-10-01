@@ -28,6 +28,7 @@ update from and cannot be uninstalled.
 | --- | --- | --- |
 | **Per-session checklist** | The session checklist panel and chip, its four MCP tools and the `checklist` skill. See [Board and sessions](board-and-sessions.md). | None. |
 | **TODOs** | Board TODOs for each task and the Unassigned tile, their MCP tools and the `archive-to-todo` skill. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). | None. |
+| **Jira** | The `jira` link type and its board chip: agents attach a Jira issue to a session or task with `set_links`, and the chip links to the issue. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). Off, stored Jira links are kept (and survive `set_links`) but draw no chip and no new ones can be set. | **Jira base URL**: what a bare issue key is appended to, e.g. `https://yourcompany.atlassian.net/browse/`. Empty uses `AW_JIRA_BASE_URL` if set; a bare key otherwise renders without a link. The old `jiraBaseUrl` config value, or `AW_JIRA_BASE_URL`, is copied into it at boot. |
 | **Adversarial PR review** | The `adversarial-pr-review` skill and its reviewer's `adversarial_review_process` tool. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | **Review process**: what the reviewer checks and how. Empty uses the built-in process; anything written replaces it. |
 
 ## Minimal external extension
@@ -919,8 +920,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
   `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,
   `core:compact`, `core:subagents`, `core:restarting`, `core:automerge`,
-  `core:runtime`, `core:worktree`, `core:pr`, `core:jira` (cards.js
-  `CORE_CHIPS`, meta-row order; PR and Jira link chips keyed separately). A
+  `core:runtime`, `core:worktree`, `core:pr` (cards.js
+  `CORE_CHIPS`, meta-row order). A `link.chip` contribution's chip is keyed
+  `<extId>:<id>` (the Jira chip is `jira:jira`) and listed by `chips()` like a pill. A
   `card.pill` contribution's key is `<extId>:<id>` (on its `.ext-slot` as
   `data-chip`) and it may carry a `label` (fallback: its id). `api.cards`
   (`chips()`, `hideChips(keys)`, `renderSample(el, { hidden })`) is gated on
@@ -1019,6 +1021,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension turns on or off; a throwing `activate` quarantines it.
 - **`host.memory.*`** (1.17.0) is provided by the task-memory extension. While it is off,
   `read` returns `null`, `has` and `append` return `false`, with a logged warning.
+- **`links.normalise({ link, host })`** (manifest `hooks`, 1.18.0) is how an extension
+  claims a board link type; core keeps only `pr`. `set_links` offers each link to
+  every enabled extension's hook in turn: return the stored link to claim it,
+  `undefined` for a type that is not yours, or throw to reject an invalid one. The
+  hook is synchronous. A link no hook claims is rejected, except one already
+  stored on that task or session: those pass through unchanged, so an agent
+  resending the full list from `get_links` is not broken by an extension being off.
+  `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
+- **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
+  `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
+  Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and
+  `icon` is accepted only as a single `<svg>` of `<path>`s with plain attributes.
+  A link no contribution answers for draws no chip, on cards, task tiles and the
+  panel alike. Read the extension's own settings with `api.settings()`, as the Jira
+  chip does to link a key-only link against the current base URL.
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
 
@@ -1032,3 +1049,14 @@ and the modal and task-menu items. Disabling it in Settings > Extensions removes
 all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 `taskMemoryEnabled: false` config value is migrated to
 `extensions.task-memory = false` at boot.
+
+## Builtin: jira
+
+`server/extensions/builtin/jira/` (default on) owns the `jira` link type
+(`links.normalise` hook: a key and/or url, with the url built from the **Jira base
+URL** setting when only a key is given) and the chip (`link.chip` contribution). The
+setting falls back to `AW_JIRA_BASE_URL` while empty and gains a trailing slash if
+it lacks one. At boot the old `jiraBaseUrl` config value, or failing that
+`AW_JIRA_BASE_URL`, is copied into `extensionSettings.jira.baseUrl` when none is set
+(`RETIRED_SETTINGS` in `config-store.js`). Disabling it keeps stored Jira links and
+hides their chips.

@@ -164,7 +164,13 @@ import semver from 'semver';
 // `memory:read`/`memory:append` (`host.memory`, provided by the task-memory
 // extension). An older server ignores the manifest keys and refuses the
 // capabilities, so only the range can say so.
-export const HOST_API_VERSION = '1.17.0';
+//
+// 1.18.0 is what moving Jira out of core needed: the `links.normalise` value hook
+// (an extension claims a board link type; core keeps only `pr`) and the
+// `link.chip` client value slot (the chip an extension draws for a link of its
+// type). An older server ignores the hook and an older slots.js throws on the
+// slot name, so only the range can say so.
+export const HOST_API_VERSION = '1.18.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

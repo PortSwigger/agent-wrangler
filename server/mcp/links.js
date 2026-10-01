@@ -1,21 +1,9 @@
-// A board link is a small typed object. Supported types: `jira` (key/url, url
-// resolved from a base+key) and `pr` (a GitHub pull-request url, from which the
-// server derives repo/number and later writes a checkStatus). normaliseLink
+// A board link is a small typed object. Core owns `pr` (a GitHub pull-request
+// url, from which the server derives repo/number and later writes a
+// checkStatus); every other type is claimed by an extension through its
+// `links.normalise` hook (the jira extension claims `jira`). normaliseLink
 // throws on an invalid item; the caller turns that into an MCP error.
-const KNOWN_TYPES = new Set(['jira', 'pr']);
-
 const GITHUB_PR_RE = /^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/;
-
-function normaliseJira(link, baseUrl) {
-  const key = typeof link.key === 'string' && link.key.trim() ? link.key.trim() : undefined;
-  const explicitUrl = typeof link.url === 'string' && link.url.trim() ? link.url.trim() : undefined;
-  if (!key && !explicitUrl) throw new Error('Each jira link needs a key or url.');
-  const url = explicitUrl ?? (baseUrl && key ? `${baseUrl}${key}` : undefined);
-  const out = { type: 'jira' };
-  if (key) out.key = key;
-  if (url) out.url = url;
-  return out;
-}
 
 export function normalisePr(link) {
   const url = typeof link.url === 'string' && link.url.trim() ? link.url.trim() : undefined;
@@ -33,15 +21,38 @@ export function normalisePr(link) {
   return out;
 }
 
-export function normaliseLink(link, baseUrl = '') {
-  if (!link || typeof link !== 'object') throw new Error('Each link must be an object.');
-  if (!KNOWN_TYPES.has(link.type)) throw new Error(`Unknown link type: ${link.type}. Supported: jira, pr.`);
-  return link.type === 'pr' ? normalisePr(link) : normaliseJira(link, baseUrl);
+// The first enabled extension whose `links.normalise` hook returns a link claims
+// the type. `ext` is the loaded registry, `hostApiFor` maps an extension id to
+// its façade; both are read per call so a live enable/disable is seen.
+export function createLinkNormaliser(ext, hostApiFor) {
+  return (link) => {
+    for (const { extId, fn } of ext?.hooks?.['links.normalise'] || []) {
+      const host = hostApiFor(extId);
+      if (!host) continue;
+      const out = fn({ link, host });
+      if (out != null) return out;
+    }
+    return undefined;
+  };
 }
 
-export function normaliseLinks(links, baseUrl = '') {
+// `existing` is the scope's currently stored list. set_links is a full replace,
+// so an agent round-tripping get_links resends links whose owning extension is
+// now off; those are passed through unchanged rather than failing the whole
+// write. A link nothing claims and nothing already stored is rejected.
+export function normaliseLink(link, { claim = () => undefined, existing = [] } = {}) {
+  if (!link || typeof link !== 'object') throw new Error('Each link must be an object.');
+  if (link.type === 'pr') return normalisePr(link);
+  const claimed = typeof link.type === 'string' ? claim(link) : undefined;
+  if (claimed != null) return claimed;
+  const kept = existing.find((e) => e && e.type === link.type && linkMatches(e, link));
+  if (kept) return kept;
+  throw new Error(`Unknown link type: ${link.type}. Supported: pr${typeof link.type === 'string' && link.type ? `, and "${link.type}" only if its extension is enabled` : ''}.`);
+}
+
+export function normaliseLinks(links, opts = {}) {
   if (!Array.isArray(links)) throw new Error('links must be an array.');
-  return links.map((l) => normaliseLink(l, baseUrl));
+  return links.map((l) => normaliseLink(l, opts));
 }
 
 // Does a stored link match a remove_links selector? Selectors are match-only
@@ -49,7 +60,8 @@ export function normaliseLinks(links, baseUrl = '') {
 // we compare leniently instead. Different `type` ⇒ no match. For pr, when both
 // urls are real GitHub pull urls we compare normalized repo+number so a trailing
 // slash or ?query on either side still matches; otherwise trimmed url equality.
-// For jira, a key match (trimmed, case-insensitive) or a trimmed url match wins.
+// For every other type, a key match (trimmed, case-insensitive) or a trimmed url
+// match wins.
 export function linkMatches(stored, selector) {
   if (!stored || !selector || stored.type !== selector.type) return false;
   if (stored.type === 'pr') {
@@ -58,12 +70,8 @@ export function linkMatches(stored, selector) {
     if (a && b) return a[1] === b[1] && a[2] === b[2];
     return (stored.url || '').trim() === (selector.url || '').trim() && !!(selector.url || '').trim();
   }
-  if (stored.type === 'jira') {
-    const selKey = (selector.key || '').trim();
-    if (selKey && (stored.key || '').trim().toLowerCase() === selKey.toLowerCase()) return true;
-    const selUrl = (selector.url || '').trim();
-    if (selUrl && (stored.url || '').trim() === selUrl) return true;
-    return false;
-  }
-  return false;
+  const selKey = (selector.key || '').trim();
+  if (selKey && (stored.key || '').trim().toLowerCase() === selKey.toLowerCase()) return true;
+  const selUrl = (selector.url || '').trim();
+  return !!selUrl && (stored.url || '').trim() === selUrl;
 }

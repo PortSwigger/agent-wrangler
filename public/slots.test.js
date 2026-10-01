@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SLOT_NAMES, DISPATCH_ANCHORS, createSlots, namespacedStorage } from './slots.js';
+import { SLOT_NAMES, DISPATCH_ANCHORS, createSlots, namespacedStorage, safeChipIcon } from './slots.js';
 
 // A DOM stub sufficient for the mount/update bookkeeping — no jsdom, matching
 // the rest of public/'s tests.
@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1147,4 +1147,31 @@ test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elem
   api.claimDrag(el2);
   slots.removeExtension('x');
   assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
+});
+
+test('linkChip returns the first contribution that answers, with its veto key, and a null for a link nobody claims', () => {
+  const { slots } = harness();
+  slots.register('link.chip', 'jira', { id: 'jira', chip: (l) => (l.type === 'jira' ? { label: l.key, href: 'https://j/' + l.key } : null) });
+  assert.deepEqual(slots.linkChip({ type: 'jira', key: 'ENT-1' }, {}, {}), { key: 'jira:jira', label: 'ENT-1', href: 'https://j/ENT-1', icon: '' });
+  assert.equal(slots.linkChip({ type: 'other' }, {}, {}), null);
+  assert.deepEqual(slots.chipContributions().map((c) => c.key), ['jira:jira']);
+  assert.throws(() => slots.register('link.chip', 'x', { id: 'bad', mount() {} }), /no chip function/);
+});
+
+test('linkChip drops a throwing contribution and skips an answer with no label', () => {
+  const { slots, errors } = harness();
+  slots.register('link.chip', 'a', { id: 'boom', chip: () => { throw new Error('x'); } });
+  slots.register('link.chip', 'b', { id: 'blank', chip: () => ({ label: '' }) });
+  assert.equal(slots.linkChip({ type: 't' }, {}, {}), null);
+  assert.equal(errors.length, 2);
+  slots.linkChip({ type: 't' }, {}, {});
+  assert.equal(errors.length, 3, 'the throwing one is gone; only the blank one reports again');
+});
+
+test('safeChipIcon keeps a plain path-only svg and refuses anything that could carry script', () => {
+  const ok = '<svg class="icon" viewBox="0 0 24 24" fill="#2684FF"><path d="M1 1h2"/></svg>';
+  assert.equal(safeChipIcon(ok), ok);
+  for (const bad of ['<svg onload="x()"><path d="M1"/></svg>', '<svg><script>x()</script></svg>', '<svg><path d="M1" fill="url(#a)"/></svg>', '<img src=x>', '', null, 5]) {
+    assert.equal(safeChipIcon(bad), '', String(bad));
+  }
 });

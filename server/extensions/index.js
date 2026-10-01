@@ -8,6 +8,7 @@ import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
 import adversarialReview from './builtin/adversarial-review/index.js';
 import taskMemory from './builtin/task-memory/index.js';
+import jira from './builtin/jira/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -42,13 +43,14 @@ import taskMemory from './builtin/task-memory/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review` and `task-memory` are the shipped set. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory` and `jira` are the shipped set. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
 export const BUILTIN = [
   checklist,
   todos,
   adversarialReview,
   taskMemory,
+  jira,
 ];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
@@ -126,7 +128,11 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
 //   session.launchContext({ sid, task, agent, runtime, reason, host })
 //     -> { env?, addDirs? } | Promise of it — see server/launch-context.js.
-export const VALUE_HOOKS = ['session.launchContext'];
+//   links.normalise({ link, host })
+//     -> the stored link | undefined — a SYNCHRONOUS claim on a link type. Return
+//     undefined for a type that is not yours; throw to reject an invalid link of
+//     yours. See server/mcp/links.js.
+export const VALUE_HOOKS = ['session.launchContext', 'links.normalise'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
