@@ -57,6 +57,7 @@ import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
+import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 
 let currentView = 'grid';
@@ -5689,6 +5690,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   syncAutoCompactPresets();
 });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
+enhanceSelects(document.getElementById('modal'));
 modal.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
   else if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key) && !scheduleMode()) {
