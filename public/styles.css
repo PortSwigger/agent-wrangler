@@ -3074,8 +3074,10 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* The Extensions tab is nothing BUT this mount point now, so it has no list
    above it to be separated from. */
 .ext-installed { margin-top: 2px; }
-.ext-installed-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.ext-installed-head .setting-label { flex: 1; }
+.ext-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ext-group-head .setting-label { flex: 1; }
+.ext-group + .ext-group { margin-top: 18px; }
+.ext-group-empty { margin-bottom: 6px; }
 /* An extension row IS a .setting-row — one list, the toggle and the provenance
    in the same row — so padding, border and the toggle come from there; this only
    top-aligns it, because these rows are several lines tall. */
