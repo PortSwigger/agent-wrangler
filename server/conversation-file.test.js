@@ -69,3 +69,14 @@ test('chat resolution returns an ordered Codex chain while Claude stays one tran
   assert.deepEqual(await findConversationFiles(UUID, 'codex', t), [t.rollout, resumed]);
   assert.deepEqual(await findConversationFiles(UUID, 'claude', t), [t.transcript]);
 });
+
+test('chat resolution keeps a legacy Codex rollout without verified session metadata', async () => {
+  const t = trees();
+  assert.deepEqual(await findConversationFiles(UUID, 'codex', t), [t.rollout]);
+});
+
+test('chat resolution rejects a rollout whose metadata names another session', async () => {
+  const t = trees();
+  fs.writeFileSync(t.rollout, JSON.stringify({ type: 'session_meta', payload: { session_id: '99999999-9999-9999-9999-999999999999' } }) + '\n');
+  assert.deepEqual(await findConversationFiles(UUID, 'codex', t), []);
+});

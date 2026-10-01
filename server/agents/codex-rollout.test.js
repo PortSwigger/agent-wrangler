@@ -78,6 +78,21 @@ test('analyzeCodex prices a resumed call under its new model', async () => {
   assert.ok(Math.abs(r.usd - (200 * 2 + 60 * 0.1) / 1_000_000) < 1e-12);
 });
 
+test('analyzeCodex keeps the previous model until a continuation changes it', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100]], [[160, 60]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(1, 1);
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.deepEqual(r.totals, { 'gpt-6-sol': { input: 160, output: 0, cacheRead: 0 } });
+});
+
+test('analyzeCodex does not rebill a dip and recovery within a continuation', async () => {
+  const { root, uuid } = resumedUsageFixture([[100, 100]], [[160, 60], [150, 60], [160, 60]]);
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 160);
+});
+
 test('analyzeCodex ignores a resumed file re-emitting the previous token snapshot', async () => {
   const { root, uuid } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100], [260, 60]]);
   const r = await analyzeCodex(uuid, { sessionsDir: root });
@@ -99,6 +114,15 @@ test('analyzeCodex counts a resumed collision when the call only emitted reasoni
   const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
   const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
   lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', summary: [] } }));
+  fs.writeFileSync(newFile, lines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.tokens.input, 300);
+});
+
+test('analyzeCodex counts a resumed collision when the call only emitted a tool request', async () => {
+  const { root, uuid, newFile } = resumedUsageFixture([[100, 100], [200, 100]], [[200, 100]]);
+  const lines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  lines.splice(2, 0, JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{}' } }));
   fs.writeFileSync(newFile, lines.join('\n') + '\n');
   const r = await analyzeCodex(uuid, { sessionsDir: root });
   assert.equal(r.tokens.input, 300);

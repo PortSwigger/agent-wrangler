@@ -105,7 +105,7 @@ async function rolloutCandidates(sessionsDir, sessionId, forceWalk) {
   return byId.get(sessionId) || [];
 }
 
-async function firstSessionId(file) {
+export async function firstSessionId(file) {
   let handle;
   try {
     handle = await fsp.open(file, 'r');
@@ -353,29 +353,32 @@ function scanLine(line, state) {
   if ((kind === 'agent_message' || (entry.type === 'response_item' && p.role === 'assistant')) && state.pendingModel) {
     state.currentModel = state.pendingModel;
   }
-  if (entry.type === 'response_item' && (p.role === 'assistant' || p.type === 'reasoning')) state.sawModelResponse = true;
+  if (entry.type === 'response_item' && (p.role === 'assistant' || p.type === 'reasoning' || (typeof p.type === 'string' && p.type.endsWith('_call')))) state.sawModelResponse = true;
   // Attribute each request to the model active when its token_count arrived.
   if (kind === 'token_count' && p.info && p.info.total_token_usage) {
     const last = p.info.last_token_usage;
     const usage = p.info.total_token_usage;
     const baseline = state.usage || state.priorUsage;
     const validLast = last && USAGE_KEYS.every((key) => Number.isFinite(last[key]) && last[key] >= 0);
-    const firstResumedCall = !state.usage && state.priorUsage && state.sawModelResponse
+    const firstResumedCall = state.needsResumeBaseline && state.sawModelResponse
       && validLast && USAGE_KEYS.some((key) => last[key] > 0);
     const changed = !baseline || USAGE_KEYS.some((key) => usage[key] !== baseline[key]) || firstResumedCall;
     if (changed) {
       const bucket = (state.byModel[state.model ?? ''] ||= { usage: blankUsage(), long: null });
       const delta = blankUsage();
+      const firstContinuationCall = state.needsResumeBaseline;
       for (const key of USAGE_KEYS) {
-        // Continuations may reset the cumulative counter; the first file uses
-        // high-water deltas so an in-file dip and recovery is charged once.
-        if (state.priorUsage) {
+        if (firstContinuationCall) {
           delta[key] = validLast ? last[key] : Math.max(0, (usage[key] || 0) - (baseline?.[key] || 0));
         } else {
           delta[key] = Math.max(0, (usage[key] || 0) - state.peak[key]);
           state.peak[key] += delta[key];
         }
         bucket.usage[key] += delta[key];
+      }
+      if (firstContinuationCall) {
+        for (const key of USAGE_KEYS) state.peak[key] = usage[key] || 0;
+        state.needsResumeBaseline = false;
       }
       if ((validLast ? last.input_tokens : delta.input_tokens) > LONG_CONTEXT_TOKENS) {
         const long = (bucket.long ||= blankUsage());
@@ -504,8 +507,8 @@ export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
   return loadCodexModelsCache(cachePath)?.get(modelSlug) ?? null;
 }
 
-async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH, priorUsage = null) {
-  const state = { usage: null, priorUsage, peak: blankUsage(), byModel: {}, model: null, firstModel: null, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
+async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH, priorUsage = null, priorModel = null) {
+  const state = { usage: null, priorUsage, needsResumeBaseline: Boolean(priorUsage), peak: blankUsage(), byModel: {}, model: priorModel, firstModel: priorModel, currentModel: null, pendingModel: null, summary: null, startedAt: meta?.startedAt || null, endedAt: null, lastTaskStartedAt: null, lastCallUsage: null };
   let lastActivity = null;
   try {
     const st = await fsp.stat(file);
@@ -554,13 +557,15 @@ async function analyzeRolloutChain(files, meta, modelsCachePath) {
   let first = null;
   let latest = null;
   let previousUsage = null;
+  let previousModel = null;
   for (const [index, file] of files.entries()) {
-    const part = await analyzeRollout(file, index === files.length - 1 ? meta : null, modelsCachePath, previousUsage);
+    const part = await analyzeRollout(file, index === files.length - 1 ? meta : null, modelsCachePath, previousUsage, previousModel);
     if (!part) continue;
     mergeTotals(totals, part.totals);
     if (!first) first = part;
     latest = part;
     previousUsage = part.rawUsage || previousUsage;
+    previousModel = part.model;
   }
   if (!latest) return null;
   return {
