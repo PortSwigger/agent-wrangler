@@ -32,7 +32,7 @@ export class InstanceLockError extends Error {
       : '';
     super(
       `agent-wrangler is already running against ${dataDir}${who}. `
-      + 'Stop that instance first, or set AW_DATA_DIR to run a fully isolated one '
+      + 'Stop that instance first, or pass --data-dir (or set AW_DATA_DIR) to run a fully isolated one '
       + '(a different PORT alone does NOT isolate — it shares the same state dir).',
     );
     this.name = 'InstanceLockError';
