@@ -427,6 +427,14 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
 
+/* Effort sits beside Model. The pairing only exists while both rows show: an
+   extension that vetoes either leaves the other full width. The float is on
+   Model only when a visible Effort row follows it, so a vetoed Effort never
+   strands Model at half width. */
+#m-model-row:not(.hidden):has(~ #m-effort-row:not(.hidden)) { float: left; width: calc(50% - 6px); }
+#m-model-row:not(.hidden) ~ #m-effort-row:not(.hidden) { float: right; width: calc(50% - 6px); }
+#m-model-row ~ .worktree-box { clear: both; }
+
 /* A `view` contribution's host, created per view by app.js renderExtViews. The
    ONE exception to the layout-transparent rule above: a top-level view is a
    <main> flex item in its own right (same shape as #search), so it needs a real
@@ -2250,6 +2258,25 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .search-dd-option:hover { background: var(--surface-2); }
 .search-dd-option.on { color: var(--accent); font-weight: 600; }
+/* Native <select>s in the dispatch modal, drawn as the search facets' dropdown
+   (select-dd.js). The <select> stays as the source of truth and is only hidden;
+   labels stay above as plain .modal-card labels. */
+.dd-native { display: none; }
+.dd-field { width: 100%; }
+.modal-card .dd-select {
+  display: flex; align-items: center; width: 100%; box-sizing: border-box;
+  background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg); font-size: 13px; padding: 7px 9px; overflow: hidden;
+}
+.modal-card .dd-select:hover { background: var(--field-bg); border-color: var(--accent); }
+.dd-select .search-select-label { flex: 1; min-width: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-select .search-select-arrow { margin: 0 0 0 8px; }
+.dd-field.disabled .dd-select { opacity: 0.55; cursor: default; }
+.dd-field .search-dd-panel { left: 0; right: 0; min-width: 0; }
+.dd-field .search-dd-option { white-space: normal; font-size: 13px; }
+.dd-field.up .search-dd-panel { top: auto; bottom: calc(100% + 6px); }
+.dd-field .search-task-heading { font-size: 10px; }
+.dd-field .search-dd-option:disabled { opacity: 0.5; cursor: default; }
 .search-task-heading { padding: 5px 6px 3px; color: var(--fg-subtle); font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .search-task-clear { width: 100%; margin-top: 4px; padding: 5px 6px; border: 0; border-top: 1px solid var(--border-muted); background: transparent; color: var(--fg-muted); font: inherit; text-align: left; cursor: pointer; }
 .search-task-clear:hover { color: var(--fg); background: var(--surface-2); }

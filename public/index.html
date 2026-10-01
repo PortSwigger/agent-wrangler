@@ -327,6 +327,10 @@
       <!-- OUTSIDE #m-model-row on purpose: an extension that hides `model` must
            not hide its own replacement control along with it. -->
       <div class="ext-dispatch-slot" data-at="model"></div>
+      <div class="dispatch-field" id="m-effort-row">
+        <label>Effort</label>
+        <select id="m-effort"></select>
+      </div>
       <div class="worktree-box">
         <div class="worktree-title">New worktree</div>
         <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
@@ -347,10 +351,6 @@
       <details class="advanced-options" id="m-advanced-options">
         <summary>Advanced options</summary>
         <div class="advanced-options-body">
-          <div class="dispatch-field" id="m-effort-row">
-            <label>Effort</label>
-            <select id="m-effort"></select>
-          </div>
           <div class="dispatch-field" id="m-auto-compact-row">
             <label>Auto-compaction threshold</label>
             <div class="auto-compact-presets" id="m-auto-compact-presets" role="group" aria-label="Auto-compaction threshold">
