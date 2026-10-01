@@ -56,7 +56,13 @@ const MAX_COMPOSER_DRAFT = 4000;
 
 const visible = (s) => s.replace(ANSI, '').trim();
 
-const STYLED_TOKEN = new RegExp(`${ESC}\\[[0-9;:?]*[ -/]*[@-~]|\\n|[^${ESC}\\n]`, 'gu');
+// CSI, then OSC (a hyperlink, say) up to its BEL or ST terminator, then any
+// other escape (charset selects and the like), so no escape payload is ever
+// read as visible text.
+const STYLED_TOKEN = new RegExp(
+  `${ESC}\\[[0-9;:?]*[ -/]*[@-~]|${ESC}\\][^\\x07${ESC}]*(?:\\x07|${ESC}\\\\)|${ESC}[ -/]*[0-~]|\\n|[^${ESC}\\n]`,
+  'gu',
+);
 
 // The pane as lines of characters, each tagged with the bold/faint state it was
 // drawn in. The capture starts in the default state, so replaying every SGR from

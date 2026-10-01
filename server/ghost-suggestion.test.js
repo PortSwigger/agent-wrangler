@@ -179,6 +179,14 @@ test('a placeholder above a real Codex draft never masks it', () => {
   assert.equal(paneComposerIsEmpty(pane, 'codex'), false);
 });
 
+test('non-SGR escapes around the Codex composer are not read as typed text', () => {
+  const placeholder = `${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(paneComposerIsEmpty(`${E}]8;;https://x${E}\\${E}[1m›${E}[0m ${placeholder}${E}]8;;\x07`, 'codex'), true);
+  assert.equal(paneComposerIsEmpty(`${E}(B${E}[1m›${E}[0m ${placeholder}`, 'codex'), true);
+  assert.equal(paneComposerIsEmpty(`${E}[1m›${E}[0m ${E}]8;;u\x07typed${E}]8;;\x07`, 'codex'), false);
+  assert.equal(paneComposerIsEmpty(`${E}[1m›${E}[0m ${E}]8;;unterminated ${placeholder}`, 'codex'), false);
+});
+
 test('a reset+bold empty Codex composer under a working status is not safe', () => {
   const working = `${E}[1m•${E}[0m Working ${E}[2m(12s · esc to interrupt)${E}[0m`;
   assert.equal(paneComposerIsEmpty([working, codexIdleAfterDim].join('\n'), 'codex'), false);
