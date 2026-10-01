@@ -119,7 +119,9 @@ export async function firstSessionId(file) {
       chunks.push(buf.subarray(0, nl < 0 ? bytesRead : nl));
       if (nl >= 0) {
         const entry = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        return entry.type === 'session_meta' ? entry.payload?.session_id ?? entry.payload?.id ?? null : null;
+        if (entry.type !== 'session_meta') return null;
+        const meta = entry.payload;
+        return meta?.thread_source === 'subagent' ? meta.id ?? null : meta?.session_id ?? meta?.id ?? null;
       }
       total += bytesRead;
     }
@@ -537,6 +539,7 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
     usd: codexCostUsd(totals),
     costByType: codexCostUsdByType(totals),
     model,
+    recordedModel: state.model,
     currentModel: state.currentModel || null,
     totals,
     rawUsage: state.usage,
@@ -565,7 +568,7 @@ async function analyzeRolloutChain(files, meta, modelsCachePath) {
     if (!first) first = part;
     latest = part;
     previousUsage = part.rawUsage || previousUsage;
-    previousModel = part.model;
+    previousModel = part.recordedModel;
   }
   if (!latest) return null;
   return {

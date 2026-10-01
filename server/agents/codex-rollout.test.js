@@ -87,6 +87,20 @@ test('analyzeCodex keeps the previous model until a continuation changes it', as
   assert.deepEqual(r.totals, { 'gpt-6-sol': { input: 160, output: 0, cacheRead: 0 } });
 });
 
+test('analyzeCodex does not carry a fallback model into a continuation', async () => {
+  const { root, uuid, oldFile, newFile } = resumedUsageFixture([[100, 100]], [[130, 30], [170, 40]]);
+  const oldLines = fs.readFileSync(oldFile, 'utf8').trimEnd().split('\n');
+  oldLines.splice(1, 1);
+  fs.writeFileSync(oldFile, oldLines.join('\n') + '\n');
+  const newLines = fs.readFileSync(newFile, 'utf8').trimEnd().split('\n');
+  const model = newLines.splice(1, 1)[0];
+  newLines.splice(2, 0, model);
+  fs.writeFileSync(newFile, newLines.join('\n') + '\n');
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+  assert.equal(r.totals['gpt-5.5-codex'].input, 100);
+  assert.equal(r.totals['gpt-6-sol'].input, 70);
+});
+
 test('analyzeCodex does not rebill a dip and recovery within a continuation', async () => {
   const { root, uuid } = resumedUsageFixture([[100, 100]], [[160, 60], [150, 60], [160, 60]]);
   const r = await analyzeCodex(uuid, { sessionsDir: root });
@@ -349,6 +363,16 @@ test('analyzeCodex includes a resumed sub-agent rollout in parent and child spen
   fs.appendFileSync(oldFile, JSON.stringify(count(150)) + '\n');
   const refreshed = await analyzeCodex(uuid, { sessionsDir: root });
   assert.equal(refreshed.tokens.input, 1480, 'a change in an older child file invalidates the parent cost cache');
+});
+
+test('findRolloutChain uses a sub-agent metadata id when session_id names its parent', async () => {
+  const { root, uuid } = fixtureSessions();
+  const child = '62626262-7777-8888-9999-aaaaaaaaaaaa';
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-05-00-${child}.jsonl`);
+  fs.writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: {
+    id: child, session_id: uuid, thread_source: 'subagent', parent_thread_id: uuid,
+  } }) + '\n');
+  assert.deepEqual(await findRolloutChain(child, root), [file]);
 });
 
 test('codexSubagentDetail reads prompt, tool calls, and result from a child rollout', async () => {
