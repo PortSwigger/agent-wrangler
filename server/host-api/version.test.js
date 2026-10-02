@@ -22,12 +22,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.15.0 the `task.body` slot, `claimDrag`, `openDispatch`, `onTaskDelete` and `host.tasks.adhocId`,
 // 1.16.0 the `textarea` setting type,
 // 1.17.0 the `hooks` manifest object, `activate`/`deactivate`, `host.events` and `host.memory`,
-// and 1.18.0 the `links.normalise` hook and the `link.chip` slot,
+// 1.18.0 the `links.normalise` hook and the `link.chip` slot,
+// and 1.19.0 the `runtimes` manifest key, `links:write` and the `worktree` dispatch field,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.18.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.18.0');
+test('the served version is 1.19.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.19.0');
+  assert.equal(servesRange('^1.19.0'), true);
   assert.equal(servesRange('^1.18.0'), true);
   assert.equal(servesRange('^1.17.0'), true);
   assert.equal(servesRange('^1.16.0'), true);

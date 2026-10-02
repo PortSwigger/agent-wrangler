@@ -20,7 +20,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
-| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, and context budget. |
+| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |

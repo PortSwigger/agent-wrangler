@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, resolveRuntimeForGraph } from './state-reader.js';
 
 // A sessions/ dir like ~/.claude/sessions: <pid>.json written by the status hook.
 function makeSessionsDir() {
@@ -538,6 +538,20 @@ test('buildGraph carries runtime onto the board node (devcontainer set, local nu
   assert.equal(graph.sessions.find((s) => s.sessionId === 'local-sid').runtime, null);
 });
 
+// The DEFAULT resolver, not a stub: a card launched on an extension's runtime
+// outlives that extension being disabled or uninstalled, and the tick must still
+// draw it (as a host session) rather than throw `unknown runtime` out of buildGraph.
+test('buildGraph still builds a row for a card whose extension runtime is not registered', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'cloud-sid', agent: 'claude', runtime: 'cloud', runtimeExt: 'cloud', cwd: '/nonexistent/c', intent: 'x' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({ usd: 0.5, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, subAgents: [] }));
+  const node = graph.sessions.find((s) => s.sessionId === 'cloud-sid');
+  assert.ok(node);
+  assert.equal(node.runtime, 'cloud');
+  assert.equal(resolveRuntimeForGraph('cloud').id, 'local');
+});
+
 // The DISCOVERED live-tmux loop (a Resume-fork-style node synthesized from an owned
 // tmux with no live session file under its owner id) is where a devcontainer's
 // bring-up/failure hint (C1's classify().waitingFor) must land — that loop has no
@@ -691,6 +705,31 @@ test('buildGraph: a live-but-UNdiscovered devcontainer tmux is synthesized into 
   assert.equal(node.status, 'working');
   assert.equal(node.waitingFor, 'starting container');
   assert.equal(node.tmux, 'cc_bu1');
+});
+
+// An extension `buildLaunch` runtime's pane never runs a discoverable `claude`
+// (the cloud runtime's pane holds on a sleep after the create client exits), so
+// it takes the same liveness fallback — a live card, not a refused Resume.
+test('buildGraph: a live-but-UNdiscovered buildLaunch-runtime tmux is synthesized into a live node', async () => {
+  const entry = { sessionId: 'cl1', agent: 'claude', runtime: 'cloud', cwd: '/nonexistent/repo', tmux: 'cc_cl1' };
+  const mgr = {
+    activeEntries: () => [entry],
+    archivedEntries: () => [],
+    entryFor: (id) => (id === 'cl1' ? entry : undefined),
+    entryByTmux: (t) => (t === 'cc_cl1' ? entry : null),
+    tmuxNameFor: (id) => (id === 'cl1' ? 'cc_cl1' : null),
+    tmuxOwner: () => null, deadTmuxNameFor: () => null,
+    isArchived: () => false, scanSockets: () => [''], socketOf: () => '',
+  };
+  const discover = async () => [];
+  const capture = async () => 'Cloud session handed off. This pane only holds the card; archive the card to close it.';
+  const cloud = { id: 'cloud', resumable: false, buildLaunch: async () => 'x', analyze: async () => ({ usd: null, subAgentUsd: 0, advisorUsd: 0, tokens: null, subAgents: [] }) };
+  const runtimeResolver = (rt) => (rt === 'cloud' ? cloud : {});
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'cl1');
+  assert.ok(node, 'synthesized node present');
+  assert.equal(node.managed, true);
+  assert.equal(node.tmux, 'cc_cl1');
 });
 
 // Negative: the fallback is scoped to a devcontainer entry with a genuinely

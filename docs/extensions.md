@@ -77,6 +77,7 @@ Supported manifest contributions are:
 | State and storage | `stores`, `graph` |
 | Session lifecycle | `session` hooks |
 | Periodic work | `sweeps` |
+| Runtimes | `runtimes`: where a session's agent runs, offered in the dispatch dialog's Runtime select and `spawn_session`. See [Runtimes](#runtimes) |
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
@@ -812,7 +813,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `dispatch-modal.test.js` asserts the ordering. It is the one slot with **NO
   graph-tick path** — its hosts exist only while the modal is open and a human
   is driving it — so `syncDispatchExtFields` hangs off `openModal`, the
-  `#m-model` change listener, `syncWorkflow` and `syncClientExtensions`, and in
+  `#m-model` and `#m-runtime` change listeners (1.19.0: a contribution can react
+  to the runtime choice), `syncWorkflow` and `syncClientExtensions`, and in
   `subagent` modalMode it is called with an **EMPTY host list** so contributions
   tear down by omission rather than sitting invisible inside a hidden block.
   **The veto is TWO keys and fails CLOSED on authority, OPEN on health.** The
@@ -822,7 +824,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the `extensions` announcement and `graph.extensions` exactly as `handlerTypes`
   does. A contribution's `hides` is the per-contribution USE, filtered against
   it, and an undeclared name is DROPPED and reported: the browser half may never
-  widen what the server half disclosed, the same rule as `send`. The veto holds
+  widen what the server half disclosed, the same rule as `send`. Since 1.19.0
+  `hides` may also be a function `(draft) => names`, called with the ctx's core
+  draft on every veto pass, so a veto can follow another field (hide the
+  worktree row only while a given runtime is selected); its answer is filtered
+  exactly like the array, and a throw or a non-array return REMOVES the
+  contribution, as a throwing `fields()` does. The veto holds
   only while that extension has a LIVE contribution, so the existing "a throwing
   contribution is removed" rule brings the core row back on its own — which is
   also why a throwing `fields()` DROPS the contribution rather than being
@@ -847,9 +854,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `slots.js` THROWS on an unknown slot name (so the whole client module fails to
   load) and an older server quarantines an unknown `hideDispatchField`, so the
   declared range is the only thing that can say which servers a manifest will
-  load on. `DISPATCH_FIELDS` is deliberately FOUR names — each is a commitment
+  load on. `DISPATCH_FIELDS` is deliberately small — each name is a commitment
   that `app.js` has a row id in `DISPATCH_FIELD_ROWS` and `index.html` a
   `.dispatch-field` wrapper, so widening it is a MINOR plus three edits.
+  `worktree` (1.19.0) is the fifth, for a runtime that cannot honour a worktree:
+  its wrapper `#m-worktree-box-row` sits OUTSIDE `.worktree-box`, because
+  `syncWorkflow` already toggles the box's own `hidden` and the two must never
+  undo each other. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
+  the ctx as a second argument.
   That slot itself has no builtin user; its coverage is test fixtures.
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**
@@ -954,14 +966,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reported once and skipped THERE only — never dropped from the board. **Pill
   authors:** `session.sample === true` means a preview; render placeholder
   content or nothing (a picker may then label it "not in preview").
-- **A `dispatch.field` contribution's `ext(el)` is data for its OWN server
+- **A `dispatch.field` contribution's `ext(el, ctx)` is data for its OWN server
   half, and the namespace is FORCED.** `dispatchFields` puts it at
   `payload.ext[<extId>]` (a `fields()` writing `ext` whole is refused and
   reported, or it could overwrite a sibling's slice); `runDispatch` →
   `sessionManager.dispatch` → the `onBeforeDispatch` payload carries the whole
   bag, and `hookPayloadFor` (extensions/index.js, applied by `index.js`'s hook
   binding) narrows it to that extension's slice — `null` when it sent nothing.
-  A scheduled dispatch stores the payload whole, so the bag fires with it.
+  An extension runtime's `preflight` and `buildLaunch` get the same narrowed
+  slice. A scheduled dispatch stores the payload whole, so the bag fires with it.
 - **`host.sessions.spawn({ taskId })` hands the task to dispatch BEFORE the pane
   starts, and `tasks.assign` after the spawn is NOT the same thing.** The option
   becomes dispatch's `taskId`, which is what `session.launchContext` hooks see
@@ -1034,6 +1047,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   stored on that task or session: those pass through unchanged, so an agent
   resending the full list from `get_links` is not broken by an extension being off.
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
+- **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
+  on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
+  URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for
+  an unknown card). `attach(sid, link)` is synchronous: it runs the link through
+  the CALLING extension's own `links.normalise` hook only, so an extension can
+  store only a type it claims (never `pr` or a sibling's), and throws when that
+  hook answers `undefined` or throws, or when the card does not exist (an unknown
+  id is never adopted, unlike `set_links`). An existing link matching by
+  `linkMatches` is replaced in place, otherwise it is appended; the board rebuilds.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and
@@ -1043,6 +1065,81 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   chip does to link a key-only link against the current base URL.
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
+
+## Runtimes
+
+A runtime is where a session's agent runs. The built-ins are `local` (the host) and
+`devcontainer`; an extension adds one with a `runtimes` array on its manifest (1.19.0),
+and no capability is needed to do so. It appears in the dispatch dialog's **Runtime**
+select while the extension is enabled, and `spawn_session` accepts its id as `runtime`.
+
+```js
+runtimes: [{
+  id: 'toyrt',                 // ID_RE; may not collide with a built-in or another extension
+  label: 'Toy',                // shown in the Runtime select and in refusals
+  wrapLaunch: async ({ inner }) => `echo hi && ${inner}`,
+  // preflight: async ({ cwd, agent, workflow, worktree, ext }) => 'refusal' | null,
+}],
+```
+
+Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, worktree, workflow,
+launchContext })` (decorate the agent's command) or `buildLaunch({ phase, intent, cwd,
+sessionId, model, ext })` (return the whole pane command instead). Optional:
+`preflight` (return a string to refuse the dispatch before anything is created),
+`readLive({ entry, tmuxName, socket })`, `analyze({ entry, liveSid })`,
+`deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
+`resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
+`host` (the extension's façade) and `settings` (its own setting values), and `ext` is
+narrowed to the extension's own dispatch-field data.
+
+Maintainer notes:
+
+- **The contract is symmetric with the built-ins** (`server/runtimes/index.js`), so
+  devcontainer can later move out unchanged. The registry module must not import
+  `server/extensions/**` (`runtimes/devcontainer → agents/claude → agent-skills →
+  extensions` would cycle), so `server/index.js` passes `BUILTIN_RUNTIME_IDS` to the
+  loader as `coreRuntimeIds` and fills the registry itself.
+- **Collisions quarantine, first-come.** `reg.runtimeIds` is seeded with the built-in
+  ids, so `local` is never claimable and of two externals naming one runtime the later
+  is quarantined. A within-manifest duplicate, a missing or doubled launch function, a
+  non-function hook or a non-boolean flag quarantine too. A disabled extension claims
+  no id; unregister releases them.
+- **Bound like session hooks.** `activateExtension` registers a copy of each runtime
+  whose functions call `fn({ ...hookPayloadFor(extId, args), host, settings })` and
+  re-check `hostApis.has(extId)` per call, so it is inert whichever of deactivate and
+  the registry runs first: `preflight` refuses, `wrapLaunch`/`buildLaunch`/`deliver`
+  throw "extension <id> is not active", `readLive`/`analyze` return null.
+  `deactivateExtension` calls `unregisterRuntimesFor`, so enable and disable are live.
+- **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
+  It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
+  that path skips the preset live id, the adapter's command, `wrapLaunch` and live-id
+  resolution, storing no `liveSessionId`. The skill gate, codex policy and launch
+  context still run, unused. `noteLiveSessionId` never adopts a conversation id for a
+  `resumable: false` runtime, so a local client's own id can't take over the card.
+- **Refusals by name.** Dispatch stamps `entry.runtimeExt`, so after the extension is
+  gone `relaunchRefusal` can still say `This session runs on runtime "<id>", which needs
+  the "<ext>" extension. Enable it in Settings → Extensions.` A `resumable: false`
+  runtime refuses with `"<label>" sessions can't be resumed or forked`. Resume checks
+  BEFORE `killForSession`, so a refused resume never kills a held pane; every implicit
+  resume (`host.sessions.wake`, `host.deliver`, PR nudges, schedules, snooze wakes)
+  surfaces the throw as its own error.
+- **The graph tick never throws on a missing runtime**: `buildGraph`'s default resolver
+  is `findRuntime`, falling back to local for status and cost. A `buildLaunch` card
+  whose tmux is alive is kept live by tmux liveness, like a devcontainer bring-up,
+  because its pane never runs a `claude` that discovery would match.
+- **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
+  the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
+  the "reply with send_message" line, since that agent has no wrangler MCP. A card whose
+  runtime has `buildLaunch` or `deliver` is stored `mailCapable: false` (its command has
+  no `--mcp-config`, so no `read_mail`); that flag is what routes peer messages there.
+  `mailbox-delivery.js` is untouched, since a mailbox branch for such a card could never
+  run.
+- **Follow-up extraction.** Devcontainer is still special-cased outside the contract:
+  the archive stop-container offer and its cascade (`control/handlers/archive.js`,
+  `public/archive-cascade.js`), `archive-session`'s `stop_container`, the add-dirs resync in
+  `session-manager.js`, the dormant-container sweep in `state-reader.js` and the card
+  chip (`public/cards.js`, `app.js`). Moving devcontainer into an extension means
+  turning each of these into a contract field.
 
 ## Builtin: task-memory
 
