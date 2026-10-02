@@ -2125,7 +2125,7 @@ function canSwitchModel(s) {
 }
 
 // What this browser last asked for, per card id. Needed only to break one
-// ambiguity: the pane's status bar says "Sonnet 5" for both `sonnet` and
+// ambiguity: the pane's status bar says "Sonnet 5.5" for both `sonnet` and
 // `sonnet[1m]`, so the label alone cannot say which row to tick. In-memory and
 // unpersisted — it is a tie-break, not a record, and it is only trusted when the
 // pane still agrees with it (see isCurrentModel).
