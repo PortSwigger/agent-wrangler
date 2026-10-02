@@ -701,14 +701,14 @@ test('sessionCardHtml: a card.cost ceiling reads $spent / $ceiling, even before 
 const chipKeys = (html) => [...html.matchAll(/data-chip="([^"]+)"/g)].map((m) => m[1]);
 
 test('the sample session renders every core chip, each keyed, and CORE_CHIPS matches the markup', () => {
-  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ linkChip: () => null }), { expanded: true });
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ linkChip: () => null, isOnOlderCode: () => true }), { expanded: true });
   assert.deepEqual(chipKeys(html), CORE_CHIPS.map((c) => c.key));
   assert.doesNotMatch(html, / hidden[ >]/);
 });
 
 test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys the PR and extension link chips separately', () => {
   const hiddenChips = new Set(['core:cost', 'core:pr']);
-  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ hiddenChips }), { expanded: true });
+  const html = sessionCardHtml(SAMPLE_SESSION, ctx({ hiddenChips, isOnOlderCode: () => true }), { expanded: true });
   const hidden = [...html.matchAll(/data-chip="([^"]+)" hidden/g)].map((m) => m[1]);
   assert.deepEqual(hidden, ['core:cost', 'core:pr']);
   assert.match(html, /<span class="card-meta-ext"><\/span>/);

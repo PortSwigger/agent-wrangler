@@ -239,3 +239,13 @@ export function setExtensionSetting(id, key, value) {
     extensionSettings: { ...all, [id]: { ...(all[id] || {}), [key]: value } },
   });
 }
+
+export const AUTO_UPDATE_MODES = ['off', 'notify', 'auto'];
+
+export function autoUpdateMode(cfg = readConfig()) {
+  return AUTO_UPDATE_MODES.includes(cfg.autoUpdate) ? cfg.autoUpdate : 'notify';
+}
+
+export function refreshSessionsAfterUpdate(cfg = readConfig()) {
+  return cfg.refreshSessionsAfterUpdate === true;
+}
