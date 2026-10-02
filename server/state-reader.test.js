@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, resolveRuntimeForGraph } from './state-reader.js';
 
 // A sessions/ dir like ~/.claude/sessions: <pid>.json written by the status hook.
 function makeSessionsDir() {
@@ -536,6 +536,20 @@ test('buildGraph carries runtime onto the board node (devcontainer set, local nu
   const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver: () => ({}) });
   assert.equal(graph.sessions.find((s) => s.sessionId === 'dc-sid').runtime, 'devcontainer');
   assert.equal(graph.sessions.find((s) => s.sessionId === 'local-sid').runtime, null);
+});
+
+// The DEFAULT resolver, not a stub: a card launched on an extension's runtime
+// outlives that extension being disabled or uninstalled, and the tick must still
+// draw it (as a host session) rather than throw `unknown runtime` out of buildGraph.
+test('buildGraph still builds a row for a card whose extension runtime is not registered', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'cloud-sid', agent: 'claude', runtime: 'cloud', runtimeExt: 'cloud', cwd: '/nonexistent/c', intent: 'x' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({ usd: 0.5, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, subAgents: [] }));
+  const node = graph.sessions.find((s) => s.sessionId === 'cloud-sid');
+  assert.ok(node);
+  assert.equal(node.runtime, 'cloud');
+  assert.equal(resolveRuntimeForGraph('cloud').id, 'local');
 });
 
 // The DISCOVERED live-tmux loop (a Resume-fork-style node synthesized from an owned

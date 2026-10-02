@@ -8,7 +8,7 @@ import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
-import { runtimeFor } from './runtimes/index.js';
+import { runtimeFor, findRuntime } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
@@ -267,7 +267,14 @@ export function apiErrorPromotion(status, apiError) {
 // session-manager (tmux ownership) and an optional cost/sub-agent provider.
 // `discover` is a test seam (defaults to the real tmux scan) so the pane→node
 // logic — team-member routing and the dedup — is testable without a live tmux.
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = runtimeFor, discover = discoverClaudeSessions, capture = capturePane, mailStore } = {}) {
+//
+// The default runtime resolver never throws: a card whose runtime came from an
+// extension that has since been disabled or uninstalled reads as a host (local)
+// session for status and cost, rather than taking buildGraph down for every card.
+// Resume/fork still refuse it by name (relaunchRefusal).
+export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
+
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore } = {}) {
   const now = Date.now();
   // The mail pill's data, keyed on card id like every other per-session field —
   // omitted entirely (undefined) when no mailStore is injected, so a caller that
