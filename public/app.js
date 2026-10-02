@@ -3090,10 +3090,20 @@ function resumeDormant(sessionId) {
   clearTimeout(resumeFailTimer);
   resumeFailTimer = setTimeout(() => {
     resumeFailTimer = null;
-    resuming.delete(sessionId);
+    abandonResume(sessionId);
     const s = latestSessions.find((x) => x.sessionId === sessionId);
     if (s && !s.managed) toast(s.exitOutput ? 'Resume failed — see last output' : 'Resume failed');
   }, 8000);
+}
+
+// Drop a resume's "Resuming…" placeholder and redraw the open card, which is
+// still dormant. Dropping the flag alone left the placeholder up until the next
+// sidebar render, and a card that won't resume never triggers one. The server
+// sends `error` when it refuses a resume (relaunchRefusal, a missing
+// transcript), so that handler calls this too, rather than waiting out the timer.
+function abandonResume(sessionId) {
+  if (!resuming.delete(sessionId)) return;
+  if (selectedSessionId === sessionId) applySessionView(sessionId);
 }
 
 // Wake a snoozed session (the sun button / "Unsnooze"). Clears the snooze, then —
@@ -6089,6 +6099,10 @@ function connect() {
         }
       } else {
         toast(msg.message, true);
+        // A refused resume comes back as a bare error with no session id, so
+        // every in-flight resume gives up its placeholder. A resume that's still
+        // on its way just shows the dormant panel until its tmux appears.
+        if (resuming.size) { clearTimeout(resumeFailTimer); resumeFailTimer = null; [...resuming].forEach(abandonResume); }
       }
     }
   };
