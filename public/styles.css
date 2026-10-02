@@ -2248,7 +2248,8 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   color: var(--fg-subtle); margin: 0 8px 0 2px;
 }
 .search-dd[open] .search-select-arrow { transform: rotate(180deg); }
-.search-dd-panel { position: absolute; z-index: 3; top: calc(100% + 6px); left: 0; min-width: 190px; max-height: 240px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px color-mix(in srgb, #000 22%, transparent); }
+/* Floats over other content, so themes with a translucent --surface set an opaque --panel-bg. */
+.search-dd-panel { position: absolute; z-index: 3; top: calc(100% + 6px); left: 0; min-width: 190px; max-height: 240px; overflow-y: auto; padding: 6px; background: var(--panel-bg, var(--surface)); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px color-mix(in srgb, #000 22%, transparent); }
 /* Shared by the Tasks facet's checkbox <label> rows and the single-select
    facets' <button> rows — the reset properties are no-ops on a <label> and
    strip a <button>'s UA chrome (border/background/font/alignment), so both

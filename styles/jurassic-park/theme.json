@@ -9,6 +9,7 @@
   "colors": {
     "bg": "rgba(30,24,14,0.35)",
     "surface": "rgba(40,33,20,0.62)",
+    "panel-bg": "#282114",
     "surface-2": "rgba(54,44,26,0.66)",
     "chrome": "rgba(22,17,9,0.66)",
     "tile-bg": "rgba(34,27,15,0.45)",
