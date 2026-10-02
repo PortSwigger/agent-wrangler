@@ -59,7 +59,8 @@ import { devcontainer } from './devcontainer.js';
 //                { ok: false, error } — how a peer message (send_message) reaches a
 //                card whose agent has no local pane to paste into. `from` is the
 //                sender's card id and `text` the BEGIN/END-fenced body the pane
-//                paste would get. A runtime with `deliver` stores its cards as
+//                paste would get, minus its "reply with send_message" line (the
+//                agent has no wrangler MCP to reply with). A runtime with `deliver` stores its cards as
 //                `mailCapable: false`, so send_message routes them here (see
 //                mcp/tools/send-message.js).
 //

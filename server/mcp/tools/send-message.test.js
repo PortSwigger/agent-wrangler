@@ -138,6 +138,9 @@ test('send_message hands a dormant runtime-delivered card the FENCED text and re
   assert.equal(calls[0].entry.sessionId, 'REMOTE1');
   assert.match(calls[0].text, /--- BEGIN PEER MESSAGE [0-9a-f]{6} ---\nping\n--- END PEER MESSAGE [0-9a-f]{6} ---/);
   assert.match(calls[0].text, /sender: \(CARD1, "Alpha"\)/);
+  // No reply path: an agent reached by its runtime has no send_message tool.
+  assert.doesNotMatch(calls[0].text, /send_message/);
+  assert.match(calls[0].text, /does not require a response\.$/);
   assert.equal(committed, 1, 'a delivered message counts against the loop throttle');
   assert.equal(sent.length, 0, 'nothing was pasted into a pane');
 });

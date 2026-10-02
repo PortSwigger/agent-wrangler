@@ -310,9 +310,13 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // Devcontainer-only: a host session's pane IS `claude`, so it's always discovered. A null
   // pid is safe (liveState/procInfo tolerate it → no cost/tty until claude runs). Fallback-
   // only: skips a tmux already in `discovered`, so it never double-counts a running session.
+  // A `buildLaunch` runtime (server/runtimes/index.js) qualifies for the same reason: its
+  // pane runs the extension's own command, never a `claude` this discovery would match (a
+  // cloud card's pane holds on a `sleep` once the create client exits), so without this it
+  // would read as dormant and offer a Resume that relaunchRefusal then refuses.
   const discoveredTmux = new Set(discovered.map((d) => d.tmuxName));
   for (const entry of sessionManager?.activeEntries?.() || []) {
-    if (entry.runtime !== 'devcontainer') continue;
+    if (entry.runtime !== 'devcontainer' && !runtimeResolver(entry.runtime)?.buildLaunch) continue;
     const tmuxName = sessionManager?.tmuxNameFor?.(entry.sessionId);
     if (!tmuxName || discoveredTmux.has(tmuxName)) continue;
     discovered.push({ tmuxName, socket: sessionManager?.socketOf?.(tmuxName) ?? '', claudePid: null, agent: entry.agent || 'claude', cwd: entry.cwd, command: '', paneTitle: '' });

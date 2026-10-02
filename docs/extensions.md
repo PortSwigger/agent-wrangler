@@ -1124,9 +1124,12 @@ Maintainer notes:
   resume (`host.sessions.wake`, `host.deliver`, PR nudges, schedules, snooze wakes)
   surfaces the throw as its own error.
 - **The graph tick never throws on a missing runtime**: `buildGraph`'s default resolver
-  is `findRuntime`, falling back to local for status and cost.
+  is `findRuntime`, falling back to local for status and cost. A `buildLaunch` card
+  whose tmux is alive is kept live by tmux liveness, like a devcontainer bring-up,
+  because its pane never runs a `claude` that discovery would match.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
-  the BEGIN/END-fenced text, because the target is a raw prompt stream. A card whose
+  the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
+  the "reply with send_message" line, since that agent has no wrangler MCP. A card whose
   runtime has `buildLaunch` or `deliver` is stored `mailCapable: false` (its command has
   no `--mcp-config`, so no `read_mail`); that flag is what routes peer messages there.
   `mailbox-delivery.js` is untouched, since a mailbox branch for such a card could never
