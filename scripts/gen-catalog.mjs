@@ -9,7 +9,7 @@
 //   npm run gen:catalog -- --litellm FILE    # a downloaded LiteLLM JSON instead
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { LITELLM_URL, reduceLitellm } from '../server/price-catalog.js';
+import { LITELLM_URL, fetchLitellm, reduceLitellm } from '../server/price-catalog.js';
 import { reduceCodexCatalog } from '../server/agents/codex-catalog.js';
 
 const PRICE_SNAPSHOT = new URL('../server/price-catalog.snapshot.json', import.meta.url);
@@ -18,7 +18,7 @@ const CODEX_SNAPSHOT = new URL('../server/agents/codex-models.snapshot.json', im
 const i = process.argv.indexOf('--litellm');
 const raw = i > 0
   ? JSON.parse(fs.readFileSync(process.argv[i + 1], 'utf8'))
-  : await (await fetch(LITELLM_URL)).json();
+  : await fetchLitellm();
 const prices = reduceLitellm(raw);
 // Sorted keys so a refresh diffs as the rows that actually changed.
 const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
