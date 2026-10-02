@@ -2085,7 +2085,7 @@ function openCardMenu(sessionId, x, y) {
 // The session pane header's "Actions" overflow menu — the inline icon row
 // collapsed into one menu. Anchored under the Actions button; reuses the same
 // mountMenu primitive as the card right-click menu. Mirrors that menu's
-// fork/snooze entries but drops Rename (the title double-click owns it).
+// fork/snooze entries but drops Rename (the title click owns it).
 function openActionsMenu(sessionId, x, y) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return;
@@ -3940,9 +3940,12 @@ function beginRename(sessionId) {
     settled = true;
     if (save) {
       const name = input.value.trim();
-      send({ type: 'rename', sessionId, name });
-      if (s && name) s.label = name; // optimistic (rename drops the marker); server confirms on next graph
-      toast(name ? 'Renamed' : 'Name reset');
+      // Unchanged: skip the send and toast, and keep an un-renamed fork's marker.
+      if (name !== seed.trim()) {
+        send({ type: 'rename', sessionId, name });
+        if (s && name) s.label = name; // optimistic (rename drops the marker); server confirms on next graph
+        toast(name ? 'Renamed' : 'Name reset');
+      }
     }
     renderPanel(sessionId);
   };
@@ -4099,7 +4102,7 @@ function renderPanel(sessionId) {
     : '';
   const body = `
         <div class="sess-row1">
-          <span class="sess-name" id="session-name" title="Double-click to rename">${esc(s.label)}</span>
+          <span class="sess-name" id="session-name" title="Click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
             <span class="chat-seg" role="group" aria-label="Session view">
               <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
@@ -4145,7 +4148,7 @@ function renderPanel(sessionId) {
   const maxBtn = panel.querySelector('#panel-maximize');
   if (maxBtn) maxBtn.addEventListener('click', toggleMaximize);
   const nameEl = panel.querySelector('#session-name');
-  if (nameEl) nameEl.addEventListener('dblclick', () => beginRename(sessionId));
+  if (nameEl) nameEl.addEventListener('click', () => beginRename(sessionId));
   const saPill = panel.querySelector('#panel-sa-pill');
   if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
@@ -4162,7 +4165,7 @@ function renderPanel(sessionId) {
   });
   // The eight inline icons collapsed into one "Actions" overflow menu, anchored
   // directly beneath the button (left edge, just below it). Fork/snooze/
-  // archive all live inside it now; rename moved to the title double-click.
+  // archive all live inside it now; rename moved to the title click.
   const actionsBtn = panel.querySelector('#actions-btn');
   if (actionsBtn) actionsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
