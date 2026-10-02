@@ -578,7 +578,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
    trace, a URL) would scroll the WHOLE stream sideways instead of just the code
    block. .file-body keeps its plain horizontal-scroll pre unchanged. */
 .chat-prose pre { white-space: pre-wrap; word-break: break-word; }
-.file-body pre code, .chat-prose pre code { background: none; color: var(--fg); padding: 0; font-size: 12.5px; }
+.file-body pre code, .chat-prose pre code { background: none; color: var(--fg); padding: 0; font-size: 0.9em; }
 .file-body blockquote, .chat-prose blockquote { margin: 0.6em 0; padding: 0.1em 0 0.1em 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
 .file-body hr, .chat-prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
 .file-body table, .chat-prose table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; }
@@ -622,7 +622,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
    flush inside the card's own 20px padding. */
 .file-body {
   flex: 1 1 auto; overflow-y: auto; min-height: 0;
-  color: var(--fg); font-size: 13px; line-height: 1.6;
+  color: var(--fg); font-size: var(--chat-font-size, 13px); line-height: 1.6;
 }
 .file-loading, .file-error { font-size: 13px; }
 .file-loading { color: var(--fg-muted); }
