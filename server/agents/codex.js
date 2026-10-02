@@ -8,14 +8,9 @@ import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
+import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 
 const exec = promisify(execFile);
-// `*-codex`-suffixed models (e.g. gpt-5.5-codex) are rejected on ChatGPT-account
-// logins ("not supported when using Codex with a ChatGPT account") and only work
-// with API-key auth; plain model ids are broadly valid. gpt-6-sol (frontier,
-// no -codex suffix) is confirmed to work on a ChatGPT-account login — default
-// to it as the strongest broadly-valid model.
-const DEFAULT_MODEL = 'gpt-6-sol';
 
 // A TOML double-quoted string for a `-c key=value` override. Escapes backslash
 // and double-quote per TOML basic-string rules; the memory prompt has neither
@@ -77,30 +72,14 @@ export const codex = {
   // into the relaunch (it's a silent no-op). A dormant-wake nudge must instead be
   // pasted into the now-live pane after resume() resolves (see pr-nudge-runner).
   resumeCarriesIntent: false,
-  models: [
-    { value: 'gpt-5.5', label: 'GPT-5.5 · frontier', pillLabel: 'gpt-5.5' },
-    { value: 'gpt-5.4', label: 'GPT-5.4 · everyday coding', pillLabel: 'gpt-5.4' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap', pillLabel: 'gpt-5.4 mini' },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol · frontier', pillLabel: 'gpt-5.6 sol' },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · everyday coding', pillLabel: 'gpt-5.6 terra' },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna · fast & cheap', pillLabel: 'gpt-5.6 luna' },
-    { value: 'gpt-6-sol', label: 'GPT-6 Sol · frontier', pillLabel: 'gpt-6 sol', default: true },
-    { value: 'gpt-6-luna', label: 'GPT-6 Luna · fast & cheap', pillLabel: 'gpt-6 luna' },
-  ],
-  // Codex's own supported_reasoning_levels, per its model catalog: `minimal` is
-  // gone and xhigh/max/ultra arrived with the 5.6 family. The list is per-AGENT
-  // where the catalog is per-MODEL (gpt-5.6-luna has no `ultra`, gpt-5.5 stops
-  // at `xhigh`), so this is the union — the CLI takes the value as a plain
-  // config override and the service decides, and refusing a level a model does
-  // offer is the worse failure of the two.
-  efforts: [
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'xhigh', label: 'Extra high' },
-    { value: 'max', label: 'Max' },
-    { value: 'ultra', label: 'Ultra' },
-  ],
+  // Codex's own catalog (codex-catalog.js): the models its /model picker lists,
+  // and the union of their reasoning levels.
+  get models() {
+    return codexModels();
+  },
+  get efforts() {
+    return codexEfforts();
+  },
 
   async isAvailable() {
     // `command -v` (POSIX sh builtin) over `which` — the latter is a separate,
@@ -125,7 +104,7 @@ export const codex = {
   },
 
   buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills, codexPolicy }) {
-    const args = ['-m', model || DEFAULT_MODEL];
+    const args = ['-m', model || defaultCodexModel()];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
     args.push(...commonFlags({ sessionId, addDirs, worktree, launchContext, disabledSkills, codexPolicy }));
@@ -145,7 +124,7 @@ export const codex = {
   buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], launchContext, disabledSkills, codexPolicy }) {
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
-    const args = ['fork', sourceId, '-m', model || DEFAULT_MODEL];
+    const args = ['fork', sourceId, '-m', model || defaultCodexModel()];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
     args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));

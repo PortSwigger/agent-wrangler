@@ -12,7 +12,8 @@
     "start": "node server/index.js",
     "test": "node --test --import ./server/test-setup.js",
     "docs:check": "node scripts/check-doc-coverage.mjs",
-    "gen:models": "node scripts/gen-skill-models.mjs"
+    "gen:models": "node scripts/gen-skill-models.mjs",
+    "gen:catalog": "node scripts/gen-catalog.mjs"
   },
   "dependencies": {
     "@devcontainers/cli": "^0.87.0",

@@ -362,7 +362,7 @@ function addUsage(totals, model, usage) {
 // even when the advisor happens to be the same model the parent turn used, its spend
 // must stay visibly separate in any per-model view (the Usage dashboard's Model slice
 // would otherwise silently merge a consult into ordinary "opus" usage). The suffixed
-// key still prices correctly: pricing.js matches by substring, so "claude-opus-4-8
+// key still prices correctly: the price catalog matches the longest id prefix, so "claude-opus-4-8
 // (advisor)" still resolves to the Opus rate. Advisor tokens ARE counted in `totals`
 // ("of which" is a breakout, not an addition) — a sub-agent's per-agent usd and any
 // session's combined total is unaffected by whether some of its spend happened to be

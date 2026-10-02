@@ -3,6 +3,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { codexCostUsd, codexCostUsdByType, LONG_CONTEXT_TOKENS } from '../pricing.js';
+import { priceCatalogVersion } from '../price-catalog.js';
+import { codexCatalogVersion, liveCodexContextWindow } from './codex-catalog.js';
 
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 const MODELS_CACHE_PATH = path.join(os.homedir(), '.codex', 'models_cache.json');
@@ -469,8 +471,8 @@ function tokensFor(totals) {
 }
 
 // Codex's OWN locally-cached model metadata (fetched from OpenAI, refreshed by
-// the CLI itself — never hand-copied here, unlike Claude's model list which
-// this codebase owns directly). Read is cheap and self-invalidating on the
+// the CLI itself — never hand-copied here). The fallback behind the live catalog
+// (codex-catalog.js), which the CLI can be newer than. Read is cheap and self-invalidating on the
 // file's mtime, so a Codex CLI update that changes a model's window is picked
 // up on the very next call with no restart.
 let modelsCacheState = null; // { path, mtimeMs, byModel }
@@ -506,7 +508,7 @@ function modelsCacheMtime(cachePath) {
 // fetched) returns null rather than a guess.
 export function codexContextWindow(modelSlug, cachePath = MODELS_CACHE_PATH) {
   if (!modelSlug) return null;
-  return loadCodexModelsCache(cachePath)?.get(modelSlug) ?? null;
+  return liveCodexContextWindow(modelSlug) ?? loadCodexModelsCache(cachePath)?.get(modelSlug) ?? null;
 }
 
 async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_PATH, priorUsage = null, priorModel = null) {
@@ -652,7 +654,10 @@ export async function analyzeCodex(sessionId, opts = {}) {
       return `${file}:${stat.size}:${stat.mtimeMs}`;
     } catch { return `${file}:?`; }
   })).join(',');
-  const signature = familySignature(sessionId, family) + '\0' + chainSignature + '\0' + modelsCacheMtime(modelsCachePath);
+  // The live model and price catalogs fold in for the same reason: a refresh
+  // changes the window or the $ without touching any rollout.
+  const signature = [familySignature(sessionId, family), chainSignature, modelsCacheMtime(modelsCachePath),
+    codexCatalogVersion(), priceCatalogVersion()].join('\0');
   const key = sessionsDir + '\0' + sessionId;
   const cached = analysisCache.get(key);
   if (cached?.signature === signature) return cached.result;
