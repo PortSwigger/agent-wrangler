@@ -13,7 +13,7 @@ Optional launch controls include:
 - **Git worktree:** create or adopt a worktree with an explicit or generated branch name.
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.
-- **Runtime:** launch Claude locally or inside the project's devcontainer. Codex currently runs on the
+- **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`.
