@@ -44,8 +44,8 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `fable` — Fable 5.1 · 1M context
 - `opus` — Opus 5.5 · 1M context (default)
 - `opusplan` — Opus plan · Sonnet execution
-- `sonnet` — Sonnet 5.5 · 200K context
-- `sonnet[1m]` — Sonnet 5.5 · 1M context
+- `sonnet` — Sonnet 5 · 200K context
+- `sonnet[1m]` — Sonnet 5 · 1M context
 - `haiku` — Haiku 4.5 · 200K context
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`
 
