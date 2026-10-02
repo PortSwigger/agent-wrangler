@@ -762,6 +762,77 @@ test('a throwing ext(el) removes the contribution', () => {
   assert.equal(slots.contributions('dispatch.field').length, 0);
 });
 
+test('fields(el, ctx) and ext(el, ctx) are handed the dispatch ctx', () => {
+  const { document, slots } = dispatchHarness();
+  const seen = [];
+  slots.register('dispatch.field', 'a', {
+    id: 'one', at: 'top', mount() {},
+    fields: (el, ctx) => { seen.push(['fields', el.dataset.ext, ctx]); return { runtime: ctx.draft.runtime }; },
+    ext: (el, ctx) => { seen.push(['ext', el.dataset.ext, ctx]); return { mode: ctx.mode }; },
+  });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  const ctx = { mode: 'launch', draft: { runtime: 'sandbox' }, agents: [] };
+  assert.deepEqual(slots.dispatchFields(ctx), { ext: { a: { mode: 'launch' } }, runtime: 'sandbox' });
+  assert.deepEqual(seen, [['ext', 'a', ctx], ['fields', 'a', ctx]]);
+});
+
+// A function `hides` follows the form's draft — say, hiding the worktree row
+// for a runtime that brings its own isolation.
+test('register accepts a function hides, and refuses one that is neither array nor function', () => {
+  const { slots } = dispatchHarness();
+  slots.register('dispatch.field', 'x', { id: 'a', at: 'model', hides: () => [], mount() {} });
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'b', at: 'model', hides: { effort: true }, mount() {} }), /hides must be an array of dispatch field names or a function/);
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'c', at: 'model', hides: 7, mount() {} }), /or a function/);
+});
+
+test('a function hides is called with ctx.draft and filtered against the manifest like a static list', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['worktree'] });
+  const drafts = [];
+  slots.register('dispatch.field', 'a', {
+    id: 'one', at: 'top', mount() {},
+    hides: (draft) => { drafts.push(draft); return draft?.runtime === 'sandbox' ? ['worktree', 'effort'] : []; },
+  });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.hiddenDispatchFields({ draft: { runtime: 'local' } }), []);
+  assert.deepEqual(slots.hiddenDispatchFields({ draft: { runtime: 'sandbox' } }), ['worktree']);
+  slots.hiddenDispatchFields({ draft: { runtime: 'sandbox' } });
+  assert.equal(errors.filter((e) => /cannot hide "effort"/.test(e)).length, 1);
+  // No ctx at all (nothing to read a draft from) reaches the function as undefined.
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+  assert.deepEqual(drafts, [{ runtime: 'local' }, { runtime: 'sandbox' }, { runtime: 'sandbox' }, undefined]);
+});
+
+test('a throwing function hides removes the contribution, taking its fields with it', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', {
+    id: 'one', at: 'top', mount() {}, fields: () => ({ effort: 'low' }),
+    hides() { throw new Error('boom'); },
+  });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.dispatchFields({}), { effort: 'low' });
+  assert.deepEqual(slots.hiddenDispatchFields({ draft: {} }), []);
+  assert.match(errors.join('\n'), /one hides failed — contribution removed/);
+  assert.deepEqual(slots.contributions('dispatch.field'), []);
+  assert.equal(top.children.length, 0);
+  assert.deepEqual(slots.dispatchFields({}), {});
+});
+
+test('a function hides that returns a non-array is treated exactly like a throw', () => {
+  for (const bad of ['effort', null, undefined, { effort: true }]) {
+    const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+    slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, fields: () => ({ effort: 'low' }), hides: () => bad });
+    const top = document.make();
+    slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+    assert.deepEqual(slots.hiddenDispatchFields({ draft: {} }), [], String(bad));
+    assert.match(errors.join('\n'), /hides failed — contribution removed/);
+    assert.deepEqual(slots.contributions('dispatch.field'), []);
+    assert.deepEqual(slots.dispatchFields({}), {});
+  }
+});
+
 test('card.action and card.cost are value slots: they need items/cost, not mount', () => {
   const { slots } = harness();
   assert.throws(() => slots.register('card.action', 'a', { id: 'x', mount() {} }), /has no items function/);
