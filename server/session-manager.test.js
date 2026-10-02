@@ -10,6 +10,7 @@ import {
   shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf,
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
+import { registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
 import { readBranch } from './state-reader.js';
 import { writeConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
@@ -126,7 +127,7 @@ test('forkEntry: inherits parent intent/model, records provenance, no custom nam
     short: 'abcd1234', tmux: 'cc_abcd1234', cwd: '/repo',
     agent: 'claude',
     intent: 'fix the bug', name: undefined, model: 'sonnet',
-    createdAt: 123, forkedFrom: 'parent-O', liveSessionId: undefined, runtime: undefined,
+    createdAt: 123, forkedFrom: 'parent-O', liveSessionId: undefined, runtime: undefined, runtimeExt: undefined,
     mailCapable: true,
   });
 });
@@ -2451,4 +2452,113 @@ test('launchContext(): a non-launch ask (assign / adopt) resolves agent, runtime
   assert.deepEqual(out.addDirs, ['/granted']);
   await sm.launchContext('S1', 'adopt', { task: null });
   assert.equal(asked[1].task, null, 'an explicit task:null overrides the lookup');
+});
+
+// ── Extension-contributed runtimes ──
+// Registered RAW here (server/index.js binds them to a façade and narrows `ext`
+// in production), so each test sees exactly what dispatch/resume hand a runtime.
+async function withRuntime(rt, extId, fn) {
+  registerRuntime(rt, extId);
+  try { return await fn(); } finally { unregisterRuntimesFor(extId); }
+}
+const CLOUDISH = { id: 'cloudt', label: '☁ Cloud', resumable: false };
+
+test('dispatch: a wrapLaunch extension runtime decorates the adapter\'s command', async () => {
+  const sm = smForDispatch();
+  let captured = '';
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => `echo hi && ${inner}` }, 'toy', async () => {
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' });
+    assert.match(captured, /^echo hi && .*claude '--session-id'/);
+    const entry = sm.map.get(sessionId);
+    assert.equal(entry.runtime, 'toyrt');
+    assert.equal(entry.runtimeExt, 'toy');
+    assert.equal(entry.mailCapable, true);
+    assert.ok(entry.liveSessionId, 'a wrapped Claude still presets its conversation id');
+  });
+});
+
+test('dispatch: a wrapLaunch runtime with deliver stores the card as not mail-capable', async () => {
+  const sm = smForDispatch();
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, deliver: async () => ({ ok: true }) }, 'toy', async () => {
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' });
+    assert.equal(sm.map.get(sessionId).mailCapable, false);
+  });
+});
+
+test('dispatch: a buildLaunch runtime REPLACES the command, gets ext and the card id, and stores no live id', async () => {
+  const sm = smForDispatch();
+  let captured = '';
+  let seen;
+  sm._newSession = async (_t, _d, inner) => { captured = inner; };
+  sm._resolveLiveId = async () => { throw new Error('must not discover a live id for a buildLaunch runtime'); };
+  const bag = { cloud: { environmentId: 'env_1' } };
+  await withRuntime({ ...CLOUDISH, buildLaunch: async (args) => { seen = args; return 'echo handed-off'; } }, 'cloud', async () => {
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'do it', model: 'opus', runtime: 'cloudt', ext: bag });
+    assert.equal(captured, 'echo handed-off');
+    assert.deepEqual(seen, { phase: 'dispatch', intent: 'do it', cwd: os.tmpdir(), sessionId, model: 'opus', ext: bag });
+    const entry = sm.map.get(sessionId);
+    assert.equal(entry.liveSessionId, undefined);
+    assert.equal(entry.runtime, 'cloudt');
+    assert.equal(entry.runtimeExt, 'cloud');
+    assert.equal(entry.mailCapable, false);
+  });
+});
+
+test('dispatch: preflight gets the widened bag, and a refusal throws before any dir or worktree is touched', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  let seen;
+  sm._newSession = async () => { launched = true; };
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rt-preflight-'));
+  const target = path.join(base, 'not-yet');
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, preflight: async (args) => { seen = args; return 'Toy refuses worktrees'; } }, 'toy', async () => {
+    await assert.rejects(
+      () => sm.dispatch({ cwd: target, intent: 'x', runtime: 'toyrt', agent: 'claude', worktree: true, workflow: { issue: 1 }, ext: { toy: { a: 1 } } }),
+      /Toy refuses worktrees/,
+    );
+  });
+  assert.deepEqual(seen, { cwd: target, agent: 'claude', workflow: true, worktree: true, ext: { toy: { a: 1 } } });
+  assert.equal(launched, false);
+  assert.equal(fs.existsSync(target), false, 'no directory was created for a refused dispatch');
+  assert.equal(sm.map.size, 0);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('resume and fork of a resumable:false card refuse with the runtime\'s label and leave its pane alone', async () => {
+  const sm = smForDispatch();
+  let killed = false;
+  let launched = false;
+  sm.killForSession = async () => { killed = true; return []; };
+  sm._newSession = async () => { launched = true; };
+  const entry = { agent: 'claude', runtime: 'cloudt', runtimeExt: 'cloud', tmux: 'cc_held', cwd: os.tmpdir() };
+  sm.map.set('c1', entry);
+  await withRuntime({ ...CLOUDISH, buildLaunch: async () => 'x' }, 'cloud', async () => {
+    await assert.rejects(() => sm.resume('c1', os.tmpdir()), { message: '"☁ Cloud" sessions can\'t be resumed or forked' });
+    await assert.rejects(() => sm.fork({ sourceId: 'c1', parentId: 'c1', parentEntry: entry, cwd: os.tmpdir() }), /can't be resumed or forked/);
+  });
+  assert.equal(killed, false, 'a refused resume must not kill the held pane');
+  assert.equal(launched, false);
+  assert.equal(sm.map.size, 1, 'a refused fork registers no card');
+});
+
+test('resume of a card whose extension is gone names the extension to re-enable', async () => {
+  const sm = smForDispatch();
+  let killed = false;
+  sm.killForSession = async () => { killed = true; return []; };
+  sm.map.set('c1', { agent: 'claude', runtime: 'cloudt', runtimeExt: 'cloud', tmux: 'cc_held', cwd: os.tmpdir() });
+  await assert.rejects(() => sm.resume('c1', os.tmpdir()), /needs the "cloud" extension\. Enable it in Settings → Extensions\./);
+  assert.equal(killed, false);
+});
+
+test('noteLiveSessionId no-ops for a resumable:false runtime, and keeps the guard (not a throw) for a missing one', async () => {
+  await withRuntime({ ...CLOUDISH, buildLaunch: async () => 'x' }, 'cloud', async () => {
+    const { sm, saves } = swapManager({ runtime: 'cloudt', liveSessionId: undefined });
+    assert.equal(await sm.noteLiveSessionId('card', 'LOCAL-CLIENT', foundTranscript), false);
+    assert.equal(sm.map.get('card').liveSessionId, undefined, 'the local client\'s own id is never adopted');
+    assert.equal(saves(), 0);
+  });
+  const { sm } = swapManager({ runtime: 'cloudt' });
+  assert.equal(await sm.noteLiveSessionId('card', 'L2', { transcriptFor: async () => null }), false, 'guarded: no transcript yet');
+  assert.equal(await sm.noteLiveSessionId('card', 'L2', foundTranscript), true);
 });

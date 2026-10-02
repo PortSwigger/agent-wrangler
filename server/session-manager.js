@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
-import { runtimeFor } from './runtimes/index.js';
+import { runtimeFor, findRuntime, relaunchRefusal } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
@@ -200,12 +200,15 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     forkedFrom: parentId,
     liveSessionId: undefined,
     runtime: parentEntry?.runtime,
+    runtimeExt: parentEntry?.runtimeExt,
     // Same argv-is-current-code reasoning as resumeEntry — a fork's launch also
     // runs buildInnerCommand/allowedToolsArg fresh, so it always carries
     // read_mail/list_mail. NOT inherited from parentEntry: a fork gets a fresh
     // card id and its own empty mailbox (unread mail is dropped on fork), so its
-    // capability is its own, not the parent's history.
-    mailCapable: true,
+    // capability is its own, not the parent's history. The one exception is a
+    // runtime with its own `deliver`, whose cards stay off the mailbox path so
+    // send_message keeps routing to it (see dispatch).
+    mailCapable: !findRuntime(parentEntry?.runtime)?.deliver,
   };
   // A name inherited from the parent is marked so the board shows "[FORK] <name>"
   // until the user renames it; an explicit title (or a later rename) is user-chosen
@@ -306,6 +309,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     workflow: prev?.workflow,
     parentSession: prev?.parentSession,
     runtime: prev?.runtime,
+    runtimeExt: prev?.runtimeExt,
     links: prev?.links,
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
@@ -315,8 +319,9 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     // regardless of what it was launched with originally — stamp it true
     // unconditionally (never carried over from `prev`; this is deliberately about
     // the argv this resume just built, not the entry's history). send_message reads
-    // this to decide mailbox vs. direct-push fallback for the recipient.
-    mailCapable: true,
+    // this to decide mailbox vs. direct-push fallback for the recipient. A runtime
+    // with its own `deliver` stays false, as at dispatch.
+    mailCapable: !findRuntime(prev?.runtime)?.deliver,
   };
 }
 
@@ -1012,6 +1017,11 @@ export class SessionManager {
     // (or an earlier fork) running under a drifted record; killing only prev.tmux
     // leaked it. Scanning by session id reaps them all so re-resume starts clean.
     const prev = this.map.get(sessionId);
+    // A runtime that can't be resumed (or one whose extension is gone) refuses
+    // HERE, before the kill below: a held pane may be the only thing keeping a
+    // non-resumable card's work visible, and a refused resume must not take it.
+    const refusal = relaunchRefusal(prev);
+    if (refusal) throw new Error(refusal);
     const agent = prev?.agent || 'claude';
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
@@ -1128,6 +1138,9 @@ export class SessionManager {
   // liveSessionId||sessionId so a previously-resumed session forks from its
   // current state, not a frozen owner-id transcript.
   async fork({ sourceId, parentId, parentEntry, cwd, prompt = '', name = '' } = {}) {
+    // Same gate as _doResume: a fork relaunches the parent's runtime.
+    const refusal = relaunchRefusal(parentEntry);
+    if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent || 'claude';
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
@@ -1228,8 +1241,16 @@ export class SessionManager {
     // caches the hit, so this costs one directory scan per clear. Gated exactly like
     // that resume guard — a discover-id agent (Codex) isn't bucketed this way, and a
     // devcontainer session's transcript lives inside the container, not on the host.
+    //
+    // A non-resumable runtime has no conversation of its own to track: whatever
+    // runs in its pane (a local client handing off to a remote service, say) is
+    // not the card's conversation, and adopting its id would cost and resume the
+    // wrong thing. A runtime that is missing altogether (its extension disabled)
+    // keeps the guard, which is the safe reading.
+    const rt = findRuntime(entry.runtime);
+    if (rt?.resumable === false) return false;
     const needsTranscript = adapterFor(entry.agent || 'claude').presetsSessionId
-      && !runtimeFor(entry.runtime).skipsHostResumeGuard;
+      && !rt?.skipsHostResumeGuard;
     if (needsTranscript && !(await transcriptFor(liveSessionId))) return false;
     const prior = new Set(entry.priorLiveSessionIds || []);
     if (entry.liveSessionId) prior.add(entry.liveSessionId);
@@ -1595,9 +1616,14 @@ export class SessionManager {
     // board error (thrown → the dispatch handler relays it as a toast), never a stray
     // scratch dir plus an opaque dead pane. e.g. the devcontainer runtime refuses a
     // repo with no .devcontainer config instead of letting `devcontainer up` try to
-    // synthesize one and die in the pane.
+    // synthesize one and die in the pane. The bag carries what a runtime may need
+    // to refuse on — the agent, workflow and worktree choices and the dialog's
+    // extension data (an extension runtime's binding narrows `ext` to its own
+    // slice) — and a runtime that doesn't care ignores the extra keys.
     const rt = runtimeFor(runtime);
-    const preflightErr = rt.preflight ? await rt.preflight({ cwd: trimmed }) : null;
+    const preflightErr = rt.preflight
+      ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
+      : null;
     if (preflightErr) throw new Error(preflightErr);
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
     // is ensured-fresh and created here; a real user-typed path is created too
@@ -1633,8 +1659,11 @@ export class SessionManager {
 
     // The conversation runs under its own live id, distinct from the card id, so
     // the card id is never also a conversation id. Preset for Claude; Codex mints
-    // and we discover it post-launch.
-    const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
+    // and we discover it post-launch. A `buildLaunch` runtime replaces the
+    // agent's command outright, so there is no local conversation to preset an
+    // id for (or to discover one of after launch).
+    const builds = Boolean(rt.buildLaunch);
+    const presetLiveId = !builds && adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     // Only an ORCHESTRATOR run loads the issue-to-pr skill plugin; a worker (tagged
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
@@ -1664,14 +1693,23 @@ export class SessionManager {
       worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
       ext: ext || null,
     });
+    // On the `buildLaunch` path the skill gate, the codex policy and the launch
+    // context above still run (an extension may persist state from them, and
+    // the hooks fire either way) — their output just goes unused, since the
+    // runtime's own command takes no adapter flags. Not branched around, so the
+    // two paths can't drift in what they announce.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
-    const rawInner = adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy });
-    const inner = await rt.wrapLaunch({ inner: rawInner, cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext });
+    const inner = builds
+      ? await rt.buildLaunch({ phase: 'dispatch', intent, cwd, sessionId, model, ext: ext || null })
+      : await rt.wrapLaunch({
+        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy }),
+        cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
+      });
     const launchedAt = Date.now();
     await this._newSession(tmux, cwd, inner, this.socket);
 
-    const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
+    const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
 
     // Merge onto any entry an early setWorkflowPhase already adopted (the process is
     // alive before this map.set, so the skill can report a phase first). The launch
@@ -1686,7 +1724,12 @@ export class SessionManager {
     // (an early setWorkflowPhase report landing before this map.set) may
     // already carry one.
     const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: true };
+    // `runtimeExt` names the extension a runtime came from, so a resume after it
+    // is uninstalled can still say which one to re-enable (relaunchRefusal).
+    // `mailCapable: false` for a buildLaunch runtime (its command has no
+    // --mcp-config, so no read_mail) and for one with `deliver`, which is how
+    // send_message routes a peer message to that `deliver` instead.
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver) };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
