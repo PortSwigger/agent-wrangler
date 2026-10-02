@@ -1035,22 +1035,45 @@ function wranglerIsQuiet() {
     && scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS).length === 0;
 }
 
+let refreshInFlight = false;
+const refreshFailed = new Set();
+
 async function refreshOneStaleSession() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  try {
+    await refreshNextStaleSession();
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+async function refreshNextStaleSession() {
   if (!refreshSessionsAfterUpdate() || !codeVersion || !lastGraph) return;
   const s = nextSessionToRefresh(lastGraph.sessions || [], {
     codeVersion,
     attached: await sessionManager.attachedSessions(),
     isResuming: (id) => sessionManager.isResuming(id),
     entryFor: (id) => sessionManager.entryFor(id),
+    failed: refreshFailed,
     now: Date.now(),
   });
   if (!s) return;
   const entry = sessionManager.entryFor(s.sessionId);
   const dir = await resolveResumeDir(entry?.liveSessionId || s.sessionId, { graphCwd: s.cwd, entryCwd: entry?.cwd });
-  if (!dir || !fs.existsSync(dir)) return;
+  if (!dir || !fs.existsSync(dir)) {
+    refreshFailed.add(s.sessionId);
+    return;
+  }
+  if (sessionManager.entryFor(s.sessionId)?.archivedAt) return;
   log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersion.slice(0, 7)}`);
   memoryStore.bindSession(s.sessionId, taskStore.taskFor(s.sessionId)?.id || null);
-  await sessionManager.resume(s.sessionId, dir, { reason: 'update-refresh' });
+  try {
+    await sessionManager.resume(s.sessionId, dir, { reason: 'update-refresh' });
+  } catch (err) {
+    refreshFailed.add(s.sessionId);
+    throw err;
+  }
   await rebuild();
 }
 

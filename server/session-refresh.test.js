@@ -38,3 +38,8 @@ test('one session per call', () => {
   const picked = nextSessionToRefresh([stale(), stale({ sessionId: 's2', tmux: 'aw-2' })], { codeVersion: 'new', now });
   assert.equal(picked.sessionId, 's1');
 });
+
+test('a session whose refresh already failed is skipped so the next one gets its turn', () => {
+  const picked = nextSessionToRefresh([stale(), stale({ sessionId: 's2', tmux: 'aw-2' })], { codeVersion: 'new', now, failed: new Set(['s1']) });
+  assert.equal(picked.sessionId, 's2');
+});
