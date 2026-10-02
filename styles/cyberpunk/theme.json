@@ -6,6 +6,7 @@
   "colors": {
     "bg": "rgba(10,6,18,0.32)",
     "surface": "rgba(20,10,36,0.6)",
+    "panel-bg": "#1a0e2e",
     "surface-2": "rgba(40,20,62,0.66)",
     "chrome": "rgba(8,4,14,0.7)",
     "tile-bg": "rgba(18,10,32,0.42)",
