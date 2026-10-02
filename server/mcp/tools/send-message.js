@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { SEND_MAX_BYTES } from '../../mailbox-store.js';
 import { sendText as defaultSendText } from '../../tmux-scraper.js';
+import { findRuntime } from '../../runtimes/index.js';
 
 // Route a peer message through the durable mailbox ("you've got mail" Phase 1):
 // send_message now APPENDS to the recipient's mailbox and returns immediately —
@@ -121,7 +122,31 @@ export const sendMessageTool = {
 // Today's direct push, UNCHANGED, for a recipient that can't yet call read_mail.
 // Self-contained (not folded into the handler above) so the mailbox branch above
 // reads as the primary path, with this as the rollout-era exception it is.
+//
+// A recipient whose RUNTIME delivers for itself (server/runtimes/index.js
+// `deliver` — an agent that runs somewhere with no local pane to paste into) is
+// handed the message here, before the tmux check: such a card is stored
+// `mailCapable: false` precisely so it lands on this path, and it may well have
+// no live pane at all. It gets the same compose()-fenced text the paste would,
+// because what it feeds is a raw prompt stream too — the reason the fence exists.
 async function legacyPushFallback({ deps, caller, to, text, gate }) {
+  const entry = deps.sessionManager.entryFor(to);
+  const rt = entry ? findRuntime(entry.runtime) : null;
+  if (rt?.deliver) {
+    let res;
+    try {
+      res = await rt.deliver({ entry, from: caller, text: compose(caller, deps, text) });
+    } catch (err) {
+      return errorResult(err?.message || String(err));
+    }
+    if (!res?.ok) return errorResult(res?.error || `Session ${to}'s runtime could not deliver the message.`);
+    gate?.commit?.();
+    const structuredContent = { to, label: labelFor(deps, to), delivered: true };
+    return {
+      content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+      structuredContent,
+    };
+  }
   const tmux = deps.tmuxFor?.(to);
   if (!tmux) {
     return errorResult(`Session ${to} is dormant and is not resumed for peer mail; resume it before sending.`);

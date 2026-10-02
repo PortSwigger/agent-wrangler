@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sendMessageTool } from './send-message.js';
+import { registerRuntime, unregisterRuntimesFor } from '../../runtimes/index.js';
 
 // A deps double with an injected sendText spy. tmuxFor/socketFor resolve only the
 // "live" cards; everything else falls through to deliverMessage's dormant/archived
@@ -107,6 +108,59 @@ test('send_message does not resume a dormant legacy target', async () => {
   assert.match(out.content[0].text, /dormant.*resume it before sending/i);
   assert.equal(resumed.length, 0);
   assert.equal(sent.length, 0);
+});
+
+// A runtime with its own `deliver` (server/runtimes/index.js): its cards are
+// stored mailCapable:false so they land on the legacy path, and may have no
+// pane at all — so the runtime is asked BEFORE the dormant refusal.
+function withDeliverRuntime(deliver, fn) {
+  registerRuntime({ id: 'remotert', label: 'Remote', resumable: false, buildLaunch: async () => '', deliver }, 'remote');
+  return Promise.resolve().then(fn).finally(() => unregisterRuntimesFor('remote'));
+}
+function dormantOn(d, runtime) {
+  d.sessionManager = { entryFor: (id) => (id === 'REMOTE1' ? { sessionId: 'REMOTE1', cwd: '/x', agent: 'claude', runtime, mailCapable: false } : null), isResuming: () => false, resume: async () => { throw new Error('must not resume'); } };
+  return d;
+}
+
+test('send_message hands a dormant runtime-delivered card the FENCED text and reports it delivered', async () => {
+  const sent = [];
+  const calls = [];
+  let committed = 0;
+  const d = dormantOn(deps(sent), 'remotert');
+  d.messageThrottle = { check: () => ({ ok: true, commit: () => { committed += 1; } }) };
+  await withDeliverRuntime(async (args) => { calls.push(args); return { ok: true }; }, async () => {
+    const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'REMOTE1', text: 'ping' });
+    assert.equal(out.isError, undefined);
+    assert.deepEqual(out.structuredContent, { to: 'REMOTE1', label: null, delivered: true });
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].from, 'CARD1');
+  assert.equal(calls[0].entry.sessionId, 'REMOTE1');
+  assert.match(calls[0].text, /--- BEGIN PEER MESSAGE [0-9a-f]{6} ---\nping\n--- END PEER MESSAGE [0-9a-f]{6} ---/);
+  assert.match(calls[0].text, /sender: \(CARD1, "Alpha"\)/);
+  assert.equal(committed, 1, 'a delivered message counts against the loop throttle');
+  assert.equal(sent.length, 0, 'nothing was pasted into a pane');
+});
+
+test('send_message surfaces a runtime delivery failure (refusal or throw) as the tool error', async () => {
+  const d = dormantOn(deps([]), 'remotert');
+  await withDeliverRuntime(async () => ({ ok: false, error: 'no cloud session id yet' }), async () => {
+    const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'REMOTE1', text: 'ping' });
+    assert.equal(out.isError, true);
+    assert.equal(out.content[0].text, 'no cloud session id yet');
+  });
+  await withDeliverRuntime(async () => { throw new Error('remote said no'); }, async () => {
+    const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'REMOTE1', text: 'ping' });
+    assert.equal(out.isError, true);
+    assert.equal(out.content[0].text, 'remote said no');
+  });
+});
+
+test('send_message to a card whose runtime has no deliver (or is gone) behaves as before', async () => {
+  const d = dormantOn(deps([]), 'remotert');
+  const out = await sendMessageTool.handler({ deps: d, caller: 'CARD1' }, { to: 'REMOTE1', text: 'ping' });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /dormant.*resume it before sending/i);
 });
 
 test('send_message errors when the target is archived, without resuming it', async () => {
