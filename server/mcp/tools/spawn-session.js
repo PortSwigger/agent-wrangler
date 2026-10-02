@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { nestedParentError } from '../../dispatch-runner.js';
+import { knownRuntimes } from '../../runtimes/index.js';
 
 // Spin the caller's current work off into a brand-new full board session (not a
 // sub-agent, not a fork). Mirrors the /ws `dispatch` handler in server/index.js:
@@ -51,6 +52,11 @@ export const spawnSessionTool = {
       + 'list_tasks silently lands the session in Unassigned instead of erroring. Defaults to '
       + 'your current task; omit to keep it there.',
     ),
+    // A string, not an enum: the set includes whatever the enabled extensions
+    // contribute, so it can change while the server runs. The handler checks it.
+    runtime: z.string().optional().describe(
+      'Where the new session runs: `local` (default), `devcontainer`, or a runtime an enabled extension provides.',
+    ),
     worktree: z.boolean().optional().describe('Launch in a fresh git worktree off cwd.'),
     worktree_branch: z.string().optional().describe('Branch for the worktree (default: derived from intent).'),
     worktree_folder_name: z.string().optional().describe('Folder name/path for the worktree.'),
@@ -76,6 +82,17 @@ export const spawnSessionTool = {
       if (nestErr) return errorResult(nestErr);
     }
 
+    // Refused by name rather than left to dispatch's `unknown runtime` throw, so
+    // the caller learns what it could have asked for. There is no dialog `ext`
+    // bag on this path: an extension runtime gets `ext: null` and falls back to
+    // its own settings, and its preflight still gates the launch.
+    if (args.runtime) {
+      const known = knownRuntimes().map((r) => r.id);
+      if (!known.includes(args.runtime)) {
+        return errorResult(`Unknown runtime "${args.runtime}". Known runtimes: ${known.join(', ')}.`);
+      }
+    }
+
     return performSpawn({
       deps,
       caller,
@@ -91,6 +108,7 @@ export const spawnSessionTool = {
         // nested child. This never sets `workflow` — that field is
         // orchestrator-only.
         intent,
+        runtime: args.runtime || undefined,
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',
         worktreeFolderName: args.worktree_folder_name || '',
