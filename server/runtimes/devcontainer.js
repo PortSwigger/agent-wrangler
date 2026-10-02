@@ -158,6 +158,7 @@ export function buildPaneScript({
 
 export const devcontainer = {
   id: 'devcontainer',
+  label: 'Devcontainer',
   skipsHostResumeGuard: true,
   async wrapLaunch({ inner, cwd, sessionId, workflow = false, launchContext = null }) {
     return buildPaneScript({ inner, hostDir: cwd, sessionId, workflow, launchContext });
