@@ -375,7 +375,7 @@ const BACKGROUND_SHELL_PATTERNS = {
 
 // A user's custom statusline (see the `statusline-builder` plugin) renders
 // independently SELECTABLE and REORDERABLE components joined by " | " — e.g.
-// `◆ Sonnet 5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`, but a user who only wants
+// `◆ Sonnet 5.5 | ███░░ 7% | 📅 $96 | Σ $977 | 📁 dir`, but a user who only wants
 // the context bar, or who puts it first, is equally valid. So a segment is
 // never identified by its POSITION (not "before the first pipe", not "the
 // second segment") — each is identified by its own leading marker, which is
@@ -391,7 +391,7 @@ const BACKGROUND_SHELL_PATTERNS = {
 // leading glyph. A leading-glyph-only check was tried and is unsafe: caught by
 // adversarial review, a real "⚠ Warning: rate limited, retrying in 5s..." tool/
 // assistant line matches a bare `/^[⚠✦◆⬦]/` and would be reported as the model.
-// Every real label this matches against ("Sonnet 5", "Claude Fable 5 2×opus",
+// Every real label this matches against ("Sonnet 5.5", "Claude Fable 5 2×opus",
 // …) is well within this shape; ordinary prose almost never is (colons,
 // ellipses, and sentence punctuation are exactly what this excludes). Only the
 // generator's own two block characters are accepted for the context bar too —

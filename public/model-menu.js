@@ -5,8 +5,8 @@
 // itself and the per-card memory this reads.
 //
 // The problem it solves: the live model comes from the pane's status bar, which
-// prints a SHORT name ("Sonnet 5"), while the adapter's rows carry a suffix
-// ("Sonnet 5 · 200K context", "Sonnet 5 · 1M context"). The status bar does not
+// prints a SHORT name ("Sonnet 5.5"), while the adapter's rows carry a suffix
+// ("Sonnet 5.5 · 200K context", "Sonnet 5.5 · 1M context"). The status bar does not
 // distinguish the two context sizes, so the label alone genuinely cannot say
 // which row is current.
 
