@@ -8,6 +8,7 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
@@ -109,7 +110,7 @@ ensurePtyHelperExecutable();
 applyRetiredFlagMigrations();
 let ext;
 try {
-  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type) });
+  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type), coreRuntimeIds: BUILTIN_RUNTIME_IDS });
 } catch (err) {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
@@ -239,6 +240,11 @@ const extWiring = {
   memoryProvider: () => extStores.taskMemory ?? null,
   rebuild: () => rebuild(),
   broadcast,
+  // `links:write` validates through the CALLER's own `links.normalise` hooks,
+  // read off the live registry per call so a re-enable's hooks are the ones
+  // asked; `hostApiFor` hands each hook its façade, as createLinkNormaliser does.
+  linkNormalisersFor: (extId) => ext.hooks['links.normalise'].filter((h) => h.extId === extId),
+  hostApiFor,
   scheduleStore,
   mailStore,
   // `usage:read` goes through usage-scan-memo's cachedScan over this, the same
@@ -358,6 +364,34 @@ function activateExtension(id, { startSweeps = true } = {}) {
         sessionManager._extHooks[name].push(bound);
       }
     }
+    // Runtimes (server/runtimes/index.js), bound exactly like the session hooks
+    // above: each function gets its own `ext` slice, its façade and its settings
+    // values, and re-checks `hostApis.has` per call — so a card launched on an
+    // extension's runtime stays harmless if the registry and the façade come
+    // down in either order. Inert means: refuse at preflight, throw where a
+    // command or a delivery was needed (the caller already surfaces that), and
+    // read nothing on the graph tick.
+    for (const rt of ext.runtimes) {
+      if (rt.extId !== id) continue;
+      const bind = (fn, inert) => fn && ((args) => {
+        if (!hostApis.has(id)) return inert();
+        const host = hostApiFor(id);
+        return fn({ ...hookPayloadFor(id, args), host, settings: host.settings.all() });
+      });
+      const notActive = () => { throw new Error(`extension ${id} is not active`); };
+      registerRuntime({
+        id: rt.id,
+        label: rt.label,
+        ...(rt.resumable === undefined ? {} : { resumable: rt.resumable }),
+        skipsHostResumeGuard: Boolean(rt.skipsHostResumeGuard),
+        preflight: bind(rt.preflight, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
+        wrapLaunch: bind(rt.wrapLaunch, notActive),
+        buildLaunch: bind(rt.buildLaunch, notActive),
+        deliver: bind(rt.deliver, notActive),
+        readLive: bind(rt.readLive, () => null),
+        analyze: bind(rt.analyze, () => null),
+      }, id);
+    }
     // Lifecycle: where a store's watcher or an event subscription is started.
     // After the façade, hooks and graph check, so a throw here quarantines a
     // fully-wired extension and deactivateExtension below undoes all of it.
@@ -407,6 +441,11 @@ function deactivateExtension(id) {
     logError(`[ext:${id}] deactivate failed`, err);
   }
   coreEvents.offOwner(id);
+  // Here rather than beside the loader's unregister, so the runtime registry
+  // agrees with the loader whichever of the two runs first and a live disable
+  // takes the runtime away with no restart. A card already launched on it
+  // keeps its `runtime` id; findRuntime/relaunchRefusal handle it being gone.
+  unregisterRuntimesFor(id);
   for (const t of sweepHandles.get(id) || []) clearInterval(t);
   sweepHandles.delete(id);
   hostApis.delete(id);

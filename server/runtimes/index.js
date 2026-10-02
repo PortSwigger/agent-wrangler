@@ -35,9 +35,10 @@ import { devcontainer } from './devcontainer.js';
 //                any dir/worktree side effect — devcontainer uses it to reject a
 //                repo with no .devcontainer config instead of dead-paning on
 //                `devcontainer up`. `workflow`/`worktree` are booleans and `ext`
-//                is the dialog's extension data narrowed to the runtime's own
-//                extension (null for a built-in, or when none was sent); a runtime
-//                that doesn't care ignores them, as devcontainer does.
+//                is the dialog's extension data — narrowed to an extension
+//                runtime's own slice by its binding (null when none was sent), and
+//                the whole bag for a built-in. A runtime that doesn't care ignores
+//                them, as devcontainer does.
 //   resumable    (optional, default true) false ⇒ resume and fork are refused up
 //                front (relaunchRefusal) and the graph tick never adopts a live
 //                conversation id for the card (noteLiveSessionId).

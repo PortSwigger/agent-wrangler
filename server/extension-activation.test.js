@@ -20,6 +20,13 @@ test('a session hook is TAGGED with its extension, and deactivate filters on tha
   assert.match(SRC, /_extHooks\[name\]\.filter\(\(fn\) => fn\.extId !== id\)/, 'deactivate removes one extension\'s hooks and leaves its siblings');
 });
 
+test('a runtime is bound per call to its own façade, and deactivate unregisters it', () => {
+  assert.match(SRC, /coreRuntimeIds: BUILTIN_RUNTIME_IDS/, 'the loader must see the built-in ids, or an extension could claim `local`');
+  assert.match(SRC, /if \(!hostApis\.has\(id\)\) return inert\(\);/, 'a runtime outliving its façade must go inert, not run with host undefined');
+  assert.match(SRC, /fn\(\{ \.\.\.hookPayloadFor\(id, args\), host, settings: host\.settings\.all\(\) \}\)/, 'its own ext slice, façade and settings');
+  assert.match(SRC, /function deactivateExtension\(id\) \{[\s\S]*?unregisterRuntimesFor\(id\);[\s\S]*?\n\}/, 'a live disable takes the runtime away');
+});
+
 test('every sweep an activation starts is held, and deactivate clears them', () => {
   assert.match(SRC, /const sweepHandles = new Map\(\)/);
   assert.match(SRC, /for \(const t of sweepHandles\.get\(id\) \|\| \[\]\) clearInterval\(t\)/, 'a disabled extension must stop ticking against a façade it no longer has');

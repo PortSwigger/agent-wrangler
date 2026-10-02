@@ -115,7 +115,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
-    hideDispatchField: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
+    hideDispatchField: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -746,7 +746,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
-    handlerTypes: [], hideDispatchField: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
+    handlerTypes: [], hideDispatchField: [], runtimes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1003,12 +1003,12 @@ test('hideDispatchField must be an array of known dispatch field names', () => {
   rejects(manifest({ hideDispatchField: 'effort' }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [7] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [''] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
-  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, runtime\)/);
+  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, runtime, worktree\)/);
   assert.ok(validateManifest(manifest({ hideDispatchField: [...DISPATCH_FIELDS] })));
 });
 
 test('the dispatch field vocabulary is closed', () => {
-  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'runtime']);
+  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'runtime', 'worktree']);
 });
 
 test('the declared hideDispatchField lands on the entry, the announcement and the graph, as a COPY', () => {
@@ -1089,6 +1089,76 @@ test('onTaskDelete: disabled and quarantined extensions are never asked, and unr
   unregisterExtension(loaded, 'on');
   await fire('t_2');
   assert.deepEqual(seen, [['on', 't_1']]);
+});
+
+// ── `runtimes` — extension-contributed runtimes (server/runtimes/index.js) ──
+const CORE_RUNTIMES = { coreRuntimeIds: ['local', 'devcontainer'] };
+const toyRuntime = (overrides = {}) => ({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, ...overrides });
+
+test('a valid runtime stages: claimed in _reg, tagged on out.runtimes, listed {id,label} on the entry and the graph', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime()] })], ...CORE_RUNTIMES });
+  assert.equal(out.list[0].quarantine, null);
+  assert.ok(out._reg.runtimeIds.has('toyrt'));
+  assert.deepEqual(out.runtimes.map((r) => [r.id, r.extId, typeof r.wrapLaunch]), [['toyrt', 'fake', 'function']]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
+});
+
+test('a runtime colliding with a built-in quarantines the extension', () => {
+  rejects(manifest({ runtimes: [toyRuntime({ id: 'local' })] }), /Extension fake: runtime id "local" is already registered/, CORE_RUNTIMES);
+  rejects(manifest({ runtimes: [toyRuntime({ id: 'devcontainer' })] }), /runtime id "devcontainer" is already registered/, CORE_RUNTIMES);
+});
+
+test('two extensions naming one runtime quarantine the second, leaving the first intact', () => {
+  const out = loadExtensions({
+    cfg: {},
+    builtin: [manifest({ runtimes: [toyRuntime()] }), manifest({ id: 'other', tools: [], handlers: [], stores: {}, runtimes: [toyRuntime()] })],
+    ...CORE_RUNTIMES,
+  });
+  assert.equal(out.list[0].quarantine, null);
+  assert.match(out.list[1].quarantine, /runtime id "toyrt" is already registered/);
+  assert.deepEqual(out.runtimes.map((r) => r.extId), ['fake']);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[1].runtimes, []);
+});
+
+test('a bad runtime shape quarantines', () => {
+  rejects(manifest({ runtimes: {} }), /runtimes must be an array/);
+  rejects(manifest({ runtimes: [null] }), /runtimes\[0\] is not an object/);
+  rejects(manifest({ runtimes: [toyRuntime({ id: 'Bad_Id' })] }), /runtimes\[0\]\.id must match/);
+  rejects(manifest({ runtimes: [toyRuntime({ label: '' })] }), /runtime toyrt label must be a non-empty string/);
+  rejects(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined })] }), /exactly one of wrapLaunch or buildLaunch/);
+  rejects(manifest({ runtimes: [toyRuntime({ buildLaunch: async () => '', resumable: false })] }), /exactly one of wrapLaunch or buildLaunch/);
+  rejects(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '' })] }), /uses buildLaunch, so it must declare resumable: false/);
+  rejects(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: true })] }), /must declare resumable: false/);
+  rejects(manifest({ runtimes: [toyRuntime({ deliver: 'yes' })] }), /runtime toyrt deliver must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ preflight: {} })] }), /runtime toyrt preflight must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ resumable: 'no' })] }), /runtime toyrt resumable must be a boolean/);
+  rejects(manifest({ runtimes: [toyRuntime({ skipsHostResumeGuard: 1 })] }), /skipsHostResumeGuard must be a boolean/);
+  rejects(manifest({ runtimes: [toyRuntime(), toyRuntime({ label: 'Again' })] }), /duplicate runtime id "toyrt"/);
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: false, deliver: async () => ({ ok: true }) })] })));
+});
+
+test('unregister releases a runtime id, so a re-enable re-stages it', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime()] })], ...CORE_RUNTIMES });
+  unregisterExtension(out, 'fake');
+  assert.equal(out._reg.runtimeIds.has('toyrt'), false);
+  assert.ok(out._reg.runtimeIds.has('local'), 'a built-in id is never released');
+  assert.deepEqual(out.runtimes, []);
+  assert.deepEqual(out.list[0].runtimes, []);
+  registerExtension(out, manifest({ runtimes: [toyRuntime()] }), { cfg: {} });
+  assert.deepEqual(out.runtimes.map((r) => r.id), ['toyrt']);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
+});
+
+test('a disabled extension claims no runtime id', () => {
+  const out = loadExtensions({
+    cfg: { extensions: { fake: false } },
+    builtin: [manifest({ runtimes: [toyRuntime()] }), manifest({ id: 'other', tools: [], handlers: [], stores: {}, runtimes: [toyRuntime()] })],
+    ...CORE_RUNTIMES,
+  });
+  assert.deepEqual(out.list[0].runtimes, []);
+  assert.equal(out.list[1].quarantine, null);
+  assert.deepEqual(out.runtimes.map((r) => r.extId), ['other']);
 });
 
 test('onTaskDelete: an extension with no façade at fire time is skipped', async () => {

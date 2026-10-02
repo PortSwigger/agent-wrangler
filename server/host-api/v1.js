@@ -2,6 +2,7 @@ import path from 'node:path';
 import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
 import { cachedScan } from '../usage-scan-memo.js';
 import { ADHOC } from '../task-store.js';
+import { linkMatches } from '../mcp/links.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -353,6 +354,43 @@ const usageRead = ({ scanUsage }) => ({
   },
 });
 
+// Write a link onto a card from server code — a sweep that learns a URL after
+// launch has no agent to call set_links for it. The link goes through the
+// CALLING extension's own `links.normalise` hook(s) and nobody else's, so an
+// extension can only ever store a type it claims itself: no `pr` (core's, and
+// the poller's to own) and no sibling's `jira`. A hook answering undefined is
+// "not my type", which here is a refusal rather than a fall-through.
+//
+// Session scope only, and only for a card that exists: setLinks would quietly
+// ADOPT an unknown id into the registry, which is the MCP tool's business (an
+// externally-discovered session) and never an extension's. Upsert by
+// linkMatches, so a sweep re-attaching the same key updates it in place.
+// Synchronous like the hook itself; the rebuild is fire-and-forget.
+const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
+  const normalise = (link) => {
+    for (const { fn } of linkNormalisersFor(id)) {
+      const out = fn({ link, host: hostApiFor(id) });
+      if (out != null) return out;
+    }
+    throw new Error(`links.attach: ${id} has no links.normalise hook that claims ${JSON.stringify(link?.type)} links`);
+  };
+  return {
+    links: {
+      get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+      attach: (sid, link) => {
+        if (!core.sessionManager.entryFor(sid)) throw new Error(`links.attach: unknown session ${sid}`);
+        const stored = normalise(link);
+        const links = core.sessionManager.getLinks(sid);
+        const at = links.findIndex((l) => linkMatches(l, stored));
+        if (at >= 0) links[at] = stored; else links.push(stored);
+        core.sessionManager.setLinks(sid, links);
+        Promise.resolve(rebuild()).catch(() => {});
+        return stored;
+      },
+    },
+  };
+};
+
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
@@ -375,4 +413,5 @@ export const V1_BUILDERS = {
   'usage:read': usageRead,
   'sessions:bill': sessionsBill,
   'sessions:interrupt': sessionsInterrupt,
+  'links:write': linksWrite,
 };
