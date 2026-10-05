@@ -90,9 +90,13 @@ export function archivableExits(deadEntries) {
   );
 }
 
+// pane_dead_time has whole-second resolution, so an instant exit can read up to
+// a second before the (pre-launch) resume stamp. Anything further negative is a
+// wall-clock correction, not an early exit, and falls back to archiving.
 function exitedEarly({ launchedAt, diedAt }) {
-  return typeof launchedAt === 'number' && typeof diedAt === 'number'
-    && diedAt - launchedAt < EARLY_EXIT_GRACE_MS;
+  if (typeof launchedAt !== 'number' || typeof diedAt !== 'number') return false;
+  const elapsed = diedAt - launchedAt;
+  return elapsed > -1000 && elapsed < EARLY_EXIT_GRACE_MS;
 }
 
 // Pure decision: which dead tmuxes haven't been logged yet, for the
@@ -1140,13 +1144,14 @@ export class SessionManager {
       codexPolicy,
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
+    const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this
     // install's socket — so a legacy default-socket session migrates here.
     this.map.set(sessionId, {
-      ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: Date.now() }),
+      ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
       launchedCodeVersion: this.codeVersion || undefined,
     });
     this._save();

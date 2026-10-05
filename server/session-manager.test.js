@@ -120,6 +120,15 @@ test('archives a clean exit once the session outlived the grace window', () => {
   assert.deepEqual(archivableExits([late]), [late]);
 });
 
+test('keeps an instant exit whose whole-second death time reads just before the resume stamp', () => {
+  assert.deepEqual(archivableExits([{ ...clean, launchedAt: 1_000_400, diedAt: 1_000_000 }]), []);
+});
+
+test('archives a clean exit that appears to predate its resume by more than a second (clock moved back)', () => {
+  const skewed = { ...clean, launchedAt: 1_600_000, diedAt: 1_000_000 };
+  assert.deepEqual(archivableExits([skewed]), [skewed]);
+});
+
 test('archives a clean exit when the death or launch time is unknown', () => {
   assert.deepEqual(archivableExits([{ ...clean, launchedAt: 1_000_000 }]), [{ ...clean, launchedAt: 1_000_000 }]);
   assert.deepEqual(archivableExits([{ ...clean, diedAt: 1_000_000 }]), [{ ...clean, diedAt: 1_000_000 }]);
