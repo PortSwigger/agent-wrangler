@@ -2981,7 +2981,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: var(--surface-2); border-right: 1px solid var(--border);
 }
 .ext-filter {
-  margin: 10px 10px 4px; padding: 5px 8px; font: inherit; font-size: 12px;
+  box-sizing: border-box; margin: 10px 10px 4px; padding: 5px 8px; font: inherit; font-size: 12px;
   background: var(--field-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px;
 }
 .ext-list-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 6px; }
@@ -3027,7 +3027,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 .ext-kv-open { color: var(--blue-fg); white-space: nowrap; }
 .ext-install-form { display: flex; gap: 8px; align-items: center; }
-.ext-install-form .ext-install-url { flex: 1; }
+.ext-install-form .ext-install-url { flex: 1; min-width: 0; }
 .ext-settings-save { margin-top: 10px; }
 .ext-install-url {
   padding: 5px 8px; font: inherit; font-size: 12px;
