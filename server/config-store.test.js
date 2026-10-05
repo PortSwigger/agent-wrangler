@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, defaultSessionCwd, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -107,6 +107,12 @@ test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
   assert.equal(chatViewDefault({}), false);
   assert.equal(chatViewDefault({ chatViewDefault: true }), true);
   assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
+});
+
+test('defaultSessionCwd is blank unless a string is set, and is trimmed', () => {
+  assert.equal(defaultSessionCwd({}), '');
+  assert.equal(defaultSessionCwd({ defaultSessionCwd: '  ~/repos  ' }), '~/repos');
+  assert.equal(defaultSessionCwd({ defaultSessionCwd: 42 }), '');
 });
 
 // The retired-flag table: a core `<x>Enabled` flag that became an extension is

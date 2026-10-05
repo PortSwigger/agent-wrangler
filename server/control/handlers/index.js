@@ -20,6 +20,7 @@ import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
+import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
@@ -87,6 +88,7 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
+  defaultSessionCwdHandler,
   extensionEnabledHandler,
   extSettingSetHandler,
   extInstallHandler,

@@ -24,6 +24,7 @@ test('each registered setting appears in exactly one tab', () => {
     'soundOnFinish',
     'childFullViewByDefault',
     'chatViewDefault',
+    'defaultSessionCwd',
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
     'archiveReviewEnabled',
