@@ -109,7 +109,7 @@ test('ignores a foreign (non-cc_) tmux even on a clean exit', () => {
   assert.deepEqual(archivableExits([{ ...clean, tmux: 'work' }]), []);
 });
 
-test('keeps a clean exit that came within the grace window of its launch/resume', () => {
+test('keeps a clean exit that came within the grace window of a resume', () => {
   const launchedAt = 1_000_000;
   assert.deepEqual(archivableExits([{ ...clean, launchedAt, diedAt: launchedAt + 68_000 }]), []);
 });
@@ -468,6 +468,20 @@ test('refreshAlive records each dead pane\'s death time from pane_dead_time', as
   assert.equal(sm.deadTime.get('cx_s'), 1791187425000);
   assert.equal(sm.deadStatus.get('cx_s'), 0);
   assert.equal(sm.deadTime.has('cc_live'), false);
+});
+
+test('reconcileExitedSessions still archives a fresh, never-resumed session quit straight away', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 5_000_000 });
+  sm.dead = new Set(['cc_s']);
+  sm.deadStatus = new Map([['cc_s', 0]]);
+  sm.deadTime = new Map([['cc_s', 5_010_000]]);
+  sm.killForSession = async () => ['cc_s'];
+  const orig = console.log;
+  console.log = () => {};
+  try { assert.deepEqual(await sm.reconcileExitedSessions(), ['s1']); } finally { console.log = orig; }
+  assert.equal(sm.entryFor('s1').archiveReason, 'clean-exit');
 });
 
 // viaTaskArchive is archive-only bookkeeping (see SessionManager.archive) — like

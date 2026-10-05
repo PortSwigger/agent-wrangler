@@ -75,10 +75,11 @@ function isInsideSessions(dir) {
 // /exit or a self-stopped agent). A non-zero or unknown (null) status is left
 // for the existing dead-pane path so a crash/failed-resume keeps surfacing its
 // output with Resume. Foreign (non-`cc_`) tmuxes are never swept. So is a clean
-// exit within EARLY_EXIT_GRACE_MS of its launch/resume: that isn't a deliberate
-// /exit but the agent bailing at startup (Codex's self-update prompt and its
-// "conversation is open in another app" screen both exit 0), and archiving it
-// hides the only explanation before anyone can read it.
+// exit within EARLY_EXIT_GRACE_MS of a RESUME: that is usually the agent bailing
+// at startup (Codex's self-update prompt and its "conversation is open in another
+// app" screen both exit 0), and archiving it hides the only explanation before
+// anyone can read it. A fresh dispatch quit straight away (Ctrl+D) is still
+// archived — `launchedAt` is only the resume stamp, never createdAt.
 export const EARLY_EXIT_GRACE_MS = 2 * 60 * 1000;
 
 export function archivableExits(deadEntries) {
@@ -1542,7 +1543,7 @@ export class SessionManager {
   // a clean exit (pane_dead_status 0) is a deliberate /exit or self-stop, so set
   // it aside as archived (recoverable via Resume) and reap the corpse — orphan-
   // proof even in the resume-fork case via killForSession. Non-zero/unknown exits,
-  // and clean exits inside the startup grace window (see archivableExits), are
+  // and clean exits just after a resume (see archivableExits), are
   // left for the dead-pane path to surface on the board. `snapshotFor` lets
   // the caller inject per-session archive snapshot fields (e.g. the task), since
   // the manager doesn't know the task store. Returns the archived sessionIds.
@@ -1555,7 +1556,7 @@ export class SessionManager {
         sessionId,
         status: this.deadStatus.has(tmux) ? this.deadStatus.get(tmux) : null,
         archived: sessionId ? this.isArchived(sessionId) : false,
-        launchedAt: entry?.relaunchedAt ?? entry?.createdAt,
+        launchedAt: entry?.relaunchedAt,
         diedAt: this.deadTime.get(tmux),
       };
     });
