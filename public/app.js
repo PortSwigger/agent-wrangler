@@ -30,7 +30,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, extSettingsKeyAction, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -52,7 +52,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, openSettingsDetail, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
@@ -276,7 +276,7 @@ function setExtSettingAcked(extId, key, value) {
     }, 10000);
     extSettingPending.set(reqId, {
       resolve: () => {
-        // Optimistic, like openExtSettings: the next graph carries the same value.
+        // Optimistic, like the detail pane's settings rows: the next graph carries the same value.
         const live = latestExtensions.find((e) => e.id === extId);
         if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
         resolve();
@@ -587,12 +587,10 @@ function applyGraph(graph) {
   // it, so without this the panel re-drew the just-uninstalled extension as an
   // ordinary installed row and kept it there until a manual page refresh.
   //
-  // The signature deliberately EXCLUDES settingValues. The tab does not draw a
-  // single value any more — they live in the dialog behind each row's cog — so
-  // a value landing is not news the list has to redraw for, and a remount would
-  // cost the install field's half-typed URL for nothing. The dialog reads
-  // latestExtensions fresh on every open, which is where a value changed in
-  // ANOTHER tab catches up.
+  // The signature deliberately EXCLUDES settingValues: the detail pane's
+  // settings fields hold what a human is part-way through typing, and a value
+  // landing (often their own) must not rebuild them from under them. A value
+  // changed in ANOTHER tab catches up on the next remount.
   const extSignature = JSON.stringify(latestExtensions.map(({ settingValues, ...rest }) => rest));
   if (extSignature !== lastExtSignature) {
     lastExtSignature = extSignature;
@@ -5597,13 +5595,80 @@ function clearExtTransientLater() {
   }, EXT_TRANSIENT_MS);
 }
 
+// The selected extension, the filter text, the add form and the "Update all"
+// queue — kept here so a remount on the next graph keeps them.
+let extSelectedId = '';
+let extFilter = '';
+let extAdding = false;
+let extUpdateQueue = [];
+// The detail pane's settings.panel host, torn down before every remount.
+let extSettingsPanelHost = null;
+
+const startExtUpdate = (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); };
+
+// One update at a time: each goes through its own consent modal, so the next
+// starts only once the last has settled.
+function runNextExtUpdate() {
+  if (extInstallBusy) return;
+  const next = extUpdateQueue.shift();
+  if (next) startExtUpdate(next);
+}
+
+// The selected extension's Settings section: its own `settings.panel`
+// contributions above the manifest rows, and a Save button for those panels
+// (the manifest rows commit on change). Null when it has neither.
+function extSettingsEl(entry) {
+  const content = document.createElement('div');
+  const panelHost = document.createElement('div');
+  panelHost.className = 'ext-settings-panel';
+  content.append(panelHost);
+  const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
+  if (panels) extSettingsPanelHost = panelHost;
+  else panelHost.remove();
+  const hasRows = (entry.settings || []).some((d) => !d.hidden);
+  if (!panels && !hasRows) return null;
+  if (hasRows) {
+    content.append(extensionSettingRowsEl(entry, {
+      onSettingChange: ({ key, value }) => {
+        send({ type: 'ext-setting-set', id: entry.id, key, value });
+        flashSettingsSaved();
+        // Written back into our own copy as well as sent, so a remount before
+        // the confirming graph arrives shows what was just set.
+        const live = latestExtensions.find((e) => e.id === entry.id);
+        if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
+      },
+    }));
+  }
+  if (panels) {
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'ext-btn ext-btn-primary ext-settings-save';
+    save.textContent = 'Save';
+    save.addEventListener('click', async () => {
+      try {
+        await slots.savePanels(panelHost);
+        flashSettingsSaved();
+      } catch (err) {
+        // A rejecting save leaves the panel as it is; the extension shows its own error.
+        console.error(`[ext:${entry.id}] settings panel save failed`, err);
+      }
+    });
+    content.append(save);
+  }
+  return content;
+}
+
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
+  commitFocusedField(host);
+  if (extSettingsPanelHost) {
+    slots.unmountHost('settings.panel', extSettingsPanelHost);
+    extSettingsPanelHost = null;
+    pruneSampleHosts();
+  }
   host.textContent = '';
   host.append(extensionsPanelEl({
-    // Builtin and installed alike, one list — the toggle and the provenance are
-    // two halves of the same row now, not two lists repeating each other.
     entries: latestExtensions,
     statuses: extUpdateStatuses,
     checking: extChecking,
@@ -5613,10 +5678,17 @@ function mountExtensionsPanel(host) {
     pendingInstall: extPendingInstall,
     canRestart: canRestartServer,
     restarting: extRestarting,
+    selectedId: extSelectedId,
+    filter: extFilter,
+    adding: extAdding,
+    onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
+    onFilter: (text) => { extFilter = text; },
+    onAdd: () => { extAdding = true; remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
-    onUpdate: (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); },
+    onUpdate: (entry) => { extUpdateQueue = []; startExtUpdate(entry); },
+    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; runNextExtUpdate(); },
     onUninstall: async (entry) => {
       const answer = await confirmDialog({
         title: `Uninstall ${entry.label || entry.id}?`,
@@ -5628,80 +5700,8 @@ function mountExtensionsPanel(host) {
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
     onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
-    onOpenSettings: (entry) => openExtSettings(entry.id),
+    settingsEl: extSettingsEl,
   }));
-}
-
-// One extension's settings, behind the cog on its row. A drill-in view inside
-// the Settings card rather than rows in the tab or a second dialog: the
-// Extensions tab answers "what have I got", every extension's fields laid out
-// flat under it answered that far worse, and a dialog stacked over Settings
-// showed two backdrops.
-//
-// Built fresh per open from `latestExtensions` — never from the entry the row
-// was drawn with, which may be several graphs old by the time the cog is
-// clicked. Nothing re-renders it while it is open, deliberately: a field a
-// human is part-way through typing in must not be taken out from under them,
-// which is the same reason applyGraph's remount signature excludes
-// settingValues.
-function openExtSettings(id) {
-  const entry = latestExtensions.find((e) => e.id === id);
-  if (!entry) return;
-  const content = document.createElement('div');
-  // The extension's own `settings.panel` contributions, ABOVE the manifest
-  // rows. Only this extension's (onlyExt). Their `save` runs on Done.
-  const panelHost = document.createElement('div');
-  panelHost.className = 'ext-settings-panel';
-  content.append(panelHost);
-  const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
-  if (!panels) panelHost.remove();
-  content.append(extensionSettingRowsEl(entry, {
-    onSettingChange: ({ key, value }) => {
-      send({ type: 'ext-setting-set', id: entry.id, key, value });
-      flashSettingsSaved();
-      // Written back into our own copy as well as sent, so re-opening the
-      // view before the confirming graph arrives shows what was just set
-      // rather than the old value. The next graph carries the same value and
-      // overwrites this wholesale.
-      const live = latestExtensions.find((e) => e.id === entry.id);
-      if (live) live.settingValues = { ...(live.settingValues || {}), [key]: value };
-    },
-  }));
-  // Save (shown only when there are panel contributions) writes them — the
-  // manifest rows have already committed on change. A rejecting save keeps the
-  // view open (the extension shows its own error); Cancel, back and Escape
-  // leave without saving.
-  const view = openSettingsDetail({
-    title: entry.label || entry.id,
-    backLabel: 'Extensions',
-    node: content,
-    saves: Boolean(panels),
-    onDone: async () => {
-      if (!panels) return;
-      try {
-        await slots.savePanels(panelHost);
-      } catch (err) {
-        console.error(`[ext:${entry.id}] settings panel save failed`, err);
-        throw err;
-      }
-    },
-    // A textarea commits on blur only, and removing the view does not reliably
-    // blur it first, so an edit would otherwise be lost.
-    onLeave: () => {
-      commitFocusedField(content);
-      slots.unmountHost('settings.panel', panelHost);
-      panelHost.remove();
-      pruneSampleHosts();
-    },
-  });
-  content.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') return;
-    const action = extSettingsKeyAction(e, { hasPanels: Boolean(panels) });
-    if (action === 'none') return;
-    e.preventDefault();
-    if (action === 'done') view.finish();
-    else view.leave();
-  });
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
@@ -6038,6 +6038,7 @@ function connect() {
       if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
       remountExtensions();
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
     }
     else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
     else if (msg.type === 'ext-install-done') {
