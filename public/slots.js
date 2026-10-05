@@ -35,7 +35,9 @@
 // of the form's current draft so the veto can follow another field (say, the
 // runtime choice). Its entries carry `at` alongside `only` — see sync(). A
 // contribution may also return `ext(el, ctx)`, data for its OWN server half,
-// which rides the dispatch frame as `ext.<extId>` — see dispatchFields().
+// which rides the dispatch frame as `ext.<extId>` — see dispatchFields() — and
+// `open(el, ctx)`, called once per modal open with its own saved slice — see
+// openDispatchFields().
 //
 // `card.action` and `card.cost` are VALUE slots: no host, no mount. The board
 // asks them for values while it draws core chrome — menu items for a card's
@@ -587,6 +589,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
       if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
+      if (contribution.open != null && typeof contribution.open !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} open must be a function`);
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
       if (slotName === 'dispatch.field') {
@@ -812,6 +815,39 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }
       }
       return [...out];
+    },
+
+    // The per-open half (1.20.0): app.js openModal calls this ONCE per open,
+    // after core has reset its own fields and the anchors are synced, and
+    // before the modal is shown. It exists because nothing else can tell an
+    // open apart: the anchor hosts are static markup, so mount is once per page
+    // (bar a subagent teardown) and keeps whatever was typed last time, while
+    // `update` fires on every sync — twice per open and again on every model,
+    // runtime or mode change. A separate call rather than a flag on update's
+    // ctx, because a flag would have to be true on exactly one of open's two
+    // syncs, and that is the ordering this is here to stop extensions relying
+    // on.
+    //
+    // Each contribution is handed `open(el, { ...ctx, saved })`, where `saved`
+    // is ITS OWN extension's slice of the saved dispatch's `ext` bag (a fresh
+    // copy; null when there is none) — narrowed here for the same reason
+    // `ext(el)` is forced to `ext.<extId>` on the way out: one extension never
+    // reads another's. `ctx.editing` (app.js) says whether a saved schedule is
+    // being restored, which is what lets a null `saved` mean "this schedule
+    // sent nothing" rather than "apply your default". A throwing `open` REMOVES
+    // the contribution, the mount/update rule; the caller re-runs the veto.
+    openDispatchFields(ctx, savedExt = null) {
+      for (const c of [...slotList('dispatch.field')]) {
+        const el = [...c.mounts.values()][0];
+        if (!el || typeof c.open !== 'function') continue;
+        const slice = isPlainObject(savedExt) ? savedExt[c.extId] : undefined;
+        try {
+          c.open(el, { ...ctx, saved: slice === undefined ? null : structuredClone(slice) });
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
+          drop('dispatch.field', c);
+        }
+      }
     },
 
     // The payload half: every live contribution's `fields(el, ctx)` return, merged
