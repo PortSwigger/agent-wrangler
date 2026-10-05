@@ -862,6 +862,25 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `syncWorkflow` already toggles the box's own `hidden` and the two must never
   undo each other. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
   the ctx as a second argument.
+  **`open(el, ctx)` (1.20.0) is the per-open call, and it exists because
+  neither `mount` nor `update` can be one.** The anchor hosts are static
+  markup, so `mount` is once per host element and the last open's typed value
+  survives; `update` runs on every sync — twice inside `openModal` alone, then
+  on every model, runtime or mode change. `openModal` calls
+  `openDispatchExtFields` exactly ONCE, after its final sync and every core
+  reset, just before the modal is unhidden, and `slots.openDispatchFields`
+  calls each mounted contribution's `open` with update's ctx plus `editing`
+  (`modalMode === 'schedule-edit'`) and `saved`: that extension's OWN slice of
+  the saved dispatch's `ext` bag, a fresh copy, `null` when there is none. It
+  is narrowed in slots for the forced-namespace reason below, and `editing`
+  exists so a `null` `saved` can mean "this schedule sent nothing" rather than
+  "apply your default". A separate call rather than a flag on update's ctx: the
+  flag would have to be true on exactly one of `openModal`'s two syncs, which is
+  the ordering this replaced extensions relying on. A throwing `open` REMOVES
+  the contribution, and `openDispatchExtFields` re-runs the veto so its hidden
+  rows come back before the modal is shown. `openDispatch`'s own overrides
+  (`cwd`, `intent`, a review's model) land after `open`, and reach a
+  contribution through `update` like any other change.
   That slot itself has no builtin user; its coverage is test fixtures.
 - **`card.action` and `card.cost` are VALUE slots — no host, no mount — because
   the chrome they feed is core markup an extension can never mount into.**

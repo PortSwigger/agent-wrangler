@@ -833,6 +833,65 @@ test('a function hides that returns a non-array is treated exactly like a throw'
   }
 });
 
+// `open(el, ctx)` is the per-open lifecycle call: the anchor hosts are static,
+// so mount keeps the last open's element, and update cannot tell an open from a
+// model change.
+test('register refuses a non-function open', () => {
+  const { slots } = dispatchHarness();
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'a', at: 'top', mount() {}, open: true }), /open must be a function/);
+  slots.register('dispatch.field', 'x', { id: 'b', at: 'top', mount() {}, open() {} });
+});
+
+test('openDispatchFields calls each mounted open once, with the ctx and only its own saved slice', () => {
+  const { document, slots } = dispatchHarness();
+  const seen = [];
+  const updates = [];
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, update: () => updates.push('a'), open: (el, ctx) => seen.push(['a', el.dataset.ext, ctx]) });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'model', mount() {}, open: (el, ctx) => seen.push(['b', el.dataset.ext, ctx]) });
+  slots.register('dispatch.field', 'c', { id: 'three', at: 'advanced', mount() {} }); // no open: skipped
+  slots.register('dispatch.field', 'd', { id: 'four', at: 'top', mount() {}, open: () => seen.push(['d']) }); // never mounted below
+  const top = document.make(); const model = document.make(); const advanced = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }, { host: advanced, at: 'advanced' }]);
+  slots.syncHosts('dispatch.field', [{ host: model, at: 'model' }, { host: advanced, at: 'advanced' }]);
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: model, at: 'model' }, { host: advanced, at: 'advanced' }]);
+  seen.length = 0;
+  const saved = { a: { usd: 50 }, z: { secret: 1 } };
+  const ctx = { mode: 'schedule', draft: { model: 'opus' }, agents: [], editing: true };
+  slots.openDispatchFields(ctx, saved);
+  assert.deepEqual(seen.map((s) => s.slice(0, 2)), [['a', 'a'], ['b', 'b'], ['d']]);
+  assert.deepEqual(seen[0][2], { ...ctx, saved: { usd: 50 } });
+  assert.deepEqual(seen[1][2], { ...ctx, saved: null }, 'an extension with no slice gets null, never a sibling\'s');
+  // A fresh copy: an extension mutating its slice must not reach the schedule.
+  seen[0][2].saved.usd = 1;
+  assert.equal(saved.a.usd, 50);
+  assert.deepEqual(updates, ['a', 'a'], 'open does not re-run update');
+});
+
+test('openDispatchFields with no saved bag hands every open saved: null', () => {
+  const { document, slots } = dispatchHarness();
+  const seen = [];
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', mount() {}, open: (el, ctx) => seen.push(ctx.saved) });
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }]);
+  slots.openDispatchFields({ mode: 'launch' });
+  slots.openDispatchFields({ mode: 'launch' }, 'not a bag');
+  assert.deepEqual(seen, [null, null]);
+});
+
+test('a throwing open removes the contribution, and its veto goes with it', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', { id: 'one', at: 'top', hides: ['effort'], mount() {}, fields: () => ({ effort: 'low' }), open() { throw new Error('boom'); } });
+  slots.register('dispatch.field', 'b', { id: 'two', at: 'top', mount() {}, open() {} });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), ['effort']);
+  slots.openDispatchFields({ mode: 'launch' });
+  assert.match(errors.join('\n'), /one open failed — contribution removed/);
+  assert.deepEqual(slots.contributions('dispatch.field').map((c) => c.id), ['two']);
+  assert.deepEqual(top.children.map((c) => c.dataset.ext), ['b']);
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+  assert.deepEqual(slots.dispatchFields({}), {});
+});
+
 test('card.action and card.cost are value slots: they need items/cost, not mount', () => {
   const { slots } = harness();
   assert.throws(() => slots.register('card.action', 'a', { id: 'x', mount() {} }), /has no items function/);
