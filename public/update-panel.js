@@ -1,6 +1,6 @@
 const shortSha = (sha) => (sha || '').slice(0, 7);
 
-export const UPDATE_HELP = 'Fast-forwards this install to origin/main and restarts the wrangler. Running sessions keep going through the restart; an agent only sees new MCP tools or skills once its session is next restarted or resumed.';
+export const UPDATE_HELP = 'Fast-forwards to origin/main and restarts the wrangler. Running sessions carry on, and pick up new tools and skills when restarted or resumed.';
 
 export function shouldReloadForVersion(seen, next) {
   return Boolean(seen && next && seen !== next);
@@ -43,7 +43,7 @@ function button(label, className, { disabled = false, onClick } = {}) {
 export function updateSummary({ phase, status, error } = {}) {
   if (phase === 'checking') return 'Checking origin/main…';
   if (phase === 'applying') return 'Updating…';
-  if (phase === 'restarting') return 'Restarting. The board reloads when the wrangler is back.';
+  if (phase === 'restarting') return 'Restarting… the board will reload when it\'s back.';
   if (phase === 'error') return error || 'The update failed.';
   if (!status) return '';
   if (status.behind === 0) return `Up to date (${shortSha(status.head)}).`;
@@ -67,7 +67,7 @@ export function updatePanelEl({ phase = 'idle', status = null, error = '', onChe
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting';
   const wrap = el('div', 'update-panel');
   const head = el('div', 'ext-installed-head');
-  head.append(el('div', 'setting-label', 'Wrangler updates'));
+  head.append(el('div', 'setting-label', 'Version'));
   const canUpdate = phase === 'status' && status && status.behind > 0 && !status.blocked && status.canApply;
   if (canUpdate) head.append(button('Update and restart', 'ext-btn ext-btn-primary', { onClick: onApply }));
   head.append(button(phase === 'checking' ? 'Checking…' : 'Check for updates', 'ext-btn', { disabled: busy, onClick: onCheck }));
