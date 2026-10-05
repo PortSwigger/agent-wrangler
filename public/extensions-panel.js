@@ -1,18 +1,15 @@
-import { COPY_ICON, CHECK_ICON, SETTINGS_ICON } from './icons.js';
+import { COPY_ICON, CHECK_ICON, PROMOTE_ICON, RESTART_ICON } from './icons.js';
 
 // The Extensions settings tab and the install/update consent modal. Pure DOM
 // builders with no app state, like toast.js and system-banner.js: settings.js
 // mounts what these return.
 //
-// ONE ROW BUILDER, two headings. Builtin and installed extensions used to be
-// rendered by two different code paths — settings.js's innerHTML toggle rows
-// above, this module's installed rows below — which showed the same extension's
-// name and description twice. They are now grouped under "Core extensions" (builtin) and
-// "External extensions" (external) headings by `entry.external`, but every row is still built
-// by the same `extensionRowEl`. Every row here is a `.setting-row` carrying
-// `data-id="ext:<id>"` and a `.setting-toggle`, which is exactly what settings.js's
-// own delegated click handler already drives, so unifying the list cost no second
-// flip path and no second flip note.
+// LIST + DETAIL. The left pane lists every extension, builtin under "Core" and
+// external under "Installed" (by `entry.external`), each with an enabled dot;
+// the right pane shows the selected one's toggle, source and settings inline.
+// The detail header is a `.setting-row` carrying `data-id="ext:<id>"` and a
+// `.setting-toggle`, which is exactly what settings.js's own delegated click
+// handler already drives, so there is no second flip path and no second flip note.
 //
 // EVERY third-party string here — label, description, origin, capability names,
 // dependency names, quarantine reasons — goes in via textContent, never
@@ -108,14 +105,13 @@ function originNode(origin) {
   return a;
 }
 
-// The restart affordance, which lives ONCE in the External extensions head beside "Check for
-// updates" rather than on each row: a restart is a whole-wrangler action, not a
-// per-extension one, and several pending rows would otherwise each draw a button
-// that does exactly the same thing. The rows still SAY what is waiting on it.
+// The restart affordance, drawn ONCE at the top of the detail pane rather than
+// per extension: a restart is a whole-wrangler action, and several pending
+// extensions would otherwise each draw a button that does exactly the same thing.
 //
-// Absent — leaving the rows' sentences alone — when the server did not say it can
-// restart itself: under `npm start` an exit is a shutdown with nothing to bring
-// the board back, so there is nothing honest to offer.
+// Absent when the server did not say it can restart itself: under `npm start`
+// an exit is a shutdown with nothing to bring the board back, so there is
+// nothing honest to offer.
 function restartButtonEl({ restarting, onRestart } = {}) {
   const btn = el('button', 'ext-btn ext-btn-warn', restarting ? 'Restarting…' : 'Restart now');
   btn.type = 'button';
@@ -124,103 +120,156 @@ function restartButtonEl({ restarting, onRestart } = {}) {
   return btn;
 }
 
-// One row per extension, builtin or installed. What only an installed one has —
-// where it came from, Uninstall, and Update when a check found one — is added on
-// top of the shared name/description/toggle.
-//
-// The row deliberately shows the origin URL and NOTHING else machine-facing: the
-// pinned commit, the author string and the local path told a reader nothing they
-// could act on and crowded out the two fields that identify the thing (its name
-// and where it came from). The commit still appears where it is a decision input,
-// on the consent modal.
-export function extensionRowEl(entry, {
-  status, pendingRemoval, onUninstall, onUpdate, onOpenSettings,
+function iconButtonEl(className, icon, label, onClick) {
+  const btn = el('button', className);
+  btn.type = 'button';
+  btn.innerHTML = icon;
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+const nameOf = (entry) => entry.label || entry.id;
+
+// Only an extension whose last check found a newer commit, and that is still
+// here to update.
+const hasUpdate = (entry, status, removing) => Boolean(entry.external && entry.origin && status?.behind && !removing);
+
+// One entry in the left pane: a status dot (filled = enabled, hollow =
+// disabled) and the name, plus — when the last check found a newer commit — a
+// one-click update button beside it. The two are siblings, not nested, because
+// a button inside a button is not a thing a browser will click reliably.
+export function extensionListItemEl(entry, { selected, status, pendingRemoval, onSelect, onUpdate } = {}) {
+  const on = entry.enabled && !entry.quarantine && !pendingRemoval;
+  const row = el('div', `ext-list-row${selected ? ' selected' : ''}${on ? '' : ' off'}`);
+  row.dataset.extId = entry.id;
+  const pick = el('button', 'ext-list-item');
+  pick.type = 'button';
+  pick.setAttribute('aria-current', selected ? 'true' : 'false');
+  pick.append(el('span', `ext-dot${on ? ' on' : ''}`));
+  pick.append(el('span', 'ext-list-name', nameOf(entry)));
+  pick.addEventListener('click', () => onSelect?.(entry.id));
+  row.append(pick);
+  if (hasUpdate(entry, status, pendingRemoval)) {
+    row.append(iconButtonEl('ext-btn ext-btn-dark ext-btn-square', PROMOTE_ICON, `Update ${nameOf(entry)}`, () => onUpdate?.(entry)));
+  }
+  return row;
+}
+
+function kvRow(list, key, value) {
+  const row = el('div', 'ext-kv-row');
+  row.append(el('div', 'ext-kv-key', key));
+  const v = el('div', 'ext-kv-value');
+  v.append(value);
+  row.append(v);
+  list.append(row);
+}
+
+// Where it came from. The origin is a link only when it is https:// — a
+// third-party href is not worth the navigation surface otherwise, and ssh:// is
+// not navigable at all.
+function sourceEl(entry) {
+  const list = el('div', 'ext-kv');
+  kvRow(list, 'Type', document.createTextNode(entry.external ? 'Installed from git' : 'Core'));
+  if (entry.origin) {
+    const repo = el('span', 'ext-kv-repo');
+    repo.append(el('span', 'ext-mono', entry.origin));
+    if (/^https:\/\//.test(entry.origin)) {
+      const a = el('a', 'ext-kv-open', 'Open ↗');
+      a.href = entry.origin;
+      a.target = '_blank';
+      a.rel = 'noreferrer noopener';
+      repo.append(a);
+    }
+    kvRow(list, 'Repository', repo);
+  }
+  if (entry.sha) kvRow(list, 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
+  return list;
+}
+
+// The right pane for one extension. The header row is a `.setting-row` with
+// `data-id="ext:<id>"` around a `.setting-toggle`, which is exactly what
+// settings.js's delegated click handler already drives (and where it puts its
+// flip note), so the enable switch has no second flip path.
+export function extensionDetailEl(entry, {
+  status, pendingRemoval, settings, onUninstall,
 } = {}) {
-  const row = el('div', `setting-row ext-row${pendingRemoval ? ' ext-row-removed' : ''}`);
-  row.dataset.id = `ext:${entry.id}`;
+  const pane = el('div', 'ext-detail-body');
+  const head = el('div', 'setting-row ext-detail-head');
+  head.dataset.id = `ext:${entry.id}`;
   const copy = el('div', 'setting-copy');
-  copy.append(el('div', 'setting-label', entry.label || entry.id));
+  copy.append(el('div', 'ext-detail-name', nameOf(entry)));
   const blurb = entry.description || entry.help;
   if (blurb) copy.append(el('div', 'setting-help', blurb));
-  const origin = originNode(entry.origin);
-  if (origin) {
-    const meta = el('div', 'ext-row-meta');
-    meta.append(origin);
-    copy.append(meta);
+  head.append(copy);
+  if (!pendingRemoval) {
+    const actions = el('div', 'ext-row-actions');
+    actions.append(el('span', 'ext-detail-enabled', 'Enabled'));
+    const toggle = el('button', `setting-toggle${entry.enabled ? ' on' : ''}`);
+    toggle.type = 'button';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', entry.enabled ? 'true' : 'false');
+    toggle.setAttribute('aria-label', nameOf(entry));
+    toggle.append(el('span', 'setting-knob'));
+    actions.append(toggle);
+    if (entry.external) {
+      const remove = el('button', 'ext-btn ext-btn-danger', 'Uninstall…');
+      remove.type = 'button';
+      remove.addEventListener('click', () => onUninstall?.(entry));
+      actions.append(remove);
+    }
+    head.append(actions);
   }
+  pane.append(head);
+
   if (entry.quarantine && !pendingRemoval) {
     const note = noteEl('ext-row-quarantine', '');
     note.append(el('strong', null, 'Quarantined: '));
     note.append(document.createTextNode(entry.quarantine));
     note.append(el('div', 'ext-row-quarantine-help', 'It is not running. Fix or reinstall it; a builtin needs a restart.'));
-    copy.append(note);
+    pane.append(note);
   }
   // Only ever the transitional frame: an uninstall deregisters the extension, so
-  // the row survives just the gap between the reply and the graph that drops it
-  // from `entries`. The durable affordance is the head's restart button, which
-  // outlives this row.
-  if (pendingRemoval) {
-    copy.append(noteEl('ext-row-note', `Uninstalled. ${UNINSTALL_RESTART_NOTE}`));
-  } else if (status) {
-    copy.append(noteEl('ext-row-note', updateStatusText(status)));
-  }
-  row.append(copy);
+  // this survives just the gap until the graph drops it from `entries`.
+  if (pendingRemoval) pane.append(noteEl('ext-row-note', `Uninstalled. ${UNINSTALL_RESTART_NOTE}`));
+  else if (status) pane.append(noteEl('ext-row-note', updateStatusText(status)));
 
-  const actions = el('div', 'ext-row-actions');
-  if (!pendingRemoval) {
-    // A cog, not the rows themselves. An extension's settings are ITS business
-    // and belong behind its own row: laid out flat under every extension they
-    // turned one tab into a wall of other people's fields, and the list stopped
-    // reading as "the extensions you have". Drawn only for a manifest that
-    // actually declares settings, so the cog's presence IS the disclosure that
-    // there is something to configure.
-    //
-    // Offered for a QUARANTINED extension too. Its defs are still on the row
-    // and the dialog draws them disabled, which says "this is what it would
-    // want" — hiding the cog would make a broken extension look like one with
-    // nothing to configure.
-    if (entry.settings?.length) {
-      const cog = el('button', 'ext-btn ext-btn-icon');
-      cog.type = 'button';
-      cog.innerHTML = SETTINGS_ICON;
-      cog.title = `Settings for ${entry.label || entry.id}`;
-      cog.setAttribute('aria-label', `Settings for ${entry.label || entry.id}`);
-      cog.addEventListener('click', () => onOpenSettings?.(entry));
-      actions.append(cog);
-    }
-    // Update is offered only when a check actually found a newer commit. A
-    // permanently present "Update…" button says nothing about whether there is
-    // one, and pressing it re-clones and re-consents for no reason.
-    if (entry.external && entry.origin && status?.behind) {
-      const update = el('button', 'ext-btn', 'Update…');
-      update.type = 'button';
-      update.addEventListener('click', () => onUpdate?.(entry));
-      actions.append(update);
-    }
-    if (entry.external) {
-      const remove = el('button', 'ext-btn ext-btn-danger', 'Uninstall');
-      remove.type = 'button';
-      remove.addEventListener('click', () => onUninstall?.(entry));
-      actions.append(remove);
-    }
-    // The toggle settings.js's delegated handler drives — same markup as its own
-    // rowHtml, because it is the same control.
-    const toggle = el('button', `setting-toggle${entry.enabled ? ' on' : ''}`);
-    toggle.type = 'button';
-    toggle.setAttribute('role', 'switch');
-    toggle.setAttribute('aria-checked', entry.enabled ? 'true' : 'false');
-    toggle.setAttribute('aria-label', entry.label || entry.id);
-    toggle.append(el('span', 'setting-knob'));
-    actions.append(toggle);
-  }
-  row.append(actions);
-  return row;
+  section(pane, 'Source', sourceEl(entry));
+  if (settings && !pendingRemoval) section(pane, 'Settings', settings);
+  return pane;
 }
 
-// One row per declared setting, for ONE extension — the body of the dialog its
-// row's cog opens (app.js's openExtSettings), not part of the tab itself. The
-// Extensions tab stays a list of extensions; a human who wants to configure one
-// asks for it.
+// The install-by-git-URL form "+ Add extension" opens in the detail pane.
+function addExtensionEl({ busy, onInstall }) {
+  const pane = el('div', 'ext-detail-body');
+  const head = el('div', 'ext-detail-head');
+  const copy = el('div', 'setting-copy');
+  copy.append(el('div', 'ext-detail-name', 'Add extension'));
+  copy.append(el('div', 'setting-help', 'Paste an https:// or ssh:// git URL. The wrangler fetches it and shows you what it asks for before anything is installed.'));
+  head.append(copy);
+  pane.append(head);
+  const form = el('div', 'ext-install-form');
+  const input = el('input', 'ext-install-url');
+  input.type = 'text';
+  input.placeholder = 'https://github.com/…';
+  input.setAttribute('aria-label', 'Extension git URL');
+  const go = el('button', 'ext-btn ext-btn-primary', 'Install…');
+  go.type = 'button';
+  go.disabled = busy;
+  const submit = () => {
+    const url = input.value.trim();
+    if (url) onInstall?.(url);
+  };
+  go.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  form.append(input, go);
+  pane.append(form);
+  return pane;
+}
+
+// One row per declared setting, for ONE extension — the Settings section of
+// its detail pane.
 //
 // These rows carry `data-ext`/`data-key` and deliberately NOT `data-id`:
 // settings.js's delegated click handler picks up any `.setting-toggle` in the
@@ -392,117 +441,139 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
   return wrap;
 }
 
-// What a keydown in one extension's settings dialog (app.js openExtSettings)
-// does: 'done', 'close' or 'none'. Enter means Done, except in a text input,
-// where it is one of the ways a manifest row commits (the dialog then just
-// closes, unless a panel may want the key), and in a textarea, where it is a
-// newline. Escape closes without saving panels.
-export function extSettingsKeyAction(e, { hasPanels }) {
-  const t = e.target;
-  if (e.key === 'Escape') return 'close';
-  if (e.key !== 'Enter' || t?.tagName === 'TEXTAREA') return 'none';
-  if (t?.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)) return hasPanels ? 'none' : 'close';
-  return 'done';
-}
-
-// Run by the dialog's close, whatever closed it (Escape, the backdrop, Done):
-// a textarea commits on blur only, and hiding the dialog does not reliably
-// blur it first, so an edit would otherwise be lost.
-export function commitFocusedField(modal, doc = document) {
+// Run before the detail pane is torn down (a remount, a different selection):
+// a textarea commits on blur only, and removing it does not reliably blur it
+// first, so an edit would otherwise be lost.
+export function commitFocusedField(container, doc = document) {
   const active = doc.activeElement;
-  if (active && modal.contains(active)) active.blur();
+  if (active && container.contains(active)) active.blur();
 }
 
-// The whole Extensions tab: a "Core extensions" group of builtin extensions and an
-// "External extensions" group of external ones (grouped by `entry.external`; one row builder
-// and one flip path for both), the on-demand "Check for updates" button, the
-// install field and the progress line. Built as one element per modal open
-// (settings.js's `extensionsBridge.mount`) rather than patched in place — this
-// panel is behind a modal nobody watches while an install runs, so there is no
-// scroll or drag state a re-render could eat.
+// The settings an extension declares, drawn inline in its detail pane: the
+// manifest rows, or nothing when every def is hidden or there are none.
+function defaultSettingsEl(entry, onSettingChange) {
+  if (!(entry.settings || []).some((d) => !d.hidden)) return null;
+  return extensionSettingRowsEl(entry, { onSettingChange });
+}
+
+// The whole Extensions tab: a list pane (filter, Core and Installed groups,
+// "+ Add extension") beside a detail pane for the selected extension. Built as
+// one element per mount (settings.js's `extensionsBridge.mount`, and app.js on
+// every state change) rather than patched in place. Selection, the filter text
+// and the add form are the caller's state, passed back in, so a remount keeps
+// them.
 //
-// The install "prompt" is an inline field rather than a second modal: it lives
-// inside the settings modal that already has focus, and a URL is one line.
+// `settingsEl(entry)` lets the caller supply the Settings section (app.js adds
+// the extension's own settings.panel contributions); without it the manifest
+// rows are drawn with `onSettingChange`.
 export function extensionsPanelEl({
   entries = [], statuses = {}, checking = false, progress = '', busy = false,
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
-  onInstall, onUninstall, onUpdate, onCheckUpdates, onRestart, onOpenSettings,
+  selectedId = '', filter = '', adding = false,
+  onSelect, onFilter, onAdd, onInstall, onUninstall, onUpdate, onUpdateAll,
+  onCheckUpdates, onRestart, onSettingChange, settingsEl,
 } = {}) {
-  const wrap = el('div');
+  const wrap = el('div', 'ext-split');
   const removing = new Set(pendingRemoval);
-  const row = (entry) => extensionRowEl(entry, {
-    status: checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id],
-    pendingRemoval: removing.has(entry.id),
-    onUninstall,
-    onUpdate,
-    onOpenSettings,
-  });
+  const statusOf = (entry) => (checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id]);
   const core = entries.filter((e) => !e.external);
   const installed = entries.filter((e) => e.external);
+  const selected = adding ? null : (entries.find((e) => e.id === selectedId) || entries[0] || null);
+
+  // ── List pane ──
+  const list = el('div', 'ext-list');
+  const search = el('input', 'ext-filter');
+  search.type = 'text';
+  search.placeholder = 'Filter';
+  search.setAttribute('aria-label', 'Filter extensions');
+  search.value = filter;
+  list.append(search);
+  const scroll = el('div', 'ext-list-scroll');
+  const rows = [];
+  const item = (entry) => {
+    const row = extensionListItemEl(entry, {
+      selected: selected?.id === entry.id,
+      status: statusOf(entry),
+      pendingRemoval: removing.has(entry.id),
+      onSelect,
+      onUpdate,
+    });
+    rows.push({ row, name: nameOf(entry).toLowerCase() });
+    return row;
+  };
 
   if (core.length > 0) {
-    const coreGroup = el('div', 'ext-group');
-    const coreHead = el('div', 'ext-group-head');
-    coreHead.append(el('div', 'setting-label', 'Core extensions'));
-    coreGroup.append(coreHead);
-    for (const entry of core) coreGroup.append(row(entry));
-    wrap.append(coreGroup);
+    const head = el('div', 'ext-group-head');
+    head.append(el('div', 'ext-group-title', 'Core'));
+    scroll.append(head);
+    for (const entry of core) scroll.append(item(entry));
   }
 
-  const group = el('div', 'ext-group');
-  const head = el('div', 'ext-group-head ext-installed-head');
-  head.append(el('div', 'setting-label', 'External extensions'));
-  // Beside the check button, and only while something is actually waiting on it.
-  if (canRestart && (pendingRemoval.length || pendingInstall)) {
-    head.append(restartButtonEl({ restarting, onRestart }));
+  const head = el('div', 'ext-group-head');
+  head.append(el('div', 'ext-group-title', 'Installed'));
+  const updatable = installed.filter((e) => hasUpdate(e, statuses[e.id], removing.has(e.id)));
+  if (updatable.length) {
+    const all = el('button', 'ext-btn ext-btn-dark ext-btn-sm', 'Update all');
+    all.type = 'button';
+    all.disabled = busy;
+    all.addEventListener('click', () => onUpdateAll?.(updatable));
+    head.append(all);
   }
-  if (entries.some((e) => e.external && e.origin)) {
-    const check = el('button', 'ext-btn', checking ? 'Checking…' : 'Check for updates');
+  if (installed.some((e) => e.origin)) {
+    // Feedback while the ls-remote round trip runs: without it the button looks
+    // inert until a result lands some seconds later.
+    const check = el('button', 'ext-btn ext-btn-sm');
     check.type = 'button';
-    // Feedback while the ls-remote round trip runs: without it the button looked
-    // inert until an "Up to date." appeared some seconds later, which reads as
-    // nothing having happened.
+    check.innerHTML = RESTART_ICON;
+    check.append(el('span', null, checking ? 'Checking…' : 'Check all'));
+    check.setAttribute('aria-label', 'Check all for updates');
     check.disabled = checking;
     check.addEventListener('click', () => onCheckUpdates?.());
     head.append(check);
   }
-  group.append(head);
-  if (installed.length === 0) group.append(el('div', 'setting-help ext-group-empty', 'No extensions installed yet.'));
-  for (const entry of installed) group.append(row(entry));
+  scroll.append(head);
+  if (installed.length === 0) scroll.append(el('div', 'setting-help ext-group-empty', 'No extensions installed yet.'));
+  for (const entry of installed) scroll.append(item(entry));
+  list.append(scroll);
 
-  const form = el('div', 'setting-row ext-row');
-  const copy = el('div', 'setting-copy');
-  copy.append(el('div', 'setting-label', 'Install an extension'));
-  copy.append(el('div', 'setting-help', 'Paste an https:// or ssh:// git URL. The wrangler fetches it and shows you what it asks for before anything is installed.'));
-  const input = el('input', 'ext-install-url');
-  input.type = 'text';
-  input.placeholder = 'https://github.com/…';
-  input.setAttribute('aria-label', 'Extension git URL');
-  copy.append(input);
-  // Only an update of an already-registered id ever sets `pendingInstall`, and
-  // its row shows the version still running rather than the one on disk — so the
-  // "restart to finish" line rides the install field instead, beside the head's
-  // button, and outlives the progress line once that has faded.
-  if (pendingInstall) {
-    copy.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
-  } else if (progress) {
-    copy.append(noteEl('ext-install-progress', progress));
-  }
-  form.append(copy);
-  const go = el('button', 'ext-btn ext-btn-primary', 'Install…');
-  go.type = 'button';
-  go.disabled = busy;
-  const submit = () => {
-    const url = input.value.trim();
-    if (url) onInstall?.(url);
+  // Filtered in place, never by a remount, so typing keeps focus.
+  const applyFilter = (text) => {
+    const q = text.trim().toLowerCase();
+    for (const { row, name } of rows) row.hidden = Boolean(q) && !name.includes(q);
   };
-  go.addEventListener('click', submit);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-  const actions = el('div', 'ext-row-actions');
-  actions.append(go);
-  form.append(actions);
-  group.append(form);
-  wrap.append(group);
+  applyFilter(filter);
+  search.addEventListener('input', () => { applyFilter(search.value); onFilter?.(search.value); });
+
+  const add = el('button', `ext-btn ext-add-btn${adding ? ' selected' : ''}`, '+ Add extension');
+  add.type = 'button';
+  add.addEventListener('click', () => onAdd?.());
+  list.append(add);
+  wrap.append(list);
+
+  // ── Detail pane ──
+  const detail = el('div', 'ext-detail');
+  // Whole-wrangler notices, above whichever extension is shown. An update of an
+  // already-registered id sets `pendingInstall`, and its entry shows the version
+  // still running rather than the one on disk, so its "restart to finish" line
+  // lives here rather than on the entry.
+  const notices = el('div', 'ext-notices');
+  if (pendingInstall) notices.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
+  else if (progress) notices.append(noteEl('ext-install-progress', progress));
+  if (canRestart && (pendingRemoval.length || pendingInstall)) notices.append(restartButtonEl({ restarting, onRestart }));
+  if (notices.childNodes.length) detail.append(notices);
+
+  if (adding || !selected) {
+    detail.append(addExtensionEl({ busy, onInstall }));
+  } else {
+    const settings = settingsEl ? settingsEl(selected) : defaultSettingsEl(selected, onSettingChange);
+    detail.append(extensionDetailEl(selected, {
+      status: statusOf(selected),
+      pendingRemoval: removing.has(selected.id),
+      settings,
+      onUninstall,
+    }));
+  }
+  wrap.append(detail);
   return wrap;
 }
 

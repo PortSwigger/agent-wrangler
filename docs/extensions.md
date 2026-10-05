@@ -8,19 +8,23 @@ only trusted code and dependencies.
 
 ## Install and manage an extension
 
-Open **Settings → Extensions**, paste a git URL, and review the identity, dependencies, and
+Open **Settings → Extensions**, choose **+ Add extension**, paste a git URL, and review the identity, dependencies, and
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
-The tab lists **Core extensions** (they ship with the wrangler) and **External extensions** (from git
-URLs); check for updates, uninstall, and the install field live under External extensions.
+The tab is a list beside a detail pane. The list groups **Core** extensions (they ship with the
+wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
+**Filter** narrows it by name. **Check all** in the Installed heading checks every installed extension
+for a newer commit; when one is found, **Update all** appears beside it and the extension gets its own
+update button in the list. Select an extension to see its **Enabled** switch, **Uninstall…** (installed
+only), its **Source** (type, repository and commit) and its **Settings**.
 
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
 ## Core extensions
 
-Some extensions ship inside Agent Wrangler itself. They are listed under **Core extensions** in the same
+Some extensions ship inside Agent Wrangler itself. They are listed under **Core** in the same
 tab, are on by default, and can be turned off or configured like any other, but they have no origin to
 update from and cannot be uninstalled.
 
@@ -262,7 +266,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   since a real tree churns by hundreds of entries. Removals can only be filtered to
   "the package name left the tree entirely" — the record stores a flat list with no
   direct/transitive mark, and adding one would only help installs made from then on.
-  "Check for updates" is one `git ls-remote` per installed extension, **on demand
+  "Check all" is one `git ls-remote` per installed extension, **on demand
   only** — no sweep, no background traffic to whatever host an extension came from,
   nothing logged — and a record-less extension is skipped.
 - **One install at a time per instance, REFUSED not queued, behind an in-memory
@@ -307,10 +311,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the reply says `active: false`, because an install must never leave the process in
   a state a restart would not reproduce.
 - **"Restart the wrangler to finish" now comes with the button that does it — ONE
-  button, in the panel head beside "Check for updates" (a restart is a
-  whole-wrangler action, so several pending rows must not each draw their own), in
-  the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the rows
-  and the install form still say what is waiting on it. The button exists ONLY
+  button, above the detail pane (a restart is a whole-wrangler action, so several
+  pending extensions must not each draw their own), in
+  the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the detail
+  pane and the notice above it still say what is waiting on it. The button exists ONLY
   under a supervisor.** `AW_SUPERVISED=1` is exported by
   `scripts/wrangler-start.sh` — which is what both the launchd plist and the systemd
   unit exec, and both bring the process straight back — so the flag means "something
@@ -384,11 +388,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   deliberate ways**: its cap is `MAX_TEXTAREA_LENGTH` (20000, via `maxLengthFor`)
   because a written-out process does not fit a URL-sized field; it takes no
   `pattern`, since a full-string regex over paragraphs is not a constraint anyone
-  means; and it commits on `change` (blur) ONLY — Enter is a newline, so neither
-  the row's Enter-commit nor view's Enter-means-Done (`openExtSettings`) may
-  fire from inside one. Because blur is its only commit, the view's `onLeave`
-  blurs whatever field has focus inside it first (`commitFocusedField`) — Escape,
-  the back link and Done all remove the view before the browser would move focus
+  means; and it commits on `change` (blur) ONLY — Enter is a newline, so the
+  row's Enter-commit never fires from inside one. Because blur is its only commit,
+  the panel blurs whatever field has focus before it remounts (`commitFocusedField`)
   on its own. With no declared `maxLength` the field still carries the server's
   cap (`MAX_TEXTAREA_LENGTH`, mirrored in `extensions-panel.js` and asserted
   equal by its test). The value is stored verbatim, untrimmed.
@@ -416,16 +418,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `value` is read, a misfit is an error envelope rather than a coercion — refuses
   a quarantined extension whatever the panel did, and ends with `ctx.rebuild()`
   and deliberately NOT `ctx.ext.changed()`, since nothing about the registry
-  moved. On the client the rows are **NOT in the Extensions tab**: the tab is a
-  list of the extensions you have, and every manifest's fields laid out flat
-  under it buried that, so a row draws a **cog** (only when it declares
-  settings, making the cog's presence the disclosure that there is anything to
-  configure) and `app.js`'s `openExtSettings` puts that one extension's rows in
-  a drill-in view inside the Settings card (`settings.js openSettingsDetail`: tab
-  panels hidden, a back link, no second dialog and so no second backdrop), built fresh per open from `latestExtensions` — never from
-  the entry the row was drawn with, which may be several graphs old by the time
-  the cog is clicked. A QUARANTINED extension keeps its cog and gets its rows
-  DISABLED, which says "this is what it would want" where a hidden cog would
+  moved. On the client the rows are drawn inline in the selected extension's detail
+  pane under **Settings** (omitted when it declares none), with its own
+  `settings.panel` contributions above them and a **Save** button for those. The
+  remount signature excludes `settingValues`, so a value landing never rebuilds
+  a field someone is typing in. A QUARANTINED extension keeps its Settings section with its rows
+  DISABLED, which says "this is what it would want" where a hidden section would
   make a broken extension look like one with nothing to configure; merely being
   switched off disables nothing (a value persists, and setting a URL before
   switching the thing on is the natural order). The rows carry
@@ -929,21 +927,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   array of distinct strings (each ≤ `MAX_TEXT_LENGTH`, at most `maxItems`, itself
   ≤ 500 and legal on a list only); `ext-setting-set` copies it and rejects
   anything else — never coerces. `hidden: true` (boolean, any type) keeps a def
-  off the dialog's rows: it is a value the extension manages itself. A visible
+  off the Settings rows: it is a value the extension manages itself. A visible
   `list` draws a read-only item count; an editable list UI is deferred.
-- **`settings.panel` (1.14.0) is the extension's own block in its settings
-  view**, above the manifest rows (`app.js openExtSettings`). Single-host, via
+- **`settings.panel` (1.14.0) is the extension's own block in its Settings
+  section**, above the manifest rows (`app.js extSettingsEl`). Single-host, via
   `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
   mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
-  **Save writes panel contributions only**: when an extension has a panel the
-  footer's Done becomes **Save** with a **Cancel** beside it. `slots.savePanels`
-  awaits each `save` in turn and a rejection keeps the view open (the extension
-  shows its own error); Cancel, the back link, Escape and switching tab leave
-  without saving; `unmountHost` runs every `unmount` on leaving. Manifest rows
-  commit on change and flash "Saved" beside the footer buttons
-  (`flashSettingsSaved`). An extension should use manifest rows or a panel, not
-  both: the view would carry two save models at once. Escape leaves the view
-  for the Extensions list rather than closing Settings.
+  **Save writes panel contributions only**: when an extension has a panel a
+  **Save** button follows it. `slots.savePanels` awaits each `save` in turn (a
+  rejection leaves the panel as it is; the extension shows its own error), and
+  `unmountHost` runs every `unmount` before the pane is rebuilt. Manifest rows
+  commit on change and flash "Saved" (`flashSettingsSaved`). An extension should
+  use manifest rows or a panel, not both: the section would carry two save models
+  at once.
 - **`registrar.api` (1.14.0).** The registrar a module's `register(registrar)`
   receives carries `api`, the SAME object (by identity) every contribution's
   `mount(el, api)` gets, so a module can call `api.cards.hideChips(...)` or

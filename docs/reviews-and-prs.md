@@ -62,8 +62,8 @@ and can run the skill again for a re-review.
 
 ### Change the review process
 
-Adversarial review is a core extension. Open **Settings → Extensions**, find **Adversarial PR
-review** under **Core extensions**, and choose its settings cog. The **Review process** field shows the built-in process when
+Adversarial review is a core extension. Open **Settings → Extensions**, select **Adversarial PR
+review** under **Core**; its settings are in the detail pane. The **Review process** field shows the built-in process when
 empty. Anything you write there replaces it for every later review. The read-only rules and the shape
 of the mail back stay fixed, so the session that asked can always read the result. Clear the field to
 go back to the built-in process. Turn the extension off to remove the skill from new sessions.
