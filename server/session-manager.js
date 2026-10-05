@@ -201,6 +201,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     liveSessionId: undefined,
     runtime: parentEntry?.runtime,
     runtimeExt: parentEntry?.runtimeExt,
+    ...(parentEntry?.addDirs ? { addDirs: [...parentEntry.addDirs] } : {}),
     // Same argv-is-current-code reasoning as resumeEntry — a fork's launch also
     // runs buildInnerCommand/allowedToolsArg fresh, so it always carries
     // read_mail/list_mail. NOT inherited from parentEntry: a fork gets a fresh
@@ -1181,7 +1182,7 @@ export class SessionManager {
     const launchContext = await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork',
     });
-    const addDirs = await withCodexGitDirAddDir(agent, dir, []);
+    const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
     // the only thing that exists to gate on at this point.
@@ -1638,6 +1639,20 @@ export class SessionManager {
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
+    if (!Array.isArray(addDirs)) throw new Error('Additional folders must be an array of paths');
+    addDirs = [...new Set(addDirs.map((raw) => {
+      if (typeof raw !== 'string' || !raw.trim()) throw new Error('Additional folder paths must be non-empty strings');
+      const dir = expandTilde(raw.trim());
+      if (!path.isAbsolute(dir)) throw new Error(`Additional folder must be an absolute path: ${raw}`);
+      const normalized = path.normalize(dir).replace(/(?!^)\/+$/, '');
+      let isDirectory = false;
+      try { isDirectory = fs.statSync(normalized).isDirectory(); } catch { /* report below */ }
+      if (!isDirectory) throw new Error(`Additional folder does not exist or is not a directory: ${normalized}`);
+      return normalized;
+    }))];
+    if (runtime === 'devcontainer' && addDirs.length) {
+      throw new Error('Additional folders currently require a local launch; devcontainers do not mount these host folders.');
+    }
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean
     // board error (thrown → the dispatch handler relays it as a toast), never a stray

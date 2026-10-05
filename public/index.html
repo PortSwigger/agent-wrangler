@@ -311,11 +311,16 @@
            extension's control lays out as a .modal-card child. -->
       <div class="ext-dispatch-slot" data-at="top"></div>
       <label>Folder (cwd)</label>
-      <div class="combo">
-        <input id="m-cwd" placeholder="/Users/you/vcs/project" autocomplete="off" />
-        <div id="folder-suggest" class="suggest hidden"></div>
+      <div class="folder-picker-row">
+        <div class="combo">
+          <input id="m-cwd" placeholder="/Users/you/vcs/project" autocomplete="off" />
+          <div id="folder-suggest" class="suggest hidden"></div>
+        </div>
+        <button id="m-add-dir" type="button" class="folder-action" aria-label="Add folder" title="Add another folder"></button>
       </div>
       <div id="m-cwd-msg" class="worktree-msg hidden"></div>
+      <div id="m-add-dirs"></div>
+      <div id="m-add-dirs-note" class="worktree-msg hidden">Additional host folders aren’t available in devcontainers.</div>
       <!-- Each hideable core field is wrapped in an id'd row so a
            `dispatch.field` contribution's `hides` can toggle it (app.js
            DISPATCH_FIELD_ROWS). A plain block wrapper — the fields inside lay

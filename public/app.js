@@ -3,6 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
+import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
   MAX_ONSCREEN_ROWS,
@@ -4626,6 +4627,10 @@ function hideRecentFolder(path) {
   try { localStorage.setItem(HIDDEN_RECENTS_KEY, JSON.stringify([...set])); } catch {}
   recentFolders = recentFolders.filter((p) => p !== path);
 }
+const additionalFolders = createAdditionalFolders({
+  list: document.getElementById('m-add-dirs'), add: document.getElementById('m-add-dir'),
+  send, recentFolders: () => recentFolders,
+});
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
 // control message. `fsProbed` is the exact input value the reply belongs to —
@@ -4654,6 +4659,7 @@ function requestFolderBrowse() {
   browseTimer = setTimeout(() => send({ type: 'browse-folders', path: raw }), 90);
 }
 function onFolderBrowse(msg) {
+  if (additionalFolders.onBrowse(msg)) return;
   if (msg.path !== document.getElementById('m-cwd').value) return; // stale keystroke
   fsProbed = msg.path;
   fsFolders = msg.entries || [];
@@ -4936,6 +4942,9 @@ function syncRuntimeToggle() {
   }
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
+  const foldersEnabled = rt.value !== 'devcontainer';
+  additionalFolders.setEnabled(foldersEnabled);
+  document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
 }
 
 // Extension-contributed runtimes (manifest `runtimes`, carried per extension
@@ -5122,6 +5131,7 @@ function readCoreDispatchFields() {
   const runtime = agent === 'claude' ? document.getElementById('m-runtime').value : 'local';
   return {
     cwd: cwdField() || proposedCwd,
+    addDirs: additionalFolders.values(),
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -5265,6 +5275,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
     ? (d.cwd || '')
     : ((selected && cwdForTask(selected)) || defaultSessionCwd);
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
+  additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
@@ -5316,6 +5327,7 @@ function openDispatch(taskId = null, opts = {}) {
   openModal({ mode: 'launch', taskId });
   // The source session's exact folder must win over openModal's task-dominant cwd.
   if (opts.cwd) document.getElementById('m-cwd').value = opts.cwd;
+  if (opts.addDirs) additionalFolders.reset(opts.addDirs);
   // Implicit nesting context (e.g. a review's source session) — not a user toggle,
   // so it isn't reflected in any dialog control; just carried through to dispatch.
   if (opts.parentSession) parentSessionId = opts.parentSession;
@@ -5387,6 +5399,8 @@ function submitDispatch() {
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
   if (cwdBlocked()) { renderCwdState(); return; }
+  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return; }
+  if (fields.runtime === 'devcontainer' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return; // can't create a worktree here — let the user untick or fix the folder
@@ -5861,6 +5875,7 @@ document.getElementById('m-model').addEventListener('change', () => {
 });
 // And the runtime choice, for a contribution that reacts to it (its update
 // sees ctx.draft.runtime, a function `hides` the same draft).
+document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
   const button = e.target.closest('.auto-compact-preset');

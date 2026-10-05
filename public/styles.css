@@ -3148,3 +3148,11 @@ a.ext-row-origin { color: var(--blue-fg); }
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
 }
 .card-tag.older-code { color: var(--warn-fg); background: color-mix(in srgb, var(--warn) 18%, var(--surface-2)); }
+
+.folder-picker-row, .additional-folder-row { display: flex; gap: 8px; align-items: flex-start; }
+.additional-folder-row { margin-top: 8px; }
+.folder-picker-row .combo, .additional-folder-row .combo { flex: 1; min-width: 0; }
+.folder-picker-row input, .additional-folder-row input { height: 34px; }
+.folder-action { width: 34px; height: 34px; padding: 0; flex: 0 0 34px; display: inline-flex; align-items: center; justify-content: center; }
+.folder-action .icon { width: 16px; height: 16px; display: block; }
+.folder-action:disabled, .additional-folder-row input:disabled { opacity: 0.45; cursor: not-allowed; }

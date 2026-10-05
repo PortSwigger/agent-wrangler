@@ -1,3 +1,4 @@
+import { createAdditionalFolders } from './additional-folders.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -169,17 +170,20 @@ function stubSelect(values) {
 function runtimeHarness(agent = 'claude') {
   const rt = stubSelect(['local', 'devcontainer']);
   const model = { selectedIndex: 0, options: [{ dataset: { agent } }] };
+  const add = { addEventListener() {} };
+  const additionalFolders = createAdditionalFolders({ list: {}, add, send() {} });
+  const note = { hidden: true, classList: { toggle: (_name, hidden) => { note.hidden = hidden; } } };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model })[id],
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note })[id],
     createElement: () => stubOption(),
   };
   const app = loadApp(
     ['function syncRuntimeToggle() {', 'function syncExtRuntimeOptions() {'],
-    ['syncExtRuntimeOptions', 'setExtensions'],
+    ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
     'let latestExtensions = []; const setExtensions = (v) => { latestExtensions = v; };',
-    { document },
+    { document, additionalFolders },
   );
-  return { rt, ...app };
+  return { rt, add, note, ...app };
 }
 const ext = (over = {}) => ({ id: 'sbx', enabled: true, quarantine: null, runtimes: [{ id: 'sandbox', label: 'Sandbox <b>' }], ...over });
 
@@ -341,4 +345,21 @@ test('a throwing open() lifts its veto before the modal is shown', async () => {
   assert.equal(els['m-runtime-row'].classList.contains('hidden'), true);
   openDispatchExtFields(undefined);
   assert.equal(els['m-runtime-row'].classList.contains('hidden'), false);
+});
+
+test('runtime selection disables folder assignment for devcontainers and restores it for local agents', () => {
+  const { rt, add, note, syncRuntimeToggle } = runtimeHarness();
+  rt.value = 'devcontainer';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, true);
+  assert.equal(note.hidden, false);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, false);
+  assert.equal(note.hidden, true);
+  const codex = runtimeHarness('codex');
+  codex.rt.value = 'devcontainer';
+  codex.syncRuntimeToggle();
+  assert.equal(codex.rt.value, 'local');
+  assert.equal(codex.add.disabled, false);
 });
