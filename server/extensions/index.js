@@ -83,6 +83,7 @@ export const CAPABILITIES = new Set([
   'usage:read',
   'sessions:bill',
   'sessions:interrupt',
+  'links:write',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
@@ -98,12 +99,16 @@ export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
 // control in the `dispatch.field` slot (public/slots.js). Deliberately SMALL —
 // each name is a field the core draws AND a commitment that app.js has a row id
 // for it (DISPATCH_FIELD_ROWS) and index.html a wrapper. Widening it is a MINOR
-// and three more edits; keep it at four unless a real extension needs more.
+// and three more edits; `worktree` (1.19.0) is the fifth, for a runtime that
+// cannot honour a worktree at all — keep it at five unless a real extension
+// needs more.
 //
 // A STATIC array on the manifest, not a function, for the same reason
 // `requires` is: the board has to know what an extension may suppress before
-// any of its code runs, and a function could answer differently per call.
-export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime', 'model']);
+// any of its code runs, and a function could answer differently per call. (A
+// contribution's own `hides` MAY be a function of the draft — that only picks
+// WHEN to hide, inside the ceiling this array declares.)
+export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime', 'model', 'worktree']);
 
 // `onBeforeDispatch` is the one hook that runs while the session does not yet
 // exist anywhere: it fires after dispatch has settled the card id, cwd and
@@ -323,6 +328,33 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
     if (!(typeof s.everyMs === 'number' && Number.isFinite(s.everyMs) && s.everyMs > 0)) fail(ext, `sweep ${s.id} everyMs must be a positive finite number`);
     if (typeof s.run !== 'function') fail(ext, `sweep ${s.id} has no run function`);
   }
+  // Runtimes: where an agent process runs (server/runtimes/index.js holds the
+  // contract, the same one the built-ins follow). Shape only here — whether an
+  // id is free is stageExtension's call, against the built-ins and every other
+  // extension. `buildLaunch` replaces the agent's own command, and 1.19.0
+  // defines it at dispatch only, so a runtime using it must say it can't be
+  // resumed: one that claimed otherwise would hand resume a card with no
+  // conversation behind it.
+  if (ext.runtimes != null) {
+    if (!Array.isArray(ext.runtimes)) fail(ext, 'runtimes must be an array of runtime definitions');
+    const ids = new Set();
+    for (const [i, rt] of ext.runtimes.entries()) {
+      if (!rt || typeof rt !== 'object') fail(ext, `runtimes[${i}] is not an object`);
+      if (typeof rt.id !== 'string' || !ID_RE.test(rt.id)) fail(ext, `runtimes[${i}].id must match ${ID_RE} (got ${JSON.stringify(rt.id)})`);
+      if (ids.has(rt.id)) fail(ext, `duplicate runtime id "${rt.id}"`);
+      ids.add(rt.id);
+      if (typeof rt.label !== 'string' || !rt.label) fail(ext, `runtime ${rt.id} label must be a non-empty string`);
+      const launchers = ['wrapLaunch', 'buildLaunch'].filter((k) => rt[k] != null);
+      if (launchers.length !== 1) fail(ext, `runtime ${rt.id} must define exactly one of wrapLaunch or buildLaunch`);
+      for (const k of ['wrapLaunch', 'buildLaunch', 'preflight', 'readLive', 'analyze', 'deliver']) {
+        if (rt[k] != null && typeof rt[k] !== 'function') fail(ext, `runtime ${rt.id} ${k} must be a function`);
+      }
+      for (const k of ['resumable', 'skipsHostResumeGuard']) {
+        if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
+      }
+      if (rt.buildLaunch && rt.resumable !== false) fail(ext, `runtime ${rt.id} uses buildLaunch, so it must declare resumable: false`);
+    }
+  }
   // `client` and `styles` are the two asset paths, checked identically: both are
   // served by the /ext/<id>/ static route, so both must resolve under the
   // manifest's own public/ and nowhere else.
@@ -364,7 +396,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField,
-    quarantine, external, description, author, homepage, provenance, requires, settings,
+    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -376,6 +408,12 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     author: author || '',
     homepage: homepage || '',
     requires: [...(requires || [])],
+    // The runtimes it contributes, for the dispatch dialog's Runtime select.
+    // Filled only while the extension is staged (empty for a disabled or
+    // quarantined row, like `handlerTypes`), and the client ALSO filters to an
+    // enabled, non-quarantined entry, so a toggle-off drops the option on the
+    // next tick even before its unregister has settled.
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel }) => ({ id: rid, label: rlabel })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -425,11 +463,16 @@ export function assertGraphKeys(id, contribution) {
 // Collision order is load-bearing: `builtin` comes first, externals are
 // appended, and every name check is first-come — so a builtin wins every tie by
 // construction and the EXTERNAL entry is the one quarantined.
-export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreToolNames = [], coreHandlerTypes = [] } = {}) {
+//
+// `coreRuntimeIds` is the same idea for runtimes (server/runtimes/index.js's
+// BUILTIN_RUNTIME_IDS), passed in because importing the runtime registry from
+// this leaf would close a cycle through runtimes/devcontainer → agents/claude.
+export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreToolNames = [], coreHandlerTypes = [], coreRuntimeIds = [] } = {}) {
   const reg = {
     ids: new Set(),
     toolNames: new Set(coreToolNames),
     handlerTypes: new Set(coreHandlerTypes),
+    runtimeIds: new Set(coreRuntimeIds),
     storeNames: new Set(),
     // SHIPPED skill names only. The in-repo ones are not in here and cannot be
     // claimed: several manifests gating `checklist` is ordinary, two
@@ -453,6 +496,10 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     codexPolicies: [],
     toolFilters: [],
     sweeps: [],
+    // The raw runtime definitions, tagged with their owner. server/index.js
+    // binds each to its extension's façade and registers the bound copy with
+    // the runtime registry on activate — this leaf only stages and names them.
+    runtimes: [],
     clientManifest: [],
     dirs: {},
     // The name registry, carried ON the object rather than kept local to this
@@ -510,6 +557,7 @@ function quarantinedEntry(ext, quarantine) {
     skills: [],
     handlerTypes: [],
     hideDispatchField: [],
+    runtimes: [],
     external: Boolean(ext?.external),
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
@@ -574,6 +622,10 @@ function stageExtension(ext, { cfg, out, reg }) {
     // it after the fact. Claims no name in `reg` and stages nothing, so
     // unregisterExtension has nothing to take back.
     hideDispatchField: [...(ext.hideDispatchField || [])],
+    // `{ id, label }` per contributed runtime, filled below once they have all
+    // claimed their ids — so a disabled row carries none, and unregister
+    // empties it again.
+    runtimes: [],
     external: Boolean(ext.external),
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
@@ -613,6 +665,15 @@ function stageExtension(ext, { cfg, out, reg }) {
     if (reg.storeNames.has(name)) fail(ext, `store name "${name}" is already registered`);
     stores.push([name, factory]);
   }
+  // One namespace with the built-ins (seeded from coreRuntimeIds) and every
+  // other extension, first-come like a tool name — so `local` is never
+  // claimable, and of two externals naming one runtime the later is the one
+  // quarantined. validateManifest has already refused a within-manifest dupe.
+  const runtimes = [];
+  for (const rt of ext.runtimes || []) {
+    if (reg.runtimeIds.has(rt.id)) fail(ext, `runtime id "${rt.id}" is already registered`);
+    runtimes.push({ ...rt, extId: ext.id });
+  }
 
   reg.ids.add(ext.id);
   place(listEntry);
@@ -620,6 +681,11 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const t of tools) { reg.toolNames.add(t.name); out.tools.push(t); out.allowedToolNames.push(t.name); }
   for (const h of handlers) { reg.handlerTypes.add(h.type); out.handlers.push(h); listEntry.handlerTypes.push(h.type); }
   for (const [name, factory] of stores) { reg.storeNames.add(name); out.stores[name] = factory; }
+  for (const rt of runtimes) {
+    reg.runtimeIds.add(rt.id);
+    out.runtimes.push(rt);
+    listEntry.runtimes.push({ id: rt.id, label: rt.label });
+  }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));
   // A RE-registration has to undo the suppression its own unregister added, or
@@ -708,13 +774,18 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
     // its handler types and store names, but never its tool names.
     for (const t of loaded.tools) if (t.extId === id) reg.toolNames.delete(t.name);
     for (const h of loaded.handlers) if (h.extId === id) reg.handlerTypes.delete(h.type);
+    for (const rt of loaded.runtimes || []) if (rt.extId === id) reg.runtimeIds?.delete(rt.id);
     for (const name of entry?.storeNames || []) reg.storeNames.delete(name);
     // In-repo names were never claimed, so dropping them here is a no-op — the
     // row carries both kinds and telling them apart again would only be a
     // second place the rule lives.
     for (const s of entry?.skills || []) reg.skillNames.delete(s);
   }
-  if (entry) entry.enabled = false;
+  if (entry) {
+    entry.enabled = false;
+    entry.runtimes = [];
+  }
+  loaded.runtimes = (loaded.runtimes || []).filter((rt) => rt.extId !== id);
   loaded.tools = loaded.tools.filter((t) => t.extId !== id);
   loaded.allowedToolNames = loaded.tools.map((t) => t.name);
   loaded.handlers = loaded.handlers.filter((h) => h.extId !== id);

@@ -435,7 +435,7 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 #m-model-row:not(.hidden) ~ #m-effort-row:not(.hidden) { float: right; width: calc(50% - 6px); margin-bottom: 12px; }
 /* Clearance replaces the box's own margin-top, so the 12px gap below the floated
    pair is their margin-bottom, not .worktree-box's. */
-#m-model-row ~ .worktree-box { clear: both; }
+#m-model-row ~ #m-worktree-box-row { clear: both; }
 
 /* A `view` contribution's host, created per view by app.js renderExtViews. The
    ONE exception to the layout-transparent rule above: a top-level view is a

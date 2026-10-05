@@ -194,6 +194,62 @@ test('sessions:interrupt passes the card id straight to the composed interruptSe
   assert.deepEqual(seen, ['c1', 'gone']);
 });
 
+// -- links:write -----------------------------------------------------------
+// A links wiring over one real card's link list, with the normalise hooks of
+// two extensions: `x` claims `cloud`, `other` claims `jira`.
+function linksWiring({ links = [], rebuilds = [] } = {}) {
+  const stored = { c1: links };
+  const hooks = [
+    { extId: 'x', fn: ({ link, host }) => {
+      if (link.type !== 'cloud') return undefined;
+      if (!link.key) throw new Error('cloud links need a key');
+      return { type: 'cloud', key: link.key, url: link.url, by: host.id };
+    } },
+    { extId: 'other', fn: ({ link }) => (link.type === 'jira' ? { type: 'jira', key: link.key } : undefined) },
+  ];
+  let host;
+  const w = wiring({
+    rebuild: () => { rebuilds.push(1); },
+    linkNormalisersFor: (id) => hooks.filter((h) => h.extId === id),
+    hostApiFor: () => host,
+  });
+  w.core.sessionManager.getLinks = (sid) => [...(stored[sid] || [])];
+  w.core.sessionManager.setLinks = (sid, next) => { stored[sid] = [...next]; return true; };
+  host = buildHostApi({ id: 'x', requires: ['links:write'], ...w });
+  return { host, stored, rebuilds };
+}
+
+test('links:write get returns a copy of the card\'s links, [] for an unknown card', () => {
+  const { host, stored } = linksWiring({ links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }] });
+  const got = host.links.get('c1');
+  assert.deepEqual(got, stored.c1);
+  got[0].url = 'mutated';
+  assert.equal(stored.c1[0].url, 'https://github.com/o/r/pull/1');
+  assert.deepEqual(host.links.get('gone'), []);
+});
+
+test('links:write attach runs the CALLER\'s own normalise, appends, then upserts in place, and rebuilds', () => {
+  const { host, stored, rebuilds } = linksWiring({ links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }] });
+  const first = host.links.attach('c1', { type: 'cloud', key: 'session_1' });
+  assert.deepEqual(first, { type: 'cloud', key: 'session_1', url: undefined, by: 'x' });
+  assert.equal(stored.c1.length, 2);
+  host.links.attach('c1', { type: 'cloud', key: 'session_1', url: 'https://claude.ai/code/session_1' });
+  assert.equal(stored.c1.length, 2, 'a matching link is replaced, not duplicated');
+  assert.equal(stored.c1[1].url, 'https://claude.ai/code/session_1');
+  assert.equal(stored.c1[0].type, 'pr', 'other links are untouched');
+  assert.equal(rebuilds.length, 2);
+});
+
+test('links:write attach refuses a type the caller does not claim, a throwing normalise, and an unknown card', () => {
+  const { host, stored } = linksWiring();
+  assert.throws(() => host.links.attach('c1', { type: 'jira', key: 'ABC-1' }), /no links\.normalise hook that claims "jira"/);
+  assert.throws(() => host.links.attach('c1', { type: 'pr', url: 'https://github.com/o/r/pull/2' }), /claims "pr"/);
+  assert.throws(() => host.links.attach('c1', { type: 'cloud' }), /cloud links need a key/);
+  assert.throws(() => host.links.attach('gone', { type: 'cloud', key: 'session_1' }), /unknown session gone/);
+  assert.deepEqual(stored.c1, []);
+  assert.equal(stored.gone, undefined, 'an unknown card is never adopted');
+});
+
 // -- sessions:spawn --------------------------------------------------------
 // A spawn wiring that records the dispatch payload and everything the builder
 // does around it, so a test can assert the NAMES the options arrive under —

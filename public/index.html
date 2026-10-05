@@ -331,16 +331,20 @@
         <label>Effort</label>
         <select id="m-effort"></select>
       </div>
-      <div class="worktree-box">
-        <div class="worktree-title">New worktree</div>
-        <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
-        <div id="m-worktree-msg" class="worktree-msg hidden"></div>
-        <div id="m-worktree-fields-wrap" class="worktree-fields-wrap">
-          <div id="m-worktree-fields" class="worktree-fields">
-            <label>Branch</label>
-            <input id="m-wt-branch" autocomplete="off" placeholder="auto from intent" />
-            <label>Worktree folder (full path)</label>
-            <input id="m-wt-folder" autocomplete="off" placeholder="/path/to/repo-worktree-branch" />
+      <!-- The `worktree` dispatch-field veto toggles this OUTER row only;
+           syncWorkflow owns .worktree-box's own hidden for workflow/review mode. -->
+      <div class="dispatch-field" id="m-worktree-box-row">
+        <div class="worktree-box">
+          <div class="worktree-title">New worktree</div>
+          <label class="check-row" id="m-worktree-row"><input type="checkbox" id="m-worktree" /> Work in a git worktree</label>
+          <div id="m-worktree-msg" class="worktree-msg hidden"></div>
+          <div id="m-worktree-fields-wrap" class="worktree-fields-wrap">
+            <div id="m-worktree-fields" class="worktree-fields">
+              <label>Branch</label>
+              <input id="m-wt-branch" autocomplete="off" placeholder="auto from intent" />
+              <label>Worktree folder (full path)</label>
+              <input id="m-wt-folder" autocomplete="off" placeholder="/path/to/repo-worktree-branch" />
+            </div>
           </div>
         </div>
       </div>

@@ -31,10 +31,11 @@
 // `dispatch.field` is the fourth shape and the first slot that shapes a CORE
 // form: three anchor hosts inside #modal's #m-dispatch-fields (app.js
 // syncDispatchExtFields), a contribution addressing one of them with `at`, and
-// an optional `hides` veto over named core rows. Its entries carry `at`
-// alongside `only` — see sync(). A contribution may also return `ext(el)`,
-// data for its OWN server half, which rides the dispatch frame as
-// `ext.<extId>` — see dispatchFields().
+// an optional `hides` veto over named core rows — a fixed list, or a function
+// of the form's current draft so the veto can follow another field (say, the
+// runtime choice). Its entries carry `at` alongside `only` — see sync(). A
+// contribution may also return `ext(el, ctx)`, data for its OWN server half,
+// which rides the dispatch frame as `ext.<extId>` — see dispatchFields().
 //
 // `card.action` and `card.cost` are VALUE slots: no host, no mount. The board
 // asks them for values while it draws core chrome — menu items for a card's
@@ -590,8 +591,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // fail at load, not render nowhere.
       if (slotName === 'dispatch.field') {
         if (!DISPATCH_ANCHORS.includes(contribution.at)) throw new Error(`[ext:${extId}] ${contribution.id} has an unknown dispatch anchor "${contribution.at}" (known: ${DISPATCH_ANCHORS.join(', ')})`);
-        if (contribution.hides != null && (!Array.isArray(contribution.hides) || contribution.hides.some((f) => typeof f !== 'string' || !f))) {
-          throw new Error(`[ext:${extId}] ${contribution.id} hides must be an array of dispatch field names`);
+        // A function `hides` can only be checked when it runs — see
+        // hiddenDispatchFields() for what a bad return costs it.
+        if (contribution.hides != null && typeof contribution.hides !== 'function'
+          && (!Array.isArray(contribution.hides) || contribution.hides.some((f) => typeof f !== 'string' || !f))) {
+          throw new Error(`[ext:${extId}] ${contribution.id} hides must be an array of dispatch field names or a function (draft) => names`);
         }
       }
       if (slotName === 'card.pill' && contribution.label != null && typeof contribution.label !== 'string') throw new Error(`[ext:${extId}] ${contribution.id} label must be a string`);
@@ -776,12 +780,30 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // Reporting is deduped per `extId:name`: app.js recomputes this on modal
     // open, on every model change and on every syncWorkflow, so a misconfigured
     // extension would otherwise print a line per interaction.
-    hiddenDispatchFields() {
+    //
+    // A function `hides` is called with `ctx.draft` (the core read app.js's
+    // dispatchFieldCtx builds) and its return goes through the same manifest
+    // filter as a static list — computing the names never widens what may be
+    // hidden. A throw, or anything but an array back, REMOVES the contribution,
+    // the same rule and the same reason as a throwing fields(): a veto that
+    // cannot be computed must fail open, not freeze on its last answer.
+    hiddenDispatchFields(ctx) {
       const out = new Set();
-      for (const c of slotList('dispatch.field')) {
-        if (c.mounts.size === 0 || !Array.isArray(c.hides)) continue;
+      for (const c of [...slotList('dispatch.field')]) {
+        if (c.mounts.size === 0 || c.hides == null) continue;
+        let names = c.hides;
+        if (typeof c.hides === 'function') {
+          try {
+            names = c.hides(ctx?.draft);
+            if (!Array.isArray(names)) throw new Error(`returned ${names === null ? 'null' : typeof names}, not an array`);
+          } catch (err) {
+            onError(`[ext:${c.extId}] ${c.id} hides failed — contribution removed`, err);
+            drop('dispatch.field', c);
+            continue;
+          }
+        }
         const declared = hideDispatchFieldsFor(c.extId) || [];
-        for (const name of c.hides) {
+        for (const name of names) {
           if (declared.includes(name)) { out.add(name); continue; }
           const key = `${c.extId}:${name}`;
           if (hideReported.has(key)) continue;
@@ -792,7 +814,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       return [...out];
     },
 
-    // The payload half: every live contribution's `fields(el)` return, merged
+    // The payload half: every live contribution's `fields(el, ctx)` return, merged
     // over each other in REGISTRATION order and spread over core's own read by
     // the caller (app.js readDispatchFields).
     //
@@ -810,11 +832,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // leave a broken extension still holding its `hides` veto while contributing
     // nothing to the payload, and removing it is what makes that veto fail open.
     //
-    // `ctx` is accepted but not passed on — the contribution signature is
-    // `fields(el)` — so the merge site has one call shape and a later minor can
-    // widen to `fields(el, ctx)` without touching the caller.
+    // `ctx` (app.js dispatchFieldCtx: mode, the core draft, agents) is handed
+    // on as the second argument to both `fields(el, ctx)` and `ext(el, ctx)`,
+    // so a contribution can shape its payload by what core is about to send —
+    // the runtime choice, say — without reading core's DOM.
     //
-    // `ext(el)` is the other half of the payload: data for the contribution's
+    // `ext(el, ctx)` is the other half of the payload: data for the contribution's
     // OWN server half, not a core field. It lands at `ext.<extId>` — the key is
     // FORCED from the contribution's id, like `send`'s types, so one extension
     // can never write into another's — and the server hands each extension only
@@ -829,7 +852,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (typeof c.ext === 'function') {
           let data;
           try {
-            data = c.ext(el);
+            data = c.ext(el, ctx);
           } catch (err) {
             onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
             drop('dispatch.field', c);
@@ -844,7 +867,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (typeof c.fields !== 'function') continue;
         let got;
         try {
-          got = c.fields(el);
+          got = c.fields(el, ctx);
         } catch (err) {
           onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
           drop('dispatch.field', c);
@@ -855,7 +878,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (value === undefined) continue;
           // `ext` is the namespaced bag above, never a field a contribution
           // may write whole — that would let it overwrite a sibling's slice.
-          if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el)`); continue; }
+          if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el, ctx)`); continue; }
           const prev = writer.get(key);
           if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
           writer.set(key, `[ext:${c.extId}] ${c.id}`);

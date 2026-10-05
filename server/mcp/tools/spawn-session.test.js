@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSessionTool } from './spawn-session.js';
+import { registerRuntime, unregisterRuntimesFor } from '../../runtimes/index.js';
 
 // A deps double that records what the handler drove and fakes a dispatch that
 // mints a fresh card id (and records the options it was given, as the real one would see them).
@@ -35,6 +36,32 @@ function deps(overrides = {}) {
     ...overrides.deps,
   };
 }
+
+test('spawn_session passes a registered extension runtime through to dispatch', async () => {
+  registerRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner }, 'toy');
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+    assert.equal(out.isError, undefined);
+    assert.equal(d.calls.dispatch[0].runtime, 'toyrt');
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
+});
+
+test('spawn_session refuses an unknown runtime, listing the known ones, without dispatching', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+  assert.equal(out.isError, true);
+  assert.equal(out.content[0].text, 'Unknown runtime "toyrt". Known runtimes: local, devcontainer.');
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+test('spawn_session with no runtime stays local (dispatch default)', async () => {
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+  assert.equal(d.calls.dispatch[0].runtime, undefined);
+});
 
 test('spawn_session joins the caller’s current task by default', async () => {
   const d = deps();

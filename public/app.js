@@ -331,6 +331,10 @@ let extClientManifest = [];
 // Nothing is awaited by the caller: one extension failing to import must never
 // hold up a render, and the loader already reports and drops it.
 function syncClientExtensions() {
+  // Extension runtimes ride graph.extensions, not the client module, so they
+  // follow every enable/disable/quarantine whether or not the extension ships
+  // a browser half at all.
+  syncExtRuntimeOptions();
   const enabled = new Set(latestExtensions.filter((e) => e.enabled).map((e) => e.id));
   let unmounted = false;
   for (const { id } of extClientManifest) {
@@ -3086,10 +3090,20 @@ function resumeDormant(sessionId) {
   clearTimeout(resumeFailTimer);
   resumeFailTimer = setTimeout(() => {
     resumeFailTimer = null;
-    resuming.delete(sessionId);
+    abandonResume(sessionId);
     const s = latestSessions.find((x) => x.sessionId === sessionId);
     if (s && !s.managed) toast(s.exitOutput ? 'Resume failed — see last output' : 'Resume failed');
   }, 8000);
+}
+
+// Drop a resume's "Resuming…" placeholder and redraw the open card, which is
+// still dormant. Dropping the flag alone left the placeholder up until the next
+// sidebar render, and a card that won't resume never triggers one. The server
+// sends `error` when it refuses a resume (relaunchRefusal, a missing
+// transcript), so that handler calls this too, rather than waiting out the timer.
+function abandonResume(sessionId) {
+  if (!resuming.delete(sessionId)) return;
+  if (selectedSessionId === sessionId) applySessionView(sessionId);
 }
 
 // Wake a snoozed session (the sun button / "Unsnooze"). Clears the snooze, then —
@@ -4901,8 +4915,10 @@ function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 // isn't wired), so for a non-Claude agent disable each non-local <option> and snap
 // the value back to local — a stale devcontainer selection must not survive an agent
 // swap. Workflow runs ARE supported (the issue-to-pr skill dir is copied into the
-// container). Extensible: a new runtime adds an <option> in index.html; the Claude-
-// only gate here covers it, and any extra per-runtime constraints slot in alongside.
+// container). Extensible: a new built-in runtime adds an <option> in index.html, an
+// extension runtime is appended by syncExtRuntimeOptions; the loop below reads
+// rt.options at call time, so the Claude-only gate covers both, and any extra
+// per-runtime constraints slot in alongside.
 function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
   const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
@@ -4912,6 +4928,50 @@ function syncRuntimeToggle() {
   }
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
+}
+
+// Extension-contributed runtimes (manifest `runtimes`, carried per extension
+// as graph.extensions[].runtimes [{id, label}]) join the two built-in options
+// in #m-runtime, tagged data-ext so they — and only they — are ever removed
+// again. Only an enabled, unquarantined extension offers its runtimes; the
+// server carries `runtimes: []` for a quarantined one, but `enabled` is ours to
+// check. Reconciled in place rather than rebuilt, because this runs on every
+// graph tick and an open modal's selection must survive it. A selection whose
+// provider has gone falls back to local — the server would refuse it anyway.
+function syncExtRuntimeOptions() {
+  const rt = document.getElementById('m-runtime');
+  if (!rt) return;
+  const want = new Map(); // runtime id -> { extId, label }; the first provider wins
+  for (const e of latestExtensions) {
+    if (!e.enabled || e.quarantine || !Array.isArray(e.runtimes)) continue;
+    for (const r of e.runtimes) {
+      if (typeof r?.id === 'string' && r.id && !want.has(r.id)) want.set(r.id, { extId: e.id, label: String(r.label || r.id) });
+    }
+  }
+  const selected = rt.value;
+  let changed = false;
+  for (const opt of [...rt.options]) {
+    if (!opt.dataset.ext) continue;
+    const w = want.get(opt.value);
+    if (w && w.extId === opt.dataset.ext) {
+      if (opt.textContent !== w.label) opt.textContent = w.label;
+      want.delete(opt.value);
+    } else { opt.remove(); changed = true; }
+  }
+  for (const [id, { extId, label }] of want) {
+    // Never shadow an option already there (a built-in of the same id).
+    if ([...rt.options].some((o) => o.value === id)) continue;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.dataset.ext = extId;
+    opt.textContent = label; // third-party string: text, never markup
+    rt.appendChild(opt);
+    changed = true;
+  }
+  if (!changed) return;
+  rt.value = [...rt.options].some((o) => o.value === selected) ? selected : 'local';
+  // A freshly appended option starts enabled; re-gate it for a non-Claude agent.
+  syncRuntimeToggle();
 }
 
 // #modal is reused for three jobs (modalMode): launching now, creating a schedule,
@@ -5096,13 +5156,18 @@ function dispatchFieldCtx(core = readCoreDispatchFields()) {
   };
 }
 
-// Which core row each hideable dispatch field lives in (index.html). Growing
-// DISPATCH_FIELDS server-side means adding a row id here and a wrapper there.
+// Which core row each hideable dispatch field lives in (index.html): model,
+// effort, autoCompactTokens, runtime and worktree. Growing DISPATCH_FIELDS
+// server-side means adding a row id here and a wrapper there. `worktree`'s row
+// is an OUTER wrapper round .worktree-box, because syncWorkflow already toggles
+// the box's own `hidden` for workflow/review mode — the veto and that toggle
+// each own one element and never undo each other.
 const DISPATCH_FIELD_ROWS = {
   model: 'm-model-row',
   effort: 'm-effort-row',
   autoCompactTokens: 'm-auto-compact-row',
   runtime: 'm-runtime-row',
+  worktree: 'm-worktree-box-row',
 };
 
 // Recomputed WHOLE every call, never incrementally: that is what lifts the veto
@@ -5113,8 +5178,12 @@ const DISPATCH_FIELD_ROWS = {
 // readCoreDispatchFields still reads it into `effort`; an extension that hides
 // a core field is expected to write that key back through fields(), and if it
 // does not the payload carries whatever the hidden control last held.
-function applyDispatchFieldVeto() {
-  const hidden = new Set(slots.hiddenDispatchFields());
+//
+// `ctx` is syncDispatchExtFields' own, so a function `hides` sees the same core
+// draft `update` just did. It is null in subagent mode, where every
+// contribution has just been torn down and so no `hides` is ever called.
+function applyDispatchFieldVeto(ctx) {
+  const hidden = new Set(slots.hiddenDispatchFields(ctx));
   for (const [name, id] of Object.entries(DISPATCH_FIELD_ROWS)) {
     document.getElementById(id)?.classList.toggle('hidden', hidden.has(name));
   }
@@ -5131,14 +5200,14 @@ function applyDispatchFieldVeto() {
 //
 // Deliberately NOT on the graph tick, unlike `view`: these hosts exist only
 // while the modal is open and a human is driving it, so the call sites are
-// openModal, the #m-model change listener, syncWorkflow and
+// openModal, the #m-model and #m-runtime change listeners, syncWorkflow and
 // syncClientExtensions.
 function syncDispatchExtFields() {
   const ctx = modalMode === 'subagent' ? null : dispatchFieldCtx();
   const entries = ctx === null ? [] : [...document.querySelectorAll('.ext-dispatch-slot')]
     .map((host) => ({ host, at: host.dataset.at, session: ctx }));
   slots.syncHosts('dispatch.field', entries, extApi, latestGraph);
-  applyDispatchFieldVeto();
+  applyDispatchFieldVeto(ctx);
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
@@ -5183,7 +5252,13 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
-  document.getElementById('m-runtime').value = d.runtime || 'local';
+  // The extension options go in first so a saved extension runtime can be
+  // selected; one whose extension is now off or gone matches no option (the
+  // select reads back '') and falls back to local.
+  syncExtRuntimeOptions();
+  const rtSel = document.getElementById('m-runtime');
+  rtSel.value = d.runtime || 'local';
+  if (rtSel.value !== (d.runtime || 'local')) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
@@ -5672,6 +5747,9 @@ document.getElementById('m-model').addEventListener('change', () => {
   // A contribution drawing a per-agent control needs the agent swap.
   syncDispatchExtFields();
 });
+// And the runtime choice, for a contribution that reacts to it (its update
+// sees ctx.draft.runtime, a function `hides` the same draft).
+document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
   const button = e.target.closest('.auto-compact-preset');
   if (!button) return;
@@ -6014,15 +6092,20 @@ function connect() {
       if (wtPending) {
         wtPending = false; setDispatchPending(false);
         // Workflow mode hides the worktree box, so its message slot is invisible —
-        // surface the failure as a toast there; otherwise show it inline.
+        // surface the failure as a toast there; otherwise show it inline. An
+        // extension's `worktree` veto hides the outer row instead, same outcome.
         const box = document.querySelector('.worktree-box');
-        if (box.classList.contains('hidden')) { toast(msg.message, true); }
+        if (box.classList.contains('hidden') || box.closest('.dispatch-field.hidden')) { toast(msg.message, true); }
         else {
           const el = document.getElementById('m-worktree-msg');
           el.textContent = msg.message; el.classList.remove('hidden', 'hint'); el.classList.add('error');
         }
       } else {
         toast(msg.message, true);
+        // A refused resume comes back as a bare error with no session id, so
+        // every in-flight resume gives up its placeholder. A resume that's still
+        // on its way just shows the dormant panel until its tmux appears.
+        if (resuming.size) { clearTimeout(resumeFailTimer); resumeFailTimer = null; [...resuming].forEach(abandonResume); }
       }
     }
   };

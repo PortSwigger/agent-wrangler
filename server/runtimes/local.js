@@ -7,6 +7,7 @@
 // No readLive/analyze: state-reader falls through to the agent adapter (host FS).
 export const local = {
   id: 'local',
+  label: 'Local (host)',
   skipsHostResumeGuard: false,
   async wrapLaunch({ inner }) {
     return inner;

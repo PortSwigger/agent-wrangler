@@ -170,7 +170,25 @@ import semver from 'semver';
 // `link.chip` client value slot (the chip an extension draws for a link of its
 // type). An older server ignores the hook and an older slots.js throws on the
 // slot name, so only the range can say so.
-export const HOST_API_VERSION = '1.18.0';
+//
+// 1.19.0 lets an extension contribute a RUNTIME — where a session's agent runs —
+// through the manifest's `runtimes` array, on the same contract the built-ins
+// follow (server/runtimes/index.js): `id`, `label`, exactly one of `wrapLaunch`
+// (decorate the agent's command) or `buildLaunch` (replace it), and optionally
+// `preflight`, `readLive`, `analyze`, `deliver`, `resumable` and
+// `skipsHostResumeGuard`. `buildLaunch` is defined at dispatch only, so a runtime
+// using it must declare `resumable: false`, and resume/fork of its cards refuse.
+// Around it: `preflight` is handed `{ cwd, agent, workflow, worktree, ext }`
+// rather than `{ cwd }`; a runtime's `deliver` receives peer messages
+// (send_message) for its cards; `spawn_session` takes a `runtime`; the
+// `links:write` capability (`host.links.get/attach`, attach validated through
+// the caller's own `links.normalise`) lets a sweep put a link on a card; and on
+// the CLIENT, `worktree` is a fifth `hideDispatchField` name, a dispatch.field's
+// `hides` may be a function of the draft, and `fields`/`ext` receive the dispatch
+// ctx as a second argument. An older server ignores `runtimes` entirely (the
+// manifest loads, its runtime is simply never offered) and quarantines the new
+// capability and field name, so only the declared range can say so.
+export const HOST_API_VERSION = '1.19.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
