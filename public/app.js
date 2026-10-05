@@ -139,6 +139,7 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
+let defaultSessionCwd = ''; // server config value, carried on every graph push
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
@@ -564,6 +565,7 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
+  defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
   graphCodeVersion = graph.codeVersion || null;
@@ -5263,7 +5265,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   };
   cwdInput.value = schedule
     ? (d.cwd || '')
-    : (selected ? cwdForTask(selected) : '');
+    : ((selected && cwdForTask(selected)) || defaultSessionCwd);
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   document.getElementById('m-intent').value = d.intent || '';
   autoCompactTokens = d.autoCompactTokens;
@@ -5750,6 +5752,7 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
+      if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
@@ -5780,6 +5783,9 @@ initSettings({
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
+      } else if (id === 'defaultSessionCwd') {
+        defaultSessionCwd = String(value || '').trim();
+        send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });

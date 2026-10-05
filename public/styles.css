@@ -781,6 +781,12 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .setting-copy { min-width: 0; }
 .setting-label { font-size: 13px; color: var(--fg); font-weight: 500; }
 .setting-help { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
+.setting-row-text .setting-copy { flex: 1; }
+.setting-text-input {
+  width: 100%; margin-top: 8px; padding: 5px 8px; font: inherit; font-size: 12px;
+  background: var(--field-bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
 /* What a just-flipped extension toggle did, and what is still pending. Accent
    rather than muted: it is the one line on the row that was not there a moment
    ago, and it has to read as an answer to the switch the reader just pressed. */

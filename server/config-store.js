@@ -249,3 +249,7 @@ export function autoUpdateMode(cfg = readConfig()) {
 export function refreshSessionsAfterUpdate(cfg = readConfig()) {
   return cfg.refreshSessionsAfterUpdate === true;
 }
+
+export function defaultSessionCwd(cfg = readConfig()) {
+  return typeof cfg.defaultSessionCwd === 'string' ? cfg.defaultSessionCwd.trim() : '';
+}

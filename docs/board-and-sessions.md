@@ -6,7 +6,9 @@ and product concepts.
 ## Dispatch a session
 
 Choose **New session**, then select a task, folder, agent, and model. Leave the folder blank for a
-scratch session; a new path is created at launch.
+scratch session; a new path is created at launch. The folder starts filled in from the task's
+existing sessions, or from **Settings → Sessions → Default folder for new sessions** when the task
+has none.
 
 Optional launch controls include:
 
@@ -90,7 +92,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 **Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
-- Child-card and Chat defaults, and completion sounds.
+- Child-card and Chat defaults, the default folder for new sessions, and completion sounds.
 - PR auto-fix, Codex folder trust, and optional extraction of archive learnings into task memory.
 - Extension installation, enablement, updates, and extension-specific settings. The per-session
   checklist is a builtin extension, so its on/off switch lives here (an older `checklistEnabled: false`

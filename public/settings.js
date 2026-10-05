@@ -16,6 +16,8 @@
 //     pills sharing the Appearance font-size row's styling; getSetting returns the
 //     chosen `value` string. An unknown stored value (hand-edited, or left behind
 //     by a renamed option) falls back to `default` rather than reaching a consumer.
+//   type 'text' → a free-text string (optional `placeholder`), saved on change
+//     (Enter or blur); getSetting returns the string.
 // New types extend renderRow()/readStored()/writeStored() + getSetting().
 //
 // scope: 'server' marks a setting persisted in the server's config.json (shared
@@ -95,6 +97,15 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'defaultSessionCwd',
+    type: 'text',
+    scope: 'server',
+    label: 'Default folder for new sessions',
+    help: 'Pre-fills the Folder field when you start a session. A task whose sessions already share a folder still uses that folder. Leave blank to start in a fresh scratch folder.',
+    placeholder: '~/repos',
+    default: '',
+  },
+  {
     id: 'terminalSide',
     type: 'segmented',
     options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }],
@@ -131,7 +142,7 @@ export const SETTINGS_TABS = [
     label: 'Sessions',
     settingIds: [
       'subagentsExpandedByDefault', 'soundOnFinish',
-      'childFullViewByDefault', 'chatViewDefault',
+      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd',
     ],
   },
   {
@@ -306,6 +317,17 @@ function rowHtml(def) {
           ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
         </div>
         <div class="setting-seg" role="radiogroup" aria-label="${esc(def.label)}">${opts}</div>
+      </div>`;
+  }
+  if (def.type === 'text') {
+    return `<div class="setting-row setting-row-text" data-id="${esc(def.id)}">
+        <div class="setting-copy">
+          <div class="setting-label">${esc(def.label)}</div>
+          ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
+          <input type="text" class="setting-text-input" value="${esc(on)}"
+            placeholder="${esc(def.placeholder || '')}" autocomplete="off" spellcheck="false"
+            aria-label="${esc(def.label)}" />
+        </div>
       </div>`;
   }
   return '';
@@ -505,6 +527,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   const close = () => {
     if (detail?.finishing) return;
     endDetail();
+    if (modal.contains(document.activeElement)) document.activeElement.blur();
     modal.classList.add('hidden');
   };
   openModal = open;
@@ -584,7 +607,22 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     }
   });
 
+  body.addEventListener('change', (e) => {
+    const input = e.target.closest('.setting-text-input');
+    if (!input) return;
+    const def = byId.get(input.closest('.setting-row')?.dataset.id);
+    if (!def || def.type !== 'text') return;
+    input.value = input.value.trim();
+    setSetting(def.id, input.value);
+    flashSettingsSaved();
+  });
+
   body.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.closest('.setting-text-input')) {
+      e.preventDefault();
+      e.target.blur();
+      return;
+    }
     const tab = e.target.closest('.settings-tab');
     if (!tab) return;
     const index = SETTINGS_TABS.findIndex(({ id }) => id === tab.dataset.tab);
