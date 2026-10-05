@@ -15,7 +15,9 @@ if [ -f "$ROLLBACK_MARKER" ]; then
   rb_target="$(sed -n 's/^target=//p' "$ROLLBACK_MARKER")"
   rb_attempts="$(sed -n 's/^attempts=//p' "$ROLLBACK_MARKER")"
   rb_attempts=$(( ${rb_attempts:-0} + 1 ))
-  if [ "$rb_attempts" -ge "$AW_ROLLBACK_AFTER_STARTS" ] && [ -n "$rb_previous" ]; then
+  if [ "$(git rev-parse HEAD 2>/dev/null)" != "$rb_target" ]; then
+    rm -f "$ROLLBACK_MARKER"
+  elif [ "$rb_attempts" -ge "$AW_ROLLBACK_AFTER_STARTS" ] && [ -n "$rb_previous" ]; then
     if git reset --keep "$rb_previous"; then
       printf 'previous=%s\ntarget=%s\nat=%s\n' "$rb_previous" "$rb_target" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$AW_STATE_DIR/update-rolled-back"
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [agent-wrangler] update to $rb_target failed to start $((rb_attempts - 1)) times; rolled back to $rb_previous"

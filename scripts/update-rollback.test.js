@@ -25,7 +25,7 @@ function installWithUpdate() {
   const start = () => execFileSync('bash', [path.join(install, 'scripts', 'update-rollback.sh')], {
     env: { ...process.env, AW_DATA_DIR: dataDir }, encoding: 'utf8',
   });
-  return { root, dataDir, previous, target, start, head: () => git('rev-parse', 'HEAD') };
+  return { root, dataDir, previous, target, start, git, head: () => git('rev-parse', 'HEAD') };
 }
 
 test('the first starts after an update count attempts and leave the new code in place', (t) => {
@@ -60,4 +60,17 @@ test('no marker means nothing happens', (t) => {
   r.start();
   r.start();
   assert.equal(r.head(), r.target);
+});
+
+test('a checkout that has moved off the update target is left alone and the marker dropped', (t) => {
+  const r = installWithUpdate();
+  t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
+  r.git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'manual fix');
+  const fixed = r.head();
+  r.start();
+  r.start();
+  r.start();
+  assert.equal(r.head(), fixed);
+  assert.equal(fs.existsSync(path.join(r.dataDir, ROLLBACK_MARKER)), false);
+  assert.equal(readRolledBack({ dataDir: r.dataDir }), null);
 });

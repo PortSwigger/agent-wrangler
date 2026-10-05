@@ -53,8 +53,9 @@ function isDismissed(level, kind) {
 // `level` (optional) enables the dismiss control and the suppression check above;
 // omit it for an alert with no "for today" concept. `kind` namespaces that
 // dismissal to one producer — see readDismiss — and is required whenever `level`
-// is given.
-export function showSystemBanner(text, { level, kind = 'fd' } = {}) {
+// is given. `forever` makes the dismissal permanent, for a one-off notice whose
+// `kind` already names the single event it reports.
+export function showSystemBanner(text, { level, kind = 'fd', forever = false } = {}) {
   if (isDismissed(level, kind)) return;
   const el = document.getElementById('system-banner');
   el.textContent = '';
@@ -64,9 +65,9 @@ export function showSystemBanner(text, { level, kind = 'fd' } = {}) {
   if (level != null) {
     const btn = document.createElement('button');
     btn.className = 'system-banner-dismiss';
-    btn.textContent = 'Dismiss for today';
+    btn.textContent = forever ? 'Dismiss' : 'Dismiss for today';
     btn.addEventListener('click', () => {
-      writeDismiss(kind, { level, until: endOfToday() });
+      writeDismiss(kind, { level, until: forever ? Number.MAX_SAFE_INTEGER : endOfToday() });
       hideSystemBanner();
     });
     el.append(btn);

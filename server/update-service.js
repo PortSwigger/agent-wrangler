@@ -1,4 +1,4 @@
-import { checkForUpdate, applyUpdate, writeRollbackMarker } from './self-update.js';
+import { checkForUpdate, applyUpdate, writeRollbackMarker, clearRollbackMarker } from './self-update.js';
 
 export class UpdateBusyError extends Error {
   constructor() {
@@ -16,6 +16,7 @@ export function createUpdateService({
   check = checkForUpdate,
   apply = applyUpdate,
   writeMarker = writeRollbackMarker,
+  clearMarker = clearRollbackMarker,
   supervised = () => false,
   mode = () => 'notify',
   isQuiet = () => true,
@@ -45,7 +46,14 @@ export function createUpdateService({
     if (!supervised()) {
       throw new Error('This wrangler was not started by a supervisor, so it cannot restart onto new code. Pull and restart it the way you launched it.');
     }
-    const result = await apply({ beforeMerge: (s) => writeMarker({ previous: s.head, target: s.remote }) });
+    let markerWritten = false;
+    let result;
+    try {
+      result = await apply({ beforeMerge: (s) => { writeMarker({ previous: s.head, target: s.remote }); markerWritten = true; } });
+    } catch (err) {
+      if (markerWritten) clearMarker();
+      throw err;
+    }
     if (!result.updated) {
       publish(result);
       return result;

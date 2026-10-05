@@ -606,7 +606,7 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
-  syncQuarantineBanner();
+  syncStandingBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
   // mount or an unmount. After `latestGraph` is assigned, because the render it
@@ -5454,10 +5454,17 @@ let quarantinedBuiltins = [];
 // it wins while active and this line is re-asserted when it clears.
 let fdBannerActive = false;
 
-function syncQuarantineBanner() {
-  if (!quarantinedBuiltins.length || fdBannerActive) return;
-  const many = quarantinedBuiltins.length !== 1;
-  showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+let rolledBackUpdate = null;
+
+function syncStandingBanner() {
+  if (fdBannerActive) return;
+  if (quarantinedBuiltins.length) {
+    const many = quarantinedBuiltins.length !== 1;
+    showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+    return;
+  }
+  const rollback = rolledBackText(rolledBackUpdate);
+  if (rollback) showSystemBanner(`⚠ ${rollback}`, { level: 1, kind: `update-rollback:${rolledBackUpdate.target}`, forever: true });
 }
 
 // Extensions panel state. All of it is per-browser and in memory: the update
@@ -5537,8 +5544,8 @@ function applyUpdateStatus(status) {
 }
 
 function noteRolledBack(rolledBack) {
-  const text = rolledBackText(rolledBack);
-  if (text) showSystemBanner(`⚠ ${text}`, { level: 1, kind: `update-rollback:${rolledBack.target}` });
+  rolledBackUpdate = rolledBack || null;
+  syncStandingBanner();
 }
 
 function noteCodeVersion(version) {
@@ -6078,15 +6085,15 @@ function connect() {
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
     else if (msg.type === 'fd-warning') {
-      // #system-banner is one slot, so the two producers have to take turns: an
-      // fd leak is the more urgent of the two and wins while it is active, and
-      // clearing it re-asserts the quarantine line (which is boot-fixed and
-      // otherwise never redrawn) rather than leaving the slot blank.
+      // #system-banner is one slot, so the producers have to take turns: an
+      // fd leak is the most urgent and wins while it is active, and clearing it
+      // re-asserts the quarantine or rollback line (which is otherwise never
+      // redrawn) rather than leaving the slot blank.
       fdBannerActive = Boolean(msg.active);
       if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
       else {
         hideSystemBanner();
-        syncQuarantineBanner();
+        syncStandingBanner();
       }
     }
     else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);

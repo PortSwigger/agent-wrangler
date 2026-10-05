@@ -47,6 +47,28 @@ test('apply writes the rollback marker before merging, then hands off to restart
   assert.equal(events.applied.length, 1);
 });
 
+test('a merge that fails after the marker is written clears it again', async () => {
+  let cleared = 0;
+  const { svc, events } = service({
+    apply: async ({ beforeMerge }) => { beforeMerge(behind); throw new Error('untracked file would be overwritten'); },
+    clearMarker: () => { cleared += 1; },
+  });
+  await assert.rejects(() => svc.apply(), /untracked file/);
+  assert.equal(events.markers.length, 1);
+  assert.equal(cleared, 1);
+  assert.equal(events.applied.length, 0);
+});
+
+test('a refusal before the merge leaves any existing marker alone', async () => {
+  let cleared = 0;
+  const { svc } = service({
+    apply: async () => { throw new Error('dirty'); },
+    clearMarker: () => { cleared += 1; },
+  });
+  await assert.rejects(() => svc.apply(), /dirty/);
+  assert.equal(cleared, 0);
+});
+
 test('apply refuses without a supervisor', async () => {
   const { svc, events } = service({ supervised: () => false });
   await assert.rejects(() => svc.apply(), /not started by a supervisor/);
