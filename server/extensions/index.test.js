@@ -610,6 +610,7 @@ test('a fully constrained settings manifest is accepted', () => {
     { ...NUM, min: 15, max: 600, step: 15 },
     { ...SETTING, maxLength: 200, pattern: 'https://.*' },
     SEL,
+    { key: 'envs', type: 'list', label: 'Envs', maxItems: 5, maxLength: 80, pattern: 'env_\\w+' },
   )));
 });
 
@@ -635,7 +636,7 @@ test('an illegal constraint quarantines the extension, naming the setting', () =
   rejects(settings({ ...SEL, options: [{ value: 'a', label: 'A' }, { value: 'a', label: 'Again' }] }), /settings.mode.options has a duplicate value "a"/);
   // Cross-type: a constraint on the wrong type is an error, never ignored.
   rejects(settings({ ...SETTING, min: 1 }), /Extension fake: settings.registryUrl.min is only valid on a number setting/);
-  rejects(settings({ ...NUM, pattern: 'x' }), /settings.pollSeconds.pattern is only valid on a text setting/);
+  rejects(settings({ ...NUM, pattern: 'x' }), /settings.pollSeconds.pattern is only valid on a text or list setting/);
   rejects(settings({ key: 'auto', type: 'toggle', label: 'Auto', step: 1 }), /settings.auto.step is only valid on a number setting/);
   rejects(settings({ ...NUM, options: [{ value: 'a', label: 'A' }] }), /settings.pollSeconds.options is only valid on a select setting/);
 });
@@ -646,9 +647,9 @@ test('a textarea takes maxLength up to its own larger cap, and never a pattern',
   assert.ok(MAX_TEXTAREA_LENGTH > MAX_TEXT_LENGTH, 'a written-out process does not fit the one-line cap');
   rejects(settings({ ...AREA, maxLength: MAX_TEXTAREA_LENGTH + 1 }), new RegExp(`settings.process.maxLength must not exceed ${MAX_TEXTAREA_LENGTH}`));
   rejects(settings({ ...AREA, maxLength: 0 }), /settings.process.maxLength must be a positive integer/);
-  rejects(settings({ ...AREA, pattern: 'x' }), /settings.process.pattern is only valid on a text setting/);
+  rejects(settings({ ...AREA, pattern: 'x' }), /settings.process.pattern is only valid on a text or list setting/);
   rejects(settings({ ...AREA, min: 1 }), /settings.process.min is only valid on a number setting/);
-  rejects(settings({ ...NUM, maxLength: 5 }), /settings.pollSeconds.maxLength is only valid on a text or textarea setting/);
+  rejects(settings({ ...NUM, maxLength: 5 }), /settings.pollSeconds.maxLength is only valid on a text or textarea or list setting/);
 });
 
 test('the defs land on the list entry as a COPY of the manifest\'s own array', () => {

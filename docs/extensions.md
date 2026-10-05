@@ -364,7 +364,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `enabled` — or for a hand-edit — to make the toggle and a value the same key;
   values are config, so they survive an uninstall/reinstall, which an extension's
   own store does not. A def may DECLARE CONSTRAINTS — `min`/`max`/`step` on a
-  number, `maxLength`/`pattern` on text, `maxLength` alone on a `textarea`,
+  number, `maxLength`/`pattern` on text, `maxLength` alone on a `textarea`, `maxItems` plus per-item
+  `maxLength`/`pattern` on a `list`,
   `options` on the `select` type — and
   both halves of that live in `server/extensions/setting-constraints.js`
   (`validateSettingDef` for a def, `checkSettingValue` for a value) so a
@@ -928,7 +929,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   ≤ 500 and legal on a list only); `ext-setting-set` copies it and rejects
   anything else — never coerces. `hidden: true` (boolean, any type) keeps a def
   off the Settings rows: it is a value the extension manages itself. A visible
-  `list` draws a read-only item count; an editable list UI is deferred.
+  `list` draws an editor (one field per item, remove buttons, an add field)
+  that commits the whole array on every edit.
+- **`pattern` and `maxLength` on a `list` (1.21.0) constrain each item**, with
+  the same full-string anchoring as on `text`. The editor mirrors both onto
+  every field and refuses an invalid item before it is sent; the server check
+  is the enforcement.
 - **`settings.panel` (1.14.0) is the extension's own block in its Settings
   section**, above the manifest rows (`app.js extSettingsEl`). Single-host, via
   `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions

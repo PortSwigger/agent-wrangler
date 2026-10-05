@@ -655,19 +655,93 @@ test('an option label containing markup goes in as text, never innerHTML', () =>
   });
 });
 
-test('a hidden def draws no row; a visible list draws a read-only item count', () => {
+const LIST_ENTRY = {
+  id: 'chips', label: 'Chips', enabled: true,
+  settings: [
+    { key: 'hiddenChips', type: 'list', label: 'Hidden chips', hidden: true },
+    { key: 'tags', type: 'list', label: 'Tags', maxItems: 3 },
+  ],
+  settingValues: { hiddenChips: ['a'], tags: ['x', 'y'] },
+};
+const listInputs = (wrap) => byClass(wrap, 'ext-setting-input');
+const errorText = (wrap) => byClass(wrap, 'setting-error')[0]._text;
+
+test('a hidden def draws no row; a visible list draws one field per item plus an add field', () => {
   withDom(() => {
-    const entry = {
-      id: 'chips', label: 'Chips', enabled: true,
-      settings: [
-        { key: 'hiddenChips', type: 'list', label: 'Hidden chips', hidden: true },
-        { key: 'tags', type: 'list', label: 'Tags' },
-      ],
-      settingValues: { hiddenChips: ['a'], tags: ['x', 'y'] },
-    };
-    const wrap = extensionSettingRowsEl(entry);
+    const wrap = extensionSettingRowsEl(LIST_ENTRY);
     assert.deepEqual(byClass(wrap, 'ext-setting-row').map((r) => r.dataset.key), ['tags']);
-    assert.ok(texts(wrap).includes('2 items'));
+    assert.deepEqual(listInputs(wrap).map((i) => i.value), ['x', 'y', '']);
+    assert.equal(byClass(wrap, 'ext-setting-list-remove').length, 2);
+  });
+});
+
+test('a list editor commits the whole array on add, edit and remove', () => {
+  withDom(() => {
+    const sent = [];
+    const wrap = extensionSettingRowsEl(LIST_ENTRY, { onSettingChange: (c) => sent.push(c.value) });
+    const add = listInputs(wrap)[2];
+    add.value = '  z  ';
+    add.fire('keydown', { key: 'Enter' });
+    assert.deepEqual(sent.at(-1), ['x', 'y', 'z']);
+    const first = listInputs(wrap)[0];
+    first.value = 'w';
+    first.fire('change');
+    assert.deepEqual(sent.at(-1), ['w', 'y', 'z']);
+    byClass(wrap, 'ext-setting-list-remove')[1].fire('click');
+    assert.deepEqual(sent.at(-1), ['w', 'z']);
+    const blanked = listInputs(wrap)[0];
+    blanked.value = ' ';
+    blanked.fire('change');
+    assert.deepEqual(sent.at(-1), ['z']);
+    assert.deepEqual(listInputs(wrap).map((i) => i.value), ['z', '']);
+  });
+});
+
+test('a list editor refuses duplicates and items past maxItems without committing', () => {
+  withDom(() => {
+    const sent = [];
+    const wrap = extensionSettingRowsEl(
+      { ...LIST_ENTRY, settingValues: { tags: ['x', 'y', 'z'] } },
+      { onSettingChange: (c) => sent.push(c.value) },
+    );
+    const add = listInputs(wrap)[3];
+    add.value = 'x';
+    add.fire('keydown', { key: 'Enter' });
+    assert.match(errorText(wrap), /already/);
+    add.value = 'q';
+    add.fire('keydown', { key: 'Enter' });
+    assert.match(errorText(wrap), /At most 3/);
+    assert.equal(sent.length, 0);
+  });
+});
+
+test('a list editor mirrors pattern and maxLength onto every field and refuses an invalid item', () => {
+  withDom(() => {
+    const sent = [];
+    const entry = {
+      ...LIST_ENTRY,
+      settings: [{ key: 'tags', type: 'list', label: 'Tags', pattern: 'env_\\w+', maxLength: 40 }],
+    };
+    const wrap = extensionSettingRowsEl(entry, { onSettingChange: (c) => sent.push(c.value) });
+    for (const i of listInputs(wrap)) {
+      assert.equal(i.attrs.pattern, 'env_\\w+');
+      assert.equal(i.maxLength, 40);
+    }
+    const add = listInputs(wrap)[2];
+    add.value = 'nope';
+    add._valid = false;
+    add.validationMessage = 'Please match the requested format.';
+    add.fire('keydown', { key: 'Enter' });
+    assert.equal(errorText(wrap), 'Please match the requested format.');
+    assert.equal(sent.length, 0);
+  });
+});
+
+test('a quarantined list editor is disabled', () => {
+  withDom(() => {
+    const wrap = extensionSettingRowsEl({ ...LIST_ENTRY, quarantine: 'bad' });
+    assert.ok(listInputs(wrap).every((i) => i.disabled));
+    assert.ok(byClass(wrap, 'ext-btn').every((b) => b.disabled));
   });
 });
 

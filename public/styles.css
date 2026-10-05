@@ -3086,6 +3086,10 @@ a.ext-row-origin { color: var(--blue-fg); }
 .ext-setting-copy svg { width: 14px; height: 14px; }
 .ext-setting-copy:hover { color: var(--fg); }
 .ext-setting-copy[hidden] { display: none; }
+.ext-setting-list { margin-top: 6px; }
+.ext-setting-list-item { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.ext-setting-list-item .ext-setting-input { margin-top: 0; flex: 1; min-width: 0; }
+.ext-setting-list-item .ext-btn { flex: 0 0 auto; }
 .ext-setting-input:disabled, .ext-setting-row .setting-toggle:disabled { opacity: 0.55; cursor: default; }
 .ext-setting-input:disabled { background: var(--surface-2); color: var(--fg-muted); }
 /* The browser's own validation message for a rejected setting value. Empty
