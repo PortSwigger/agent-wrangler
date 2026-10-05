@@ -356,7 +356,7 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-subagents-empty svg { width: 12px; height: 12px; }
 .sess-body { flex: 1; min-width: 0; padding: 9px 12px; }
 .sess-row1 { display: flex; align-items: center; gap: 8px; }
-.sess-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 /* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
    the session-action menu. The eight inline icons collapsed into this one entry. */
