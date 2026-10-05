@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import {
   archivableExits, forkEntry, buildInnerCommand, SESSIONS_DIR, resolveWorktree, SessionManager, resumePlan,
   resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions, autoCompactTokensError,
-  shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf,
+  shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf, EARLY_EXIT_GRACE_MS,
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
 import { registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
@@ -107,6 +107,31 @@ test('paneStateOf distinguishes the three ways a resume can find a session', () 
 
 test('ignores a foreign (non-cc_) tmux even on a clean exit', () => {
   assert.deepEqual(archivableExits([{ ...clean, tmux: 'work' }]), []);
+});
+
+test('keeps a clean exit that came within the grace window of a resume', () => {
+  const launchedAt = 1_000_000;
+  assert.deepEqual(archivableExits([{ ...clean, launchedAt, diedAt: launchedAt + 68_000 }]), []);
+});
+
+test('archives a clean exit once the session outlived the grace window', () => {
+  const launchedAt = 1_000_000;
+  const late = { ...clean, launchedAt, diedAt: launchedAt + EARLY_EXIT_GRACE_MS };
+  assert.deepEqual(archivableExits([late]), [late]);
+});
+
+test('keeps an instant exit whose whole-second death time reads just before the resume stamp', () => {
+  assert.deepEqual(archivableExits([{ ...clean, launchedAt: 1_000_400, diedAt: 1_000_000 }]), []);
+});
+
+test('archives a clean exit that appears to predate its resume by more than a second (clock moved back)', () => {
+  const skewed = { ...clean, launchedAt: 1_600_000, diedAt: 1_000_000 };
+  assert.deepEqual(archivableExits([skewed]), [skewed]);
+});
+
+test('archives a clean exit when the death or launch time is unknown', () => {
+  assert.deepEqual(archivableExits([{ ...clean, launchedAt: 1_000_000 }]), [{ ...clean, launchedAt: 1_000_000 }]);
+  assert.deepEqual(archivableExits([{ ...clean, diedAt: 1_000_000 }]), [{ ...clean, diedAt: 1_000_000 }]);
 });
 
 test('picks only the clean owned exits out of a mixed batch', () => {
@@ -430,6 +455,42 @@ test('reconcileExitedSessions logs the auto-archive, stores reason clean-exit, a
   assert.equal(sm.entryFor('s1').archiveReason, 'clean-exit');
   assert.deepEqual(kills, [['s1', { reason: 'auto-archive-exit' }]]);
   assert.ok(logs.some((l) => l.includes('[session] auto-archived s1 (tmux cc_s) — clean exit (status 0)')));
+});
+
+test('reconcileExitedSessions leaves a pane that died right after its resume for the dead-pane path', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cx_s', cwd: '/repo', intent: 'x', createdAt: 1, relaunchedAt: 5_000_000 });
+  sm.dead = new Set(['cx_s']);
+  sm.deadStatus = new Map([['cx_s', 0]]);
+  sm.deadTime = new Map([['cx_s', 5_068_000]]);
+  sm.killForSession = async () => { throw new Error('must not kill'); };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.isArchived('s1'), false);
+});
+
+test('refreshAlive records each dead pane\'s death time from pane_dead_time', async () => {
+  const sm = new SessionManager();
+  sm.scanSockets = () => [''];
+  sm._tmux = async () => ({ stdout: 'cx_s\x1f1\x1f0\x1f1791187425\ncc_live\x1f0\x1f\x1f\n' });
+  await sm.refreshAlive();
+  assert.equal(sm.deadTime.get('cx_s'), 1791187425000);
+  assert.equal(sm.deadStatus.get('cx_s'), 0);
+  assert.equal(sm.deadTime.has('cc_live'), false);
+});
+
+test('reconcileExitedSessions still archives a fresh, never-resumed session quit straight away', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 5_000_000 });
+  sm.dead = new Set(['cc_s']);
+  sm.deadStatus = new Map([['cc_s', 0]]);
+  sm.deadTime = new Map([['cc_s', 5_010_000]]);
+  sm.killForSession = async () => ['cc_s'];
+  const orig = console.log;
+  console.log = () => {};
+  try { assert.deepEqual(await sm.reconcileExitedSessions(), ['s1']); } finally { console.log = orig; }
+  assert.equal(sm.entryFor('s1').archiveReason, 'clean-exit');
 });
 
 // viaTaskArchive is archive-only bookkeeping (see SessionManager.archive) — like
