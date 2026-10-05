@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  extensionRowEl, extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
-  uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT, extSettingsKeyAction,
+  extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
+  uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
   commitFocusedField, MAX_TEXTAREA_LENGTH,
 } from './extensions-panel.js';
 import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
@@ -67,7 +67,6 @@ const walk = (node, out = []) => {
 
 const texts = (node) => walk(node).map((n) => n._text).filter((t) => t != null);
 const byClass = (node, cls) => walk(node).filter((n) => String(n.className).split(' ').includes(cls));
-const headLabels = (node) => byClass(node, 'ext-group-head').map((h) => byClass(h, 'setting-label')[0]._text);
 
 function withDom(fn) {
   const prior = globalThis.document;
@@ -81,216 +80,201 @@ const INSTALLED = {
   origin: 'https://example.invalid/notes.git', sha: 'abcdef0123456789',
 };
 
-test('a settings row renders name, description and origin — and nothing else machine-facing', () => {
+const BUILTIN_A = { id: 'a', label: 'Alpha', external: false, enabled: true };
+const BUILTIN_B = { id: 'b', label: 'Beta' };
+const EXT1 = { ...INSTALLED, id: 'ext1', label: 'One', enabled: true };
+const EXT2 = { ...INSTALLED, id: 'ext2', label: 'Two' };
+const BEHIND = { updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40), behind: true };
+const listIds = (node) => byClass(node, 'ext-list-row').map((r) => r.dataset.extId);
+const groupTitles = (node) => byClass(node, 'ext-group-title').map((n) => n._text);
+const detailOf = (node) => byClass(node, 'ext-detail')[0];
+const buttonTexts = (node) => byClass(node, 'ext-btn').map((b) => b._text || texts(b).join(''));
+// The only innerHTML the panel writes is a static icon from icons.js.
+const assertNoThirdPartyHtml = (node) => {
+  for (const n of walk(node)) assert.ok(n._html == null || n._html.startsWith('<svg'), `${n.className} must not take markup`);
+};
+
+test('the list pane: filter, Core then Installed groups, Add extension at the bottom', () => {
   withDom(() => {
-    const row = extensionRowEl(INSTALLED);
-    const all = texts(row);
-    assert.ok(all.includes('Session notes'));
-    assert.ok(all.includes('Keeps notes beside a card.'));
-    assert.ok(all.includes('https://example.invalid/notes.git'));
-    // The commit, the author and any local path were unactionable clutter on a
-    // row; the commit survives on the consent modal, where it is a decision.
-    assert.equal(all.includes('abcdef01'), false, 'no SHA on the row');
-    assert.equal(all.includes('abcdef0123456789'), false);
-    assert.equal(all.includes('A Colleague'), false, 'no author on the row');
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, BUILTIN_B, EXT2] });
+    const list = byClass(panel, 'ext-list')[0];
+    assert.equal(list.children[0].className, 'ext-filter');
+    assert.equal(list.children[list.children.length - 1]._text, '+ Add extension');
+    assert.deepEqual(groupTitles(panel), ['Core', 'Installed']);
+    assert.deepEqual(listIds(panel), ['a', 'b', 'ext1', 'ext2'], 'grouped by external, order kept within each');
   });
 });
 
-test('every extension is ONE row: the toggle lives with the origin and the actions', () => {
+test('an empty Core group is omitted; an empty Installed group says so', () => {
   withDom(() => {
-    const row = extensionRowEl({ ...INSTALLED, enabled: true });
-    assert.equal(row.dataset.id, 'ext:notes', 'settings.js\'s delegated flip handler finds the def by this id');
-    const toggle = byClass(row, 'setting-toggle')[0];
-    assert.ok(toggle, 'the row carries the same toggle markup rowHtml builds');
-    assert.equal(toggle.getAttribute('aria-checked'), 'true');
-    assert.equal(byClass(extensionRowEl({ ...INSTALLED, enabled: false }), 'setting-toggle')[0].getAttribute('aria-checked'), 'false');
+    assert.deepEqual(groupTitles(extensionsPanelEl({ entries: [INSTALLED] })), ['Installed']);
+    const none = extensionsPanelEl({ entries: [BUILTIN_A] });
+    assert.ok(texts(none).includes('No extensions installed yet.'));
+    assert.equal(texts(extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED] })).includes('No extensions installed yet.'), false);
   });
 });
 
-test('a settings row renders the quarantine reason plainly, and only via textContent', () => {
+test('a list item shows a filled dot when enabled, hollow and muted when not', () => {
   withDom(() => {
-    const row = extensionRowEl({ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' });
-    assert.ok(texts(row).includes('tool name "list_sessions" is already registered'));
-    assert.equal(byClass(row, 'ext-row-quarantine')[0].getAttribute('role'), 'status');
-    // Every third-party string on this row came off a git URL, so nothing in the
-    // rendered subtree may take an innerHTML write.
-    for (const node of walk(row)) assert.equal(node._html, null, `${node.className} must not use innerHTML`);
+    const [on, off] = byClass(extensionsPanelEl({ entries: [EXT1, EXT2] }), 'ext-list-row');
+    assert.ok(byClass(on, 'ext-dot')[0].classList.contains('on'));
+    assert.equal(on.classList.contains('off'), false);
+    assert.equal(byClass(off, 'ext-dot')[0].classList.contains('on'), false);
+    assert.ok(off.classList.contains('off'));
+    // A quarantined one is not running, whatever its flag says.
+    const q = byClass(extensionsPanelEl({ entries: [{ ...EXT1, quarantine: 'broken' }] }), 'ext-list-row')[0];
+    assert.ok(q.classList.contains('off'));
+  });
+});
+
+test('the selected extension is highlighted and shown; clicking another selects it', () => {
+  withDom(() => {
+    const picked = [];
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1], selectedId: 'ext1', onSelect: (id) => picked.push(id) });
+    const rows = byClass(panel, 'ext-list-row');
+    assert.deepEqual(rows.map((r) => r.classList.contains('selected')), [false, true]);
+    assert.ok(texts(detailOf(panel)).includes('One'));
+    byClass(rows[0], 'ext-list-item')[0].fire('click');
+    assert.deepEqual(picked, ['a']);
+    // Nothing (or something gone) selected falls back to the first entry.
+    const fallback = extensionsPanelEl({ entries: [BUILTIN_A, EXT1], selectedId: 'gone' });
+    assert.ok(byClass(fallback, 'ext-list-row')[0].classList.contains('selected'));
+  });
+});
+
+test('the filter hides non-matching items in place and reports the text', () => {
+  withDom(() => {
+    const seen = [];
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, EXT2], filter: 'tw', onFilter: (t) => seen.push(t) });
+    const visible = () => byClass(panel, 'ext-list-row').filter((r) => !r.hidden).map((r) => r.dataset.extId);
+    assert.deepEqual(visible(), ['ext2'], 'the filter survives a remount');
+    const input = byClass(panel, 'ext-filter')[0];
+    input.value = 'ALP';
+    input.fire('input');
+    assert.deepEqual(visible(), ['a'], 'case-insensitive');
+    assert.deepEqual(seen, ['ALP']);
+  });
+});
+
+test('Check all is in the Installed head, only with an origin to check, and says so while it runs', () => {
+  withDom(() => {
+    let checks = 0;
+    assert.equal(byClass(extensionsPanelEl({ entries: [BUILTIN_A] }), 'ext-group-head').some((h) => byClass(h, 'ext-btn').length), false);
+    const panel = extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED], onCheckUpdates: () => { checks += 1; } });
+    const [coreHead, installedHead] = byClass(panel, 'ext-group-head');
+    assert.equal(byClass(coreHead, 'ext-btn').length, 0);
+    assert.deepEqual(buttonTexts(installedHead), ['Check all']);
+    byClass(installedHead, 'ext-btn')[0].fire('click');
+    assert.equal(checks, 1);
+    const check = byClass(byClass(extensionsPanelEl({ entries: [INSTALLED], checking: true }), 'ext-group-head')[0], 'ext-btn')[0];
+    assert.ok(texts(check).includes('Checking…'));
+    assert.equal(check.disabled, true);
+  });
+});
+
+test('Update all and a per-item update button appear only once a check found a newer commit', () => {
+  withDom(() => {
+    const seen = [];
+    const opts = { entries: [BUILTIN_A, EXT1, EXT2], onUpdate: (e) => seen.push(['one', e.id]), onUpdateAll: (es) => seen.push(['all', es.map((e) => e.id)]) };
+    const before = extensionsPanelEl(opts);
+    assert.deepEqual(buttonTexts(byClass(before, 'ext-group-head')[1]), ['Check all']);
+    assert.equal(byClass(before, 'ext-btn-square').length, 0);
+    const after = extensionsPanelEl({ ...opts, statuses: { ext2: BEHIND, ext1: { ...BEHIND, behind: false } } });
+    const head = byClass(after, 'ext-group-head')[1];
+    assert.deepEqual(buttonTexts(head), ['Update all', 'Check all'], 'Update all comes first');
+    const [square] = byClass(after, 'ext-btn-square');
+    assert.equal(square.getAttribute('aria-label'), 'Update Two');
+    assert.equal(byClass(after, 'ext-list-row').find((r) => r.dataset.extId === 'ext2').children.includes(square), true);
+    square.fire('click');
+    byClass(head, 'ext-btn')[0].fire('click');
+    assert.deepEqual(seen, [['one', 'ext2'], ['all', ['ext2']]]);
+    // A pending removal is past updating.
+    assert.equal(byClass(extensionsPanelEl({ ...opts, statuses: { ext2: BEHIND }, pendingRemoval: ['ext2'] }), 'ext-btn-square').length, 0);
+  });
+});
+
+test('the detail header: name, description, the enable toggle settings.js drives, and Uninstall for external only', () => {
+  withDom(() => {
+    const removed = [];
+    const panel = extensionsPanelEl({ entries: [EXT1], onUninstall: (e) => removed.push(e.id) });
+    const head = byClass(panel, 'ext-detail-head')[0];
+    assert.equal(head.dataset.id, 'ext:ext1', 'settings.js\'s delegated flip handler finds the def by this id');
+    assert.ok(head.classList.contains('setting-row'));
+    assert.ok(texts(head).includes('Keeps notes beside a card.'));
+    assert.equal(byClass(head, 'setting-toggle')[0].getAttribute('aria-checked'), 'true');
+    const uninstall = byClass(head, 'ext-btn-danger')[0];
+    assert.equal(uninstall._text, 'Uninstall…');
+    uninstall.fire('click');
+    assert.deepEqual(removed, ['ext1']);
+    const core = byClass(extensionsPanelEl({ entries: [BUILTIN_A] }), 'ext-detail-head')[0];
+    assert.equal(byClass(core, 'ext-btn-danger').length, 0);
+    assert.ok(byClass(core, 'setting-toggle')[0]);
+  });
+});
+
+test('the Source section: type, repository with an https-only Open link, and short commit', () => {
+  withDom(() => {
+    const detail = detailOf(extensionsPanelEl({ entries: [INSTALLED] }));
+    const all = texts(detail);
+    for (const t of ['Source', 'Type', 'Installed from git', 'Repository', 'https://example.invalid/notes.git', 'Commit', 'abcdef01']) assert.ok(all.includes(t), t);
+    assert.equal(all.includes('A Colleague'), false, 'no author');
+    const open = byClass(detail, 'ext-kv-open')[0];
+    assert.equal(open.href, 'https://example.invalid/notes.git');
+    for (const bad of ['http://example.invalid', 'ssh://git@example.invalid/x.git', 'javascript:alert(1)']) {
+      const d = detailOf(extensionsPanelEl({ entries: [{ ...INSTALLED, origin: bad }] }));
+      assert.equal(byClass(d, 'ext-kv-open').length, 0, bad);
+      assert.ok(texts(d).includes(bad));
+    }
+    const core = texts(detailOf(extensionsPanelEl({ entries: [BUILTIN_A] })));
+    assert.ok(core.includes('Core'));
+    assert.equal(core.includes('Repository'), false);
+    assert.equal(core.includes('Commit'), false);
+  });
+});
+
+test('quarantine is stated plainly in the detail pane, and only via textContent', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [{ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' }] });
+    assert.ok(texts(panel).includes('tool name "list_sessions" is already registered'));
+    assert.equal(byClass(panel, 'ext-row-quarantine')[0].getAttribute('role'), 'status');
   });
 });
 
 test('hostile third-party strings are inert text, not markup', () => {
   withDom(() => {
     const evil = '<img src=x onerror=alert(1)>';
-    const row = extensionRowEl({ id: 'x', label: evil, description: evil, origin: evil, quarantine: evil });
-    assert.ok(texts(row).includes(evil));
-    for (const node of walk(row)) assert.equal(node._html, null);
+    const panel = extensionsPanelEl({ entries: [{ id: 'x', label: evil, description: evil, origin: evil, quarantine: evil, external: true }], statuses: { x: BEHIND } });
+    assert.ok(texts(panel).includes(evil));
+    assertNoThirdPartyHtml(panel);
   });
 });
 
-test('an origin is a link only when it is https://, otherwise plain text', () => {
+test('an uninstalled extension says so in its detail, with nothing left to toggle or uninstall', () => {
   withDom(() => {
-    const secure = byClass(extensionRowEl({ id: 'x', label: 'X', external: true, origin: 'https://example.invalid/x.git' }), 'ext-row-origin');
-    assert.ok(secure.some((n) => n.tagName === 'A' && n.href === 'https://example.invalid/x.git'));
-    for (const bad of ['http://example.invalid', 'ssh://git@example.invalid/x.git', 'javascript:alert(1)']) {
-      const nodes = byClass(extensionRowEl({ id: 'x', label: 'X', external: true, origin: bad }), 'ext-row-origin');
-      assert.equal(nodes.some((n) => n.tagName === 'A'), false, bad);
-      assert.ok(nodes.some((n) => n._text === bad), bad);
-    }
+    const detail = detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], pendingRemoval: ['notes'] }));
+    assert.ok(texts(detail).some((t) => /Uninstalled\. .*stays in memory until the wrangler restarts/.test(t)));
+    assert.equal(byClass(detail, 'setting-toggle').length, 0);
+    assert.equal(byClass(detail, 'ext-btn-danger').length, 0);
+    assert.equal(byClass(detail, 'ext-setting-row').length, 0, 'nothing left to configure');
   });
 });
 
-test('Update appears only once a check found a newer commit; Uninstall is external-only', () => {
-  withDom(() => {
-    const seen = [];
-    const opts = { onUninstall: (e) => seen.push(['uninstall', e.id]), onUpdate: (e) => seen.push(['update', e.id]) };
-    // No check yet: a standing "Update…" would claim there is one to take.
-    assert.deepEqual(byClass(extensionRowEl(INSTALLED, opts), 'ext-btn').map((b) => b._text), ['Uninstall']);
-    assert.deepEqual(byClass(extensionRowEl(INSTALLED, { ...opts, status: { updatable: true, sha: 'a', remoteSha: 'b', behind: false } }), 'ext-btn').map((b) => b._text), ['Uninstall']);
-    const behind = extensionRowEl(INSTALLED, { ...opts, status: { updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40), behind: true } });
-    const buttons = byClass(behind, 'ext-btn');
-    assert.deepEqual(buttons.map((b) => b._text), ['Update…', 'Uninstall']);
-    buttons[0].fire('click');
-    buttons[1].fire('click');
-    assert.deepEqual(seen, [['update', 'notes'], ['uninstall', 'notes']]);
-    // A builtin cannot be uninstalled or updated — only turned off.
-    const builtin = extensionRowEl({ id: 'core', label: 'Core', external: false }, opts);
-    assert.deepEqual(byClass(builtin, 'ext-btn').map((b) => b._text), []);
-    assert.ok(byClass(builtin, 'setting-toggle')[0]);
-  });
-});
-
-test('an uninstalled extension says so on its own row, and draws no button of its own', () => {
-  withDom(() => {
-    const row = extensionRowEl(INSTALLED, { pendingRemoval: true });
-    assert.ok(texts(row).some((t) => /Uninstalled/.test(t)));
-    assert.ok(texts(row).some((t) => /stays in memory until the wrangler restarts/.test(t)));
-    // The restart itself is one button in the panel head — a whole-wrangler
-    // action, not a per-extension one, and several pending rows would otherwise
-    // each draw the same button.
-    assert.equal(byClass(row, 'ext-btn').length, 0);
-    // Nothing to toggle, update or uninstall on a row that is already gone.
-    assert.equal(byClass(row, 'setting-toggle').length, 0);
-  });
-});
-
-test('the restart button sits beside Check for updates, and only while something waits on it', () => {
+test('Restart now sits above the detail, and only while something waits on it and the server can restart', () => {
   withDom(() => {
     let restarts = 0;
     const opts = { entries: [INSTALLED], canRestart: true, onRestart: () => { restarts += 1; } };
-    // Nothing pending: no button, however restartable the server is.
     assert.equal(byClass(extensionsPanelEl(opts), 'ext-btn-warn').length, 0);
     for (const pending of [{ pendingRemoval: ['notes'] }, { pendingInstall: 'other' }]) {
-      const panel = extensionsPanelEl({ ...opts, ...pending });
-      const head = byClass(panel, 'ext-installed-head')[0];
-      const btn = byClass(head, 'ext-btn-warn')[0];
-      assert.ok(btn, `${JSON.stringify(pending)} draws the button in the head`);
+      const notices = byClass(extensionsPanelEl({ ...opts, ...pending }), 'ext-notices')[0];
+      const btn = byClass(notices, 'ext-btn-warn')[0];
       assert.equal(btn._text, 'Restart now');
-      assert.equal(byClass(head, 'setting-label')[0]._text, 'External extensions');
       btn.fire('click');
     }
     assert.equal(restarts, 2);
-    // While it is going down the button says so rather than inviting a second press.
     const going = byClass(extensionsPanelEl({ ...opts, pendingRemoval: ['notes'], restarting: true }), 'ext-btn-warn')[0];
     assert.equal(going._text, 'Restarting…');
     assert.equal(going.disabled, true);
-  });
-});
-
-test('no restart button where the server cannot restart itself — just the row\'s sentence', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [INSTALLED], pendingRemoval: ['notes'], canRestart: false });
-    assert.ok(texts(panel).some((t) => /stays in memory until the wrangler restarts/.test(t)));
-    assert.equal(byClass(panel, 'ext-btn-warn').length, 0);
-  });
-});
-
-test('the panel is one row builder under Core and Installed headings', () => {
-  withDom(() => {
-    const empty = extensionsPanelEl({ entries: [] });
-    assert.deepEqual(headLabels(empty), ['External extensions']);
-    assert.ok(texts(empty).includes('No extensions installed yet.'));
-    assert.equal(byClass(empty, 'ext-row').length, 1, 'just the install field');
-    // Nothing to check against with no recorded origin anywhere.
-    assert.equal(texts(empty).includes('Check for updates'), false);
-    const full = extensionsPanelEl({ entries: [{ id: 'core', label: 'Core', external: false }, INSTALLED] });
-    assert.ok(texts(full).includes('Check for updates'));
-    assert.equal(byClass(full, 'ext-row').length, 3, 'a builtin, an installed one, and the install field');
-    assert.equal(byClass(full, 'setting-toggle').length, 2, 'both halves of the list carry their own toggle');
-  });
-});
-
-const BUILTIN_A = { id: 'a', label: 'Alpha', external: false };
-const BUILTIN_B = { id: 'b', label: 'Beta' };
-const EXT1 = { ...INSTALLED, id: 'ext1', label: 'One' };
-const EXT2 = { ...INSTALLED, id: 'ext2', label: 'Two' };
-// Extension rows only: the install field is an .ext-row with no data-id.
-const ids = (node) => byClass(node, 'ext-row').map((r) => r.dataset.id).filter(Boolean);
-
-test('rows are grouped by external, keeping order within each group', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, BUILTIN_B, EXT2] });
-    const groups = byClass(panel, 'ext-group');
-    assert.equal(groups.length, 2);
-    assert.deepEqual(headLabels(groups[0]), ['Core extensions']);
-    assert.deepEqual(headLabels(groups[1]), ['External extensions']);
-    assert.deepEqual(ids(groups[0]), ['ext:a', 'ext:b']);
-    assert.deepEqual(ids(groups[1]), ['ext:ext1', 'ext:ext2']);
-  });
-});
-
-test('an empty Core group is omitted entirely', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [INSTALLED] });
-    assert.equal(byClass(panel, 'ext-group').length, 1);
-    assert.deepEqual(headLabels(panel), ['External extensions']);
-    assert.equal(texts(panel).includes('Core extensions'), false);
-  });
-});
-
-test('the empty-Installed hint shows only with no installed extensions', () => {
-  withDom(() => {
-    const none = extensionsPanelEl({ entries: [BUILTIN_A] });
-    assert.ok(texts(none).includes('No extensions installed yet.'));
-    assert.equal(texts(none).includes('Check for updates'), false);
-    assert.equal(texts(extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED] })).includes('No extensions installed yet.'), false);
-  });
-});
-
-test('Check for updates and Restart now live in the Installed head, not Core', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [BUILTIN_A, INSTALLED], canRestart: true, pendingRemoval: ['x'] });
-    const [coreGroup, installedGroup] = byClass(panel, 'ext-group');
-    const head = byClass(installedGroup, 'ext-group-head')[0];
-    for (const label of ['Check for updates', 'Restart now']) {
-      assert.ok(byClass(head, 'ext-btn').some((b) => b._text === label), `${label} in Installed head`);
-      assert.equal(byClass(coreGroup, 'ext-btn').some((b) => b._text === label), false, `${label} not in Core`);
-    }
-  });
-});
-
-test('the install field is the last thing in the Installed group', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [BUILTIN_A, EXT1, EXT2] });
-    const installedGroup = byClass(panel, 'ext-group')[1];
-    const kids = installedGroup.children;
-    const last = kids[kids.length - 1];
-    assert.equal(byClass(last, 'ext-install-url').length, 1);
-    const lastExt = Math.max(...kids.map((k, i) => (k.dataset?.id ? i : -1)));
-    assert.ok(lastExt < kids.length - 1, 'after every external row');
-    assert.deepEqual(ids(installedGroup), ['ext:ext1', 'ext:ext2']);
-  });
-});
-
-test('a quarantined builtin stays in Core; a pending-removal external row stays in Installed', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({
-      entries: [{ ...BUILTIN_A, quarantine: 'broken' }, EXT1], pendingRemoval: ['ext1'],
-    });
-    const [coreGroup, installedGroup] = byClass(panel, 'ext-group');
-    assert.ok(texts(coreGroup).includes('broken'));
-    assert.deepEqual(ids(coreGroup), ['ext:a']);
-    assert.deepEqual(ids(installedGroup), ['ext:ext1']);
-    assert.equal(byClass(installedGroup, 'ext-row-removed').length, 1);
+    assert.equal(byClass(extensionsPanelEl({ ...opts, canRestart: false, pendingRemoval: ['notes'] }), 'ext-btn-warn').length, 0);
   });
 });
 
@@ -305,39 +289,43 @@ const WITH_SETTINGS = {
   settingValues: { registryUrl: 'https://reg.invalid', pollMs: 30, auto: true },
 };
 
-test('the tab draws a cog, not the settings — and only for an extension that declares some', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }, WITH_SETTINGS] });
-    // The whole point of the cog: the tab stays a list of extensions, with not
-    // one of anybody's fields laid out flat in it.
-    assert.equal(byClass(panel, 'ext-setting-row').length, 0);
-    assert.equal(byClass(panel, 'ext-settings').length, 0);
-    assert.equal(texts(panel).includes('Registry URL'), false);
-    // Its presence IS the disclosure that there is something to configure, so
-    // an extension declaring none must not draw one.
-    assert.equal(byClass(panel, 'ext-btn-icon').length, 1);
-    assert.equal(byClass(extensionsPanelEl({ entries: [{ id: 'core', label: 'Core' }] }), 'ext-btn-icon').length, 0);
-  });
-});
-
-test('one extension\'s rows are the dialog body its cog asks for, one row per declared setting', () => {
+test('the selected extension\'s settings render inline under Settings; none means no section', () => {
   withDom(() => {
     const seen = [];
-    const panel = extensionsPanelEl({ entries: [WITH_SETTINGS], onOpenSettings: (e) => seen.push(e.id) });
-    byClass(panel, 'ext-btn-icon')[0].fire('click');
-    assert.deepEqual(seen, ['notes'], 'the cog names its own extension');
-    const rows = byClass(extensionSettingRowsEl(WITH_SETTINGS), 'ext-setting-row');
-    assert.deepEqual(rows.map((r) => r.dataset.key), ['registryUrl', 'pollMs', 'auto']);
-    const all = texts(extensionSettingRowsEl(WITH_SETTINGS));
-    assert.ok(all.includes('Registry URL'));
-    assert.ok(all.includes('Where handles are published.'));
+    const detail = detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], onSettingChange: (c) => seen.push(c) }));
+    assert.ok(texts(detail).includes('Settings'));
+    assert.deepEqual(byClass(detail, 'ext-setting-row').map((r) => r.dataset.key), ['registryUrl', 'pollMs', 'auto']);
+    byClass(detail, 'setting-toggle').at(-1).fire('click');
+    assert.deepEqual(seen, [{ id: 'notes', key: 'auto', value: false }]);
+    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [INSTALLED] }))).includes('Settings'), false);
+    // Only hidden defs (a settings.panel manages them) is still nothing to draw.
+    const hiddenOnly = { ...INSTALLED, settings: [{ key: 'k', type: 'text', label: 'K', hidden: true }] };
+    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [hiddenOnly] }))).includes('Settings'), false);
   });
 });
 
-test('a row on its way out keeps no cog — there is nothing left to configure', () => {
+test('a caller-supplied settingsEl replaces the default rows, and null omits the section', () => {
   withDom(() => {
-    const panel = extensionsPanelEl({ entries: [WITH_SETTINGS], pendingRemoval: ['notes'] });
-    assert.equal(byClass(panel, 'ext-btn-icon').length, 0);
+    const custom = document.createElement('div');
+    custom.textContent = 'custom';
+    const asked = [];
+    const panel = extensionsPanelEl({ entries: [INSTALLED], settingsEl: (e) => { asked.push(e.id); return custom; } });
+    assert.deepEqual(asked, ['notes']);
+    assert.ok(walk(detailOf(panel)).includes(custom));
+    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], settingsEl: () => null }))).includes('Settings'), false);
+  });
+});
+
+test('+ Add extension opens the install form in the detail pane', () => {
+  withDom(() => {
+    let adds = 0;
+    const panel = extensionsPanelEl({ entries: [INSTALLED], onAdd: () => { adds += 1; } });
+    assert.equal(byClass(panel, 'ext-install-url').length, 0);
+    byClass(panel, 'ext-add-btn')[0].fire('click');
+    assert.equal(adds, 1);
+    const adding = extensionsPanelEl({ entries: [INSTALLED], adding: true });
+    assert.equal(byClass(detailOf(adding), 'ext-install-url').length, 1);
+    assert.equal(byClass(adding, 'ext-list-row')[0].classList.contains('selected'), false);
   });
 });
 
@@ -445,17 +433,7 @@ test('a quarantined control sends nothing even if something manages to click it'
   });
 });
 
-test('checking for updates says so while it runs, on the button and on each row', () => {
-  withDom(() => {
-    const panel = extensionsPanelEl({ entries: [INSTALLED], checking: true });
-    const check = byClass(panel, 'ext-btn').find((b) => /Check/.test(b._text));
-    assert.equal(check._text, 'Checking…');
-    assert.equal(check.disabled, true);
-    assert.ok(texts(panel).includes('Checking…'));
-  });
-});
-
-test('a finished install says so on the install form — it has no row until the restart', () => {
+test('a finished update that waits on a restart says so above the detail pane', () => {
   withDom(() => {
     const panel = extensionsPanelEl({
       entries: [], pendingInstall: 'notes', progress: 'Installed notes. Restart the wrangler to finish.',
@@ -742,30 +720,16 @@ test('Enter in a textarea is a newline: it neither commits nor is swallowed; blu
   });
 });
 
-test('the settings dialog: Enter in a textarea is a newline, with or without a settings panel', () => {
-  const area = { tagName: 'TEXTAREA' };
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: area }, { hasPanels: false }), 'none');
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: area }, { hasPanels: true }), 'none', 'must not save the panel');
-});
-
-test('the settings dialog: Escape closes without saving panels, from anywhere', () => {
-  for (const hasPanels of [false, true]) {
-    for (const target of [{ tagName: 'TEXTAREA' }, { tagName: 'INPUT', type: 'text' }, { tagName: 'BUTTON' }]) {
-      assert.equal(extSettingsKeyAction({ key: 'Escape', target }, { hasPanels }), 'close');
-    }
-  }
-});
-
-test('closing the dialog first blurs a focused field inside it, so a blur-committed edit is not lost', () => {
+test('a remount first blurs a focused field inside the pane, so a blur-committed edit is not lost', () => {
   const calls = [];
   const area = { blur: () => calls.push('blur') };
   const modal = { contains: (n) => n === area };
   commitFocusedField(modal, { activeElement: area });
-  assert.deepEqual(calls, ['blur'], 'Escape, the backdrop and Done all close through here');
+  assert.deepEqual(calls, ['blur']);
   const outside = { blur: () => calls.push('outside') };
   commitFocusedField(modal, { activeElement: outside });
   commitFocusedField(modal, { activeElement: null });
-  assert.deepEqual(calls, ['blur'], 'focus outside the dialog is left alone');
+  assert.deepEqual(calls, ['blur'], 'focus outside the pane is left alone');
 });
 
 test('a textarea with no declared maxLength still gets the server\'s cap natively', () => {
@@ -775,19 +739,4 @@ test('a textarea with no declared maxLength still gets the server\'s cap nativel
     const [area] = byClass(extensionSettingRowsEl(entry), 'ext-setting-input');
     assert.equal(area.maxLength, MAX_TEXTAREA_LENGTH);
   });
-});
-
-test('the settings dialog: Enter in a text input commits its row and closes only when there is no panel to save', () => {
-  const input = { tagName: 'INPUT', type: 'text' };
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: input }, { hasPanels: false }), 'close');
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: input }, { hasPanels: true }), 'none');
-  for (const type of ['checkbox', 'radio', 'button']) {
-    assert.equal(extSettingsKeyAction({ key: 'Enter', target: { tagName: 'INPUT', type } }, { hasPanels: true }), 'done');
-  }
-});
-
-test('the settings dialog: Enter anywhere else means Done; other keys do nothing', () => {
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: { tagName: 'BUTTON' } }, { hasPanels: true }), 'done');
-  assert.equal(extSettingsKeyAction({ key: 'Enter', target: null }, { hasPanels: false }), 'done');
-  assert.equal(extSettingsKeyAction({ key: 'a', target: { tagName: 'TEXTAREA' } }, { hasPanels: false }), 'none');
 });
