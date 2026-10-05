@@ -1,7 +1,6 @@
 import { PLUS_ICON, X_ICON } from './icons.js';
 
-// Each input has a unique browse key, including across modal resets. Late replies
-// cannot fill a different row or a newly opened dialog.
+// Keep IDs unique across resets so late replies cannot target new rows.
 export function createAdditionalFolders({ list, add, send, recentFolders = () => [], document = globalThis.document }) {
   let rows = [];
   let enabled = true;

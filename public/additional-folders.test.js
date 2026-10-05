@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAdditionalFolders } from './additional-folders.js';
 
-// Only browser primitives are doubled; the picker, row state and routing are real.
 class Element {
   constructor(tag = 'div') { this.tagName = tag; this.children = []; this.value = ''; this.handlers = {}; this.dataset = {}; }
   append(...els) { this.children.push(...els); }

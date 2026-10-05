@@ -1646,7 +1646,7 @@ export class SessionManager {
       if (!path.isAbsolute(dir)) throw new Error(`Additional folder must be an absolute path: ${raw}`);
       const normalized = path.normalize(dir).replace(/(?!^)\/+$/, '');
       let isDirectory = false;
-      try { isDirectory = fs.statSync(normalized).isDirectory(); } catch { /* report below */ }
+      try { isDirectory = fs.statSync(normalized).isDirectory(); } catch {}
       if (!isDirectory) throw new Error(`Additional folder does not exist or is not a directory: ${normalized}`);
       return normalized;
     }))];

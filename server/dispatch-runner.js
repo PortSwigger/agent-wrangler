@@ -12,7 +12,6 @@ import { slugFromIntent } from './worktree.js';
 //
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
 //          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession }
-// The launch and schedule dialogs both carry optional additional folder grants.
 // Nesting only ever renders one level deep (computeAbsorption in
 // public/workflow.js pops a grandchild back out to top-level) — refuse a
 // brand-new parentSession that would create a session at depth > 1, rather
