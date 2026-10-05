@@ -66,8 +66,8 @@ function commitListEl(commits) {
 export function updatePanelEl({ phase = 'idle', status = null, error = '', onCheck, onApply } = {}) {
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting';
   const wrap = el('div', 'update-panel');
-  const head = el('div', 'ext-installed-head');
-  head.append(el('div', 'setting-label', 'Version'));
+  const head = el('div', 'update-panel-head');
+  head.append(el('div', 'setting-label', 'Manual update'));
   const canUpdate = phase === 'status' && status && status.behind > 0 && !status.blocked && status.canApply;
   if (canUpdate) head.append(button('Update and restart', 'ext-btn ext-btn-primary', { onClick: onApply }));
   head.append(button(phase === 'checking' ? 'Checking…' : 'Check for updates', 'ext-btn', { disabled: busy, onClick: onCheck }));
