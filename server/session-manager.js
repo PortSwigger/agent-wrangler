@@ -74,12 +74,24 @@ function isInsideSessions(dir) {
 // isn't already archived and whose pane exited with status 0 (a deliberate
 // /exit or a self-stopped agent). A non-zero or unknown (null) status is left
 // for the existing dead-pane path so a crash/failed-resume keeps surfacing its
-// output with Resume. Foreign (non-`cc_`) tmuxes are never swept.
+// output with Resume. Foreign (non-`cc_`) tmuxes are never swept. So is a clean
+// exit within EARLY_EXIT_GRACE_MS of its launch/resume: that isn't a deliberate
+// /exit but the agent bailing at startup (Codex's self-update prompt and its
+// "conversation is open in another app" screen both exit 0), and archiving it
+// hides the only explanation before anyone can read it.
+export const EARLY_EXIT_GRACE_MS = 2 * 60 * 1000;
+
 export function archivableExits(deadEntries) {
   return deadEntries.filter(
     (d) => typeof d.tmux === 'string' && isOwnedTmux(d.tmux)
-      && d.sessionId && !d.archived && d.status === 0,
+      && d.sessionId && !d.archived && d.status === 0
+      && !exitedEarly(d),
   );
+}
+
+function exitedEarly({ launchedAt, diedAt }) {
+  return typeof launchedAt === 'number' && typeof diedAt === 'number'
+    && diedAt - launchedAt < EARLY_EXIT_GRACE_MS;
 }
 
 // Pure decision: which dead tmuxes haven't been logged yet, for the
@@ -375,6 +387,7 @@ export class SessionManager {
     this.alive = new Set(); // tmux session names with a live (non-dead) pane
     this.dead = new Set(); // tmux sessions kept by remain-on-exit after their command exited
     this.deadStatus = new Map(); // dead tmux name -> pane exit code (absent if tmux didn't report one)
+    this.deadTime = new Map(); // dead tmux name -> epoch ms the pane died (absent if tmux didn't report one)
     this.tmuxBin = 'tmux'; // resolved to an absolute path in init()
     this.socket = ''; // this install's generated tmux socket, resolved in init()
     // The socket pre-migration (legacy) sessions live on: the default socket ('')
@@ -1458,7 +1471,7 @@ export class SessionManager {
     // Publishing empty/partial sets here meant a concurrent liveness reader
     // during the tmux query saw every pane as dead.
     const alive = new Set(), dead = new Set();
-    const deadStatusByName = new Map(), socketByName = new Map();
+    const deadStatusByName = new Map(), deadTimeByName = new Map(), socketByName = new Map();
     // Scan this install's socket plus the default socket while legacy sessions
     // remain there. Each socket is a separate tmux server, so we query each and
     // remember which socket every session was found on (for attach/kill/capture).
@@ -1466,7 +1479,7 @@ export class SessionManager {
     for (const socket of this.scanSockets()) {
       let stdout = '';
       try {
-        ({ stdout } = await this._tmux(socket, ['list-panes', '-a', '-F', '#{session_name}\x1f#{pane_dead}\x1f#{pane_dead_status}']));
+        ({ stdout } = await this._tmux(socket, ['list-panes', '-a', '-F', '#{session_name}\x1f#{pane_dead}\x1f#{pane_dead_status}\x1f#{pane_dead_time}']));
       } catch {
         scanFailed = true;
         continue; // that socket's server isn't running → nothing there
@@ -1474,18 +1487,20 @@ export class SessionManager {
       const seen = new Set();
       for (const line of stdout.split('\n')) {
         if (!line) continue;
-        const [name, dead, deadStatus] = line.split('\x1f');
+        const [name, dead, deadStatus, deadTime] = line.split('\x1f');
         if (!name) continue;
         seen.add(name);
         socketByName.set(name, socket);
-        if ((dead || '').trim() !== '1') alive.add(name);
-        else if (deadStatus !== undefined && deadStatus.trim() !== '') deadStatusByName.set(name, Number(deadStatus));
+        if ((dead || '').trim() !== '1') { alive.add(name); continue; }
+        if (deadStatus !== undefined && deadStatus.trim() !== '') deadStatusByName.set(name, Number(deadStatus));
+        if (deadTime !== undefined && deadTime.trim() !== '') deadTimeByName.set(name, Number(deadTime) * 1000);
       }
       for (const name of seen) if (!alive.has(name)) dead.add(name);
     }
     this.alive = alive;
     this.dead = dead;
     this.deadStatus = deadStatusByName;
+    this.deadTime = deadTimeByName;
     this.socketByName = socketByName;
     // An agent exiting on its own is the event nothing recorded before this: a
     // claude that launched and died 19s later left no trace of either end. A
@@ -1526,18 +1541,22 @@ export class SessionManager {
   // Auto-archive sessions whose Claude agent exited cleanly inside an owned tmux:
   // a clean exit (pane_dead_status 0) is a deliberate /exit or self-stop, so set
   // it aside as archived (recoverable via Resume) and reap the corpse — orphan-
-  // proof even in the resume-fork case via killForSession. Non-zero/unknown exits
-  // are left for the dead-pane path to surface on the board. `snapshotFor` lets
+  // proof even in the resume-fork case via killForSession. Non-zero/unknown exits,
+  // and clean exits inside the startup grace window (see archivableExits), are
+  // left for the dead-pane path to surface on the board. `snapshotFor` lets
   // the caller inject per-session archive snapshot fields (e.g. the task), since
   // the manager doesn't know the task store. Returns the archived sessionIds.
   async reconcileExitedSessions(snapshotFor = () => ({})) {
     const deadEntries = [...this.dead].map((tmux) => {
       const sessionId = this.tmuxOwner(tmux);
+      const entry = sessionId ? this.map.get(sessionId) : null;
       return {
         tmux,
         sessionId,
         status: this.deadStatus.has(tmux) ? this.deadStatus.get(tmux) : null,
         archived: sessionId ? this.isArchived(sessionId) : false,
+        launchedAt: entry?.relaunchedAt ?? entry?.createdAt,
+        diedAt: this.deadTime.get(tmux),
       };
     });
     const toArchive = archivableExits(deadEntries);
