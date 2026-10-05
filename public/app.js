@@ -29,6 +29,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
+import { updatePanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, extSettingsKeyAction, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -51,7 +52,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, openSettingsDetail, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX } from './settings.js';
+import { initSettings, openSettingsDetail, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { playSound } from './sound.js';
@@ -142,6 +143,9 @@ let chatViewDefault = false; // server config flag, carried on every graph push
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
 // identity fields are fixed at server boot; `enabled` is live.
+let autoUpdate = 'notify';
+let refreshSessionsAfterUpdate = false;
+let graphCodeVersion = null;
 let latestExtensions = [];
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
@@ -302,7 +306,7 @@ function pruneSampleHosts() {
 function renderSampleCard(el, _extId, hidden) {
   if (!el) return;
   pruneSampleHosts();
-  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null, isOnOlderCode: () => true }, { expanded: true });
   // Inert: never wired (no wireGridEvents), not focusable, not clickable.
   const card = el.querySelector('.session-card');
   if (card) {
@@ -560,6 +564,9 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   chatViewDefault = graph.chatViewDefault === true;
+  autoUpdate = graph.autoUpdate || 'notify';
+  refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
+  graphCodeVersion = graph.codeVersion || null;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
@@ -599,7 +606,7 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
-  syncQuarantineBanner();
+  syncStandingBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
   // mount or an unmount. After `latestGraph` is assigned, because the render it
@@ -1271,6 +1278,7 @@ function cardCtx() {
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
+    isOnOlderCode: (s) => sessionOnOlderCode(s, graphCodeVersion),
   };
 }
 
@@ -5460,10 +5468,17 @@ let quarantinedBuiltins = [];
 // it wins while active and this line is re-asserted when it clears.
 let fdBannerActive = false;
 
-function syncQuarantineBanner() {
-  if (!quarantinedBuiltins.length || fdBannerActive) return;
-  const many = quarantinedBuiltins.length !== 1;
-  showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+let rolledBackUpdate = null;
+
+function syncStandingBanner() {
+  if (fdBannerActive) return;
+  if (quarantinedBuiltins.length) {
+    const many = quarantinedBuiltins.length !== 1;
+    showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+    return;
+  }
+  const rollback = rolledBackText(rolledBackUpdate);
+  if (rollback) showSystemBanner(`⚠ ${rollback}`, { level: 1, kind: `update-rollback:${rolledBackUpdate.target}`, forever: true });
 }
 
 // Extensions panel state. All of it is per-browser and in memory: the update
@@ -5493,6 +5508,74 @@ let extPanelHost = null;
 // The serialised extension list the open panel was last drawn from — see
 // applyGraph, which re-mounts only when this moves.
 let lastExtSignature = null;
+
+let updatePhase = 'idle';
+let updateStatus = null;
+let updateError = '';
+let updatePanelHost = null;
+let seenCodeVersion = null;
+const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
+
+function mountUpdatePanel(host) {
+  updatePanelHost = host;
+  if (!host) return;
+  host.textContent = '';
+  host.append(updatePanelEl({
+    phase: updatePhase,
+    status: updateStatus,
+    error: updateError,
+    onCheck: () => { updatePhase = 'checking'; send({ type: 'update-check' }); remountUpdatePanel(); },
+    onApply: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); },
+  }));
+}
+
+const remountUpdatePanel = () => {
+  document.getElementById('settings-btn')?.classList.toggle('has-update', updateAvailable(updateStatus));
+  if (updatePanelHost?.isConnected) mountUpdatePanel(updatePanelHost);
+};
+
+const UPDATE_TOASTED_KEY = 'aw-update-toasted';
+
+function readUpdateToasted() {
+  try { return localStorage.getItem(UPDATE_TOASTED_KEY); } catch { return null; }
+}
+
+function toastNewUpdate(status, { userAsked }) {
+  const text = updateToastText(status, { lastToasted: readUpdateToasted(), userAsked });
+  try { if (updateAvailable(status)) localStorage.setItem(UPDATE_TOASTED_KEY, status.remote); } catch { /* private window — it may toast again next load */ }
+  if (!text) return;
+  const actions = [{ label: 'View', onClick: () => openSettings('updates') }];
+  if (status.canApply) actions.push({ label: 'Update now', onClick: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); } });
+  toast(text, false, { actions, duration: 15000 });
+}
+
+function applyUpdateStatus(status) {
+  if (!status) return;
+  toastNewUpdate(status, { userAsked: updatePhase === 'checking' });
+  updateStatus = status;
+  if (!UPDATE_IN_FLIGHT.has(updatePhase)) { updatePhase = 'status'; updateError = ''; }
+  remountUpdatePanel();
+}
+
+function noteRolledBack(rolledBack) {
+  rolledBackUpdate = rolledBack || null;
+  syncStandingBanner();
+}
+
+function noteCodeVersion(version) {
+  if (shouldReloadForVersion(seenCodeVersion, version)) {
+    location.reload();
+    return;
+  }
+  if (version) seenCodeVersion = version;
+  if (UPDATE_IN_FLIGHT.has(updatePhase)) { updatePhase = 'idle'; updateStatus = null; remountUpdatePanel(); }
+}
+
+function noteConfigUpdate(msg) {
+  noteCodeVersion(msg.codeVersion);
+  applyUpdateStatus(msg.update);
+  noteRolledBack(msg.updateRolledBack);
+}
 
 const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
 
@@ -5667,6 +5750,8 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'chatViewDefault') return chatViewDefault;
+      if (id === 'autoUpdate') return autoUpdate;
+      if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
       // back off graph.extensions — one rung for all of them, no per-extension
       // branch. Undefined for an unknown id so settings.js falls back to its
@@ -5695,6 +5780,12 @@ initSettings({
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
+      } else if (id === 'autoUpdate') {
+        autoUpdate = value;
+        send({ type: 'set-auto-update-mode', mode: autoUpdate });
+      } else if (id === 'refreshSessionsAfterUpdate') {
+        refreshSessionsAfterUpdate = Boolean(value);
+        send({ type: 'set-refresh-sessions-after-update', enabled: refreshSessionsAfterUpdate });
       } else if (id.startsWith(EXT_SETTING_PREFIX)) {
         // Nothing flips locally: the server fixed the extension's tools/handlers
         // at boot, so the toggle only records the choice (read back off the next
@@ -5717,6 +5808,7 @@ initSettings({
     onChatFontSize: setChatFontSize,
   },
   extensions: { mount: mountExtensionsPanel },
+  updates: { mount: mountUpdatePanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', submitDispatch);
@@ -5914,6 +6006,7 @@ function connect() {
       sessionsDir = msg.sessionsDir || '';
       homeDir = msg.homeDir || '';
       canRestartServer = Boolean(msg.canRestart);
+      noteConfigUpdate(msg);
       extRestarting = false;
       extPendingRemoval.clear();
       extPendingInstall = '';
@@ -5985,6 +6078,9 @@ function connect() {
       clearExtTransientLater();
       remountExtensions();
     }
+    else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
+    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
+    else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
@@ -6003,15 +6099,15 @@ function connect() {
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
     else if (msg.type === 'fd-warning') {
-      // #system-banner is one slot, so the two producers have to take turns: an
-      // fd leak is the more urgent of the two and wins while it is active, and
-      // clearing it re-asserts the quarantine line (which is boot-fixed and
-      // otherwise never redrawn) rather than leaving the slot blank.
+      // #system-banner is one slot, so the producers have to take turns: an
+      // fd leak is the most urgent and wins while it is active, and clearing it
+      // re-asserts the quarantine or rollback line (which is otherwise never
+      // redrawn) rather than leaving the slot blank.
       fdBannerActive = Boolean(msg.active);
       if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
       else {
         hideSystemBanner();
-        syncQuarantineBanner();
+        syncStandingBanner();
       }
     }
     else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);

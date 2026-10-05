@@ -955,7 +955,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **The chip veto (1.14.0) is presentation-only, and scoped to the board
   CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
   `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,
-  `core:compact`, `core:subagents`, `core:restarting`, `core:automerge`,
+  `core:compact`, `core:subagents`, `core:restarting`, `core:older-code`, `core:automerge`,
   `core:runtime`, `core:worktree`, `core:pr` (cards.js
   `CORE_CHIPS`, meta-row order). A `link.chip` contribution's chip is keyed
   `<extId>:<id>` (the Jira chip is `jira:jira`) and listed by `chips()` like a pill. A

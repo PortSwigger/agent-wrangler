@@ -82,3 +82,15 @@ test('an alert with no level offers no dismiss control and is never suppressed',
   assert.equal(env.visible(), true);
   assert.equal(env.banner.children.some((c) => c.className === 'system-banner-dismiss'), false);
 });
+
+test('a forever dismissal outlasts today', () => {
+  const env = stubEnv();
+  showSystemBanner('rolled back', { level: 1, kind: 'update-rollback:abc', forever: true });
+  dismiss(env.banner);
+  const stored = JSON.parse(env.store.get('aw-system-banner-dismiss'));
+  assert.ok(stored['update-rollback:abc'].until > Date.now() + 365 * 24 * 60 * 60 * 1000);
+  showSystemBanner('rolled back', { level: 1, kind: 'update-rollback:abc', forever: true });
+  assert.equal(env.visible(), false);
+  showSystemBanner('rolled back again', { level: 1, kind: 'update-rollback:def', forever: true });
+  assert.equal(env.visible(), true, 'a rollback of a different commit is a new notice');
+});

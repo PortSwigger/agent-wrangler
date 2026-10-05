@@ -40,6 +40,8 @@
     "task-action": "#c9bb95",
     "snooze": "#d29922",
     "snooze-fg": "#e3b341",
+    "warn": "#d29922",
+    "warn-fg": "#e3b341",
     "shadow": "rgba(0,0,0,0.5)",
     "terminal": {
       "bg": "rgba(20,15,8,0.78)",

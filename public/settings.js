@@ -102,6 +102,23 @@ export const SETTINGS = [
     help: 'Which side of the board the selected session\'s terminal / chat pane sits on. Per-browser rather than shared, like the theme and the pane\'s own drag-resized width — which side of the screen it wants to be on is a property of the machine you are sitting at. The nav rail stays on the far left either way.',
     default: 'right',
   },
+  {
+    id: 'autoUpdate',
+    type: 'segmented',
+    scope: 'server',
+    options: [{ value: 'off', label: 'Off' }, { value: 'notify', label: 'Notify' }, { value: 'auto', label: 'Auto' }],
+    label: 'Automatic updates',
+    help: 'Notify checks origin/main hourly and puts a dot on Settings when an update is ready. Auto also installs it and restarts, if the checkout is clean and no session is launching or about to start on a schedule. If an update fails to start, the wrangler rolls back and skips that commit.',
+    default: 'notify',
+  },
+  {
+    id: 'refreshSessionsAfterUpdate',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Restart idle sessions after an update',
+    help: 'Running sessions keep the MCP tools and skills they launched with. When this is on, sessions marked "older version" restart one at a time after 10 idle minutes with no terminal, background job or snooze. Each restart re-reads the conversation, so the next turn pays for a new prompt cache.',
+    default: false,
+  },
 ];
 
 // The Extensions tab's rows are not hand-listed: setExtensionDefs builds one
@@ -124,6 +141,7 @@ export const SETTINGS_TABS = [
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
+  { id: 'updates', label: 'Updates', settingIds: ['autoUpdate', 'refreshSessionsAfterUpdate'] },
 ];
 
 // Every extension toggle is a scope:'server' def under this prefix, so app.js's
@@ -216,6 +234,8 @@ let changeBridge = () => {};
 // modal open so a row's quarantine reason and SHA are current. A no-op default
 // keeps every settings test free of the extensions panel.
 let extensionsBridge = { mount: () => {} };
+let updatesBridge = { mount: () => {} };
+let openModal = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
@@ -243,6 +263,10 @@ function writeStored(def, value) {
 
 // The single read path for consumers. Unknown id → undefined (a caller typo
 // shouldn't silently masquerade as a real, unset setting).
+export function openSettings(tabId) {
+  openModal(tabId);
+}
+
 export function getSetting(id) {
   const def = byId.get(id);
   return def ? readStored(def) : undefined;
@@ -318,6 +342,8 @@ function tabPanelHtml(tab, selected) {
     // installed extensions in one list instead of the two that repeated each
     // other's name and description.
     inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
+  } else if (tab.id === 'updates') {
+    inner = `<div id="settings-updates"></div>${inner}`;
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
       role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
@@ -448,11 +474,12 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange, extensions } = {}) {
+export function initSettings({ server, appearance, onChange, extensions, updates } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
   if (extensions) extensionsBridge = extensions;
+  if (updates) updatesBridge = updates;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -463,13 +490,15 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
   // Land focus on Done so the modal-scoped Escape handler below fires on a fresh
   // open (a click-opened modal otherwise leaves focus on <body>) — same trick the
   // file-preview / schedule modals use.
-  const open = () => {
+  const open = (tabId) => {
     endDetail();
     render(body);
+    if (typeof tabId === 'string') selectTab(body, tabId);
     // After render, because the mount point only exists once the panels are in
     // the DOM. Every open rebuilds it, so a quarantine reason or a SHA that
     // changed since the last open is current without any subscription here.
     extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
+    updatesBridge.mount(body.querySelector('#settings-updates'));
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };
@@ -478,8 +507,9 @@ export function initSettings({ server, appearance, onChange, extensions } = {}) 
     endDetail();
     modal.classList.add('hidden');
   };
+  openModal = open;
 
-  if (btn) btn.addEventListener('click', open);
+  if (btn) btn.addEventListener('click', () => open());
   closeBtn?.addEventListener('click', () => { if (detail) finishDetail(); else close(); });
   window.addEventListener('keydown', (e) => {
     if (!isOpenSettingsKey(e)) return;

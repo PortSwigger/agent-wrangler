@@ -373,6 +373,19 @@ test('dispatch omits a blank auto-compaction threshold from the persisted entry'
   assert.equal(Object.hasOwn(sm.map.get(sessionId), 'autoCompactTokens'), false);
 });
 
+test('hasLaunchInFlight covers a dispatch until it settles', async () => {
+  const sm = smForDispatch();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  sm._newSession = async () => { await gate; };
+  assert.equal(sm.hasLaunchInFlight(), false);
+  const p = sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.equal(sm.hasLaunchInFlight(), true);
+  release();
+  await p;
+  assert.equal(sm.hasLaunchInFlight(), false);
+});
+
 test('resumeEntry drops archivedAt, snooze, suspendedAt, and suspendPending — resume returns to the board live and un-suspended', () => {
   const prev = {
     intent: 'fix', createdAt: 100,
@@ -824,7 +837,8 @@ test('resume() refuses (does not launch) when a Claude transcript is nowhere on 
   const sm = new SessionManager();
   sm.map.clear();
   let launched = false;
-  sm.killForSession = async () => [];
+  let killed = false;
+  sm.killForSession = async () => { killed = true; return []; };
   sm._newSession = async () => { launched = true; };
   sm._save = () => {};
   sm.refreshAlive = async () => {};
@@ -833,6 +847,7 @@ test('resume() refuses (does not launch) when a Claude transcript is nowhere on 
   sm.map.set(cardId, { agent: 'claude', cwd: os.tmpdir(), liveSessionId: '00000000-dead-beef-0000-000000000000' });
   await assert.rejects(() => sm.resume(cardId, os.tmpdir()), (e) => e.message === RESUME_NO_TRANSCRIPT_MSG);
   assert.equal(launched, false); // never spawned a blank session in place of the lost one
+  assert.equal(killed, false, 'a refused resume leaves any live pane running');
 });
 
 test('dispatch refuses a devcontainer with no config before any side effect (native error, no pane)', async () => {

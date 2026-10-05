@@ -18,6 +18,12 @@ export const HEADLESS_DISALLOWED_TOOLS = [
   'SlashCommand',
 ];
 
+let headlessInFlight = 0;
+
+export function headlessRunsInFlight() {
+  return headlessInFlight;
+}
+
 export function runHeadlessClaude(prompt, stdin, {
   model = 'haiku',
   execFile = defaultExecFile,
@@ -33,6 +39,7 @@ export function runHeadlessClaude(prompt, stdin, {
     '--output-format', 'json',
     prompt,
   ];
+  headlessInFlight += 1;
   return new Promise((resolve) => {
     const child = execFile('claude', args, {
       cwd: os.tmpdir(),
@@ -46,5 +53,5 @@ export function runHeadlessClaude(prompt, stdin, {
       resolve({ text: typeof parsed.result === 'string' ? parsed.result.trim() : null, liveSessionId, error: null });
     });
     child.stdin.end(stdin);
-  });
+  }).finally(() => { headlessInFlight -= 1; });
 }

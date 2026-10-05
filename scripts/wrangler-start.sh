@@ -54,6 +54,10 @@ nvm use --silent default >/dev/null 2>&1 || true
 
 cd "$(dirname "$0")/.." || exit 1
 
+# Steps back to the pre-update commit when an update from the board has left a
+# server that cannot boot. Before sync-deps, so a failed `npm ci` counts too.
+bash scripts/update-rollback.sh
+
 # server (node-pty) panes inherit this PATH; devcontainer sessions run
 # `devcontainer up`/`exec` in a pane, and @devcontainers/cli installs to
 # node_modules/.bin. Appended (not prepended) so system binaries still win —

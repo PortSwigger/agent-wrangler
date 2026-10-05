@@ -314,6 +314,7 @@ export const CORE_CHIPS = Object.freeze([
   { key: 'core:compact', label: 'Auto-compact' },
   { key: 'core:subagents', label: 'Sub-agents' },
   { key: 'core:restarting', label: 'Restarting' },
+  { key: 'core:older-code', label: 'Older version' },
   { key: 'core:automerge', label: 'Auto-merge' },
   { key: 'core:runtime', label: 'Runtime' },
   { key: 'core:worktree', label: 'Worktree' },
@@ -349,6 +350,9 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   const runtimeChip = s.runtime === 'devcontainer' ? devcontainerChip(s) : '';
   const restarting = s.restarting
     ? '<span class="card-tag restarting" title="Tmux is being killed and relaunched">restarting</span>'
+    : '';
+  const olderCode = ctx.isOnOlderCode?.(s)
+    ? '<span class="card-tag older-code" title="Launched before the wrangler last updated. Restart the session to pick up new MCP tools and skills.">older version</span>'
     : '';
   const age = s.lastActivity
     ? `<span class="card-tag">${CLOCK_ICON}${esc(timeAgo(s.lastActivity))}</span>`
@@ -399,7 +403,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${cardPillHostHtml()}${metaLinks}</div>
+    <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(olderCode, 'core:older-code', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }

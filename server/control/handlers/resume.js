@@ -103,11 +103,8 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
     await nudgeAndWaitForJobs(s.tmux, s, { ctx, id: sessionId });
   }
   // NB restart newly routes a *live* session through resume(): _doResume kills the
-  // tmux BEFORE its resume refuse-guards (resumePlan/resumeLaunchPlan), so a refuse
-  // drops the session to dormant (surfaced only as an error toast) rather than
-  // leaving it live. For a live, messaged Claude the transcript exists on disk so a
-  // refuse is near-unreachable here; not guarded, since reordering _doResume is a
-  // flow change to a leaf other paths depend on. See the restart-session design.
+  // tmux only after its resume refuse-guards (resumePlan/resumeLaunchPlan), so a
+  // refuse leaves the session live and surfaces as an error toast.
   const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: 'manual' });
   await ctx.rebuild();
   // Deliver the (pre-resume) snooze note into the freshly-launched pane once the
