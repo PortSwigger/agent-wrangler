@@ -188,7 +188,17 @@ import semver from 'semver';
 // ctx as a second argument. An older server ignores `runtimes` entirely (the
 // manifest loads, its runtime is simply never offered) and quarantines the new
 // capability and field name, so only the declared range can say so.
-export const HOST_API_VERSION = '1.19.0';
+//
+// 1.20.0 is the CLIENT half again: a `dispatch.field` contribution may carry
+// `open(el, ctx)`, called once per dispatch-modal open after core has reset its
+// own fields and before the modal is shown (public/slots.js
+// openDispatchFields, app.js openDispatchExtFields). Its ctx is update's plus
+// `editing` (a saved schedule is being restored) and `saved`, that
+// extension's own slice of the saved dispatch's `ext` bag, so editing a
+// schedule can finally restore an extension field. No server-side key, but an
+// older slots.js never calls `open` — the field silently keeps last time's
+// value — so only the declared range can say which servers honour it.
+export const HOST_API_VERSION = '1.20.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

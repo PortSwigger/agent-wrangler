@@ -5210,6 +5210,18 @@ function syncDispatchExtFields() {
   applyDispatchFieldVeto(ctx);
 }
 
+// The per-open lifecycle call (slots.openDispatchFields): once per openModal,
+// after every core field is reset and the anchors are synced, before the modal
+// is shown. `saved` is the saved dispatch's whole `ext` bag when editing a
+// schedule — slots narrows it to each extension's own slice. The veto is re-run
+// because a throwing `open` removes its contribution, and that must lift
+// whatever it was hiding.
+function openDispatchExtFields(saved) {
+  const ctx = { ...dispatchFieldCtx(), editing: modalMode === 'schedule-edit' };
+  slots.openDispatchFields(ctx, saved);
+  applyDispatchFieldVeto(ctx);
+}
+
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
@@ -5281,6 +5293,8 @@ function openModal({ mode, taskId = null, schedule = null }) {
   syncWorktreeFields();
   requestFolderBrowse();
   suggestIndex = -1;
+  // Last, so a contribution's open() sees the form exactly as it will be shown.
+  openDispatchExtFields(d.ext);
   modal.classList.remove('hidden');
   (scheduleMode() ? document.getElementById('m-sch-name') : document.getElementById('m-intent')).focus();
 }

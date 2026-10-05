@@ -262,10 +262,10 @@ async function dispatchExtHarness() {
   const wiring = appSrc.match(/^document\.getElementById\('m-runtime'\)\.addEventListener\('change', syncDispatchExtFields\);$/m)?.[0];
   assert.ok(wiring, 'app.js should wire #m-runtime change to syncDispatchExtFields');
   const app = loadApp(
-    ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {'],
-    ['syncDispatchExtFields', 'setModalMode'],
+    ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {', 'function openDispatchExtFields(saved) {', 'function scheduleMode() {'],
+    ['syncDispatchExtFields', 'openDispatchExtFields', 'setModalMode'],
     `let modalMode = 'launch'; const setModalMode = (m) => { modalMode = m; };
-     const scheduleMode = () => false; const availableAgents = [];
+     const availableAgents = [];
      const readCoreDispatchFields = () => ({ runtime: document.getElementById('m-runtime').value });
      const extApi = {}; const latestGraph = null;
      ${wiring}`,
@@ -300,4 +300,45 @@ test('the worktree veto toggles only #m-worktree-box-row, never the inner .workt
   syncDispatchExtFields();
   assert.equal(els['m-worktree-box-row'].classList.contains('hidden'), false);
   assert.equal(els['worktree-box'].classList.contains('hidden'), true);
+});
+
+test('openModal fires the per-open hook once, after its last sync and just before the modal is shown', () => {
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null }) {');
+  const calls = open.match(/openDispatchExtFields\(/g) || [];
+  assert.equal(calls.length, 1);
+  const hook = open.indexOf('openDispatchExtFields(d.ext)');
+  assert.ok(hook > open.lastIndexOf('syncDispatchExtFields()'), 'open() must follow the final anchor sync');
+  assert.ok(hook > open.indexOf('syncWorktreeFields()'), 'open() must follow every core reset');
+  assert.ok(hook < open.indexOf("modal.classList.remove('hidden')"), 'open() must run before the modal is shown');
+  // The saved bag comes from the same `d` every core field is restored from.
+  assert.match(open, /const d = \(action\?\.kind === 'dispatch' \? action\.dispatch : null\) \|\| \{\};/);
+});
+
+test('openDispatchExtFields hands open() editing, mode and its own saved slice', async () => {
+  const { slots, syncDispatchExtFields, openDispatchExtFields, setModalMode } = await dispatchExtHarness();
+  const seen = [];
+  slots.register('dispatch.field', 'x', { id: 'a', at: 'top', mount() {}, open: (el, ctx) => seen.push([ctx.mode, ctx.editing, ctx.saved, ctx.draft.runtime]) });
+  syncDispatchExtFields();
+  openDispatchExtFields(undefined);
+  setModalMode('schedule-create');
+  openDispatchExtFields(undefined);
+  setModalMode('schedule-edit');
+  openDispatchExtFields({ x: { usd: 50 }, y: { usd: 1 } });
+  openDispatchExtFields({ y: { usd: 1 } });
+  assert.deepEqual(seen, [
+    ['launch', false, null, 'local'],
+    ['schedule', false, null, 'local'],
+    ['schedule', true, { usd: 50 }, 'local'],
+    // Editing a schedule saved with nothing for this extension: null, but editing.
+    ['schedule', true, null, 'local'],
+  ]);
+});
+
+test('a throwing open() lifts its veto before the modal is shown', async () => {
+  const { els, slots, syncDispatchExtFields, openDispatchExtFields } = await dispatchExtHarness();
+  slots.register('dispatch.field', 'x', { id: 'a', at: 'top', hides: ['runtime'], mount() {}, open() { throw new Error('boom'); } });
+  syncDispatchExtFields();
+  assert.equal(els['m-runtime-row'].classList.contains('hidden'), true);
+  openDispatchExtFields(undefined);
+  assert.equal(els['m-runtime-row'].classList.contains('hidden'), false);
 });
