@@ -251,6 +251,18 @@ test('a list value is stored as a copy; non-array, non-string, duplicate and ove
   });
 });
 
+test("a list def's pattern and maxLength apply to every item", async () => {
+  await withConfig({}, async () => {
+    const defs = [{ key: 'envs', type: 'list', label: 'Envs', pattern: 'env_\\w+( .+)?', maxLength: 12 }];
+    const c = ctx([manifest('demo', { settings: defs })]);
+    await set(c, { id: 'demo', key: 'envs', value: ['env_a', 'env_b CI'] });
+    assert.deepEqual(readConfig().extensionSettings, { demo: { envs: ['env_a', 'env_b CI'] } });
+    await assert.rejects(() => set(c, { id: 'demo', key: 'envs', value: ['env_a', 'nope'] }), /item "nope" that does not match/);
+    await assert.rejects(() => set(c, { id: 'demo', key: 'envs', value: ['env_abcdefghij'] }), /too long \(max 12/);
+    assert.deepEqual(readConfig().extensionSettings, { demo: { envs: ['env_a', 'env_b CI'] } });
+  });
+});
+
 test('a reqId gets an ext-setting-result reply, in place of the error envelope on failure', async () => {
   await withConfig({}, async () => {
     const c = ctx([manifest('demo', { settings: LIST_DEFS })]);

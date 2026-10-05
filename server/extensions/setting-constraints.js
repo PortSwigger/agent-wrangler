@@ -32,11 +32,12 @@ export const MAX_PATTERN_LENGTH = 200;
 // type. A field on the wrong type is a def ERROR, not something silently
 // ignored — a `min` on a text setting is a manifest author believing in an
 // enforcement that would never run.
-// `pattern` stays text-only: a full-string regex over multi-line prose is not a
-// constraint anyone means.
+// `pattern` never applies to a textarea: a full-string regex over multi-line
+// prose is not a constraint anyone means. On a `list`, `pattern` and
+// `maxLength` constrain EACH item.
 const FIELD_TYPES = {
   min: ['number'], max: ['number'], step: ['number'],
-  maxLength: ['text', 'textarea'], pattern: ['text'],
+  maxLength: ['text', 'textarea', 'list'], pattern: ['text', 'list'],
   options: ['select'],
   maxItems: ['list'],
 };
@@ -67,13 +68,13 @@ export function validateSettingDef(def) {
     if (def.step != null && def.step <= 0) return 'step must be greater than zero';
     if (def.min != null && def.max != null && def.min > def.max) return 'min must not be greater than max';
   }
-  if (def.type === 'text' || def.type === 'textarea') {
+  if (def.type === 'text' || def.type === 'textarea' || def.type === 'list') {
     if (def.maxLength != null) {
       if (!Number.isInteger(def.maxLength) || def.maxLength < 1) return 'maxLength must be a positive integer';
       if (def.maxLength > maxLengthFor(def)) return `maxLength must not exceed ${maxLengthFor(def)}`;
     }
   }
-  if (def.type === 'text') {
+  if (def.type === 'text' || def.type === 'list') {
     if (def.pattern != null) {
       if (typeof def.pattern !== 'string') return 'pattern must be a string';
       if (def.pattern.length > MAX_PATTERN_LENGTH) return `pattern must be at most ${MAX_PATTERN_LENGTH} characters`;
@@ -147,7 +148,9 @@ export function checkSettingValue(def, value) {
     const seen = new Set();
     for (const item of value) {
       if (typeof item !== 'string') return 'must contain only strings';
-      if (item.length > MAX_TEXT_LENGTH) return `has an item that is too long (max ${MAX_TEXT_LENGTH} characters)`;
+      const cap = def.maxLength ?? MAX_TEXT_LENGTH;
+      if (item.length > cap) return `has an item that is too long (max ${cap} characters)`;
+      if (def.pattern != null && !compile(def.pattern).test(item)) return `has an item ${JSON.stringify(item)} that does not match the required format (${def.pattern})`;
       if (seen.has(item)) return `has a duplicate item ${JSON.stringify(item)}`;
       seen.add(item);
     }

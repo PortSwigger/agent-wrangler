@@ -299,9 +299,8 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     const current = values[def.key];
     const commit = (value) => onSettingChange?.({ id: entry.id, key: def.key, value });
     if (def.type === 'list') {
-      // Read-only summary: an editable list UI is deferred.
-      const n = Array.isArray(current) ? current.length : 0;
-      row.append(copy, el('div', 'ext-row-actions', `${n} item${n === 1 ? '' : 's'}`));
+      copy.append(listEditorEl(def, current, { frozen, commit }));
+      row.append(copy);
       wrap.append(row);
       continue;
     }
@@ -439,6 +438,97 @@ export function extensionSettingRowsEl(entry, { onSettingChange } = {}) {
     wrap.append(row);
   }
   return wrap;
+}
+
+// A `list` setting's editor: one field per item with a remove button, then an
+// add field. Every edit commits the WHOLE array. Like the toggle, it keeps its
+// own `items` and redraws itself, because nothing remounts these rows after a
+// value edit. Items are trimmed, a blanked item is removed, and a duplicate, an
+// item past maxItems, or one failing the def's pattern/maxLength is refused
+// here with a message. The server still
+// enforces all of this; checking here only lets the editor say why.
+function listEditorEl(def, current, { frozen, commit }) {
+  const box = el('div', 'ext-setting-list');
+  const itemsEl = el('div', 'ext-setting-list-items');
+  const error = el('div', 'setting-error');
+  let items = Array.isArray(current) ? current.filter((v) => typeof v === 'string') : [];
+  const max = def.maxItems ?? Infinity;
+
+  const save = (next) => {
+    error.textContent = '';
+    items = next;
+    commit([...items]);
+    draw();
+  };
+  const refuse = (msg) => { error.textContent = msg; };
+  // maxLength and pattern apply to EACH item, mirrored onto every field and
+  // checked with the browser's own validity, as the text input does.
+  const constrain = (input) => {
+    if (def.maxLength != null) input.maxLength = def.maxLength;
+    if (def.pattern != null) input.setAttribute('pattern', def.pattern);
+  };
+  const invalid = (input) => {
+    if (input.checkValidity?.() !== false) return false;
+    refuse(input.validationMessage || 'Not a valid item');
+    return true;
+  };
+
+  const draw = () => {
+    itemsEl.textContent = '';
+    items.forEach((item, i) => {
+      const line = el('div', 'ext-setting-list-item');
+      const input = el('input', 'ext-setting-input');
+      input.type = 'text';
+      input.value = item;
+      input.disabled = frozen;
+      input.setAttribute('aria-label', `${def.label} item ${i + 1}`);
+      constrain(input);
+      const edit = () => {
+        const v = input.value.trim();
+        if (v === items[i]) return;
+        if (!v) { save(items.filter((_, j) => j !== i)); return; }
+        if (invalid(input)) return;
+        if (items.some((x, j) => j !== i && x === v)) { refuse(`"${v}" is already in the list`); return; }
+        save(items.map((x, j) => (j === i ? v : x)));
+      };
+      input.addEventListener('change', edit);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); edit(); } });
+      const remove = el('button', 'ext-btn ext-setting-list-remove', '×');
+      remove.type = 'button';
+      remove.disabled = frozen;
+      remove.setAttribute('aria-label', `Remove ${def.label} item ${i + 1}`);
+      remove.addEventListener('click', () => save(items.filter((_, j) => j !== i)));
+      line.append(input, remove);
+      itemsEl.append(line);
+    });
+  };
+
+  const addLine = el('div', 'ext-setting-list-item');
+  const addInput = el('input', 'ext-setting-input');
+  addInput.type = 'text';
+  addInput.placeholder = def.placeholder || 'Add an item';
+  addInput.disabled = frozen;
+  addInput.setAttribute('aria-label', `Add to ${def.label}`);
+  constrain(addInput);
+  const addBtn = el('button', 'ext-btn', 'Add');
+  addBtn.type = 'button';
+  addBtn.disabled = frozen;
+  const add = () => {
+    const v = addInput.value.trim();
+    if (!v) return;
+    if (invalid(addInput)) return;
+    if (items.includes(v)) { refuse(`"${v}" is already in the list`); return; }
+    if (items.length >= max) { refuse(`At most ${max} items`); return; }
+    addInput.value = '';
+    save([...items, v]);
+  };
+  addBtn.addEventListener('click', add);
+  addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); add(); } });
+  addLine.append(addInput, addBtn);
+
+  draw();
+  box.append(itemsEl, addLine, error);
+  return box;
 }
 
 // Run before the detail pane is torn down (a remount, a different selection):

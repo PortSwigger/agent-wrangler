@@ -198,7 +198,13 @@ import semver from 'semver';
 // schedule can finally restore an extension field. No server-side key, but an
 // older slots.js never calls `open` — the field silently keeps last time's
 // value — so only the declared range can say which servers honour it.
-export const HOST_API_VERSION = '1.20.0';
+//
+// 1.21.0 lets a `list` setting declare `pattern` and `maxLength`, checked
+// against EACH item (server/extensions/setting-constraints.js), and the
+// Extensions panel now edits a visible list instead of showing a count. An
+// older server quarantines either field on a list, so only the declared range
+// can say so.
+export const HOST_API_VERSION = '1.21.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
