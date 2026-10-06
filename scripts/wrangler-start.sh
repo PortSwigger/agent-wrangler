@@ -6,6 +6,16 @@
 # node_modules in step with the lockfile, then execs bin/agent-wrangler, which
 # owns the rest of the process environment (locale, fd limit, PATH).
 
+# Both supervisors above (launchd KeepAlive, systemd Restart=always) bring the
+# process straight back, which is what makes the board's "Restart the wrangler"
+# button — the one that finishes an extension install or uninstall — safe to
+# offer. Nothing exports this on the `npm start` or bare-launcher paths, so there
+# the button is simply absent rather than a way to kill the board.
+export AW_SUPERVISED=1
+
+# Trim before nvm and dependency sync: either can fail before the launcher runs.
+. "$(dirname "$0")/trim-service-logs.sh"
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 nvm use --silent default >/dev/null 2>&1 || true
@@ -45,12 +55,5 @@ done
 # Deliberately NOT in bin/agent-wrangler: a Homebrew install dir is immutable and
 # has its dependencies installed at build time, so only checkout start paths run it.
 bash scripts/sync-deps.sh || exit 1
-
-# Both supervisors above (launchd KeepAlive, systemd Restart=always) bring the
-# process straight back, which is what makes the board's "Restart the wrangler"
-# button — the one that finishes an extension install or uninstall — safe to
-# offer. Nothing exports this on the `npm start` or bare-launcher paths, so there
-# the button is simply absent rather than a way to kill the board.
-export AW_SUPERVISED=1
 
 exec "$PWD/bin/agent-wrangler"
