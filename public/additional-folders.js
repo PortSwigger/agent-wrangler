@@ -1,6 +1,5 @@
 import { PLUS_ICON, X_ICON } from './icons.js';
 
-// Keep IDs unique across resets so late replies cannot target new rows.
 export function createAdditionalFolders({ list, add, send, recentFolders = () => [], onChange = () => {}, document = globalThis.document }) {
   let rows = [];
   let enabled = true;
