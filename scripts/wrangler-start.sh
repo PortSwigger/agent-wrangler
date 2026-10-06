@@ -64,6 +64,23 @@ bash scripts/update-rollback.sh
 # only fills the `devcontainer` gap. The `npm start` path gets this for free.
 export PATH="$PATH:$PWD/node_modules/.bin"
 
+# The supervisor PATHs (launchd plist, systemd unit) predate this and omit the
+# sbin dirs, so sessions could not find macOS tools like pkgutil — which mise
+# needs to install .pkg-based tools (awscli), failing with "No such file or
+# directory". Filled here rather than in the templates so existing installs
+# self-heal on their next restart without editing their plist.
+for d in /usr/sbin /sbin; do
+  case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
+done
+export PATH
+
+# A tmux server outlives the wrangler and keeps the PATH it started with, so new
+# panes would go on inheriting a stale one. Bring any running session servers
+# into line with this PATH; it only affects panes created from here on.
+for sock in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/aw-*; do
+  [ -S "$sock" ] && tmux -S "$sock" set-environment -g PATH "$PATH" 2>/dev/null || true
+done
+
 # Keep node_modules in lockstep with the lockfile so a restart after a dependency
 # change self-heals instead of crash-looping on a missing module. Shared with
 # npm's prestart hook so the launchd and `npm start` paths behave identically.

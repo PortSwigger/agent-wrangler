@@ -29,11 +29,9 @@
     <dict>
         <key>PORT</key>
         <string>7777</string>
-        <!-- ~/.local/bin must be on PATH or dispatch/resume exit 127. The
-             sbin dirs carry macOS tools like pkgutil, which mise needs to
-             install .pkg-based tools (awscli) inside sessions. -->
+        <!-- ~/.local/bin must be on PATH or dispatch/resume exit 127. -->
         <key>PATH</key>
-        <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
     <!-- The open-file limit is pinned in wrangler-start.sh (defaults to 256,
