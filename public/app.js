@@ -4629,7 +4629,7 @@ function hideRecentFolder(path) {
 }
 const additionalFolders = createAdditionalFolders({
   list: document.getElementById('m-add-dirs'), add: document.getElementById('m-add-dir'),
-  send, recentFolders: () => recentFolders,
+  send, recentFolders: () => recentFolders, onChange: syncScheduleGo,
 });
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
@@ -4942,7 +4942,7 @@ function syncRuntimeToggle() {
   }
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
-  const foldersEnabled = rt.value !== 'devcontainer';
+  const foldersEnabled = rt.value === 'local';
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
 }
@@ -5071,10 +5071,8 @@ function syncScheduleGo() {
   go.textContent = 'Save schedule';
   go.disabled = !(whenValid(readPicker(), Date.now()) && scheduleActionValid());
 }
-// A dispatch needs only a valid `when` (intent can be empty, like a manual launch);
-// a session action just needs a target — the message is always optional.
 function scheduleActionValid() {
-  if (scheduleAction === 'dispatch') return true;
+  if (scheduleAction === 'dispatch') return !additionalFolders.invalid();
   return Boolean(document.getElementById('m-sch-target').value);
 }
 // Build the schedule's action payload from the form for the selected kind. Dispatch
@@ -5400,7 +5398,7 @@ function submitDispatch() {
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
   if (cwdBlocked()) { renderCwdState(); return; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return; }
-  if (fields.runtime === 'devcontainer' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return; }
+  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return; // can't create a worktree here — let the user untick or fix the folder

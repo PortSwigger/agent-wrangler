@@ -2680,3 +2680,20 @@ test('dispatch refuses host folder grants in devcontainers', async () => {
   const sm = freshManager();
   await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), runtime: 'devcontainer', addDirs: [os.tmpdir()] }), /Additional folders.*local/);
 });
+
+for (const mode of ['buildLaunch', 'wrapLaunch']) {
+  test(`dispatch refuses additional folder grants for an extension ${mode} runtime before launch`, async () => {
+    const sm = smForDispatch();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-runtime-grants-'));
+    const cwd = path.join(root, 'new');
+    const runtime = mode === 'buildLaunch'
+      ? { id: 'grant-test', label: 'Test', resumable: false, buildLaunch: async () => 'echo test' }
+      : { id: 'grant-test', label: 'Test', wrapLaunch: async ({ inner }) => inner };
+    try {
+      await withRuntime(runtime, 'grant-test', async () => {
+        await assert.rejects(sm.dispatch({ cwd, runtime: 'grant-test', addDirs: [os.tmpdir()] }), /Additional folders.*local/);
+        assert.equal(fs.existsSync(cwd), false);
+      });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}

@@ -11,12 +11,12 @@ class Element {
   focus() { this.fire('focus'); }
   remove() { this.removed = true; }
 }
-function setup() {
+function setup(onChange = () => {}) {
   const doc = { createElement: (tag) => new Element(tag) };
   const list = new Element();
   const add = new Element('button');
   const sent = [];
-  const picker = createAdditionalFolders({ list, add, document: doc, send: (msg) => sent.push(msg), recentFolders: () => ['/recent'] });
+  const picker = createAdditionalFolders({ list, add, document: doc, onChange, send: (msg) => sent.push(msg), recentFolders: () => ['/recent'] });
   return { picker, list, add, sent };
 }
 
@@ -98,4 +98,22 @@ test('disabled folder picker suppresses grants and browsing but restores selecti
   assert.equal(add.disabled, false);
   assert.equal(input.disabled, false);
   assert.deepEqual(picker.values(), ['/first']);
+});
+
+
+test('schedule save availability follows folder validation, edits and removal', () => {
+  const save = { disabled: false };
+  const ui = setup(() => { save.disabled = ui.picker.invalid(); });
+  ui.picker.reset(['/missing']);
+  const input = ui.list.children[0].children[0].children[0];
+  input.focus();
+  ui.picker.onBrowse({ ...ui.sent.at(-1), exists: false, entries: [] });
+  assert.equal(save.disabled, true);
+  input.value = '/other';
+  input.fire('input');
+  assert.equal(save.disabled, false);
+  ui.picker.onBrowse({ ...ui.sent.at(-1), exists: false, entries: [] });
+  assert.equal(save.disabled, true);
+  ui.list.children[0].children[1].fire('click');
+  assert.equal(save.disabled, false);
 });

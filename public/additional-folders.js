@@ -1,7 +1,7 @@
 import { PLUS_ICON, X_ICON } from './icons.js';
 
 // Keep IDs unique across resets so late replies cannot target new rows.
-export function createAdditionalFolders({ list, add, send, recentFolders = () => [], document = globalThis.document }) {
+export function createAdditionalFolders({ list, add, send, recentFolders = () => [], onChange = () => {}, document = globalThis.document }) {
   let rows = [];
   let enabled = true;
   add.innerHTML = `<span aria-hidden="true">${PLUS_ICON}</span>`;
@@ -40,6 +40,7 @@ export function createAdditionalFolders({ list, add, send, recentFolders = () =>
       hint.className = 'worktree-msg hidden';
       send({ type: 'browse-folders', field: row.field, path: input.value });
       render(row);
+      onChange();
     }
     row.pick = (path) => {
       if (!enabled) return;
@@ -62,7 +63,7 @@ export function createAdditionalFolders({ list, add, send, recentFolders = () =>
         e.preventDefault(); e.stopPropagation(); close();
       }
     });
-    remove.addEventListener('click', () => { rows = rows.filter((r) => r !== row); el.remove(); });
+    remove.addEventListener('click', () => { rows = rows.filter((r) => r !== row); el.remove(); onChange(); });
     render(row);
     if (focus) input.focus();
   }
@@ -93,8 +94,9 @@ export function createAdditionalFolders({ list, add, send, recentFolders = () =>
         row.input.disabled = !enabled;
         if (!enabled) { row.wanted = false; row.box.className = 'suggest hidden'; }
       }
+      onChange();
     },
-    reset(values = []) { rows = []; list.replaceChildren(); for (const value of values) addRow(value); },
+    reset(values = []) { rows = []; list.replaceChildren(); for (const value of values) addRow(value); onChange(); },
     values() { if (!enabled) return []; return [...new Set(rows.map(({ input }) => input.value.trim().replace(/(?!^)\/+$/, '')).filter(Boolean))]; },
     invalid() { return enabled && rows.some((row) => row.input.value.trim() && row.checkedPath === row.input.value && row.exists === false); },
     onBrowse(msg) {
@@ -107,6 +109,7 @@ export function createAdditionalFolders({ list, add, send, recentFolders = () =>
       row.hint.textContent = msg.exists === false ? 'Choose an existing folder.' : '';
       row.hint.className = msg.exists === false ? 'worktree-msg error' : 'worktree-msg hidden';
       render(row);
+      onChange();
       return true;
     },
   };

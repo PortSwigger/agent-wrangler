@@ -1675,8 +1675,8 @@ export class SessionManager {
       if (!isDirectory) throw new Error(`Additional folder does not exist or is not a directory: ${normalized}`);
       return normalized;
     }))];
-    if (runtime === 'devcontainer' && addDirs.length) {
-      throw new Error('Additional folders currently require a local launch; devcontainers do not mount these host folders.');
+    if (runtime !== 'local' && addDirs.length) {
+      throw new Error('Additional folders currently require a local launch; other runtimes do not support these host folder grants.');
     }
     const trimmed = cwd && expandTilde(String(cwd).trim());
     // Runtime preflight, BEFORE any dir/worktree side effect so a refusal is a clean

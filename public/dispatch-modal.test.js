@@ -363,3 +363,63 @@ test('runtime selection disables folder assignment for devcontainers and restore
   assert.equal(codex.rt.value, 'local');
   assert.equal(codex.add.disabled, false);
 });
+
+test('extension runtimes disable additional folder grants until Local is selected', () => {
+  const { rt, add, note, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
+  setExtensions([ext()]);
+  syncExtRuntimeOptions();
+  rt.value = 'sandbox';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, true);
+  assert.equal(note.hidden, false);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, false);
+  assert.equal(note.hidden, true);
+});
+
+function scheduleHarness(kind = 'dispatch', editing = false) {
+  const sent = [];
+  const state = { invalid: true, closed: false };
+  const go = { disabled: false };
+  const document = { getElementById: (id) => id === 'm-go' ? go : { value: id === 'm-sch-target' ? 'S1' : 'Example' } };
+  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'] } } : { kind: 'session', sessionId: 'S1' };
+  const app = loadApp(
+    ['function scheduleActionValid() {', 'function syncScheduleGo() {', 'function submitSchedule() {'],
+    ['submitSchedule', 'syncScheduleGo'],
+    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1';`,
+    {
+      document, additionalFolders: { invalid: () => state.invalid },
+      scheduleMode: () => true, readPicker: () => ({}), whenValid: () => true,
+      compileWhen: () => '2027-01-01T09:00:00Z', readScheduleAction: () => action,
+      send: (msg) => sent.push(msg), closeModal: () => { state.closed = true; },
+      openSchedulesPanel() {}, toast() {},
+    },
+  );
+  return { ...app, sent, state, go };
+}
+
+for (const editing of [false, true]) {
+  test(`a known-invalid folder blocks dispatch schedule ${editing ? 'editing' : 'creation'}`, () => {
+    const { submitSchedule, syncScheduleGo, sent, state, go } = scheduleHarness('dispatch', editing);
+    syncScheduleGo();
+    assert.equal(go.disabled, true);
+    submitSchedule();
+    assert.deepEqual(sent, []);
+    assert.equal(state.closed, false);
+    state.invalid = false;
+    syncScheduleGo();
+    assert.equal(go.disabled, false);
+    submitSchedule();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].type, editing ? 'schedule-update' : 'schedule-create');
+    assert.equal(state.closed, true);
+  });
+}
+
+test('session schedules ignore folder errors in the unused dispatch fields', () => {
+  const { submitSchedule, sent, go } = scheduleHarness('session');
+  submitSchedule();
+  assert.equal(sent[0].type, 'schedule-create');
+  assert.equal(go.disabled, false);
+});
