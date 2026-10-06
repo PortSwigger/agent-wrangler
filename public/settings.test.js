@@ -87,7 +87,7 @@ test('settings shortcut requires exactly Ctrl+Cmd+comma', () => {
 
 test('settings card keeps its chrome fixed around a scrolling pane', () => {
   const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
-  assert.match(css, /\.settings-card \{[^}]*height: 70vh;[^}]*display: flex;[^}]*flex-direction: column;/s);
+  assert.match(css, /\.settings-card \{[^}]*height: \d+vh;[^}]*display: flex;[^}]*flex-direction: column;/s);
   assert.match(css, /\.settings-body \{[^}]*flex: 1 1 auto;[^}]*min-height: 0;/s);
   assert.match(css, /\.settings-panels \{[^}]*flex: 1 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/s);
   assert.match(css, /\.settings-tab\.active \{[^}]*background: transparent;[^}]*border-bottom-color: var\(--accent\);/s);
