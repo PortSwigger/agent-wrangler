@@ -12,6 +12,7 @@ has none.
 
 Optional launch controls include:
 
+- **Additional folders:** use the square **+** button beside the main folder to grant a local Claude or Codex session access to more existing folders. Browse or type each path, and remove rows you no longer need. Grants persist across resume and fork and are saved with scheduled launches. The main folder remains the working directory. Devcontainer and extension runtimes disable these extra host folder controls; switching back to Local restores your selections.
 - **Git worktree:** create or adopt a worktree with an explicit or generated branch name.
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.

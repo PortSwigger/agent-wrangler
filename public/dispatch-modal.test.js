@@ -1,3 +1,4 @@
+import { createAdditionalFolders } from './additional-folders.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -169,17 +170,20 @@ function stubSelect(values) {
 function runtimeHarness(agent = 'claude') {
   const rt = stubSelect(['local', 'devcontainer']);
   const model = { selectedIndex: 0, options: [{ dataset: { agent } }] };
+  const add = { addEventListener() {} };
+  const additionalFolders = createAdditionalFolders({ list: {}, add, send() {} });
+  const note = { hidden: true, classList: { toggle: (_name, hidden) => { note.hidden = hidden; } } };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model })[id],
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note })[id],
     createElement: () => stubOption(),
   };
   const app = loadApp(
     ['function syncRuntimeToggle() {', 'function syncExtRuntimeOptions() {'],
-    ['syncExtRuntimeOptions', 'setExtensions'],
+    ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
     'let latestExtensions = []; const setExtensions = (v) => { latestExtensions = v; };',
-    { document },
+    { document, additionalFolders },
   );
-  return { rt, ...app };
+  return { rt, add, note, ...app };
 }
 const ext = (over = {}) => ({ id: 'sbx', enabled: true, quarantine: null, runtimes: [{ id: 'sandbox', label: 'Sandbox <b>' }], ...over });
 
@@ -341,4 +345,116 @@ test('a throwing open() lifts its veto before the modal is shown', async () => {
   assert.equal(els['m-runtime-row'].classList.contains('hidden'), true);
   openDispatchExtFields(undefined);
   assert.equal(els['m-runtime-row'].classList.contains('hidden'), false);
+});
+
+test('runtime selection disables folder assignment for devcontainers and restores it for local agents', () => {
+  const { rt, add, note, syncRuntimeToggle } = runtimeHarness();
+  rt.value = 'devcontainer';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, true);
+  assert.equal(note.hidden, false);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, false);
+  assert.equal(note.hidden, true);
+  const codex = runtimeHarness('codex');
+  codex.rt.value = 'devcontainer';
+  codex.syncRuntimeToggle();
+  assert.equal(codex.rt.value, 'local');
+  assert.equal(codex.add.disabled, false);
+});
+
+test('extension runtimes disable additional folder grants until Local is selected', () => {
+  const { rt, add, note, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
+  setExtensions([ext()]);
+  syncExtRuntimeOptions();
+  rt.value = 'sandbox';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, true);
+  assert.equal(note.hidden, false);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(add.disabled, false);
+  assert.equal(note.hidden, true);
+});
+
+test('Codex quick launch restores retained grants when switching from a non-local Claude runtime', () => {
+  for (const runtime of ['devcontainer', 'sandbox']) {
+    const rt = stubSelect(['local', runtime]);
+    const model = stubSelect(['claude-model', 'codex-model']);
+    model.options[0].dataset.agent = 'claude';
+    model.options[1].dataset.agent = 'codex';
+    const element = () => ({ append() {}, replaceChildren() {}, addEventListener() {} });
+    const document = {
+      createElement: element,
+      getElementById: (id) => ({
+        'm-runtime': rt, 'm-model': model,
+        'm-add-dirs-note': { classList: { toggle() {} } },
+      })[id] || { value: '', checked: false },
+    };
+    const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
+    additionalFolders.reset(['/extra']);
+    const app = loadApp(
+      ['function quickLaunch(value) {', 'function syncRuntimeToggle() {', 'function readCoreDispatchFields() {'],
+      ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
+      `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
+       const autoCompactTokens = undefined; const parentSessionId = null;
+       const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
+      { document, additionalFolders, modal: { classList: { contains: () => false } },
+        scheduleMode: () => false, cwdField: () => '/repo' },
+    );
+    rt.value = runtime;
+    app.syncRuntimeToggle();
+    assert.deepEqual(additionalFolders.values(), []);
+    app.quickLaunch('codex-model');
+    assert.equal(app.dispatched[0].agent, 'codex');
+    assert.equal(app.dispatched[0].runtime, undefined);
+    assert.deepEqual(app.dispatched[0].addDirs, ['/extra']);
+  }
+});
+
+function scheduleHarness(kind = 'dispatch', editing = false) {
+  const sent = [];
+  const state = { invalid: true, closed: false };
+  const go = { disabled: false };
+  const document = { getElementById: (id) => id === 'm-go' ? go : { value: id === 'm-sch-target' ? 'S1' : 'Example' } };
+  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'] } } : { kind: 'session', sessionId: 'S1' };
+  const app = loadApp(
+    ['function scheduleActionValid() {', 'function syncScheduleGo() {', 'function submitSchedule() {'],
+    ['submitSchedule', 'syncScheduleGo'],
+    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1';`,
+    {
+      document, additionalFolders: { invalid: () => state.invalid },
+      scheduleMode: () => true, readPicker: () => ({}), whenValid: () => true,
+      compileWhen: () => '2027-01-01T09:00:00Z', readScheduleAction: () => action,
+      send: (msg) => sent.push(msg), closeModal: () => { state.closed = true; },
+      openSchedulesPanel() {}, toast() {},
+    },
+  );
+  return { ...app, sent, state, go };
+}
+
+for (const editing of [false, true]) {
+  test(`a known-invalid folder blocks dispatch schedule ${editing ? 'editing' : 'creation'}`, () => {
+    const { submitSchedule, syncScheduleGo, sent, state, go } = scheduleHarness('dispatch', editing);
+    syncScheduleGo();
+    assert.equal(go.disabled, true);
+    submitSchedule();
+    assert.deepEqual(sent, []);
+    assert.equal(state.closed, false);
+    state.invalid = false;
+    syncScheduleGo();
+    assert.equal(go.disabled, false);
+    submitSchedule();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].type, editing ? 'schedule-update' : 'schedule-create');
+    assert.equal(state.closed, true);
+  });
+}
+
+test('session schedules ignore folder errors in the unused dispatch fields', () => {
+  const { submitSchedule, sent, go } = scheduleHarness('session');
+  submitSchedule();
+  assert.equal(sent[0].type, 'schedule-create');
+  assert.equal(go.disabled, false);
 });

@@ -326,3 +326,11 @@ test('parseTeamMember returns null for an ordinary (non-team) launch', () => {
   assert.equal(claude.parseTeamMember('claude --session-id SID --permission-mode auto --model opus'), null);
   assert.equal(claude.parseTeamMember(''), null);
 });
+
+for (const phase of ['buildLaunch', 'buildResume', 'buildFork']) {
+  test(`claude ${phase} preserves multiple folder grants and shell quoting`, () => {
+    const cmd = claude[phase]({ sessionId: 'SID', resumeId: 'LIVE', sourceId: 'LIVE', addDirs: ['/repo one', "/repo's two"] });
+    assert.ok(cmd.includes("'--add-dir' '/repo one'"));
+    assert.ok(cmd.includes("'--add-dir' '/repo'\\''s two'"));
+  });
+}

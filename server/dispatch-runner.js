@@ -12,8 +12,6 @@ import { slugFromIntent } from './worktree.js';
 //
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
 //          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession }
-// (`addDirs` is part of the contract but neither the dispatch dialog nor the
-// schedule UI exposes it, so it resolves to [] when absent.)
 // Nesting only ever renders one level deep (computeAbsorption in
 // public/workflow.js pops a grandchild back out to top-level) — refuse a
 // brand-new parentSession that would create a session at depth > 1, rather

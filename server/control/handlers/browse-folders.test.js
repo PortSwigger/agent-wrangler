@@ -115,3 +115,9 @@ test('browse-folders: creatable has no opinion when the folder already exists or
 test('browse-folders: a relative path is never creatable', async () => {
   assert.equal((await call('server')).creatable, false);
 });
+
+test('browse-folders echoes the field so replies reach the correct folder input', async () => {
+  const c = ctx();
+  await browseFoldersHandler.handler({ path: '', field: 'extra-2' }, c);
+  assert.equal(c.sent[0].field, 'extra-2');
+});
