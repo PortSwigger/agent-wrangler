@@ -227,7 +227,7 @@ export const claude = {
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
+  buildResume({ sessionId, resumeId, addDirs = [], effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -235,18 +235,20 @@ export const claude = {
     // (buildInnerCommand appends it after `--`); empty for an interactive resume.
     // effort is re-threaded here because it is NOT transcript-restored on resume.
     const args = ['--resume', resumeId, '--permission-mode', 'auto'];
+    for (const d of addDirs) args.push('--add-dir', d);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, model, effort, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
     const args = ['--resume', sourceId, '--fork-session'];
     if (liveSessionId) args.push('--session-id', liveSessionId);
     args.push('--permission-mode', 'auto');
+    for (const d of addDirs) args.push('--add-dir', d);
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);

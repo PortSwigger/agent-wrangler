@@ -46,6 +46,7 @@ export const browseFoldersHandler = {
   async handler(msg, ctx) {
     const raw = String(msg.path ?? '');
     const reply = { type: 'folder-browse', path: raw, entries: [], exists: null, creatable: null };
+    if (typeof msg.field === 'string') reply.field = msg.field;
     const typed = expandTilde(raw.trim());
     if (!typed) { ctx.reply(reply); return; } // blank is legal (scratch session) — no opinion
     if (!path.isAbsolute(typed)) { ctx.reply({ ...reply, exists: false, creatable: false }); return; }

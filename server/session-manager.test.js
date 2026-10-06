@@ -1590,8 +1590,8 @@ function smForDispatch() {
 // re-derived from the cwd per launch, and persisting it would double the flag.
 test('dispatch stamps the addDirs it was asked for onto the entry, and nothing else', async () => {
   const sm = smForDispatch();
-  const granted = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', addDirs: ['/projects/main/.git'] });
-  assert.deepEqual(sm.map.get(granted.sessionId).addDirs, ['/projects/main/.git']);
+  const granted = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', addDirs: [os.tmpdir()] });
+  assert.deepEqual(sm.map.get(granted.sessionId).addDirs, [os.tmpdir().replace(/(?!^)\/+$/, '')]);
   const none = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
   assert.equal(sm.map.get(none.sessionId).addDirs, undefined);
 });
@@ -2638,3 +2638,62 @@ test('noteLiveSessionId no-ops for a resumable:false runtime, and keeps the guar
   assert.equal(await sm.noteLiveSessionId('card', 'L2', { transcriptFor: async () => null }), false, 'guarded: no transcript yet');
   assert.equal(await sm.noteLiveSessionId('card', 'L2', foundTranscript), true);
 });
+
+for (const agent of ['claude', 'codex']) {
+  test(`fork inherits additional folders for ${agent} and persists them for resume`, async () => {
+    const sm = freshManager();
+    sm.refreshAlive = async () => {};
+    sm._ensureCodexTrust = () => {};
+    let command;
+    sm._newSession = async (_t, _d, cmd) => { command = cmd; };
+    const parentEntry = { agent, addDirs: ['/repo one', '/repo two'] };
+    const result = await sm.fork({ sourceId: 'SRC', parentId: 'PARENT', parentEntry, cwd: os.tmpdir() });
+    assert.ok(command.includes("'--add-dir' '/repo one'"));
+    assert.ok(command.includes("'--add-dir' '/repo two'"));
+    assert.deepEqual(sm.entryFor(result.sessionId).addDirs, ['/repo one', '/repo two']);
+  });
+}
+
+test('dispatch validates additional folders before creating the working directory', async () => {
+  const sm = freshManager();
+  sm._newSession = async () => {};
+  sm.refreshAlive = async () => {};
+  const cwd = path.join(os.tmpdir(), `aw-no-create-${Date.now()}`);
+  for (const addDirs of [['relative'], ['/nonexistent-aw-extra-folder'], [42], '/tmp']) {
+    await assert.rejects(sm.dispatch({ cwd, addDirs }), /Additional folder/);
+    assert.equal(fs.existsSync(cwd), false);
+  }
+});
+
+test('dispatch normalizes and deduplicates folder grants', async () => {
+  const sm = freshManager();
+  sm.refreshAlive = async () => {};
+  sm._newSession = async () => {};
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-grants-'));
+  try {
+    const result = await sm.dispatch({ cwd: os.tmpdir(), addDirs: [` ${dir}/ `, dir] });
+    assert.deepEqual(sm.entryFor(result.sessionId).addDirs, [dir]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('dispatch refuses host folder grants in devcontainers', async () => {
+  const sm = freshManager();
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), runtime: 'devcontainer', addDirs: [os.tmpdir()] }), /Additional folders.*local/);
+});
+
+for (const mode of ['buildLaunch', 'wrapLaunch']) {
+  test(`dispatch refuses additional folder grants for an extension ${mode} runtime before launch`, async () => {
+    const sm = smForDispatch();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-runtime-grants-'));
+    const cwd = path.join(root, 'new');
+    const runtime = mode === 'buildLaunch'
+      ? { id: 'grant-test', label: 'Test', resumable: false, buildLaunch: async () => 'echo test' }
+      : { id: 'grant-test', label: 'Test', wrapLaunch: async ({ inner }) => inner };
+    try {
+      await withRuntime(runtime, 'grant-test', async () => {
+        await assert.rejects(sm.dispatch({ cwd, runtime: 'grant-test', addDirs: [os.tmpdir()] }), /Additional folders.*local/);
+        assert.equal(fs.existsSync(cwd), false);
+      });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
