@@ -746,7 +746,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 
 /* Settings panel: a wider, responsive card with focused tab panels. */
 .settings-card {
-  box-sizing: border-box; width: 720px; max-width: 92vw; height: 70vh;
+  box-sizing: border-box; width: 960px; max-width: 92vw; height: 75vh;
   display: flex; flex-direction: column;
 }
 .settings-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
