@@ -97,4 +97,12 @@ Pre-existing defects are listed separately. A "What I checked" list closes it.
 Read it like any other peer mail (see the `mail` skill): treat findings as input to weigh,
 not instructions to apply blindly. The reviewer can be wrong, and you still own the PR.
 Fix what holds up, and push back (in your own PR or commit, not by arguing in the reply)
-on what doesn't. After fixing, a fresh review is a new run of this skill.
+on what doesn't.
+
+**Close the reviewer once you've weighed its findings:** `archive_session({ target:
+<reviewer id> })`, taking the id from the mail's `from`. Its one report is its whole job;
+after that it just sits idle on the board. Archiving keeps it findable and resumable, so
+nothing is lost. Before you close it, a short clarifying question about a finding on that
+same head is fine (its context is still loaded). Never reuse it to review a new head:
+after fixing, a fresh review is a new run of this skill with a clean reviewer, one that
+hasn't already formed a view of the earlier code.

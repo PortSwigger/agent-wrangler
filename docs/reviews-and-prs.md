@@ -58,7 +58,7 @@ not finish), then the head commit it reviewed. Findings follow, most severe firs
 severity (`blocker`, `major`, `minor` or `nit`), a file and line, a failure scenario, a suggested fix
 and a confidence (`confirmed` or `plausible`). Defects that predate the PR are listed separately, and
 a "What I checked" list closes it. The session that asked weighs the findings, fixes what holds up,
-and can run the skill again for a re-review.
+and archives the reviewer. A re-review is a new run of the skill with a new reviewer.
 
 ### Change the review process
 

@@ -81,4 +81,5 @@ test('the shipped skill is named as the manifest declares, and names the tool fo
   assert.equal(skill?.name, 'adversarial-pr-review');
   const body = fs.readFileSync(path.join(dir, 'skills', 'adversarial-pr-review', 'SKILL.md'), 'utf8');
   assert.match(body, /adversarial_review_process/);
+  assert.match(body, /archive_session/);
 });
