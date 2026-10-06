@@ -1,0 +1,70 @@
+name: Refresh catalog snapshots
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: refresh-catalog-snapshots
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # A GITHUB_TOKEN-opened PR would not trigger the Test workflow; a SwigApp
+      # token minted via idcat does. The installation must grant contents: write
+      # and pull-requests: write on this repo.
+      - name: Mint token via idcat
+        id: idcat
+        uses: portswigger-cloud/github-actions/actions/idcat-token@main
+        with:
+          target-repository: PortSwigger/agent-wrangler
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.idcat.outputs.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # gen-catalog keeps the existing Codex snapshot when `codex` is absent, so a
+      # failed install degrades to a price-only refresh rather than failing the job.
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+        continue-on-error: true
+
+      - run: npm run gen:catalog
+
+      - run: npm run gen:models
+
+      - name: Open or update the refresh PR
+        env:
+          GH_TOKEN: ${{ steps.idcat.outputs.token }}
+        run: |
+          if git diff --quiet; then
+            echo "Snapshots already current"
+            exit 0
+          fi
+          branch=automation/refresh-catalog-snapshots
+          git config user.name "agent-wrangler-bot"
+          git config user.email "agent-wrangler-bot@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          git commit -m "Refresh model and price catalog snapshots"
+          git push --force origin "$branch"
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')" ]; then
+            gh pr create --head "$branch" --base main \
+              --title "Refresh model and price catalog snapshots" \
+              --body "Scheduled \`npm run gen:catalog\` and \`npm run gen:models\`."
+          fi
