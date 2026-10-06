@@ -29,7 +29,8 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          token: ${{ steps.idcat.outputs.token }}
+          ref: main
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -41,7 +42,7 @@ jobs:
       # gen-catalog keeps the existing Codex snapshot when `codex` is absent, so a
       # failed install degrades to a price-only refresh rather than failing the job.
       - name: Install Codex CLI
-        run: npm install -g @openai/codex
+        run: npm install -g @openai/codex@0.160.1
         continue-on-error: true
 
       - run: npm run gen:catalog
@@ -62,7 +63,7 @@ jobs:
           git checkout -B "$branch"
           git add -A
           git commit -m "Refresh model and price catalog snapshots"
-          git push --force origin "$branch"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
           if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')" ]; then
             gh pr create --head "$branch" --base main \
               --title "Refresh model and price catalog snapshots" \

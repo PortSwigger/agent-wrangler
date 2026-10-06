@@ -19,7 +19,17 @@ const i = process.argv.indexOf('--litellm');
 const raw = i > 0
   ? JSON.parse(fs.readFileSync(process.argv[i + 1], 'utf8'))
   : await fetchLitellm();
-const prices = reduceLitellm(raw);
+const reduced = reduceLitellm(raw);
+const rows = (c) => Object.keys(c.anthropic).length + Object.keys(c.openai).length;
+if (rows(reduced) < 10) {
+  console.error(`price snapshot NOT refreshed: upstream reduced to only ${rows(reduced)} rows`);
+  process.exit(1);
+}
+const previous = (() => { try { return JSON.parse(fs.readFileSync(PRICE_SNAPSHOT, 'utf8')); } catch { return {}; } })();
+const prices = {
+  anthropic: { ...previous.anthropic, ...reduced.anthropic },
+  openai: { ...previous.openai, ...reduced.openai },
+};
 // Sorted keys so a refresh diffs as the rows that actually changed.
 const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
 fs.writeFileSync(PRICE_SNAPSHOT, `${JSON.stringify({
@@ -32,6 +42,11 @@ console.log(`price snapshot: ${Object.keys(prices.anthropic).length} anthropic, 
 try {
   const out = execFileSync('codex', ['debug', 'models'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const models = reduceCodexCatalog(JSON.parse(out));
+  const listed = (ms) => ms.filter((m) => m.visibility === 'list').length;
+  const before = (() => { try { return listed(JSON.parse(fs.readFileSync(CODEX_SNAPSHOT, 'utf8')).models || []); } catch { return 0; } })();
+  if (listed(models) === 0 || listed(models) * 2 < before) {
+    throw new Error(`implausible catalog: ${listed(models)} listed models, was ${before}`);
+  }
   fs.writeFileSync(CODEX_SNAPSHOT, `${JSON.stringify({ models }, null, 1)}\n`);
   console.log(`codex snapshot: ${models.filter((m) => m.visibility === 'list').length} listed models`);
 } catch (err) {
