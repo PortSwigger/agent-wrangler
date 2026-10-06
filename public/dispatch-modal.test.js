@@ -378,6 +378,41 @@ test('extension runtimes disable additional folder grants until Local is selecte
   assert.equal(note.hidden, true);
 });
 
+test('Codex quick launch restores retained grants when switching from a non-local Claude runtime', () => {
+  for (const runtime of ['devcontainer', 'sandbox']) {
+    const rt = stubSelect(['local', runtime]);
+    const model = stubSelect(['claude-model', 'codex-model']);
+    model.options[0].dataset.agent = 'claude';
+    model.options[1].dataset.agent = 'codex';
+    const element = () => ({ append() {}, replaceChildren() {}, addEventListener() {} });
+    const document = {
+      createElement: element,
+      getElementById: (id) => ({
+        'm-runtime': rt, 'm-model': model,
+        'm-add-dirs-note': { classList: { toggle() {} } },
+      })[id] || { value: '', checked: false },
+    };
+    const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
+    additionalFolders.reset(['/extra']);
+    const app = loadApp(
+      ['function quickLaunch(value) {', 'function syncRuntimeToggle() {', 'function readCoreDispatchFields() {'],
+      ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
+      `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
+       const autoCompactTokens = undefined; const parentSessionId = null;
+       const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
+      { document, additionalFolders, modal: { classList: { contains: () => false } },
+        scheduleMode: () => false, cwdField: () => '/repo' },
+    );
+    rt.value = runtime;
+    app.syncRuntimeToggle();
+    assert.deepEqual(additionalFolders.values(), []);
+    app.quickLaunch('codex-model');
+    assert.equal(app.dispatched[0].agent, 'codex');
+    assert.equal(app.dispatched[0].runtime, undefined);
+    assert.deepEqual(app.dispatched[0].addDirs, ['/extra']);
+  }
+});
+
 function scheduleHarness(kind = 'dispatch', editing = false) {
   const sent = [];
   const state = { invalid: true, closed: false };

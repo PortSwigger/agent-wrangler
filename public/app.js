@@ -521,6 +521,7 @@ function quickLaunch(value) {
   if (!opt) return;
   sel.value = value;
   modelEdited = true;
+  syncRuntimeToggle();
   submitDispatch();
 }
 
