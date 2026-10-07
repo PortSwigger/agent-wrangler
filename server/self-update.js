@@ -8,10 +8,18 @@ import { VERSION } from './version.js';
 
 const execFileAsync = promisify(execFile);
 
+// The native realpath, not fs.realpathSync: on a case-insensitive filesystem
+// (macOS by default) only the native one returns the on-disk case, which is what
+// git reports for --show-toplevel. The JS one keeps the case the path was typed
+// in, so a checkout launched as ~/github/... would not match git's ~/GitHub/...
+function canonicalPath(p) {
+  return fs.realpathSync.native(p);
+}
+
 // The real directory this code runs from, derived from import.meta.url. Git
 // always runs here, never in AW_INSTALL_ROOT (task 06's session-facing path,
 // which may be a symlink that a package upgrade repoints).
-export const APP_ROOT = fs.realpathSync(fileURLToPath(new URL('..', import.meta.url)));
+export const APP_ROOT = canonicalPath(fileURLToPath(new URL('..', import.meta.url)));
 export const UPDATE_REMOTE = 'origin';
 export const UPDATE_BRANCH = 'main';
 const UPSTREAM = `${UPDATE_REMOTE}/${UPDATE_BRANCH}`;
@@ -66,7 +74,7 @@ export class NotACheckoutError extends Error {
 export async function isOwnCheckout({ git = defaultGit, appRoot = APP_ROOT } = {}) {
   try {
     const top = await gitOut(git, ['rev-parse', '--show-toplevel']);
-    return Boolean(top) && fs.realpathSync(top) === appRoot;
+    return Boolean(top) && canonicalPath(top) === canonicalPath(appRoot);
   } catch {
     return false;
   }

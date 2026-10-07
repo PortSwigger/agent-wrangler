@@ -25,7 +25,7 @@ export const restartHandler = {
   type: 'restart-server',
   async handler(msg, ctx) {
     if (!ctx.canRestart) {
-      throw new Error('This wrangler was not started by a supervisor, so it cannot restart itself — stop and start it the way you launched it.');
+      throw new Error('Nothing restarts this wrangler (it was not started by a supervisor, or it is a dev instance), so it cannot restart itself — stop and start it the way you launched it.');
     }
     // A state change a human would ask about afterwards, and the one line that
     // explains an otherwise unexplained restart in the log. The shutdown line's

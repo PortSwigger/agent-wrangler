@@ -72,5 +72,8 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 
 - Set `AW_INSTALL_MANAGER` in the wrapper, so foreground and service starts both get it.
 - Set `AW_SUPERVISED=1` only in the service definition.
+- Make the service restart the process after any exit, including a clean one. **Restart the
+  wrangler** exits with status 0, so a service that restarts only after a crash (Homebrew's
+  `keep_alive crashed: true`) would leave the board stopped. Use `keep_alive true`.
 - Never set `AW_GIT_UPDATES`. A package's start path has no checkout rollback or dependency sync.
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).

@@ -217,6 +217,29 @@ test('real git: a symlinked install path resolves to what it points at', async (
   assert.equal(await isOwnCheckout({ git: gitFor(kegRoot), appRoot: kegRoot }), false);
 });
 
+// macOS volumes are case-insensitive by default, and git reports the on-disk
+// case while a launch path keeps whatever case it was typed in.
+test('real git: a checkout reached through a differently-cased path is still its own', async (t) => {
+  const dir = tmp(t);
+  const repo = repoBehindOrigin(dir, 'Wrangler');
+  const typed = path.join(dir, 'wrangler');
+  if (!fs.existsSync(typed)) {
+    t.skip('case-sensitive filesystem');
+    return;
+  }
+  assert.equal(await isOwnCheckout({ git: gitFor(typed), appRoot: typed }), true);
+  assert.equal((await readInstall(inApp(typed))).codeVersion, sh(repo, 'rev-parse', 'HEAD'));
+
+  // The enclosing-repository case stays refused through a differently-cased path.
+  const parent = repoBehindOrigin(dir, 'Parent');
+  appIn(parent, 'App');
+  const typedApp = path.join(dir, 'parent', 'app');
+  const before = repoState(parent);
+  assert.equal(await isOwnCheckout({ git: gitFor(typedApp), appRoot: typedApp }), false);
+  await assert.rejects(() => checkForUpdate(inApp(typedApp)), NotACheckoutError);
+  assert.deepEqual(repoState(parent), before);
+});
+
 test('real git: inherited GIT_DIR / GIT_WORK_TREE pointing at another repository are ignored', async (t) => {
   const dir = tmp(t);
   const other = repoBehindOrigin(dir, 'other');

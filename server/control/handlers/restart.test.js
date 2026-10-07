@@ -13,7 +13,7 @@ function ctx(canRestart) {
 
 test('an unsupervised restart is refused rather than exiting the board', async () => {
   const c = ctx(false);
-  await assert.rejects(() => restartHandler.handler({}, c), /not started by a supervisor/);
+  await assert.rejects(() => restartHandler.handler({}, c), /Nothing restarts this wrangler/);
   assert.equal(c.calls.restarts, 0, 'nothing exits');
 });
 
@@ -37,7 +37,7 @@ test('restart support needs a supervisor and no dev instance', () => {
 
 test('the handler follows the capability, not just the flag', async () => {
   const dev = ctx(restartSupported({ supervised: true, dev: true }));
-  await assert.rejects(() => restartHandler.handler({}, dev), /not started by a supervisor/);
+  await assert.rejects(() => restartHandler.handler({}, dev), /Nothing restarts this wrangler/);
   assert.equal(dev.calls.restarts, 0);
   const service = ctx(restartSupported({ supervised: true, dev: false }));
   await restartHandler.handler({}, service);
