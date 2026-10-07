@@ -69,6 +69,8 @@ import { readCodeVersion, clearRollbackMarker, readRolledBack } from './self-upd
 import { createUpdateService } from './update-service.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight } from './headless-claude.js';
+import { startupStyle, bannerLines, listenErrorMessage } from './startup-output.js';
+import { VERSION } from './version.js';
 
 const open = openModule.default || openModule;
 
@@ -1187,6 +1189,7 @@ async function main() {
     log,
   });
   await sessionManager.init();
+  await sessionManager.refreshTmuxPath();
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
   // (reason `adopt`): extensions repair per-session state that went stale while
@@ -1248,11 +1251,27 @@ async function main() {
   startPriceCatalogRefresh();
   startCodexCatalogRefresh();
 
+  // A failed bind must end the process. Without this listener the error reaches
+  // the last-resort uncaughtException guard above, which only logs — leaving a
+  // process that holds the instance lock and serves nothing, which a supervisor's
+  // KeepAlive never notices. The lock is released by its own exit handler.
+  // Detached once listening: the server also emits 'error' for a failed accept
+  // (EMFILE under fd pressure), which must stay a logged, survivable event.
+  const onListenError = (err) => {
+    logError(listenErrorMessage(err, PORT));
+    process.exit(1);
+  };
+  server.once('error', onListenError);
   server.listen(PORT, HOST, () => {
+    server.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
-    log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
+    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: restartSupported() }) === 'banner') {
+      console.log(bannerLines({ version: VERSION, url, dataDir: DATA_DIR }).join('\n'));
+    } else {
+      log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
+    }
     if (shouldOpenBrowser()) open(url).catch(() => {});
     setTimeout(() => clearRollbackMarker(), ROLLBACK_CLEAR_AFTER_MS).unref();
   });

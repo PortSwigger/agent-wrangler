@@ -5,11 +5,11 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "agent-wrangler": "server/index.js"
+    "agent-wrangler": "bin/agent-wrangler"
   },
   "scripts": {
     "prestart": "bash scripts/sync-deps.sh",
-    "start": "node server/index.js",
+    "start": "bin/agent-wrangler",
     "test": "node --test --import ./server/test-setup.js",
     "docs:check": "node scripts/check-doc-coverage.mjs",
     "gen:models": "node scripts/gen-skill-models.mjs",

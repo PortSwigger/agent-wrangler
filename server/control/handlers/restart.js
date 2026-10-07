@@ -6,7 +6,7 @@ import { log } from '../../log.js';
 // done nothing at all.
 //
 // Offered ONLY where the process is supervised. Exiting under `npm start` or a
-// bare `node server/index.js` is not a restart, it is a shutdown with nothing to
+// bare launcher (`bin/agent-wrangler`) is not a restart, it is a shutdown with nothing to
 // bring the board back, and a button that kills the board is worse than no
 // button. `AW_SUPERVISED=1` is exported by scripts/wrangler-start.sh, which is
 // what BOTH the launchd plist and the systemd unit exec — so the flag means

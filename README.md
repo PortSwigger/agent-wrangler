@@ -112,6 +112,29 @@ npm start          # serves http://localhost:7878
 need to remember `npm install`. That's the fastest way to try it out, but for everyday use we'd
 recommend running it as a background service instead (below) so it survives restarts and reboots.
 
+`npm start` runs `bin/agent-wrangler`, which you can also run directly (or put on your PATH with
+`npm link`). It takes flags for the common settings; `agent-wrangler --help` lists them:
+
+```bash
+bin/agent-wrangler --port 7999 --data-dir ~/aw-scratch --open
+```
+
+- `--port <n>` — same as `AW_PORT`
+- `--data-dir <path>` — same as `AW_DATA_DIR`
+- `--open` — same as `AW_OPEN_BROWSER=1`
+- `--host <addr>` — same as `AW_BIND_HOST` (see the exposure warning below)
+- `-v`/`--version`, `-h`/`--help`
+
+A flag overrides its environment variable. Running the launcher directly never auto-installs
+dependencies; only `npm start` and the service start script do.
+
+The launcher preserves your locale settings. If `LC_ALL`, `LC_CTYPE`, and `LANG` are all
+empty or unset, it selects an installed UTF-8 locale for `LC_CTYPE` only, preferring
+`C.UTF-8`, then `en_US.UTF-8`. If your effective setting is unavailable or non-UTF-8,
+or no usable UTF-8 locale is installed, it warns and continues without changing it.
+Use `locale -a` to find an installed UTF-8 locale and configure `LC_CTYPE` for Unicode
+in tmux; a non-empty `LC_ALL` takes precedence and must be updated or unset first.
+
 Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port to listen on (default `7878`)
@@ -167,8 +190,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now agent-wrangler.service
 ```
 
-Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm, pins a UTF-8 locale so
-tmux renders Unicode correctly, and auto-installs after a dependency change.
+Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm and auto-installs after a
+dependency change, then runs `bin/agent-wrangler`. The launcher checks the effective character
+locale and, when none is configured, selects an installed UTF-8 `LC_CTYPE` for tmux Unicode
+(see the locale guidance above).
 
 ## Snags
 

@@ -34,7 +34,7 @@
         <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
-    <!-- The open-file limit is pinned in wrangler-start.sh (defaults to 256,
+    <!-- The open-file limit is pinned in bin/agent-wrangler (defaults to 16384,
          AW_MAX_FILES overrides). The scoped notes watcher is what keeps the fd
          count bounded; before it, the watch grew until node-pty spawns failed
          with "posix_spawnp failed" on every terminal attach until a restart. -->
@@ -49,7 +49,7 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- launchd appends to these forever and never rotates them. wrangler-start.sh
+    <!-- launchd appends to these forever and never rotates them. bin/agent-wrangler
          trims them at startup, but it can't ask launchd where they are: if you
          change the paths below, set AW_LOG_DIR above to the same directory or the
          trim silently no-ops and the files grow without bound. -->
