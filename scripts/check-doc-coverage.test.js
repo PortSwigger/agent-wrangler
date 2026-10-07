@@ -19,6 +19,7 @@ function fixture() {
   fs.writeFileSync(path.join(root, 'docs/agent-tools.md'), '# Tools\n');
   fs.writeFileSync(path.join(root, 'docs/board-and-sessions.md'), '# Board and sessions\n');
   fs.writeFileSync(path.join(root, 'docs/reviews-and-prs.md'), '# Reviews and pull requests\n');
+  fs.writeFileSync(path.join(root, 'docs/install-signals.md'), '# Install signals\n');
   fs.mkdirSync(path.join(root, '.claude/skills/maintain-product-docs'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude/skills/maintain-product-docs/SKILL.md'), '# Maintain docs\n');
   return root;
@@ -72,6 +73,7 @@ test('reports required documentation files hidden by git ignore rules', () => {
     'docs/agent-tools.md is hidden by a git ignore rule',
     'docs/board-and-sessions.md is hidden by a git ignore rule',
     'docs/reviews-and-prs.md is hidden by a git ignore rule',
+    'docs/install-signals.md is hidden by a git ignore rule',
     '.claude/skills/maintain-product-docs/SKILL.md is hidden by a git ignore rule',
   ]);
 });
@@ -82,6 +84,7 @@ test('reports every missing required documentation path', async (t) => {
     'docs/agent-tools.md',
     'docs/board-and-sessions.md',
     'docs/reviews-and-prs.md',
+    'docs/install-signals.md',
     '.claude/skills/maintain-product-docs/SKILL.md',
   ];
 

@@ -55,3 +55,7 @@ test('a new update toasts once per upstream commit, and not when the user just a
   assert.equal(updateToastText({ ...status, blocked: 'dirty' }), '');
   assert.equal(updateToastText({ ...status, rolledBack: { target: 'r2' } }), '', 'the rollback banner already covers it');
 });
+
+test('the summary names the checkout service when an update cannot be applied here', () => {
+  assert.match(updateSummary({ phase: 'status', status: { head: 'x', commits: [], behind: 1, blocked: null, canApply: false } }), /not started by the checkout service/);
+});

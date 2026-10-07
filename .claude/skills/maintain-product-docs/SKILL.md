@@ -18,6 +18,7 @@ is not documented merely because its label appears in the UI or its agent metada
 | Review and PR automation | `docs/reviews-and-prs.md` |
 | Core MCP tools | `docs/agent-tools.md` |
 | Extension installation and authoring | `docs/extensions.md` |
+| Install signals (restart/update env vars, app identity, packaging) | `docs/install-signals.md` |
 
 ## Workflow
 

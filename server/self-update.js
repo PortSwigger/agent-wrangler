@@ -4,27 +4,96 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR } from './data-dir.js';
+import { VERSION } from './version.js';
 
 const execFileAsync = promisify(execFile);
 
-export const INSTALL_ROOT = fileURLToPath(new URL('..', import.meta.url));
+// The native realpath, not fs.realpathSync: on a case-insensitive filesystem
+// (macOS by default) only the native one returns the on-disk case, which is what
+// git reports for --show-toplevel. The JS one keeps the case the path was typed
+// in, so a checkout launched as ~/github/... would not match git's ~/GitHub/...
+function canonicalPath(p) {
+  return fs.realpathSync.native(p);
+}
+
+// The real directory this code runs from, derived from import.meta.url. Git
+// always runs here, never in AW_INSTALL_ROOT (task 06's session-facing path,
+// which may be a symlink that a package upgrade repoints).
+export const APP_ROOT = canonicalPath(fileURLToPath(new URL('..', import.meta.url)));
 export const UPDATE_REMOTE = 'origin';
 export const UPDATE_BRANCH = 'main';
 const UPSTREAM = `${UPDATE_REMOTE}/${UPDATE_BRANCH}`;
 const MAX_LISTED_COMMITS = 50;
 
-const defaultGit = (args, opts = {}) => execFileAsync('git', args, { cwd: INSTALL_ROOT, timeout: 60000, maxBuffer: 4 * 1024 * 1024, ...opts });
+// Env vars that make git operate on a repository other than the one found from
+// its working directory: the list `git rev-parse --local-env-vars` prints, plus
+// the two that widen discovery. One inherited from a parent git process (a hook,
+// `git rebase --exec`) would otherwise point every command below at that repo.
+const REDIRECTING_GIT_ENV = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+  'GIT_OBJECT_DIRECTORY', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE',
+  'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX',
+  'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+];
+
+// The ceiling stops git walking up out of the app root, so a Homebrew keg (inside
+// Homebrew's own repository on Apple Silicon) or an unpacked tarball inside some
+// other checkout finds no repository at all rather than the enclosing one.
+export function checkoutGitEnv(env, appRoot) {
+  const out = { ...env };
+  for (const name of REDIRECTING_GIT_ENV) delete out[name];
+  out.GIT_CEILING_DIRECTORIES = path.dirname(appRoot);
+  return out;
+}
+
+export function gitFor(appRoot) {
+  return (args, opts = {}) => execFileAsync('git', args, {
+    cwd: appRoot, env: checkoutGitEnv(process.env, appRoot), timeout: 60000, maxBuffer: 4 * 1024 * 1024, ...opts,
+  });
+}
+
+const defaultGit = gitFor(APP_ROOT);
 
 async function gitOut(git, args) {
   const { stdout } = await git(args);
   return String(stdout).trim();
 }
 
-export async function readCodeVersion({ git = defaultGit } = {}) {
+export class NotACheckoutError extends Error {
+  constructor() {
+    super('This install is not a Git checkout of agent-wrangler, so it cannot update from the board.');
+    this.name = 'NotACheckoutError';
+  }
+}
+
+// Whether the app root is itself the top level of a Git work tree: an ordinary
+// checkout or a linked worktree. Checked before every fetch, version read and
+// merge. Setting cwd does not establish ownership, because git searches parent
+// directories; the ceiling above stops that, and comparing canonical paths also
+// rejects a repository whose top level is anywhere but the app root.
+export async function isOwnCheckout({ git = defaultGit, appRoot = APP_ROOT } = {}) {
   try {
-    return await gitOut(git, ['rev-parse', 'HEAD']);
+    const top = await gitOut(git, ['rev-parse', '--show-toplevel']);
+    return Boolean(top) && canonicalPath(top) === canonicalPath(appRoot);
   } catch {
-    return null;
+    return false;
+  }
+}
+
+async function assertOwnCheckout(git, appRoot) {
+  if (!(await isOwnCheckout({ git, appRoot }))) throw new NotACheckoutError();
+}
+
+// What this install is, read once at startup. `codeVersion` is the identity
+// sessions record at launch and the board reloads on: a validated checkout's
+// HEAD commit, otherwise the package version (a Homebrew keg, an unpacked
+// release). Never an enclosing repository's commit.
+export async function readInstall({ git = defaultGit, appRoot = APP_ROOT, packageVersion = VERSION } = {}) {
+  if (!(await isOwnCheckout({ git, appRoot }))) return { checkout: false, codeVersion: packageVersion };
+  try {
+    return { checkout: true, codeVersion: await gitOut(git, ['rev-parse', 'HEAD']) };
+  } catch {
+    return { checkout: true, codeVersion: null };
   }
 }
 
@@ -57,13 +126,14 @@ async function inspect(git) {
   return { head, remote, behind, commits, blocked: blockedReason({ branch, dirty: status.length > 0, ahead }) };
 }
 
-export async function checkForUpdate({ git = defaultGit } = {}) {
+export async function checkForUpdate({ git = defaultGit, appRoot = APP_ROOT } = {}) {
+  await assertOwnCheckout(git, appRoot);
   await git(['fetch', '--quiet', UPDATE_REMOTE, UPDATE_BRANCH]);
   return inspect(git);
 }
 
-export async function applyUpdate({ git = defaultGit, beforeMerge = () => {} } = {}) {
-  const status = await checkForUpdate({ git });
+export async function applyUpdate({ git = defaultGit, appRoot = APP_ROOT, beforeMerge = () => {} } = {}) {
+  const status = await checkForUpdate({ git, appRoot });
   if (status.blocked) throw new Error(status.blocked);
   if (status.behind === 0) return { ...status, updated: false };
   beforeMerge(status);

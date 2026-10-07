@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// First, before any other module runs: captures the install-scoped signals
+// (AW_SUPERVISED, AW_INSTALL_MANAGER, AW_GIT_UPDATES, ...) and removes them from
+// process.env, so no tmux server or child process started later inherits them.
+import { INSTALL_ENV } from './install-env.js';
 import os from 'node:os';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -65,8 +69,8 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
-import { readCodeVersion, clearRollbackMarker, readRolledBack } from './self-update.js';
-import { createUpdateService } from './update-service.js';
+import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
+import { createUpdateService, updateSupport } from './update-service.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight } from './headless-claude.js';
 import { startupStyle, bannerLines, listenErrorMessage } from './startup-output.js';
@@ -1086,7 +1090,7 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateRolledBack: updates?.rolledBack() || null }));
+  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null }));
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1126,6 +1130,7 @@ controlWss.on('connection', (ws) => {
     // reads exactly like the hard kill a missing reason is supposed to mean. The
     // small delay lets the ack reach the browser before the socket dies with us.
     restart: () => exitForRestart('restart requested from the board'),
+    canRestart: restartSupported(),
     updates,
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
@@ -1175,10 +1180,19 @@ async function main() {
   // in-memory. After the lock, so a duplicate instance never sweeps the running
   // one's in-flight staging dir out from under it.
   sweepStaging();
-  codeVersion = await readCodeVersion();
+  // A package-managed install never runs Git, even to read a version: its
+  // identity is the package version it was built from.
+  const install = INSTALL_ENV.installManager ? { checkout: false, codeVersion: VERSION } : await readInstall();
+  codeVersion = install.codeVersion;
   sessionManager.codeVersion = codeVersion;
   updates = createUpdateService({
-    supervised: restartSupported,
+    support: updateSupport({
+      installManager: INSTALL_ENV.installManager,
+      checkout: install.checkout,
+      supervised: INSTALL_ENV.supervised,
+      gitUpdates: INSTALL_ENV.gitUpdates,
+      dev: Boolean(process.env.AW_DEV),
+    }),
     mode: () => autoUpdateMode(),
     isQuiet: wranglerIsQuiet,
     rolledBack: readRolledBack(),
@@ -1191,6 +1205,7 @@ async function main() {
   });
   await sessionManager.init();
   await sessionManager.refreshTmuxPath();
+  await sessionManager.clearInstallEnv();
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
   // (reason `adopt`): extensions repair per-session state that went stale while
@@ -1268,8 +1283,8 @@ async function main() {
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
-    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: restartSupported() }) === 'banner') {
-      console.log(bannerLines({ version: VERSION, url, dataDir: DATA_DIR }).join('\n'));
+    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: INSTALL_ENV.supervised }) === 'banner') {
+      console.log(bannerLines({ version: VERSION, commit: install.checkout ? codeVersion : null, url, dataDir: DATA_DIR }).join('\n'));
     } else {
       log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);
     }

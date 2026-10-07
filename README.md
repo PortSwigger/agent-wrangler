@@ -62,12 +62,15 @@ otherwise it behaves exactly as a Claude-only board.
   reply arriving word by word the way the terminal does; while a turn is running it shows a
   live row naming the tool in flight and how long the session has been busy.
 - **Themeable** — built-in dark/light plus drop-in custom styles.
-- **Updates from the board** — Settings › Updates checks `origin/main`, lists the new commits and
-  fast-forwards the install and restarts it in one click; sessions keep running through the restart
-  and open tabs reload onto the new code. It checks hourly and can install on its own (Off / Notify /
-  Auto). If an update can't start, the next restart rolls back to the commit it came from. Needs the
-  background service below, a clean checkout on `main`, and no local commits. Running sessions
-  get an "older version" tag until they restart, and an opt-in setting restarts idle ones for you.
+- **Updates from the board** — for a Git checkout, Settings › Updates checks `origin/main`, lists
+  the new commits, fast-forwards the checkout and restarts it in one click. Sessions keep running
+  through the restart, and open tabs reload onto the new code. It checks hourly and can install on
+  its own (Off / Notify / Auto). If an update can't start, the next restart rolls back to the commit
+  it came from. Installing needs the background service below (which also installs changed
+  dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
+  checkout, such as one managed by a package manager, shows updates as unavailable and never runs
+  Git. See [Install signals](docs/install-signals.md). Running sessions get an "older version" tag
+  until they restart, and an opt-in setting restarts idle ones for you.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
 
@@ -83,6 +86,7 @@ work, reviewing changes, managing tasks, and automating pull requests.
 | [Reviews and pull requests](docs/reviews-and-prs.md) | Peer-review sessions, adversarial PR reviews, the diff reviewer, PR status, auto-fix, and auto-merge |
 | [Agent tools](docs/agent-tools.md) | Reference for the MCP tools available to Agent Wrangler sessions |
 | [Extensions](docs/extensions.md) | The core extensions, installing more, and building one with server, browser, tool, setting, and skill contributions |
+| [Install signals](docs/install-signals.md) | For packagers: the environment variables that decide restart and update behaviour, app identity, and why sessions never inherit them |
 
 If you are unsure what to ask for, start with [Agent capabilities](docs/agent-capabilities.md): it
 includes example prompts for every built-in Wrangler skill.
@@ -159,6 +163,10 @@ Environment variables:
 - `AW_ROLLBACK_AFTER_STARTS` — how many starts an update gets to come up healthy before
   `scripts/wrangler-start.sh` rolls it back (default `3`, i.e. two failed attempts)
 
+Start scripts and package wrappers set a few more variables (`AW_SUPERVISED`, `AW_GIT_UPDATES`,
+`AW_INSTALL_MANAGER`, `AW_NODE`, `AW_INSTALL_ROOT`) to describe how the install runs. They're
+documented in [Install signals](docs/install-signals.md), and sessions never inherit them.
+
 ### Run as a background service
 
 To keep it always-on, run it under launchd (macOS) or a systemd user unit (Linux).
@@ -190,8 +198,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now agent-wrangler.service
 ```
 
-Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm and auto-installs after a
-dependency change, then runs `bin/agent-wrangler`. The launcher checks the effective character
+Both paths invoke `scripts/wrangler-start.sh`, which resolves Node via nvm, rolls back an update
+from the board that failed to start, and auto-installs after a dependency change, then runs
+`bin/agent-wrangler`. Because it does those steps, it's the start path that lets the board apply
+updates. The launcher checks the effective character
 locale and, when none is configured, selects an installed UTF-8 `LC_CTYPE` for tmux Unicode
 (see the locale guidance above).
 

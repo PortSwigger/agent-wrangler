@@ -8,10 +8,13 @@ export function startupStyle({ isTTY, supervised }) {
   return isTTY && !supervised ? 'banner' : 'line';
 }
 
-export function bannerLines({ version, url, dataDir }) {
+// `commit` is a validated checkout's HEAD, or null for a packaged install. Every
+// checkout reports package.json's version, so the short commit is what tells
+// two of them apart; a package's version already identifies it.
+export function bannerLines({ version, commit = null, url, dataDir }) {
   return [
     '',
-    `  Agent Wrangler ${version}`,
+    `  Agent Wrangler ${version}${commit ? ` (${commit.slice(0, 7)})` : ''}`,
     '',
     `  ➜  ${url}`,
     '',

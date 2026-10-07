@@ -9,6 +9,7 @@ const REQUIRED_DOC_PATHS = [
   'docs/agent-tools.md',
   'docs/board-and-sessions.md',
   'docs/reviews-and-prs.md',
+  'docs/install-signals.md',
   '.claude/skills/maintain-product-docs/SKILL.md',
 ];
 

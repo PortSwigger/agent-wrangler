@@ -20,6 +20,7 @@ import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
+import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -1386,19 +1387,41 @@ export class SessionManager {
   // (bin/agent-wrangler exports it before exec). Call after init(), which has
   // resolved this.socket, and after the instance lock, so only the owner writes.
   //
-  // Only a supervised, non-dev server does this: AW_SUPERVISED is inherited by
-  // every tmux pane, so a dev instance started from a pane would otherwise
-  // rewrite the PATH of the board it was started from. Only this.socket is
+  // Only a supervised, non-dev server does this. AW_SUPERVISED no longer reaches
+  // new panes (install-env.js), but a pane created before that rule still has
+  // it, so a dev instance started from one is also excluded by AW_DEV; it would
+  // otherwise rewrite the PATH of the board it was started from. Only this.socket is
   // touched, never the legacy default socket: that server is shared with
   // whatever else uses the user's default tmux, and a legacy session picks up
   // the refreshed PATH when it is resumed onto this install's socket.
   //
   // Best effort: set-environment on a socket with no server fails ("no server
   // running") without starting one, and that is the normal first-boot state.
-  async refreshTmuxPath(env = process.env) {
-    if (env.AW_SUPERVISED !== '1' || env.AW_DEV || !this.socket || !env.PATH) return false;
+  async refreshTmuxPath({ supervised = INSTALL_ENV.supervised, env = process.env } = {}) {
+    if (!supervised || env.AW_DEV || !this.socket || !env.PATH) return false;
     try {
       await this._tmux(this.socket, ['set-environment', '-g', 'PATH', env.PATH]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // The second half of the env-inheritance rule (install-env.js): a tmux server
+  // started before this process, by an older wrangler or before the rule
+  // existed, still holds the install-scoped signals in its global environment
+  // and would hand them to every new pane. Remove them from this install's own
+  // server, in one tmux call (unsetting an absent variable is not an error).
+  // Same constraints as refreshTmuxPath: after init() and the instance lock, own
+  // socket only, and harmless when no server is running. Unlike the PATH
+  // refresh this runs for every instance, dev ones included: it only ever
+  // removes signals from the socket this instance owns. Panes that already
+  // exist keep their environment until they are relaunched.
+  async clearInstallEnv(names = INSTALL_SCOPED_ENV) {
+    if (!this.socket || !names.length) return false;
+    const args = names.flatMap((name, i) => [...(i ? [';'] : []), 'set-environment', '-g', '-u', name]);
+    try {
+      await this._tmux(this.socket, args);
       return true;
     } catch {
       return false;
