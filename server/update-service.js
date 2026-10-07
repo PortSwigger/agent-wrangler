@@ -14,6 +14,19 @@ function managedReason(manager) {
   return `This install is managed by ${manager}. Update it with ${manager}, not from the board.`;
 }
 
+function restartHint(manager) {
+  if (manager === 'homebrew') return 'If it runs as a service, restart it with `brew services restart agent-wrangler`. Otherwise stop and start it the way you launched it.';
+  return 'Stop and start it the way you launched it.';
+}
+
+// What the board is told about an upgrade that repointed AW_INSTALL_ROOT under
+// this running server (install-root.js installRootDrift), or null for none. The
+// hint is how to restart by hand, for a board that can't restart itself
+// (canRestart false); the client decides which of the two to offer.
+export function installDriftStatus(drift, { manager = null, runningVersion = null } = {}) {
+  return drift && { ...drift, runningVersion, restartHint: restartHint(manager) };
+}
+
 // What the board's Git updater may do in this process, decided once at startup.
 // `available` gates every check (manual or scheduled); `canApply` additionally
 // gates every apply, manual or automatic. Restart support is a separate

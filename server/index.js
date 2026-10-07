@@ -70,7 +70,8 @@ import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
-import { createUpdateService, updateSupport } from './update-service.js';
+import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
+import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight } from './headless-claude.js';
 import { startupStyle, bannerLines, listenErrorMessage } from './startup-output.js';
@@ -183,11 +184,20 @@ const storesFor = (id) => Object.fromEntries(
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
 sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
+// An upgrade that repointed AW_INSTALL_ROOT under this running server (see
+// install-root.js): checked at every launch, since that is when a session picks
+// up the new version's hook and skills, and on a timer in main(). Shown in
+// Settings › Updates through the config frame and `install-drift`.
+const installDrift = createInstallDriftWatch({ onChange: () => broadcast({ type: 'install-drift', drift: installDriftNotice() }) });
+const installDriftNotice = () => installDriftStatus(installDrift.current(), { manager: INSTALL_ENV.installManager, runningVersion: VERSION });
 // Per-launch env and directory grants from the enabled extensions (the
 // `session.launchContext` hook, server/launch-context.js): dispatch/resume/fork
 // await it before building the command. `_taskFor` is how session-manager asks
 // "which task is this session on" without knowing the task store.
-sessionManager._launchContext = (ctx) => collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
+sessionManager._launchContext = (ctx) => {
+  installDrift.poll();
+  return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
+};
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
 // Bind the archive-review seam (default no-op in the class, see session-manager.js)
 // to the real runner with the event bus injected — the review publishes its
@@ -1090,7 +1100,7 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null }));
+  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() }));
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1296,6 +1306,7 @@ async function main() {
     setTimeout(() => updates.tick(), 60 * 1000).unref();
     setInterval(() => updates.tick(), UPDATE_CHECK_MS).unref();
   }
+  setInterval(() => installDrift.poll(), 60 * 1000).unref();
   setInterval(() => refreshOneStaleSession().catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless

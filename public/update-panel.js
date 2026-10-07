@@ -74,6 +74,34 @@ function unavailablePanelEl(reason) {
   return wrap;
 }
 
+// An upgrade repointed AW_INSTALL_ROOT under this running server (server/
+// install-root.js installRootDrift): sessions already get the new version's
+// hook and skills, so the board asks for the restart that finishes it. Offers
+// the Restart action only where the server can restart itself; otherwise says
+// how, in the words the server chose for this install.
+export function installDriftNotice({ drift, canRestart = false } = {}) {
+  if (!drift) return null;
+  const { version, runningVersion } = drift;
+  const versions = version && runningVersion && version !== runningVersion ? ` (${runningVersion} → ${version})` : '';
+  const text = drift.target
+    ? `An upgrade has landed${versions}, but this wrangler is still running the old version. Sessions already use the new version's hook and skills, so restart the wrangler to finish the upgrade.`
+    : `The install path ${drift.installRoot} cannot be resolved, so an upgrade may be in progress. Restart the wrangler once it finishes.`;
+  return { text, restart: Boolean(canRestart), hint: canRestart ? null : (drift.restartHint || null) };
+}
+
+export function installDriftEl({ drift, canRestart = false, restarting = false, onRestart } = {}) {
+  const notice = installDriftNotice({ drift, canRestart });
+  if (!notice) return null;
+  const wrap = el('div', 'update-panel');
+  const head = el('div', 'update-panel-head');
+  head.append(el('div', 'setting-label', 'Restart to finish the upgrade'));
+  if (notice.restart) head.append(button(restarting ? 'Restarting…' : 'Restart now', 'ext-btn ext-btn-warn', { disabled: restarting, onClick: onRestart }));
+  wrap.append(head);
+  wrap.append(el('div', 'update-summary', notice.text));
+  if (notice.hint) wrap.append(el('div', 'setting-help', notice.hint));
+  return wrap;
+}
+
 export function updatePanelEl({ phase = 'idle', status = null, error = '', unavailable = null, onCheck, onApply } = {}) {
   if (unavailable) return unavailablePanelEl(unavailable);
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting';

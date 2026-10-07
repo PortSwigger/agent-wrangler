@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createUpdateService, canAutoApply, UpdateBusyError, updateSupport } from './update-service.js';
+import { createUpdateService, canAutoApply, UpdateBusyError, updateSupport, installDriftStatus } from './update-service.js';
 
 const behind = { head: 'h0', remote: 'r1', behind: 2, commits: [], blocked: null };
 
@@ -165,4 +165,15 @@ test('a failing check in a tick is logged, not thrown', async () => {
   const { svc, events } = service({ check: async () => { throw new Error('offline'); } });
   assert.equal(await svc.tick(), null);
   assert.match(events.logs[0], /offline/);
+});
+
+test('drift reaches the board with the running version and how to restart by hand', () => {
+  const drift = { installRoot: '/opt/homebrew/opt/agent-wrangler', target: '/opt/homebrew/Cellar/agent-wrangler/0.2.0', version: '0.2.0' };
+  assert.equal(installDriftStatus(null, { manager: 'homebrew', runningVersion: '0.1.0' }), null);
+  const brew = installDriftStatus(drift, { manager: 'homebrew', runningVersion: '0.1.0' });
+  assert.deepEqual({ ...brew, restartHint: undefined }, { ...drift, runningVersion: '0.1.0', restartHint: undefined });
+  // Matches managedReason's wording for the same install.
+  assert.match(brew.restartHint, /`brew services restart agent-wrangler`/);
+  assert.match(updateSupport({ installManager: 'homebrew' }).reason, /`brew services restart agent-wrangler`/);
+  assert.equal(installDriftStatus(drift, { manager: null }).restartHint, 'Stop and start it the way you launched it.');
 });

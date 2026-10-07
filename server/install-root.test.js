@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SOURCE_ROOT, resolveInstallRoot, installPath } from './install-root.js';
+import { SOURCE_ROOT, resolveInstallRoot, installPath, installRootDrift, createInstallDriftWatch } from './install-root.js';
 
 test('AW_INSTALL_ROOT wins only when it resolves to the running app, and never in a dev instance', () => {
   const sourceRoot = '/versions/1.0/aw';
@@ -28,6 +28,49 @@ test('AW_INSTALL_ROOT wins only when it resolves to the running app, and never i
     assert.equal(warned.length, warns, `${installRoot} dev=${dev}: ${warned}`);
     if (warns) assert.match(warned[0], /AW_INSTALL_ROOT ignored/);
   }
+});
+
+test('drift is a startup-honoured AW_INSTALL_ROOT that no longer resolves to the running app', () => {
+  const sourceRoot = '/versions/1.0/aw';
+  const enoent = (p) => { throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' }); };
+  // Each row boots with /stable/aw -> the running app, then the link becomes `now`.
+  for (const [name, env, dev, now, want] of [
+    ['unchanged', '/stable/aw', false, sourceRoot, null],
+    ['repointed', '/stable/aw', false, '/versions/2.0/aw', { installRoot: '/stable/aw', target: '/versions/2.0/aw', version: '2.0.0' }],
+    ['missing', '/stable/aw', false, null, { installRoot: '/stable/aw', target: null, version: null }],
+    ['variable unset', null, false, '/versions/2.0/aw', null],
+    ['dev', '/stable/aw', true, '/versions/2.0/aw', null],
+  ]) {
+    const links = { '/stable/aw': sourceRoot, [sourceRoot]: sourceRoot, '/versions/2.0/aw': '/versions/2.0/aw' };
+    const realpath = (p) => (p in links ? links[p] : enoent(p));
+    const installRoot = resolveInstallRoot({ installRoot: env, dev, sourceRoot, realpath, warn: () => {} });
+    if (now) links['/stable/aw'] = now; else delete links['/stable/aw'];
+    const files = { '/stable/aw/package.json': now === '/versions/2.0/aw' ? '{"version":"2.0.0"}' : undefined };
+    const readFile = (p) => files[p] ?? enoent(p);
+    assert.deepEqual(installRootDrift({ installRoot, sourceRoot, realpath, readFile }), want, name);
+  }
+});
+
+test('the running app\'s own directory vanishing is drift too', () => {
+  const realpath = (p) => {
+    if (p === '/stable/aw') return '/versions/2.0/aw';
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  };
+  const got = installRootDrift({ installRoot: '/stable/aw', sourceRoot: '/versions/1.0/aw', realpath, readFile: () => '{"version":"2.0.0"}' });
+  assert.deepEqual(got, { installRoot: '/stable/aw', target: '/versions/2.0/aw', version: '2.0.0' });
+});
+
+test('the drift watch warns once on entering drift and reports every change', () => {
+  const repointed = { installRoot: '/stable/aw', target: '/versions/2.0/aw', version: '2.0.0' };
+  const seq = [null, repointed, { ...repointed }, { ...repointed, target: null, version: null }, null, repointed];
+  const warned = [];
+  const changes = [];
+  const watch = createInstallDriftWatch({ check: () => seq.shift(), warn: (m) => warned.push(m), onChange: (d) => changes.push(d) });
+  for (let i = 0; i < 6; i++) watch.poll();
+  assert.deepEqual(changes.map((d) => d?.target ?? null), ['/versions/2.0/aw', null, null, '/versions/2.0/aw']);
+  assert.equal(warned.length, 2, 'once per entry into drift, not per poll');
+  assert.match(warned[0], /AW_INSTALL_ROOT \/stable\/aw now resolves to \/versions\/2\.0\/aw/);
+  assert.deepEqual(watch.current(), repointed);
 });
 
 test('installPath re-roots only paths inside the source root', () => {
