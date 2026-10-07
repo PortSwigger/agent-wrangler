@@ -62,7 +62,9 @@ export function parseCliArgs(argv) {
     if (!values['data-dir']) return { action: 'error', error: '--data-dir must not be empty' };
     env.AW_DATA_DIR = values['data-dir'];
   }
-  if (values.open) env.AW_OPEN_BROWSER = '1';
+  // The legacy AW_NO_OPEN suppresses even AW_OPEN_BROWSER (shouldOpenBrowser), so
+  // clear it too or --open loses to an old plist's setting.
+  if (values.open) Object.assign(env, { AW_OPEN_BROWSER: '1', AW_NO_OPEN: '' });
   if (values.host !== undefined) {
     if (!values.host) return { action: 'error', error: '--host must not be empty' };
     env.AW_BIND_HOST = values.host;

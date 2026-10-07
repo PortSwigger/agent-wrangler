@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCliArgs, usage } from './cli-args.js';
 import { VERSION } from './version.js';
+import { shouldOpenBrowser } from './config-store.js';
 
 const cases = [
   { name: 'no flags runs with no env changes', argv: [], want: { action: 'run', env: {} } },
@@ -14,12 +15,12 @@ const cases = [
   { name: '--port=value form', argv: ['--port=1'], want: { action: 'run', env: { AW_PORT: '1' } } },
   { name: '--port upper bound', argv: ['--port', '65535'], want: { action: 'run', env: { AW_PORT: '65535' } } },
   { name: '--data-dir', argv: ['--data-dir', '~/aw-x'], want: { action: 'run', env: { AW_DATA_DIR: '~/aw-x' } } },
-  { name: '--open', argv: ['--open'], want: { action: 'run', env: { AW_OPEN_BROWSER: '1' } } },
+  { name: '--open', argv: ['--open'], want: { action: 'run', env: { AW_OPEN_BROWSER: '1', AW_NO_OPEN: '' } } },
   { name: '--host', argv: ['--host', '0.0.0.0'], want: { action: 'run', env: { AW_BIND_HOST: '0.0.0.0' } } },
   {
     name: 'flags combine',
     argv: ['--port', '7998', '--data-dir', '/tmp/aw', '--open'],
-    want: { action: 'run', env: { AW_PORT: '7998', AW_DATA_DIR: '/tmp/aw', AW_OPEN_BROWSER: '1' } },
+    want: { action: 'run', env: { AW_PORT: '7998', AW_DATA_DIR: '/tmp/aw', AW_OPEN_BROWSER: '1', AW_NO_OPEN: '' } },
   },
 ];
 
@@ -55,6 +56,11 @@ test('usage names every flag and the env var it sets', () => {
   for (const s of ['--port', 'AW_PORT', '--data-dir', 'AW_DATA_DIR', '--open', 'AW_OPEN_BROWSER', '--host', 'AW_BIND_HOST', '--help', '--version']) {
     assert.ok(text.includes(s), `usage mentions ${s}`);
   }
+});
+
+test('--open overrides a legacy AW_NO_OPEN', () => {
+  const { env } = parseCliArgs(['--open']);
+  assert.equal(shouldOpenBrowser({ AW_NO_OPEN: '1', ...env }), true);
 });
 
 test('VERSION is the package.json version', () => {
