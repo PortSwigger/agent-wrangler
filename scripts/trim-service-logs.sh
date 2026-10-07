@@ -9,10 +9,11 @@
 # is O_APPEND, so writes simply resume after the kept tail.
 #
 # Only under a supervisor (AW_SUPERVISED=1, set by wrangler-start.sh and by the
-# Homebrew service): an interactive run writes to the terminal. Both launchd
-# setups name the files wrangler.log/wrangler.err; set AW_LOG_DIR to the
-# directory they live in. The systemd path logs to the journal, which rotates
-# itself — these files won't exist there, and the function no-ops.
+# Homebrew service): an interactive run writes to the terminal. The source
+# launchd plist and Homebrew formula use wrangler.log/wrangler.err; set AW_LOG_DIR
+# to their directory. Homebrew can write these files on macOS or Linux, so both
+# platforms use this trimming. The source-install systemd unit instead writes
+# to the journal, which manages its own retention; missing log files are a no-op.
 trim_log() {
   # POSIX sh has no `local`; the prefix keeps these out of the caller's way.
   _tl_f="$1"; _tl_max="$2"
