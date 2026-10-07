@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -137,30 +138,47 @@ test('launcher appends the sbin dirs a bare supervisor PATH omits', t => {
   assert.ok(dirs.includes('/usr/sbin') && dirs.includes('/sbin'), result.stdout);
 });
 
-const tmuxBin = spawnSync('sh', ['-c', 'command -v tmux'], { encoding: 'utf8' }).stdout.trim();
+// The launcher no longer touches tmux: a server's PATH is refreshed by the server
+// itself, on its own socket (SessionManager.refreshTmuxPath). The old launcher
+// looped over ${TMUX_TMPDIR}/tmux-UID/aw-* and only ran tmux for a real Unix
+// socket, so the fixture binds one (no tmux needed) and a recording tmux on PATH
+// proves the launcher stays out of it for every entry path, including the
+// informational and error ones that never start a server, with the supervisor
+// flag a tmux pane would have inherited.
+async function listenOnAwSocket(t, root) {
+  const dir = path.join(root, 'tmux', `tmux-${process.getuid()}`);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const sock = path.join(dir, 'aw-test');
+  const server = net.createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(sock, resolve));
+  t.after(() => server.close());
+  assert.ok(fs.statSync(sock).isSocket(), 'fixture must be a real Unix socket');
+  return path.join(root, 'tmux');
+}
 
-for (const supervised of [false, true]) {
-  test(`${supervised ? 'supervised' : 'interactive'} launcher ${supervised ? 'refreshes' : 'leaves'} running tmux servers' PATH`, {
-    skip: !tmuxBin && 'tmux not installed',
-  }, t => {
+const cases = [
+  { name: 'server start', args: [], status: 0 },
+  { name: '--help', args: ['--help'], status: 0 },
+  { name: '--version', args: ['--version'], status: 0 },
+  { name: 'an invalid argument', args: ['--no-such-flag'], status: 2 },
+  { name: 'a dev start', args: [], env: { AW_DEV: '1' }, status: 0 },
+];
+
+for (const { name, args, env: extra = {}, status } of cases) {
+  test(`supervised launcher leaves tmux untouched for ${name}`, async t => {
     const { root, env } = fixture(t);
-    const tmuxTmp = path.join(root, 'tmux');
-    const sock = path.join(tmuxTmp, `tmux-${process.getuid()}`, 'aw-test');
-    fs.mkdirSync(path.dirname(sock), { recursive: true, mode: 0o700 });
-    const tmux = (...args) => spawnSync(tmuxBin, ['-S', sock, ...args], {
-      encoding: 'utf8', env: { ...process.env, PATH: '/stale/bin' },
+    const tmuxTmp = await listenOnAwSocket(t, root);
+    for (const file of ['cli.js', 'cli-args.js', 'version.js']) {
+      fs.copyFileSync(path.join(sourceRoot, 'server', file), path.join(root, 'server', file));
+    }
+    fs.writeFileSync(path.join(root, 'server/index.js'), 'console.log("server-started");');
+    const log = path.join(root, 'tmux.log');
+    fs.writeFileSync(path.join(root, 'bin/tmux'), `#!/bin/sh\necho "$@" >> '${log}'\n`, { mode: 0o755 });
+    const result = spawnSync(path.join(root, 'bin/agent-wrangler'), args, {
+      cwd: root, encoding: 'utf8', timeout: 10000,
+      env: { ...env, ...extra, PATH: `${root}/bin:${env.PATH}`, TMUX_TMPDIR: tmuxTmp, AW_SUPERVISED: '1' },
     });
-    assert.equal(tmux('-f', '/dev/null', 'new-session', '-d').status, 0);
-    t.after(() => tmux('kill-server'));
-    fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
-    const result = run(root, {
-      ...env,
-      PATH: `${env.PATH}:${path.dirname(tmuxBin)}`,
-      TMUX_TMPDIR: tmuxTmp,
-      ...(supervised ? { AW_SUPERVISED: '1' } : {}),
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const serverPath = tmux('show-environment', '-g', 'PATH').stdout.trim();
-    assert.equal(serverPath, `PATH=${supervised ? result.stdout.trim() : '/stale/bin'}`);
+    assert.equal(result.status, status, result.stderr);
+    assert.equal(fs.existsSync(log), false, `launcher ran tmux: ${fs.existsSync(log) && fs.readFileSync(log, 'utf8')}`);
   });
 }

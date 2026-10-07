@@ -1189,6 +1189,7 @@ async function main() {
     log,
   });
   await sessionManager.init();
+  await sessionManager.refreshTmuxPath();
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
   // (reason `adopt`): extensions repair per-session state that went stale while

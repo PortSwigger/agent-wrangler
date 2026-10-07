@@ -80,15 +80,4 @@ case ":$PATH:" in
 esac
 export PATH
 
-# A tmux server outlives the wrangler and keeps the PATH it started with, so new
-# panes would go on inheriting a stale one. Bring any running session servers
-# into line with the final PATH; it only affects panes created from here on.
-# Supervised starts only: an interactive run (say, a dev instance from a pane)
-# must not rewrite the live board's servers with its own shell's PATH.
-if [ "${AW_SUPERVISED:-}" = 1 ] && command -v tmux >/dev/null 2>&1; then
-  for sock in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/aw-*; do
-    [ -S "$sock" ] && tmux -S "$sock" set-environment -g PATH "$PATH" 2>/dev/null || true
-  done
-fi
-
 exec "$node_bin" "$ROOT/server/cli.js" "$@"

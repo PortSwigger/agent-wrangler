@@ -1380,6 +1380,31 @@ export class SessionManager {
     await this.refreshAlive();
   }
 
+  // A tmux server outlives the wrangler and keeps the PATH it started with, so
+  // panes created after a restart or source update would inherit a stale one.
+  // Bring this install's own server into line with the PATH the launcher built
+  // (bin/agent-wrangler exports it before exec). Call after init(), which has
+  // resolved this.socket, and after the instance lock, so only the owner writes.
+  //
+  // Only a supervised, non-dev server does this: AW_SUPERVISED is inherited by
+  // every tmux pane, so a dev instance started from a pane would otherwise
+  // rewrite the PATH of the board it was started from. Only this.socket is
+  // touched, never the legacy default socket: that server is shared with
+  // whatever else uses the user's default tmux, and a legacy session picks up
+  // the refreshed PATH when it is resumed onto this install's socket.
+  //
+  // Best effort: set-environment on a socket with no server fails ("no server
+  // running") without starting one, and that is the normal first-boot state.
+  async refreshTmuxPath(env = process.env) {
+    if (env.AW_SUPERVISED !== '1' || env.AW_DEV || !this.socket || !env.PATH) return false;
+    try {
+      await this._tmux(this.socket, ['set-environment', '-g', 'PATH', env.PATH]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   _tmuxName(agentId, short) {
     return `${adapterFor(agentId).tmuxPrefix}${short}`;
   }
