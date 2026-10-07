@@ -319,8 +319,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   straight back: `scripts/wrangler-start.sh` (which both the launchd plist and the
   systemd unit exec) and a Homebrew service. So the flag means "something will
   restart me", never "I am on macOS" and never "I may apply a Git update" (that is
-  `AW_GIT_UPDATES`). Under `npm start` or a bare `bin/agent-wrangler`, an exit is a
-  shutdown with nothing to return the board, so `restart-server` refuses (it checks
+  `AW_GIT_UPDATES`). Under `npm start`, a bare `bin/agent-wrangler` or a dev instance
+  (`AW_DEV`), an exit is a shutdown with nothing to return the board, so `restart-server` refuses (it checks
   `ctx.canRestart`) and the client (`config.canRestart`) never draws the button. The
   server reads the flag once at startup and keeps it out of tmux panes, so a dev
   instance started from a pane doesn't inherit the button either; see

@@ -1283,7 +1283,7 @@ async function main() {
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
-    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: restartSupported() }) === 'banner') {
+    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: INSTALL_ENV.supervised }) === 'banner') {
       console.log(bannerLines({ version: VERSION, commit: install.checkout ? codeVersion : null, url, dataDir: DATA_DIR }).join('\n'));
     } else {
       log(`[agent-wrangler] running at ${url} (pid ${process.pid})`);

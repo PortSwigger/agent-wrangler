@@ -14,9 +14,12 @@ import { INSTALL_ENV } from '../../install-env.js';
 // systemd unit exec) and a Homebrew service. So the flag means "something will
 // restart me", never "I am on macOS", and never "I can apply a Git update" (that
 // is AW_GIT_UPDATES, see update-service.js). It is read once at startup and kept
-// out of tmux panes (install-env.js), so a dev instance started from a pane
+// out of tmux panes (install-env.js), so a dev instance started from a new pane
 // doesn't inherit the button, and the restart note still says what to do by hand.
-export const restartSupported = () => INSTALL_ENV.supervised;
+// A pane that predates that cleanup still carries the flag, so a dev instance
+// (AW_DEV) never offers Restart either, matching the updater and the tmux PATH
+// refresh.
+export const restartSupported = ({ supervised = INSTALL_ENV.supervised, dev = Boolean(process.env.AW_DEV) } = {}) => supervised && !dev;
 
 export const restartHandler = {
   type: 'restart-server',
