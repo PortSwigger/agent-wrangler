@@ -14,7 +14,7 @@ function fixture(t) {
   for (const dir of ['bin', 'scripts', 'server', 'node_modules/.bin', 'home', 'logs', 'brew node/bin']) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
-  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/trim-service-logs.sh', 'scripts/setup-locale.sh']) {
+  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/update-rollback.sh', 'scripts/trim-service-logs.sh', 'scripts/setup-locale.sh']) {
     fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
   }
   const node = path.join(root, 'brew node/bin/node');
@@ -124,5 +124,43 @@ for (const supervised of [false, true]) {
     assert.match(result.stdout, /server-started/);
     if (supervised) assertTrimmed(logs);
     else for (const { file } of logs) assert.ok(fs.statSync(file).size > 1000);
+  });
+}
+
+test('launcher appends the sbin dirs a bare supervisor PATH omits', t => {
+  const { root, env } = fixture(t);
+  fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
+  const result = run(root, env);
+  assert.equal(result.status, 0, result.stderr);
+  const dirs = result.stdout.trim().split(':');
+  assert.deepEqual(dirs.slice(0, 2), ['/usr/bin', '/bin'], 'system dirs keep precedence');
+  assert.ok(dirs.includes('/usr/sbin') && dirs.includes('/sbin'), result.stdout);
+});
+
+const tmuxBin = spawnSync('sh', ['-c', 'command -v tmux'], { encoding: 'utf8' }).stdout.trim();
+
+for (const supervised of [false, true]) {
+  test(`${supervised ? 'supervised' : 'interactive'} launcher ${supervised ? 'refreshes' : 'leaves'} running tmux servers' PATH`, {
+    skip: !tmuxBin && 'tmux not installed',
+  }, t => {
+    const { root, env } = fixture(t);
+    const tmuxTmp = path.join(root, 'tmux');
+    const sock = path.join(tmuxTmp, `tmux-${process.getuid()}`, 'aw-test');
+    fs.mkdirSync(path.dirname(sock), { recursive: true, mode: 0o700 });
+    const tmux = (...args) => spawnSync(tmuxBin, ['-S', sock, ...args], {
+      encoding: 'utf8', env: { ...process.env, PATH: '/stale/bin' },
+    });
+    assert.equal(tmux('-f', '/dev/null', 'new-session', '-d').status, 0);
+    t.after(() => tmux('kill-server'));
+    fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
+    const result = run(root, {
+      ...env,
+      PATH: `${env.PATH}:${path.dirname(tmuxBin)}`,
+      TMUX_TMPDIR: tmuxTmp,
+      ...(supervised ? { AW_SUPERVISED: '1' } : {}),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const serverPath = tmux('show-environment', '-g', 'PATH').stdout.trim();
+    assert.equal(serverPath, `PATH=${supervised ? result.stdout.trim() : '/stale/bin'}`);
   });
 }
