@@ -37,7 +37,13 @@ function run(root, env, file = 'bin/agent-wrangler') {
   });
 }
 
-test('AW_NODE supplies Node to child tools on a bare service PATH', t => {
+// A host Node on the bare PATH (distro Node in /usr/bin) wins over the appended
+// AW_NODE fallback, which is the intended precedence but leaves nothing to test.
+const bareNode = ['/usr/bin', '/bin'].find(dir => fs.existsSync(path.join(dir, 'node')));
+
+test('AW_NODE supplies Node to child tools on a bare service PATH', {
+  skip: bareNode && `${bareNode}/node shadows the AW_NODE fallback`,
+}, t => {
   const { root, env } = fixture(t);
   fs.writeFileSync(path.join(root, 'node_modules/.bin/devcontainer'),
     '#!/usr/bin/env node\nconsole.log(process.execPath);\n', { mode: 0o755 });
