@@ -2,7 +2,15 @@ import { z } from 'zod';
 import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { nestedParentError } from '../../dispatch-runner.js';
-import { knownRuntimes } from '../../runtimes/index.js';
+import { knownRuntimes, DEFAULT_RUNTIME } from '../../runtimes/index.js';
+
+// e.g. "`local` (default), `devcontainer`, `cloud` (extension)".
+function runtimeChoicesText() {
+  return knownRuntimes().map(({ id, extId }) => {
+    if (id === DEFAULT_RUNTIME) return `\`${id}\` (default)`;
+    return extId ? `\`${id}\` (extension)` : `\`${id}\``;
+  }).join(', ');
+}
 
 // Spin the caller's current work off into a brand-new full board session (not a
 // sub-agent, not a fork). Mirrors the /ws `dispatch` handler in server/index.js:
@@ -54,9 +62,12 @@ export const spawnSessionTool = {
     ),
     // A string, not an enum: the set includes whatever the enabled extensions
     // contribute, so it can change while the server runs. The handler checks it.
-    runtime: z.string().optional().describe(
-      'Where the new session runs: `local` (default), `devcontainer`, or a runtime an enabled extension provides.',
-    ),
+    // A getter so the description is rebuilt on every read: buildMcpServer
+    // registers the tools per request, so each tools/list names the runtimes
+    // that are registered right then, not the ones there were at import.
+    get runtime() {
+      return z.string().optional().describe(`Where the new session runs. Valid values — ${runtimeChoicesText()}.`);
+    },
     worktree: z.boolean().optional().describe('Launch in a fresh git worktree off cwd.'),
     worktree_branch: z.string().optional().describe('Branch for the worktree (default: derived from intent).'),
     worktree_folder_name: z.string().optional().describe('Folder name/path for the worktree.'),

@@ -57,6 +57,18 @@ test('spawn_session refuses an unknown runtime, listing the known ones, without 
   assert.equal(d.calls.dispatch.length, 0);
 });
 
+test('spawn_session\'s runtime description names the runtimes registered when it is read', () => {
+  const describe = () => spawnSessionTool.inputSchema.runtime.description;
+  assert.equal(describe(), 'Where the new session runs. Valid values — `local` (default), `devcontainer`.');
+  registerRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner }, 'toy');
+  try {
+    assert.equal(describe(), 'Where the new session runs. Valid values — `local` (default), `devcontainer`, `toyrt` (extension).');
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
+  assert.equal(describe(), 'Where the new session runs. Valid values — `local` (default), `devcontainer`.');
+});
+
 test('spawn_session with no runtime stays local (dispatch default)', async () => {
   const d = deps();
   await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
