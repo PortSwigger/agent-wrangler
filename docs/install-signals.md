@@ -55,10 +55,17 @@ With `AW_INSTALL_ROOT` set, these paths are built from it instead (`server/insta
 
 At startup the value must resolve, through symlinks, to the app directory that is running; a symlink
 to it is the intended shape. Otherwise the server logs `AW_INSTALL_ROOT ignored` and uses the real
-directory, because a wrong value would hand every session a missing hook and no skills. An extension installed under the data dir keeps its own path. Paths the server reads for
-itself (the board's `public/` files, styles, catalog snapshots) still come from the real directory,
-because the running process can't outlive it. Unset, every path is the real app directory's, as in
-a checkout.
+directory, because a wrong value would hand every session a missing hook and no skills. An
+extension installed under the data dir keeps its own path. Paths the server reads for itself (the
+board's `public/` files, styles, catalog snapshots) still come from the real directory, because the
+running process can't outlive it. Unset, every path is the real app directory's, as in a checkout.
+
+Between an upgrade repointing the path and the server restarting, the old server hands new
+sessions the new version's hook and skills, and sessions already running pick them up too. The
+hook only POSTs a PR URL and swallows every error, so the risk is a new skill naming an MCP tool
+the old server doesn't have yet. Those sessions carry the old server's identity, so after the
+restart they show as an older version (see [App identity](#app-identity)). A package wrapper keeps
+the gap short by restarting the service as soon as it repoints the path.
 
 ## App identity
 
@@ -99,3 +106,5 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
   `keep_alive crashed: true`) would leave the board stopped. Use `keep_alive true`.
 - Never set `AW_GIT_UPDATES`. A package's start path has no checkout rollback or dependency sync.
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).
+- Restart the service straight after an upgrade repoints `AW_INSTALL_ROOT`, so the running server
+  and its sessions' hook and skills don't stay on different versions (see [Session paths](#session-paths)).
