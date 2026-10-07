@@ -14,7 +14,7 @@ function fixture(t) {
   for (const dir of ['bin', 'scripts', 'server', 'node_modules/.bin', 'home', 'logs', 'brew node/bin']) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
-  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/trim-service-logs.sh']) {
+  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/trim-service-logs.sh', 'scripts/setup-locale.sh']) {
     fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
   }
   const node = path.join(root, 'brew node/bin/node');

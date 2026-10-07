@@ -19,10 +19,9 @@ while [ -h "$self" ]; do
 done
 ROOT="$(cd "$(dirname "$self")/.." && pwd)" || exit 1
 
-# launchd doesn't inherit the login locale; without a UTF-8 locale tmux renders
-# Unicode (⏺, box-drawing, em-dash) as "_" in attached terminals.
-export LANG="${LANG:-en_US.UTF-8}"
-export LC_CTYPE="${LC_CTYPE:-$LANG}"
+# Supervisors may not inherit a locale; tmux needs UTF-8 character handling
+# for Unicode (⏺, box-drawing, em-dash). Detect a default without overriding users.
+. "$ROOT/scripts/setup-locale.sh"
 
 # Pin the open-file limit so every launch path behaves identically. This is a
 # blast-radius backstop, not a leak canary — that job is server/fd-watchdog.js,
