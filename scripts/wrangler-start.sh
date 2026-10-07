@@ -13,6 +13,15 @@
 # the button is simply absent rather than a way to kill the board.
 export AW_SUPERVISED=1
 
+# Restarting is not enough to apply an update from the board: the next start
+# must also roll back an update that cannot boot and install changed
+# dependencies. This script does both (update-rollback.sh, then sync-deps.sh,
+# below) before the launcher runs, so it alone grants the board's Git updater
+# permission to apply. A Homebrew service sets AW_SUPERVISED but never this.
+# The server reads both once and keeps them out of tmux panes
+# (server/install-env.js), so a dev instance started from a pane inherits neither.
+export AW_GIT_UPDATES=1
+
 # Trim before nvm and dependency sync: either can fail before the launcher runs.
 . "$(dirname "$0")/trim-service-logs.sh"
 

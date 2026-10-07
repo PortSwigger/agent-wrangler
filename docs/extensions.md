@@ -315,13 +315,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pending extensions must not each draw their own), in
   the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the detail
   pane and the notice above it still say what is waiting on it. The button exists ONLY
-  under a supervisor.** `AW_SUPERVISED=1` is exported by
-  `scripts/wrangler-start.sh` — which is what both the launchd plist and the systemd
-  unit exec, and both bring the process straight back — so the flag means "something
-  will restart me", never "I am on macOS"; under `npm start` or bare `node
-  server/index.js` an exit is a shutdown with nothing to return the board, so
-  `restart-server` refuses and the client (`config.canRestart`) never draws the
-  button. The handler (`control/handlers/restart.js`) acks BEFORE the exit is armed
+  under a supervisor.** `AW_SUPERVISED=1` is set by whatever brings the process
+  straight back: `scripts/wrangler-start.sh` (which both the launchd plist and the
+  systemd unit exec) and a Homebrew service. So the flag means "something will
+  restart me", never "I am on macOS" and never "I may apply a Git update" (that is
+  `AW_GIT_UPDATES`). Under `npm start` or a bare `bin/agent-wrangler`, an exit is a
+  shutdown with nothing to return the board, so `restart-server` refuses (it checks
+  `ctx.canRestart`) and the client (`config.canRestart`) never draws the button. The
+  server reads the flag once at startup and keeps it out of tmux panes, so a dev
+  instance started from a pane doesn't inherit the button either; see
+  [Install signals](install-signals.md). The handler (`control/handlers/restart.js`) acks BEFORE the exit is armed
   (the socket dies with the process) and the exit itself lives in `index.js`'s
   `ctx.restart`, which calls `shutdownLog.noteReason` first — a self-inflicted exit
   with no reason logs exactly like the hard kill an absent reason is supposed to

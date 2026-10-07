@@ -5527,16 +5527,24 @@ let updateStatus = null;
 let updateError = '';
 let updatePanelHost = null;
 let seenCodeVersion = null;
+// Why this install cannot update from the board (managed by Homebrew, not a Git
+// checkout), from the connect config; null when it can.
+let updateUnavailable = null;
 const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
 
 function mountUpdatePanel(host) {
   updatePanelHost = host;
   if (!host) return;
   host.textContent = '';
+  // The Automatic updates row means nothing to an install the board cannot
+  // update, and a Notify or Auto value carried over in config.json is ignored by
+  // the server, so the row is hidden rather than left looking live.
+  host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
   host.append(updatePanelEl({
     phase: updatePhase,
     status: updateStatus,
     error: updateError,
+    unavailable: updateUnavailable,
     onCheck: () => { updatePhase = 'checking'; send({ type: 'update-check' }); remountUpdatePanel(); },
     onApply: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); },
   }));
@@ -5585,6 +5593,7 @@ function noteCodeVersion(version) {
 }
 
 function noteConfigUpdate(msg) {
+  updateUnavailable = msg.updateUnavailable || null;
   noteCodeVersion(msg.codeVersion);
   applyUpdateStatus(msg.update);
   noteRolledBack(msg.updateRolledBack);

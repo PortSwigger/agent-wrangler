@@ -49,7 +49,7 @@ export function updateSummary({ phase, status, error } = {}) {
   if (status.behind === 0) return `Up to date (${shortSha(status.head)}).`;
   const commits = `${status.behind} new commit${status.behind === 1 ? '' : 's'} on origin/main.`;
   if (status.blocked) return `${commits} ${status.blocked}`;
-  if (!status.canApply) return `${commits} This wrangler is not running under launchd or systemd, so pull and restart it by hand.`;
+  if (!status.canApply) return `${commits} This wrangler was not started by the checkout service (launchd or systemd), so pull and restart it by hand.`;
   return commits;
 }
 
@@ -63,7 +63,19 @@ function commitListEl(commits) {
   return list;
 }
 
-export function updatePanelEl({ phase = 'idle', status = null, error = '', onCheck, onApply } = {}) {
+// An install the board's Git updater does not own (a Homebrew keg, an unpacked
+// release): say so and how it is updated instead, and offer no check at all.
+function unavailablePanelEl(reason) {
+  const wrap = el('div', 'update-panel');
+  const head = el('div', 'update-panel-head');
+  head.append(el('div', 'setting-label', 'Updates from the board'));
+  wrap.append(head);
+  wrap.append(el('div', 'setting-help', `Unavailable. ${reason}`));
+  return wrap;
+}
+
+export function updatePanelEl({ phase = 'idle', status = null, error = '', unavailable = null, onCheck, onApply } = {}) {
+  if (unavailable) return unavailablePanelEl(unavailable);
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting';
   const wrap = el('div', 'update-panel');
   const head = el('div', 'update-panel-head');

@@ -7,6 +7,28 @@ export class UpdateBusyError extends Error {
   }
 }
 
+const NOT_STARTED_BY_SERVICE = 'This wrangler was not started by the checkout service (scripts/wrangler-start.sh under launchd or systemd), which rolls back a failed update and installs new dependencies. Pull and restart it the way you launched it.';
+
+function managedReason(manager) {
+  if (manager === 'homebrew') return 'This install is managed by Homebrew. Update it with `brew upgrade agent-wrangler`, then `brew services restart agent-wrangler` if it runs as a service.';
+  return `This install is managed by ${manager}. Update it with ${manager}, not from the board.`;
+}
+
+// What the board's Git updater may do in this process, decided once at startup.
+// `available` gates every check (manual or scheduled); `canApply` additionally
+// gates every apply, manual or automatic. Restart support is a separate
+// question: a supervised process can be restarted without being able to apply
+// an update, because applying one also needs a start path that rolls back a
+// failed update and syncs dependencies. Only scripts/wrangler-start.sh provides
+// that, and only it sets AW_GIT_UPDATES. A dev instance (AW_DEV) never applies,
+// whatever it inherited from the pane it was started in.
+export function updateSupport({ installManager = null, checkout = false, supervised = false, gitUpdates = false, dev = false } = {}) {
+  if (installManager) return { available: false, canApply: false, reason: managedReason(installManager) };
+  if (!checkout) return { available: false, canApply: false, reason: 'This install is not a Git checkout of agent-wrangler, so it cannot update from the board.' };
+  const canApply = supervised && gitUpdates && !dev;
+  return { available: true, canApply, reason: canApply ? null : NOT_STARTED_BY_SERVICE };
+}
+
 export function canAutoApply(status, rolledBack) {
   if (!status || status.behind <= 0 || status.blocked || !status.canApply) return false;
   return !(rolledBack && rolledBack.target === status.remote);
@@ -17,7 +39,7 @@ export function createUpdateService({
   apply = applyUpdate,
   writeMarker = writeRollbackMarker,
   clearMarker = clearRollbackMarker,
-  supervised = () => false,
+  support = { available: true, canApply: false, reason: NOT_STARTED_BY_SERVICE },
   mode = () => 'notify',
   isQuiet = () => true,
   rolledBack = null,
@@ -35,17 +57,18 @@ export function createUpdateService({
   }
 
   function publish(status) {
-    latest = { ...status, canApply: supervised(), rolledBack, checkedAt: Date.now() };
+    latest = { ...status, canApply: support.canApply, rolledBack, checkedAt: Date.now() };
     onStatus(latest);
     return latest;
   }
 
-  const runCheck = () => exclusive(async () => publish(await check()));
+  const runCheck = () => exclusive(async () => {
+    if (!support.available) throw new Error(support.reason);
+    return publish(await check());
+  });
 
   const runApply = ({ automatic = false } = {}) => exclusive(async () => {
-    if (!supervised()) {
-      throw new Error('This wrangler was not started by a supervisor, so it cannot restart onto new code. Pull and restart it the way you launched it.');
-    }
+    if (!support.canApply) throw new Error(support.reason);
     let markerWritten = false;
     let result;
     try {
@@ -64,6 +87,10 @@ export function createUpdateService({
   });
 
   async function tick() {
+    // An unavailable updater makes no check at all: a Notify or Auto mode
+    // carried over in config.json must not fetch, and must not log a failed
+    // check every interval.
+    if (!support.available) return null;
     const current = mode();
     if (current === 'off' || busy) return null;
     let status;
@@ -87,6 +114,7 @@ export function createUpdateService({
     apply: runApply,
     tick,
     latest: () => latest,
+    unavailable: () => (support.available ? null : support.reason),
     rolledBack: () => rolledBack,
   };
 }

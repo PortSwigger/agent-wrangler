@@ -115,6 +115,21 @@ test('checkout service trims logs once before handing off to the launcher', t =>
   assertTrimmed(logs);
 });
 
+// AW_GIT_UPDATES grants the board's updater permission to apply, and only this
+// start path earns it: rollback and dependency sync run before the launcher. A
+// supervised bare launcher (a Homebrew service) is restartable but never gets it.
+test('checkout service, and only it, grants Git updates after rollback and sync', t => {
+  const { root, env } = fixture(t);
+  fs.writeFileSync(path.join(root, 'bin/npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(JSON.stringify({ s: process.env.AW_SUPERVISED, g: process.env.AW_GIT_UPDATES }));');
+  const service = run(root, { ...env, PATH: `${root}/bin:${env.PATH}` }, 'scripts/wrangler-start.sh');
+  assert.equal(service.status, 0, service.stderr);
+  assert.deepEqual(JSON.parse(service.stdout.trim().split('\n').pop()), { s: '1', g: '1' });
+  const bare = run(root, { ...env, AW_SUPERVISED: '1' });
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(JSON.parse(bare.stdout.trim()), { s: '1' });
+});
+
 for (const supervised of [false, true]) {
   test(`direct launcher ${supervised ? 'trims supervised' : 'preserves interactive'} logs`, t => {
     const { root, env } = fixture(t);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createUpdateService, canAutoApply, UpdateBusyError } from './update-service.js';
+import { createUpdateService, canAutoApply, UpdateBusyError, updateSupport } from './update-service.js';
 
 const behind = { head: 'h0', remote: 'r1', behind: 2, commits: [], blocked: null };
 
@@ -10,7 +10,7 @@ function service(overrides = {}) {
     check: async () => behind,
     apply: async ({ beforeMerge }) => { beforeMerge(behind); return { ...behind, head: 'r1', updated: true }; },
     writeMarker: (m) => events.markers.push(m),
-    supervised: () => true,
+    support: { available: true, canApply: true, reason: null },
     mode: () => 'auto',
     onStatus: (s) => events.statuses.push(s),
     onApplied: (r) => events.applied.push(r),
@@ -69,10 +69,64 @@ test('a refusal before the merge leaves any existing marker alone', async () => 
   assert.equal(cleared, 0);
 });
 
-test('apply refuses without a supervisor', async () => {
-  const { svc, events } = service({ supervised: () => false });
-  await assert.rejects(() => svc.apply(), /not started by a supervisor/);
+test('apply refuses without the capability, before touching git or the marker', async () => {
+  let applied = 0;
+  const support = updateSupport({ checkout: true, supervised: true, gitUpdates: false });
+  const { svc, events } = service({ support, apply: async () => { applied += 1; } });
+  await assert.rejects(() => svc.apply(), /not started by the checkout service/);
+  assert.equal(applied, 0);
   assert.equal(events.markers.length, 0);
+});
+
+// Restart support and update capability are separate: a Homebrew service is
+// supervised (restartable) but its start path has no rollback or dependency
+// sync; a bare launcher may be supervised by hand; a pane-started dev instance
+// may still carry the board's signals in a pane that predates the env rule.
+for (const [label, input, want] of [
+  ['checkout service', { checkout: true, supervised: true, gitUpdates: true }, { available: true, canApply: true }],
+  ['supervised bare launcher', { checkout: true, supervised: true, gitUpdates: false }, { available: true, canApply: false }],
+  ['unsupervised checkout (npm start)', { checkout: true, supervised: false, gitUpdates: false }, { available: true, canApply: false }],
+  ['capability without a supervisor', { checkout: true, supervised: false, gitUpdates: true }, { available: true, canApply: false }],
+  ['dev instance with inherited signals', { checkout: true, supervised: true, gitUpdates: true, dev: true }, { available: true, canApply: false }],
+  ['not a checkout', { checkout: false, supervised: true, gitUpdates: true }, { available: false, canApply: false }],
+  ['Homebrew-managed, even in a checkout', { installManager: 'homebrew', checkout: true, supervised: true, gitUpdates: true }, { available: false, canApply: false }],
+]) {
+  test(`update support: ${label}`, () => {
+    const got = updateSupport(input);
+    assert.equal(got.available, want.available);
+    assert.equal(got.canApply, want.canApply);
+    assert.equal(Boolean(got.reason), !want.canApply, 'a reason whenever it cannot apply');
+  });
+}
+
+test('a managed install says how it is updated instead', () => {
+  assert.match(updateSupport({ installManager: 'homebrew' }).reason, /brew upgrade agent-wrangler/);
+  assert.match(updateSupport({ installManager: 'nix' }).reason, /managed by nix/);
+});
+
+test('an unavailable updater never checks, even in auto mode, and logs nothing', async () => {
+  let checks = 0;
+  const support = updateSupport({ installManager: 'homebrew', supervised: true });
+  const { svc, events } = service({ support, check: async () => { checks += 1; return behind; } });
+  assert.equal(await svc.tick(), null);
+  assert.equal(checks, 0);
+  assert.deepEqual(events.logs, []);
+  assert.deepEqual(events.statuses, []);
+  assert.match(svc.unavailable(), /Homebrew/);
+});
+
+test('an unavailable updater refuses a direct check or apply request', async () => {
+  let calls = 0;
+  const support = updateSupport({ checkout: false, supervised: true, gitUpdates: true });
+  const { svc, events } = service({ support, check: async () => { calls += 1; return behind; }, apply: async () => { calls += 1; } });
+  await assert.rejects(() => svc.check(), /not a Git checkout/);
+  await assert.rejects(() => svc.apply(), /not a Git checkout/);
+  assert.equal(calls, 0);
+  assert.equal(events.markers.length, 0);
+});
+
+test('an available updater reports no unavailability', () => {
+  assert.equal(service().svc.unavailable(), null);
 });
 
 test('a second request while one runs is refused', async () => {

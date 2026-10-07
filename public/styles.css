@@ -764,6 +764,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .settings-panels { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .settings-panel.hidden { display: none; }
+.setting-row.hidden { display: none; }
 .settings-body.in-detail .settings-panels { display: none; }
 .settings-saved { align-self: center; margin-right: auto; font-size: 12px; color: var(--fg-muted); opacity: 0; transition: opacity 0.25s; }
 .settings-saved.show { opacity: 1; }

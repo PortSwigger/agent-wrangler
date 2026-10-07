@@ -16,6 +16,11 @@ for (const { isTTY, supervised, want } of styles) {
   });
 }
 
+test('bannerLines tells checkouts apart by their short commit', () => {
+  assert.match(bannerLines({ version: '0.1.0', commit: '0123456789abcdef', url: 'u', dataDir: 'd' })[1], /Agent Wrangler 0\.1\.0 \(0123456\)$/);
+  assert.match(bannerLines({ version: '0.2.0', commit: null, url: 'u', dataDir: 'd' })[1], /Agent Wrangler 0\.2\.0$/);
+});
+
 test('bannerLines carries the version, URL, data dir and how to stop', () => {
   const text = bannerLines({ version: '1.2.3', url: 'http://localhost:7878', dataDir: '/tmp/aw' }).join('\n');
   assert.match(text, /Agent Wrangler 1\.2\.3/);

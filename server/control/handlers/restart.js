@@ -1,4 +1,5 @@
 import { log } from '../../log.js';
+import { INSTALL_ENV } from '../../install-env.js';
 
 // "Restart the wrangler to finish" is the answer to every extension install and
 // uninstall, and without this the board could only ask a human to go and type a
@@ -8,17 +9,19 @@ import { log } from '../../log.js';
 // Offered ONLY where the process is supervised. Exiting under `npm start` or a
 // bare launcher (`bin/agent-wrangler`) is not a restart, it is a shutdown with nothing to
 // bring the board back, and a button that kills the board is worse than no
-// button. `AW_SUPERVISED=1` is exported by scripts/wrangler-start.sh, which is
-// what BOTH the launchd plist and the systemd unit exec — so the flag means
-// "something will restart me", never "I am on macOS". A dev instance started any
-// other way simply doesn't get the button, and the restart note still says what
-// to do by hand.
-export const restartSupported = () => process.env.AW_SUPERVISED === '1';
+// button. `AW_SUPERVISED=1` is set by whatever brings the process back: the
+// checkout's scripts/wrangler-start.sh (what both the launchd plist and the
+// systemd unit exec) and a Homebrew service. So the flag means "something will
+// restart me", never "I am on macOS", and never "I can apply a Git update" (that
+// is AW_GIT_UPDATES, see update-service.js). It is read once at startup and kept
+// out of tmux panes (install-env.js), so a dev instance started from a pane
+// doesn't inherit the button, and the restart note still says what to do by hand.
+export const restartSupported = () => INSTALL_ENV.supervised;
 
 export const restartHandler = {
   type: 'restart-server',
   async handler(msg, ctx) {
-    if (!restartSupported()) {
+    if (!ctx.canRestart) {
       throw new Error('This wrangler was not started by a supervisor, so it cannot restart itself — stop and start it the way you launched it.');
     }
     // A state change a human would ask about afterwards, and the one line that
