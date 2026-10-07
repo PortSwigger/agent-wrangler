@@ -5513,7 +5513,7 @@ const extPendingRemoval = new Set();
 // affordance has to ride the install form.
 let extPendingInstall = '';
 // Whether the server can restart itself (it is under launchd/systemd). Off for a
-// bare `node server/index.js`, where an exit would just kill the board.
+// bare launcher (`bin/agent-wrangler`), where an exit would just kill the board.
 let canRestartServer = false;
 // The mount point settings.js hands over, kept so a progress broadcast arriving
 // while the modal is open can re-render in place rather than wait for a reopen.
