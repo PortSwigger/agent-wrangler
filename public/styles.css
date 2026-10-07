@@ -3098,10 +3098,6 @@ a.ext-row-origin { color: var(--blue-fg); }
    to say. */
 .setting-error { margin-top: 4px; font-size: 11px; color: var(--danger-strong); }
 .ext-btn:disabled { opacity: 0.6; cursor: default; }
-/* A pending restart is something to notice, not something destructive: amber,
-   not the danger red Uninstall uses. */
-.ext-btn-warn { color: var(--warn-fg); border-color: var(--warn); }
-.ext-btn-warn:hover:not(:disabled) { border-color: var(--warn-fg); }
 .ext-btn {
   font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer;
   background: var(--surface-2); color: var(--fg);
@@ -3110,6 +3106,10 @@ a.ext-row-origin { color: var(--blue-fg); }
 .ext-btn:hover { border-color: var(--fg-subtle); }
 .ext-btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .ext-btn-danger { color: var(--danger-strong); border-color: var(--danger-border); }
+/* A pending restart is something to notice, not something destructive: amber,
+   not the danger red Uninstall uses. */
+.ext-btn-warn { color: var(--warn-fg); border-color: var(--warn); }
+.ext-btn-warn:hover:not(:disabled) { border-color: var(--warn-fg); }
 .ext-install-progress { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 6px; }
 .ext-consent { display: flex; flex-direction: column; gap: 4px; }
 .ext-consent-trust {
