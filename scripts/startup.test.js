@@ -81,7 +81,7 @@ function assertTrimmed(logs) {
     const text = fs.readFileSync(file, 'utf8');
     assert.ok(Buffer.byteLength(text) < 512, 'keep a bounded tail and trim marker');
     assert.match(text, /recent tail/);
-    assert.match(text, /log trimmed at startup/);
+    assert.equal(text.match(/log trimmed at startup/g)?.length, 1, 'trim once per start');
   }
 }
 
@@ -94,6 +94,17 @@ test('checkout service trims logs even when npm ci fails and does not start the 
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /dependency-sync-failed/);
   assert.doesNotMatch(result.stdout, /server-started/);
+  assertTrimmed(logs);
+});
+
+test('checkout service trims logs once before handing off to the launcher', t => {
+  const { root, env } = fixture(t);
+  const logs = oversizedLogs(root);
+  fs.writeFileSync(path.join(root, 'bin/npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log("server-started");');
+  const result = run(root, { ...env, PATH: `${root}/bin:${env.PATH}` }, 'scripts/wrangler-start.sh');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /server-started/);
   assertTrimmed(logs);
 });
 

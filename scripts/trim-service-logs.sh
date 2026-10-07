@@ -31,10 +31,14 @@ trim_log() {
   fi
   rm -f "$_tl_tmp"
 }
-if [ "${AW_SUPERVISED:-}" = 1 ]; then
+# Once per start: wrangler-start.sh trims, then execs bin/agent-wrangler, which
+# sources this again. A second pass would drop another line and add a second
+# marker whenever the first marker pushed the file back over the cap.
+if [ "${AW_SUPERVISED:-}" = 1 ] && [ -z "${AW_LOGS_TRIMMED:-}" ]; then
   AW_LOG_DIR="${AW_LOG_DIR:-$HOME/Library/Logs/wrangler}"
   AW_LOG_MAX_BYTES="${AW_LOG_MAX_BYTES:-2097152}"
   trim_log "$AW_LOG_DIR/wrangler.log" "$AW_LOG_MAX_BYTES"
   trim_log "$AW_LOG_DIR/wrangler.err" "$AW_LOG_MAX_BYTES"
+  export AW_LOGS_TRIMMED=1
 fi
 
