@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { listSessionsTool } from './list-sessions.js';
+import { registerRuntime, unregisterRuntimesFor } from '../../runtimes/index.js';
 
 function deps() {
   return {
@@ -51,4 +52,17 @@ test('list_sessions yields a null caller block when the request had no identity'
 test('list_sessions tolerates an empty/absent graph', async () => {
   const out = await listSessionsTool.handler({ deps: { graph: () => null, taskStore: { taskFor: () => null } }, caller: 'X' });
   assert.deepEqual(out.structuredContent.sessions, []);
+});
+
+test('list_sessions adds launch only to rows whose runtime answers', async () => {
+  registerRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, launchStatus: () => ({ state: 'failed', error: 'nope' }) }, 'toy');
+  try {
+    const d = { ...deps(), sessionManager: { entryFor: (sid) => (sid === 'CARD2' ? { runtime: 'toyrt' } : {}) } };
+    const out = await listSessionsTool.handler({ deps: d, caller: 'CARD1' });
+    const [alpha, beta] = ['CARD1', 'CARD2'].map((id) => out.structuredContent.sessions.find((s) => s.sessionId === id));
+    assert.equal('launch' in alpha, false);
+    assert.deepEqual(beta.launch, { state: 'failed', error: 'nope' });
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
 });

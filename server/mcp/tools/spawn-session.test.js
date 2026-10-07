@@ -324,3 +324,56 @@ test('spawn_session still inherits a caller model the adapter no longer offers',
   assert.equal(out.isError, undefined);
   assert.equal(d.calls.dispatch[0].model, 'opus-legacy');
 });
+
+// A cloud-like runtime whose launch outcome arrives after dispatch returns.
+function withLaunchRuntime(launchStatus, fn) {
+  registerRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, launchStatus }, 'toy');
+  return fn().finally(() => unregisterRuntimesFor('toy'));
+}
+const launchDeps = () => deps({
+  entries: { CARD1: { agent: 'claude', model: 'sonnet' }, NEWCARD: { runtime: 'toyrt' } },
+  deps: { launchWait: { sleep: async () => {} } },
+});
+
+test('spawn_session returns a failed launch as an error that keeps the new session id', () => withLaunchRuntime(
+  () => ({ state: 'failed', error: 'no GitHub remote was detected' }),
+  async () => {
+    const out = await spawnSessionTool.handler({ deps: launchDeps(), caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /^The session was created but its launch failed: no GitHub remote was detected/);
+    assert.equal(out.structuredContent.sessionId, 'NEWCARD');
+    assert.deepEqual(out.structuredContent.launch, { state: 'failed', error: 'no GitHub remote was detected' });
+  },
+));
+
+test('spawn_session waits for a pending launch and reports the outcome', () => {
+  let calls = 0;
+  return withLaunchRuntime(
+    () => (++calls < 3 ? { state: 'pending' } : { state: 'ok', url: 'https://claude.ai/code/session_1' }),
+    async () => {
+      const out = await spawnSessionTool.handler({ deps: launchDeps(), caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+      assert.equal(out.isError, undefined);
+      assert.deepEqual(out.structuredContent.launch, { state: 'ok', url: 'https://claude.ai/code/session_1' });
+      assert.equal(calls, 3);
+    },
+  );
+});
+
+test('spawn_session with wait: false does not ask the runtime', () => {
+  let asked = false;
+  return withLaunchRuntime(
+    () => { asked = true; return { state: 'failed', error: 'x' }; },
+    async () => {
+      const out = await spawnSessionTool.handler({ deps: launchDeps(), caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt', wait: false });
+      assert.equal(out.isError, undefined);
+      assert.equal(out.structuredContent.launch, undefined);
+      assert.equal(asked, false);
+    },
+  );
+});
+
+test('spawn_session on a runtime without launchStatus has no launch field', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude' }, NEWCARD: {} } });
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+  assert.equal(out.structuredContent.launch, undefined);
+});

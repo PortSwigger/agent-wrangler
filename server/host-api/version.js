@@ -204,7 +204,15 @@ import semver from 'semver';
 // Extensions panel now edits a visible list instead of showing a count. An
 // older server quarantines either field on a list, so only the declared range
 // can say so.
-export const HOST_API_VERSION = '1.21.0';
+//
+// 1.22.0 adds an optional `launchStatus({ entry })` to the runtime contract: a
+// runtime whose launch can fail after dispatch returns (a cloud hand-off) says
+// whether it worked, spawn_session waits briefly for that answer and returns it
+// as `launch`, and list_sessions reports it per row. An older server ignores the
+// key (its loader only checks the keys it knows), so the runtime still loads but
+// spawn_session reports a failed launch as a success; a manifest that needs the
+// caller to hear about it declares `^1.22.0`.
+export const HOST_API_VERSION = '1.22.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

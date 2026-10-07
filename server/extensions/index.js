@@ -346,7 +346,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       if (typeof rt.label !== 'string' || !rt.label) fail(ext, `runtime ${rt.id} label must be a non-empty string`);
       const launchers = ['wrapLaunch', 'buildLaunch'].filter((k) => rt[k] != null);
       if (launchers.length !== 1) fail(ext, `runtime ${rt.id} must define exactly one of wrapLaunch or buildLaunch`);
-      for (const k of ['wrapLaunch', 'buildLaunch', 'preflight', 'readLive', 'analyze', 'deliver']) {
+      for (const k of ['wrapLaunch', 'buildLaunch', 'preflight', 'readLive', 'analyze', 'deliver', 'launchStatus']) {
         if (rt[k] != null && typeof rt[k] !== 'function') fail(ext, `runtime ${rt.id} ${k} must be a function`);
       }
       for (const k of ['resumable', 'skipsHostResumeGuard']) {

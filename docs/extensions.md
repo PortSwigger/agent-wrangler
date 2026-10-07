@@ -1109,6 +1109,7 @@ sessionId, model, ext })` (return the whole pane command instead). Optional:
 `preflight` (return a string to refuse the dispatch before anything is created),
 `readLive({ entry, tmuxName, socket })`, `analyze({ entry, liveSid })`,
 `deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
+`launchStatus({ entry })` (1.22.0; return `{ state, error?, url? }` or null),
 `resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.
@@ -1129,7 +1130,7 @@ Maintainer notes:
   whose functions call `fn({ ...hookPayloadFor(extId, args), host, settings })` and
   re-check `hostApis.has(extId)` per call, so it is inert whichever of deactivate and
   the registry runs first: `preflight` refuses, `wrapLaunch`/`buildLaunch`/`deliver`
-  throw "extension <id> is not active", `readLive`/`analyze` return null.
+  throw "extension <id> is not active", `readLive`/`analyze`/`launchStatus` return null.
   `deactivateExtension` calls `unregisterRuntimesFor`, so enable and disable are live.
 - **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
   It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
@@ -1155,6 +1156,14 @@ Maintainer notes:
   no `--mcp-config`, so no `read_mail`); that flag is what routes peer messages there.
   `mailbox-delivery.js` is untouched, since a mailbox branch for such a card could never
   run.
+- **`launchStatus` is for launches that fail after dispatch returns** (1.22.0), such as
+  a hand-off to a remote service. `state` is `pending`, `ok`, `failed` (with `error`)
+  or `unknown`. `spawn_session` polls it every 250 ms for up to 15 s
+  (`runtimes/launch-status.js`), returns it as `launch`, and turns `failed` into an
+  error result that still carries the new `sessionId`; `wait: false` skips the wait.
+  `list_sessions` adds `launch` to each row whose runtime answers. An off-shape answer
+  or a throw reads as no answer, and the bound copy returns null while inactive. Keep
+  it cheap: it runs once per row on every `list_sessions`.
 - **Follow-up extraction.** Devcontainer is still special-cased outside the contract:
   the archive stop-container offer and its cascade (`control/handlers/archive.js`,
   `public/archive-cascade.js`), `archive-session`'s `stop_container`, the add-dirs resync in
