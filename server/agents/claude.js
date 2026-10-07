@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
@@ -11,19 +11,19 @@ import { newestClaudeName, priceCatalogVersion } from '../price-catalog.js';
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
 // repo the workflow's worktree belongs to — without a user-level ~/.claude/skills
-// symlink. Resolved from this module's own path, so the running install (worktree
-// or merged main checkout) always points at its own bundled copy.
-export const ISSUE_TO_PR_SKILL_DIR = fileURLToPath(new URL('../../skills/issue-to-pr', import.meta.url));
+// symlink. Resolved from the install root (server/install-root.js), so the running
+// install (worktree or merged main checkout) always points at its own bundled copy.
+export const ISSUE_TO_PR_SKILL_DIR = path.join(INSTALL_ROOT, 'skills', 'issue-to-pr');
 
 export function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-// Absolute path to the PostToolUse PR-attach hook (this file is server/agents/).
-export const PR_HOOK_PATH = path.join(fileURLToPath(import.meta.url), '..', '..', '..', 'scripts', 'pr-attach-hook.mjs');
+// Absolute path to the PostToolUse PR-attach hook.
+export const PR_HOOK_PATH = path.join(INSTALL_ROOT, 'scripts', 'pr-attach-hook.mjs');
 // The .mjs imports `../server/pr-hook.js` at runtime; the devcontainer runtime copies
 // this file to the sibling container location so that relative import resolves.
-export const PR_HOOK_DEP_PATH = path.join(fileURLToPath(import.meta.url), '..', '..', 'pr-hook.js');
+export const PR_HOOK_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-hook.js');
 
 // Inline --settings value for every Claude launch. Claude merges --settings with
 // the user's own settings.json (additive) and an explicit --settings key wins over

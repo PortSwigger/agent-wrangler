@@ -17,8 +17,8 @@ function canonicalPath(p) {
 }
 
 // The real directory this code runs from, derived from import.meta.url. Git
-// always runs here, never in AW_INSTALL_ROOT (task 06's session-facing path,
-// which may be a symlink that a package upgrade repoints).
+// always runs here, never in INSTALL_ROOT (server/install-root.js: the
+// session-facing path, which may be a symlink that a package upgrade repoints).
 export const APP_ROOT = canonicalPath(fileURLToPath(new URL('..', import.meta.url)));
 export const UPDATE_REMOTE = 'origin';
 export const UPDATE_BRANCH = 'main';

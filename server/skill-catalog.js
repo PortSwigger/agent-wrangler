@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { INSTALL_ROOT } from './install-root.js';
 
 // Reading a skill off disk. It lives apart from agent-skills.js because BOTH
 // that module and server/extensions/index.js need it — the catalog to publish a
@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 // `getExtensions()`, so the loader cannot import it back. A second copy of "what
 // a SKILL.md is" inside the loader is the thing that would drift.
 //
-// A LEAF: node:fs / node:path / node:url only, so server/extensions/** may
-// import it without breaching its own leaf rule.
+// A LEAF: node:fs / node:path and install-root.js (itself a leaf) only, so
+// server/extensions/** may import it without breaching its own leaf rule.
 
-// The wrangler-meta skills ship in-repo under agent-skills/. Resolved from this
-// module's own path (server/ → repo root → agent-skills), so the running install
-// — worktree or merged main checkout — points at its own bundled copy, and the
-// paths survive an arbitrary or changing session cwd. AGENT_SKILLS_PLUGIN_DIR is
-// the plugin root Claude loads via --plugin-dir; SKILLS_ROOT holds the skill dirs
-// the Codex catalog reads.
-export const AGENT_SKILLS_PLUGIN_DIR = fileURLToPath(new URL('../agent-skills', import.meta.url));
+// The wrangler-meta skills ship in-repo under agent-skills/. Resolved from the
+// install root (this checkout, or AW_INSTALL_ROOT's upgrade-stable path), so the
+// running install — worktree or merged main checkout — points at its own bundled
+// copy, and the paths survive an arbitrary or changing session cwd.
+// AGENT_SKILLS_PLUGIN_DIR is the plugin root Claude loads via --plugin-dir;
+// SKILLS_ROOT holds the skill dirs the Codex catalog reads.
+export const AGENT_SKILLS_PLUGIN_DIR = path.join(INSTALL_ROOT, 'agent-skills');
 export const SKILLS_ROOT = path.join(AGENT_SKILLS_PLUGIN_DIR, 'skills');
 
 // Minimal frontmatter read: the leading --- block's `name` and `description`

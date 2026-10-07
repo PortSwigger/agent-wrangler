@@ -173,8 +173,10 @@ function fail(ext, reason) {
   throw new Error(`Extension ${id}: ${reason}`);
 }
 
-// The wrangler's own skill names, read once: agent-skills/skills/ cannot change
-// under a running process, and this is on the boot path for every manifest.
+// The wrangler's own skill names, read once: this is on the boot path for every
+// manifest. SKILLS_ROOT may sit behind AW_INSTALL_ROOT's symlink, which an
+// upgrade repoints under a running process, so the set is the boot version's;
+// manifests are validated once at boot too, against that same version.
 // They are the OTHER half of what a `skills` entry may resolve to — an
 // extension has always been able to gate an in-repo skill without shipping one.
 let repoNames = null;
