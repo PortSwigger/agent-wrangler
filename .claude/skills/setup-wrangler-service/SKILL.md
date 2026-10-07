@@ -90,8 +90,11 @@ Success is `state = running` **and** `http 200`. Report both. If the state is
 - **Exit 127 in the log** — `~/.local/bin` missing from `PATH`. Check the
   `PATH` string in the plist matches the template.
 - **Terminals render Unicode as `_`** — the server's locale isn't UTF-8.
-  `bin/agent-wrangler` (exec'd by `wrangler-start.sh`) pins `LANG`/`LC_CTYPE`;
-  confirm with `ps eww <pid>`.
+  `bin/agent-wrangler` (exec'd by `wrangler-start.sh`) picks an installed UTF-8
+  `LC_CTYPE` only when `LC_ALL`, `LC_CTYPE` and `LANG` are all unset; an
+  explicit non-UTF-8 one is kept, with a warning in `wrangler.err`. Set
+  `LC_CTYPE` in the plist's `EnvironmentVariables` to a UTF-8 locale from
+  `locale -a` (and drop any non-UTF-8 `LC_ALL`); confirm with `ps eww <pid>`.
 - **Job won't load ("Bootstrap failed: 5: Input/output error")** — usually a
   malformed plist. Validate with `plutil -lint "$PLIST"`.
 
