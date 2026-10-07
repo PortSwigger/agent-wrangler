@@ -30,7 +30,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText } from './update-panel.js';
+import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -5530,6 +5530,10 @@ let seenCodeVersion = null;
 // Why this install cannot update from the board (managed by Homebrew, not a Git
 // checkout), from the connect config; null when it can.
 let updateUnavailable = null;
+// An upgrade repointed AW_INSTALL_ROOT under this running server, from the
+// connect config and `install-drift`; null when the install matches.
+let installDrift = null;
+let installDriftRestarting = false;
 const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
 
 function mountUpdatePanel(host) {
@@ -5540,6 +5544,13 @@ function mountUpdatePanel(host) {
   // update, and a Notify or Auto value carried over in config.json is ignored by
   // the server, so the row is hidden rather than left looking live.
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
+  const drift = installDriftEl({
+    drift: installDrift,
+    canRestart: canRestartServer,
+    restarting: installDriftRestarting,
+    onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
+  });
+  if (drift) host.append(drift);
   host.append(updatePanelEl({
     phase: updatePhase,
     status: updateStatus,
@@ -5551,7 +5562,7 @@ function mountUpdatePanel(host) {
 }
 
 const remountUpdatePanel = () => {
-  document.getElementById('settings-btn')?.classList.toggle('has-update', updateAvailable(updateStatus));
+  document.getElementById('settings-btn')?.classList.toggle('has-update', updateAvailable(updateStatus) || Boolean(installDrift));
   if (updatePanelHost?.isConnected) mountUpdatePanel(updatePanelHost);
 };
 
@@ -5594,9 +5605,14 @@ function noteCodeVersion(version) {
 
 function noteConfigUpdate(msg) {
   updateUnavailable = msg.updateUnavailable || null;
+  installDrift = msg.installDrift || null;
+  installDriftRestarting = false;
   noteCodeVersion(msg.codeVersion);
   applyUpdateStatus(msg.update);
   noteRolledBack(msg.updateRolledBack);
+  // applyUpdateStatus skips a null status, and a restart that cleared the drift
+  // must still take its notice and the Settings dot away.
+  remountUpdatePanel();
 }
 
 const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
@@ -6110,6 +6126,7 @@ function connect() {
     }
     else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
     else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
+    else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
     else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.

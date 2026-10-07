@@ -69,7 +69,8 @@ otherwise it behaves exactly as a Claude-only board.
   it came from. Installing needs the background service below (which also installs changed
   dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
   checkout, such as one managed by a package manager, shows updates as unavailable and never runs
-  Git. See [Install signals](docs/install-signals.md). Running sessions get an "older version" tag
+  Git, but asks for a restart if a package upgrade lands while the wrangler is still running. See
+  [Install signals](docs/install-signals.md). Running sessions get an "older version" tag
   until they restart, and an opt-in setting restarts idle ones for you.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)

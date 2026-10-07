@@ -13,7 +13,7 @@ Agent Wrangler, for example a Homebrew formula.
 | `AW_GIT_UPDATES` | `1` | unset | `scripts/wrangler-start.sh` only | The start path rolls back an update that fails to start (`update-rollback.sh`) and installs changed dependencies (`sync-deps.sh`) before the launcher runs. Required, together with `AW_SUPERVISED=1`, before **Update and restart** or **Auto** can apply a Git update. |
 | `AW_INSTALL_MANAGER` | a package manager's name, e.g. `homebrew` | unset | a package wrapper (the Homebrew formula) | A package manager owns the install. The board's Git updater is disabled: no checks, no applies, and Settings › Updates says how to update instead (`brew upgrade agent-wrangler` for `homebrew`). The app reports its package version. Restart stays available when `AW_SUPERVISED=1`. |
 | `AW_NODE` | path to `node` | `node` on `PATH` | a package wrapper | The interpreter the launcher execs. Use a path that stays stable across upgrades, such as Homebrew's `opt/node/bin/node`. |
-| `AW_INSTALL_ROOT` | directory | the real app directory | a package wrapper | An upgrade-stable path to the app, such as a symlink that an upgrade repoints. Every path a session is handed at launch is built from it (see [Session paths](#session-paths)) when it resolves to the running app, as is the `node_modules/.bin` entry the launcher adds to `PATH`. Ignored by a dev instance (`AW_DEV`). Git never runs here; it always runs in the real app directory. |
+| `AW_INSTALL_ROOT` | directory | the real app directory | a package wrapper | An upgrade-stable path to the app, such as a symlink that an upgrade repoints. Every path a session is handed at launch is built from it (see [Session paths](#session-paths)) when it resolves to the running app, as is the `node_modules/.bin` entry the launcher adds to `PATH`. If an upgrade repoints it while the server runs, Settings › Updates asks for a restart. Ignored by a dev instance (`AW_DEV`). Git never runs here; it always runs in the real app directory. |
 | `AW_LOGS_TRIMMED` | `1` | unset | the launcher, internally | Stops a second log trim when `wrangler-start.sh` hands off to `bin/agent-wrangler`. Not a setting. |
 
 Only exactly `1` turns `AW_SUPERVISED` or `AW_GIT_UPDATES` on. Any non-blank `AW_INSTALL_MANAGER`
@@ -66,6 +66,16 @@ hook only POSTs a PR URL and swallows every error, so the risk is a new skill na
 the old server doesn't have yet. Those sessions carry the old server's identity, so after the
 restart they show as an older version (see [App identity](#app-identity)). A package wrapper keeps
 the gap short by restarting the service as soon as it repoints the path.
+
+When that restart doesn't happen, the board notices. At every session launch and once a minute, the
+server checks whether `AW_INSTALL_ROOT` still resolves to the running app. The first time it
+doesn't, including when the path can't be resolved mid-upgrade, the server logs one
+`AW_INSTALL_ROOT … now resolves to …` warning. Settings › Updates then says the upgrade has landed,
+with both versions when it can read the new `package.json`, and Settings gets a dot. A supervised
+install (`AW_SUPERVISED=1`) offers **Restart now**; any other install says how to restart instead
+(`brew services restart agent-wrangler` for `homebrew`). The notice clears once the restarted server
+is the version the path points at. Sessions keep the `AW_INSTALL_ROOT` paths meanwhile: the old
+version's directory may already be gone.
 
 ## App identity
 

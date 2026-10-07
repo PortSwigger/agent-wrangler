@@ -58,6 +58,51 @@ export function resolveInstallRoot({
 
 export const INSTALL_ROOT = resolveInstallRoot({ installRoot: INSTALL_ENV.installRoot, dev: Boolean(process.env.AW_DEV) });
 
+// After startup an upgrade repoints INSTALL_ROOT at the new version and is meant
+// to restart us; until something does, every session (new or running) gets the
+// new version's hook and skills with this server. Drift is that state: the root
+// was honoured at boot and its realpath no longer matches this app's. A root
+// that can't be resolved (mid-upgrade) or a running app whose directory the
+// upgrade already removed counts too. Never drift when the variable was ignored
+// or unset, dev included, since INSTALL_ROOT is then SOURCE_ROOT itself.
+// Reports the new version from its package.json when readable, else null. Only
+// ever reported: sessions keep INSTALL_ROOT, because SOURCE_ROOT may be gone.
+export function installRootDrift({
+  installRoot = INSTALL_ROOT, sourceRoot = SOURCE_ROOT, realpath = fs.realpathSync.native,
+  readFile = (p) => fs.readFileSync(p, 'utf8'),
+} = {}) {
+  if (installRoot === sourceRoot) return null;
+  let target = null;
+  try {
+    target = realpath(installRoot);
+    if (target === realpath(sourceRoot)) return null;
+  } catch { /* unresolvable on either side: drift, target as far as known */ }
+  let version = null;
+  try { version = JSON.parse(readFile(path.join(installRoot, 'package.json'))).version || null; } catch { /* mid-upgrade */ }
+  return { installRoot, target, version };
+}
+
+// Polls installRootDrift and reports changes: `onChange` on every change (into,
+// out of, or between drifted states) and one warning on entering drift, so a
+// per-minute check doesn't repeat it.
+export function createInstallDriftWatch({ check = installRootDrift, onChange = () => {}, warn = logWarn } = {}) {
+  let current = null;
+  return {
+    poll() {
+      const next = check();
+      if (JSON.stringify(next) === JSON.stringify(current)) return current;
+      if (next && !current) {
+        const now = next.target ? `now resolves to ${next.target}` : 'cannot be resolved';
+        warn(`[agent-wrangler] AW_INSTALL_ROOT ${next.installRoot} ${now}, not this running app; sessions get the new version's hook and skills with this server until it restarts`);
+      }
+      current = next;
+      onChange(current);
+      return current;
+    },
+    current: () => current,
+  };
+}
+
 // Re-roots a path found under SOURCE_ROOT (a builtin extension's import.meta.url
 // dir) onto INSTALL_ROOT. Anything outside it, such as an extension installed
 // under the data dir, is returned unchanged. The identity when the variable is unset.
