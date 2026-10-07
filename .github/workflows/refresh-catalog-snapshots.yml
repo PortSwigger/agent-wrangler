@@ -17,16 +17,9 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      pr_url: ${{ steps.pr.outputs.url }}
-      slack: ${{ steps.slack.outputs.configured }}
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - name: Check Slack webhook is configured
-        id: slack
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: echo "configured=${SLACK_WEBHOOK_URL:+true}" >> "$GITHUB_OUTPUT"
-
       # A GITHUB_TOKEN-opened PR would not trigger the Test workflow; a SwigApp
       # token minted via idcat does. The installation must grant contents: write
       # and pull-requests: write on this repo.
@@ -82,29 +75,18 @@ jobs:
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-  notify-pr:
-    needs: [refresh]
-    if: needs.refresh.outputs.pr_url != '' && needs.refresh.outputs.slack == 'true'
-    uses: portswigger-apps/shared-workflows/.github/workflows/notify-slack.yaml@e6e203b62c30f7bf211cd79b8b6f2eae5a0927d5
-    secrets:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-    with:
-      message-title: "Model and price catalog refresh needs review"
-      message-body-markdown: |
-        The weekly catalog snapshot refresh changed the bundled model or price lists.
+      - name: Notify Slack of the refresh PR
+        if: steps.pr.outputs.url != '' && env.SLACK_WEBHOOK_URL != ''
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          jq -n --arg text "Model and price catalog refresh needs review: $PR_URL" '{text: $text}' \
+            | curl --fail -sS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
 
-        *PR:* <${{ needs.refresh.outputs.pr_url }}|${{ needs.refresh.outputs.pr_url }}>
-
-  notify-failure:
-    needs: [refresh]
-    if: failure() && needs.refresh.outputs.slack == 'true'
-    uses: portswigger-apps/shared-workflows/.github/workflows/notify-slack.yaml@e6e203b62c30f7bf211cd79b8b6f2eae5a0927d5
-    secrets:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-    with:
-      message-title: "Catalog snapshot refresh failed"
-      message-body-markdown: |
-        refresh-catalog-snapshots.yml failed.
-
-        *Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      message-sidebar-color: "#dc3545"
+      - name: Notify Slack of failure
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg text "Catalog snapshot refresh failed: $RUN_URL" '{text: $text}' \
+            | curl --fail -sS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
