@@ -57,6 +57,10 @@ function stubDom() {
         for (const fn of this._events.get(ev.type) || []) fn(ev);
         return true;
       },
+      contains(node) {
+        for (let n = node; n; n = n._parent) if (n === this) return true;
+        return false;
+      },
       focus() {},
       remove() { this._parent?.removeChild(this); },
       setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
@@ -104,6 +108,13 @@ function stubDom() {
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
   const document = {
+    addEventListener(type, fn) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(fn);
+    },
+    dispatchEvent(ev) {
+      for (const fn of listeners.get(ev.type) || []) fn(ev);
+    },
     getElementById: (id) => byId.get(id) || null,
     createElement: (tag) => make(tag),
     // fillLinked's plain-text-segment path (chat-dom.js) — the jump-pill tests
@@ -171,6 +182,46 @@ async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
     runTimers: () => { for (const t of timers) if (!t.cancelled) t.fn(); },
   };
 }
+
+test('copy uses highlighted transcript text even when the composer has focus', async () => {
+  const { view, byId, input, document } = await mountView();
+  view.mount('s1');
+  input.value = 'draft to keep';
+  document.activeElement = input;
+  const stream = byId.get('chat-stream');
+  const anchorNode = stream.appendChild(document.createElement('p'));
+  const focusNode = stream.appendChild(document.createElement('p'));
+  window.getSelection = () => ({ anchorNode, focusNode, toString: () => 'Selected reply\nwith another line' });
+  const copied = new Map();
+  let prevented = false;
+  document.dispatchEvent({
+    type: 'copy', target: input,
+    clipboardData: { setData: (type, text) => copied.set(type, text) },
+    preventDefault() { prevented = true; },
+  });
+  assert.equal(copied.get('text/plain'), 'Selected reply\nwith another line');
+  assert.equal(prevented, true);
+  assert.equal(input.value, 'draft to keep');
+});
+
+test('copy leaves native behavior for selections outside the transcript or an unmounted Chat view', async () => {
+  const { view, byId, input, document } = await mountView();
+  view.mount('s1');
+  const stream = byId.get('chat-stream');
+  const outside = document.createElement('p');
+  for (const [anchorNode, focusNode, text] of [
+    [input, input, 'selected draft'],
+    [outside, outside, 'elsewhere'],
+    [stream, outside, 'crossing views'],
+    [stream, stream, ''],
+  ]) {
+    window.getSelection = () => ({ anchorNode, focusNode, toString: () => text });
+    document.dispatchEvent({ type: 'copy', clipboardData: { setData() { assert.fail('must leave clipboard alone'); } }, preventDefault() { assert.fail('must allow native copy'); } });
+  }
+  view.unmount();
+  window.getSelection = () => ({ anchorNode: stream, focusNode: stream, toString: () => 'stale selection' });
+  document.dispatchEvent({ type: 'copy', clipboardData: { setData() { assert.fail('must leave clipboard alone'); } }, preventDefault() { assert.fail('must allow native copy'); } });
+});
 
 // --- context-window percentage chip ------------------------------------------
 

@@ -73,6 +73,15 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   });
 
   let sessionId = null;
+  document.addEventListener('copy', (e) => {
+    if (!sessionId || wrap.hidden || !e.clipboardData) return;
+    const selection = window.getSelection?.();
+    if (!selection || !stream.contains(selection.anchorNode) || !stream.contains(selection.focusNode)) return;
+    const text = selection.toString();
+    if (!text) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  });
   let offset = null;
   let timer = null;
   // The pending burst, cancelled by anything that puts `offset` back to null —
