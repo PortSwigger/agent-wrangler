@@ -1254,11 +1254,15 @@ async function main() {
   // the last-resort uncaughtException guard above, which only logs — leaving a
   // process that holds the instance lock and serves nothing, which a supervisor's
   // KeepAlive never notices. The lock is released by its own exit handler.
-  server.once('error', (err) => {
+  // Detached once listening: the server also emits 'error' for a failed accept
+  // (EMFILE under fd pressure), which must stay a logged, survivable event.
+  const onListenError = (err) => {
     logError(listenErrorMessage(err, PORT));
     process.exit(1);
-  });
+  };
+  server.once('error', onListenError);
   server.listen(PORT, HOST, () => {
+    server.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
