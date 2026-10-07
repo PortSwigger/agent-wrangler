@@ -57,6 +57,10 @@ function stubDom() {
         for (const fn of this._events.get(ev.type) || []) fn(ev);
         return true;
       },
+      contains(node) {
+        for (let n = node; n; n = n._parent) if (n === this) return true;
+        return false;
+      },
       focus() {},
       remove() { this._parent?.removeChild(this); },
       setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
@@ -103,7 +107,20 @@ function stubDom() {
     'chat-notice-bar', 'chat-jump-last', 'chat-exit-notice',
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
+  const body = make('body');
+  body.appendChild(byId.get('chat-wrap'));
+  byId.get('chat-wrap').appendChild(byId.get('chat-stream'));
+  byId.get('chat-wrap').appendChild(byId.get('chat-input'));
   const document = {
+    body,
+    activeElement: body,
+    addEventListener(type, fn) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(fn);
+    },
+    dispatchEvent(ev) {
+      for (const fn of listeners.get(ev.type) || []) fn(ev);
+    },
     getElementById: (id) => byId.get(id) || null,
     createElement: (tag) => make(tag),
     // fillLinked's plain-text-segment path (chat-dom.js) — the jump-pill tests
@@ -115,13 +132,14 @@ function stubDom() {
   return { document, byId, listeners };
 }
 
-async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
+async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacIntel' } = {}) {
   const { document, byId } = stubDom();
   globalThis.document = document;
   // Just enough markdown-it for createRenderer's constructor dance. This suite is
   // about composer and restore state, never about rendered prose — chat-dom.test.js
   // owns that — so the renderer only has to exist.
   globalThis.window = {
+    navigator: { platform },
     markdownit: () => ({
       renderer: { rules: {} },
       // createRenderer's markdown-path rules escape through md.utils, so the stub
@@ -170,6 +188,81 @@ async function mountView({ onSend, cwd = null, onGoTerminal } = {}) {
     // would never run.
     runTimers: () => { for (const t of timers) if (!t.cancelled) t.fn(); },
   };
+}
+
+async function mountSelectedTranscript(options) {
+  const state = await mountView(options);
+  state.view.mount('s1');
+  const stream = state.byId.get('chat-stream');
+  const anchorNode = stream.appendChild(state.document.createElement('p'));
+  const focusNode = stream.appendChild(state.document.createElement('p'));
+  window.getSelection = () => ({ anchorNode, focusNode, toString: () => 'Selected reply' });
+  return { ...state, stream };
+}
+
+for (const focus of ['body', 'transcript link']) {
+  test(`Ctrl+C copies selected transcript text with focus on ${focus}`, async () => {
+    const { stream, document } = await mountSelectedTranscript();
+    if (focus === 'transcript link') document.activeElement = stream.appendChild(document.createElement('a'));
+    const commands = [];
+    document.execCommand = (command) => { commands.push(command); return true; };
+    let prevented = false;
+    document.dispatchEvent({ type: 'keydown', key: 'c', ctrlKey: true, preventDefault() { prevented = true; } });
+    assert.deepEqual(commands, ['copy']);
+    assert.equal(prevented, true);
+  });
+}
+
+test('a rejected copy command leaves Ctrl+C available to the browser', async () => {
+  const { document } = await mountSelectedTranscript();
+  let attempted = false;
+  document.execCommand = (command) => { assert.equal(command, 'copy'); attempted = true; return false; };
+  document.dispatchEvent({ type: 'keydown', key: 'c', ctrlKey: true, preventDefault() { assert.fail('must allow native copy'); } });
+  assert.equal(attempted, true);
+});
+
+for (const modifiers of [
+  { metaKey: true }, {}, { ctrlKey: true, shiftKey: true },
+  { ctrlKey: true, altKey: true }, { ctrlKey: true, metaKey: true },
+]) {
+  test(`copy leaves native shortcuts alone for ${JSON.stringify(modifiers)}`, async () => {
+    const { document } = await mountSelectedTranscript();
+    document.execCommand = () => assert.fail('must leave native shortcut alone');
+    document.dispatchEvent({ type: 'keydown', key: 'c', ...modifiers, preventDefault() { assert.fail('must allow native shortcut'); } });
+  });
+}
+
+for (const platform of ['Win32', 'Linux x86_64']) {
+  test(`Ctrl+C uses native copy on ${platform}`, async () => {
+    const { document } = await mountSelectedTranscript({ platform });
+    document.execCommand = () => assert.fail('must leave native shortcut alone');
+    document.dispatchEvent({ type: 'keydown', key: 'c', ctrlKey: true, preventDefault() { assert.fail('must allow native shortcut'); } });
+  });
+}
+
+for (const scenario of ['handled key', 'composition', 'repeat', 'selected draft', 'shell focus', 'hidden view', 'unmounted view', 'outside selection', 'partial selection', 'empty selection']) {
+  test(`Ctrl+C leaves native behavior when ${scenario}`, async () => {
+    const { view, stream, byId, input, document } = await mountSelectedTranscript();
+    const outside = document.createElement('div');
+    if (scenario === 'selected draft') {
+      document.activeElement = input;
+      input.value = 'draft';
+      input.setSelectionRange(0, 5);
+    }
+    if (scenario === 'shell focus') document.activeElement = outside;
+    if (scenario === 'hidden view') byId.get('chat-wrap').hidden = true;
+    if (scenario === 'unmounted view') view.unmount();
+    if (scenario === 'outside selection') window.getSelection = () => ({ anchorNode: outside, focusNode: outside, toString: () => 'elsewhere' });
+    if (scenario === 'partial selection') window.getSelection = () => ({ anchorNode: stream, focusNode: outside, toString: () => 'crossing views' });
+    if (scenario === 'empty selection') window.getSelection = () => ({ anchorNode: stream, focusNode: stream, toString: () => '' });
+    document.execCommand = () => assert.fail('must leave clipboard alone');
+    document.dispatchEvent({
+      type: 'keydown', key: 'c', ctrlKey: true,
+      defaultPrevented: scenario === 'handled key', isComposing: scenario === 'composition',
+      repeat: scenario === 'repeat',
+      preventDefault() { assert.fail('must allow native behavior'); },
+    });
+  });
 }
 
 // --- context-window percentage chip ------------------------------------------

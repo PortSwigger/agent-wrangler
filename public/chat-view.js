@@ -115,6 +115,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // Declared here (factory scope), not inside submit() — setStatus and a later
   // task both need to reach `input` to drive its placeholder/disabled state.
   const input = document.getElementById('chat-input');
+  const isMac = /Mac/i.test(window.navigator?.userAgentData?.platform || window.navigator?.platform || '');
+  document.addEventListener('keydown', (e) => {
+    if (!isMac || !sessionId || wrap.hidden || e.defaultPrevented || e.isComposing || e.repeat) return;
+    if (e.key.toLowerCase() !== 'c' || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const active = document.activeElement;
+    if (active !== document.body && !wrap.contains(active)) return;
+    if (active === input && input.selectionStart !== input.selectionEnd) return;
+    const selection = window.getSelection?.();
+    if (!selection || !stream.contains(selection.anchorNode) || !stream.contains(selection.focusNode)) return;
+    if (!selection.toString()) return;
+    if (document.execCommand('copy')) e.preventDefault();
+  });
   const sendBtn = document.getElementById('chat-send');
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
