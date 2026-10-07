@@ -201,12 +201,31 @@ test('copy uses highlighted transcript text even when the composer has focus', a
   });
   assert.equal(copied.get('text/plain'), 'Selected reply\nwith another line');
   assert.equal(prevented, true);
-  assert.equal(input.value, 'draft to keep');
 });
+
+for (const scenario of ['composer not focused', 'copy already handled', 'composer text selected']) {
+  test(`copy preserves native behavior when ${scenario}`, async () => {
+    const { view, byId, input, document } = await mountView();
+    view.mount('s1');
+    const stream = byId.get('chat-stream');
+    const textNode = stream.appendChild(document.createElement('p'));
+    window.getSelection = () => ({ anchorNode: textNode, focusNode: textNode, toString: () => 'Lingering transcript highlight' });
+    document.activeElement = scenario === 'composer not focused' ? stream : input;
+    input.value = 'draft fragment';
+    if (scenario === 'composer text selected') input.setSelectionRange(0, 5);
+    document.dispatchEvent({
+      type: 'copy', target: document.activeElement,
+      defaultPrevented: scenario === 'copy already handled',
+      clipboardData: { setData() { assert.fail('must leave clipboard alone'); } },
+      preventDefault() { assert.fail('must leave native behavior alone'); },
+    });
+  });
+}
 
 test('copy leaves native behavior for selections outside the transcript or an unmounted Chat view', async () => {
   const { view, byId, input, document } = await mountView();
   view.mount('s1');
+  document.activeElement = input;
   const stream = byId.get('chat-stream');
   const outside = document.createElement('p');
   for (const [anchorNode, focusNode, text] of [

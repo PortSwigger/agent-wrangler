@@ -73,15 +73,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   });
 
   let sessionId = null;
-  document.addEventListener('copy', (e) => {
-    if (!sessionId || wrap.hidden || !e.clipboardData) return;
-    const selection = window.getSelection?.();
-    if (!selection || !stream.contains(selection.anchorNode) || !stream.contains(selection.focusNode)) return;
-    const text = selection.toString();
-    if (!text) return;
-    e.clipboardData.setData('text/plain', text);
-    e.preventDefault();
-  });
   let offset = null;
   let timer = null;
   // The pending burst, cancelled by anything that puts `offset` back to null —
@@ -124,6 +115,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // Declared here (factory scope), not inside submit() — setStatus and a later
   // task both need to reach `input` to drive its placeholder/disabled state.
   const input = document.getElementById('chat-input');
+  document.addEventListener('copy', (e) => {
+    if (!sessionId || wrap.hidden || e.defaultPrevented || !e.clipboardData) return;
+    if (document.activeElement !== input || input.selectionStart !== input.selectionEnd) return;
+    const selection = window.getSelection?.();
+    if (!selection || !stream.contains(selection.anchorNode) || !stream.contains(selection.focusNode)) return;
+    const text = selection.toString();
+    if (!text) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  });
   const sendBtn = document.getElementById('chat-send');
   const stopBtn = document.getElementById('chat-stop');
   const hint = document.getElementById('chat-hint');
