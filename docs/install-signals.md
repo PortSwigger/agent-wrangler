@@ -13,7 +13,7 @@ Agent Wrangler, for example a Homebrew formula.
 | `AW_GIT_UPDATES` | `1` | unset | `scripts/wrangler-start.sh` only | The start path rolls back an update that fails to start (`update-rollback.sh`) and installs changed dependencies (`sync-deps.sh`) before the launcher runs. Required, together with `AW_SUPERVISED=1`, before **Update and restart** or **Auto** can apply a Git update. |
 | `AW_INSTALL_MANAGER` | a package manager's name, e.g. `homebrew` | unset | a package wrapper (the Homebrew formula) | A package manager owns the install. The board's Git updater is disabled: no checks, no applies, and Settings › Updates says how to update instead (`brew upgrade agent-wrangler` for `homebrew`). The app reports its package version. Restart stays available when `AW_SUPERVISED=1`. |
 | `AW_NODE` | path to `node` | `node` on `PATH` | a package wrapper | The interpreter the launcher execs. Use a path that stays stable across upgrades, such as Homebrew's `opt/node/bin/node`. |
-| `AW_INSTALL_ROOT` | directory | the real app directory | a package wrapper | An upgrade-stable path to the app, such as a symlink that an upgrade repoints. Every path a session is handed at launch is built from it (see [Session paths](#session-paths)), as is the `node_modules/.bin` entry the launcher adds to `PATH`. Ignored by a dev instance (`AW_DEV`). Git never runs here; it always runs in the real app directory. |
+| `AW_INSTALL_ROOT` | directory | the real app directory | a package wrapper | An upgrade-stable path to the app, such as a symlink that an upgrade repoints. Every path a session is handed at launch is built from it (see [Session paths](#session-paths)) when it resolves to the running app, as is the `node_modules/.bin` entry the launcher adds to `PATH`. Ignored by a dev instance (`AW_DEV`). Git never runs here; it always runs in the real app directory. |
 | `AW_LOGS_TRIMMED` | `1` | unset | the launcher, internally | Stops a second log trim when `wrangler-start.sh` hands off to `bin/agent-wrangler`. Not a setting. |
 
 Only exactly `1` turns `AW_SUPERVISED` or `AW_GIT_UPDATES` on. Any non-blank `AW_INSTALL_MANAGER`
@@ -53,8 +53,9 @@ With `AW_INSTALL_ROOT` set, these paths are built from it instead (`server/insta
 - each builtin extension's skills, `server/extensions/builtin/<id>/skills/<name>`
 - the workflow skill, `skills/issue-to-pr`
 
-The directory must hold the same files as the real app directory; a symlink to it is the intended
-shape. An extension installed under the data dir keeps its own path. Paths the server reads for
+At startup the value must resolve, through symlinks, to the app directory that is running; a symlink
+to it is the intended shape. Otherwise the server logs `AW_INSTALL_ROOT ignored` and uses the real
+directory, because a wrong value would hand every session a missing hook and no skills. An extension installed under the data dir keeps its own path. Paths the server reads for
 itself (the board's `public/` files, styles, catalog snapshots) still come from the real directory,
 because the running process can't outlive it. Unset, every path is the real app directory's, as in
 a checkout.

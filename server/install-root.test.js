@@ -6,11 +6,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { SOURCE_ROOT, resolveInstallRoot, installPath } from './install-root.js';
 
-test('AW_INSTALL_ROOT wins when set, except in a dev instance', () => {
-  const sourceRoot = '/src/agent-wrangler';
-  assert.equal(resolveInstallRoot({ installRoot: null, dev: false, sourceRoot }), sourceRoot);
-  assert.equal(resolveInstallRoot({ installRoot: '/stable/aw/', dev: false, sourceRoot }), '/stable/aw');
-  assert.equal(resolveInstallRoot({ installRoot: '/stable/aw', dev: true, sourceRoot }), sourceRoot);
+test('AW_INSTALL_ROOT wins only when it resolves to the running app, and never in a dev instance', () => {
+  const sourceRoot = '/versions/1.0/aw';
+  // A fake filesystem: /stable/aw is a symlink to the running version,
+  // /stable/old to another one, and anything else is missing.
+  const links = { '/stable/aw': sourceRoot, '/stable/old': '/versions/0.9/aw', [sourceRoot]: sourceRoot };
+  const realpath = (p) => {
+    if (!(p in links)) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    return links[p];
+  };
+  for (const [installRoot, dev, want, warns] of [
+    [null, false, sourceRoot, 0],
+    ['/stable/aw/', false, '/stable/aw', 0],
+    ['/stable/aw', true, sourceRoot, 0],
+    ['/stable/old', false, sourceRoot, 1],
+    ['/stable/typo', false, sourceRoot, 1],
+  ]) {
+    const warned = [];
+    const got = resolveInstallRoot({ installRoot, dev, sourceRoot, realpath, warn: (m) => warned.push(m) });
+    assert.equal(got, want, `${installRoot} dev=${dev}`);
+    assert.equal(warned.length, warns, `${installRoot} dev=${dev}: ${warned}`);
+    if (warns) assert.match(warned[0], /AW_INSTALL_ROOT ignored/);
+  }
 });
 
 test('installPath re-roots only paths inside the source root', () => {
@@ -36,7 +53,7 @@ function sessionPaths(env) {
       codex: codex.buildLaunch({ sessionId: 'SID' }),
       leaked: process.env.AW_INSTALL_ROOT ?? null,
     }));
-  `], { encoding: 'utf8', env });
+  `], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
   return JSON.parse(out);
 }
 
@@ -80,4 +97,9 @@ test('unset, the paths are the source root ones; a dev instance ignores the vari
   const dev = sessionPaths({ ...baseEnv(), AW_DEV: '1', AW_INSTALL_ROOT: '/stable/agent-wrangler' });
   assert.equal(dev.claude, unset.claude);
   assert.equal(dev.codex, unset.codex);
+  // A value that doesn't resolve to this app would hand sessions a missing hook
+  // and no skills; it is ignored instead.
+  const missing = sessionPaths({ ...baseEnv(), AW_INSTALL_ROOT: path.join(os.tmpdir(), 'aw-install-root-missing') });
+  assert.equal(missing.claude, unset.claude);
+  assert.equal(missing.codex, unset.codex);
 });

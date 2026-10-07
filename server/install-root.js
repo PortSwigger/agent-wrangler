@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INSTALL_ENV } from './install-env.js';
+import { logWarn } from './log.js';
 
 // Where sessions should find files that ship with the app: the PR-attach hook,
 // the agent-skills plugin, the builtin extensions' skills. Those paths are baked
@@ -17,8 +19,8 @@ import { INSTALL_ENV } from './install-env.js';
 // import.meta.url paths: they're resolved by the running process and can't go
 // stale. Git never uses this; it runs in self-update.js's realpathed APP_ROOT.
 //
-// A LEAF apart from install-env.js (itself import-free), so skill-catalog.js
-// stays importable from server/extensions/**.
+// A LEAF apart from install-env.js and log.js (both import-free), so
+// skill-catalog.js stays importable from server/extensions/**.
 
 // The app directory as this module resolved it: the default, which is exactly
 // what each session-facing path was derived from before AW_INSTALL_ROOT.
@@ -27,8 +29,31 @@ export const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.
 // A dev instance (AW_DEV) is always a checkout testing its own hook and skills,
 // so it ignores the variable even when started from a pane that still carries a
 // packaged board's copy (panes predating install-env.js's strip keep their env).
-export function resolveInstallRoot({ installRoot, dev, sourceRoot = SOURCE_ROOT }) {
-  return installRoot && !dev ? path.resolve(installRoot) : sourceRoot;
+//
+// At boot the stable path must resolve to the app that is running: an upgrade
+// repoints it and then restarts us. Anything else (a typo, a missing directory,
+// a wrapper pointing one level too high) would hand every session a hook and
+// skills that don't exist, and the skill readers fail silently on a missing
+// directory. So a mismatch is refused loudly and the real directory is used.
+// The native realpath, as in self-update.js: on a case-insensitive filesystem
+// only it returns the on-disk case for both sides.
+export function resolveInstallRoot({
+  installRoot, dev, sourceRoot = SOURCE_ROOT, realpath = fs.realpathSync.native, warn = logWarn,
+}) {
+  if (!installRoot || dev) return sourceRoot;
+  const root = path.resolve(installRoot);
+  let resolved;
+  try {
+    resolved = realpath(root);
+  } catch (err) {
+    warn(`[agent-wrangler] AW_INSTALL_ROOT ignored: ${root} cannot be resolved (${err.code || err.message}); sessions use ${sourceRoot}`);
+    return sourceRoot;
+  }
+  if (resolved !== realpath(sourceRoot)) {
+    warn(`[agent-wrangler] AW_INSTALL_ROOT ignored: ${root} resolves to ${resolved}, not the running app at ${sourceRoot}; sessions use ${sourceRoot}`);
+    return sourceRoot;
+  }
+  return root;
 }
 
 export const INSTALL_ROOT = resolveInstallRoot({ installRoot: INSTALL_ENV.installRoot, dev: Boolean(process.env.AW_DEV) });
