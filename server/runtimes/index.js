@@ -63,6 +63,15 @@ import { devcontainer } from './devcontainer.js';
 //                agent has no wrangler MCP to reply with). A runtime with `deliver` stores its cards as
 //                `mailCapable: false`, so send_message routes them here (see
 //                mcp/tools/send-message.js).
+//   launchStatus (optional) ({ entry }) → { state, error?, url? } or null —
+//                whether the card's launch got its agent running, for a runtime
+//                whose launch can fail AFTER dispatch has returned (a hand-off to a
+//                remote service that refuses it). `state` is 'pending' (no outcome
+//                yet), 'ok', 'failed' (with `error`, the human-facing reason) or
+//                'unknown' (the runtime gave up watching). Must be cheap: spawn_session
+//                polls it for a few seconds so the caller learns a failed launch in
+//                the tool result, and list_sessions reads it for every row.
+//                Normalised by launch-status.js. Absent ⇒ no row says anything.
 //
 // Per-runtime POLICY (comms severing, teardown timing) is deliberately NOT in the
 // contract yet: no current runtime needs it, so adding it now would be dead code.

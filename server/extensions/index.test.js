@@ -1133,6 +1133,7 @@ test('a bad runtime shape quarantines', () => {
   rejects(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: true })] }), /must declare resumable: false/);
   rejects(manifest({ runtimes: [toyRuntime({ deliver: 'yes' })] }), /runtime toyrt deliver must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ preflight: {} })] }), /runtime toyrt preflight must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ launchStatus: 'ok' })] }), /runtime toyrt launchStatus must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ resumable: 'no' })] }), /runtime toyrt resumable must be a boolean/);
   rejects(manifest({ runtimes: [toyRuntime({ skipsHostResumeGuard: 1 })] }), /skipsHostResumeGuard must be a boolean/);
   rejects(manifest({ runtimes: [toyRuntime(), toyRuntime({ label: 'Again' })] }), /duplicate runtime id "toyrt"/);

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { autoCompactTokensError, expandTilde } from '../../session-manager.js';
 import { launchTargetError } from '../../agents/index.js';
+import { awaitLaunchStatus } from '../../runtimes/launch-status.js';
 
 // Shared plumbing for the spawn_* tools (spawn_session, spawn_workflow). Both
 // mirror the /ws `dispatch` handler: resolve the target task, bind memory to it
@@ -93,8 +94,25 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
     agent,
     task,
   };
+  // A runtime whose launch can still fail after dispatch (e.g. a cloud hand-off)
+  // is waited on briefly, so a refused launch reaches the caller here rather than
+  // only as a chip on the board. `wait: false` skips it for fan-outs.
+  if (args.wait !== false) {
+    const launch = await awaitLaunchStatus(deps.sessionManager?.entryFor(result.sessionId), deps.launchWait);
+    if (launch) structuredContent.launch = launch;
+  }
+  const json = JSON.stringify(structuredContent, null, 2);
+  if (structuredContent.launch?.state === 'failed') {
+    // The card exists (and stays, so the board shows why); the caller decides
+    // whether to archive it or retry.
+    return {
+      content: [{ type: 'text', text: `The session was created but its launch failed: ${structuredContent.launch.error}\n\n${json}` }],
+      structuredContent,
+      isError: true,
+    };
+  }
   return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    content: [{ type: 'text', text: json }],
     structuredContent,
   };
 }

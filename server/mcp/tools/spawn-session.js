@@ -31,7 +31,10 @@ export const spawnSessionTool = {
     + 'itself, not a channel for briefing another session. Returns the new session id and its '
     + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
     + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
-    + 'with a short id.',
+    + 'with a short id. For a runtime whose launch can fail after the card is created (e.g. '
+    + '`cloud`), the tool waits up to 15 s for the outcome and returns it as `launch` '
+    + '(`state`: ok, failed, pending or unknown); a failed launch is returned as an error that '
+    + 'still carries the new session id.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '
@@ -68,6 +71,11 @@ export const spawnSessionTool = {
     get runtime() {
       return z.string().optional().describe(`Where the new session runs. Valid values — ${runtimeChoicesText()}.`);
     },
+    wait: z.boolean().optional().describe(
+      'Wait for the runtime to report whether the launch worked (default true; only runtimes that '
+      + 'can fail after dispatch, such as `cloud`, wait at all). Pass false when spawning many at '
+      + 'once and check `launch` on list_sessions instead.',
+    ),
     worktree: z.boolean().optional().describe('Launch in a fresh git worktree off cwd.'),
     worktree_branch: z.string().optional().describe('Branch for the worktree (default: derived from intent).'),
     worktree_folder_name: z.string().optional().describe('Folder name/path for the worktree.'),

@@ -396,6 +396,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         deliver: bind(rt.deliver, notActive),
         readLive: bind(rt.readLive, () => null),
         analyze: bind(rt.analyze, () => null),
+        launchStatus: bind(rt.launchStatus, () => null),
       }, id);
     }
     // Lifecycle: where a store's watcher or an event subscription is started.
