@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { getExtensions } from './extensions/index.js';
 import { AGENT_SKILLS_PLUGIN_DIR, SKILLS_ROOT, skillsIn } from './skill-catalog.js';
+import { installPath } from './install-root.js';
 
 // Re-exported rather than relocated: the adapters and the devcontainer runtime
 // ask THIS module where the skills are, and skill-catalog.js exists only
@@ -25,13 +26,18 @@ export function skillEntries(skillsRoot = SKILLS_ROOT) {
 // skill names the way they claim tool names), so what is left here is the shape
 // of that refusal — a quarantined manifest whose directory is still on disk
 // must not reach an agent through the back door.
+//
+// A builtin extension's dir comes from its own import.meta.url, so its skills
+// are re-rooted onto INSTALL_ROOT here: every consumer of an entry's `dir` and
+// `path` hands it to a session (--plugin-dir, the Codex catalog, the
+// devcontainer copy list, which must match the --plugin-dir it translates).
 export function allSkillEntries(skillsRoot = SKILLS_ROOT, ext = getExtensions()) {
   const entries = skillEntries(skillsRoot);
   const seen = new Set(entries.map((e) => e.name));
   for (const { id, dir, skills } of ext.list || []) {
     if (!dir || !skills?.length) continue;
     const declared = new Set(skills);
-    for (const entry of skillsIn(path.join(dir, 'skills'), id)) {
+    for (const entry of skillsIn(installPath(path.join(dir, 'skills')), id)) {
       if (!declared.has(entry.name) || seen.has(entry.name)) continue;
       seen.add(entry.name);
       entries.push(entry);
