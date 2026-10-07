@@ -44,19 +44,18 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `fable` — Fable 5.1 · 1M context
 - `opus` — Opus 5.5 · 1M context (default)
 - `opusplan` — Opus plan · Sonnet execution
-- `sonnet` — Sonnet 5 · 200K context
-- `sonnet[1m]` — Sonnet 5 · 1M context
+- `sonnet` — Sonnet 5.5 · 200K context
+- `sonnet[1m]` — Sonnet 5.5 · 1M context
 - `haiku` — Haiku 4.5 · 200K context
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`
 
 **Codex** (`agent: "codex"`):
-- `gpt-6-astra` — GPT-6-Astra · Frontier intelligence for the most demanding work
-- `gpt-6-sol` — GPT-6-Sol · Workhorse model for coding and everyday work (default)
+- `gpt-6.1-sol` — GPT-6.1-Sol · Latest workhorse model for coding and everyday work
+- `gpt-6-sol` — GPT-6-Sol · Previous generation workhorse model (default)
 - `gpt-6-luna` — GPT-6-Luna · Fast and affordable model for easier tasks
-- `gpt-5.6-sol` — GPT-5.6-Sol · Older coding model for complex work
+- `gpt-5.6-sol` — GPT-5.6-Sol · Older generation workhorse model
 - `gpt-5.6-terra` — GPT-5.6-Terra · Older balanced model for straightforward work
 - `gpt-5.6-luna` — GPT-5.6-Luna · Older fast and efficient model
-- `gpt-5.5` — GPT-5.5 · Legacy coding model
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
 The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.

@@ -1,0 +1,110 @@
+name: Refresh catalog snapshots
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: refresh-catalog-snapshots
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      pr_url: ${{ steps.pr.outputs.url }}
+      slack: ${{ steps.slack.outputs.configured }}
+    steps:
+      - name: Check Slack webhook is configured
+        id: slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: echo "configured=${SLACK_WEBHOOK_URL:+true}" >> "$GITHUB_OUTPUT"
+
+      # A GITHUB_TOKEN-opened PR would not trigger the Test workflow; a SwigApp
+      # token minted via idcat does. The installation must grant contents: write
+      # and pull-requests: write on this repo.
+      - name: Mint token via idcat
+        id: idcat
+        uses: portswigger-cloud/github-actions/actions/idcat-token@main
+        with:
+          target-repository: PortSwigger/agent-wrangler
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # gen-catalog keeps the existing Codex snapshot when `codex` is absent, so a
+      # failed install degrades to a price-only refresh rather than failing the job.
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@0.160.1
+        continue-on-error: true
+
+      - run: npm run gen:catalog
+
+      - run: npm run gen:models
+
+      - name: Open or update the refresh PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.idcat.outputs.token }}
+        run: |
+          if git diff --quiet; then
+            echo "Snapshots already current"
+            exit 0
+          fi
+          branch=automation/refresh-catalog-snapshots
+          git config user.name "agent-wrangler-bot"
+          git config user.email "agent-wrangler-bot@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          git commit -m "Refresh model and price catalog snapshots"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url')
+          if [ -z "$url" ]; then
+            url=$(gh pr create --head "$branch" --base main \
+              --title "Refresh model and price catalog snapshots" \
+              --body "Scheduled \`npm run gen:catalog\` and \`npm run gen:models\`.")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+  notify-pr:
+    needs: [refresh]
+    if: needs.refresh.outputs.pr_url != '' && needs.refresh.outputs.slack == 'true'
+    uses: portswigger-apps/shared-workflows/.github/workflows/notify-slack.yaml@e6e203b62c30f7bf211cd79b8b6f2eae5a0927d5
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    with:
+      message-title: "Model and price catalog refresh needs review"
+      message-body-markdown: |
+        The weekly catalog snapshot refresh changed the bundled model or price lists.
+
+        *PR:* <${{ needs.refresh.outputs.pr_url }}|${{ needs.refresh.outputs.pr_url }}>
+
+  notify-failure:
+    needs: [refresh]
+    if: failure() && needs.refresh.outputs.slack == 'true'
+    uses: portswigger-apps/shared-workflows/.github/workflows/notify-slack.yaml@e6e203b62c30f7bf211cd79b8b6f2eae5a0927d5
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    with:
+      message-title: "Catalog snapshot refresh failed"
+      message-body-markdown: |
+        refresh-catalog-snapshots.yml failed.
+
+        *Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      message-sidebar-color: "#dc3545"

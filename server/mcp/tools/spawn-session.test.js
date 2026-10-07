@@ -130,12 +130,12 @@ test('spawn_session falls back to Ad-hoc for a null caller with no `into`', asyn
 test('spawn_session passes agent, model, cwd and worktree options through to dispatch', async () => {
   const d = deps();
   await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, {
-    intent: 'x', agent: 'codex', model: 'gpt-5.5', cwd: '/repo',
+    intent: 'x', agent: 'codex', model: 'gpt-6-sol', cwd: '/repo',
     worktree: true, worktree_branch: 'feat', worktree_folder_name: 'wt', worktree_auto: true,
   });
   const opts = d.calls.dispatch[0];
   assert.equal(opts.agent, 'codex');
-  assert.equal(opts.model, 'gpt-5.5');
+  assert.equal(opts.model, 'gpt-6-sol');
   assert.equal(opts.cwd, '/repo');
   assert.equal(opts.worktree, true);
   assert.equal(opts.worktreeBranch, 'feat');

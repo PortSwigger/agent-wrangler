@@ -152,6 +152,13 @@
    "cacheWrite5m": 2.5,
    "cacheWrite1h": 4,
    "cacheRead": 0.2
+  },
+  "claude-sonnet-5-5": {
+   "input": 2,
+   "output": 10,
+   "cacheWrite5m": 2.5,
+   "cacheWrite1h": 4,
+   "cacheRead": 0.2
   }
  },
  "openai": {
@@ -891,6 +898,19 @@
     "input": 4,
     "output": 15,
     "cacheRead": 0.4
+   }
+  },
+  "gpt-6.1-sol": {
+   "input": 2,
+   "output": 10,
+   "cacheWrite5m": 2.5,
+   "cacheWrite1h": 4,
+   "cacheRead": 0.1,
+   "long": {
+    "threshold": 272000,
+    "input": 4,
+    "output": 15,
+    "cacheRead": 0.2
    }
   },
   "gpt-audio": {
