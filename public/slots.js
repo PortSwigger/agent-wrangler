@@ -235,11 +235,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             renderer as the chat view and file preview; a non-string is
   //             reported and gives ''. Style the result with `.chat-prose` or
   //             the extension's own CSS.
-  //             `notify({ id, title, body, actions })` (1.23.0) raises a card
+  //             `notify({ id, title, body, actions, sessionId })` (1.23.0; sessionId 1.24.0) raises a card
   //             in the bottom-right stack (public/notifications.js) and
   //             resolves with the clicked action's id, or null when it is
   //             closed or withdrawn; `withdraw(id)` takes one down. The owner
   //             is forced to this extension, and its cards go when it does.
+//             A `sessionId` has the board print that session's task name
+//             under the title.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -294,6 +296,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             const bad = typeof o.id !== 'string' || !o.id ? 'id must be a non-empty string'
               : typeof o.title !== 'string' || !o.title ? 'title must be a non-empty string'
                 : o.body != null && typeof o.body !== 'string' ? 'body must be a string'
+                  : o.sessionId != null && typeof o.sessionId !== 'string' ? 'sessionId must be a string'
                   : actions.some((a) => !isPlainObject(a) || typeof a.id !== 'string' || typeof a.label !== 'string') ? 'each action needs a string id and label'
                     : null;
             if (bad) {
@@ -302,7 +305,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             }
             if (typeof baseApi.notify !== 'function') return Promise.resolve(null);
             return Promise.resolve(baseApi.notify(extId, {
-              id: o.id, title: o.title, body: o.body || '',
+              id: o.id, title: o.title, body: o.body || '', sessionId: o.sessionId || null,
               actions: actions.map((a) => ({ id: a.id, label: a.label, primary: Boolean(a.primary) })),
             }));
           },

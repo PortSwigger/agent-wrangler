@@ -1262,7 +1262,18 @@ test('ui.notify forces the owner, normalises actions and passes the answer back'
   const seen = [];
   const { api } = uiHarness({ notify: (owner, o) => { seen.push([owner, o]); return Promise.resolve('archive'); } });
   assert.equal(await api.ui.notify({ id: 'k', title: 'T', actions: [{ id: 'archive', label: 'Archive', primary: 1, extra: 'x' }] }), 'archive');
-  assert.deepEqual(seen, [['fake', { id: 'k', title: 'T', body: '', actions: [{ id: 'archive', label: 'Archive', primary: true }] }]]);
+  assert.deepEqual(seen, [['fake', { id: 'k', title: 'T', body: '', sessionId: null, actions: [{ id: 'archive', label: 'Archive', primary: true }] }]]);
+});
+
+test('ui.notify passes a sessionId through and refuses a non-string one', async () => {
+  const seen = [];
+  const { api, errors } = uiHarness({ notify: (owner, o) => { seen.push(o.sessionId); return Promise.resolve(null); } });
+  await api.ui.notify({ id: 'k', title: 'T', sessionId: 's1' });
+  await api.ui.notify({ id: 'k', title: 'T' });
+  assert.deepEqual(seen, ['s1', null]);
+  assert.equal(await api.ui.notify({ id: 'k', title: 'T', sessionId: 7 }), null);
+  assert.equal(seen.length, 2);
+  assert.match(errors[0], /sessionId must be a string/);
 });
 
 test('ui.notify refuses a malformed card without raising anything', async () => {

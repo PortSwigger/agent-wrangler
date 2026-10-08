@@ -6,11 +6,12 @@
 //
 // Cards are keyed `<owner>:<id>`, the owner being the extension id, so one
 // extension can neither replace nor withdraw another's. All text is set as
-// text.
+// text. A card naming a `sessionId` shows that session's task name under the
+// title, resolved by `taskNameFor` each time the card is drawn.
 
 export const MAX_ACTIONS = 3;
 
-export function createNotifications({ document }) {
+export function createNotifications({ document, taskNameFor = () => null }) {
   let stack = null;
   // key -> { el, resolvers }
   const open = new Map();
@@ -34,7 +35,7 @@ export function createNotifications({ document }) {
     for (const resolve of entry.resolvers) resolve(answer);
   }
 
-  function fill(el, key, { title, body, actions }) {
+  function fill(el, key, { title, body, actions, sessionId }) {
     el.replaceChildren();
     const close = document.createElement('button');
     close.className = 'notif-close';
@@ -45,6 +46,13 @@ export function createNotifications({ document }) {
     head.className = 'notif-title';
     head.textContent = title;
     el.append(close, head);
+    const taskName = sessionId ? taskNameFor(sessionId) : null;
+    if (taskName) {
+      const t = document.createElement('div');
+      t.className = 'notif-task';
+      t.textContent = taskName;
+      el.append(t);
+    }
     if (body) {
       const p = document.createElement('div');
       p.className = 'notif-body';
@@ -69,7 +77,7 @@ export function createNotifications({ document }) {
     // Resolves with the clicked action's id, or null when closed or withdrawn.
     // Showing an id that is already up updates it in place, and every caller
     // waiting on it gets the same answer.
-    show(owner, { id, title, body = '', actions = [] }) {
+    show(owner, { id, title, body = '', actions = [], sessionId = null }) {
       const key = `${owner}:${id}`;
       return new Promise((resolve) => {
         let entry = open.get(key);
@@ -81,7 +89,7 @@ export function createNotifications({ document }) {
           root().append(el);
         }
         entry.resolvers.push(resolve);
-        fill(entry.el, key, { title, body, actions: actions.slice(0, MAX_ACTIONS) });
+        fill(entry.el, key, { title, body, actions: actions.slice(0, MAX_ACTIONS), sessionId });
       });
     },
     withdraw(owner, id) { settle(`${owner}:${id}`, null); },

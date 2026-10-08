@@ -73,3 +73,20 @@ test('at most MAX_ACTIONS buttons are drawn', () => {
   n.show('ext', { id: 'a', title: 'T', actions: Array.from({ length: 5 }, (_, i) => ({ id: String(i), label: String(i) })) });
   assert.equal(buttons(cards(doc)[0]).length, MAX_ACTIONS);
 });
+
+test('a card for a session shows its task name under the title, resolved on every draw', () => {
+  const doc = fakeDocument();
+  const tasks = { s1: 'Alpha' };
+  const n = createNotifications({ document: doc, taskNameFor: (id) => tasks[id] || null });
+  n.show('ext', { id: 'a', title: 'A', body: 'why', sessionId: 's1' });
+  n.show('ext', { id: 'b', title: 'B', sessionId: 'none' });
+  n.show('ext', { id: 'c', title: 'C' });
+  const [a, b, c] = cards(doc);
+  assert.deepEqual(a.children.map((k) => k.className), ['notif-close', 'notif-title', 'notif-task', 'notif-body']);
+  assert.equal(find(a, 'notif-task').textContent, 'Alpha');
+  assert.equal(find(b, 'notif-task'), undefined);
+  assert.equal(find(c, 'notif-task'), undefined);
+  tasks.s1 = 'Renamed';
+  n.show('ext', { id: 'a', title: 'A', sessionId: 's1' });
+  assert.equal(find(cards(doc)[0], 'notif-task').textContent, 'Renamed');
+});

@@ -193,7 +193,7 @@ function noteExtClientFacts(list) {
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
-const notifications = createNotifications({ document });
+const notifications = createNotifications({ document, taskNameFor: (sessionId) => taskForSession(sessionId)?.name || null });
 const slots = createSlots({
   document,
   onExtensionRemoved: (id) => notifications.clear(id),
