@@ -836,6 +836,17 @@ test('codex: injected role:user wrappers are dropped rather than shown as human 
   );
 });
 
+test('codex: a goal-continuation prompt becomes a collapsed context event, not a user bubble', () => {
+  const text = '<codex_internal_context source="goal">\nContinue working toward the active thread goal.\n</codex_internal_context>';
+  const { events } = scanChatText(codexLines({
+    type: 'response_item', timestamp: '2026-09-06T10:00:00.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  }), 'codex');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'context');
+  assert.equal(events[0].label, 'Codex goal');
+  assert.equal(events[0].text, text);
+});
 
 test('codex: an apply_patch arriving as a custom_tool_call still reports its +/- counts', () => {
   // apply_patch uses the custom-tool shape, with the whole diff as raw `input`

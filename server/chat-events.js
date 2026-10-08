@@ -424,6 +424,11 @@ const CODEX_SYNTHETIC_PREFIXES = [
   '# AGENTS.md instructions', '<recommended_plugins>', '<in-app-browser-context',
   '<user_shell_command>',
 ];
+// Codex wraps its own injected prompts (the goal-continuation nudge, ...) as a
+// user message. Unlike the plumbing above these are worth keeping reachable, but
+// as a collapsed row — never a human bubble, and never restore-prompt's "newest
+// user turn".
+const CODEX_INTERNAL_CONTEXT_RE = /^\s*<codex_internal_context source="([^"]+)">/;
 function isSyntheticCodex(text) {
   const head = text.slice(0, 40).trimStart();
   return CODEX_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
@@ -491,6 +496,13 @@ function pushCodex(entry, state) {
     if (!role) return out;
     const text = codexText(p.content);
     if (!text) return out;
+    if (role === 'user') {
+      const internal = CODEX_INTERNAL_CONTEXT_RE.exec(text);
+      if (internal) {
+        out.push({ kind: 'context', label: `Codex ${internal[1]}`, text, ts });
+        return out;
+      }
+    }
     if (role === 'user' && (isSynthetic(text) || isSyntheticCodex(text))) return out;
     if (role === 'user') out.push({ kind: 'user', text, ts });
     else out.push({ kind: 'assistant', text, ts, model: state.model || null });
