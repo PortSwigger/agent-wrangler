@@ -46,7 +46,7 @@ async function wakeDormant(to, entry, deps) {
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };
   if (tmuxFor(to)) return { mode: 'deferred', reason: 'woken by another resume, delivering next sweep' };
   try {
-    await sessionManager.resume(to, dir, { reason: 'mail', keepArchived: true });
+    await sessionManager.resume(to, dir, { reason: 'mail', automatic: true });
   } catch (err) {
     if (sessionManager.entryFor(to)?.archivedAt) return { mode: 'skip' };
     throw err;

@@ -938,7 +938,7 @@ test('_doResume: devcontainer skips the host transcript guard and wraps in a dev
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('_doResume: keepArchived discards a relaunch when the card was archived mid-launch', async () => {
+test('_doResume: automatic discards a relaunch when the card was archived mid-launch', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-keep-arch-'));
   const sm = new SessionManager();
   sm.map.clear();
@@ -950,10 +950,27 @@ test('_doResume: keepArchived discards a relaunch when the card was archived mid
   let launched;
   sm._newSession = async (tmux) => { launched = tmux; sm.map.get('c1').archivedAt = 5; };
   sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
-  await assert.rejects(() => sm._doResume('c1', dir, { keepArchived: true }), /archived during resume/);
+  await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived during resume/);
   assert.equal(sm.map.get('c1').archivedAt, 5);
   assert.deepEqual(tmuxCalls, [['kill-session', '-t', launched]]);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('_doResume: an automatic wake keeps a pending snooze, a plain resume drops it', async () => {
+  for (const [automatic, kept] of [[true, true], [false, false]]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-snooze-keep-'));
+    const sm = new SessionManager();
+    sm.map.clear();
+    sm.killForSession = async () => [];
+    sm._save = () => {};
+    sm.refreshAlive = async () => {};
+    sm._newSession = async () => {};
+    const snooze = { until: Date.now() + 3600_000, createdAt: 1, comment: 'recheck' };
+    sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir, snooze });
+    await sm._doResume('c1', dir, { automatic });
+    assert.deepEqual(sm.map.get('c1').snooze, kept ? snooze : undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('_doResume: a devcontainer workflow session resumes with the issue-to-pr skill copied in', async () => {

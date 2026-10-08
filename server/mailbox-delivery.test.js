@@ -55,7 +55,7 @@ test('dormant recipient is resumed bare, with the notification left for the gate
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.equal(mode.mode, 'deferred');
   assert.equal(d.resumed.length, 1);
-  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail', keepArchived: true }]);
+  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail', automatic: true }]);
   assert.deepEqual(d.sent, []);
 });
 
