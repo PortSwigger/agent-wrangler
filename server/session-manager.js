@@ -1151,7 +1151,7 @@ export class SessionManager {
     // An automatic caller (mail wake) must not resurrect a card archived while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
     if (keepArchived && this.map.get(sessionId)?.archivedAt) {
-      await this.killForSession(sessionId);
+      await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
       throw new Error(`Session ${sessionId} was archived during resume; relaunch discarded.`);
     }
     // Rebuild the entry without `archivedAt` (so it returns to the board) while

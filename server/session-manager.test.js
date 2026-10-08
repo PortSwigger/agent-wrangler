@@ -942,15 +942,17 @@ test('_doResume: keepArchived discards a relaunch when the card was archived mid
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-keep-arch-'));
   const sm = new SessionManager();
   sm.map.clear();
-  let killed = 0;
-  sm.killForSession = async () => { killed += 1; return []; };
+  sm.killForSession = async () => [];
+  const tmuxCalls = [];
+  sm._tmux = async (socket, args) => { tmuxCalls.push(args); };
   sm._save = () => {};
   sm.refreshAlive = async () => {};
-  sm._newSession = async () => { sm.map.get('c1').archivedAt = 5; };
+  let launched;
+  sm._newSession = async (tmux) => { launched = tmux; sm.map.get('c1').archivedAt = 5; };
   sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
   await assert.rejects(() => sm._doResume('c1', dir, { keepArchived: true }), /archived during resume/);
   assert.equal(sm.map.get('c1').archivedAt, 5);
-  assert.equal(killed, 2); // the pre-launch teardown plus the discarded relaunch
+  assert.deepEqual(tmuxCalls, [['kill-session', '-t', launched]]);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
