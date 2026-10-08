@@ -1308,7 +1308,7 @@ function flashPr(url) {
 function cardCtx() {
   return {
     selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
-    justFinished, cardState, barWord, phaseOf, ADHOC_ID,
+    justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, now: Date.now(),
