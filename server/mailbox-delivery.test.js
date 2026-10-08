@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { createPaneDeferral } from './pane-deferral.js';
 
@@ -48,21 +49,32 @@ test('dormant recipient keeps its mail unread without being resumed', async () =
   assert.deepEqual(d.sent, []);
 });
 
-test('dormant recipient is woken with the notification when wakesDormant is on', async () => {
-  const d = deps({ entries: { CARD1: { cwd: '/tmp/session' } } });
-  const calls = [];
+test('dormant recipient is resumed bare, with the notification left for the gated live path', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
   d.wakesDormant = () => true;
-  d.deliverMessage = async (...args) => { calls.push(args); return { mode: 'dormant' }; };
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
-  assert.deepEqual(mode, { mode: 'live' });
-  assert.deepEqual(calls.map((c) => [c[0], c[1], c[3]]), [['CARD1', 'you have mail', { reason: 'mail' }]]);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 1);
+  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail' }]);
+  assert.deepEqual(d.sent, []);
 });
 
-test('a failed wake is reported as an error so the mail is retried', async () => {
-  const d = deps({ entries: { CARD1: {} } });
+test('a dormant recipient archived before the wake is skipped, not resumed', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
   d.wakesDormant = () => true;
-  d.deliverMessage = async () => ({ mode: 'error', error: 'boom' });
-  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'error', error: 'boom' });
+  const entry = d.sessionManager.entryFor('CARD1');
+  const real = d.sessionManager.entryFor;
+  let calls = 0;
+  d.sessionManager.entryFor = (id) => (++calls > 1 ? { ...entry, archivedAt: 1 } : real(id));
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a failed resume propagates so the sweep reopens the settle window', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => { throw new Error('boom'); };
+  await assert.rejects(deliverMailNotification('CARD1', 'x', d), /boom/);
 });
 
 test('live recipient archived during its settle window is skipped', async () => {
