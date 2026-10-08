@@ -570,6 +570,9 @@ test('tileHtml: carries the restored-task halo class only when this tile is the 
   assert.match(tileHtml(tile, ctx({ restoredTaskId: 'T1' })), /task-cell task-restored-flash"/);
   assert.doesNotMatch(tileHtml(tile, ctx({ restoredTaskId: 'T2' })), /task-restored-flash/);
   assert.doesNotMatch(tileHtml(tile, ctx()), /task-restored-flash/);
+  const notask = { kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] };
+  assert.match(tileHtml(notask, ctx({ restoredTaskId: 'adhoc' })), /task-cell no-task task-restored-flash"/);
+  assert.doesNotMatch(tileHtml(notask, ctx({ restoredTaskId: 'T1' })), /task-restored-flash/);
 });
 
 test('tileHtml: both tile kinds carry the actions kebab (sort/focus/minimise/memory/delete now live in its menu)', () => {

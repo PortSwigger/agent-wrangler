@@ -1338,3 +1338,18 @@ test('safeChipIcon keeps a plain path-only svg and refuses anything that could c
     assert.equal(safeChipIcon(bad), '', String(bad));
   }
 });
+
+test('openTask hands a task id to the base api and returns its answer', () => {
+  const opened = [];
+  const h = harness();
+  let api = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { api = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, { openTask: (id) => { opened.push(id); return id === 't1'; } });
+  assert.equal(api.openTask('t1'), true);
+  assert.equal(api.openTask('gone'), false);
+  assert.equal(api.openTask(''), false);
+  assert.equal(api.openTask({ id: 't1' }), false);
+  assert.deepEqual(opened, ['t1', 'gone']);
+  assert.equal(h.errors.length, 2);
+  assert.match(h.errors[0], /\[ext:fake\] openTask refused: expected a task id, got ""/);
+});
