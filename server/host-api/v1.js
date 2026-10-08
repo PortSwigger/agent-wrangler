@@ -223,6 +223,16 @@ const tasksWrite = ({ core }) => ({
   },
 });
 
+// Archive the task and every live session assigned to it, exactly as the tile's
+// Archive does. Its own capability rather than part of `tasks:write`: an
+// existing consent to rename and assign must not silently grow into one that
+// kills panes.
+const tasksArchive = ({ archiveTask }) => ({
+  tasks: {
+    archive: (taskId) => archiveTask(taskId),
+  },
+});
+
 // `memory.*` is PROVIDED by the task-memory extension: index.js wires
 // `memoryProvider` to that extension's store while it is active, and to null
 // otherwise. With the provider gone these answer "not available" — null for a
@@ -399,6 +409,7 @@ export const V1_BUILDERS = {
   'sessions:kill': sessionsKill,
   'tasks:read': tasksRead,
   'tasks:write': tasksWrite,
+  'tasks:archive': tasksArchive,
   'memory:read': memoryRead,
   'memory:append': memoryAppend,
   events: eventsCap,
