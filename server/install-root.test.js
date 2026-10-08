@@ -21,6 +21,13 @@ test('AW_INSTALL_ROOT wins only when it resolves to the running app, and never i
     ['/stable/aw', true, sourceRoot, 0],
     ['/stable/old', false, sourceRoot, 1],
     ['/stable/typo', false, sourceRoot, 1],
+    // One reading only: relative values and dot segments are refused before
+    // any resolution, even when they would reach the running app.
+    ['stable/aw', false, sourceRoot, 1],
+    ['/stable/./aw', false, sourceRoot, 1],
+    ['/stable/old/../aw', false, sourceRoot, 1],
+    ['/stable/aw/..', false, sourceRoot, 1],
+    ['/stable//aw', false, '/stable/aw', 0],
   ]) {
     const warned = [];
     const got = resolveInstallRoot({ installRoot, dev, sourceRoot, realpath, warn: (m) => warned.push(m) });

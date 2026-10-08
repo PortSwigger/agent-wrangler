@@ -37,10 +37,22 @@ export const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.
 // directory. So a mismatch is refused loudly and the real directory is used.
 // The native realpath, as in self-update.js: on a case-insensitive filesystem
 // only it returns the on-disk case for both sides.
+//
+// The value must also be absolute with no `.` or `..` segment. Lexical
+// normalisation of `a/link/../b` (path.resolve) and the filesystem's walk
+// through `link` reach different directories, and a relative value depends on
+// the cwd. Refusing both leaves one reading of the value, which
+// bin/agent-wrangler can check with `-ef` and use verbatim for its
+// node_modules/.bin PATH entry. It applies all of these rules; keep the two in step.
 export function resolveInstallRoot({
   installRoot, dev, sourceRoot = SOURCE_ROOT, realpath = fs.realpathSync.native, warn = logWarn,
 }) {
   if (!installRoot || dev) return sourceRoot;
+  if (!path.isAbsolute(installRoot) || installRoot.split('/').some((seg) => seg === '.' || seg === '..')) {
+    warn(`[agent-wrangler] AW_INSTALL_ROOT ignored: ${installRoot} must be an absolute path with no . or .. segments; sessions use ${sourceRoot}`);
+    return sourceRoot;
+  }
+  // Only collapses repeated and trailing slashes now, which never change the target.
   const root = path.resolve(installRoot);
   let resolved;
   try {

@@ -32,9 +32,9 @@ function fixture(t) {
   return { root, env };
 }
 
-function run(root, env, file = 'bin/agent-wrangler') {
+function run(root, env, file = 'bin/agent-wrangler', cwd = root) {
   return spawnSync(path.join(root, file), [], {
-    cwd: root, env, encoding: 'utf8', timeout: 10000,
+    cwd, env, encoding: 'utf8', timeout: 10000,
   });
 }
 
@@ -152,6 +152,72 @@ test('launcher appends the sbin dirs a bare supervisor PATH omits', t => {
   assert.deepEqual(dirs.slice(0, 2), ['/usr/bin', '/bin'], 'system dirs keep precedence');
   assert.ok(dirs.includes('/usr/sbin') && dirs.includes('/sbin'), result.stdout);
 });
+
+// The tmux server keeps the launcher's PATH, so the node_modules/.bin entry
+// follows AW_INSTALL_ROOT on the server's terms (server/install-root.js): only
+// an absolute path with no `.` or `..` segment that is this app, and never in a
+// dev instance. The value goes into PATH exactly as checked.
+//
+// The case flip is in the fixture's own name, a real directory. Flipping the
+// first letter of the path would hit macOS's /var, a symlink, where comparing
+// `pwd -P` strings (the wrong check, since it keeps the typed case) also passes.
+function caseFlipped(p) {
+  const base = path.basename(p).replace(/[a-z]/i, ch => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()));
+  return path.join(path.dirname(p), base);
+}
+
+const binRootCases = [
+  { name: 'unset', installRoot: () => undefined, expect: 'root' },
+  { name: 'a symlink to the app', installRoot: ({ link }) => link, expect: 'link' },
+  { name: 'a symlink with a trailing slash', installRoot: ({ link }) => `${link}/`, expect: 'link' },
+  // Relative: refused even though it reaches the app from the launcher's cwd.
+  // CDPATH would also make a `cd` print the path and pick its own directory.
+  {
+    name: 'a relative path, with CDPATH set',
+    installRoot: ({ link }) => path.basename(link),
+    cwd: ({ link }) => path.dirname(link),
+    env: ({ link }) => ({ CDPATH: path.dirname(link) }),
+    expect: 'root',
+  },
+  // `<links>/opt/..` walks the filesystem through opt to the app's parent, so
+  // `-ef` alone matches the app. Lexically (path.resolve, a logical `cd`) the
+  // same value names <links>/<app name>, an unrelated directory that exists.
+  { name: 'a `..` through the symlink', installRoot: ({ root, links }) => `${links}/opt/../${path.basename(root)}`, expect: 'root' },
+  { name: 'a `.` segment', installRoot: ({ link }) => `${link}/.`, expect: 'root' },
+  { name: 'a symlink in a dev instance', installRoot: ({ link }) => link, env: () => ({ AW_DEV: '1' }), expect: 'root' },
+  { name: 'another directory', installRoot: ({ other }) => other, expect: 'root' },
+  { name: 'a missing directory', installRoot: ({ root }) => path.join(root, 'missing'), expect: 'root' },
+  {
+    name: 'the app through a differently-cased path',
+    installRoot: ({ root }) => caseFlipped(root),
+    skip: root => !fs.existsSync(caseFlipped(root)) && 'case-sensitive filesystem',
+    expect: 'flipped',
+  },
+];
+
+for (const { name, installRoot, env: extra = () => ({}), cwd = ({ root }) => root, skip, expect } of binRootCases) {
+  test(`launcher PATH takes node_modules/.bin from AW_INSTALL_ROOT: ${name}`, t => {
+    const { root, env } = fixture(t);
+    const reason = skip?.(root);
+    if (reason) return t.skip(reason);
+    const link = path.join(root, '..', `${path.basename(root)}-opt`);
+    fs.symlinkSync(root, link);
+    t.after(() => fs.rmSync(link, { force: true }));
+    const links = path.join(root, '..', `${path.basename(root)}-links`);
+    fs.mkdirSync(path.join(links, path.basename(root), 'node_modules/.bin'), { recursive: true });
+    fs.symlinkSync(root, path.join(links, 'opt'));
+    t.after(() => fs.rmSync(links, { recursive: true, force: true }));
+    const other = path.join(root, 'home');
+    const ctx = { root, link, links, other };
+    const value = installRoot(ctx);
+    fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
+    const result = run(root, { ...env, ...extra(ctx), ...(value ? { AW_INSTALL_ROOT: value } : {}) }, 'bin/agent-wrangler', cwd(ctx));
+    assert.equal(result.status, 0, result.stderr);
+    const want = { root, link, flipped: caseFlipped(root) }[expect];
+    const entries = result.stdout.trim().split(':').filter(dir => dir.endsWith('node_modules/.bin'));
+    assert.deepEqual(entries, [path.join(want, 'node_modules/.bin')]);
+  });
+}
 
 // The launcher no longer touches tmux: a server's PATH is refreshed by the server
 // itself, on its own socket (SessionManager.refreshTmuxPath). The old launcher
