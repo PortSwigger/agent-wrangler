@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { createPaneDeferral } from './pane-deferral.js';
 
@@ -46,6 +47,85 @@ test('dormant recipient keeps its mail unread without being resumed', async () =
   assert.deepEqual(mode, { mode: 'deferred', reason: 'no tmux target' });
   assert.equal(d.resumed.length, 0);
   assert.deepEqual(d.sent, []);
+});
+
+test('dormant recipient is resumed bare, with the notification left for the gated live path', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 1);
+  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail', automatic: true }]);
+  assert.deepEqual(d.sent, []);
+});
+
+test('a snoozed dormant recipient is never woken for mail', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir(), snooze: { until: Date.now() + 3600_000, createdAt: 1 } } } });
+  d.wakesDormant = () => true;
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a dormant recipient archived before the wake is skipped, not resumed', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const entry = d.sessionManager.entryFor('CARD1');
+  const real = d.sessionManager.entryFor;
+  let calls = 0;
+  d.sessionManager.entryFor = (id) => (++calls > 1 ? { ...entry, archivedAt: 1 } : real(id));
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a recipient that went live during the directory lookup is not resumed again', async () => {
+  const live = {};
+  const d = deps({ live, entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const tmuxFor = d.tmuxFor;
+  let calls = 0;
+  d.tmuxFor = (id) => (++calls > 1 ? 'cc_other' : tmuxFor(id));
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a resume that loses to an archive is skipped, not retried', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => {
+    d.sessionManager.entryFor('CARD1').archivedAt = 1;
+    throw new Error('archived during resume');
+  };
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
+});
+
+test('a snooze set during the wake window defers the mail without resuming', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const entry = d.sessionManager.entryFor('CARD1');
+  let calls = 0;
+  d.sessionManager.entryFor = () => (++calls > 1 ? { ...entry, snooze: { until: 1, createdAt: 1 } } : entry);
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a resume discarded because a snooze appeared mid-launch defers instead of erroring', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => {
+    d.sessionManager.entryFor('CARD1').snooze = { until: 1, createdAt: 1 };
+    throw new Error('discarded');
+  };
+  assert.equal((await deliverMailNotification('CARD1', 'x', d)).mode, 'deferred');
+});
+
+test('a failed resume propagates so the sweep reopens the settle window', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => { throw new Error('boom'); };
+  await assert.rejects(deliverMailNotification('CARD1', 'x', d), /boom/);
 });
 
 test('live recipient archived during its settle window is skipped', async () => {

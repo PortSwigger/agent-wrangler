@@ -1046,7 +1046,7 @@ export class SessionManager {
 
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
-  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified' } = {}) {
+  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false } = {}) {
     const prev = this.map.get(sessionId);
     // A runtime that can't be resumed (or one whose extension is gone) refuses
     // HERE, before the kill below: a held pane may be the only thing keeping a
@@ -1148,6 +1148,12 @@ export class SessionManager {
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
+    // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
+    // launch was in flight. Nothing awaits between this check and the map.set below.
+    if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
+      await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
+      throw new Error(`Session ${sessionId} was archived or snoozed during resume; relaunch discarded.`);
+    }
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this

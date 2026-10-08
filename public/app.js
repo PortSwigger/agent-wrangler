@@ -139,6 +139,7 @@ let subagentsExpandedByDefault = false; // server config flag, carried on every 
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
+let mailWakesDormant = false;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
@@ -600,6 +601,7 @@ function applyGraph(graph) {
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
+  mailWakesDormant = graph.mailWakesDormant === true;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   autoUpdate = graph.autoUpdate || 'notify';
@@ -5829,6 +5831,7 @@ initSettings({
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
+      if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'autoUpdate') return autoUpdate;
@@ -5858,6 +5861,9 @@ initSettings({
       } else if (id === 'archiveReviewEnabled') {
         archiveReviewEnabled = Boolean(value);
         send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
+      } else if (id === 'mailWakesDormant') {
+        mailWakesDormant = Boolean(value);
+        send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
