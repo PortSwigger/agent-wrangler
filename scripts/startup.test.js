@@ -156,13 +156,23 @@ test('launcher appends the sbin dirs a bare supervisor PATH omits', t => {
 // The tmux server keeps the launcher's PATH, so the node_modules/.bin entry
 // follows AW_INSTALL_ROOT on the server's terms (server/install-root.js): only
 // when it is this app, and never in a dev instance.
+//
+// The case flip is in the fixture's own name, a real directory. Flipping the
+// first letter of the path would hit macOS's /var, a symlink, where comparing
+// `pwd -P` strings (the wrong check, since it keeps the typed case) also passes.
 function caseFlipped(p) {
-  return p.replace(/[a-z]/i, ch => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()));
+  const base = path.basename(p).replace(/[a-z]/i, ch => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()));
+  return path.join(path.dirname(p), base);
 }
 
 const binRootCases = [
   { name: 'unset', installRoot: () => undefined, expect: 'root' },
   { name: 'a symlink to the app', installRoot: ({ link }) => link, expect: 'link' },
+  // Resolved against the launcher's cwd, which the shell reports physically
+  // (macOS's /var is /private/var), as Node's path.resolve does; the symlink
+  // named in the value itself is kept.
+  { name: 'a relative symlink, made absolute', installRoot: ({ link }) => path.join('..', path.basename(link)), expect: 'relativeLink' },
+  { name: 'a symlink with a trailing slash', installRoot: ({ link }) => `${link}/`, expect: 'link' },
   { name: 'a symlink in a dev instance', installRoot: ({ link }) => link, env: { AW_DEV: '1' }, expect: 'root' },
   { name: 'another directory', installRoot: ({ other }) => other, expect: 'root' },
   { name: 'a missing directory', installRoot: ({ root }) => path.join(root, 'missing'), expect: 'root' },
@@ -187,7 +197,8 @@ for (const { name, installRoot, env: extra = {}, skip, expect } of binRootCases)
     fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
     const result = run(root, { ...env, ...extra, ...(value ? { AW_INSTALL_ROOT: value } : {}) });
     assert.equal(result.status, 0, result.stderr);
-    const want = { root, link, flipped: caseFlipped(root) }[expect];
+    const relativeLink = path.join(fs.realpathSync(path.dirname(link)), path.basename(link));
+    const want = { root, link, relativeLink, flipped: caseFlipped(root) }[expect];
     const entries = result.stdout.trim().split(':').filter(dir => dir.endsWith('node_modules/.bin'));
     assert.deepEqual(entries, [path.join(want, 'node_modules/.bin')]);
   });

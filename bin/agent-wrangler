@@ -54,10 +54,12 @@ fi
 # Honoured on the server's terms (server/install-root.js): never in a dev
 # instance, and only when it is this app. `-ef` compares the resolved files, so
 # a symlink or a differently-cased path on a case-insensitive volume still
-# matches. A mismatch falls back silently; the server logs it.
+# matches. A mismatch falls back silently; the server logs it. Made absolute
+# like the server's path.resolve, so the entry works from any pane's cwd, with
+# a logical `pwd` (not -P) so the upgrade-stable symlink itself is kept.
 bin_root="$ROOT"
 if [ -n "${AW_INSTALL_ROOT:-}" ] && [ -z "${AW_DEV:-}" ] && [ "$AW_INSTALL_ROOT" -ef "$ROOT" ]; then
-  bin_root="$AW_INSTALL_ROOT"
+  bin_root="$(cd "$AW_INSTALL_ROOT" && pwd)" || bin_root="$ROOT"
 fi
 PATH="$PATH:$bin_root/node_modules/.bin"
 
