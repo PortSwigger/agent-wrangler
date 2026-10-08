@@ -55,7 +55,7 @@ test('dormant recipient is resumed bare, with the notification left for the gate
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.equal(mode.mode, 'deferred');
   assert.equal(d.resumed.length, 1);
-  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail' }]);
+  assert.deepEqual([d.resumed[0][0], d.resumed[0][2]], ['CARD1', { reason: 'mail', keepArchived: true }]);
   assert.deepEqual(d.sent, []);
 });
 
@@ -68,6 +68,28 @@ test('a dormant recipient archived before the wake is skipped, not resumed', asy
   d.sessionManager.entryFor = (id) => (++calls > 1 ? { ...entry, archivedAt: 1 } : real(id));
   assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
   assert.equal(d.resumed.length, 0);
+});
+
+test('a recipient that went live during the directory lookup is not resumed again', async () => {
+  const live = {};
+  const d = deps({ live, entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const tmuxFor = d.tmuxFor;
+  let calls = 0;
+  d.tmuxFor = (id) => (++calls > 1 ? 'cc_other' : tmuxFor(id));
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a resume that loses to an archive is skipped, not retried', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => {
+    d.sessionManager.entryFor('CARD1').archivedAt = 1;
+    throw new Error('archived during resume');
+  };
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
 });
 
 test('a failed resume propagates so the sweep reopens the settle window', async () => {

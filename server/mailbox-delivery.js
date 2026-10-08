@@ -37,14 +37,20 @@ export async function deliverMailNotification(to, text, deps) {
 }
 
 async function wakeDormant(to, entry, deps) {
-  const { sessionManager } = deps;
+  const { sessionManager, tmuxFor } = deps;
   let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
   if (!dir || !fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
   }
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };
-  await sessionManager.resume(to, dir, { reason: 'mail' });
+  if (tmuxFor(to)) return { mode: 'deferred', reason: 'woken by another resume, delivering next sweep' };
+  try {
+    await sessionManager.resume(to, dir, { reason: 'mail', keepArchived: true });
+  } catch (err) {
+    if (sessionManager.entryFor(to)?.archivedAt) return { mode: 'skip' };
+    throw err;
+  }
   return { mode: 'deferred', reason: 'woken dormant session, delivering next sweep' };
 }
 
