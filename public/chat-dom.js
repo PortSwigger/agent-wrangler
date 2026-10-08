@@ -189,6 +189,14 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       }
       return wrap;
     }
+    if (item.type === 'context') {
+      const wrap = el('div', 'chat-thinking');
+      wrap.appendChild(chipButton('chat-thinking-chip', 'chat-thinking-label', e.label || 'Context'));
+      const body = el('div', 'chat-thinking-body', e.text);
+      body.dataset.collapsed = '1';
+      wrap.appendChild(body);
+      return wrap;
+    }
     if (item.type === 'recap') {
       const wrap = el('div', 'chat-recap');
       wrap.appendChild(el('div', 'chat-recap-label', 'Recap'));

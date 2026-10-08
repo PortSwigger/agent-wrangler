@@ -836,6 +836,41 @@ test('codex: injected role:user wrappers are dropped rather than shown as human 
   );
 });
 
+test('codex: a goal-continuation prompt becomes a collapsed context event, not a user bubble', () => {
+  const text = '<codex_internal_context source="goal">\nContinue working toward the active thread goal.\n</codex_internal_context>';
+  const { events } = scanChatText(codexLines({
+    type: 'response_item', timestamp: '2026-09-06T10:00:00.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  }), 'codex');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'context');
+  assert.equal(events[0].label, 'Codex goal');
+  assert.equal(events[0].text, text);
+});
+
+test('codex: a human message merely starting with the context tag stays a user turn', () => {
+  const say = (text, ts) => ({
+    type: 'response_item', timestamp: ts,
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  });
+  const open = '<codex_internal_context source="goal">\nWhy is this shown?';
+  const wrapped = '<codex_internal_context source="goal">\nx\n</codex_internal_context>\nExplain this XML';
+  const { events } = scanChatText(codexLines(
+    say(open, '2026-09-06T10:00:00.000Z'),
+    say(wrapped, '2026-09-06T10:00:01.000Z'),
+  ), 'codex');
+  assert.deepEqual(events.map((e) => e.kind), ['user', 'user']);
+});
+
+test('codex: a context event advances lastTs so later reasoning durations are not inflated', () => {
+  const scanner = createChatScanner('codex');
+  const text = '<codex_internal_context source="goal">\nx\n</codex_internal_context>';
+  scanner.push(JSON.stringify({
+    type: 'response_item', timestamp: '2026-09-06T10:00:00.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  }));
+  assert.equal(scanner.lastTs(), Date.parse('2026-09-06T10:00:00.000Z'));
+});
 
 test('codex: an apply_patch arriving as a custom_tool_call still reports its +/- counts', () => {
   // apply_patch uses the custom-tool shape, with the whole diff as raw `input`
