@@ -217,7 +217,11 @@ import semver from 'semver';
 // tile's Archive: the task and every live session assigned to it) and the
 // client `api.ui.notify`/`withdraw`, a stack of persistent notifications for
 // something the human did not ask about. A manifest calling either declares `^1.23.0`.
-export const HOST_API_VERSION = '1.23.0';
+//
+// 1.24.0 adds the client `api.openTask(taskId)`, the task counterpart of
+// `api.openSession`: it shows the task's tile on the board, restoring it from
+// the tray if it was minimised. A manifest calling it declares `^1.24.0`.
+export const HOST_API_VERSION = '1.24.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
