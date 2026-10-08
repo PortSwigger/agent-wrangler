@@ -1,0 +1,74 @@
+name: 'idcat Token'
+description: 'Exchange the workflow OIDC token for a GitHub App installation token via idcat and expose it as an action output'
+author: 'PortSwigger Cloud Platform Team'
+
+inputs:
+
+  target-repository:
+    description: 'owner/repo to mint the installation token for, e.g. portswigger-apps/my-app.'
+
+  github-app:
+    description: 'idcat-configured GitHub App name'
+    required: false
+    default: 'SwigApp'
+
+  idcat-url:
+    description: 'idcat service base URL'
+    required: false
+    default: 'https://idcat.platform-prod.portswigger.io'
+
+  audience:
+    description: 'OIDC token audience expected by idcat (matches the [[role]] audience in idcat config)'
+    required: false
+    default: 'idcat.platform-prod.portswigger.io'
+
+outputs:
+  token:
+    description: 'GitHub App installation token obtained by idcat'
+    value: ${{ steps.exchange.outputs.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Exchange OIDC token for GitHub App installation token
+      id: exchange
+      shell: bash
+      env:
+        IDCAT_URL: ${{ inputs.idcat-url }}
+        IDCAT_APP: ${{ inputs.github-app }}
+        IDCAT_REPO: ${{ inputs.target-repository }}
+        IDCAT_AUDIENCE: ${{ inputs.audience }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::error::OIDC environment not present. Add 'permissions: { id-token: write }' to the calling job."
+          exit 1
+        fi
+
+        jwt=$(curl --fail-with-body -sS \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${IDCAT_AUDIENCE}" \
+          | jq -r .value)
+
+        # Capture body and status separately so a non-2xx from idcat is shown
+        # in the run log. Piping curl straight into $(...) would swallow the
+        # error body and leave only a bare "exit code 22".
+        response=$(mktemp)
+        status=$(curl -sS -X POST \
+          -H "Authorization: Bearer ${jwt}" \
+          -o "${response}" -w '%{http_code}' \
+          "${IDCAT_URL}/installation-token/${IDCAT_APP}/${IDCAT_REPO}") || true
+        status=${status:-000}
+
+        if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+          echo "::error::idcat returned HTTP ${status} minting a token for ${IDCAT_APP}/${IDCAT_REPO}: $(cat "${response}")"
+          rm -f "${response}"
+          exit 1
+        fi
+
+        token=$(cat "${response}")
+        rm -f "${response}"
+
+        echo "::add-mask::${token}"
+        echo "token=${token}" >> "$GITHUB_OUTPUT"
