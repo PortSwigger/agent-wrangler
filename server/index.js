@@ -1043,6 +1043,9 @@ async function rebuildOnce() {
 
 const rebuild = createRebuildCoalescer(rebuildOnce);
 let codeVersion = null;
+// codeVersion as a log shows it: a checkout's short commit, a package's whole
+// version (slicing "10.10.10" to seven characters would name another release).
+let codeVersionLabel = null;
 let updates = null;
 const UPDATE_CHECK_MS = (Number(process.env.AW_UPDATE_CHECK_MINUTES) || 60) * 60 * 1000;
 const ROLLBACK_CLEAR_AFTER_MS = 30000;
@@ -1090,7 +1093,7 @@ async function refreshNextStaleSession() {
     return;
   }
   if (sessionManager.entryFor(s.sessionId)?.archivedAt) return;
-  log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersion.slice(0, 7)}`);
+  log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersionLabel}`);
   memoryStore.bindSession(s.sessionId, taskStore.taskFor(s.sessionId)?.id || null);
   try {
     await sessionManager.resume(s.sessionId, dir, { reason: 'update-refresh' });
@@ -1200,6 +1203,7 @@ async function main() {
   // identity is the package version it was built from.
   const install = INSTALL_ENV.installManager ? { checkout: false, codeVersion: VERSION } : await readInstall();
   codeVersion = install.codeVersion;
+  codeVersionLabel = install.checkout && codeVersion ? codeVersion.slice(0, 7) : codeVersion;
   sessionManager.codeVersion = codeVersion;
   updates = createUpdateService({
     support: updateSupport({
