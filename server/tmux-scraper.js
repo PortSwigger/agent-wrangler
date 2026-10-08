@@ -189,7 +189,8 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
   }
 }
 
-function codexUpdateState(text) {
+export function codexUpdateState(paneText) {
+  const text = stripAnsi(paneText);
   const starts = [...text.matchAll(/^(?:Updating\b|🎉)/gm)];
   for (const start of starts.reverse()) {
     const fences = text.slice(0, start.index).match(/^[ \t]*(?:```|~~~)/gm) || [];

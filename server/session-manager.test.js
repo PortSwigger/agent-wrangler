@@ -469,6 +469,61 @@ test('reconcileExitedSessions leaves a pane that died right after its resume for
   assert.equal(sm.isArchived('s1'), false);
 });
 
+for (const [label, relaunchedAt] of [['fresh dispatch', undefined], ['resume outside startup grace', 4_820_000]]) {
+  test(`reconcileExitedSessions preserves a completed Codex update after ${label}`, async () => {
+    const sm = new SessionManager();
+    sm._save = () => {};
+    sm.map.set('s1', { tmux: 'cx_update', agent: 'codex', socket: 'update-test', relaunchedAt });
+    sm.dead = new Set(['cx_update']);
+    sm.deadStatus = new Map([['cx_update', 0]]);
+    sm.deadTime = new Map([['cx_update', 5_000_000]]);
+    sm._tmux = async (socket, args) => {
+      assert.equal(socket, 'update-test');
+      assert.equal(args[0], 'capture-pane');
+      assert.equal(args[args.indexOf('-t') + 1], 'cx_update');
+      return { stdout: '🎉 Update ran successfully! Please restart Codex.\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)' };
+    };
+    const killed = [];
+    sm.killForSession = async (id) => { killed.push(id); return ['cx_update']; };
+    assert.deepEqual(await sm.reconcileExitedSessions(), []);
+    assert.equal(sm.isArchived('s1'), false);
+    assert.equal(sm.deadTmuxNameFor('s1'), 'cx_update');
+    assert.deepEqual(killed, []);
+  });
+}
+
+test('reconcileExitedSessions still archives an ordinary clean Codex exit', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_exit', agent: 'codex', socket: 'exit-test' });
+  sm.dead = new Set(['cx_exit']);
+  sm.deadStatus = new Map([['cx_exit', 0]]);
+  sm._tmux = async () => ({ stdout: 'Bye!\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)' });
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return ['cx_exit']; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), ['s1']);
+  assert.equal(sm.isArchived('s1'), true);
+  assert.deepEqual(killed, ['s1']);
+});
+
+test('reconcileExitedSessions does not archive a replacement launched during the exit capture', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_old', agent: 'codex' });
+  sm.dead = new Set(['cx_old']);
+  sm.deadStatus = new Map([['cx_old', 0]]);
+  sm._tmux = async () => {
+    sm.map.set('s1', { tmux: 'cx_new', agent: 'codex' });
+    return { stdout: 'Bye!' };
+  };
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return []; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.entryFor('s1').tmux, 'cx_new');
+  assert.equal(sm.isArchived('s1'), false);
+  assert.deepEqual(killed, []);
+});
+
 test('refreshAlive records each dead pane\'s death time from pane_dead_time', async () => {
   const sm = new SessionManager();
   sm.scanSockets = () => [''];

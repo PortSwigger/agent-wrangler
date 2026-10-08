@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
+import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal } from './runtimes/index.js';
@@ -1620,7 +1620,8 @@ export class SessionManager {
   // Auto-archive sessions whose Claude agent exited cleanly inside an owned tmux:
   // a clean exit (pane_dead_status 0) is a deliberate /exit or self-stop, so set
   // it aside as archived (recoverable via Resume) and reap the corpse — orphan-
-  // proof even in the resume-fork case via killForSession. Non-zero/unknown exits,
+  // proof even in the resume-fork case via killForSession. Codex updates requiring
+  // a restart, non-zero/unknown exits,
   // and clean exits just after a resume (see archivableExits), are
   // left for the dead-pane path to surface on the board. `snapshotFor` lets
   // the caller inject per-session archive snapshot fields (e.g. the task), since
@@ -1639,13 +1640,22 @@ export class SessionManager {
       };
     });
     const toArchive = archivableExits(deadEntries);
-    for (const { sessionId } of toArchive) {
-      const tmux = this.map.get(sessionId)?.tmux;
+    const archived = [];
+    for (const { sessionId, tmux } of toArchive) {
+      const entry = this.map.get(sessionId);
+      if (entry?.agent === 'codex' || tmux.startsWith('cx_')) {
+        const { stdout } = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
+          maxBuffer: 4 * 1024 * 1024,
+        }).catch(() => ({ stdout: '' }));
+        if (codexUpdateState(stdout)?.status === 'needs-you') continue;
+      }
+      if (this.map.get(sessionId)?.tmux !== tmux || this.isArchived(sessionId) || !this.dead.has(tmux)) continue;
       this.archive(sessionId, { ...(snapshotFor(sessionId) || {}), reason: 'clean-exit' });
+      archived.push(sessionId);
       log(`[session] auto-archived ${sessionId} (tmux ${tmux}) — clean exit (status 0)`);
       await this.killForSession(sessionId, { reason: 'auto-archive-exit' });
     }
-    return toArchive.map((d) => d.sessionId);
+    return archived;
   }
 
   // Reclaim RAM from idle/snoozed sessions: given the freshly-built graph's
