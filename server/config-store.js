@@ -81,6 +81,15 @@ export function archiveReviewEnabled(cfg = readConfig()) {
   return cfg.archiveReviewEnabled === true;
 }
 
+// Whether a mail notification wakes a dormant recipient (resuming it with the
+// notification as its first prompt) instead of leaving the mail unread until
+// someone resumes it. Default OFF — a wake spends a session's context and
+// launches a process nobody asked for. Takes cfg so tests never write the
+// shared config.json.
+export function mailWakesDormant(cfg = readConfig()) {
+  return cfg.mailWakesDormant === true;
+}
+
 // Whether a Codex launch/resume/fork marks that invocation's cwd trusted
 // (`-c projects."<cwd>".trust_level="trusted"`), skipping Codex's own
 // trust-folder prompt — Agent Wrangler already sandboxes the session

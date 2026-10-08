@@ -34,7 +34,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -812,7 +812,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral,
+  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 });
 
@@ -1004,6 +1004,7 @@ async function rebuildOnce() {
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
+  graph.mailWakesDormant = mailWakesDormant();
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.autoUpdate = autoUpdateMode();

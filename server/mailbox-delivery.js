@@ -1,7 +1,9 @@
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
+import { deliverMessage as defaultDeliverMessage } from './message-delivery.js';
 
-// Deliver mail only to a live session. A dormant recipient keeps its mail
-// unread until it is resumed by a human or another workflow.
+// Deliver mail to a live session. A dormant recipient keeps its mail unread
+// until it is resumed by a human or another workflow, unless `wakesDormant()`
+// is true: then the notification wakes it like any addressed message.
 export async function deliverMailNotification(to, text, deps) {
   const { tmuxFor, socketFor, sessionManager, paneDeferral } = deps;
   const mcpSeenAt = deps.mcpSeenAt ?? defaultMcpSeenAt;
@@ -11,7 +13,12 @@ export async function deliverMailNotification(to, text, deps) {
   if (!entry || entry.archivedAt) return { mode: 'skip' };
 
   const target = tmuxFor(to);
-  if (!target) return { mode: 'deferred', reason: 'no tmux target' };
+  if (!target) {
+    if (!deps.wakesDormant?.()) return { mode: 'deferred', reason: 'no tmux target' };
+    const deliverMessage = deps.deliverMessage ?? defaultDeliverMessage;
+    const woken = await deliverMessage(to, text, deps, { reason: 'mail' });
+    return woken.mode === 'error' ? woken : { mode: 'live' };
+  }
 
   const beforeSend = async () => {
     const relaunchedAt = entry.relaunchedAt;

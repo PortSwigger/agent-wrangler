@@ -27,8 +27,9 @@ sections below cover more than the nudge does.)
 When a mail notification starts a turn, call `read_mail()` with no arguments
 before continuing your work. The server waits until an active turn finishes
 before sending its notification, so mail does not interrupt work already in
-progress. Mail is delivered only to a live idle session; dormant sessions are
-not resumed for mail and keep their unread messages until explicitly resumed.
+progress. Mail is delivered to a live idle session; dormant sessions keep their
+unread messages until resumed, unless the user has turned on the "Let mail wake
+dormant sessions" setting, in which case the notification resumes them.
 A large message may come back as an excerpt rather than the full body
 (over ~4KB alone, or once a batch's total passes ~16KB) — follow up with
 `read_mail({ id })` to fetch that one message in full.

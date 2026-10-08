@@ -48,6 +48,23 @@ test('dormant recipient keeps its mail unread without being resumed', async () =
   assert.deepEqual(d.sent, []);
 });
 
+test('dormant recipient is woken with the notification when wakesDormant is on', async () => {
+  const d = deps({ entries: { CARD1: { cwd: '/tmp/session' } } });
+  const calls = [];
+  d.wakesDormant = () => true;
+  d.deliverMessage = async (...args) => { calls.push(args); return { mode: 'dormant' }; };
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(calls.map((c) => [c[0], c[1], c[3]]), [['CARD1', 'you have mail', { reason: 'mail' }]]);
+});
+
+test('a failed wake is reported as an error so the mail is retried', async () => {
+  const d = deps({ entries: { CARD1: {} } });
+  d.wakesDormant = () => true;
+  d.deliverMessage = async () => ({ mode: 'error', error: 'boom' });
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'error', error: 'boom' });
+});
+
 test('live recipient archived during its settle window is skipped', async () => {
   const d = deps({
     live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } },
