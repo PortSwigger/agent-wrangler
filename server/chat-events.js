@@ -428,7 +428,7 @@ const CODEX_SYNTHETIC_PREFIXES = [
 // user message. Unlike the plumbing above these are worth keeping reachable, but
 // as a collapsed row — never a human bubble, and never restore-prompt's "newest
 // user turn".
-const CODEX_INTERNAL_CONTEXT_RE = /^\s*<codex_internal_context source="([^"]+)">/;
+const CODEX_INTERNAL_CONTEXT_RE = /^\s*<codex_internal_context source="([^"]+)">[\s\S]*<\/codex_internal_context>\s*$/;
 function isSyntheticCodex(text) {
   const head = text.slice(0, 40).trimStart();
   return CODEX_SYNTHETIC_PREFIXES.some((prefix) => head.startsWith(prefix));
@@ -500,6 +500,7 @@ function pushCodex(entry, state) {
       const internal = CODEX_INTERNAL_CONTEXT_RE.exec(text);
       if (internal) {
         out.push({ kind: 'context', label: `Codex ${internal[1]}`, text, ts });
+        state.prevTs = ts;
         return out;
       }
     }
