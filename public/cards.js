@@ -3,7 +3,7 @@
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
 // app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
 //   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
-//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, ADHOC_ID }
+//     activitySortedTasks, justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   ROBOT_ICON, KEBAB_ICON,
@@ -429,8 +429,8 @@ export function workerStatusWord(s, ctx) {
 // data-sid so a click opens it like any card; not independently draggable — it
 // rides with its run, reordered only by dragging the whole workflow box. Mirrors
 // sessionCardHtml's `selected` ring so a focused child session reads exactly like
-// a focused top-level one — cardState() already supplies the same
-// needs-you/just-finished/snooze-alarm vocabulary to both (see styles.css).
+// a focused top-level one. Automatic completion keeps only the status dot;
+// manual unread and attention/snooze alarms retain their halos (see styles.css).
 export function workerRowHtml(s, ctx) {
   const state = ctx.cardState(s);
   const doneQuiet = ctx.justFinished.has(s.sessionId) && !ctx.unread?.has(s.sessionId) ? ' done-quiet' : '';
