@@ -43,6 +43,7 @@ import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, gho
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
 import { toast } from './toast.js';
+import { createNotifications } from './notifications.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
@@ -192,8 +193,10 @@ function noteExtClientFacts(list) {
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
+const notifications = createNotifications({ document });
 const slots = createSlots({
   document,
+  onExtensionRemoved: (id) => notifications.clear(id),
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -253,6 +256,9 @@ const extApi = {
   renderSampleCard,
   // Backs `api.openDispatch`: the dispatch modal as a promise.
   openDispatchAcked,
+  // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
+  notify: (owner, opts) => notifications.show(owner, opts),
+  withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },

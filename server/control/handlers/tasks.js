@@ -31,19 +31,28 @@ export const taskRenameHandler = {
 // (matches exactly how the live board buckets a task's tile, see app.js's byTask);
 // a nested child that isn't itself assigned to this task is unaffected — it just
 // stops rendering nested and reappears as its own top-level card.
+// Shared with the `tasks:archive` host capability (server/index.js). Returns null
+// when there was nothing to archive (unknown or already archived).
+export async function archiveTaskCascade(taskId, ctx) {
+  if (!ctx.taskStore.archiveTask(taskId)) return null;
+  const { assignments } = ctx.taskStore.snapshot();
+  const sessionIds = Object.entries(assignments)
+    .filter(([, tid]) => tid === taskId)
+    .map(([sid]) => sid)
+    .filter((sid) => !ctx.sessionManager.isArchived(sid));
+  const { unclean } = await archiveCascade(sessionIds, ctx, { viaTaskArchive: taskId });
+  return { sessionIds, unclean };
+}
+
 export const taskArchiveHandler = {
   type: 'task-archive',
   async handler(msg, ctx) {
-    if (!ctx.taskStore.archiveTask(msg.taskId)) {
+    const result = await archiveTaskCascade(msg.taskId, ctx);
+    if (!result) {
       await ctx.rebuild();
       return;
     }
-    const { assignments } = ctx.taskStore.snapshot();
-    const sessionIds = Object.entries(assignments)
-      .filter(([, tid]) => tid === msg.taskId)
-      .map(([sid]) => sid)
-      .filter((sid) => !ctx.sessionManager.isArchived(sid));
-    const { unclean } = await archiveCascade(sessionIds, ctx, { viaTaskArchive: msg.taskId });
+    const { sessionIds, unclean } = result;
     ctx.reply({ type: 'task-archived', taskId: msg.taskId, unclean, archivedSessions: sessionIds.length });
     // Delayed like archive.js's own cascade rebuild: panes just got killed above,
     // so an immediate rebuild risks broadcasting a still-dying tree mid-teardown.

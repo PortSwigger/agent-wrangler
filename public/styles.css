@@ -1009,6 +1009,30 @@ body.system-banner-open { padding-top: 30px; }
 }
 .system-banner-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--bar-on) 15%, transparent); }
 
+/* api.ui.notify's stack (public/notifications.js): persistent cards in the
+   bottom-right corner, newest at the bottom, that never take focus. Clear of
+   #toast, which sits bottom-centre. */
+.notif-stack {
+  position: fixed; right: 16px; bottom: 16px; z-index: 30;
+  display: flex; flex-direction: column; gap: 8px; width: 340px; max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px); overflow-y: auto; pointer-events: none;
+}
+.notif-stack:empty { display: none; }
+.notif-card {
+  position: relative; pointer-events: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow); padding: 12px 14px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.notif-title { font-size: 13px; font-weight: 600; padding-right: 20px; overflow-wrap: anywhere; }
+.notif-body { margin-top: 4px; font-size: 12px; color: var(--fg-muted); line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.notif-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.notif-actions button { padding: 4px 10px; font-size: 12px; }
+.notif-close {
+  position: absolute; top: 6px; right: 6px; padding: 0 6px; border: none;
+  background: none; color: var(--fg-muted); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.notif-close:hover { color: var(--fg); background: none; }
 #toast {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
   background: var(--accent); color: var(--accent-fg); padding: 9px 16px; border-radius: 8px;

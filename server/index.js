@@ -47,6 +47,7 @@ import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession } from './shell-session.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
+import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage, invalidateHandlerMap } from './control/router.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
@@ -277,6 +278,11 @@ const extWiring = {
     const result = await archiveCascade(ids, archiveCascadeCtx);
     await rebuild();
     return { archived: ids, ...result };
+  },
+  archiveTask: async (taskId) => {
+    const result = await archiveTaskCascade(taskId, archiveCascadeCtx);
+    await rebuild();
+    return result ? { archived: true, sessionIds: result.sessionIds, unclean: result.unclean } : { archived: false, sessionIds: [], unclean: false };
   },
   // `sessions:interrupt`: the same Escape the interrupt control handler sends,
   // minus its composer restore (there is no chat view waiting on a reply).

@@ -32,6 +32,7 @@ function wiring(overrides = {}) {
     rebuild: () => {},
     broadcast: () => {},
     archiveSession: () => {},
+    archiveTask: async () => ({ archived: false, sessionIds: [], unclean: false }),
     createTerminal: () => {},
     interruptSession: async () => true,
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
@@ -452,6 +453,16 @@ test('tasks:read serves the Unassigned id, equal to the core ADHOC constant', as
   const host = buildHostApi({ id: 'x', requires: ['tasks:read'], ...wiring() });
   assert.equal(host.tasks.adhocId, ADHOC);
   assert.equal(host.tasks.adhocId, 'adhoc');
+});
+
+test('tasks:archive is its own grant: tasks:write alone has no archive', async () => {
+  const calls = [];
+  const w = wiring({ archiveTask: async (t) => { calls.push(t); return { archived: true, sessionIds: ['s1'], unclean: false }; } });
+  assert.equal('archive' in buildHostApi({ id: 'x', requires: ['tasks:write'], ...w }).tasks, false);
+  const host = buildHostApi({ id: 'x', requires: ['tasks:read', 'tasks:archive'], ...w });
+  assert.deepEqual(await host.tasks.archive('t_1'), { archived: true, sessionIds: ['s1'], unclean: false });
+  assert.deepEqual(calls, ['t_1']);
+  assert.equal(typeof host.tasks.list, 'function');
 });
 
 // -- memory (provided by the task-memory extension) -------------------------

@@ -1258,6 +1258,39 @@ test('ui.markdownPreview is empty when the base api has no renderer', () => {
   assert.equal(uiHarness({}).api.ui.markdownPreview('x'), '');
 });
 
+test('ui.notify forces the owner, normalises actions and passes the answer back', async () => {
+  const seen = [];
+  const { api } = uiHarness({ notify: (owner, o) => { seen.push([owner, o]); return Promise.resolve('archive'); } });
+  assert.equal(await api.ui.notify({ id: 'k', title: 'T', actions: [{ id: 'archive', label: 'Archive', primary: 1, extra: 'x' }] }), 'archive');
+  assert.deepEqual(seen, [['fake', { id: 'k', title: 'T', body: '', actions: [{ id: 'archive', label: 'Archive', primary: true }] }]]);
+});
+
+test('ui.notify refuses a malformed card without raising anything', async () => {
+  let raised = 0;
+  const { api, errors } = uiHarness({ notify: () => { raised += 1; return 'x'; } });
+  assert.equal(await api.ui.notify({ title: 'T' }), null);
+  assert.equal(await api.ui.notify({ id: 'k' }), null);
+  assert.equal(await api.ui.notify({ id: 'k', title: 'T', body: 3 }), null);
+  assert.equal(await api.ui.notify({ id: 'k', title: 'T', actions: [{ id: 'a' }] }), null);
+  assert.equal(raised, 0);
+  assert.equal(errors.length, 4);
+  assert.match(errors[0], /\[ext:fake\] ui\.notify refused: id/);
+});
+
+test('ui.withdraw forces the owner; removing an extension reports it for cleanup', () => {
+  const withdrawn = [];
+  const removed = [];
+  const h = harness({ onExtensionRemoved: (id) => removed.push(id) });
+  let api;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { api = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, { withdrawNotification: (o, id) => withdrawn.push([o, id]) });
+  api.ui.withdraw('k');
+  api.ui.withdraw(5);
+  assert.deepEqual(withdrawn, [['fake', 'k']]);
+  h.slots.removeExtension('fake');
+  assert.deepEqual(removed, ['fake']);
+});
+
 test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elements, and clears on removeExtension', () => {
   const { slots, errors } = harness();
   const attrs = () => {

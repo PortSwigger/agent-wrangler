@@ -1089,6 +1089,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   chip does to link a key-only link against the current base URL.
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
+- **Client `api.ui.notify({ id, title, body, actions })`** (1.23.0) raises a card in
+  the board's bottom-right notification stack for something the human did not ask
+  about. Cards stack, stay until answered or closed, and never take focus. It
+  resolves with the clicked action's `id` (`actions` is up to three
+  `{ id, label, primary? }`), or `null` when the card is closed with × or
+  withdrawn. Showing an `id` that is already up updates it in place.
+  `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
+  cards are removed when it is turned off. All text is set as text.
+- **`host.tasks.archive(taskId)`** (capability `tasks:archive`, 1.23.0) archives a
+  task as its tile's Archive does: the task and every live session assigned to it.
+  Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
+  already-archived task. It is separate from `tasks:write` so a consent to rename
+  and assign never grows into one that stops sessions.
 
 ## Runtimes
 

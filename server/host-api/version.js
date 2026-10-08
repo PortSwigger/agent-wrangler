@@ -212,7 +212,12 @@ import semver from 'semver';
 // key (its loader only checks the keys it knows), so the runtime still loads but
 // spawn_session reports a failed launch as a success; a manifest that needs the
 // caller to hear about it declares `^1.22.0`.
-export const HOST_API_VERSION = '1.22.0';
+//
+// 1.23.0 adds the `tasks:archive` capability (`host.tasks.archive(taskId)`, the
+// tile's Archive: the task and every live session assigned to it) and the
+// client `api.ui.notify`/`withdraw`, a stack of persistent notifications for
+// something the human did not ask about. A manifest calling either declares `^1.23.0`.
+export const HOST_API_VERSION = '1.23.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

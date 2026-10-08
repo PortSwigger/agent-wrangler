@@ -72,7 +72,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
 // new capability is a two-file change by design.
 export const CAPABILITIES = new Set([
   'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:kill',
-  'tasks:read', 'tasks:write',
+  'tasks:read', 'tasks:write', 'tasks:archive',
   'memory:read', 'memory:append',
   'events',
   'deliver',
