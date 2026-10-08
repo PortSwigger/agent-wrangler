@@ -433,6 +433,7 @@ export function workerStatusWord(s, ctx) {
 // needs-you/just-finished/snooze-alarm vocabulary to both (see styles.css).
 export function workerRowHtml(s, ctx) {
   const state = ctx.cardState(s);
+  const doneQuiet = ctx.justFinished.has(s.sessionId) && !ctx.unread?.has(s.sessionId) ? ' done-quiet' : '';
   // Same restarting exemption as the top-level card (sessionCardHtml): a worker/child
   // row being restarted is only briefly unmanaged — don't flicker it to the dormant skin.
   const dormant = (s.managed || s.restarting) ? '' : ' dormant';
@@ -451,7 +452,7 @@ export function workerRowHtml(s, ctx) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
-  return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}

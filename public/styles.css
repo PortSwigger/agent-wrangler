@@ -1595,9 +1595,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   0%, 100% { box-shadow: 0 0 0 2px var(--red), 0 0 4px color-mix(in srgb, var(--red) 20%, transparent); }
   50% { box-shadow: 0 0 0 3px var(--red), 0 0 20px color-mix(in srgb, var(--red) 70%, transparent); }
 }
-/* A child session's compact spine row gets the exact same halo vocabulary as a
-   top-level card — waiting/focused/awoken/done all read the same whether a
-   session is nested or not, so a child is never quietly out of view. It CANNOT
+/* A child session's compact spine row keeps attention, snooze, selection and
+   manual-unread halos; automatic completion uses only the status dot. It CANNOT
    reuse the card's box-shadow ring by putting it on the row itself, though: a
    worker-row draws its own parent-to-child join line on ::before/::after (see
    above), and both box-shadow AND outline on the row's own box are unreliably
@@ -1675,6 +1674,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   0%, 100% { box-shadow: 0 0 0 2px var(--just-finished), 0 0 4px color-mix(in srgb, var(--just-finished) 20%, transparent); }
   50% { box-shadow: 0 0 0 3px var(--just-finished), 0 0 20px color-mix(in srgb, var(--just-finished) 70%, transparent); }
 }
+.worker-row.done-quiet { border-color: var(--border-muted); }
+.worker-row.done-quiet .worker-ring { box-shadow: none; animation: none; }
 
 /* Snooze "awake" alarm: the amber twin of needs-you/just-finished. Always wins
    the flashing animation when a snooze fires (you deliberately set the timer),
