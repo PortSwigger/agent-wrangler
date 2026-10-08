@@ -218,6 +218,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             selection and the core `resume` frame — none of which `send`
   //             may reach, since it is bound to the extension's own types. A
   //             non-id argument is reported and dropped, like a refused send.
+  //   openTask — the task counterpart of openSession (1.24.0): show this task's
+  //             tile, out of the tray if it was minimised, scrolled into view
+  //             and pulsed. Returns whether the task is on the live board; an
+  //             archived or unknown id toasts instead. Base-api-only for
+  //             openSession's reason, and refused for a non-id the same way.
   //   minimiseTask — the tile-level counterpart (1.11.0): tuck this task's tile
   //             into the tray, exactly as its header's Minimise does. Same
   //             reason it lives on the base api — the minimised set is board
@@ -272,6 +277,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             return;
           }
           baseApi.openSession?.(sessionId);
+        },
+        openTask: (taskId) => {
+          if (typeof taskId !== 'string' || !taskId) {
+            onError(`[ext:${extId}] openTask refused: expected a task id, got ${JSON.stringify(taskId)}`);
+            return false;
+          }
+          return Boolean(baseApi.openTask?.(taskId));
         },
         minimiseTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {

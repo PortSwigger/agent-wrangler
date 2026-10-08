@@ -216,10 +216,37 @@ const slots = createSlots({
 let chipsRenderQueued = false;
 function openSessionInBoard(sessionId) {
   setView('grid');
-  if (latestSessions.some((x) => x.sessionId === sessionId)) { focusSession(sessionId); return; }
+  if (latestSessions.some((x) => x.sessionId === sessionId)) {
+    const tile = assignedTaskId(sessionId) || ADHOC_ID;
+    if (minimisedIds.has(tile)) unminimise(tile);
+    focusSession(sessionId);
+    return;
+  }
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
   toast('Restoring…');
+}
+
+// Show a task's tile: the grid, the tile out of the tray if it was minimised,
+// scrolled into view with the restore pulse. A task that is not on the live
+// board (archived, deleted) toasts instead.
+function openTaskInBoard(taskId) {
+  setView('grid');
+  if (!currentOrder().includes(taskId)) { toast('Task is not on the board', true); return false; }
+  // A maximised session pane or an open diff panel hides #grid entirely.
+  if (maximized) setMaximized(false);
+  if (isDiffPanelOpen()) closeDiffPanel();
+  if (minimisedIds.has(taskId)) unminimise(taskId);
+  // The diff panel keeps #grid hidden through its slide-out; flashing renders
+  // the grid, which must be measurable first.
+  const reveal = () => {
+    if (currentView !== 'grid' || maximized || gridHidden()) return;
+    flashRestoredTask(taskId);
+    const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
+    document.querySelector(sel)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  if (gridHidden()) setTimeout(reveal, 300); else reveal();
+  return true;
 }
 
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
@@ -232,10 +259,11 @@ const extApi = {
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
   // Show a card from an extension's own view (a job's session, say): the board's
   // grid, selected if it is there, otherwise resumed and selected when the next
-  // graph brings it back — the same sequence as a Search result's Restore. This
-  // is the only board navigation an extension has; slots.apiFor exposes it and
-  // has already refused anything that is not a session id.
+  // graph brings it back — the same sequence as a Search result's Restore. openTask is the
+  // task counterpart. They are the only board navigation an extension has;
+  // slots.apiFor exposes them and has already refused anything that is not an id.
   openSession: openSessionInBoard,
+  openTask: openTaskInBoard,
   // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
@@ -1110,7 +1138,7 @@ let restoredTaskId = null;
 function flashRestoredTask(taskId) {
   restoredTaskId = taskId;
   renderGrid();
-  setTimeout(() => { restoredTaskId = null; renderGrid(); }, 1800);
+  setTimeout(() => { restoredTaskId = null; renderGridIfVisible(); }, 1800);
 }
 
 // Workflow boxes the user has collapsed (hiding their worker spine), keyed on the

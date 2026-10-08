@@ -922,6 +922,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   because `minimise()` silently refuses the last visible tile — an extension
   must be able to tell. `app.js` also refuses an id not in `currentOrder()`, or
   an archived task would sit in the minimised set until the next prune.
+  **`api.openTask(taskId)`** (1.24.0) is `openSession`'s task counterpart: it
+  shows the task's tile, restoring it from the tray if it was minimised, and
+  scrolls to it with the restore pulse. It returns whether the task is on the
+  live board; an archived or unknown id toasts "Task is not on the board". Opening
+  a session likewise restores its task's tile first, so a session in a minimised
+  task is no longer opened behind the tray. A notification's "Go to" is an
+  ordinary action that calls one of these when its answer comes back.
 - **`api.settings()`** (1.13.0) returns the extension's own current setting
   values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL

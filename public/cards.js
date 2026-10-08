@@ -666,7 +666,8 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   // fills a tile hides the empty-state hint itself (:has() in its styles).
   const body = (hint) => (cards || emptyBody(hint)) + slotRow + bodyHost;
   if (tile.kind === 'notask') {
-    return `<div class="task-cell no-task" data-entity="no-task" style="${pos}">
+    const noTaskFlash = ctx.ADHOC_ID === ctx.restoredTaskId ? ' task-restored-flash' : '';
+    return `<div class="task-cell no-task${noTaskFlash}" data-entity="no-task" style="${pos}">
       <div class="task-head" draggable="true">
         <span class="task-name">Unassigned</span>
         ${newSess}
