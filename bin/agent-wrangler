@@ -51,7 +51,15 @@ fi
 # system binaries still win. Built from AW_INSTALL_ROOT when set: the tmux server
 # keeps the environment it was started with across wrangler restarts, so a
 # versioned install path here would go stale after an upgrade removes it.
-PATH="$PATH:${AW_INSTALL_ROOT:-$ROOT}/node_modules/.bin"
+# Honoured on the server's terms (server/install-root.js): never in a dev
+# instance, and only when it is this app. `-ef` compares the resolved files, so
+# a symlink or a differently-cased path on a case-insensitive volume still
+# matches. A mismatch falls back silently; the server logs it.
+bin_root="$ROOT"
+if [ -n "${AW_INSTALL_ROOT:-}" ] && [ -z "${AW_DEV:-}" ] && [ "$AW_INSTALL_ROOT" -ef "$ROOT" ]; then
+  bin_root="$AW_INSTALL_ROOT"
+fi
+PATH="$PATH:$bin_root/node_modules/.bin"
 
 # The supervisor PATHs (launchd plist, systemd unit) predate this and omit the
 # sbin dirs, so sessions could not find macOS tools like pkgutil — which mise

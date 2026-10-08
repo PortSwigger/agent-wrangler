@@ -36,7 +36,8 @@ export const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.
 // skills that don't exist, and the skill readers fail silently on a missing
 // directory. So a mismatch is refused loudly and the real directory is used.
 // The native realpath, as in self-update.js: on a case-insensitive filesystem
-// only it returns the on-disk case for both sides.
+// only it returns the on-disk case for both sides. bin/agent-wrangler applies
+// the same two rules to its node_modules/.bin PATH entry; keep them in step.
 export function resolveInstallRoot({
   installRoot, dev, sourceRoot = SOURCE_ROOT, realpath = fs.realpathSync.native, warn = logWarn,
 }) {

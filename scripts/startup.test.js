@@ -153,6 +153,46 @@ test('launcher appends the sbin dirs a bare supervisor PATH omits', t => {
   assert.ok(dirs.includes('/usr/sbin') && dirs.includes('/sbin'), result.stdout);
 });
 
+// The tmux server keeps the launcher's PATH, so the node_modules/.bin entry
+// follows AW_INSTALL_ROOT on the server's terms (server/install-root.js): only
+// when it is this app, and never in a dev instance.
+function caseFlipped(p) {
+  return p.replace(/[a-z]/i, ch => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()));
+}
+
+const binRootCases = [
+  { name: 'unset', installRoot: () => undefined, expect: 'root' },
+  { name: 'a symlink to the app', installRoot: ({ link }) => link, expect: 'link' },
+  { name: 'a symlink in a dev instance', installRoot: ({ link }) => link, env: { AW_DEV: '1' }, expect: 'root' },
+  { name: 'another directory', installRoot: ({ other }) => other, expect: 'root' },
+  { name: 'a missing directory', installRoot: ({ root }) => path.join(root, 'missing'), expect: 'root' },
+  {
+    name: 'the app through a differently-cased path',
+    installRoot: ({ root }) => caseFlipped(root),
+    skip: root => !fs.existsSync(caseFlipped(root)) && 'case-sensitive filesystem',
+    expect: 'flipped',
+  },
+];
+
+for (const { name, installRoot, env: extra = {}, skip, expect } of binRootCases) {
+  test(`launcher PATH takes node_modules/.bin from AW_INSTALL_ROOT: ${name}`, t => {
+    const { root, env } = fixture(t);
+    const reason = skip?.(root);
+    if (reason) return t.skip(reason);
+    const link = path.join(root, '..', `${path.basename(root)}-opt`);
+    fs.symlinkSync(root, link);
+    t.after(() => fs.rmSync(link, { force: true }));
+    const other = path.join(root, 'home');
+    const value = installRoot({ root, link, other });
+    fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log(process.env.PATH);');
+    const result = run(root, { ...env, ...extra, ...(value ? { AW_INSTALL_ROOT: value } : {}) });
+    assert.equal(result.status, 0, result.stderr);
+    const want = { root, link, flipped: caseFlipped(root) }[expect];
+    const entries = result.stdout.trim().split(':').filter(dir => dir.endsWith('node_modules/.bin'));
+    assert.deepEqual(entries, [path.join(want, 'node_modules/.bin')]);
+  });
+}
+
 // The launcher no longer touches tmux: a server's PATH is refreshed by the server
 // itself, on its own socket (SessionManager.refreshTmuxPath). The old launcher
 // looped over ${TMUX_TMPDIR}/tmux-UID/aw-* and only ran tmux for a real Unix
