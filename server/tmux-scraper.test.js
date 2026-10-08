@@ -189,6 +189,13 @@ test('classify: updater prose, quoted output and update scrollback after resume 
   ];
   for (const pane of panes) assert.equal(classify(pane).status, 'idle', pane);
 });
+test('classify: Codex update completion accepts a plain dead-pane trailer', () => {
+  for (const heading of ['', `${CODEX_UPDATING}\n`]) {
+    const result = classify(`${heading}${CODEX_UPDATED}\nPane is dead`);
+    assert.equal(result.status, 'needs-you');
+    assert.match(result.waitingFor, /restart Codex/i);
+  }
+});
 test('classify: the real banner reads as needs-you at every realistic (and several unrealistic) pane widths', () => {
   // 40 down to 12 columns — well past anything this product would actually
   // render a terminal at, which is the point: the fix must not depend on

@@ -492,6 +492,19 @@ for (const [label, relaunchedAt] of [['fresh dispatch', undefined], ['resume out
   });
 }
 
+test('reconcileExitedSessions preserves recognized updater output with a custom dead-pane trailer', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_update', agent: 'codex' });
+  sm.dead = new Set(['cx_update']);
+  sm.deadStatus = new Map([['cx_update', 0]]);
+  sm._tmux = async () => ({ stdout: 'Updating Codex via `brew upgrade --cask codex`...\n🎉 Update ran successfully! Please restart Codex.\nProcess finished (exit 0)' });
+  sm.killForSession = async () => { throw new Error('must not kill'); };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.isArchived('s1'), false);
+  assert.equal(sm.deadTmuxNameFor('s1'), 'cx_update');
+});
+
 test('reconcileExitedSessions still archives an ordinary clean Codex exit', async () => {
   const sm = new SessionManager();
   sm._save = () => {};

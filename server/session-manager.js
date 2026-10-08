@@ -1647,7 +1647,7 @@ export class SessionManager {
         const capture = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
           maxBuffer: 4 * 1024 * 1024,
         }).catch(() => null);
-        if (!capture || codexUpdateState(capture.stdout)?.status === 'needs-you') continue;
+        if (!capture || codexUpdateState(capture.stdout)) continue;
       }
       if (this.map.get(sessionId)?.tmux !== tmux || this.isArchived(sessionId) || this.isResuming(sessionId) || !this.dead.has(tmux)) continue;
       this.archive(sessionId, { ...(snapshotFor(sessionId) || {}), reason: 'clean-exit' });

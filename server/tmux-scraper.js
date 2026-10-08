@@ -197,7 +197,7 @@ export function codexUpdateState(paneText) {
     if (fences.length % 2) continue;
     const output = text.slice(start.index);
     const compact = output.replace(/\s/g, '');
-    if (/^🎉Updateransuccessfully!PleaserestartCodex\.(?:Paneisdead\(status[^)]*\))?$/.test(compact)) {
+    if (/^🎉Updateransuccessfully!PleaserestartCodex\.(?:Paneisdead(?:\([^)]*\))?)?$/.test(compact)) {
       return { status: 'needs-you', waitingFor: 'Codex update finished — restart Codex' };
     }
     if (/^UpdatingCodexvia`[^`]+`\.\.\./.test(compact)
