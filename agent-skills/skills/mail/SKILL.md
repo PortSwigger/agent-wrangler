@@ -29,7 +29,8 @@ before continuing your work. The server waits until an active turn finishes
 before sending its notification, so mail does not interrupt work already in
 progress. Mail is delivered to a live idle session; dormant sessions keep their
 unread messages until resumed, unless the user has turned on the "Let mail wake
-dormant sessions" setting, in which case the session is resumed and then notified once idle.
+dormant sessions" setting, in which case the session is resumed and then notified
+once idle. Snoozed sessions are never woken for mail.
 A large message may come back as an excerpt rather than the full body
 (over ~4KB alone, or once a batch's total passes ~16KB) — follow up with
 `read_mail({ id })` to fetch that one message in full.

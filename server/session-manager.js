@@ -1158,12 +1158,8 @@ export class SessionManager {
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this
     // install's socket — so a legacy default-socket session migrates here.
-    // An automatic wake is not the user opening the card, so a pending snooze (and
-    // its note) survives it; read now, not from `prev`, so a concurrent clear wins.
-    const snooze = automatic ? this.map.get(sessionId)?.snooze : undefined;
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
-      ...(snooze ? { snooze } : {}),
       launchedCodeVersion: this.codeVersion || undefined,
     });
     this._save();

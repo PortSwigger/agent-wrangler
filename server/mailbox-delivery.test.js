@@ -59,6 +59,14 @@ test('dormant recipient is resumed bare, with the notification left for the gate
   assert.deepEqual(d.sent, []);
 });
 
+test('a snoozed dormant recipient is never woken for mail', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir(), snooze: { until: Date.now() + 3600_000, createdAt: 1 } } } });
+  d.wakesDormant = () => true;
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
 test('a dormant recipient archived before the wake is skipped, not resumed', async () => {
   const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
   d.wakesDormant = () => true;

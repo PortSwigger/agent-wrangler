@@ -19,6 +19,7 @@ export async function deliverMailNotification(to, text, deps) {
   const target = tmuxFor(to);
   if (!target) {
     if (!deps.wakesDormant?.()) return { mode: 'deferred', reason: 'no tmux target' };
+    if (entry.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
     return wakeDormant(to, entry, deps);
   }
 

@@ -956,23 +956,6 @@ test('_doResume: automatic discards a relaunch when the card was archived mid-la
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('_doResume: an automatic wake keeps a pending snooze, a plain resume drops it', async () => {
-  for (const [automatic, kept] of [[true, true], [false, false]]) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-snooze-keep-'));
-    const sm = new SessionManager();
-    sm.map.clear();
-    sm.killForSession = async () => [];
-    sm._save = () => {};
-    sm.refreshAlive = async () => {};
-    sm._newSession = async () => {};
-    const snooze = { until: Date.now() + 3600_000, createdAt: 1, comment: 'recheck' };
-    sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir, snooze });
-    await sm._doResume('c1', dir, { automatic });
-    assert.deepEqual(sm.map.get('c1').snooze, kept ? snooze : undefined);
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('_doResume: a devcontainer workflow session resumes with the issue-to-pr skill copied in', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dc-wf-resume-'));
   const sm = new SessionManager();
