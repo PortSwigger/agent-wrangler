@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, resolveRuntimeForGraph } from './state-reader.js';
+import { SessionManager } from './session-manager.js';
+import { workerStatusWord } from '../public/cards.js';
+import { SESSIONS_DIR as HOOK_SESSIONS_DIR } from './claude-paths.js';
 
 // A sessions/ dir like ~/.claude/sessions: <pid>.json written by the status hook.
 function makeSessionsDir() {
@@ -571,6 +574,80 @@ function makeDiscoveredManager(entry, tmuxName) {
     socketOf: () => '',
   };
 }
+
+test('buildGraph: live Codex self-update status reaches the board with its restart reason', async () => {
+  const entry = { sessionId: 'codex-update', agent: 'codex', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cx_update');
+  const discover = async () => [{ tmuxName: 'cx_update', claudePid: 4242, agent: 'codex', command: 'codex' }];
+  const runtimeResolver = () => ({ analyze: async () => ({}) });
+  for (const [pane, expected] of [
+    ['Updating Codex via `brew upgrade --cask codex`...\n==> Upgrading codex', 'working'],
+    ['🎉 Update ran successfully! Please restart Codex.', 'needs-you'],
+  ]) {
+    const graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => pane });
+    const node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+    assert.equal(node.status, expected);
+    assert.equal(node.managed, true);
+    if (expected === 'needs-you') assert.match(node.waitingFor, /restart Codex/i);
+  }
+});
+
+test('buildGraph: confirmed Codex update exit wins over discovery and preserves Resume, output and mail', async () => {
+  const mgr = new SessionManager();
+  const sid = 'codex-update-exit';
+  const entry = { tmux: 'cx_update_exit', agent: 'codex', liveSessionId: 'L1', socket: 'update-test', relaunchedAt: 1791451076706 };
+  mgr.map.set(sid, entry);
+  mgr.scanSockets = () => ['update-test'];
+  mgr._tmux = async () => ({ stdout: 'cx_update_exit\x1f1\x1f0\x1f1791451142\n' });
+  await mgr.refreshAlive();
+  assert.deepEqual(await mgr.reconcileExitedSessions(), []);
+  const exitOutput = '🎉 Update ran successfully! Please restart Codex.\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)';
+  const discover = async () => [{ tmuxName: entry.tmux, socket: entry.socket, claudePid: 4242, agent: 'codex', command: 'codex' }];
+  const runtimeResolver = () => ({ readLive: async () => ({ liveSid: 'L1', status: 'working' }), analyze: async () => ({}) });
+  const mail = { unread: 6, undeliverable: 0 };
+  const graph = await buildGraph(mgr, async () => ({}), {
+    discover, runtimeResolver,
+    capture: async (name, lines, socket) => {
+      assert.equal(name, entry.tmux);
+      assert.equal(socket, entry.socket);
+      return exitOutput;
+    },
+    mailStore: { unreadInfo: (id) => { assert.equal(id, sid); return mail; } },
+  });
+  assert.equal(graph.sessions.length, 1);
+  const node = graph.sessions[0];
+  assert.equal(node.managed, false);
+  assert.equal(node.dormant, true);
+  assert.equal(node.tmux, null);
+  assert.equal(node.exitOutput, exitOutput);
+  assert.deepEqual(node.mail, mail);
+  assert.equal(workerStatusWord(node, { justFinished: new Set() }), 'resume');
+});
+
+test('buildGraph: a frozen busy session file cannot override a confirmed dead pane', async (t) => {
+  const entry = { sessionId: 'frozen-update', agent: 'codex', tmux: 'cx_frozen' };
+  const mgr = makeDormantManager([entry]);
+  mgr.deadTmuxNameFor = (id) => id === entry.sessionId ? entry.tmux : null;
+  const hookPath = path.join(HOOK_SESSIONS_DIR, 'frozen-update-test.json');
+  const readdir = fs.readdirSync;
+  const readFile = fs.readFileSync;
+  t.mock.method(fs, 'readdirSync', (dir, ...args) => dir === HOOK_SESSIONS_DIR
+    ? ['frozen-update-test.json'] : readdir(dir, ...args));
+  t.mock.method(fs, 'readFileSync', (file, ...args) => file === hookPath
+    ? JSON.stringify({ sessionId: entry.sessionId, pid: process.pid, status: 'busy' }) : readFile(file, ...args));
+  const exitOutput = '🎉 Update ran successfully! Please restart Codex.';
+  const graph = await buildGraph(mgr, async () => ({}), {
+    discover: async () => [], runtimeResolver: () => ({ analyze: async () => ({}) }),
+    capture: async () => exitOutput,
+  });
+  assert.equal(graph.sessions.length, 1);
+  const node = graph.sessions[0];
+  assert.equal(node.managed, false);
+  assert.equal(node.dormant, true);
+  assert.equal(node.status, 'idle');
+  assert.equal(node.exitOutput, exitOutput);
+  assert.equal(workerStatusWord(node, { justFinished: new Set() }), 'resume');
+});
 
 test('buildGraph ignores a Codex pane title made from the truncated worktree name', async () => {
   const entry = { sessionId: 'cx1', agent: 'codex', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names', intent: 'Why are Codex session names sometimes the full initial prompt?', liveSessionId: 'L1' };

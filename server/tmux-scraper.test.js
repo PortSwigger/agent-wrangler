@@ -143,6 +143,52 @@ const REAL_BANNER_LINES = [
   '  2. Skip', '  3. Skip until next version', '',
   '  Press enter to continue',
 ];
+const CODEX_UPDATING = 'Updating Codex via `brew upgrade --cask codex`...';
+const CODEX_UPDATED = '🎉 Update ran successfully! Please restart Codex.';
+
+test('classify: Codex self-update progress reads working beyond the default tail', () => {
+  for (const width of [80, 40, 24, 20]) {
+    const lines = [CODEX_UPDATING, '==> Fetching downloads for: codex', '==> Upgrading codex', '  0.160.1 -> 0.161.0', ...Array(20).fill('==> Downloading Homebrew API data')];
+    const pane = lines.flatMap((l) => wordWrap(l, width)).join('\n');
+    assert.equal(classify(pane).status, 'working', `width ${width}`);
+    assert.equal(classify(pane, { tailLines: 60, strictWorking: true }).status, 'working');
+  }
+  assert.equal(classify(CODEX_UPDATING).status, 'working');
+});
+
+test('classify: raw updater output survives terminal hard wrapping', () => {
+  for (const width of [40, 24, 20, 16, 12]) {
+    for (const [text, status] of [[CODEX_UPDATING, 'working'], [CODEX_UPDATED, 'needs-you']]) {
+      const lines = [];
+      for (let i = 0; i < text.length; i += width) lines.push(text.slice(i, i + width));
+      assert.equal(classify(lines.join('\n')).status, status, `width ${width}: ${text}`);
+    }
+  }
+});
+
+test('classify: completed Codex update requires a restart even with stale working output', () => {
+  for (const width of [80, 40, 24, 20, 12]) {
+    const pane = ['• Working (1s · esc to interrupt)', CODEX_UPDATING, CODEX_UPDATED]
+      .flatMap((l) => wordWrap(l, width)).join('\n');
+    const result = classify(pane);
+    assert.equal(result.status, 'needs-you', `width ${width}`);
+    assert.match(result.waitingFor, /restart Codex/i);
+  }
+  assert.equal(classify(`${CODEX_UPDATED}\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)`).status, 'needs-you');
+});
+
+test('classify: updater prose, quoted output and update scrollback after resume stay idle', () => {
+  const panes = [
+    'I am updating Codex via brew upgrade --cask codex.',
+    `The output says: ${CODEX_UPDATED}`,
+    `> ${CODEX_UPDATING}\n> ==> Upgrading codex`,
+    `    ${CODEX_UPDATING}\n    ==> Upgrading codex\n    ${CODEX_UPDATED}`,
+    `\`\`\`text\n${CODEX_UPDATING}\n==> Upgrading codex\n${CODEX_UPDATED}\n\`\`\``,
+    `${CODEX_UPDATING}\n==> Upgrading codex\n${CODEX_UPDATED}\n› Ask Codex to do anything\n? for shortcuts`,
+    `${CODEX_UPDATING}\n==> Upgrading codex\n› Explain the update output\n• The update completed successfully.`,
+  ];
+  for (const pane of panes) assert.equal(classify(pane).status, 'idle', pane);
+});
 test('classify: the real banner reads as needs-you at every realistic (and several unrealistic) pane widths', () => {
   // 40 down to 12 columns — well past anything this product would actually
   // render a terminal at, which is the point: the fix must not depend on
