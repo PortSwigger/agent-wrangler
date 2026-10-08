@@ -950,9 +950,27 @@ test('_doResume: automatic discards a relaunch when the card was archived mid-la
   let launched;
   sm._newSession = async (tmux) => { launched = tmux; sm.map.get('c1').archivedAt = 5; };
   sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
-  await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived during resume/);
+  await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived or snoozed during resume/);
   assert.equal(sm.map.get('c1').archivedAt, 5);
   assert.deepEqual(tmuxCalls, [['kill-session', '-t', launched]]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('_doResume: automatic discards a relaunch when a snooze appeared mid-launch and keeps it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-keep-snz-'));
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.killForSession = async () => [];
+  const tmuxCalls = [];
+  sm._tmux = async (socket, args) => { tmuxCalls.push(args); };
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  const snooze = { until: Date.now() + 3600_000, createdAt: 1, comment: 'recheck' };
+  sm._newSession = async () => { sm.map.get('c1').snooze = snooze; };
+  sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
+  await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived or snoozed during resume/);
+  assert.deepEqual(sm.map.get('c1').snooze, snooze);
+  assert.equal(tmuxCalls.length, 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

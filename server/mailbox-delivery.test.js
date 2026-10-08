@@ -100,6 +100,27 @@ test('a resume that loses to an archive is skipped, not retried', async () => {
   assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
 });
 
+test('a snooze set during the wake window defers the mail without resuming', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  const entry = d.sessionManager.entryFor('CARD1');
+  let calls = 0;
+  d.sessionManager.entryFor = () => (++calls > 1 ? { ...entry, snooze: { until: 1, createdAt: 1 } } : entry);
+  const mode = await deliverMailNotification('CARD1', 'x', d);
+  assert.equal(mode.mode, 'deferred');
+  assert.equal(d.resumed.length, 0);
+});
+
+test('a resume discarded because a snooze appeared mid-launch defers instead of erroring', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
+  d.sessionManager.resume = async () => {
+    d.sessionManager.entryFor('CARD1').snooze = { until: 1, createdAt: 1 };
+    throw new Error('discarded');
+  };
+  assert.equal((await deliverMailNotification('CARD1', 'x', d)).mode, 'deferred');
+});
+
 test('a failed resume propagates so the sweep reopens the settle window', async () => {
   const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
   d.wakesDormant = () => true;

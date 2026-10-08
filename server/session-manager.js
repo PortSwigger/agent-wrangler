@@ -1148,11 +1148,11 @@ export class SessionManager {
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
-    // An automatic caller (mail wake) must not resurrect a card archived while the
+    // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
-    if (automatic && this.map.get(sessionId)?.archivedAt) {
+    if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
       await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
-      throw new Error(`Session ${sessionId} was archived during resume; relaunch discarded.`);
+      throw new Error(`Session ${sessionId} was archived or snoozed during resume; relaunch discarded.`);
     }
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
