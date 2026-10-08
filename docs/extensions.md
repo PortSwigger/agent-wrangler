@@ -19,6 +19,13 @@ for a newer commit; when one is found, **Update all** appears beside it and the 
 update button in the list. Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Source** (type, repository and commit) and its **Settings**.
 
+**+ Add extension** also lists public GitHub repositories tagged with the
+[`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
+the owner's avatar, description, stars, language and last update. **Install…** on a card goes through
+the same review as a pasted URL; repositories you already have are marked **Installed**. The list is
+searched when the pane opens and on **Refresh**. Anyone can tag a repository, so a listing is not a
+review or an endorsement; check the code and its author before installing.
+
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
@@ -65,6 +72,9 @@ export default {
   defaultEnabled: true,
 };
 ```
+
+To list a public extension under **+ Add extension**, add the `agent-wrangler-extension` topic to its
+GitHub repository.
 
 The directory `<id>`, `wranglerExtension.id`, and runtime manifest `id` must agree. IDs begin with a
 lowercase letter and contain lowercase letters, digits, or hyphens. A lockfile is required only when

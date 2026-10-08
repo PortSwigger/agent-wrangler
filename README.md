@@ -249,7 +249,8 @@ survive and each card just needs a manual Resume.
 ## Extensions
 
 Optional features are packaged as extensions — one manifest each, switched on and off from
-**Settings → Extensions**, and installable from a git URL. An extension can add MCP tools,
+**Settings → Extensions**, and installable from a git URL or by browsing GitHub repositories tagged
+`agent-wrangler-extension`. An extension can add MCP tools,
 control handlers, board state, settings, session hooks, skills and a browser-side half. See
 [docs/extensions.md](docs/extensions.md) for installation, a minimal authoring example, and the
 complete implementation constraints.

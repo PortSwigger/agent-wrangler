@@ -1,4 +1,4 @@
-import { COPY_ICON, CHECK_ICON, PROMOTE_ICON, RESTART_ICON } from './icons.js';
+import { COPY_ICON, CHECK_ICON, PROMOTE_ICON, RESTART_ICON, GITHUB_ICON, STAR_ICON } from './icons.js';
 
 // The Extensions settings tab and the install/update consent modal. Pure DOM
 // builders with no app state, like toast.js and system-banner.js: settings.js
@@ -240,13 +240,17 @@ export function extensionDetailEl(entry, {
   return pane;
 }
 
-// The install-by-git-URL form "+ Add extension" opens in the detail pane.
-function addExtensionEl({ busy, onInstall }) {
+// "+ Add extension" in the detail pane: the paste-a-git-URL form, then the
+// GitHub browser — public repositories carrying the extension topic, as cards.
+// A card's Install… sends its clone URL down the same `onInstall` as the form,
+// so it gets the same clone, disclosure and consent modal; nothing is skipped
+// for having been found here.
+function addExtensionEl({ busy, onInstall, browse, installedOrigins, onBrowse }) {
   const pane = el('div', 'ext-detail-body');
   const head = el('div', 'ext-detail-head');
   const copy = el('div', 'setting-copy');
   copy.append(el('div', 'ext-detail-name', 'Add extension'));
-  copy.append(el('div', 'setting-help', 'Paste an https:// or ssh:// git URL. The wrangler fetches it and shows you what it asks for before anything is installed.'));
+  copy.append(el('div', 'setting-help', 'Paste an https:// or ssh:// git URL, or pick one from GitHub below. The wrangler fetches it and shows you what it asks for before anything is installed.'));
   head.append(copy);
   pane.append(head);
   const form = el('div', 'ext-install-form');
@@ -265,7 +269,173 @@ function addExtensionEl({ busy, onInstall }) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
   form.append(input, go);
   pane.append(form);
+  if (browse) pane.append(githubBrowserEl({ browse, busy, installedOrigins, onInstall, onBrowse }));
   return pane;
+}
+
+export const EXTENSION_TOPIC = 'agent-wrangler-extension';
+
+// The browser's own warning, and like TRUST_STATEMENT not to be softened: a
+// topic is something any repository owner sets on their own repository, so
+// being listed here says nothing about who wrote it or what it does.
+export const BROWSE_NOTICE = 'Anyone can tag a public repository with this topic, so nothing listed here has been reviewed or endorsed. Read the code and check who wrote it before installing — making sure an extension is safe is up to you.';
+
+// One comparable form for a git remote, so a card can tell it is already
+// installed whether the origin was recorded as https, with .git, or as git@.
+export function normalizeRepoUrl(url) {
+  return String(url || '').trim().toLowerCase()
+    .replace(/^git@([^:]+):/, 'https://$1/')
+    .replace(/^ssh:\/\/git@/, 'https://')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '');
+}
+
+const RELATIVE_UNITS = [['year', 365 * 86400], ['month', 30 * 86400], ['week', 7 * 86400], ['day', 86400], ['hour', 3600], ['minute', 60]];
+
+// "Updated 3 days ago" — how alive a repository is matters more than when.
+export function updatedAgoText(iso, now = Date.now()) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return '';
+  const secs = Math.max(0, (now - then) / 1000);
+  for (const [unit, size] of RELATIVE_UNITS) {
+    const n = Math.floor(secs / size);
+    if (n >= 1) return `Updated ${n} ${unit}${n === 1 ? '' : 's'} ago`;
+  }
+  return 'Updated just now';
+}
+
+function compactCount(n) {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '')}k` : String(n);
+}
+
+function avatarEl(repo) {
+  // The initial is underneath the image, so a blocked or failed avatar still
+  // leaves something in the circle rather than a broken-image glyph.
+  const box = el('div', 'ext-gh-avatar');
+  box.append(el('span', 'ext-gh-avatar-initial', (repo.owner || repo.name || '?').slice(0, 1).toUpperCase()));
+  if (repo.avatarUrl) {
+    const img = el('img');
+    img.src = `${repo.avatarUrl}${repo.avatarUrl.includes('?') ? '&' : '?'}s=80`;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => img.remove());
+    box.append(img);
+  }
+  return box;
+}
+
+function repoCardEl(repo, { busy, installed, onInstall }) {
+  const card = el('div', `ext-gh-card${installed ? ' installed' : ''}`);
+  card.append(avatarEl(repo));
+  const body = el('div', 'ext-gh-body');
+  const title = el('a', 'ext-gh-title');
+  title.href = repo.htmlUrl;
+  title.target = '_blank';
+  title.rel = 'noreferrer noopener';
+  title.title = `Open ${repo.fullName} on GitHub`;
+  if (repo.owner) title.append(el('span', 'ext-gh-owner', `${repo.owner} / `));
+  title.append(el('span', 'ext-gh-name', repo.name || repo.fullName));
+  body.append(title);
+  body.append(el('div', `ext-gh-desc${repo.description ? '' : ' empty'}`, repo.description || 'No description.'));
+  const meta = el('div', 'ext-gh-meta');
+  const stars = el('span', 'ext-gh-stars');
+  stars.innerHTML = STAR_ICON;
+  stars.append(el('span', null, compactCount(repo.stars)));
+  stars.title = `${repo.stars} star${repo.stars === 1 ? '' : 's'}`;
+  meta.append(stars);
+  if (repo.language) {
+    const lang = el('span', 'ext-gh-lang');
+    const dot = el('span', 'ext-gh-lang-dot');
+    dot.dataset.lang = repo.language;
+    lang.append(dot, el('span', null, repo.language));
+    meta.append(lang);
+  }
+  const ago = updatedAgoText(repo.pushedAt);
+  if (ago) meta.append(el('span', 'ext-gh-updated', ago));
+  body.append(meta);
+  card.append(body);
+
+  const action = el('div', 'ext-gh-action');
+  if (installed) {
+    const badge = el('span', 'ext-gh-installed');
+    badge.innerHTML = CHECK_ICON;
+    badge.append(el('span', null, 'Installed'));
+    action.append(badge);
+  } else {
+    const btn = el('button', 'ext-btn ext-btn-primary', 'Install…');
+    btn.type = 'button';
+    btn.disabled = busy;
+    btn.setAttribute('aria-label', `Install ${repo.fullName}`);
+    btn.addEventListener('click', () => onInstall?.(repo.cloneUrl));
+    action.append(btn);
+  }
+  card.append(action);
+  return card;
+}
+
+function skeletonCardEl() {
+  const card = el('div', 'ext-gh-card ext-gh-skeleton');
+  card.setAttribute('aria-hidden', 'true');
+  card.append(el('div', 'ext-gh-avatar'));
+  const body = el('div', 'ext-gh-body');
+  body.append(el('div', 'ext-gh-bar wide'), el('div', 'ext-gh-bar'), el('div', 'ext-gh-bar short'));
+  card.append(body);
+  return card;
+}
+
+// `browse` is `{ loading, error, repos }`, owned by app.js so a remount keeps
+// it. Installed repositories sink below the rest: the point of the list is
+// what you could add.
+function githubBrowserEl({ browse, busy, installedOrigins = [], onInstall, onBrowse }) {
+  const wrap = el('div', 'ext-gh');
+  const head = el('div', 'ext-gh-head');
+  const heading = el('div', 'ext-gh-heading');
+  heading.innerHTML = GITHUB_ICON;
+  heading.append(el('span', null, 'Browse GitHub'));
+  const repos = browse.repos || [];
+  if (!browse.loading && repos.length) heading.append(el('span', 'ext-gh-count', String(repos.length)));
+  head.append(heading);
+  const topic = el('a', 'ext-gh-topic', EXTENSION_TOPIC);
+  topic.href = `https://github.com/topics/${EXTENSION_TOPIC}`;
+  topic.target = '_blank';
+  topic.rel = 'noreferrer noopener';
+  topic.title = 'The GitHub topic this list is built from';
+  head.append(topic);
+  const refresh = el('button', 'ext-btn ext-btn-sm ext-gh-refresh');
+  refresh.type = 'button';
+  refresh.innerHTML = RESTART_ICON;
+  refresh.append(el('span', null, browse.loading ? 'Searching…' : 'Refresh'));
+  refresh.setAttribute('aria-label', 'Search GitHub again');
+  refresh.disabled = Boolean(browse.loading);
+  refresh.addEventListener('click', () => onBrowse?.());
+  head.append(refresh);
+  wrap.append(head);
+
+  const notice = el('div', 'ext-gh-notice');
+  notice.setAttribute('role', 'note');
+  notice.append(el('span', 'ext-gh-notice-lead', 'Community extensions are unvetted.'), document.createTextNode(` ${BROWSE_NOTICE}`));
+  wrap.append(notice);
+
+  const list = el('div', 'ext-gh-list');
+  list.setAttribute('aria-busy', browse.loading ? 'true' : 'false');
+  if (browse.loading) {
+    for (let i = 0; i < 3; i += 1) list.append(skeletonCardEl());
+  } else if (browse.error) {
+    list.append(el('div', 'ext-gh-empty ext-gh-error', `Could not search GitHub: ${browse.error}`));
+  } else if (!repos.length) {
+    const empty = el('div', 'ext-gh-empty');
+    empty.append(el('div', 'ext-gh-empty-lead', 'Nothing tagged yet.'));
+    empty.append(el('div', null, `Add the ${EXTENSION_TOPIC} topic to a public extension repository to list it here.`));
+    list.append(empty);
+  } else {
+    const have = new Set(installedOrigins.map(normalizeRepoUrl));
+    const isInstalled = (r) => have.has(normalizeRepoUrl(r.htmlUrl));
+    const ordered = [...repos.filter((r) => !isInstalled(r)), ...repos.filter(isInstalled)];
+    for (const repo of ordered) list.append(repoCardEl(repo, { busy, installed: isInstalled(repo), onInstall }));
+  }
+  wrap.append(list);
+  return wrap;
 }
 
 // One row per declared setting, for ONE extension — the Settings section of
@@ -559,8 +729,8 @@ function defaultSettingsEl(entry, onSettingChange) {
 export function extensionsPanelEl({
   entries = [], statuses = {}, checking = false, progress = '', busy = false,
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
-  selectedId = '', filter = '', adding = false,
-  onSelect, onFilter, onAdd, onInstall, onUninstall, onUpdate, onUpdateAll,
+  selectedId = '', filter = '', adding = false, browse = null,
+  onSelect, onFilter, onAdd, onInstall, onBrowse, onUninstall, onUpdate, onUpdateAll,
   onCheckUpdates, onRestart, onSettingChange, settingsEl,
 } = {}) {
   const wrap = el('div', 'ext-split');
@@ -653,7 +823,8 @@ export function extensionsPanelEl({
   if (notices.childNodes.length) detail.append(notices);
 
   if (adding || !selected) {
-    detail.append(addExtensionEl({ busy, onInstall }));
+    const installedOrigins = installed.map((e) => e.origin).filter(Boolean);
+    detail.append(addExtensionEl({ busy, onInstall, browse, installedOrigins, onBrowse }));
   } else {
     const settings = settingsEl ? settingsEl(selected) : defaultSettingsEl(selected, onSettingChange);
     detail.append(extensionDetailEl(selected, {

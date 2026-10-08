@@ -5675,6 +5675,10 @@ let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
 let extUpdateQueue = [];
+// The GitHub browser in the add pane: searched when the pane is opened and on
+// Refresh, then kept for the life of the page so reopening it costs nothing.
+let extBrowse = null;
+const searchExtBrowse = () => { extBrowse = { loading: true, repos: extBrowse?.repos || [] }; send({ type: 'ext-browse' }); };
 // The detail pane's settings.panel host, torn down before every remount.
 let extSettingsPanelHost = null;
 
@@ -5755,9 +5759,11 @@ function mountExtensionsPanel(host) {
     selectedId: extSelectedId,
     filter: extFilter,
     adding: extAdding,
+    browse: extBrowse,
     onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
     onFilter: (text) => { extFilter = text; },
-    onAdd: () => { extAdding = true; remountExtensions(); },
+    onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
+    onBrowse: () => { searchExtBrowse(); remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
@@ -6150,6 +6156,10 @@ function connect() {
     else if (msg.type === 'ext-uninstall-done') {
       extPendingRemoval.add(msg.id);
       toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
+      remountExtensions();
+    }
+    else if (msg.type === 'ext-browse-results') {
+      extBrowse = { loading: false, repos: Array.isArray(msg.repos) ? msg.repos : [], error: msg.error || '' };
       remountExtensions();
     }
     else if (msg.type === 'ext-updates') {
