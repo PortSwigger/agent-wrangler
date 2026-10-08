@@ -2469,10 +2469,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Same cascade problem as #term-wrap (styles.css:349) and .diff-panel[hidden]:
    an explicit display beats the UA's [hidden] { display: none }, so anything
    toggled via the hidden attribute needs its own override here too. */
-/* --card-bg, the same single translucent wash #panel uses, so the chat continues
-   the header's surface rather than exposing the wallpaper behind the prose
-   (#sidebar is deliberately transparent and each pane paints its own backdrop —
-   #term does the same with --term-bg). One layer, on the wrapper: painting the
+/* --term-bg, the same backdrop #term paints, so a style's translucency reads the
+   same in the chat view as in the terminal (#sidebar is deliberately transparent
+   and each pane paints its own backdrop). One layer, on the wrapper: painting the
    stream and the composer separately would double it. */
 /* THE type scale for this whole pane. Every size below is an `em` fraction of
    this one value, so the "Chat font size" setting (app.js applyChatFontSize sets
@@ -2481,7 +2480,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    setting produce big prose beside unchanged 11px machinery.
    The px fallback matters: --chat-font-size is set by JS, and the pane must
    still render correctly if that never runs. */
-#chat-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--card-bg);
+#chat-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--term-bg);
   font-size: var(--chat-font-size, 14px); }
 #chat-wrap[hidden] { display: none; }
 
