@@ -395,11 +395,12 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // Archived sessions belong in graph.history, never on the board — even if
     // their process is still alive (the kill may lag or fail). Curation wins.
     if (sessionManager?.isArchived?.(s.sessionId)) continue;
-    if (sessionManager?.deadTmuxNameFor?.(s.sessionId)) continue;
 
     // Skip forked copies created by Resume: a tmux session we own but mapped to
     // a *different* (original) session id. The original node represents it.
     const discTmux = pidToTmux.get(s.pid) || null;
+    const deadHome = sessionManager?.deadTmuxNameFor?.(s.sessionId);
+    if (deadHome && (discTmux === deadHome || !sessionManager?.alive?.has(discTmux))) continue;
     const forkOwner = discTmux && sessionManager?.tmuxOwner ? sessionManager.tmuxOwner(discTmux) : null;
     if (forkOwner && forkOwner !== s.sessionId) continue;
 

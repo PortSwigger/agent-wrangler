@@ -524,6 +524,49 @@ test('reconcileExitedSessions does not archive a replacement launched during the
   assert.deepEqual(killed, []);
 });
 
+for (const [label, output, archived] of [
+  ['update exit', '🎉 Update ran successfully! Please restart Codex.', []],
+  ['ordinary exit', 'Bye!', ['s1']],
+]) {
+  test(`reconcileExitedSessions defers a failed capture and retries the ${label}`, async () => {
+    const sm = new SessionManager();
+    sm._save = () => {};
+    sm.map.set('s1', { tmux: 'cx_capture', agent: 'codex' });
+    sm.dead = new Set(['cx_capture']);
+    sm.deadStatus = new Map([['cx_capture', 0]]);
+    let captures = 0;
+    sm._tmux = async () => {
+      if (++captures === 1) throw new Error('tmux socket unavailable');
+      return { stdout: output };
+    };
+    const killed = [];
+    sm.killForSession = async (id) => { killed.push(id); return ['cx_capture']; };
+    assert.deepEqual(await sm.reconcileExitedSessions(), []);
+    assert.equal(sm.isArchived('s1'), false);
+    assert.deepEqual(killed, []);
+    assert.deepEqual(await sm.reconcileExitedSessions(), archived);
+    assert.equal(sm.isArchived('s1'), archived.length > 0);
+    assert.deepEqual(killed, archived);
+  });
+}
+
+test('reconcileExitedSessions leaves a resume in flight alone after capture', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_resuming', agent: 'codex' });
+  sm.dead = new Set(['cx_resuming']);
+  sm.deadStatus = new Map([['cx_resuming', 0]]);
+  sm._tmux = async () => {
+    sm._resuming.set('s1', Promise.resolve());
+    return { stdout: 'Bye!' };
+  };
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return []; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.isArchived('s1'), false);
+  assert.deepEqual(killed, []);
+});
+
 test('refreshAlive records each dead pane\'s death time from pane_dead_time', async () => {
   const sm = new SessionManager();
   sm.scanSockets = () => [''];

@@ -624,17 +624,21 @@ test('buildGraph: confirmed Codex update exit wins over discovery and preserves 
   assert.equal(workerStatusWord(node, { justFinished: new Set() }), 'resume');
 });
 
-test('buildGraph: a frozen busy session file cannot override a confirmed dead pane', async (t) => {
-  const entry = { sessionId: 'frozen-update', agent: 'codex', tmux: 'cx_frozen' };
-  const mgr = makeDormantManager([entry]);
-  mgr.deadTmuxNameFor = (id) => id === entry.sessionId ? entry.tmux : null;
+function mockHookSession(t, session) {
   const hookPath = path.join(HOOK_SESSIONS_DIR, 'frozen-update-test.json');
   const readdir = fs.readdirSync;
   const readFile = fs.readFileSync;
   t.mock.method(fs, 'readdirSync', (dir, ...args) => dir === HOOK_SESSIONS_DIR
     ? ['frozen-update-test.json'] : readdir(dir, ...args));
   t.mock.method(fs, 'readFileSync', (file, ...args) => file === hookPath
-    ? JSON.stringify({ sessionId: entry.sessionId, pid: process.pid, status: 'busy' }) : readFile(file, ...args));
+    ? JSON.stringify(session) : readFile(file, ...args));
+}
+
+test('buildGraph: a frozen busy session file cannot override a confirmed dead pane', async (t) => {
+  const entry = { sessionId: 'frozen-update', agent: 'codex', tmux: 'cx_frozen' };
+  const mgr = makeDormantManager([entry]);
+  mgr.deadTmuxNameFor = (id) => id === entry.sessionId ? entry.tmux : null;
+  mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid, status: 'busy' });
   const exitOutput = '🎉 Update ran successfully! Please restart Codex.';
   const graph = await buildGraph(mgr, async () => ({}), {
     discover: async () => [], runtimeResolver: () => ({ analyze: async () => ({}) }),
@@ -648,6 +652,28 @@ test('buildGraph: a frozen busy session file cannot override a confirmed dead pa
   assert.equal(node.exitOutput, exitOutput);
   assert.equal(workerStatusWord(node, { justFinished: new Set() }), 'resume');
 });
+
+for (const [label, discoveredTmux, live] of [
+  ['separately confirmed live pane', 'cc_running', true],
+  ['dead recorded pane still discovered', 'cc_dead', false],
+]) {
+  test(`buildGraph: ${label} takes its actual liveness from the snapshot`, async (t) => {
+    const entry = { sessionId: 'drifted-home', agent: 'claude', tmux: 'cc_dead' };
+    const mgr = makeDormantManager([entry]);
+    mgr.deadTmuxNameFor = (id) => id === entry.sessionId ? entry.tmux : null;
+    mgr.alive = new Set(live ? [discoveredTmux] : []);
+    mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid, status: 'busy' });
+    const graph = await buildGraph(mgr, async () => ({}), {
+      discover: async () => [{ tmuxName: discoveredTmux, claudePid: process.pid, agent: 'claude' }],
+      capture: async () => '• Working (1s · esc to interrupt)',
+    });
+    assert.equal(graph.sessions.length, 1);
+    const node = graph.sessions[0];
+    assert.equal(node.managed, live);
+    assert.equal(node.tmux, live ? 'cc_running' : null);
+    assert.equal(node.status, live ? 'working' : 'idle');
+  });
+}
 
 test('buildGraph ignores a Codex pane title made from the truncated worktree name', async () => {
   const entry = { sessionId: 'cx1', agent: 'codex', cwd: '/nonexistent/agent-wrangler-worktree-codex-session-names', intent: 'Why are Codex session names sometimes the full initial prompt?', liveSessionId: 'L1' };

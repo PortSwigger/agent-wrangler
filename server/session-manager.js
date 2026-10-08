@@ -1644,12 +1644,12 @@ export class SessionManager {
     for (const { sessionId, tmux } of toArchive) {
       const entry = this.map.get(sessionId);
       if (entry?.agent === 'codex' || tmux.startsWith('cx_')) {
-        const { stdout } = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
+        const capture = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
           maxBuffer: 4 * 1024 * 1024,
-        }).catch(() => ({ stdout: '' }));
-        if (codexUpdateState(stdout)?.status === 'needs-you') continue;
+        }).catch(() => null);
+        if (!capture || codexUpdateState(capture.stdout)?.status === 'needs-you') continue;
       }
-      if (this.map.get(sessionId)?.tmux !== tmux || this.isArchived(sessionId) || !this.dead.has(tmux)) continue;
+      if (this.map.get(sessionId)?.tmux !== tmux || this.isArchived(sessionId) || this.isResuming(sessionId) || !this.dead.has(tmux)) continue;
       this.archive(sessionId, { ...(snapshotFor(sessionId) || {}), reason: 'clean-exit' });
       archived.push(sessionId);
       log(`[session] auto-archived ${sessionId} (tmux ${tmux}) — clean exit (status 0)`);
