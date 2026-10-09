@@ -122,6 +122,11 @@ const REQUIRED_FIELDS = { view: ['label'], 'dispatch.field': ['at'] };
 // in every host, the error reported) while every other contribution carries on —
 // the same lesson as module-syntax.test.js's blank-dashboard incident, applied
 // at run time to code the core does not own.
+// Deep, so a caller cannot write through into the board's own model list.
+function copyAgents(agents) {
+  return Array.isArray(agents) ? JSON.parse(JSON.stringify(agents)) : [];
+}
+
 function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -134,6 +139,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const hiddenByExt = new Map();
   // extId -> Set<fn>: api.settings.onChange subscribers, fed by settingsChanged().
   const settingsListeners = new Map();
+  // extId -> Set<fn>: api.agents.onChange subscribers, fed by agentsChanged().
+  const agentsListeners = new Map();
   // Sample-card failures already reported, `extId:id`, so a pill that throws on
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
@@ -235,6 +242,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             state. Read live, never captured, so a dispatch.field can
   //             prefill from what Settings holds right now. Unset keys are
   //             absent, exactly as `host.settings` reads them server-side.
+  //   agents  — the dispatch dialog's agent list (1.25.0): `[{ id, label,
+  //             models: [{ value, label, default }], efforts }]`, the same
+  //             live-catalog list the board's own model select reads, as a
+  //             fresh deep copy per call. `agents.onChange(fn)` fires when the
+  //             server re-sends it (on connect, and on a catalog refresh), so
+  //             an extension never has to mirror the model vocabulary.
   //   ui      — rendering helpers the board owns (frozen). `markdownPreview(md)`
   //             returns sanitised HTML for a markdown string, from the same
   //             renderer as the chat view and file preview; a non-string is
@@ -323,6 +336,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           },
         }),
         settings: settingsApi(extId, baseApi),
+        agents: agentsApi(extId, baseApi),
         // Mark `el` as carrying an extension-owned drag: the board treats any
         // [data-ext-drag] element as "a drag is in progress" and holds its
         // background re-renders (app.js gridEditing) so the gesture is not torn
@@ -435,6 +449,22 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }
         if (!settingsListeners.has(extId)) settingsListeners.set(extId, new Set());
         const set = settingsListeners.get(extId);
+        set.add(fn);
+        return () => { set.delete(fn); };
+      },
+    });
+  }
+
+  function agentsApi(extId, baseApi) {
+    const read = () => copyAgents(baseApi.agents?.());
+    return Object.assign(read, {
+      onChange: (fn) => {
+        if (typeof fn !== 'function') {
+          onError(`[ext:${extId}] agents.onChange needs a function`);
+          return () => {};
+        }
+        if (!agentsListeners.has(extId)) agentsListeners.set(extId, new Set());
+        const set = agentsListeners.get(extId);
         set.add(fn);
         return () => { set.delete(fn); };
       },
@@ -678,6 +708,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // re-imports and re-subscribes.
       listeners.delete(extId);
       settingsListeners.delete(extId);
+      agentsListeners.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
       try { onExtensionRemoved(extId); } catch (err) { onError(`[ext:${extId}] cleanup failed`, err); }
     },
@@ -704,6 +735,20 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const fn of [...set]) {
         called += 1;
         try { fn({ ...(values || {}) }); } catch (err) { onError(`[ext:${extId}] settings.onChange listener failed`, err); }
+      }
+      return called;
+    },
+
+    // app.js calls this when an `agents` frame arrives. Every extension's
+    // listeners hear it, each with its own copy; a throwing listener is reported
+    // and KEPT, the same rule as settingsChanged.
+    agentsChanged(agents) {
+      let called = 0;
+      for (const [extId, set] of agentsListeners) {
+        for (const fn of [...set]) {
+          called += 1;
+          try { fn(copyAgents(agents)); } catch (err) { onError(`[ext:${extId}] agents.onChange listener failed`, err); }
+        }
       }
       return called;
     },
