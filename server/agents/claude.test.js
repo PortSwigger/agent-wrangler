@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
-import { claude, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
+import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
 import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
@@ -334,3 +334,20 @@ for (const phase of ['buildLaunch', 'buildResume', 'buildFork']) {
     assert.ok(cmd.includes("'--add-dir' '/repo'\\''s two'"));
   });
 }
+
+test('claude models offer only aliased families plus snapshot families that are not excluded', () => {
+  const values = claude.models.map((m) => m.value);
+  assert.ok(values.includes('opus') && values.includes('haiku'));
+  assert.ok(!values.some((v) => v.includes('mythos')), 'mythos is not a Claude Code model');
+});
+
+test('derivedModels offers an unaliased family by its newest id and skips aliased and excluded ones', () => {
+  const derived = derivedModels([
+    { family: 'zeta', id: 'claude-zeta-3-2', name: 'Zeta 3.2' },
+    { family: 'opus', id: 'claude-opus-5-5', name: 'Opus 5.5' },
+    { family: 'mythos', id: 'claude-mythos-5-1', name: 'Mythos 5.1' },
+  ]);
+  assert.deepEqual(derived, [
+    { value: 'claude-zeta-3-2', label: 'Zeta 3.2', pillLabel: 'zeta 3.2', transcriptPrefixes: ['claude-zeta-'] },
+  ]);
+});

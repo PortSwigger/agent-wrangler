@@ -227,6 +227,26 @@ export function newestClaudeName(family) {
   return `${name} ${best[0]}${best[1] >= 0 ? `.${best[1]}` : ''}`;
 }
 
+// The families of first-party Claude models in the bundled snapshot, each with its
+// newest model: [{ family: 'opus', id: 'claude-opus-5-5', name: 'Opus 5.5' }]. Read
+// from the snapshot alone, so a family only joins the picker once a reviewed
+// snapshot refresh carries it — never straight from a live fetch.
+export function snapshotClaudeFamilies() {
+  const newest = new Map();
+  for (const id of Object.keys(snapshot.anthropic || {})) {
+    const m = /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/.exec(id);
+    if (!m) continue;
+    const v = [Number(m[2]), m[3] == null ? -1 : Number(m[3])];
+    const cur = newest.get(m[1]);
+    if (!cur || compareVersions(v, cur.v) > 0) newest.set(m[1], { id, v });
+  }
+  return [...newest].map(([family, { id, v }]) => ({
+    family,
+    id,
+    name: `${family[0].toUpperCase()}${family.slice(1)} ${v[0]}${v[1] >= 0 ? `.${v[1]}` : ''}`,
+  }));
+}
+
 // LiteLLM's raw file, read with a size cap. Throws with a message of our own
 // wording only — never echoing the body, which a JSON.parse error would.
 export async function fetchLitellm({ fetchImpl = globalThis.fetch, url = LITELLM_URL } = {}) {

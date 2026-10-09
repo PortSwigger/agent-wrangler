@@ -5,7 +5,23 @@
    "displayName": "GPT-6.1-Sol",
    "description": "Latest workhorse model for coding and everyday work.",
    "visibility": "list",
-   "priority": 0,
+   "priority": 1,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "contextWindow": 272000
+  },
+  {
+   "slug": "gpt-6-astra",
+   "displayName": "GPT-6-Astra",
+   "description": "Frontier intelligence for the most demanding work.",
+   "visibility": "list",
+   "priority": 2,
    "efforts": [
     "low",
     "medium",
@@ -48,21 +64,6 @@
    "contextWindow": 272000
   },
   {
-   "slug": "gpt-reserve",
-   "displayName": "GPT-Reserve",
-   "description": "Fast and affordable agentic coding model.",
-   "visibility": "hide",
-   "priority": 4,
-   "efforts": [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max"
-   ],
-   "contextWindow": 272000
-  },
-  {
    "slug": "gpt-5.6-sol",
    "displayName": "GPT-5.6-Sol",
    "description": "Older generation workhorse model.",
@@ -83,7 +84,7 @@
    "displayName": "GPT-5.6-Terra",
    "description": "Older balanced model for straightforward work.",
    "visibility": "list",
-   "priority": 6,
+   "priority": 8,
    "efforts": [
     "low",
     "medium",
@@ -99,7 +100,7 @@
    "displayName": "GPT-5.6-Luna",
    "description": "Older fast and efficient model.",
    "visibility": "list",
-   "priority": 7,
+   "priority": 9,
    "efforts": [
     "low",
     "medium",
@@ -110,11 +111,43 @@
    "contextWindow": 272000
   },
   {
+   "slug": "gpt-daybreak-blue-latest",
+   "displayName": "Daybreak Blue",
+   "description": "Latest frontier agentic coding model for broad defensive cybersecurity work.",
+   "visibility": "hide",
+   "priority": 11,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "contextWindow": 272000
+  },
+  {
+   "slug": "gpt-daybreak-red-latest",
+   "displayName": "Daybreak Red",
+   "description": "Cyber-permissive variant of our latest frontier agentic coding model for advanced, authorized cybersecurity research.",
+   "visibility": "hide",
+   "priority": 12,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "contextWindow": 372000
+  },
+  {
    "slug": "gpt-5.5",
    "displayName": "GPT-5.5",
    "description": "Legacy coding model.",
-   "visibility": "hide",
-   "priority": 8,
+   "visibility": "list",
+   "priority": 13,
    "efforts": [
     "low",
     "medium",
