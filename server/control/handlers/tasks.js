@@ -60,6 +60,12 @@ export const taskArchiveHandler = {
   },
 };
 
+export function cascadedSessionIds(taskId, sessionManager) {
+  return sessionManager.archivedEntries()
+    .filter((e) => e.viaTaskArchive === taskId)
+    .map((e) => e.sessionId);
+}
+
 export const taskUnarchiveHandler = {
   type: 'task-unarchive',
   async handler(msg, ctx) {
@@ -81,10 +87,7 @@ export const taskUnarchiveHandler = {
     // isn't double-resumed. Sequential, not parallel — mirrors archiveCascade's own
     // one-at-a-time teardown, avoiding a burst of simultaneous tmux launches.
     if (msg.restoreSessions) {
-      const cascaded = ctx.sessionManager.archivedEntries()
-        .filter((e) => e.viaTaskArchive === msg.taskId)
-        .map((e) => e.sessionId);
-      for (const sessionId of cascaded) {
+      for (const sessionId of cascadedSessionIds(msg.taskId, ctx.sessionManager)) {
         await resumeSession(sessionId, ctx);
       }
     }

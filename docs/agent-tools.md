@@ -27,6 +27,8 @@ add more tools. A running session receives tool-registry changes after its next 
 | `detach_session` | Promote a nested session back to the top level. |
 | `rename_session` | Change a session's board label. |
 | `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. |
+| `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
+| `restore_task` | Restore an archived task, and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
 | `name_branch` | Rename the caller's Wrangler-managed worktree branch. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
