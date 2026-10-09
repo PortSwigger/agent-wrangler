@@ -458,3 +458,80 @@ test('session schedules ignore folder errors in the unused dispatch fields', () 
   assert.equal(sent[0].type, 'schedule-create');
   assert.equal(go.disabled, false);
 });
+
+
+test('session schedule includes focus only when checked; dispatch ignores it', () => {
+  const fields = { 'm-sch-target': { value: 'CARD1' }, 'm-sch-message': { value: ' ping ' }, 'm-sch-focus': { checked: true } };
+  const app = loadApp(['function readScheduleAction() {'], ['readScheduleAction'], "let scheduleAction = 'session';", {
+    document: { getElementById: (id) => fields[id] }, readDispatchFields: () => ({ intent: 'launch' }),
+  });
+  assert.deepEqual(app.readScheduleAction(), { kind: 'session', sessionId: 'CARD1', message: 'ping', focus: true });
+  fields['m-sch-focus'].checked = false;
+  assert.equal(app.readScheduleAction().focus, undefined);
+  const dispatchApp = loadApp(['function readScheduleAction() {'], ['readScheduleAction'], "let scheduleAction = 'dispatch';", {
+    document: { getElementById: (id) => fields[id] }, readDispatchFields: () => ({ intent: 'launch' }),
+  });
+  fields['m-sch-focus'].checked = true;
+  assert.deepEqual(dispatchApp.readScheduleAction(), { kind: 'dispatch', dispatch: { intent: 'launch' } });
+});
+
+function scheduledFocusHarness(sessions = []) {
+  const selected = [], views = {}, notices = [];
+  const diff = { open: false };
+  const clock = { now: 0 };
+  const app = loadApp(
+    ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
+    ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
+    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
+    { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {},
+      setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
+      isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; } },
+  );
+  app.state.sessions = sessions;
+  return { ...app, selected, views, notices, diff, clock };
+}
+
+test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
+  app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1' });
+  assert.deepEqual(app.selected, []);
+  app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
+  assert.deepEqual(app.selected, ['CARD1']);
+  assert.equal(app.views.CARD1, 'terminal');
+  assert.equal(app.state.pending, null);
+});
+
+test('focused schedule waits for resumed target to be live without requesting another resume', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: false }]);
+  app.onScheduleFired({ name: 'Wake', sessionId: 'CARD1', focus: true });
+  app.tryFulfillScheduledFocus();
+  assert.deepEqual(app.selected, []);
+  assert.equal(app.state.pending, 'CARD1');
+  app.state.sessions = [{ sessionId: 'CARD1', managed: true }];
+  app.tryFulfillScheduledFocus();
+  assert.deepEqual(app.selected, ['CARD1']);
+  assert.equal(app.views.CARD1, 'terminal');
+});
+
+
+test('scheduled focus dismisses a diff panel so the target terminal is visible', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
+  app.diff.open = true;
+  app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
+  assert.equal(app.diff.open, false);
+  assert.deepEqual(app.selected, ['CARD1']);
+});
+
+
+test('scheduled focus expires after a failed resume instead of jumping to a later wake', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: false }]);
+  app.onScheduleFired({ name: 'Wake', sessionId: 'CARD1', focus: true });
+  app.diff.open = true;
+  app.clock.now = 8000;
+  app.state.sessions = [{ sessionId: 'CARD1', managed: true }];
+  app.tryFulfillScheduledFocus();
+  assert.equal(app.state.pending, null);
+  assert.deepEqual(app.selected, []);
+  assert.deepEqual(app.views, {});
+  assert.equal(app.diff.open, true);
+});

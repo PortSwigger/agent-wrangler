@@ -743,7 +743,7 @@ async function fireSchedule(id, { manual = false } = {}) {
   try {
     const { sessionId } = await performScheduleAction(snap.action, now);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
-    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId });
+    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
     scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });

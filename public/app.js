@@ -678,6 +678,7 @@ function applyGraph(graph) {
   renderGridIfVisible();
   refreshFolderList();
 
+  tryFulfillScheduledFocus();
   tryFulfillPending();
 
   const active = document.activeElement;
@@ -3041,6 +3042,7 @@ let selectedNewSlot = null;
 // click (jump to the restored session once it's back) and by the URL hash on
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
+let pendingScheduledFocus = null;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
 export function setPendingSelect(id) { pendingSelect = id; }
@@ -5126,6 +5128,7 @@ function readScheduleAction() {
     kind: 'session',
     sessionId: document.getElementById('m-sch-target').value,
     message: document.getElementById('m-sch-message').value.trim(),
+    ...(document.getElementById('m-sch-focus').checked ? { focus: true } : {}),
   };
 }
 function readPicker() {
@@ -5292,6 +5295,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   scheduleAction = action?.kind || 'dispatch';
   const d = (action?.kind === 'dispatch' ? action.dispatch : null) || {};
   populateTargetSelect(action?.sessionId);
+  document.getElementById('m-sch-focus').checked = action?.kind === 'session' && action.focus === true;
   document.getElementById('m-sch-message').value = action && action.kind !== 'dispatch' ? (action.message || '') : '';
   const wantTask = typeof taskId === 'string' ? taskId : (d.taskId || null);
   populateTaskSelect(wantTask);
@@ -6102,6 +6106,30 @@ document.getElementById('schedules-new').addEventListener('click', () => { close
 schedulesModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeSchedulesPanel(); } });
 schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedulesModal) closeSchedulesPanel(); });
 
+function onScheduleFired(msg) {
+  toast(`Scheduled "${msg.name}" started`);
+  if (msg.focus === true && msg.sessionId) {
+    pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
+    tryFulfillScheduledFocus();
+  }
+}
+
+function tryFulfillScheduledFocus() {
+  if (!pendingScheduledFocus) return;
+  if (Date.now() >= pendingScheduledFocus.expiresAt) {
+    pendingScheduledFocus = null;
+    return;
+  }
+  if (!latestSessions.some((s) => s.sessionId === pendingScheduledFocus.sessionId && s.managed)) return;
+  const target = pendingScheduledFocus.sessionId;
+  pendingScheduledFocus = null;
+  if (isDiffPanelOpen()) closeDiffPanel();
+  disarmChatHandoff();
+  setSessionView(target, 'terminal');
+  pendingSelect = target;
+  tryFulfillPending();
+}
+
 // --- websocket control ---
 let ws;
 export function send(obj) {
@@ -6221,7 +6249,7 @@ function connect() {
     else if (msg.type === 'pr-merge') onPrMerge(msg);
     else if (msg.type === 'pr-dirty') onPrDirty(msg);
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
-    else if (msg.type === 'schedule-fired') toast(`Scheduled "${msg.name}" started`);
+    else if (msg.type === 'schedule-fired') onScheduleFired(msg);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);

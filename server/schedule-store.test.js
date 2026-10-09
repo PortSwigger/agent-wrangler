@@ -243,3 +243,14 @@ test('load: an already-stored legacy model does not break startup', () => {
   const [s] = store.snapshot().schedules;
   assert.equal(s.action.dispatch.model, 'claude-opus-4-8');
 });
+
+
+test('session focus survives saving, reloading, and unrelated edits, and can be disabled', () => {
+  const file = tmpFile();
+  const store = new ScheduleStore(file);
+  const s = store.create({ when: DAILY, action: { kind: 'session', sessionId: 'CARD1', focus: true } }, NOW);
+  const reloaded = new ScheduleStore(file);
+  assert.equal(reloaded.snapshot().schedules[0].action.focus, true);
+  assert.equal(reloaded.update(s.id, { name: 'Renamed' }, NOW).action.focus, true);
+  assert.equal(reloaded.update(s.id, { action: { ...s.action, focus: false } }, NOW).action.focus, undefined);
+});

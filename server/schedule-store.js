@@ -59,7 +59,7 @@ function validateAction(action, { isCron }) {
     const sessionId = String(a.sessionId || '').trim();
     if (!sessionId) throw new Error('A session schedule needs a target session.');
     const message = typeof a.message === 'string' ? a.message.trim() : '';
-    return { kind: 'session', sessionId, message };
+    return { kind: 'session', sessionId, message, ...(a.focus === true ? { focus: true } : {}) };
   }
   throw new Error(`Unknown schedule action: ${a.kind}`);
 }

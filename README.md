@@ -307,7 +307,9 @@ cadence. A schedule is **a saved action + a "when"**, and the action is one of t
   it's **resumed** (delivering the message as its first prompt — e.g. "every weekday
   09:00, resume my review session and tell it to check overnight CI"); if it's **live**
   the message is **injected into its terminal** (a recurring nudge). With no message, a
-  dormant session is just woken and a live one is left alone.
+  dormant session is just woken and a live one is left alone. **Focus session when
+  task runs**, below the target-session selector, opens the target’s terminal in the
+  board after a successful run. It is off by default and also applies to **Run now**.
 
 - **New / Edit** reuses the dispatch dialog with an added **When** section and an
   **action selector**: pick **One-off** (a single date & time), **Daily** (a time), or
