@@ -21,6 +21,7 @@ import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
+import { checkGuiSession } from './gui-session.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -1432,6 +1433,23 @@ export class SessionManager {
     } catch {
       return false;
     }
+  }
+
+  // Whether this install's tmux server is stuck in an old macOS login session
+  // (see gui-session.js). After init(), which resolves this.socket. Never throws.
+  async checkGuiSession() {
+    return checkGuiSession({ socket: this.socket, exec, tmux: (args) => this._tmux(this.socket, args) }).catch(() => null);
+  }
+
+  // Stop this install's tmux server and every pane on it, so the next launch
+  // starts a fresh server from this process, in this process's login session.
+  // Sessions go dormant, as after a reboot: their cards stay and Resume relaunches
+  // them. Only this.socket, never the legacy default one, which other tools share.
+  // "No server running" is not an error.
+  async killTmuxServer() {
+    if (!this.socket) return;
+    await this._tmux(this.socket, ['kill-server']).catch(() => {});
+    await this.refreshAlive();
   }
 
   _tmuxName(agentId, short) {

@@ -233,6 +233,17 @@ The grant only applies to *new* processes, so the tmux server needs restarting (
 kill-server`, or just kill the process) — this kills every live session on that socket; mapping entries
 survive and each card just needs a manual Resume.
 
+**A browser an agent opens (Playwright, say) sits behind other windows, has no Dock icon and won't
+take typing (macOS only).** Your keystrokes land in whichever app was in front instead. This happens
+after you log out and back in without restarting the Mac. Logging out stops the wrangler service but
+not its tmux server, so the restarted wrangler reconnects to a tmux server that still belongs to the
+old login session. Every agent, and every app an agent starts, inherits that session, and macOS won't
+let its windows come to the front. Restarting the wrangler doesn't help. When the wrangler starts it
+checks for this and shows a banner on the board. Click **Restart tmux** on the banner to stop the old
+tmux server, then resume your sessions. The next session you start or resume gets a new tmux server
+in your current login session. As above, this stops every live session on that socket, but their
+cards survive.
+
 ## How it works
 
 - **State** is read through an adapter for each supported agent. Claude state and transcripts come

@@ -27,6 +27,7 @@ import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpda
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { extBrowseHandler } from './ext-browse.js';
 import { restartHandler } from './restart.js';
+import { restartTmuxHandler } from './restart-tmux.js';
 import { updateCheckHandler, updateApplyHandler, autoUpdateModeHandler, refreshSessionsAfterUpdateHandler } from './self-update.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
@@ -100,6 +101,7 @@ export const CONTROL_HANDLERS = [
   extCheckUpdatesHandler,
   extBrowseHandler,
   restartHandler,
+  restartTmuxHandler,
   updateCheckHandler,
   updateApplyHandler,
   autoUpdateModeHandler,

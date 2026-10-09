@@ -65,7 +65,7 @@ import { collectLaunchContext } from './launch-context.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
-import { log, logError } from './log.js';
+import { log, logWarn, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
@@ -546,6 +546,11 @@ const extBag = {
 // only reaches tabs already open at the moment it fires.
 let fdWarning = null;
 
+// `{ socket }` when this install's tmux server is in an old macOS login session
+// (gui-session.js), else null. Checked once at startup: a logout stops this
+// service, so the next login always comes through here again.
+let staleGuiSession = null;
+
 // When the last control client was connected/active — drives the dev-instance
 // idle self-shutdown. Seeded to start time so a dev server launched and never
 // driven still reaps itself once the window elapses.
@@ -1020,6 +1025,8 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
+  // Boot-fixed too, and carried the same way for the same reason.
+  graph.staleGuiSession = staleGuiSession;
   // Each enabled extension's graph contribution. Only enabled ones are in the
   // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
   for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
@@ -1152,6 +1159,8 @@ controlWss.on('connection', (ws) => {
     restart: () => exitForRestart('restart requested from the board'),
     canRestart: restartSupported(),
     updates,
+    staleGuiSession: () => staleGuiSession,
+    recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
 });
@@ -1227,6 +1236,8 @@ async function main() {
   await sessionManager.init();
   await sessionManager.refreshTmuxPath();
   await sessionManager.clearInstallEnv();
+  staleGuiSession = await sessionManager.checkGuiSession();
+  if (staleGuiSession) logWarn(`[gui-session] tmux server on socket ${staleGuiSession.socket} is in an old macOS login session; windows its agents open can't be focused`);
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
   // (reason `adopt`): extensions repair per-session state that went stale while
