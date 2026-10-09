@@ -399,6 +399,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // Skip forked copies created by Resume: a tmux session we own but mapped to
     // a *different* (original) session id. The original node represents it.
     const discTmux = pidToTmux.get(s.pid) || null;
+    const deadHome = sessionManager?.deadTmuxNameFor?.(s.sessionId);
+    if (deadHome && (discTmux === deadHome || !sessionManager?.alive?.has(discTmux))) continue;
     const forkOwner = discTmux && sessionManager?.tmuxOwner ? sessionManager.tmuxOwner(discTmux) : null;
     if (forkOwner && forkOwner !== s.sessionId) continue;
 
@@ -574,6 +576,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const appEntry = sessionManager?.entryByTmux?.(d.tmuxName) || null;
     if (!appEntry) continue;
     const realSid = appEntry.sessionId;
+    if (sessionManager?.deadTmuxNameFor?.(realSid)) continue;
     if (synthesized.has(realSid)) continue;
     synthesized.add(realSid);
     // An archived session that's still running in tmux stays off the board.

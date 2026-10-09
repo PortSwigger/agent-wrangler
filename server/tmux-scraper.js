@@ -189,12 +189,34 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
   }
 }
 
+export function codexUpdateState(paneText) {
+  const text = stripAnsi(paneText);
+  const starts = [...text.matchAll(/^(?:Updating\b|🎉)/gm)];
+  for (const start of starts.reverse()) {
+    const fences = text.slice(0, start.index).match(/^[ \t]*(?:```|~~~)/gm) || [];
+    if (fences.length % 2) continue;
+    const output = text.slice(start.index);
+    const compact = output.replace(/\s/g, '');
+    if (/^🎉Updateransuccessfully!PleaserestartCodex\.(?:Paneisdead(?:\([^)]*\))?)?$/.test(compact)) {
+      return { status: 'needs-you', waitingFor: 'Codex update finished — restart Codex' };
+    }
+    if (/^UpdatingCodexvia`[^`]+`\.\.\./.test(compact)
+      && !/^[ \t]*(?:[›❯>•]|```|~~~|╭)|\? for shortcuts/m.test(output)) {
+      return { status: 'working' };
+    }
+  }
+  return null;
+}
+
 // Derive live state from the pane: only the "esc to interrupt" working signal
 // vs idle. The "needs you" (waiting) state comes from Claude's own session
 // file (status: 'waiting'), not from scraping the pane — pane scraping produced
 // false positives (e.g. a newline in the prompt looked like a selection menu).
 export function classify(paneText, { tailLines = 12, strictWorking = false } = {}) {
-  const recent = stripAnsi(paneText).split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
+  const plain = stripAnsi(paneText);
+  const update = codexUpdateState(plain);
+  if (update) return update;
+  const recent = plain.split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
   if (strictWorking ? paneHasWorkingStatus(recent) : /esc to interrupt/i.test(recent)) return { status: 'working' };
   // Verified against the real fresh-container login flow (Group G E2E capture):
   // the method-picker ("Select login method: 1. Claude account with

@@ -469,6 +469,117 @@ test('reconcileExitedSessions leaves a pane that died right after its resume for
   assert.equal(sm.isArchived('s1'), false);
 });
 
+for (const [label, relaunchedAt] of [['fresh dispatch', undefined], ['resume outside startup grace', 4_820_000]]) {
+  test(`reconcileExitedSessions preserves a completed Codex update after ${label}`, async () => {
+    const sm = new SessionManager();
+    sm._save = () => {};
+    sm.map.set('s1', { tmux: 'cx_update', agent: 'codex', socket: 'update-test', relaunchedAt });
+    sm.dead = new Set(['cx_update']);
+    sm.deadStatus = new Map([['cx_update', 0]]);
+    sm.deadTime = new Map([['cx_update', 5_000_000]]);
+    sm._tmux = async (socket, args) => {
+      assert.equal(socket, 'update-test');
+      assert.equal(args[0], 'capture-pane');
+      assert.equal(args[args.indexOf('-t') + 1], 'cx_update');
+      return { stdout: '🎉 Update ran successfully! Please restart Codex.\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)' };
+    };
+    const killed = [];
+    sm.killForSession = async (id) => { killed.push(id); return ['cx_update']; };
+    assert.deepEqual(await sm.reconcileExitedSessions(), []);
+    assert.equal(sm.isArchived('s1'), false);
+    assert.equal(sm.deadTmuxNameFor('s1'), 'cx_update');
+    assert.deepEqual(killed, []);
+  });
+}
+
+test('reconcileExitedSessions preserves recognized updater output with a custom dead-pane trailer', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_update', agent: 'codex' });
+  sm.dead = new Set(['cx_update']);
+  sm.deadStatus = new Map([['cx_update', 0]]);
+  sm._tmux = async () => ({ stdout: 'Updating Codex via `brew upgrade --cask codex`...\n🎉 Update ran successfully! Please restart Codex.\nProcess finished (exit 0)' });
+  sm.killForSession = async () => { throw new Error('must not kill'); };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.isArchived('s1'), false);
+  assert.equal(sm.deadTmuxNameFor('s1'), 'cx_update');
+});
+
+test('reconcileExitedSessions still archives an ordinary clean Codex exit', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_exit', agent: 'codex', socket: 'exit-test' });
+  sm.dead = new Set(['cx_exit']);
+  sm.deadStatus = new Map([['cx_exit', 0]]);
+  sm._tmux = async () => ({ stdout: 'Bye!\nPane is dead (status 0, Thu Oct 8 10:19:02 2026)' });
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return ['cx_exit']; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), ['s1']);
+  assert.equal(sm.isArchived('s1'), true);
+  assert.deepEqual(killed, ['s1']);
+});
+
+test('reconcileExitedSessions does not archive a replacement launched during the exit capture', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_old', agent: 'codex' });
+  sm.dead = new Set(['cx_old']);
+  sm.deadStatus = new Map([['cx_old', 0]]);
+  sm._tmux = async () => {
+    sm.map.set('s1', { tmux: 'cx_new', agent: 'codex' });
+    return { stdout: 'Bye!' };
+  };
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return []; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.entryFor('s1').tmux, 'cx_new');
+  assert.equal(sm.isArchived('s1'), false);
+  assert.deepEqual(killed, []);
+});
+
+for (const [label, output, archived] of [
+  ['update exit', '🎉 Update ran successfully! Please restart Codex.', []],
+  ['ordinary exit', 'Bye!', ['s1']],
+]) {
+  test(`reconcileExitedSessions defers a failed capture and retries the ${label}`, async () => {
+    const sm = new SessionManager();
+    sm._save = () => {};
+    sm.map.set('s1', { tmux: 'cx_capture', agent: 'codex' });
+    sm.dead = new Set(['cx_capture']);
+    sm.deadStatus = new Map([['cx_capture', 0]]);
+    let captures = 0;
+    sm._tmux = async () => {
+      if (++captures === 1) throw new Error('tmux socket unavailable');
+      return { stdout: output };
+    };
+    const killed = [];
+    sm.killForSession = async (id) => { killed.push(id); return ['cx_capture']; };
+    assert.deepEqual(await sm.reconcileExitedSessions(), []);
+    assert.equal(sm.isArchived('s1'), false);
+    assert.deepEqual(killed, []);
+    assert.deepEqual(await sm.reconcileExitedSessions(), archived);
+    assert.equal(sm.isArchived('s1'), archived.length > 0);
+    assert.deepEqual(killed, archived);
+  });
+}
+
+test('reconcileExitedSessions leaves a resume in flight alone after capture', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { tmux: 'cx_resuming', agent: 'codex' });
+  sm.dead = new Set(['cx_resuming']);
+  sm.deadStatus = new Map([['cx_resuming', 0]]);
+  sm._tmux = async () => {
+    sm._resuming.set('s1', Promise.resolve());
+    return { stdout: 'Bye!' };
+  };
+  const killed = [];
+  sm.killForSession = async (id) => { killed.push(id); return []; };
+  assert.deepEqual(await sm.reconcileExitedSessions(), []);
+  assert.equal(sm.isArchived('s1'), false);
+  assert.deepEqual(killed, []);
+});
+
 test('refreshAlive records each dead pane\'s death time from pane_dead_time', async () => {
   const sm = new SessionManager();
   sm.scanSockets = () => [''];
@@ -1033,6 +1144,193 @@ function codexSessionsFixture() {
     fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000);
   };
   return { root, proj, write, writeAt };
+}
+
+for (const otherRollout of [false, true]) {
+  test(`codex Resume restarts a first-launch updater ${otherRollout ? 'without adopting another conversation' : 'with no conversation to resume'}`, async (t) => {
+    const { root, proj, writeAt } = codexSessionsFixture();
+    t.after(() => {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(proj, { recursive: true, force: true });
+    });
+    const other = '77777777-7777-4777-8777-777777777777';
+    const createdAt = Date.now() - 60_000;
+    if (otherRollout) writeAt(other, new Date(createdAt + 10_000), Date.now());
+    const sm = new SessionManager();
+    sm.map.clear();
+    sm.map.set('updating-card', {
+      agent: 'codex', tmux: 'cx_update', socket: 'update-test', cwd: proj,
+      name: 'My card', intent: '', createdAt, model: 'gpt-6.1', effort: 'high',
+      autoCompactTokens: 120000, addDirs: ['/extra'], parentSession: 'parent-card',
+    });
+    if (otherRollout) sm.map.set('other-card', { agent: 'codex', cwd: proj, liveSessionId: other });
+    sm.dead = new Set(['cx_update']);
+    sm._save = () => {};
+    sm.refreshAlive = async () => {};
+    sm._tmux = async (socket, args) => {
+      assert.equal(socket, 'update-test');
+      assert.deepEqual(args, ['capture-pane', '-t', 'cx_update', '-p', '-S', '-60']);
+      return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+    };
+    const kills = [];
+    sm.killForSession = async (id) => { kills.push(id); return ['cx_update']; };
+    let command;
+    let launchDir;
+    sm._newSession = async (_tmux, dir, cmd) => { command = cmd; launchDir = dir; };
+    const codex = adapterFor('codex');
+    const discover = codex.discoverLiveId;
+    codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+    t.after(() => { codex.discoverLiveId = discover; });
+    await sm.resume('updating-card', proj);
+    assert.match(command, /AW_SESSION_ID='updating-card'/);
+    assert.doesNotMatch(command, /codex 'resume'|77777777-7777-4777-8777-777777777777/);
+    assert.match(command, /'-m' 'gpt-6.1'/);
+    assert.match(command, /'model_reasoning_effort=high'/);
+    assert.match(command, /'model_auto_compact_token_limit=120000'/);
+    assert.match(command, /'--add-dir' '\/extra'/);
+    assert.equal(launchDir, proj);
+    assert.deepEqual(kills, ['updating-card']);
+    const entry = sm.entryFor('updating-card');
+    assert.equal(entry.name, 'My card');
+    assert.equal(entry.createdAt, createdAt);
+    assert.equal(entry.intent, '');
+    assert.equal(entry.parentSession, 'parent-card');
+    assert.equal(entry.liveSessionId, undefined);
+    assert.notEqual(entry.tmux, 'cx_update');
+    if (otherRollout) assert.equal(sm.entryFor('other-card').liveSessionId, other);
+  });
+}
+
+test('codex Resume does not restart an unfinished updater fork with its parent task', async (t) => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(proj, { recursive: true, force: true });
+  });
+  const source = '99999999-9999-4999-8999-999999999999';
+  writeAt(source, new Date(Date.now() - 60_000), Date.now());
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('parent-card', { agent: 'codex', cwd: proj, intent: 'Parent task', liveSessionId: source, tmux: 'cx_parent' });
+  sm.map.set('fork-card', forkEntry({ short: 'fork', tmux: 'cx_fork', cwd: proj, parentEntry: sm.entryFor('parent-card'), parentId: 'parent-card', createdAt: Date.now() }));
+  sm.dead = new Set(['cx_fork']);
+  sm._tmux = async () => ({ stdout: '🎉 Update ran successfully! Please restart Codex.' });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  const kills = [];
+  sm.killForSession = async (id) => { kills.push(id); return []; };
+  let command;
+  sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+  const codex = adapterFor('codex');
+  const discover = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+  t.after(() => { codex.discoverLiveId = discover; });
+  await assert.rejects(sm.resume('fork-card', proj), /Could not locate a codex session to resume/);
+  assert.deepEqual(kills, []);
+  assert.equal(command, undefined);
+  assert.equal(sm.entryFor('fork-card').tmux, 'cx_fork');
+  assert.equal(sm.entryFor('fork-card').liveSessionId, undefined);
+  assert.equal(sm.entryFor('parent-card').liveSessionId, source);
+});
+
+for (const forkedFrom of [undefined, 'parent-card']) {
+  test(`codex Resume keeps an existing ${forkedFrom ? 'fork' : 'conversation'} after an updater exit`, async () => {
+    const sm = resumableCodex('existing-update');
+    sm.map.get('existing-update').tmux = 'cx_update';
+    sm.map.get('existing-update').forkedFrom = forkedFrom;
+    sm.dead = new Set(['cx_update']);
+    sm.killForSession = async () => [];
+    let command;
+    sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+    await sm.resume('existing-update', os.tmpdir());
+    assert.match(command, /codex 'resume' 'live-abc'/);
+    assert.equal(sm.entryFor('existing-update').liveSessionId, 'live-abc');
+  });
+}
+
+test('codex Resume retries a failed exit capture and records the fresh conversation', async (t) => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(proj, { recursive: true, force: true });
+  });
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('capture-retry', { agent: 'codex', tmux: 'cx_update', cwd: proj, intent: 'Original task', createdAt: Date.now() - 60_000 });
+  sm.dead = new Set(['cx_update']);
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  let captures = 0;
+  sm._tmux = async () => {
+    if (++captures === 1) throw new Error('capture unavailable');
+    return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+  };
+  const fresh = '88888888-8888-4888-8888-888888888888';
+  let command;
+  const kills = [];
+  sm.killForSession = async (id) => { kills.push(id); return ['cx_update']; };
+  sm._newSession = async (_tmux, _dir, cmd) => {
+    command = cmd;
+    writeAt(fresh, new Date(), Date.now());
+  };
+  const codex = adapterFor('codex');
+  const discover = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+  t.after(() => { codex.discoverLiveId = discover; });
+  await assert.rejects(sm.resume('capture-retry', proj), /Could not read Codex exit output/);
+  assert.deepEqual(kills, []);
+  assert.equal(command, undefined);
+  assert.equal(sm.entryFor('capture-retry').tmux, 'cx_update');
+  await sm.resume('capture-retry', proj);
+  assert.match(command, / 'Original task'$/);
+  assert.doesNotMatch(command, /codex 'resume'/);
+  assert.deepEqual(kills, ['capture-retry']);
+  assert.equal(sm.entryFor('capture-retry').liveSessionId, fresh);
+});
+
+test('codex Resume leaves a replacement alone when the pane changes during exit capture', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('changed-update', { agent: 'codex', tmux: 'cx_update', cwd: os.tmpdir() });
+  sm.dead = new Set(['cx_update']);
+  sm._tmux = async () => {
+    sm.map.set('changed-update', { agent: 'codex', tmux: 'cx_replacement', liveSessionId: 'live-replacement' });
+    return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+  };
+  sm.killForSession = async () => { throw new Error('must not kill replacement'); };
+  sm._newSession = async () => { throw new Error('must not launch'); };
+  await assert.rejects(sm.resume('changed-update', os.tmpdir()), /Codex pane changed/);
+  assert.equal(sm.entryFor('changed-update').tmux, 'cx_replacement');
+  assert.equal(sm.entryFor('changed-update').liveSessionId, 'live-replacement');
+});
+
+for (const [label, state] of [
+  ['archived', { archivedAt: 5 }],
+  ['snoozed', { snooze: { until: 9_000_000, createdAt: 1, comment: 'later' } }],
+]) {
+  test(`automatic Codex update recovery preserves a card ${label} during conversation lookup`, async (t) => {
+    const sm = new SessionManager();
+    sm.map.clear();
+    sm.map.set('automatic-update', { agent: 'codex', tmux: 'cx_update', cwd: os.tmpdir() });
+    sm.dead = new Set(['cx_update']);
+    sm.killForSession = async () => [];
+    let launched;
+    sm._newSession = async (tmux) => { launched = tmux; };
+    const discarded = [];
+    sm._tmux = async (_socket, args) => {
+      if (args[0] === 'capture-pane') return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+      assert.equal(args[0], 'kill-session');
+      discarded.push(args[args.indexOf('-t') + 1]);
+    };
+    t.mock.method(adapterFor('codex'), 'discoverLiveId', async () => {
+      Object.assign(sm.entryFor('automatic-update'), state);
+      return 'live-fresh';
+    });
+    await assert.rejects(sm.resume('automatic-update', os.tmpdir(), { automatic: true }), /archived or snoozed during resume/);
+    for (const [key, value] of Object.entries(state)) assert.deepEqual(sm.entryFor('automatic-update')[key], value);
+    assert.equal(sm.entryFor('automatic-update').liveSessionId, undefined);
+    assert.deepEqual(discarded, [launched]);
+  });
 }
 
 test('codex resume never binds a card to a rollout older than the card itself', async () => {
