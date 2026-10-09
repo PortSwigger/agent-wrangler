@@ -163,9 +163,9 @@ const EXCLUDED_FAMILIES = new Set(['mythos']);
 
 // A family in the price snapshot that MODELS has no alias for is offered by its
 // newest full model id, which `--model` accepts; the next snapshot refresh moves it.
-function derivedModels() {
+export function derivedModels(families = snapshotClaudeFamilies()) {
   const known = new Set(MODELS.map((m) => m.family).filter(Boolean));
-  return snapshotClaudeFamilies()
+  return families
     .filter(({ family }) => !known.has(family) && !EXCLUDED_FAMILIES.has(family))
     .map(({ family, id, name }) => ({
       value: id,
