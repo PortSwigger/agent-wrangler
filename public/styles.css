@@ -990,8 +990,10 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
    #nav-rail and main down by the same amount rather than overlapping them,
    since body is a plain flex row with no reserved header space. */
 #system-banner {
-  position: fixed; top: 0; left: 0; right: 0; height: 30px; z-index: 40;
-  display: flex; align-items: center; justify-content: center;
+  position: fixed; top: 0; left: 0; right: 0; min-height: 30px; z-index: 40;
+  box-sizing: border-box; padding: 4px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  text-align: center;
   /* --snooze-fg is a same-lightness accent for use ALONGSIDE --snooze (see its
      14%-tint usage elsewhere), not a text color meant to sit on a solid --snooze
      fill — that pairing measures ~1.3:1 contrast, illegible. --bar-on is the
@@ -1001,7 +1003,9 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   font-size: 12px; font-weight: 600; gap: 14px;
 }
 #system-banner.hidden { display: none; }
-body.system-banner-open { padding-top: 30px; }
+/* --system-banner-h is the banner's measured height (system-banner.js), since
+   a long message wraps; 30px is the one-line height before it is measured. */
+body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 .system-banner-dismiss {
   padding: 2px 8px; border: 1px solid var(--bar-on); border-radius: 5px;
   background: transparent; color: var(--bar-on); font: inherit; font-weight: 600;

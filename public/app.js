@@ -644,6 +644,7 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  staleGuiSession = graph.staleGuiSession || null;
   syncStandingBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
@@ -5519,11 +5520,20 @@ let fdBannerActive = false;
 
 let rolledBackUpdate = null;
 
+// `{ socket }` when the tmux server hosting the agents is in an old macOS login
+// session (server/gui-session.js), from the graph. App windows an agent opens
+// there, such as a Playwright browser, can't come to the front or take typing.
+let staleGuiSession = null;
+
 function syncStandingBanner() {
   if (fdBannerActive) return;
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
     showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+    return;
+  }
+  if (staleGuiSession) {
+    showSystemBanner(`⚠ Agents are in an old macOS login session, so windows they open can't take focus. Fix: run "tmux -L ${staleGuiSession.socket} kill-server", restart the wrangler and resume sessions.`, { level: 1, kind: 'gui-session' });
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);

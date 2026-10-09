@@ -55,6 +55,19 @@ function isDismissed(level, kind) {
 // dismissal to one producer — see readDismiss — and is required whenever `level`
 // is given. `forever` makes the dismissal permanent, for a one-off notice whose
 // `kind` already names the single event it reports.
+// The banner grows to fit its text (a long message wraps, more so on a narrow
+// screen), so the space body reserves for it has to follow its real height
+// rather than a fixed one. One observer for the page's lifetime. Without
+// ResizeObserver (tests) the CSS fallback height applies.
+let heightObserver = null;
+function trackHeight(el) {
+  if (heightObserver || typeof ResizeObserver === 'undefined') return;
+  heightObserver = new ResizeObserver(() => {
+    if (el.offsetHeight) document.documentElement.style.setProperty('--system-banner-h', `${el.offsetHeight}px`);
+  });
+  heightObserver.observe(el);
+}
+
 export function showSystemBanner(text, { level, kind = 'fd', forever = false } = {}) {
   if (isDismissed(level, kind)) return;
   const el = document.getElementById('system-banner');
@@ -74,6 +87,7 @@ export function showSystemBanner(text, { level, kind = 'fd', forever = false } =
   }
   el.classList.remove('hidden');
   document.body.classList.add('system-banner-open');
+  trackHeight(el);
 }
 
 export function hideSystemBanner() {

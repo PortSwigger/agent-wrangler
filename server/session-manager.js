@@ -21,6 +21,7 @@ import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
+import { checkGuiSession } from './gui-session.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -1432,6 +1433,12 @@ export class SessionManager {
     } catch {
       return false;
     }
+  }
+
+  // Whether this install's tmux server is stuck in an old macOS login session
+  // (see gui-session.js). After init(), which resolves this.socket. Never throws.
+  async checkGuiSession() {
+    return checkGuiSession({ socket: this.socket, exec, tmux: (args) => this._tmux(this.socket, args) }).catch(() => null);
   }
 
   _tmuxName(agentId, short) {
