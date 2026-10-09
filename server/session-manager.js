@@ -1065,6 +1065,18 @@ export class SessionManager {
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
     let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    let freshAfterUpdate = false;
+    if (agent === 'codex' && !prev?.liveSessionId && this.dead.has(prev?.tmux)) {
+      const exitedTmux = prev.tmux;
+      const capture = await this._tmux(this.socketOf(exitedTmux), ['capture-pane', '-t', exitedTmux, '-p', '-S', '-60'], {
+        maxBuffer: 4 * 1024 * 1024,
+      }).catch(() => null);
+      if (!capture) throw new Error('Could not read Codex exit output; retry Resume.');
+      if (this.map.get(sessionId) !== prev || prev.tmux !== exitedTmux || prev.liveSessionId || !this.dead.has(exitedTmux)) {
+        throw new Error('Codex pane changed during exit capture; retry Resume.');
+      }
+      freshAfterUpdate = Boolean(codexUpdateState(capture.stdout));
+    }
     // Memory binds to the owner/mapped id (this `sessionId`, stable across the
     // fork), not the new id --fork-session gives the process — per the resume-fork
     // invariant, so the memory follows the durable identity.
@@ -1075,14 +1087,16 @@ export class SessionManager {
     // launch dir — by resume time the rollout definitely exists. Never resume the
     // board id for codex; that's what produced "Run `codex resume` without an ID".
     let resumeId;
-    if (adapter.presetsSessionId) {
+    if (freshAfterUpdate) {
+      resumeId = undefined;
+    } else if (adapter.presetsSessionId) {
       resumeId = prev?.liveSessionId || sessionId;
     } else if (prev?.liveSessionId && prev.liveSessionId !== sessionId) {
       resumeId = prev.liveSessionId;
     } else {
       resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
     }
-    if (!resumeId) {
+    if (!freshAfterUpdate && !resumeId) {
       throw new Error(`Could not locate a ${agent} session to resume (no rollout found under ${dir}).`);
     }
     // A never-messaged Claude fork has no transcript under its own id (Claude writes
@@ -1129,8 +1143,9 @@ export class SessionManager {
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
-    const inner = adapter.buildResume({
+    const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
+      worktree: prev?.worktree || null,
       addDirs,
       launchContext,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
@@ -1141,7 +1156,7 @@ export class SessionManager {
       // A scheduled resume can carry a message to deliver as the relaunch prompt
       // (claude --resume … -- <intent>), avoiding a paste race against a booting
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
-      intent,
+      intent: freshAfterUpdate ? prev?.intent || '' : intent,
       spawnedBy: prev?.spawnedBy,
       disabledSkills,
       codexPolicy,
@@ -1149,6 +1164,7 @@ export class SessionManager {
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
+    if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
     if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
@@ -1161,6 +1177,7 @@ export class SessionManager {
     // install's socket — so a legacy default-socket session migrates here.
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
+      ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
       launchedCodeVersion: this.codeVersion || undefined,
     });
     this._save();

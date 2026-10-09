@@ -1146,6 +1146,129 @@ function codexSessionsFixture() {
   return { root, proj, write, writeAt };
 }
 
+for (const otherRollout of [false, true]) {
+  test(`codex Resume restarts a first-launch updater ${otherRollout ? 'without adopting another conversation' : 'with no conversation to resume'}`, async (t) => {
+    const { root, proj, writeAt } = codexSessionsFixture();
+    t.after(() => {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(proj, { recursive: true, force: true });
+    });
+    const other = '77777777-7777-4777-8777-777777777777';
+    const createdAt = Date.now() - 60_000;
+    if (otherRollout) writeAt(other, new Date(createdAt + 10_000), Date.now());
+    const sm = new SessionManager();
+    sm.map.clear();
+    sm.map.set('updating-card', {
+      agent: 'codex', tmux: 'cx_update', socket: 'update-test', cwd: proj,
+      name: 'My card', intent: '', createdAt, model: 'gpt-6.1', effort: 'high',
+      autoCompactTokens: 120000, addDirs: ['/extra'], parentSession: 'parent-card',
+    });
+    if (otherRollout) sm.map.set('other-card', { agent: 'codex', cwd: proj, liveSessionId: other });
+    sm.dead = new Set(['cx_update']);
+    sm._save = () => {};
+    sm.refreshAlive = async () => {};
+    sm._tmux = async (socket, args) => {
+      assert.equal(socket, 'update-test');
+      assert.deepEqual(args, ['capture-pane', '-t', 'cx_update', '-p', '-S', '-60']);
+      return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+    };
+    const kills = [];
+    sm.killForSession = async (id) => { kills.push(id); return ['cx_update']; };
+    let command;
+    let launchDir;
+    sm._newSession = async (_tmux, dir, cmd) => { command = cmd; launchDir = dir; };
+    const codex = adapterFor('codex');
+    const discover = codex.discoverLiveId;
+    codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+    t.after(() => { codex.discoverLiveId = discover; });
+    await sm.resume('updating-card', proj);
+    assert.match(command, /AW_SESSION_ID='updating-card'/);
+    assert.doesNotMatch(command, /codex 'resume'|77777777-7777-4777-8777-777777777777/);
+    assert.match(command, /'-m' 'gpt-6.1'/);
+    assert.match(command, /'model_reasoning_effort=high'/);
+    assert.match(command, /'model_auto_compact_token_limit=120000'/);
+    assert.match(command, /'--add-dir' '\/extra'/);
+    assert.equal(launchDir, proj);
+    assert.deepEqual(kills, ['updating-card']);
+    const entry = sm.entryFor('updating-card');
+    assert.equal(entry.name, 'My card');
+    assert.equal(entry.createdAt, createdAt);
+    assert.equal(entry.intent, '');
+    assert.equal(entry.parentSession, 'parent-card');
+    assert.equal(entry.liveSessionId, undefined);
+    assert.notEqual(entry.tmux, 'cx_update');
+    if (otherRollout) assert.equal(sm.entryFor('other-card').liveSessionId, other);
+  });
+}
+
+test('codex Resume keeps an existing conversation after an updater exit', async () => {
+  const sm = resumableCodex('existing-update');
+  sm.map.get('existing-update').tmux = 'cx_update';
+  sm.dead = new Set(['cx_update']);
+  sm.killForSession = async () => [];
+  let command;
+  sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+  await sm.resume('existing-update', os.tmpdir());
+  assert.match(command, /codex 'resume' 'live-abc'/);
+  assert.equal(sm.entryFor('existing-update').liveSessionId, 'live-abc');
+});
+
+test('codex Resume retries a failed exit capture and records the fresh conversation', async (t) => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(proj, { recursive: true, force: true });
+  });
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('capture-retry', { agent: 'codex', tmux: 'cx_update', cwd: proj, intent: 'Original task', createdAt: Date.now() - 60_000 });
+  sm.dead = new Set(['cx_update']);
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  let captures = 0;
+  sm._tmux = async () => {
+    if (++captures === 1) throw new Error('capture unavailable');
+    return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+  };
+  const fresh = '88888888-8888-4888-8888-888888888888';
+  let command;
+  const kills = [];
+  sm.killForSession = async (id) => { kills.push(id); return ['cx_update']; };
+  sm._newSession = async (_tmux, _dir, cmd) => {
+    command = cmd;
+    writeAt(fresh, new Date(), Date.now());
+  };
+  const codex = adapterFor('codex');
+  const discover = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+  t.after(() => { codex.discoverLiveId = discover; });
+  await assert.rejects(sm.resume('capture-retry', proj), /Could not read Codex exit output/);
+  assert.deepEqual(kills, []);
+  assert.equal(command, undefined);
+  assert.equal(sm.entryFor('capture-retry').tmux, 'cx_update');
+  await sm.resume('capture-retry', proj);
+  assert.match(command, / 'Original task'$/);
+  assert.doesNotMatch(command, /codex 'resume'/);
+  assert.deepEqual(kills, ['capture-retry']);
+  assert.equal(sm.entryFor('capture-retry').liveSessionId, fresh);
+});
+
+test('codex Resume leaves a replacement alone when the pane changes during exit capture', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('changed-update', { agent: 'codex', tmux: 'cx_update', cwd: os.tmpdir() });
+  sm.dead = new Set(['cx_update']);
+  sm._tmux = async () => {
+    sm.map.set('changed-update', { agent: 'codex', tmux: 'cx_replacement', liveSessionId: 'live-replacement' });
+    return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+  };
+  sm.killForSession = async () => { throw new Error('must not kill replacement'); };
+  sm._newSession = async () => { throw new Error('must not launch'); };
+  await assert.rejects(sm.resume('changed-update', os.tmpdir()), /Codex pane changed/);
+  assert.equal(sm.entryFor('changed-update').tmux, 'cx_replacement');
+  assert.equal(sm.entryFor('changed-update').liveSessionId, 'live-replacement');
+});
+
 test('codex resume never binds a card to a rollout older than the card itself', async () => {
   const { root, proj, write } = codexSessionsFixture();
   const stale = '11111111-1111-4111-8111-111111111111';
