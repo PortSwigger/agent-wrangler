@@ -1820,6 +1820,35 @@ test('clearSnooze removes the field but keeps the entry', () => {
   assert.equal(sm.clearSnooze('sess-x'), false); // no-op second time
 });
 
+function claimSnooze(sm, id) {
+  const entry = sm.entryFor(id);
+  const claim = { snooze: entry.snooze, suspendPending: entry.suspendPending, generation: sm.snoozeGeneration(id) };
+  sm.clearSnooze(id);
+  return claim;
+}
+
+test('restoreSnooze puts a claimed snooze (and its pending suspend) back', () => {
+  const sm = freshManager();
+  sm.setSnooze('sess-r', 2_000_000, { cwd: '/y', comment: 'keep me' });
+  sm.entryFor('sess-r').suspendPending = true;
+  const claim = claimSnooze(sm, 'sess-r');
+  assert.equal(sm.restoreSnooze('sess-r', claim), true);
+  assert.equal(sm.entryFor('sess-r').snooze.comment, 'keep me');
+  assert.equal(sm.entryFor('sess-r').suspendPending, true);
+  assert.equal(sm.restoreSnooze('sess-r', claim), false); // already present
+  assert.equal(sm.restoreSnooze('nope', claim), false);
+});
+
+test('restoreSnooze refuses once a newer snooze was set, even if it was cleared again', () => {
+  const sm = freshManager();
+  sm.setSnooze('sess-r', 2_000_000, { cwd: '/y', comment: 'A' });
+  const claim = claimSnooze(sm, 'sess-r');
+  sm.setSnooze('sess-r', 3_000_000, { cwd: '/y', comment: 'B' });
+  sm.clearSnooze('sess-r');
+  assert.equal(sm.restoreSnooze('sess-r', claim), false);
+  assert.equal(sm.entryFor('sess-r').snooze, undefined);
+});
+
 test('detachSession clears parentSession, keeping the rest of the entry', () => {
   const sm = new SessionManager();
   sm._save = () => {};

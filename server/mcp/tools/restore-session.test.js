@@ -11,6 +11,7 @@ function deps({ live = false, cwd = os.tmpdir() } = {}) {
     sessionManager: {
       entryFor: (id) => (id === 'S1' ? { cwd, archivedAt: 1 } : undefined),
       clearSnooze: () => false,
+      snoozeGeneration: () => 0,
       resume: async (id, dir, opts) => { calls.resume.push({ id, dir, opts }); return { tmux: 't' }; },
     },
     taskStore: { isAssignedToArchivedTask: () => false, unassign() {} },
