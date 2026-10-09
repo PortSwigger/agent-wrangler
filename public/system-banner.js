@@ -50,6 +50,8 @@ function isDismissed(level, kind) {
   return Boolean(d && level != null && level <= d.level && Date.now() < d.until);
 }
 
+// `action` (optional) is `{ label, onClick }`: a button that fixes the problem
+// the banner reports, shown before the dismiss control.
 // `level` (optional) enables the dismiss control and the suppression check above;
 // omit it for an alert with no "for today" concept. `kind` namespaces that
 // dismissal to one producer — see readDismiss — and is required whenever `level`
@@ -68,13 +70,20 @@ function trackHeight(el) {
   heightObserver.observe(el);
 }
 
-export function showSystemBanner(text, { level, kind = 'fd', forever = false } = {}) {
+export function showSystemBanner(text, { level, kind = 'fd', forever = false, action = null } = {}) {
   if (isDismissed(level, kind)) return;
   const el = document.getElementById('system-banner');
   el.textContent = '';
   const msg = document.createElement('span');
   msg.textContent = text;
   el.append(msg);
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'system-banner-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => action.onClick());
+    el.append(btn);
+  }
   if (level != null) {
     const btn = document.createElement('button');
     btn.className = 'system-banner-dismiss';

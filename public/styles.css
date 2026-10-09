@@ -1012,6 +1012,14 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   cursor: pointer; opacity: 0.85;
 }
 .system-banner-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--bar-on) 15%, transparent); }
+/* A banner's fix-it button: the same outline as dismiss, filled so it reads as
+   the main thing to do. */
+.system-banner-action {
+  padding: 2px 8px; border: 1px solid var(--bar-on); border-radius: 5px;
+  background: var(--bar-on); color: var(--snooze); font: inherit; font-weight: 600;
+  cursor: pointer;
+}
+.system-banner-action:hover { opacity: 0.9; }
 
 /* api.ui.notify's stack (public/notifications.js): persistent cards in the
    bottom-right corner, newest at the bottom, that never take focus. Clear of

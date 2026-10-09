@@ -644,7 +644,11 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  // Unlike the quarantine line this one can clear while the page is open (the
+  // Restart tmux button), and syncStandingBanner only ever shows, so hide it here.
+  const wasStale = staleGuiSession;
   staleGuiSession = graph.staleGuiSession || null;
+  if (wasStale && !staleGuiSession && !fdBannerActive) hideSystemBanner();
   syncStandingBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
@@ -5524,6 +5528,22 @@ let rolledBackUpdate = null;
 // session (server/gui-session.js), from the graph. App windows an agent opens
 // there, such as a Playwright browser, can't come to the front or take typing.
 let staleGuiSession = null;
+// True from the confirmed "Restart tmux" click until the server answers, so the
+// banner (redrawn on every graph) drops the button instead of offering it twice.
+let tmuxRestarting = false;
+
+async function restartTmux() {
+  const result = await confirmDialog({
+    title: 'Restart tmux?',
+    body: 'This stops every running agent session, and any terminal opened from the board. Their cards stay on the board and you can resume each one. The new tmux server starts in your current login session, so windows that agents open will work normally.',
+    okLabel: 'Restart tmux',
+    danger: true,
+  });
+  if (result !== 'ok') return;
+  tmuxRestarting = true;
+  syncStandingBanner();
+  send({ type: 'restart-tmux' });
+}
 
 function syncStandingBanner() {
   if (fdBannerActive) return;
@@ -5533,7 +5553,8 @@ function syncStandingBanner() {
     return;
   }
   if (staleGuiSession) {
-    showSystemBanner(`⚠ Agents are in an old macOS login session, so windows they open can't take focus. Fix: run "tmux -L ${staleGuiSession.socket} kill-server", restart the wrangler and resume sessions.`, { level: 1, kind: 'gui-session' });
+    if (tmuxRestarting) showSystemBanner('Restarting tmux…');
+    else showSystemBanner('⚠ Agents are in an old macOS login session, so windows they open (such as a Playwright browser) can\'t take focus.', { level: 1, kind: 'gui-session', action: { label: 'Restart tmux', onClick: restartTmux } });
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
@@ -6304,8 +6325,14 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'restart-tmux-done') {
+      tmuxRestarting = false;
+      toast('tmux restarted. Resume your sessions to bring them back.');
+    }
     else if (msg.type === 'error') {
       dispatchWaiter.error({ modalOpen: wtPending });
+      // A refused restart-tmux comes back as a bare error too; put the button back.
+      if (tmuxRestarting) { tmuxRestarting = false; syncStandingBanner(); }
       if (wtPending) {
         wtPending = false; setDispatchPending(false);
         // Workflow mode hides the worktree box, so its message slot is invisible —

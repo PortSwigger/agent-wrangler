@@ -1441,6 +1441,17 @@ export class SessionManager {
     return checkGuiSession({ socket: this.socket, exec, tmux: (args) => this._tmux(this.socket, args) }).catch(() => null);
   }
 
+  // Stop this install's tmux server and every pane on it, so the next launch
+  // starts a fresh server from this process, in this process's login session.
+  // Sessions go dormant, as after a reboot: their cards stay and Resume relaunches
+  // them. Only this.socket, never the legacy default one, which other tools share.
+  // "No server running" is not an error.
+  async killTmuxServer() {
+    if (!this.socket) return;
+    await this._tmux(this.socket, ['kill-server']).catch(() => {});
+    await this.refreshAlive();
+  }
+
   _tmuxName(agentId, short) {
     return `${adapterFor(agentId).tmuxPrefix}${short}`;
   }

@@ -94,3 +94,15 @@ test('a forever dismissal outlasts today', () => {
   showSystemBanner('rolled back again', { level: 1, kind: 'update-rollback:def', forever: true });
   assert.equal(env.visible(), true, 'a rollback of a different commit is a new notice');
 });
+
+test('an action button runs its callback and sits before the dismiss control', () => {
+  const env = stubEnv();
+  let clicks = 0;
+  showSystemBanner('old session', { level: 1, kind: 'gui-session', action: { label: 'Restart tmux', onClick: () => { clicks += 1; } } });
+  const classes = env.banner.children.map((c) => c.className);
+  assert.deepEqual(classes, ['', 'system-banner-action', 'system-banner-dismiss']);
+  const btn = env.banner.children[1];
+  assert.equal(btn.textContent, 'Restart tmux');
+  btn.fire('click');
+  assert.equal(clicks, 1);
+});

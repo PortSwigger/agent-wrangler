@@ -239,9 +239,10 @@ after you log out and back in without restarting the Mac. Logging out stops the 
 not its tmux server, so the restarted wrangler reconnects to a tmux server that still belongs to the
 old login session. Every agent, and every app an agent starts, inherits that session, and macOS won't
 let its windows come to the front. Restarting the wrangler doesn't help. When the wrangler starts it
-checks for this and shows a banner on the board. To fix it, stop the tmux server
-(`tmux -L <socket> kill-server`), restart the wrangler, then resume your sessions. As above, this
-stops every live session on that socket, but their cards survive.
+checks for this and shows a banner on the board. Click **Restart tmux** on the banner to stop the old
+tmux server, then resume your sessions. The next session you start or resume gets a new tmux server
+in your current login session. As above, this stops every live session on that socket, but their
+cards survive.
 
 ## How it works
 

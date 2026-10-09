@@ -1159,6 +1159,8 @@ controlWss.on('connection', (ws) => {
     restart: () => exitForRestart('restart requested from the board'),
     canRestart: restartSupported(),
     updates,
+    staleGuiSession: () => staleGuiSession,
+    recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
 });
