@@ -334,3 +334,9 @@ for (const phase of ['buildLaunch', 'buildResume', 'buildFork']) {
     assert.ok(cmd.includes("'--add-dir' '/repo'\\''s two'"));
   });
 }
+
+test('claude models offer only aliased families plus snapshot families that are not excluded', () => {
+  const values = claude.models.map((m) => m.value);
+  assert.ok(values.includes('opus') && values.includes('haiku'));
+  assert.ok(!values.some((v) => v.includes('mythos')), 'mythos is not a Claude Code model');
+});

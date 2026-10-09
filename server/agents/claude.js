@@ -6,7 +6,7 @@ import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
-import { newestClaudeName, priceCatalogVersion } from '../price-catalog.js';
+import { newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -158,6 +158,23 @@ const MODELS = [
   { value: 'haiku', family: 'haiku', pillLabel: 'haiku', transcriptPrefixes: ['claude-haiku-'], contextWindow: 200_000 },
 ];
 
+// Families LiteLLM prices but Claude Code does not offer as a selectable model.
+const EXCLUDED_FAMILIES = new Set(['mythos']);
+
+// A family in the price snapshot that MODELS has no alias for is offered by its
+// newest full model id, which `--model` accepts; the next snapshot refresh moves it.
+function derivedModels() {
+  const known = new Set(MODELS.map((m) => m.family).filter(Boolean));
+  return snapshotClaudeFamilies()
+    .filter(({ family }) => !known.has(family) && !EXCLUDED_FAMILIES.has(family))
+    .map(({ family, id, name }) => ({
+      value: id,
+      label: name,
+      pillLabel: `${family} ${id.slice(`claude-${family}-`.length).replace('-', '.')}`,
+      transcriptPrefixes: [`claude-${family}-`],
+    }));
+}
+
 let modelsMemo = null; // { version, models }
 
 function claudeModels() {
@@ -169,7 +186,7 @@ function claudeModels() {
       const ctx = m.contextWindow >= 1_000_000 ? `${m.contextWindow / 1_000_000}M` : `${m.contextWindow / 1000}K`;
       return { ...m, label: `${name} · ${ctx} context` };
     });
-    modelsMemo = { version, models };
+    modelsMemo = { version, models: [...models, ...derivedModels()] };
   }
   return modelsMemo.models;
 }
