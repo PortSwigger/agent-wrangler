@@ -19,6 +19,7 @@ function deps({ cwd = os.tmpdir() } = {}) {
       archivedEntries: () => Object.entries(entries).map(([sessionId, e]) => ({ sessionId, ...e })),
       entryFor: (id) => entries[id],
       clearSnooze: () => false,
+      snoozeGeneration: () => 0,
       resume: async (id) => { calls.resume.push(id); return { tmux: 't' }; },
     },
     sessionFromGraph: () => null,

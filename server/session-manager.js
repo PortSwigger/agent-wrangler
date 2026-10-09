@@ -392,6 +392,7 @@ async function withCodexGitDirAddDir(agent, cwd, addDirs) {
 export class SessionManager {
   constructor() {
     this.map = new Map(); // sessionId -> { short, tmux, cwd, intent, model, createdAt, worktree?, archivedAt? }
+    this._snoozeGen = new Map(); // sessionId -> setSnooze count (see snoozeGeneration)
     this.alive = new Set(); // tmux session names with a live (non-dead) pane
     this.dead = new Set(); // tmux sessions kept by remain-on-exit after their command exited
     this.deadStatus = new Map(); // dead tmux name -> pane exit code (absent if tmux didn't report one)
@@ -691,6 +692,7 @@ export class SessionManager {
       };
       this.map.set(sessionId, entry);
     }
+    this._snoozeGen.set(sessionId, this.snoozeGeneration(sessionId) + 1);
     entry.snooze = { until, createdAt: Date.now() };
     // An optional note the user attached in the Custom snooze modal; delivered to
     // the agent on wake. Store it only when it's a real non-empty string so a
@@ -708,6 +710,26 @@ export class SessionManager {
     if (!entry || !entry.snooze) return false;
     delete entry.snooze;
     delete entry.suspendPending;
+    this._save();
+    return true;
+  }
+
+  // Bumped by every setSnooze, so a claim taken before it can tell its snooze was
+  // superseded. In-memory only: a restart drops any in-flight claim anyway.
+  snoozeGeneration(sessionId) {
+    return this._snoozeGen.get(sessionId) || 0;
+  }
+
+  // Undo a clearSnooze claim whose launch never happened. `claim` is the
+  // { snooze, suspendPending, generation } snapshot taken just before the clear;
+  // a no-op if the session is gone, carries a snooze again, or a newer snooze was
+  // set (even if since cleared) — the claimed note is then obsolete.
+  restoreSnooze(sessionId, claim) {
+    const entry = this.map.get(sessionId);
+    if (!entry || entry.snooze || !claim?.snooze) return false;
+    if (claim.generation !== this.snoozeGeneration(sessionId)) return false;
+    entry.snooze = claim.snooze;
+    if (claim.suspendPending) entry.suspendPending = claim.suspendPending;
     this._save();
     return true;
   }

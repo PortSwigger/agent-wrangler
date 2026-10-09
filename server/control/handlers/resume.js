@@ -65,6 +65,11 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // AFTER resume — not via the resume `intent`/`-- <prompt>` path, which auto-runs
   // it — so the human reviews and hits Enter (the suspended-long-snooze half).
   const snoozeComment = entry?.snooze?.comment || '';
+  const claim = {
+    snooze: entry?.snooze,
+    suspendPending: entry?.suspendPending,
+    generation: ctx.sessionManager.snoozeGeneration(sessionId),
+  };
   const claimed = ctx.sessionManager.clearSnooze(sessionId);
   // Resume from the session's launch dir (owns its project bucket), not its
   // latest cwd — a session that cd'd into a worktree is still bucketed under
@@ -80,6 +85,9 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
     entryCwd: entry?.cwd,
   });
   if (!ensureLaunchDir({ dir, recreateDir, reply: ctx.reply, sessionId })) {
+    // Refused before any launch: hand the claimed note back so the recreateDir
+    // retry can still deliver it.
+    if (claimed) ctx.sessionManager.restoreSnooze(sessionId, claim);
     return;
   }
   // (The launch context — per-task state like task-memory's symlink — is

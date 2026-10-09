@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { resumeHandler, waitForPaneReady, deliverWakeNote } from './resume.js';
 
 // waitForPaneReady: hooks the post-resume prefill to a readiness signal (the pane's
@@ -68,7 +70,7 @@ test('deliverWakeNote: no-op when there is no note or no live pane', async () =>
 // entry. Crucially the note is captured BEFORE resume, since resumeEntry drops
 // entry.snooze — the resume spy simulates that drop.
 function handlerCtx(entry, { graphCwd = os.tmpdir(), clearReturns = true } = {}) {
-  const calls = { resume: [], ready: [], prefill: [], rebuild: 0, clear: [] };
+  const calls = { resume: [], ready: [], prefill: [], rebuild: 0, clear: [], restore: [] };
   return {
     calls,
     sessionFromGraph: () => ({ sessionId: 'S1', cwd: graphCwd }),
@@ -78,6 +80,8 @@ function handlerCtx(entry, { graphCwd = os.tmpdir(), clearReturns = true } = {})
       // the sweep having already claimed (and relaunched-with-intent) this session —
       // the entry.snooze is gone, so the manual side must NOT deliver again.
       clearSnooze: (sid) => { calls.clear.push(sid); delete entry.snooze; return clearReturns; },
+      snoozeGeneration: () => 0,
+      restoreSnooze: (sid, claim) => { calls.restore.push(sid); entry.snooze = claim.snooze; return true; },
       resume: async (sid, dir, opts) => {
         calls.resume.push({ sid, dir, opts });
         delete entry.snooze; // resumeEntry rebuilds the entry without the snooze
@@ -177,4 +181,26 @@ test('resume (dormant, sweep wins): clearSnooze→false ⇒ resumes but does NOT
   assert.equal(c.calls.resume.length, 1);
   assert.deepEqual(c.calls.ready, []);       // readiness gate never runs
   assert.deepEqual(c.calls.prefill, []);     // ZERO manual deliveries — the sweep's intent already delivered it
+});
+
+test('resume: a refused restore (missing launch dir) leaves the snooze note unclaimed; retry with recreateDir delivers it', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-resume-'));
+  const gone = path.join(base, 'deleted-worktree');
+  const entry = { cwd: gone, socket: 'sockR', liveSessionId: null, snooze: { until: 1, comment: 'do not lose me' } };
+  const c = handlerCtx(entry, { graphCwd: gone });
+  const replies = [];
+  c.reply = (m) => replies.push(m);
+  try {
+    await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
+    assert.equal(replies[0]?.type, 'resume-needs-dir');
+    assert.deepEqual(c.calls.resume, []);
+    assert.deepEqual(c.calls.restore, ['S1']);
+    assert.equal(entry.snooze?.comment, 'do not lose me');
+
+    await resumeHandler.handler({ type: 'resume', sessionId: 'S1', recreateDir: true }, c);
+    assert.equal(c.calls.resume.length, 1);
+    assert.deepEqual(c.calls.prefill, [{ name: 'cc_new', text: 'do not lose me', socket: 'sockR' }]);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });
