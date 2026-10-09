@@ -478,16 +478,17 @@ test('session schedule includes focus only when checked; dispatch ignores it', (
 function scheduledFocusHarness(sessions = []) {
   const selected = [], views = {}, notices = [];
   const diff = { open: false };
+  const clock = { now: 0 };
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus; }, get view() { return currentView; } };",
-    { toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {},
+    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
+    { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {},
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
       isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; } },
   );
   app.state.sessions = sessions;
-  return { ...app, selected, views, notices, diff };
+  return { ...app, selected, views, notices, diff, clock };
 }
 
 test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
@@ -519,4 +520,18 @@ test('scheduled focus dismisses a diff panel so the target terminal is visible',
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
   assert.equal(app.diff.open, false);
   assert.deepEqual(app.selected, ['CARD1']);
+});
+
+
+test('scheduled focus expires after a failed resume instead of jumping to a later wake', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: false }]);
+  app.onScheduleFired({ name: 'Wake', sessionId: 'CARD1', focus: true });
+  app.diff.open = true;
+  app.clock.now = 8000;
+  app.state.sessions = [{ sessionId: 'CARD1', managed: true }];
+  app.tryFulfillScheduledFocus();
+  assert.equal(app.state.pending, null);
+  assert.deepEqual(app.selected, []);
+  assert.deepEqual(app.views, {});
+  assert.equal(app.diff.open, true);
 });

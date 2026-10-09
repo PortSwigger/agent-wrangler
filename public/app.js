@@ -6109,15 +6109,19 @@ schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedules
 function onScheduleFired(msg) {
   toast(`Scheduled "${msg.name}" started`);
   if (msg.focus === true && msg.sessionId) {
-    pendingScheduledFocus = msg.sessionId;
+    pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
   }
 }
 
 function tryFulfillScheduledFocus() {
   if (!pendingScheduledFocus) return;
-  if (!latestSessions.some((s) => s.sessionId === pendingScheduledFocus && s.managed)) return;
-  const target = pendingScheduledFocus;
+  if (Date.now() >= pendingScheduledFocus.expiresAt) {
+    pendingScheduledFocus = null;
+    return;
+  }
+  if (!latestSessions.some((s) => s.sessionId === pendingScheduledFocus.sessionId && s.managed)) return;
+  const target = pendingScheduledFocus.sessionId;
   pendingScheduledFocus = null;
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
