@@ -1066,7 +1066,7 @@ export class SessionManager {
     const tmux = this._tmuxName(agent, short);
     let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     let freshAfterUpdate = false;
-    if (agent === 'codex' && !prev?.liveSessionId && this.dead.has(prev?.tmux)) {
+    if (agent === 'codex' && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
       const exitedTmux = prev.tmux;
       const capture = await this._tmux(this.socketOf(exitedTmux), ['capture-pane', '-t', exitedTmux, '-p', '-S', '-60'], {
         maxBuffer: 4 * 1024 * 1024,

@@ -1201,17 +1201,52 @@ for (const otherRollout of [false, true]) {
   });
 }
 
-test('codex Resume keeps an existing conversation after an updater exit', async () => {
-  const sm = resumableCodex('existing-update');
-  sm.map.get('existing-update').tmux = 'cx_update';
-  sm.dead = new Set(['cx_update']);
-  sm.killForSession = async () => [];
+test('codex Resume does not restart an unfinished updater fork with its parent task', async (t) => {
+  const { root, proj, writeAt } = codexSessionsFixture();
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(proj, { recursive: true, force: true });
+  });
+  const source = '99999999-9999-4999-8999-999999999999';
+  writeAt(source, new Date(Date.now() - 60_000), Date.now());
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('parent-card', { agent: 'codex', cwd: proj, intent: 'Parent task', liveSessionId: source, tmux: 'cx_parent' });
+  sm.map.set('fork-card', forkEntry({ short: 'fork', tmux: 'cx_fork', cwd: proj, parentEntry: sm.entryFor('parent-card'), parentId: 'parent-card', createdAt: Date.now() }));
+  sm.dead = new Set(['cx_fork']);
+  sm._tmux = async () => ({ stdout: '🎉 Update ran successfully! Please restart Codex.' });
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  const kills = [];
+  sm.killForSession = async (id) => { kills.push(id); return []; };
   let command;
   sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
-  await sm.resume('existing-update', os.tmpdir());
-  assert.match(command, /codex 'resume' 'live-abc'/);
-  assert.equal(sm.entryFor('existing-update').liveSessionId, 'live-abc');
+  const codex = adapterFor('codex');
+  const discover = codex.discoverLiveId;
+  codex.discoverLiveId = (opts) => discover.call(codex, { ...opts, sessionsDir: root });
+  t.after(() => { codex.discoverLiveId = discover; });
+  await assert.rejects(sm.resume('fork-card', proj), /Could not locate a codex session to resume/);
+  assert.deepEqual(kills, []);
+  assert.equal(command, undefined);
+  assert.equal(sm.entryFor('fork-card').tmux, 'cx_fork');
+  assert.equal(sm.entryFor('fork-card').liveSessionId, undefined);
+  assert.equal(sm.entryFor('parent-card').liveSessionId, source);
 });
+
+for (const forkedFrom of [undefined, 'parent-card']) {
+  test(`codex Resume keeps an existing ${forkedFrom ? 'fork' : 'conversation'} after an updater exit`, async () => {
+    const sm = resumableCodex('existing-update');
+    sm.map.get('existing-update').tmux = 'cx_update';
+    sm.map.get('existing-update').forkedFrom = forkedFrom;
+    sm.dead = new Set(['cx_update']);
+    sm.killForSession = async () => [];
+    let command;
+    sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+    await sm.resume('existing-update', os.tmpdir());
+    assert.match(command, /codex 'resume' 'live-abc'/);
+    assert.equal(sm.entryFor('existing-update').liveSessionId, 'live-abc');
+  });
+}
 
 test('codex Resume retries a failed exit capture and records the fresh conversation', async (t) => {
   const { root, proj, writeAt } = codexSessionsFixture();
