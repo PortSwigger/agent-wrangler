@@ -221,7 +221,12 @@ import semver from 'semver';
 // 1.24.0 adds the client `api.openTask(taskId)`, the task counterpart of
 // `api.openSession`: it shows the task's tile on the board, restoring it from
 // the tray if it was minimised. A manifest calling it declares `^1.24.0`.
-export const HOST_API_VERSION = '1.24.0';
+//
+// 1.25.0 adds the client `api.agents()` and `api.agents.onChange(fn)`: the
+// dispatch dialog's agent/model/effort list, sourced from the live catalogs,
+// so an extension offering its own model picker stops hand-copying the
+// vocabulary. A manifest calling it declares `^1.25.0`.
+export const HOST_API_VERSION = '1.25.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

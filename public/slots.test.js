@@ -1114,6 +1114,30 @@ test('settings() stays callable; set forwards to the base api with the forced id
   assert.equal(h.slots.settingsChanged('a', {}), 0, 'subscriptions die with the extension');
 });
 
+test('agents() is a deep copy of the base list; onChange hears agentsChanged until unsubscribed or removed', () => {
+  const h = harness();
+  const list = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [{ value: 'high', label: 'High' }] }];
+  const api = h.slots.forExtension('a', { agents: () => list }).api;
+  const got = api.agents();
+  assert.deepEqual(got, list);
+  got[0].models.push({ value: 'x' });
+  assert.equal(list[0].models.length, 1, 'no write-through into board state');
+  assert.deepEqual(h.slots.forExtension('b', {}).api.agents(), [], 'no base list reads as empty');
+
+  const seen = [];
+  const off = api.agents.onChange((v) => { seen.push(v); throw new Error('listener bug'); });
+  assert.equal(h.slots.agentsChanged(list), 1);
+  assert.deepEqual(seen, [list]);
+  assert.notEqual(seen[0], list);
+  assert.match(h.errors.at(-1), /agents\.onChange listener failed/);
+  assert.equal(h.slots.agentsChanged(list), 1, 'kept after throwing');
+  off();
+  assert.equal(h.slots.agentsChanged(list), 0);
+  api.agents.onChange(() => {});
+  h.slots.removeExtension('a');
+  assert.equal(h.slots.agentsChanged(list), 0, 'subscriptions die with the extension');
+});
+
 // ── registrar.api (1.14.0) ──────────────────────────────────────────────────
 test('registrar.api is the contribution api, gated, and cleaned up by removeExtension', () => {
   let chipsChanged = 0;

@@ -274,6 +274,8 @@ const extApi = {
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs `api.agents()`; slots hands each caller a deep copy.
+  agents: () => availableAgents,
   // Backs slots' per-extension `api.settings()`, which binds the id.
   settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
   // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
@@ -6241,7 +6243,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) availableAgents = msg.agents; populateModelSelect(); }
+    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);

@@ -929,6 +929,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a session likewise restores its task's tile first, so a session in a minimised
   task is no longer opened behind the tray. A notification's "Go to" is an
   ordinary action that calls one of these when its answer comes back.
+- **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
+  `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
+  the same list core's model select reads, sourced from the live model and
+  price catalogs — as a fresh deep copy per call. **`api.agents.onChange(fn)`**
+  fires (with its own copy) whenever the server re-sends the `agents` frame: on
+  connect, and when a catalog refresh changes it. It returns the unsubscribe
+  function; subscriptions die with the extension, and a throwing listener is
+  reported and kept. An extension with its own agent/model picker reads this
+  instead of mirroring the vocabulary, which would drift on every model release.
 - **`api.settings()`** (1.13.0) returns the extension's own current setting
   values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL
