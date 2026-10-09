@@ -131,6 +131,18 @@ test('ensureSubmitted stops dead on a needs-you dialog and sends no keys', async
   assert.deepEqual(keys, []);
 });
 
+test('ensureSubmitted does not confirm updater activity as a submitted turn', async () => {
+  const keys = [];
+  const ok = await ensureSubmitted('cx_a', '/s', {
+    text: MSG, agent: 'codex', windowMs: 0,
+    capture: async () => `${working}\nUpdating Codex via \`brew upgrade --cask codex\`...\n==> Upgrading codex`,
+    sendKeys: async (name, pressed) => { keys.push(pressed); },
+    sleep: nowait,
+  });
+  assert.equal(ok, false);
+  assert.deepEqual(keys, []);
+});
+
 // A turn that submitted and finished inside the observation window leaves an
 // empty composer. That is deliberately NOT read as success (pre-paste looks
 // identical), but it must not earn an Enter either.

@@ -72,6 +72,14 @@ test('a codex thinking item with no text renders without a duration or body', ()
   assert.ok(walk(node).some((n) => n._text === 'Thinking'));
 });
 
+test('a context item renders its label as a collapsed chip with the text as body', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({ type: 'context', event: { kind: 'context', label: 'Codex goal', text: 'long goal text', ts: 1 } });
+  const nodes = walk(node);
+  assert.ok(nodes.some((n) => n._text === 'Codex goal'));
+  assert.ok(nodes.some((n) => n._text === 'long goal text'));
+});
+
 test('subagent name never reaches innerHTML', () => {
   const dom = createChatDom({ document: stubDocument(), renderMarkdown: (s) => `<p>${s}</p>` });
   const node = dom.itemNode({

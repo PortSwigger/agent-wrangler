@@ -74,6 +74,14 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'mailWakesDormant',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Let mail wake dormant sessions',
+    help: 'When mail arrives for a dormant session, resume it and then deliver the mail notification once it is idle, instead of leaving the message unread until you resume it yourself. Off by default — a wake relaunches the session and spends its context. Archived and snoozed sessions are never woken.',
+    default: false,
+  },
+  {
     id: 'soundOnFinish',
     type: 'toggle',
     label: 'Play a sound when a session finishes',
@@ -148,7 +156,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled'],
+    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

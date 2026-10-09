@@ -233,6 +233,17 @@ The grant only applies to *new* processes, so the tmux server needs restarting (
 kill-server`, or just kill the process) — this kills every live session on that socket; mapping entries
 survive and each card just needs a manual Resume.
 
+**A browser an agent opens (Playwright, say) sits behind other windows, has no Dock icon and won't
+take typing (macOS only).** Your keystrokes land in whichever app was in front instead. This happens
+after you log out and back in without restarting the Mac. Logging out stops the wrangler service but
+not its tmux server, so the restarted wrangler reconnects to a tmux server that still belongs to the
+old login session. Every agent, and every app an agent starts, inherits that session, and macOS won't
+let its windows come to the front. Restarting the wrangler doesn't help. When the wrangler starts it
+checks for this and shows a banner on the board. Click **Restart tmux** on the banner to stop the old
+tmux server, then resume your sessions. The next session you start or resume gets a new tmux server
+in your current login session. As above, this stops every live session on that socket, but their
+cards survive.
+
 ## How it works
 
 - **State** is read through an adapter for each supported agent. Claude state and transcripts come
@@ -249,7 +260,8 @@ survive and each card just needs a manual Resume.
 ## Extensions
 
 Optional features are packaged as extensions — one manifest each, switched on and off from
-**Settings → Extensions**, and installable from a git URL. An extension can add MCP tools,
+**Settings → Extensions**, and installable from a git URL or by browsing GitHub repositories tagged
+`agent-wrangler-extension`. An extension can add MCP tools,
 control handlers, board state, settings, session hooks, skills and a browser-side half. See
 [docs/extensions.md](docs/extensions.md) for installation, a minimal authoring example, and the
 complete implementation constraints.
@@ -295,7 +307,9 @@ cadence. A schedule is **a saved action + a "when"**, and the action is one of t
   it's **resumed** (delivering the message as its first prompt — e.g. "every weekday
   09:00, resume my review session and tell it to check overnight CI"); if it's **live**
   the message is **injected into its terminal** (a recurring nudge). With no message, a
-  dormant session is just woken and a live one is left alone.
+  dormant session is just woken and a live one is left alone. **Focus session when
+  task runs**, below the target-session selector, opens the target’s terminal in the
+  board after a successful run. It is off by default and also applies to **Run now**.
 
 - **New / Edit** reuses the dispatch dialog with an added **When** section and an
   **action selector**: pick **One-off** (a single date & time), **Daily** (a time), or

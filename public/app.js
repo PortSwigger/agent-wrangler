@@ -139,6 +139,7 @@ let subagentsExpandedByDefault = false; // server config flag, carried on every 
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
+let mailWakesDormant = false;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
@@ -216,10 +217,37 @@ const slots = createSlots({
 let chipsRenderQueued = false;
 function openSessionInBoard(sessionId) {
   setView('grid');
-  if (latestSessions.some((x) => x.sessionId === sessionId)) { focusSession(sessionId); return; }
+  if (latestSessions.some((x) => x.sessionId === sessionId)) {
+    const tile = assignedTaskId(sessionId) || ADHOC_ID;
+    if (minimisedIds.has(tile)) unminimise(tile);
+    focusSession(sessionId);
+    return;
+  }
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
   toast('Restoring…');
+}
+
+// Show a task's tile: the grid, the tile out of the tray if it was minimised,
+// scrolled into view with the restore pulse. A task that is not on the live
+// board (archived, deleted) toasts instead.
+function openTaskInBoard(taskId) {
+  setView('grid');
+  if (!currentOrder().includes(taskId)) { toast('Task is not on the board', true); return false; }
+  // A maximised session pane or an open diff panel hides #grid entirely.
+  if (maximized) setMaximized(false);
+  if (isDiffPanelOpen()) closeDiffPanel();
+  if (minimisedIds.has(taskId)) unminimise(taskId);
+  // The diff panel keeps #grid hidden through its slide-out; flashing renders
+  // the grid, which must be measurable first.
+  const reveal = () => {
+    if (currentView !== 'grid' || maximized || gridHidden()) return;
+    flashRestoredTask(taskId);
+    const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
+    document.querySelector(sel)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  if (gridHidden()) setTimeout(reveal, 300); else reveal();
+  return true;
 }
 
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
@@ -232,10 +260,11 @@ const extApi = {
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
   // Show a card from an extension's own view (a job's session, say): the board's
   // grid, selected if it is there, otherwise resumed and selected when the next
-  // graph brings it back — the same sequence as a Search result's Restore. This
-  // is the only board navigation an extension has; slots.apiFor exposes it and
-  // has already refused anything that is not a session id.
+  // graph brings it back — the same sequence as a Search result's Restore. openTask is the
+  // task counterpart. They are the only board navigation an extension has;
+  // slots.apiFor exposes them and has already refused anything that is not an id.
   openSession: openSessionInBoard,
+  openTask: openTaskInBoard,
   // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
@@ -572,6 +601,7 @@ function applyGraph(graph) {
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
+  mailWakesDormant = graph.mailWakesDormant === true;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   autoUpdate = graph.autoUpdate || 'notify';
@@ -614,6 +644,11 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  // Unlike the quarantine line this one can clear while the page is open (the
+  // Restart tmux button), and syncStandingBanner only ever shows, so hide it here.
+  const wasStale = staleGuiSession;
+  staleGuiSession = graph.staleGuiSession || null;
+  if (wasStale && !staleGuiSession && !fdBannerActive) hideSystemBanner();
   syncStandingBanner();
   latestGraph = graph;
   // `enabled` is live server-side, so this is where a settings flip becomes a
@@ -643,6 +678,7 @@ function applyGraph(graph) {
   renderGridIfVisible();
   refreshFolderList();
 
+  tryFulfillScheduledFocus();
   tryFulfillPending();
 
   const active = document.activeElement;
@@ -1110,7 +1146,7 @@ let restoredTaskId = null;
 function flashRestoredTask(taskId) {
   restoredTaskId = taskId;
   renderGrid();
-  setTimeout(() => { restoredTaskId = null; renderGrid(); }, 1800);
+  setTimeout(() => { restoredTaskId = null; renderGridIfVisible(); }, 1800);
 }
 
 // Workflow boxes the user has collapsed (hiding their worker spine), keyed on the
@@ -1278,7 +1314,7 @@ function flashPr(url) {
 function cardCtx() {
   return {
     selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, activitySortedTasks, restoredTaskId,
-    justFinished, cardState, barWord, phaseOf, ADHOC_ID,
+    justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
     subagentShown: { has: isSubagentShown }, now: Date.now(),
@@ -3006,6 +3042,7 @@ let selectedNewSlot = null;
 // click (jump to the restored session once it's back) and by the URL hash on
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
+let pendingScheduledFocus = null;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
 export function setPendingSelect(id) { pendingSelect = id; }
@@ -5091,6 +5128,7 @@ function readScheduleAction() {
     kind: 'session',
     sessionId: document.getElementById('m-sch-target').value,
     message: document.getElementById('m-sch-message').value.trim(),
+    ...(document.getElementById('m-sch-focus').checked ? { focus: true } : {}),
   };
 }
 function readPicker() {
@@ -5257,6 +5295,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   scheduleAction = action?.kind || 'dispatch';
   const d = (action?.kind === 'dispatch' ? action.dispatch : null) || {};
   populateTargetSelect(action?.sessionId);
+  document.getElementById('m-sch-focus').checked = action?.kind === 'session' && action.focus === true;
   document.getElementById('m-sch-message').value = action && action.kind !== 'dispatch' ? (action.message || '') : '';
   const wantTask = typeof taskId === 'string' ? taskId : (d.taskId || null);
   populateTaskSelect(wantTask);
@@ -5489,11 +5528,37 @@ let fdBannerActive = false;
 
 let rolledBackUpdate = null;
 
+// `{ socket }` when the tmux server hosting the agents is in an old macOS login
+// session (server/gui-session.js), from the graph. App windows an agent opens
+// there, such as a Playwright browser, can't come to the front or take typing.
+let staleGuiSession = null;
+// True from the confirmed "Restart tmux" click until the server answers, so the
+// banner (redrawn on every graph) drops the button instead of offering it twice.
+let tmuxRestarting = false;
+
+async function restartTmux() {
+  const result = await confirmDialog({
+    title: 'Restart tmux?',
+    body: 'This stops every running agent session, and any terminal opened from the board. Their cards stay on the board and you can resume each one. The new tmux server starts in your current login session, so windows that agents open will work normally.',
+    okLabel: 'Restart tmux',
+    danger: true,
+  });
+  if (result !== 'ok') return;
+  tmuxRestarting = true;
+  syncStandingBanner();
+  send({ type: 'restart-tmux' });
+}
+
 function syncStandingBanner() {
   if (fdBannerActive) return;
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
     showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+    return;
+  }
+  if (staleGuiSession) {
+    if (tmuxRestarting) showSystemBanner('Restarting tmux…');
+    else showSystemBanner('⚠ Agents are in an old macOS login session, so windows they open (such as a Playwright browser) can\'t take focus.', { level: 1, kind: 'gui-session', action: { label: 'Restart tmux', onClick: restartTmux } });
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
@@ -5647,6 +5712,10 @@ let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
 let extUpdateQueue = [];
+// The GitHub browser in the add pane: searched when the pane is opened and on
+// Refresh, then kept for the life of the page so reopening it costs nothing.
+let extBrowse = null;
+const searchExtBrowse = () => { extBrowse = { loading: true, repos: extBrowse?.repos || [] }; send({ type: 'ext-browse' }); };
 // The detail pane's settings.panel host, torn down before every remount.
 let extSettingsPanelHost = null;
 
@@ -5727,9 +5796,11 @@ function mountExtensionsPanel(host) {
     selectedId: extSelectedId,
     filter: extFilter,
     adding: extAdding,
+    browse: extBrowse,
     onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
     onFilter: (text) => { extFilter = text; },
-    onAdd: () => { extAdding = true; remountExtensions(); },
+    onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
+    onBrowse: () => { searchExtBrowse(); remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
@@ -5795,6 +5866,7 @@ initSettings({
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
+      if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'autoUpdate') return autoUpdate;
@@ -5824,6 +5896,9 @@ initSettings({
       } else if (id === 'archiveReviewEnabled') {
         archiveReviewEnabled = Boolean(value);
         send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
+      } else if (id === 'mailWakesDormant') {
+        mailWakesDormant = Boolean(value);
+        send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
@@ -6031,6 +6106,30 @@ document.getElementById('schedules-new').addEventListener('click', () => { close
 schedulesModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeSchedulesPanel(); } });
 schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedulesModal) closeSchedulesPanel(); });
 
+function onScheduleFired(msg) {
+  toast(`Scheduled "${msg.name}" started`);
+  if (msg.focus === true && msg.sessionId) {
+    pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
+    tryFulfillScheduledFocus();
+  }
+}
+
+function tryFulfillScheduledFocus() {
+  if (!pendingScheduledFocus) return;
+  if (Date.now() >= pendingScheduledFocus.expiresAt) {
+    pendingScheduledFocus = null;
+    return;
+  }
+  if (!latestSessions.some((s) => s.sessionId === pendingScheduledFocus.sessionId && s.managed)) return;
+  const target = pendingScheduledFocus.sessionId;
+  pendingScheduledFocus = null;
+  if (isDiffPanelOpen()) closeDiffPanel();
+  disarmChatHandoff();
+  setSessionView(target, 'terminal');
+  pendingSelect = target;
+  tryFulfillPending();
+}
+
 // --- websocket control ---
 let ws;
 export function send(obj) {
@@ -6124,6 +6223,10 @@ function connect() {
       toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
       remountExtensions();
     }
+    else if (msg.type === 'ext-browse-results') {
+      extBrowse = { loading: false, repos: Array.isArray(msg.repos) ? msg.repos : [], error: msg.error || '' };
+      remountExtensions();
+    }
     else if (msg.type === 'ext-updates') {
       extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
       extChecking = false;
@@ -6146,7 +6249,7 @@ function connect() {
     else if (msg.type === 'pr-merge') onPrMerge(msg);
     else if (msg.type === 'pr-dirty') onPrDirty(msg);
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
-    else if (msg.type === 'schedule-fired') toast(`Scheduled "${msg.name}" started`);
+    else if (msg.type === 'schedule-fired') onScheduleFired(msg);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
@@ -6250,8 +6353,14 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'restart-tmux-done') {
+      tmuxRestarting = false;
+      toast('tmux restarted. Resume your sessions to bring them back.');
+    }
     else if (msg.type === 'error') {
       dispatchWaiter.error({ modalOpen: wtPending });
+      // A refused restart-tmux comes back as a bare error too; put the button back.
+      if (tmuxRestarting) { tmuxRestarting = false; syncStandingBanner(); }
       if (wtPending) {
         wtPending = false; setDispatchPending(false);
         // Workflow mode hides the worktree box, so its message slot is invisible —

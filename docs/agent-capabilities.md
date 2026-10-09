@@ -31,7 +31,7 @@ phase and switches to **needs-you** if blocked. Launch it from the dialog or wit
 - **Checklist:** the human and agent edit the same per-session list.
 - **Task memory:** durable Markdown shared across all sessions on a task.
 - **Links:** Jira and GitHub context displayed on cards and task headings.
-- **Mail:** durable peer-to-peer messages; live idle recipients are prompted, while dormant recipients keep mail unread until explicitly resumed.
+- **Mail:** durable peer-to-peer messages; live idle recipients are prompted, while dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed sessions are never woken).
 - **Hierarchy:** sessions can be nested for presentation without changing who originally spawned them.
 
 Use these board-visible surfaces instead of burying coordination state in a transcript.

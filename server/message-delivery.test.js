@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deliverMessage } from './message-delivery.js';
+import { ensureSubmitted } from './pane-ready.js';
 
 // A real cwd so resolveResumeDir's existence check operates on a path that's
 // actually present — the dormant entry's cwd points here.
@@ -129,6 +130,23 @@ test('dormant Codex target: an unconfirmed send reports outcome unknown, not suc
   assert.equal(result.mode, 'dormant', 'the card IS live now, so the caller still rebuilds');
   assert.equal(result.outcome, 'unknown');
   assert.match(result.error, /could not confirm/);
+});
+
+test('dormant Codex target: update after sending leaves delivery unknown', async () => {
+  const dir = realDir();
+  const d = deps({ entries: { CARD1: { cwd: dir, agent: 'codex', socket: '/s/cx' } }, readyResult: false });
+  d.ensureSubmitted = (name, socket, opts) => ensureSubmitted(name, socket, {
+    ...opts, windowMs: 0,
+    capture: async () => 'Updating Codex via `brew upgrade --cask codex`...\n==> Upgrading codex',
+    sendKeys: async () => { throw new Error('must not press Enter during update'); },
+  });
+  try {
+    const result = await deliverMessage('CARD1', 'wake up please', d);
+    assert.equal(result.mode, 'dormant');
+    assert.equal(result.outcome, 'unknown');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // An unreadable/never-ready pane must still be delivered into — a late message

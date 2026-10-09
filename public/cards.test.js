@@ -327,6 +327,44 @@ test('workerRowHtml: marks selection like a top-level card, suppressed by a slot
   assert.doesNotMatch(slotted, /worker-row [^"]*\bselected\b/);
 });
 
+test('workerRowHtml: automatic completion keeps the done dot but suppresses its halo', () => {
+  const html = workerRowHtml(sess({ status: 'idle' }), ctx({
+    justFinished: new Set(['s1']),
+    cardState: () => 'just-finished',
+  }));
+  assert.match(html, /worker-row just-finished done-quiet/);
+  assert.match(html, /worker-dot" title="done"/);
+});
+
+test('workerRowHtml: manual unread keeps its halo even when the child also just finished', () => {
+  for (const justFinished of [new Set(), new Set(['s1'])]) {
+    const html = workerRowHtml(sess({ status: 'idle' }), ctx({
+      justFinished, unread: new Set(['s1']), cardState: () => 'just-finished',
+    }));
+    assert.match(html, /worker-row just-finished/);
+    assert.doesNotMatch(html, /done-quiet/);
+  }
+});
+
+test('workerRowHtml: completion suppression preserves selection and snooze alarms', () => {
+  const html = workerRowHtml(sess({ status: 'idle' }), ctx({
+    justFinished: new Set(['s1']), selectedSessionId: 's1',
+    cardState: () => 'just-finished snooze-alarm',
+  }));
+  assert.match(html, /worker-row just-finished snooze-alarm done-quiet selected/);
+});
+
+test('renderTileCards: full-view children retain their completion halo', () => {
+  const parent = sess({ sessionId: 'p1' });
+  const child = sess({ sessionId: 'c1', parentSession: 'p1', childFullView: true, status: 'idle' });
+  const html = renderTileCards([parent, child], ctx({
+    justFinished: new Set(['c1']),
+    cardState: (s) => s.sessionId === 'c1' ? 'just-finished' : 'working',
+  }));
+  assert.match(html, /session-card just-finished/);
+  assert.doesNotMatch(html, /done-quiet/);
+});
+
 test('workerRowHtml: cost renders as a card-tag pill with the dollar icon, matching the full card, codex still gets the ~ prefix', () => {
   const html = workerRowHtml(sess({ usd: 1.5 }), ctx());
   assert.match(html, /<span class="card-tag" title="cost so far">.*1\.50<\/span>/);
@@ -570,6 +608,9 @@ test('tileHtml: carries the restored-task halo class only when this tile is the 
   assert.match(tileHtml(tile, ctx({ restoredTaskId: 'T1' })), /task-cell task-restored-flash"/);
   assert.doesNotMatch(tileHtml(tile, ctx({ restoredTaskId: 'T2' })), /task-restored-flash/);
   assert.doesNotMatch(tileHtml(tile, ctx()), /task-restored-flash/);
+  const notask = { kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] };
+  assert.match(tileHtml(notask, ctx({ restoredTaskId: 'adhoc' })), /task-cell no-task task-restored-flash"/);
+  assert.doesNotMatch(tileHtml(notask, ctx({ restoredTaskId: 'T1' })), /task-restored-flash/);
 });
 
 test('tileHtml: both tile kinds carry the actions kebab (sort/focus/minimise/memory/delete now live in its menu)', () => {

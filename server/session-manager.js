@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { discoverClaudeSessions, tmuxesForSession } from './tmux-scraper.js';
+import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal } from './runtimes/index.js';
@@ -21,6 +21,7 @@ import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
+import { checkGuiSession } from './gui-session.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -1046,7 +1047,7 @@ export class SessionManager {
 
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
-  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified' } = {}) {
+  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false } = {}) {
     const prev = this.map.get(sessionId);
     // A runtime that can't be resumed (or one whose extension is gone) refuses
     // HERE, before the kill below: a held pane may be the only thing keeping a
@@ -1064,6 +1065,18 @@ export class SessionManager {
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
     let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    let freshAfterUpdate = false;
+    if (agent === 'codex' && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
+      const exitedTmux = prev.tmux;
+      const capture = await this._tmux(this.socketOf(exitedTmux), ['capture-pane', '-t', exitedTmux, '-p', '-S', '-60'], {
+        maxBuffer: 4 * 1024 * 1024,
+      }).catch(() => null);
+      if (!capture) throw new Error('Could not read Codex exit output; retry Resume.');
+      if (this.map.get(sessionId) !== prev || prev.tmux !== exitedTmux || prev.liveSessionId || !this.dead.has(exitedTmux)) {
+        throw new Error('Codex pane changed during exit capture; retry Resume.');
+      }
+      freshAfterUpdate = Boolean(codexUpdateState(capture.stdout));
+    }
     // Memory binds to the owner/mapped id (this `sessionId`, stable across the
     // fork), not the new id --fork-session gives the process — per the resume-fork
     // invariant, so the memory follows the durable identity.
@@ -1074,14 +1087,16 @@ export class SessionManager {
     // launch dir — by resume time the rollout definitely exists. Never resume the
     // board id for codex; that's what produced "Run `codex resume` without an ID".
     let resumeId;
-    if (adapter.presetsSessionId) {
+    if (freshAfterUpdate) {
+      resumeId = undefined;
+    } else if (adapter.presetsSessionId) {
       resumeId = prev?.liveSessionId || sessionId;
     } else if (prev?.liveSessionId && prev.liveSessionId !== sessionId) {
       resumeId = prev.liveSessionId;
     } else {
       resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
     }
-    if (!resumeId) {
+    if (!freshAfterUpdate && !resumeId) {
       throw new Error(`Could not locate a ${agent} session to resume (no rollout found under ${dir}).`);
     }
     // A never-messaged Claude fork has no transcript under its own id (Claude writes
@@ -1128,8 +1143,9 @@ export class SessionManager {
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
-    const inner = adapter.buildResume({
+    const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
+      worktree: prev?.worktree || null,
       addDirs,
       launchContext,
       // A resumed orchestrator entry (resumeEntry preserves the marker) reloads the
@@ -1140,7 +1156,7 @@ export class SessionManager {
       // A scheduled resume can carry a message to deliver as the relaunch prompt
       // (claude --resume … -- <intent>), avoiding a paste race against a booting
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
-      intent,
+      intent: freshAfterUpdate ? prev?.intent || '' : intent,
       spawnedBy: prev?.spawnedBy,
       disabledSkills,
       codexPolicy,
@@ -1148,12 +1164,20 @@ export class SessionManager {
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);
+    if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
+    // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
+    // launch was in flight. Nothing awaits between this check and the map.set below.
+    if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
+      await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
+      throw new Error(`Session ${sessionId} was archived or snoozed during resume; relaunch discarded.`);
+    }
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
     // preserving the original description, creation time, provenance/worktree, and
     // the autopilot workflow marker (see resumeEntry). Resume relaunches on this
     // install's socket — so a legacy default-socket session migrates here.
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
+      ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
       launchedCodeVersion: this.codeVersion || undefined,
     });
     this._save();
@@ -1428,6 +1452,23 @@ export class SessionManager {
     }
   }
 
+  // Whether this install's tmux server is stuck in an old macOS login session
+  // (see gui-session.js). After init(), which resolves this.socket. Never throws.
+  async checkGuiSession() {
+    return checkGuiSession({ socket: this.socket, exec, tmux: (args) => this._tmux(this.socket, args) }).catch(() => null);
+  }
+
+  // Stop this install's tmux server and every pane on it, so the next launch
+  // starts a fresh server from this process, in this process's login session.
+  // Sessions go dormant, as after a reboot: their cards stay and Resume relaunches
+  // them. Only this.socket, never the legacy default one, which other tools share.
+  // "No server running" is not an error.
+  async killTmuxServer() {
+    if (!this.socket) return;
+    await this._tmux(this.socket, ['kill-server']).catch(() => {});
+    await this.refreshAlive();
+  }
+
   _tmuxName(agentId, short) {
     return `${adapterFor(agentId).tmuxPrefix}${short}`;
   }
@@ -1596,7 +1637,8 @@ export class SessionManager {
   // Auto-archive sessions whose Claude agent exited cleanly inside an owned tmux:
   // a clean exit (pane_dead_status 0) is a deliberate /exit or self-stop, so set
   // it aside as archived (recoverable via Resume) and reap the corpse — orphan-
-  // proof even in the resume-fork case via killForSession. Non-zero/unknown exits,
+  // proof even in the resume-fork case via killForSession. Codex updates requiring
+  // a restart, non-zero/unknown exits,
   // and clean exits just after a resume (see archivableExits), are
   // left for the dead-pane path to surface on the board. `snapshotFor` lets
   // the caller inject per-session archive snapshot fields (e.g. the task), since
@@ -1615,13 +1657,22 @@ export class SessionManager {
       };
     });
     const toArchive = archivableExits(deadEntries);
-    for (const { sessionId } of toArchive) {
-      const tmux = this.map.get(sessionId)?.tmux;
+    const archived = [];
+    for (const { sessionId, tmux } of toArchive) {
+      const entry = this.map.get(sessionId);
+      if (entry?.agent === 'codex' || tmux.startsWith('cx_')) {
+        const capture = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
+          maxBuffer: 4 * 1024 * 1024,
+        }).catch(() => null);
+        if (!capture || codexUpdateState(capture.stdout)) continue;
+      }
+      if (this.map.get(sessionId)?.tmux !== tmux || this.isArchived(sessionId) || this.isResuming(sessionId) || !this.dead.has(tmux)) continue;
       this.archive(sessionId, { ...(snapshotFor(sessionId) || {}), reason: 'clean-exit' });
+      archived.push(sessionId);
       log(`[session] auto-archived ${sessionId} (tmux ${tmux}) — clean exit (status 0)`);
       await this.killForSession(sessionId, { reason: 'auto-archive-exit' });
     }
-    return toArchive.map((d) => d.sessionId);
+    return archived;
   }
 
   // Reclaim RAM from idle/snoozed sessions: given the freshly-built graph's

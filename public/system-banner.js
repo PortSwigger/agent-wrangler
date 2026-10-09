@@ -50,18 +50,40 @@ function isDismissed(level, kind) {
   return Boolean(d && level != null && level <= d.level && Date.now() < d.until);
 }
 
+// `action` (optional) is `{ label, onClick }`: a button that fixes the problem
+// the banner reports, shown before the dismiss control.
 // `level` (optional) enables the dismiss control and the suppression check above;
 // omit it for an alert with no "for today" concept. `kind` namespaces that
 // dismissal to one producer — see readDismiss — and is required whenever `level`
 // is given. `forever` makes the dismissal permanent, for a one-off notice whose
 // `kind` already names the single event it reports.
-export function showSystemBanner(text, { level, kind = 'fd', forever = false } = {}) {
+// The banner grows to fit its text (a long message wraps, more so on a narrow
+// screen), so the space body reserves for it has to follow its real height
+// rather than a fixed one. One observer for the page's lifetime. Without
+// ResizeObserver (tests) the CSS fallback height applies.
+let heightObserver = null;
+function trackHeight(el) {
+  if (heightObserver || typeof ResizeObserver === 'undefined') return;
+  heightObserver = new ResizeObserver(() => {
+    if (el.offsetHeight) document.documentElement.style.setProperty('--system-banner-h', `${el.offsetHeight}px`);
+  });
+  heightObserver.observe(el);
+}
+
+export function showSystemBanner(text, { level, kind = 'fd', forever = false, action = null } = {}) {
   if (isDismissed(level, kind)) return;
   const el = document.getElementById('system-banner');
   el.textContent = '';
   const msg = document.createElement('span');
   msg.textContent = text;
   el.append(msg);
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'system-banner-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => action.onClick());
+    el.append(btn);
+  }
   if (level != null) {
     const btn = document.createElement('button');
     btn.className = 'system-banner-dismiss';
@@ -74,6 +96,7 @@ export function showSystemBanner(text, { level, kind = 'fd', forever = false } =
   }
   el.classList.remove('hidden');
   document.body.classList.add('system-banner-open');
+  trackHeight(el);
 }
 
 export function hideSystemBanner() {

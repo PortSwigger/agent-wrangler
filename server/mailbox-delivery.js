@@ -1,7 +1,13 @@
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import { resolveResumeDir } from './transcript-reader.js';
 
-// Deliver mail only to a live session. A dormant recipient keeps its mail
-// unread until it is resumed by a human or another workflow.
+// Deliver mail to a live session. A dormant recipient keeps its mail unread
+// until it is resumed by a human or another workflow, unless `wakesDormant()`
+// is true: then it is resumed bare and the notification follows through the
+// gated live path on the next sweep, so it never pastes into a booting pane or
+// over a draft.
 export async function deliverMailNotification(to, text, deps) {
   const { tmuxFor, socketFor, sessionManager, paneDeferral } = deps;
   const mcpSeenAt = deps.mcpSeenAt ?? defaultMcpSeenAt;
@@ -11,7 +17,11 @@ export async function deliverMailNotification(to, text, deps) {
   if (!entry || entry.archivedAt) return { mode: 'skip' };
 
   const target = tmuxFor(to);
-  if (!target) return { mode: 'deferred', reason: 'no tmux target' };
+  if (!target) {
+    if (!deps.wakesDormant?.()) return { mode: 'deferred', reason: 'no tmux target' };
+    if (entry.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
+    return wakeDormant(to, entry, deps);
+  }
 
   const beforeSend = async () => {
     const relaunchedAt = entry.relaunchedAt;
@@ -25,6 +35,27 @@ export async function deliverMailNotification(to, text, deps) {
   const onDefer = (r) => { reason = r; };
   const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral, beforeSend, onDefer);
   return delivery === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
+}
+
+async function wakeDormant(to, entry, deps) {
+  const { sessionManager, tmuxFor } = deps;
+  let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
+  if (!dir || !fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
+  }
+  const fresh = sessionManager.entryFor(to);
+  if (!fresh || fresh.archivedAt) return { mode: 'skip' };
+  if (fresh.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
+  if (tmuxFor(to)) return { mode: 'deferred', reason: 'woken by another resume, delivering next sweep' };
+  try {
+    await sessionManager.resume(to, dir, { reason: 'mail', automatic: true });
+  } catch (err) {
+    const now = sessionManager.entryFor(to);
+    if (now?.archivedAt) return { mode: 'skip' };
+    if (now?.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
+    throw err;
+  }
+  return { mode: 'deferred', reason: 'woken dormant session, delivering next sweep' };
 }
 
 // Today's only live transport: paste into the pane, gated by paneDeferral so it

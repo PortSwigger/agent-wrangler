@@ -3,7 +3,7 @@
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
 // app.js owns the singletons. `ctx` shape (see app.js `cardCtx()`):
 //   { selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows,
-//     activitySortedTasks, justFinished, cardState, barWord, phaseOf, ADHOC_ID }
+//     activitySortedTasks, justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID }
 import {
   CLOCK_ICON, DOLLAR_ICON, WORKFLOW_ICON, MOON_ICON, WAKE_ICON,
   ROBOT_ICON, KEBAB_ICON,
@@ -429,10 +429,11 @@ export function workerStatusWord(s, ctx) {
 // data-sid so a click opens it like any card; not independently draggable — it
 // rides with its run, reordered only by dragging the whole workflow box. Mirrors
 // sessionCardHtml's `selected` ring so a focused child session reads exactly like
-// a focused top-level one — cardState() already supplies the same
-// needs-you/just-finished/snooze-alarm vocabulary to both (see styles.css).
+// a focused top-level one. Automatic completion keeps only the status dot;
+// manual unread and attention/snooze alarms retain their halos (see styles.css).
 export function workerRowHtml(s, ctx) {
   const state = ctx.cardState(s);
+  const doneQuiet = ctx.justFinished.has(s.sessionId) && !ctx.unread?.has(s.sessionId) ? ' done-quiet' : '';
   // Same restarting exemption as the top-level card (sessionCardHtml): a worker/child
   // row being restarted is only briefly unmanaged — don't flicker it to the dormant skin.
   const dormant = (s.managed || s.restarting) ? '' : ' dormant';
@@ -451,7 +452,7 @@ export function workerRowHtml(s, ctx) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
-  return `<div class="worker-row ${state}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
@@ -666,7 +667,8 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   // fills a tile hides the empty-state hint itself (:has() in its styles).
   const body = (hint) => (cards || emptyBody(hint)) + slotRow + bodyHost;
   if (tile.kind === 'notask') {
-    return `<div class="task-cell no-task" data-entity="no-task" style="${pos}">
+    const noTaskFlash = ctx.ADHOC_ID === ctx.restoredTaskId ? ' task-restored-flash' : '';
+    return `<div class="task-cell no-task${noTaskFlash}" data-entity="no-task" style="${pos}">
       <div class="task-head" draggable="true">
         <span class="task-name">Unassigned</span>
         ${newSess}

@@ -17,6 +17,7 @@ import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
+import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
@@ -24,7 +25,9 @@ import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
+import { extBrowseHandler } from './ext-browse.js';
 import { restartHandler } from './restart.js';
+import { restartTmuxHandler } from './restart-tmux.js';
 import { updateCheckHandler, updateApplyHandler, autoUpdateModeHandler, refreshSessionsAfterUpdateHandler } from './self-update.js';
 import { setSessionModelHandler } from './set-session-model.js';
 import {
@@ -85,6 +88,7 @@ export const CONTROL_HANDLERS = [
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   archiveReviewEnabledHandler,
+  mailWakesDormantHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
@@ -95,7 +99,9 @@ export const CONTROL_HANDLERS = [
   extConsentHandler,
   extUninstallHandler,
   extCheckUpdatesHandler,
+  extBrowseHandler,
   restartHandler,
+  restartTmuxHandler,
   updateCheckHandler,
   updateApplyHandler,
   autoUpdateModeHandler,

@@ -1,4 +1,4 @@
-import { capturePaneStyled, classify, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
+import { capturePaneStyled, classify, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
@@ -123,7 +123,9 @@ export async function ensureSubmitted(name, socket, {
 async function watchPane(name, socket, capture, windowMs, pollMs, sleep) {
   const deadline = Date.now() + windowMs;
   for (;;) {
-    const { status } = classify(await capture(name, 60, socket));
+    const pane = await capture(name, 60, socket);
+    if (codexUpdateState(pane)) return 'blocked';
+    const { status } = classify(pane);
     if (status === 'working') return 'working';
     if (status === 'needs-you') return 'blocked';
     if (Date.now() >= deadline) return 'idle';

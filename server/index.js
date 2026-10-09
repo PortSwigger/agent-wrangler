@@ -34,7 +34,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -65,7 +65,7 @@ import { collectLaunchContext } from './launch-context.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
-import { log, logError } from './log.js';
+import { log, logWarn, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
@@ -546,6 +546,11 @@ const extBag = {
 // only reaches tabs already open at the moment it fires.
 let fdWarning = null;
 
+// `{ socket }` when this install's tmux server is in an old macOS login session
+// (gui-session.js), else null. Checked once at startup: a logout stops this
+// service, so the next login always comes through here again.
+let staleGuiSession = null;
+
 // When the last control client was connected/active — drives the dev-instance
 // idle self-shutdown. Seeded to start time so a dev server launched and never
 // driven still reaps itself once the window elapses.
@@ -738,7 +743,7 @@ async function fireSchedule(id, { manual = false } = {}) {
   try {
     const { sessionId } = await performScheduleAction(snap.action, now);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
-    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId });
+    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
     scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });
@@ -812,7 +817,7 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral,
+  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 });
 
@@ -1004,6 +1009,7 @@ async function rebuildOnce() {
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
+  graph.mailWakesDormant = mailWakesDormant();
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.autoUpdate = autoUpdateMode();
@@ -1019,6 +1025,8 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
+  // Boot-fixed too, and carried the same way for the same reason.
+  graph.staleGuiSession = staleGuiSession;
   // Each enabled extension's graph contribution. Only enabled ones are in the
   // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
   for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
@@ -1043,6 +1051,9 @@ async function rebuildOnce() {
 
 const rebuild = createRebuildCoalescer(rebuildOnce);
 let codeVersion = null;
+// codeVersion as a log shows it: a checkout's short commit, a package's whole
+// version (slicing "10.10.10" to seven characters would name another release).
+let codeVersionLabel = null;
 let updates = null;
 const UPDATE_CHECK_MS = (Number(process.env.AW_UPDATE_CHECK_MINUTES) || 60) * 60 * 1000;
 const ROLLBACK_CLEAR_AFTER_MS = 30000;
@@ -1090,7 +1101,7 @@ async function refreshNextStaleSession() {
     return;
   }
   if (sessionManager.entryFor(s.sessionId)?.archivedAt) return;
-  log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersion.slice(0, 7)}`);
+  log(`[agent-wrangler] restarting idle session ${s.sessionId} onto ${codeVersionLabel}`);
   memoryStore.bindSession(s.sessionId, taskStore.taskFor(s.sessionId)?.id || null);
   try {
     await sessionManager.resume(s.sessionId, dir, { reason: 'update-refresh' });
@@ -1148,6 +1159,8 @@ controlWss.on('connection', (ws) => {
     restart: () => exitForRestart('restart requested from the board'),
     canRestart: restartSupported(),
     updates,
+    staleGuiSession: () => staleGuiSession,
+    recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
   ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
 });
@@ -1200,6 +1213,7 @@ async function main() {
   // identity is the package version it was built from.
   const install = INSTALL_ENV.installManager ? { checkout: false, codeVersion: VERSION } : await readInstall();
   codeVersion = install.codeVersion;
+  codeVersionLabel = install.checkout && codeVersion ? codeVersion.slice(0, 7) : codeVersion;
   sessionManager.codeVersion = codeVersion;
   updates = createUpdateService({
     support: updateSupport({
@@ -1222,6 +1236,8 @@ async function main() {
   await sessionManager.init();
   await sessionManager.refreshTmuxPath();
   await sessionManager.clearInstallEnv();
+  staleGuiSession = await sessionManager.checkGuiSession();
+  if (staleGuiSession) logWarn(`[gui-session] tmux server on socket ${staleGuiSession.socket} is in an old macOS login session; windows its agents open can't be focused`);
   setTmuxBin(sessionManager.tmuxBin);
   // Re-run the launch context for every active session before the first build
   // (reason `adopt`): extensions repair per-session state that went stale while

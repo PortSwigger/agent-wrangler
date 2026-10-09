@@ -60,7 +60,7 @@ export const BUILTIN = [
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'childFullViewByDefault',
-  'autoFixPrChecksDefault', 'archiveReviewEnabled', 'chatViewDefault', 'defaultSessionCwd',
+  'autoFixPrChecksDefault', 'archiveReviewEnabled', 'mailWakesDormant', 'chatViewDefault', 'defaultSessionCwd',
   'quarantinedBuiltins',
 ]);
 

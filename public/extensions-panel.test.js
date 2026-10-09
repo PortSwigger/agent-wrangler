@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
-  commitFocusedField, MAX_TEXTAREA_LENGTH,
+  commitFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText,
 } from './extensions-panel.js';
 import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
 
@@ -327,6 +327,62 @@ test('+ Add extension opens the install form in the detail pane', () => {
     assert.equal(byClass(detailOf(adding), 'ext-install-url').length, 1);
     assert.equal(byClass(adding, 'ext-list-row')[0].classList.contains('selected'), false);
   });
+});
+
+const REPO = {
+  fullName: 'someone/wrangler-thing', name: 'wrangler-thing', owner: 'someone',
+  avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4', description: '<b>Does a thing</b>',
+  cloneUrl: 'https://github.com/someone/wrangler-thing.git', htmlUrl: 'https://github.com/someone/wrangler-thing',
+  stars: 1234, language: 'JavaScript', pushedAt: '2026-10-05T00:00:00Z',
+};
+const MINE = { ...REPO, fullName: 'charlie/notes', name: 'notes', owner: 'charlie', cloneUrl: 'https://github.com/charlie/notes.git', htmlUrl: 'https://github.com/charlie/notes' };
+
+test('the add pane lists GitHub repos as cards under the unvetted notice', () => {
+  withDom(() => {
+    const installs = [];
+    const installed = { ...INSTALLED, origin: 'git@github.com:Charlie/notes.git' };
+    const panel = extensionsPanelEl({
+      entries: [installed], adding: true, browse: { repos: [MINE, REPO] }, onInstall: (u) => installs.push(u),
+    });
+    const notice = byClass(panel, 'ext-gh-notice')[0];
+    assert.ok(texts(notice).includes(` ${BROWSE_NOTICE}`));
+    const cards = byClass(panel, 'ext-gh-card');
+    // Installed ones sink to the bottom and offer no Install button.
+    assert.deepEqual(cards.map((c) => texts(byClass(c, 'ext-gh-name')[0])[0]), ['wrangler-thing', 'notes']);
+    assert.equal(cards[1].classList.contains('installed'), true);
+    assert.equal(byClass(cards[1], 'ext-btn').length, 0);
+    byClass(cards[0], 'ext-btn')[0].fire('click');
+    assert.deepEqual(installs, [REPO.cloneUrl]);
+    assert.ok(texts(cards[0]).includes('1.2k'));
+    assert.equal(walk(cards[0]).find((n) => n.tagName === 'IMG').src, `${REPO.avatarUrl}&s=80`);
+    assertNoThirdPartyHtml(panel);
+  });
+});
+
+test('the GitHub browser shows loading, error and empty states, and Refresh asks again', () => {
+  withDom(() => {
+    let browses = 0;
+    const loading = extensionsPanelEl({ entries: [INSTALLED], adding: true, browse: { loading: true }, onBrowse: () => { browses += 1; } });
+    assert.equal(byClass(loading, 'ext-gh-skeleton').length, 3);
+    assert.equal(byClass(loading, 'ext-gh-refresh')[0].disabled, true);
+    const failed = extensionsPanelEl({ entries: [INSTALLED], adding: true, browse: { error: 'rate limited', repos: [] }, onBrowse: () => { browses += 1; } });
+    assert.ok(texts(failed).includes('Could not search GitHub: rate limited'));
+    byClass(failed, 'ext-gh-refresh')[0].fire('click');
+    assert.equal(browses, 1);
+    const empty = extensionsPanelEl({ entries: [INSTALLED], adding: true, browse: { repos: [] } });
+    assert.ok(texts(empty).includes('Nothing tagged yet.'));
+    assert.equal(byClass(extensionsPanelEl({ entries: [INSTALLED], adding: true }), 'ext-gh').length, 0);
+  });
+});
+
+test('normalizeRepoUrl and updatedAgoText', () => {
+  for (const u of ['https://github.com/A/b.git', 'git@github.com:a/B.git', 'ssh://git@github.com/a/b', 'https://github.com/a/b/']) {
+    assert.equal(normalizeRepoUrl(u), 'https://github.com/a/b');
+  }
+  const now = Date.parse('2026-10-08T00:00:00Z');
+  assert.equal(updatedAgoText('2026-10-05T00:00:00Z', now), 'Updated 3 days ago');
+  assert.equal(updatedAgoText('2026-10-07T23:00:00Z', now), 'Updated 1 hour ago');
+  assert.equal(updatedAgoText('nope', now), '');
 });
 
 test('a setting row carries data-ext/data-key and NO data-id — the collision guard', () => {
