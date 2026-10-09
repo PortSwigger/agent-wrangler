@@ -188,3 +188,10 @@ test('list_tasks ignores unassigned (adhoc) sessions — they belong to no task'
   assert.equal(t1.sessionCount, 1);
   assert.equal(t1.bestFolder, '/Users/x/vcs/agent-wrangler');
 });
+
+test('list_tasks archived: true lists only archived tasks with their cascaded session counts', async () => {
+  const d = deps({ tasks: [{ id: 'T1', name: 'Live' }, { id: 'T2', name: 'Gone', archivedAt: 9 }] });
+  d.sessionManager = { archivedEntries: () => [{ sessionId: 'A', viaTaskArchive: 'T2' }, { sessionId: 'B', viaTaskArchive: 'T2' }, { sessionId: 'C' }] };
+  const out = await listTasksTool.handler({ deps: d }, { archived: true });
+  assert.deepEqual(out.structuredContent.tasks, [{ id: 'T2', name: 'Gone', archivedAt: 9, archivedSessionCount: 2 }]);
+});

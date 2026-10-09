@@ -13,7 +13,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `list_sessions` | List sessions currently on the board, including status, provider, task, working directory, parent, spawner, and context budget. |
 | `get_session_info` | Return the caller's own identity, task, nesting chain, launch lineage, and context budget. |
 | `get_session_cost` | Return the caller's board-card spend, tokens, and sub-agent/advisor breakouts. Codex values are estimates. |
-| `list_tasks` | List active board tasks, session counts, and the best launch folder for each task. |
+| `list_tasks` | List active board tasks, session counts, and the best launch folder for each task. `archived: true` lists archived tasks instead. |
 | `get_session_activity` | Scan Claude and Codex transcripts for work performed on a local date or date range, including archived sessions. |
 
 ## Launch and organise work
@@ -27,6 +27,8 @@ add more tools. A running session receives tool-registry changes after its next 
 | `detach_session` | Promote a nested session back to the top level. |
 | `rename_session` | Change a session's board label. |
 | `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. |
+| `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
+| `restore_task` | Restore an archived task (ids from `list_tasks` with `archived: true`), and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
 | `name_branch` | Rename the caller's Wrangler-managed worktree branch. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
