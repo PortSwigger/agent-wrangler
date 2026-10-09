@@ -1269,6 +1269,35 @@ test('codex Resume leaves a replacement alone when the pane changes during exit 
   assert.equal(sm.entryFor('changed-update').liveSessionId, 'live-replacement');
 });
 
+for (const [label, state] of [
+  ['archived', { archivedAt: 5 }],
+  ['snoozed', { snooze: { until: 9_000_000, createdAt: 1, comment: 'later' } }],
+]) {
+  test(`automatic Codex update recovery preserves a card ${label} during conversation lookup`, async (t) => {
+    const sm = new SessionManager();
+    sm.map.clear();
+    sm.map.set('automatic-update', { agent: 'codex', tmux: 'cx_update', cwd: os.tmpdir() });
+    sm.dead = new Set(['cx_update']);
+    sm.killForSession = async () => [];
+    let launched;
+    sm._newSession = async (tmux) => { launched = tmux; };
+    const discarded = [];
+    sm._tmux = async (_socket, args) => {
+      if (args[0] === 'capture-pane') return { stdout: '🎉 Update ran successfully! Please restart Codex.' };
+      assert.equal(args[0], 'kill-session');
+      discarded.push(args[args.indexOf('-t') + 1]);
+    };
+    t.mock.method(adapterFor('codex'), 'discoverLiveId', async () => {
+      Object.assign(sm.entryFor('automatic-update'), state);
+      return 'live-fresh';
+    });
+    await assert.rejects(sm.resume('automatic-update', os.tmpdir(), { automatic: true }), /archived or snoozed during resume/);
+    for (const [key, value] of Object.entries(state)) assert.deepEqual(sm.entryFor('automatic-update')[key], value);
+    assert.equal(sm.entryFor('automatic-update').liveSessionId, undefined);
+    assert.deepEqual(discarded, [launched]);
+  });
+}
+
 test('codex resume never binds a card to a rollout older than the card itself', async () => {
   const { root, proj, write } = codexSessionsFixture();
   const stale = '11111111-1111-4111-8111-111111111111';
