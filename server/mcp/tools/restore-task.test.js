@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { restoreTaskTool } from './restore-task.js';
 
-function deps() {
+function deps({ cwd = os.tmpdir() } = {}) {
   const calls = { resume: [], unarchive: [] };
-  const entries = { A: { viaTaskArchive: 'T1', archivedAt: 1 }, B: { viaTaskArchive: 'T2', archivedAt: 2 } };
+  const entries = { A: { viaTaskArchive: 'T1', archivedAt: 1, cwd }, B: { viaTaskArchive: 'T2', archivedAt: 2 } };
   return {
     calls,
     taskStore: {
@@ -41,4 +43,13 @@ test('restore_sessions: false brings back only the task', async () => {
 test('rejects unknown and non-archived tasks', async () => {
   assert.equal((await restoreTaskTool.handler({ deps: deps() }, { task_id: 'zz' })).isError, true);
   assert.match((await restoreTaskTool.handler({ deps: deps() }, { task_id: 'T2' })).content[0].text, /not archived/);
+});
+
+test('a session whose launch dir is gone lands in failed_sessions, not restored_sessions', async () => {
+  const d = deps({ cwd: path.join(os.tmpdir(), 'aw-missing-dir-xyz') });
+  const out = await restoreTaskTool.handler({ deps: d }, { task_id: 'T1' });
+  assert.deepEqual(d.calls.resume, []);
+  assert.deepEqual(out.structuredContent.restored_sessions, []);
+  assert.equal(out.structuredContent.failed_sessions[0].session_id, 'A');
+  assert.match(out.structuredContent.failed_sessions[0].error, /recreate_dir/);
 });

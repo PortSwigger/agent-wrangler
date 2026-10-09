@@ -8,7 +8,7 @@ export const restoreTaskTool = {
     'Restore an archived task onto the board — the same as the board\'s Search "Restore task". By default '
     + 'it also resumes the sessions that were archived along with it (restore_sessions: false brings back '
     + 'just the empty tile). Use this before restore_session when a session belongs to an archived task. '
-    + 'Get task ids from list_tasks.',
+    + 'Get archived task ids from list_tasks with archived: true. A session whose launch directory is gone is reported in failed_sessions; restore it with restore_session and recreate_dir: true.',
   inputSchema: {
     task_id: z.string().min(1).describe('Archived task id to restore.'),
     restore_sessions: z.boolean().optional().describe('Also resume sessions archived with the task. Default true.'),
@@ -21,14 +21,24 @@ export const restoreTaskTool = {
     if (!task.archivedAt) return errorResult(`Task ${taskId} is not archived.`);
     deps.taskStore.unarchiveTask(taskId);
     await deps.rebuild?.();
-    const ctx = { ...deps, reply: () => {} };
+    const replies = [];
+    const ctx = { ...deps, reply: (m) => replies.push(m) };
     const restored = [];
     const failed = [];
     if (args.restore_sessions !== false) {
       for (const sessionId of cascadedSessionIds(taskId, deps.sessionManager)) {
         try {
+          replies.length = 0;
           await resumeSession(sessionId, ctx);
-          restored.push(sessionId);
+          const needsDir = replies.find((m) => m.type === 'resume-needs-dir');
+          if (needsDir) {
+            failed.push({
+              session_id: sessionId,
+              error: `Launch directory ${needsDir.dir} no longer exists — call restore_session with recreate_dir: true.`,
+            });
+          } else {
+            restored.push(sessionId);
+          }
         } catch (err) {
           failed.push({ session_id: sessionId, error: err?.message || String(err) });
         }
