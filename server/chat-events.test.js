@@ -38,6 +38,19 @@ test('claude: isMeta and synthetic user turns are dropped', () => {
   assert.deepEqual(scanChatText(text, 'claude').events, []);
 });
 
+test('claude: a compact summary becomes a collapsed context event, not a user bubble', () => {
+  const summary = 'This session is being continued from a previous conversation that ran out of context.';
+  const { events } = scanChatText(claudeLines(
+    { type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', timestamp: '2026-08-14T10:00:00.000Z' },
+    { type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'user', content: summary } },
+    { type: 'user', timestamp: '2026-08-14T10:00:02.000Z', message: { role: 'user', content: 'carry on' } },
+  ), 'claude');
+  assert.deepEqual(events, [
+    { kind: 'context', label: 'Conversation compacted', text: summary, ts: Date.parse('2026-08-14T10:00:01.000Z') },
+    { kind: 'user', text: 'carry on', ts: Date.parse('2026-08-14T10:00:02.000Z') },
+  ]);
+});
+
 test('a half-written trailing line is ignored, not thrown on', () => {
   const text = '{"type":"user","timestamp":"2026-08-14T10:00:00.000Z","message":{"role":"user","content":"hi"}}\n{"type":"user","message":{"role":"user","content":"hi';
   assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.kind), ['user']);

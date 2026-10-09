@@ -361,6 +361,11 @@ function pushClaude(entry, state) {
       }
     }
     const { text, rawText, images } = userTextAndImages(msg.content);
+    if (entry.isCompactSummary) {
+      if (text) out.push({ kind: 'context', label: 'Conversation compacted', text, ts });
+      state.prevTs = ts;
+      return out;
+    }
     // `images.length` is part of the emit test, not just a decoration: an
     // image-only paste can leave no prose at all, and gating on text alone would
     // drop that turn from the stream entirely.
