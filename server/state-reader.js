@@ -175,29 +175,31 @@ function addDirsFromWorker(worker) {
 }
 
 // Claude Code titles a freshly-launched session with its own auto "agent" name —
-// the cwd basename plus an optional short hex hash, e.g. `enterprise-3f` — and
+// a slug of the cwd basename plus a 2-hex random tail, e.g. `enterprise-3f` — and
 // holds it there until it regenerates a conversation summary (a just-resumed
 // session often never does). That name otherwise outranks `intent`/`summary` in
 // `sessionLabel` below, flipping a meaningful card to junk the moment the pane is
-// scraped, so we treat it as no title and fall through. The basename is matched
-// verbatim (regex-escaped), the hex tail case-insensitively; a real summary is a
-// phrase (spaces, non-hex words) so it won't collide.
+// scraped, so we treat it as no title and fall through. `claudeAutoNameSlug`
+// mirrors Claude Code's own slugger (2.1.296: first 4 whitespace words,
+// lowercased, every non-[a-z0-9] run → `-`, cut to 40 chars, dashes trimmed, so
+// `charlie.goldstraw` → `charlie-goldstraw-5c`); a real summary is a phrase with
+// spaces, so it won't collide.
+function claudeAutoNameSlug(base) {
+  return base.split(/\s+/).filter(Boolean).slice(0, 4).join(' ').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '') || 'claude';
+}
+
 function isAutoAgentTitle(title, cwd) {
   const base = cwd ? path.basename(cwd) : '';
   if (!base) return false;
   const t = String(title || '');
-  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (new RegExp(`^${esc}(-[0-9a-f]+)?$`, 'i').test(t)) return true;
-  const clipped = t.replace(/(?:\.\.\.|…)$/, '');
-  if (clipped !== t && clipped.length >= 8 && base.toLowerCase().startsWith(clipped.toLowerCase())) return true;
-  // For a long basename, Claude Code truncates it mid-word before appending the
-  // hex tail (e.g. "…open-te-04" for a "…open-terminal" cwd), so the exact match
-  // above misses it. Treat a substantial truncated prefix (+ optional hex tail)
-  // as the same placeholder — a real summary is a phrase, so it can't collide
-  // with a bare dash-joined prefix of the cwd basename.
-  const stripped = t.replace(/-[0-9a-f]+$/i, '');
-  return stripped.length >= base.length / 2 && stripped.length < base.length
-    && base.toLowerCase().startsWith(stripped.toLowerCase());
+  const lower = t.toLowerCase();
+  if (lower === base.toLowerCase()) return true;
+  const slug = claudeAutoNameSlug(base);
+  if (lower === slug || (t.length === slug.length + 3 && t.startsWith(`${slug}-`) && /-[0-9a-f]{2}$/.test(t))) return true;
+  const clipped = lower.replace(/(?:\.\.\.|…)$/, '');
+  return clipped !== lower && clipped.length >= 8
+    && (base.toLowerCase().startsWith(clipped) || slug.startsWith(clipped));
 }
 
 function shortCodexTitle(source) {
