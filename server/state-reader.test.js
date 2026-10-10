@@ -170,6 +170,19 @@ test('sessionLabel ignores a truncated auto agent-name (long basename cut mid-wo
   );
 });
 
+test('sessionLabel ignores an auto agent-name slugged from a basename with punctuation, case or spaces', () => {
+  for (const [cwd, liveTitle] of [
+    ['/Users/charlie.goldstraw', 'charlie-goldstraw-5c'],
+    ['/x/My_Repo', 'my-repo-0a'],
+    ['/x/foo..bar+baz', 'foo-bar-baz-1f'],
+    ['/x/.dotfiles', 'dotfiles-e2'],
+    ['/x/a b c d e', 'a-b-c-d-77'],
+    ['/x/___', 'claude-9b'],
+  ]) {
+    assert.equal(sessionLabel({ names: [], liveTitle, intent: 'Fix the bug', cwd }), 'Fix the bug', cwd);
+  }
+});
+
 test('sessionLabel ignores a poisoned cached lastLabel (auto agent-name) in the names array', () => {
   // Dormant sessions feed [entry.name, entry.lastLabel] as names; lastLabel can
   // have been snapshotted from a moment the live title was Claude's auto name.
