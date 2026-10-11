@@ -1501,9 +1501,14 @@ function renderGrid() {
   // last tile row; the implicit gridAutoRows track sizes it (capped by CSS).
   const tray = el.querySelector(':scope > .focus-switcher');
   if (tray) tray.style.gridRow = scroll ? `${rows + 1}` : '';
-  restoreScrollState(el, scrollState);
   wireGridEvents(el);
   wireTray(el);
+  restoreScrollState(el, scrollState);
+  // A re-render replaces every element hint mode is pointing at, so re-resolve
+  // the markers rather than letting the ~4s graph poll strand them over
+  // detached nodes. After the scroll restore, since hint targets depend on what
+  // is visible. A no-op unless hint mode is up.
+  syncHints();
 
   // Freshly created task → drop straight into naming it.
   if (autoEditTaskId) {
@@ -1533,9 +1538,14 @@ function renderFocusedTile(el, id) {
   el.style.gridAutoRows = '';
   const scrollState = captureScrollState(el);
   el.innerHTML = tileHtml(tile, cardCtx(), { focusMode: true }) + trayHtml([id]);
-  restoreScrollState(el, scrollState);
   wireGridEvents(el);
   wireTray(el);
+  restoreScrollState(el, scrollState);
+  // A re-render replaces every element hint mode is pointing at, so re-resolve
+  // the markers rather than letting the ~4s graph poll strand them over
+  // detached nodes. After the scroll restore, since hint targets depend on what
+  // is visible. A no-op unless hint mode is up.
+  syncHints();
 }
 
 // Status class for a single session's switcher dot — same hue vocabulary as the
@@ -1744,10 +1754,6 @@ function wireGridEvents(el) {
   });
   wireGridDnd(el);
   wireTaskControls(el);
-  // A re-render replaces every element hint mode is pointing at, so re-resolve
-  // the markers here rather than letting the ~4s graph poll strand them over
-  // detached nodes. A no-op unless hint mode is up.
-  syncHints();
 }
 
 // Right-click menu on a session card: the same per-session actions as the detail
