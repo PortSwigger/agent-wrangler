@@ -3448,6 +3448,7 @@ window.addEventListener('keydown', (e) => {
   const action = dirs[e.key];
   if (!action) return;
   if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
+  if (document.activeElement?.closest?.('.snooze-toggle')) return;
   if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
   e.preventDefault();
   if (action === 'taskPrev') moveTaskFocus(-1);
