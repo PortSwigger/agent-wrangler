@@ -1104,6 +1104,7 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   assert.equal(echoMatchesEvent(echo, { text: 'Explain this', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '[Image #1]', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '', ts: 1500 }), false);
+  assert.equal(echoMatchesEvent({ text: '[Image #1] shows the error', images: ['a.png'], sentAt: 1000 }, { text: '[Image #2][Image #1] shows the error', ts: 1500 }), true);
   const literal = { text: 'Compare [Image #1] with [Image #2]', images: [], sentAt: 1000 };
   assert.equal(echoMatchesEvent(literal, { text: 'Compare [Image #1] with [Image #2]', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
