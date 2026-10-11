@@ -572,8 +572,12 @@ export async function killSession(name, socket = '') {
 // shell-escaping pitfalls of `send-keys -l`) AND submit it with a trailing Enter.
 // Shares the paste-block mechanism with prefillPane, which omits the Enter. `run` is
 // the low-level tmux runner (test seam).
+// A trailing backslash is held back by Claude Code's composer: `\` + Enter is its
+// line-continuation, so the Enter becomes a newline and the prompt is never
+// submitted (verified against a live pane). A trailing space defuses it without
+// altering the message.
 export async function sendText(name, text, socket = '', run = tmux, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  await pasteBlock(name, text, socket, run);
+  await pasteBlock(name, text.endsWith('\\') ? `${text} ` : text, socket, run);
   await wait(120);
   await run(socket, ['send-keys', '-t', name, 'Enter']);
 }

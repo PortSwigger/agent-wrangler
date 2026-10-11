@@ -740,3 +740,11 @@ test('trustDialogState: reports which option the cursor is on, and nothing for a
   assert.equal(trustDialogState('❯ Try "fix typecheck errors"'), null);
   assert.equal(trustDialogState(''), null);
 });
+
+test('sendText pads a trailing backslash so Enter submits instead of continuing the line', async () => {
+  const pasted = [];
+  const run = (socket, args) => { if (args[0] === 'load-buffer') pasted.push(fs.readFileSync(args[3], 'utf8')); return Promise.resolve(); };
+  await sendText('cc_y', 'see src\\', '', run, { wait: async () => {} });
+  await sendText('cc_y', 'see src/', '', run, { wait: async () => {} });
+  assert.deepEqual(pasted, ['see src\\ ', 'see src/']);
+});

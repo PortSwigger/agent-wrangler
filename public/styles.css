@@ -2551,6 +2551,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    too much once it was the ONLY thing visible above the bubble, with nothing
    of the previous turn left on screen to justify it. */
 .chat-user { margin-top: 26px; scroll-margin-top: 20px; }
+/* Consecutive human messages are one thought, so they sit as close as the queued
+   tray's items do, however they arrived. */
+.chat-user + .chat-user { margin-top: 9px; }
 .chat-assistant { margin-top: 16px; }
 
 /* 1em and the same leading as .chat-prose, deliberately: the user's words and
@@ -2567,6 +2570,19 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   padding: 9px 14px; font-size: 1em; line-height: 1.62;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* A prompt echoed locally until the transcript records it: dashed while sending, then queued (delivered to the pane, but the agent has not started on it). */
+.chat-user[data-pending] { border-style: dashed; opacity: 0.75; }
+.chat-user[data-pending="1"]::after {
+  content: "Sending…"; display: block; margin-top: 4px; font-size: 0.75em; color: var(--fg-subtle);
+}
+/* Prompts sent but not yet recorded, grouped under one heading. */
+.chat-queue {
+  align-self: flex-end; max-width: 84%; margin-top: 26px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 9px;
+}
+.chat-queue-head { font-size: 0.75em; color: var(--fg-subtle); }
+.chat-queue > .chat-user { margin-top: 0; max-width: 100%; }
 
 /* Links inside the chat stream. Two kinds, deliberately styled the same as
    .chat-prose's anchors (styles.css:~497) so a link reads as a link wherever it
