@@ -1162,6 +1162,7 @@ function toggleSnoozedCollapse(tileKey) {
   if (collapsedSnoozed.has(tileKey)) collapsedSnoozed.delete(tileKey);
   else collapsedSnoozed.add(tileKey);
   try { localStorage.setItem(COLLAPSED_SNOOZED_KEY, JSON.stringify([...collapsedSnoozed])); } catch {}
+  selectedNewSlot = null;
   const hadFocus = Boolean(document.activeElement?.closest?.('.snooze-toggle'));
   if (currentView === 'grid') renderGrid();
   if (hadFocus) document.querySelector(`.snooze-toggle[data-tile="${CSS.escape(tileKey)}"]`)?.focus();
