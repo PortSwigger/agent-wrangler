@@ -1101,9 +1101,12 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   const { echoMatchesEvent } = await import('./chat-view.js');
   const echo = { text: 'Explain this', images: ['a.png', 'b.png'], sentAt: 1000 };
   assert.equal(echoMatchesEvent(echo, { text: '[Image #1][Image #2]Explain this', ts: 1500 }), true);
-  assert.equal(echoMatchesEvent(echo, { text: 'Explain this', ts: 1500 }), false);
+  assert.equal(echoMatchesEvent(echo, { text: 'Explain this', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '[Image #1]', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '', ts: 1500 }), false);
+  const literal = { text: 'Compare [Image #1] with [Image #2]', images: [], sentAt: 1000 };
+  assert.equal(echoMatchesEvent(literal, { text: 'Compare [Image #1] with [Image #2]', ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
 });
 
 test('history replayed by a remount cannot acknowledge a newer identical prompt', async () => {
@@ -1123,6 +1126,25 @@ test('history replayed by a remount cannot acknowledge a newer identical prompt'
   };
   reply();
   sendOnce();
+  view.unmount();
+  view.mount('sess-1');
+  reply();
+  assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
+});
+
+test('a terminal-origin prompt already shown cannot acknowledge a later identical send', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  const ts = Date.now();
+  const reply = () => {
+    const chat = sent.filter((m) => m.type === 'chat').at(-1);
+    view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 50, events: [{ kind: 'user', text: 'continue', ts }] });
+  };
+  reply();
+  input.value = 'continue';
+  send(input);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
   view.unmount();
   view.mount('sess-1');
   reply();

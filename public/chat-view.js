@@ -42,17 +42,18 @@ export function isHumanTypedUserItem(item) {
 }
 
 // The TUI prefixes an attached image's `[Image #N]` marker to the recorded text,
-// so the prose is compared without them.
-const stripImageMarkers = (t) => String(t || '').replace(/\[Image #\d+\]\s*/g, '').trim();
+// so only LEADING markers are dropped; one the human typed inside their prose stays.
+const stripImageMarkers = (t) => String(t || '').replace(/^(?:\[Image #\d+\]\s*)+/, '').trim();
 
 // Whether a transcript user event is the recording of a locally echoed prompt.
 export function echoMatchesEvent(echo, event) {
   // Mounting reads a window of history, which may hold an older prompt with the
   // same words ("yes", "continue") — only one recorded after the send is ours.
   if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
-  const hasImages = (Array.isArray(event.images) && event.images.length > 0) || /\[Image #\d+\]/.test(event.text || '');
-  if (echo.images.length && !hasImages) return false;
-  return stripImageMarkers(event.text) === echo.text;
+  const text = String(event.text || '').trim();
+  if (text === echo.text) return true;
+  if (!echo.images.length) return false;
+  return stripImageMarkers(text) === echo.text && text !== stripImageMarkers(text);
 }
 
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
@@ -817,8 +818,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (item.type === 'user' && isHumanTypedUserItem(item)) {
         lastUserEl = node;
         const hit = echoList().find((e) => echoMatches(e, item));
+        noteAcked(sessionId, item.event);
         if (hit) {
-          noteAcked(hit.sessionId, item.event);
           removeEcho(hit);
           renderSuggestion();
         }
