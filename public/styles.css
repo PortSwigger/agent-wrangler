@@ -1736,6 +1736,13 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 .snooze-divider::before, .snooze-divider::after { content: ""; height: 1px; background: var(--border-muted); flex: 1; }
 .snooze-label { color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, transparent); padding: 1px 8px; border-radius: 999px; }
+.snooze-toggle {
+  display: inline-flex; align-items: center; gap: 4px; border: none; font: inherit;
+  text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.snooze-toggle:hover { background: color-mix(in srgb, var(--snooze) 26%, transparent); }
+.snooze-toggle-icon { display: inline-flex; }
+.snooze-toggle-icon svg { width: 10px; height: 10px; }
 .snoozed-row {
   position: relative; display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 30px; border-radius: 8px;

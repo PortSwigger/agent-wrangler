@@ -21,6 +21,7 @@ function ctx(over = {}) {
     selectedNewSlot: null,
     flashingPr: new Set(),
     collapsedWorkflows: new Set(),
+    collapsedSnoozed: new Set(),
     activitySortedTasks: new Set(),
     justFinished: new Set(),
     cardState: (s) => s.status || 'idle',
@@ -629,6 +630,18 @@ test('tileHtml: asleep sessions sink under a snoozed divider', () => {
   const html = tileHtml(tile, ctx());
   assert.match(html, /snooze-divider/);
   assert.match(html, /snoozed-row/);
+});
+
+test('tileHtml: a collapsed snoozed block keeps the toggle pill but drops the rows', () => {
+  const tile = {
+    kind: 'task', col: 0, rowStart: 0, span: 1,
+    sessions: [sess({ sessionId: 'a', snooze: { until: 1 } })],
+    task: { id: 'T1', name: 'T', links: [] },
+  };
+  const html = tileHtml(tile, ctx({ collapsedSnoozed: new Set(['T1']) }));
+  assert.match(html, /snooze-toggle/);
+  assert.match(html, /data-tile="T1"/);
+  assert.doesNotMatch(html, /snoozed-row/);
 });
 
 test('ghostHtml: an empty grid cell renders the new-task drop target', () => {

@@ -117,3 +117,9 @@ test('tileWeight: snoozed rows counted at reduced weight', () => {
   // No snoozed -> no divider added.
   assert.equal(tileWeight({ activeCount: 1, snoozedCount: 0, cardStride: stride }), 1);
 });
+
+test('tileWeight: a collapsed snoozed block keeps only its divider', () => {
+  const stride = 80;
+  const expected = (2 * stride + SNOOZE_DIVIDER_PX) / stride;
+  assert.equal(tileWeight({ activeCount: 2, snoozedCount: 3, cardStride: stride, snoozedCollapsed: true }), expected);
+});

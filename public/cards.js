@@ -646,9 +646,11 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   }
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
   const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
-  const cards = renderTileCards(active, ctx, { focusMode })
-    + (asleep.length ? `<div class="snooze-divider"><span class="snooze-label">snoozed</span></div>${asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
   const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
+  const snoozedCollapsed = ctx.collapsedSnoozed.has(tileKey);
+  const snoozePill = `<button class="snooze-label snooze-toggle" data-tile="${esc(tileKey)}" title="${snoozedCollapsed ? 'Show snoozed' : 'Hide snoozed'}">snoozed ${asleep.length}<span class="snooze-toggle-icon">${snoozedCollapsed ? PLUS_ICON : MINUS_ICON}</span></button>`;
+  const cards = renderTileCards(active, ctx, { focusMode })
+    + (asleep.length ? `<div class="snooze-divider">${snoozePill}</div>${snoozedCollapsed ? '' : asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
   const bodyHost = taskBodyHostHtml(tileKey);
   // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
   // The lit target must sit where nav lands it — the *end* of the body — so on a

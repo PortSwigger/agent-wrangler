@@ -58,9 +58,9 @@ export const SUBAGENT_ZONE_BASE_PX = 4;   // margin-top(12) + margin-bottom(-2) 
 // module stays untouched (multiply back to px, add the rest, divide back to units).
 export function tileWeightWithBody({
   activeCount, snoozedCount, cardStride, bodyPx = 0, childRowCount = 0,
-  workflowBoxCount = 0, subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
+  workflowBoxCount = 0, subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false,
 }) {
-  const px = tileWeight({ activeCount, snoozedCount, cardStride }) * cardStride
+  const px = tileWeight({ activeCount, snoozedCount, cardStride, snoozedCollapsed }) * cardStride
     + bodyPx
     + childRowCount * CHILD_STRIDE_PX
     // A full-view child draws as a real card, so it costs a whole cardStride,
@@ -451,13 +451,13 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 // content like the rest: part of the capped bucket.
 export function tileSpan(
   sessions, perRow, bodyPx = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false,
 ) {
   const snoozedCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
   const topLevelActiveCount = sessions.length - snoozedCount - absorbedChildCount;
   const totalWeight = tileWeightWithBody({
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, bodyPx, childRowCount, workflowBoxCount,
-    subagentRowCount, subagentZoneCount, childFullViewCount,
+    subagentRowCount, subagentZoneCount, childFullViewCount, snoozedCollapsed,
   });
   const uncappedCount = topLevelActiveCount + childFullViewCount;
   const secondaryWeight = Math.min(totalWeight - uncappedCount, perRow);
