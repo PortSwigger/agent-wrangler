@@ -51,6 +51,7 @@ export function echoMatchesEvent(echo, event) {
   // same words ("yes", "continue") — only one recorded after the send is ours.
   if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
   const text = String(event.text || '').trim();
+  if (!echo.text) return (Boolean(text) && !stripImageMarkers(text)) || (Array.isArray(event.images) && event.images.length > 0);
   if (text === echo.text) return true;
   if (!echo.images.length) return false;
   return stripImageMarkers(text) === echo.text && text !== stripImageMarkers(text);
