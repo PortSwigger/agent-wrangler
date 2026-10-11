@@ -1501,9 +1501,9 @@ function renderGrid() {
   // last tile row; the implicit gridAutoRows track sizes it (capped by CSS).
   const tray = el.querySelector(':scope > .focus-switcher');
   if (tray) tray.style.gridRow = scroll ? `${rows + 1}` : '';
-  restoreScrollState(el, scrollState);
   wireGridEvents(el);
   wireTray(el);
+  restoreScrollState(el, scrollState);
 
   // Freshly created task → drop straight into naming it.
   if (autoEditTaskId) {
@@ -1533,9 +1533,9 @@ function renderFocusedTile(el, id) {
   el.style.gridAutoRows = '';
   const scrollState = captureScrollState(el);
   el.innerHTML = tileHtml(tile, cardCtx(), { focusMode: true }) + trayHtml([id]);
-  restoreScrollState(el, scrollState);
   wireGridEvents(el);
   wireTray(el);
+  restoreScrollState(el, scrollState);
 }
 
 // Status class for a single session's switcher dot — same hue vocabulary as the
