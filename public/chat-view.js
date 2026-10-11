@@ -525,14 +525,23 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   // An attached image is a complete prompt on its own (the TUI submits the bare
   // `[Image #1]`), so Send has to stay live for an empty box that holds one.
+  let refocusInput = false;
+
   function renderSendability() {
     if (sessionId && pendingMessages.has(sessionId)) {
+      // Disabling a focused field blurs it for good, so note it to hand focus back.
+      if (document.activeElement === input) refocusInput = true;
       input.disabled = true;
       sendBtn.disabled = true;
       return;
     }
     if (blockedByNeedsYou()) return; // setStatus owns the button while blocked
     input.disabled = false;
+    if (refocusInput) {
+      refocusInput = false;
+      // Only when focus is still nowhere: a click elsewhere meanwhile is the user's call.
+      if (!document.activeElement || document.activeElement === document.body) input.focus();
+    }
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
 

@@ -1080,3 +1080,19 @@ test('several queued prompts share one tray with a single heading', async () => 
   assert.equal(new Set(echoNodes(byId)).size, 2);
   assert.match(trays[0].children[0].textContent, /Queued · 2 waiting/);
 });
+
+test('a send hands focus back to the composer once delivery is acknowledged', async () => {
+  const { view, input, sent, document } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  let focused = 0;
+  input.focus = () => { focused += 1; };
+  document.activeElement = input;
+  input.value = 'hello';
+  send(input);
+  assert.equal(input.disabled, true);
+  document.activeElement = document.body;
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  assert.equal(input.disabled, false);
+  assert.equal(focused, 1);
+});
