@@ -41,6 +41,20 @@ export function isHumanTypedUserItem(item) {
   return !String(item.event?.text || '').startsWith(AGENT_WRANGLER_NOTICE_PREFIX);
 }
 
+// The TUI prefixes an attached image's `[Image #N]` marker to the recorded text,
+// so the prose is compared without them.
+const stripImageMarkers = (t) => String(t || '').replace(/\[Image #\d+\]\s*/g, '').trim();
+
+// Whether a transcript user event is the recording of a locally echoed prompt.
+export function echoMatchesEvent(echo, event) {
+  // Mounting reads a window of history, which may hold an older prompt with the
+  // same words ("yes", "continue") — only one recorded after the send is ours.
+  if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
+  const hasImages = (Array.isArray(event.images) && event.images.length > 0) || /\[Image #\d+\]/.test(event.text || '');
+  if (echo.images.length && !hasImages) return false;
+  return stripImageMarkers(event.text) === echo.text;
+}
+
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
@@ -321,14 +335,22 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     stream.appendChild(queueTray);
   }
 
+  const eventKey = (event) => `${event.ts}|${event.text}`;
+  // Events that have already acknowledged a send, per session, so history replayed
+  // by a remount cannot acknowledge a newer identical prompt.
+  const ackedEvents = new Map();
+  const ACKED_MAX = 200;
+
   function echoMatches(echo, item) {
-    // Mounting reads a window of history, which may hold an older prompt with the
-    // same words ("yes", "continue") — only one recorded after the send is ours.
-    const ts = item.event?.ts;
-    if (Number.isFinite(ts) && ts < echo.sentAt - 2000) return false;
-    const text = String(item.event?.text || '').trim();
-    if (echo.text) return text === echo.text;
-    return Array.isArray(item.event?.images) && item.event.images.length > 0;
+    if (ackedEvents.get(echo.sessionId)?.has(eventKey(item.event || {}))) return false;
+    return echoMatchesEvent(echo, item.event || {});
+  }
+
+  function noteAcked(sessionId, event) {
+    const set = ackedEvents.get(sessionId) || new Set();
+    set.add(eventKey(event));
+    if (set.size > ACKED_MAX) set.delete(set.values().next().value);
+    ackedEvents.set(sessionId, set);
   }
 
   function saveDraft(id) {
@@ -796,6 +818,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         lastUserEl = node;
         const hit = echoList().find((e) => echoMatches(e, item));
         if (hit) {
+          noteAcked(hit.sessionId, item.event);
           removeEcho(hit);
           renderSuggestion();
         }

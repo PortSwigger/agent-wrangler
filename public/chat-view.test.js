@@ -1096,3 +1096,35 @@ test('a send hands focus back to the composer once delivery is acknowledged', as
   assert.equal(input.disabled, false);
   assert.equal(focused, 1);
 });
+
+test('a prompt with an attachment is matched through the TUI image marker', async () => {
+  const { echoMatchesEvent } = await import('./chat-view.js');
+  const echo = { text: 'Explain this', images: ['a.png', 'b.png'], sentAt: 1000 };
+  assert.equal(echoMatchesEvent(echo, { text: '[Image #1][Image #2]Explain this', ts: 1500 }), true);
+  assert.equal(echoMatchesEvent(echo, { text: 'Explain this', ts: 1500 }), false);
+  assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '[Image #1]', ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ text: '', images: ['a.png'], sentAt: 1000 }, { text: '', ts: 1500 }), false);
+});
+
+test('history replayed by a remount cannot acknowledge a newer identical prompt', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  const sendOnce = () => {
+    input.value = 'continue';
+    send(input);
+    view.onMessageResult({ requestId: sent.filter((m) => m.type === 'message').at(-1).requestId, sessionId: 'sess-1', ok: true });
+  };
+  sendOnce();
+  const ts = Date.now() + 100;
+  const reply = () => {
+    const chat = sent.filter((m) => m.type === 'chat').at(-1);
+    view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 100, events: [{ kind: 'user', text: 'continue', ts }] });
+  };
+  reply();
+  sendOnce();
+  view.unmount();
+  view.mount('sess-1');
+  reply();
+  assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
+});
