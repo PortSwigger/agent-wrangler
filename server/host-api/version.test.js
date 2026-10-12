@@ -31,12 +31,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.24.0 the client `api.openTask`,
 // 1.25.0 the client `api.agents`,
 // 1.26.0 the manifest `keybindings` and client `api.keys.bind`,
-// and 1.27.0 the client `api.openDiff`,
+// 1.27.0 the client `api.openDiff`,
+// and 1.28.0 node `effort`, `api.dispatch.submit` and the `quickLaunch` field,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.27.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.27.0');
+test('the served version is 1.28.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.28.0');
+  assert.equal(servesRange('^1.28.0'), true);
   assert.equal(servesRange('^1.27.0'), true);
   assert.equal(servesRange('^1.26.0'), true);
   assert.equal(servesRange('^1.25.0'), true);

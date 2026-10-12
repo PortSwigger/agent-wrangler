@@ -812,6 +812,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   null); while a launch awaits its ack the second call REJECTS, since two acks cannot
   be told apart. An error reply to a launch whose modal is still open makes it
   retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
+- **`api.dispatch.submit({ model?, effort? })` (1.28.0)** launches the dispatch
+  modal that is ALREADY open, as Launch would, optionally on a given model and
+  effort. It works only in launch mode (rejects when the modal is closed, or in
+  schedule or sub-agent mode). `model` must be an option the modal offers, and
+  `effort` one it offers after that model is selected; anything else rejects
+  without sending. Both are marked as the human's explicit choice. Core
+  validation still applies (blocked folder, bad worktree, …), and a blocked
+  launch rejects `dispatch blocked by validation`. It resolves once the
+  dispatch is SENT, not launched: a worktree or workflow dispatch is still
+  pending then, so an extension that needs the `dispatched` ack opens the modal
+  with `openDispatch` and awaits that promise. `dispatch.field` contributions'
+  `fields()` merge into the payload as usual.
+- **Graph `effort` (1.28.0).** Board session nodes and `graph.history` nodes
+  carry `effort`, the effort the session was launched with (`null` when none
+  was recorded, e.g. the agent's default or an adopted session). Resume and
+  fork keep the original's. `dispatch.field`'s `update(el, ctx, graph)` always
+  gets the cached `history`, even on a tick whose graph did not resend it.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default
@@ -872,7 +889,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `worktree` (1.19.0) is the fifth, for a runtime that cannot honour a worktree:
   its wrapper `#m-worktree-box-row` sits OUTSIDE `.worktree-box`, because
   `syncWorkflow` already toggles the box's own `hidden` and the two must never
-  undo each other. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
+  undo each other. `quickLaunch` (1.28.0) is the sixth: the ⌘1–⌘3 quick-launch
+  buttons, wrapped in `#m-quick-launch-row` (outside `#m-quick-launch`, which
+  `syncQuickLaunch` hides in schedule mode). Hiding it also turns off core's
+  ⌘1–⌘3 binding, so an extension's own `keys.bind` on those combos in the
+  `dispatch` scope owns them, for an extension that ranks its own quick
+  launches with `api.dispatch.submit`. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
   the ctx as a second argument.
   **`open(el, ctx)` (1.20.0) is the per-open call, and it exists because
   neither `mount` nor `update` can be one.** The anchor hosts are static
