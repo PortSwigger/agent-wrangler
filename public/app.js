@@ -19,7 +19,7 @@ import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
   CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
-  agentIcon, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON,
+  agentIcon, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON, COPY_ICON,
 } from './icons.js';
 import {
   TERM_FONT_SIZES, DEFAULT_TERM_FONT_SIZE, normalizeFontSize,
@@ -2132,6 +2132,7 @@ function openCardMenu(sessionId, x, y) {
     ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, run: () => openFork(sessionId) }] : []),
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(sessionId) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -2163,6 +2164,15 @@ function openCardMenu(sessionId, x, y) {
     { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
+}
+
+// A line to paste into another agent's chat: the id is what read_session_transcript
+// takes, and naming the tool saves the reader a list_sessions lookup.
+function copySessionReference(s) {
+  const ref = `Agent Wrangler session "${s.label || s.sessionId.slice(0, 8)}" (id: ${s.sessionId}) — read it with the read_session_transcript tool`;
+  const p = navigator.clipboard?.writeText(ref);
+  if (!p) return toast('Clipboard unavailable', true);
+  p.then(() => toast('Copied session reference', false, { duration: 1500 }), () => toast('Could not copy to clipboard', true));
 }
 
 // The session pane header's "Actions" overflow menu — the inline icon row

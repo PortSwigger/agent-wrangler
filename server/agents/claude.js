@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
-import { analyze, listResumable, activityInRange } from '../transcript-reader.js';
+import { analyze, listResumable, activityInRange, findTranscript } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
@@ -279,4 +279,5 @@ export const claude = {
   analyze(liveSid, opts) { return analyze(liveSid, undefined, opts); },
   listResumable(excludeIds, opts) { return listResumable(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRange(liveSid, startMs, endMs, dir); },
+  transcriptPath(liveSid, dir) { return findTranscript(liveSid, dir); },
 };

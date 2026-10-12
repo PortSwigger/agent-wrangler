@@ -15,6 +15,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `get_session_cost` | Return the caller's board-card spend, tokens, and sub-agent/advisor breakouts. Codex values are estimates. |
 | `list_tasks` | List active board tasks, session counts, and the best launch folder for each task. `archived: true` lists archived tasks instead. |
 | `get_session_activity` | Scan Claude and Codex transcripts for work performed on a local date or date range, including archived sessions. |
+| `read_session_transcript` | Read a condensed view of any session's conversation (first and last 5 messages, long messages trimmed), with the transcript path for a full read. |
 
 ## Launch and organise work
 

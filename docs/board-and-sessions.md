@@ -56,6 +56,7 @@ Right-click a card or open **Actions** to find:
 - **Fork** into a separate card, optionally with a divergent first prompt.
 - **Peer review session…**, using the complementary provider when available.
 - **View diff** for uncommitted, branch, and PR review.
+- **Copy reference** (right-click only) to paste a session into another agent's chat; the agent reads it with `read_session_transcript`.
 - **Open terminal** for a separate shell in the session directory.
 - **Snooze** until a preset or custom time, optionally with a wake-up note.
 - **Mark read / unread** to manage attention.

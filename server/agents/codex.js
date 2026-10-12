@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
-import { analyzeCodex, listResumableCodex, activityInRangeCodex } from './codex-rollout.js';
+import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
@@ -147,4 +147,5 @@ export const codex = {
   analyze(liveSid) { return analyzeCodex(liveSid); },
   listResumable(excludeIds, opts) { return listResumableCodex(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRangeCodex(liveSid, startMs, endMs, dir); },
+  transcriptPath(liveSid, dir) { return findRollout(liveSid, dir); },
 };
