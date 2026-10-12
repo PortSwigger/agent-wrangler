@@ -317,11 +317,21 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // The tail of the stream is always the working row, then the tray. Queued
   // prompts belong after everything the agent is still producing, whatever order
   // the nodes were appended in.
+  // Re-appending a node that is already last still detaches and reinserts it, and a
+  // click whose target is reinserted between mousedown and mouseup never fires — pinTail
+  // runs on every poll, so a node is only moved when it is actually out of place.
+  function placeLast(parent, nodes) {
+    const kids = parent.children;
+    const start = kids.length - nodes.length;
+    if (start >= 0 && nodes.every((n, i) => kids[start + i] === n)) return;
+    for (const n of nodes) parent.appendChild(n);
+  }
+
   function pinTail() {
-    if (live) stream.appendChild(live);
     const list = echoList();
     if (!list.length) {
       queueTray.remove();
+      if (live) placeLast(stream, [live]);
       return;
     }
     for (const e of list) {
@@ -339,13 +349,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         dismiss.addEventListener('click', requestUnqueue);
         e.node.appendChild(dismiss);
       }
-      queueTray.appendChild(e.node);
     }
+    placeLast(queueTray, [queueHead, ...list.map((e) => e.node)]);
     const queued = list.filter((e) => e.state === 'queued').length;
-    queueHead.textContent = queued
-      ? `Queued · ${queued} waiting for the agent`
-      : 'Sending…';
-    stream.appendChild(queueTray);
+    const heading = queued ? `Queued · ${queued} waiting for the agent` : 'Sending…';
+    if (queueHead.textContent !== heading) queueHead.textContent = heading;
+    placeLast(stream, live ? [live, queueTray] : [queueTray]);
   }
 
   const eventKey = (event) => `${event.ts}|${event.text}`;

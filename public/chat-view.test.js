@@ -1189,3 +1189,20 @@ test('an agent that cannot give a queued prompt back only hides it, and says so'
   assert.equal(input.value, '');
   assert.match(byId.get('chat-hint').textContent, /will still run/);
 });
+
+test('a poll that changes nothing leaves the queued tray where it is', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.value = 'waiting';
+  send(input);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  const stream = byId.get('chat-stream');
+  const append = stream.appendChild.bind(stream);
+  let moves = 0;
+  stream.appendChild = (c) => { moves += 1; return append(c); };
+  const chat = sent.filter((m) => m.type === 'chat').at(-1);
+  view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 0, events: [] });
+  view.setStatus('working');
+  assert.equal(moves, 0);
+});
