@@ -182,6 +182,11 @@ const extHideDispatchFields = new Map();
 // And each extension's `requires` grant, for the client-only capabilities
 // slots.js checks (cards:hideChips). Same two inputs, same fail-closed default.
 const extRequires = new Map();
+// And each extension's declared `keybindings` ([{ combo, scope }]) — the ceiling
+// api.keys.bind is checked against, like extHideDispatchFields.
+const extKeybindings = new Map();
+// Extension labels, for the Shortcuts tab's group titles.
+const extLabels = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -192,6 +197,8 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
     if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
+    if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
+    if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -204,6 +211,9 @@ const slots = createSlots({
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
   requiresFor: (id) => extRequires.get(id) || [],
+  keybindingsFor: (id) => extKeybindings.get(id) || [],
+  labelFor: (id) => extLabels.get(id) || id,
+  keys: keybindings,
   coreChips: CORE_CHIPS,
   // An extension's hideChips (or its removal) changed the veto: redraw the
   // board, which re-syncs the pills too (wireGridEvents → mountCardPills).

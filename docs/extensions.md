@@ -938,6 +938,33 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
+- **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
+  adds a keyboard shortcut through the board's keybinding registry
+  (`public/keybindings.js`) and returns an unbind function. The manifest must
+  declare every combo+scope it binds in a static `keybindings` array —
+  `keybindings: [{ combo: 'mod+shift+l', scope: 'dispatch' }]` — and a bind
+  not on that list is dropped and reported, the same disclosure rule as
+  `hideDispatchField`. The server validates the array at load (a parsable
+  combo, a known scope) and quarantines a bad one.
+  - **Combos** are `+`-joined, case-insensitive: modifiers `mod` (⌘ on Mac,
+    Ctrl elsewhere), `cmd`/`meta`, `ctrl`, `shift`, `alt`, then one key — a
+    letter, a digit, `/ , . ; [ ] - = \``, or `enter`, `escape`, `left`,
+    `right`, `up`, `down`, `backspace`, `delete`, `space`, `tab`. `mod+k` and
+    `cmd+k` are different declarations.
+  - **Scopes**: `dispatch` (the dispatch dialog is open), `modal` (any other
+    dialog or the card menu is open), `board` (grid view, nothing typed into a
+    text field), `global` (always considered, after the active scope).
+  - **Precedence**: for a keypress, the active scope's bindings are tried, then
+    `global`'s; within a scope extension bindings come before core. The first
+    whose `when(e)` passes (or has none) runs, and the key is
+    `preventDefault`ed. A `when` that returns false falls through to the next
+    candidate, core included.
+  - **Collisions**: if another extension already holds the same combo+scope,
+    the later bind is dropped and reported; the first keeps it. A throwing
+    `run` is reported and the binding kept. Bindings go when the extension is
+    disabled or uninstalled.
+  - Bindings are listed under the extension's label in Settings → Shortcuts.
+  A manifest using either half declares `^1.26.0`.
 - **`api.settings()`** (1.13.0) returns the extension's own current setting
   values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL

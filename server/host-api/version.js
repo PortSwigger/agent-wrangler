@@ -226,7 +226,12 @@ import semver from 'semver';
 // dispatch dialog's agent/model/effort list, sourced from the live catalogs,
 // so an extension offering its own model picker stops hand-copying the
 // vocabulary. A manifest calling it declares `^1.25.0`.
-export const HOST_API_VERSION = '1.25.0';
+//
+// 1.26.0 adds the manifest `keybindings` field and the client
+// `api.keys.bind({ combo, scope, when, run, description })`: an extension's
+// shortcuts go through the board's keybinding registry (public/keybindings.js)
+// and are listed in Settings → Shortcuts. A manifest using either declares `^1.26.0`.
+export const HOST_API_VERSION = '1.26.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
