@@ -1206,3 +1206,20 @@ test('a poll that changes nothing leaves the queued tray where it is', async () 
   view.setStatus('working');
   assert.equal(moves, 0);
 });
+
+test('a queued prompt can be dismissed more than once in a row', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  for (let round = 1; round <= 3; round += 1) {
+    input.value = 'same message';
+    send(input);
+    view.onMessageResult({ requestId: sent.filter((m) => m.type === 'message').at(-1).requestId, sessionId: 'sess-1', ok: true });
+    echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+    const requests = sent.filter((m) => m.type === 'unqueue');
+    assert.equal(requests.length, round);
+    view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: requests.at(-1).token, text: 'same message', source: 'pane' });
+    assert.equal(echoNodes(byId).length, 0);
+    input.value = '';
+  }
+});

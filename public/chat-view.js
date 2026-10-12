@@ -59,6 +59,8 @@ export function echoMatchesEvent(echo, event) {
   return false;
 }
 
+const UNQUEUE_REPLY_TIMEOUT_MS = 5000;
+
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
@@ -368,11 +370,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // clears the bubbles, so a failed pull leaves them standing.
   function requestUnqueue() {
     if (!sessionId || unqueueToken) return;
-    unqueueToken = `${requestEra}#${++unqueueSeq}`;
-    if (!send({ type: 'unqueue', sessionId, token: unqueueToken })) {
+    const token = `${requestEra}#${++unqueueSeq}`;
+    unqueueToken = token;
+    if (!send({ type: 'unqueue', sessionId, token })) {
       unqueueToken = null;
       setPasteNote('Not dismissed: connection unavailable.');
+      return;
     }
+    // A reply that never comes (a dropped socket, a server that predates the
+    // request) must not leave every later dismiss ignored.
+    setTimeout(() => { if (unqueueToken === token) unqueueToken = null; }, UNQUEUE_REPLY_TIMEOUT_MS);
   }
 
   function echoMatches(echo, item) {
@@ -994,6 +1001,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // this view never has to guess which it got.
     onUnqueueResult(msg) {
       if (!unqueueToken || msg.token !== unqueueToken || msg.sessionId !== sessionId) return;
+      unqueueToken = null;
       for (const e of echoList().filter((x) => x.state === 'queued')) removeEcho(e);
       if (msg.text) {
         const draft = input.value.trim();
