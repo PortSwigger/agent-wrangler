@@ -2517,26 +2517,31 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-stream::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
 .chat-stream::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; }
 
-/* Jump-to-last-message pill (chat-view.js toggles [hidden] based on scroll
+/* Previous/next user-message navigator (chat-view.js toggles [hidden] based on scroll
    position). It hides itself the instant the target scrolls back into view,
    but while up it floats over the conversation, so it is kept as small as an
    affordance can be (an icon, not a label) and translucent+blurred rather
    than opaque — any text it does land over stays legible through it instead
    of being flatly occluded. */
-.chat-jump-last {
+.chat-jump-nav {
   position: absolute; right: 16px; bottom: 14px;
-  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--border); border-radius: 999px; padding: 0;
+  width: 32px; height: 32px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0; overflow: hidden;
   background: color-mix(in srgb, var(--surface-2) 78%, transparent);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  color: var(--fg); cursor: pointer;
+  color: var(--fg);
   box-shadow: 0 1px 6px rgba(0,0,0,.18);
 }
-.chat-jump-last:hover { border-color: var(--accent); color: var(--accent); }
-.chat-jump-last .icon { width: 15px; height: 15px; }
+.chat-jump-btn {
+  width: 100%; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  border: 0; padding: 0; background: none; color: inherit; cursor: pointer;
+}
+.chat-jump-btn:hover:not(:disabled) { color: var(--accent); }
+.chat-jump-btn:disabled { opacity: .3; cursor: default; }
+.chat-jump-nav .icon { width: 14px; height: 14px; }
 /* Same [hidden] trap as the rest of this pane's toggled elements — the
    explicit `display: flex` above out-specifies the UA's [hidden] rule. */
-.chat-jump-last[hidden] { display: none; }
+.chat-jump-nav[hidden] { display: none; }
 
 /* The brief ring pulse a jump lands with, so it's obvious which bubble it
    landed on. A box-shadow ring rather than a background flash: .chat-user's
