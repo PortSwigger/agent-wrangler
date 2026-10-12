@@ -54,6 +54,7 @@ import { diffCommentsHandler } from './diff-comments.js';
 import { subagentDetailHandler } from './subagent-detail.js';
 import { chatHandler } from './chat.js';
 import { interruptHandler } from './interrupt.js';
+import { unqueueHandler } from './unqueue.js';
 import { pasteImageHandler } from './paste-image.js';
 import { usageHandler } from './usage.js';
 import { searchHandler, searchStatusHandler, searchReindexHandler } from './search.js';
@@ -127,6 +128,7 @@ export const CONTROL_HANDLERS = [
   subagentDetailHandler,
   chatHandler,
   interruptHandler,
+  unqueueHandler,
   pasteImageHandler,
   usageHandler,
   searchHandler,

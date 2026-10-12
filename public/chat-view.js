@@ -269,6 +269,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // The in-flight interrupt's token, and whether the composer already held
   // something when it was sent.
   let restoreToken = null;
+  let unqueueToken = null;
+  let unqueueSeq = 0;
   let restoreSeq = 0;
   let restoreOverDraft = false;
   let messageSeq = 0;
@@ -334,10 +336,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         dismiss.className = 'chat-queue-dismiss';
         dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
         dismiss.setAttribute('title', 'Dismiss');
-        dismiss.addEventListener('click', () => {
-          removeEcho(e);
-          renderSuggestion();
-        });
+        dismiss.addEventListener('click', requestUnqueue);
         e.node.appendChild(dismiss);
       }
       queueTray.appendChild(e.node);
@@ -354,6 +353,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // by a remount cannot acknowledge a newer identical prompt.
   const ackedEvents = new Map();
   const ACKED_MAX = 200;
+
+  // Dismissing a queued prompt has to take it out of the AGENT's queue too, or it
+  // still runs. The server pulls the queue back off the pane; the reply is what
+  // clears the bubbles, so a failed pull leaves them standing.
+  function requestUnqueue() {
+    if (!sessionId || unqueueToken) return;
+    unqueueToken = `${requestEra}#${++unqueueSeq}`;
+    if (!send({ type: 'unqueue', sessionId, token: unqueueToken })) {
+      unqueueToken = null;
+      setPasteNote('Not dismissed: connection unavailable.');
+    }
+  }
 
   function echoMatches(echo, item) {
     if (ackedEvents.get(echo.sessionId)?.has(eventKey(item.event || {}))) return false;
@@ -972,6 +983,21 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // server-side from the pane (authoritative when Claude Code restored the
     // prompt there) or else from a fresh transcript read. `source` is carried so
     // this view never has to guess which it got.
+    onUnqueueResult(msg) {
+      if (!unqueueToken || msg.token !== unqueueToken || msg.sessionId !== sessionId) return;
+      for (const e of echoList().filter((x) => x.state === 'queued')) removeEcho(e);
+      if (msg.text) {
+        const draft = input.value.trim();
+        loadComposer(draft ? `${msg.text}\n${draft}` : msg.text);
+        setPasteNote('Queued prompt moved back into the box.');
+      } else if (msg.source === 'unsupported') {
+        setPasteNote('Hidden here only: this agent cannot take a queued prompt back, so it will still run.');
+      } else {
+        setPasteNote('Already picked up by the agent.');
+      }
+      renderSuggestion();
+      renderSendability();
+    },
     onInterruptRestore(msg) {
       // Exactly one in-flight interrupt per view, so an unmatched token means the
       // reply belongs to a superseded request or another session's era.
@@ -1034,6 +1060,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // what makes its reply unmatchable, so it can never be typed into the
       // composer of whichever session is open by the time it lands.
       restoreToken = null;
+      unqueueToken = null;
       restoreOverDraft = false;
       paneRestoreArmed = false;
       wrap.hidden = false;
@@ -1098,6 +1125,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // what makes its reply unmatchable, so it can never be typed into the
       // composer of whichever session is open by the time it lands.
       restoreToken = null;
+      unqueueToken = null;
       restoreOverDraft = false;
       paneRestoreArmed = false;
       // Saved against the card being closed so reopening it restores the draft,

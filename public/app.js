@@ -6457,6 +6457,7 @@ function connect() {
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
     else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
+    else if (msg.type === 'unqueue-result') chatView.onUnqueueResult(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);

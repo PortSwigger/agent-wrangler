@@ -1152,20 +1152,40 @@ test('a terminal-origin prompt already shown cannot acknowledge a later identica
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
 });
 
-test('a queued prompt can be dismissed, a sending one cannot', async () => {
+test('dismissing a queued prompt asks the server to pull it back, and loads it into the box', async () => {
   const { view, input, sent, byId } = await mountView();
   view.mount('sess-1');
-  view.setStatus('idle');
+  view.setStatus('working');
   input.value = 'stuck';
   send(input);
   const [bubble] = echoNodes(byId);
-  assert.equal(bubble.dataset.pending, '1');
   view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  assert.equal(bubble.dataset.pending, 'queued');
-  const dismiss = bubble.children.find((c) => c.className === 'chat-queue-dismiss');
-  dismiss.dispatchEvent({ type: 'click' });
+  bubble.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+  const req = sent.find((m) => m.type === 'unqueue');
+  assert.equal(req.sessionId, 'sess-1');
+  assert.equal(echoNodes(byId).length, 1);
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: 'other', text: 'x', source: 'pane' });
+  assert.equal(echoNodes(byId).length, 1);
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'stuck', source: 'pane' });
   assert.equal(echoNodes(byId).length, 0);
+  assert.equal(input.value, 'stuck');
   view.unmount();
   view.mount('sess-1');
   assert.equal(echoNodes(byId).length, 0);
+});
+
+test('an agent that cannot give a queued prompt back only hides it, and says so', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.value = 'stuck';
+  send(input);
+  const [bubble] = echoNodes(byId);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  bubble.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+  const req = sent.find((m) => m.type === 'unqueue');
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: null, source: 'unsupported' });
+  assert.equal(echoNodes(byId).length, 0);
+  assert.equal(input.value, '');
+  assert.match(byId.get('chat-hint').textContent, /will still run/);
 });
