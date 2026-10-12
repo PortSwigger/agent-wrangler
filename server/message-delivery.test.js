@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deliverMessage } from './message-delivery.js';
-import { ensureSubmitted } from './pane-ready.js';
+import { ensureSubmitted, waitForComposerReady } from './pane-ready.js';
 
 // A real cwd so resolveResumeDir's existence check operates on a path that's
 // actually present — the dormant entry's cwd points here.
@@ -108,6 +108,25 @@ test('dormant Codex target: waits for the composer to paint BEFORE pasting', asy
   assert.equal(d.sent.length, 1);
 });
 
+test('a joined Codex resume delivers after startup even when another turn is working', async () => {
+  const entry = { cwd: realDir(), agent: 'codex', socket: '/s/cx' };
+  const d = deps({ entries: { CARD1: entry }, resuming: true, resumeTmux: 'cx_woken' });
+  let captures = 0;
+  d.waitForComposerReady = (name, socket, agent) => waitForComposerReady(name, socket, agent, {
+    capture: async () => {
+      assert.equal(d.sent.length, 0, 'no message before input is ready');
+      captures += 1;
+      return captures < 3 ? 'Loading…' : '\x1b[1m•\x1b[0m Working (3s • esc to interrupt)\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m';
+    },
+    sleep: () => Promise.resolve(),
+  });
+
+  assert.deepEqual(await deliverMessage('CARD1', 'new guidance', d), { mode: 'dormant' });
+  assert.equal(captures, 3);
+  assert.deepEqual(d.sent, [{ name: 'cx_woken', text: 'new guidance', socket: '/s/cx' }]);
+  assert.equal(d.submitted.length, 1);
+});
+
 test('dormant Codex target: confirms the send became a turn, handing the repair our own text and agent', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
@@ -134,33 +153,56 @@ test('dormant Codex target: an unconfirmed send reports outcome unknown, not suc
 
 test('dormant Codex target: update after sending leaves delivery unknown', async () => {
   const dir = realDir();
-  const d = deps({ entries: { CARD1: { cwd: dir, agent: 'codex', socket: '/s/cx' } }, readyResult: false });
+  const d = deps({ entries: { CARD1: { cwd: dir, agent: 'codex', socket: '/s/cx' } } });
+  let captures = 0;
   d.ensureSubmitted = (name, socket, opts) => ensureSubmitted(name, socket, {
     ...opts, windowMs: 0,
-    capture: async () => 'Updating Codex via `brew upgrade --cask codex`...\n==> Upgrading codex',
+    capture: async () => {
+      captures += 1;
+      return 'Updating Codex via `brew upgrade --cask codex`...\n==> Upgrading codex';
+    },
     sendKeys: async () => { throw new Error('must not press Enter during update'); },
   });
   try {
     const result = await deliverMessage('CARD1', 'wake up please', d);
     assert.equal(result.mode, 'dormant');
     assert.equal(result.outcome, 'unknown');
+    assert.match(result.error, /could not confirm/);
+    assert.equal(d.sent.length, 1, 'the update started after the message was pasted');
+    assert.equal(captures, 1, 'submission confirmation observes the updater');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-// An unreadable/never-ready pane must still be delivered into — a late message
-// beats a lost one — and it must STILL get the repair attempt, because a pane
-// whose composer marker we could not parse is exactly where a dropped CR is most
-// likely and the text check can still see our own prompt.
-test('dormant Codex target: a never-ready pane is still pasted into AND still repaired', async () => {
+// A readiness timeout must not splice a message into a draft or submit a dialog.
+test('dormant Codex target: a never-ready pane reports unknown without pasting or pressing keys', async () => {
   const dir = realDir();
   const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
   const d = deps({ entries: { CARD1: entry }, resumeTmux: 'cx_woken', readyResult: false });
   const result = await deliverMessage('CARD1', 'wake up please', d);
-  assert.deepEqual(result, { mode: 'dormant' });
-  assert.deepEqual(d.sent, [{ name: 'cx_woken', text: 'wake up please', socket: '/s/cx' }]);
-  assert.equal(d.submitted.length, 1, 'readiness failure must not disable the repair');
+  assert.equal(result.mode, 'dormant');
+  assert.equal(result.outcome, 'unknown');
+  assert.match(result.error, /terminal input is not ready/);
+  assert.deepEqual(d.sent, []);
+  assert.deepEqual(d.submitted, [], 'no submission repair when nothing was pasted');
+});
+
+test('a resumed Codex dialog or draft never receives the message after readiness times out', async () => {
+  for (const pane of [
+    '\x1b[1m›\x1b[0m a human draft',
+    '1. Update now\n2. Skip\n3. Skip until next version\npress enter to continue',
+  ]) {
+    const entry = { cwd: realDir(), agent: 'codex' };
+    const d = deps({ entries: { CARD1: entry }, resuming: true, resumeTmux: 'cx_woken' });
+    d.waitForComposerReady = (name, socket, agent) => waitForComposerReady(name, socket, agent, {
+      capture: async () => pane, timeoutMs: 0,
+    });
+    const result = await deliverMessage('CARD1', 'new guidance', d);
+    assert.equal(result.outcome, 'unknown');
+    assert.deepEqual(d.sent, []);
+    assert.deepEqual(d.submitted, []);
+  }
 });
 
 // The live path is deliberately untouched: the pane is long past boot, and a

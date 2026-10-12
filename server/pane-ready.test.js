@@ -35,6 +35,32 @@ test('waitForComposerReady resolves true as soon as the composer paints', async 
   assert.equal(calls, 3);
 });
 
+test('resume readiness waits for input to paint but accepts Codex already working', async () => {
+  let captures = 0;
+  const ready = await waitForComposerReady('cx_a', '/s', 'codex', {
+    capture: async () => {
+      captures += 1;
+      return captures < 3 ? booting : `${working}\n${codexEmpty}`;
+    },
+    sleep: nowait,
+  });
+  assert.equal(ready, true);
+  assert.equal(captures, 3);
+});
+
+test('active-turn resume readiness still rejects drafts, dialogs and unreadable input', async () => {
+  for (const pane of [
+    `${working}\n${codexHolding}`,
+    `${updateMenu}\n${codexEmpty}`,
+    `${working}\n› Ask Codex to do anything`,
+    '',
+  ]) {
+    assert.equal(await waitForComposerReady('cx_a', '/s', 'codex', {
+      capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), false);
+  }
+});
+
 test('waitForComposerReady is agent-aware (a Codex composer is not a Claude one)', async () => {
   assert.equal(await waitForComposerReady('cc_a', '/s', 'claude', {
     capture: async () => claudeEmpty, sleep: nowait,
@@ -44,8 +70,7 @@ test('waitForComposerReady is agent-aware (a Codex composer is not a Claude one)
   }), false);
 });
 
-// A timeout must FALL THROUGH to the caller's paste, not abort it — but the
-// caller then reports UNKNOWN rather than success (see message-delivery).
+// A timeout must leave delivery unconfirmed without bypassing the input guard.
 test('waitForComposerReady returns false on timeout rather than throwing', async () => {
   assert.equal(await waitForComposerReady('cx_a', '/s', 'codex', {
     capture: async () => booting, timeoutMs: 0, sleep: nowait,

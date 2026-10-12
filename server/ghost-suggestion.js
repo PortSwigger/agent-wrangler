@@ -142,10 +142,12 @@ export function paneComposerIsReady(paneText, agent = 'claude') {
 // into a pane whose state we could not read is exactly what must not happen —
 // the paste lands at the cursor, so a draft already there would turn
 // "/model sonnet" into a mangled prompt the Enter then submits.
-export function paneComposerIsEmpty(paneText, agent = 'claude') {
+// Notifications and resume readiness can opt into Codex's active-turn input.
+// Callers that need idle input still require the working marker to be absent.
+export function paneComposerIsEmpty(paneText, agent = 'claude', { allowWhileWorking = false } = {}) {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return false;
   if (agent === 'codex') {
-    if (paneHasWorkingStatus(paneText)) return false;
+    if (!allowWhileWorking && paneHasWorkingStatus(paneText)) return false;
     return codexComposerIsEmpty(paneText);
   }
   const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();

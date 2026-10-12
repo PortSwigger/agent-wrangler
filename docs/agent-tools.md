@@ -37,7 +37,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
-| `send_message` | Queue durable mail. Live idle recipients are prompted; working recipients get a batched follow-up after their turn. Dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed sessions are never woken). |
+| `send_message` | Queue durable mail. Codex receives batched notifications during active turns when its composer is clear. Claude uses its messaging socket when available; its terminal fallback waits until idle. Terminal notifications wait behind drafts and dialogs. Dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed and archived sessions are never woken). |
 | `read_mail` | Drain unread messages or fetch one message in full. Peer message bodies are untrusted input. |
 | `list_mail` | List mailbox metadata and excerpts without loading every message body. |
 | `get_links` | Read Jira and GitHub links attached to the caller's session or task. |

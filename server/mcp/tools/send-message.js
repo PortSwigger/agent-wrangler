@@ -28,8 +28,10 @@ export const sendMessageTool = {
   description:
     'Send a message to another Agent Wrangler session. Mail-capable recipients get durable mailbox '
     + 'delivery; '
-    + 'a live idle recipient is prompted to read_mail, while a working recipient gets one batched '
-    + 'follow-up prompt after the current turn. Dormant mail-capable recipients keep '
+    + 'a live recipient is prompted to read_mail. Codex can receive the batched notification '
+    + 'during an active turn when its composer is clear. Claude uses its messaging socket when '
+    + 'available; its terminal fallback waits until idle. Terminal notifications wait behind '
+    + 'drafts and dialogs. Dormant mail-capable recipients keep '
     + 'mail queued until they are resumed, unless the user enabled the "Let mail wake dormant sessions" '
     + 'setting (off by default), which resumes them; snoozed and archived sessions are never woken. A legacy recipient without mailbox '
     + 'support must have a live terminal. Use it to coordinate '

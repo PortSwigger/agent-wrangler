@@ -36,13 +36,16 @@ const COMPACT_POLL_MS = 1000;
 // title, which Codex never sets, so it would burn its whole timeout on exactly
 // the agent this exists for. Reading it needs `capture-pane -e` (capturePaneStyled)
 // — the faint-text handling is the whole basis of the Claude branch.
+// A resumed Codex process can already be working (for example after joining
+// another resume). Working does not prevent input once its composer is painted.
+// Read the status as well so a dialog cannot be mistaken for ready input.
 //
-// A timeout FALLS THROUGH (returns false, never throws): a late message beats a
-// lost one, and a pane this cannot parse must still be deliverable. It reports
-// which happened because `ensureSubmitted` below is only safe on a confirmed pane.
-// Note it also reads false for a composer with text already in it; on a pane this
-// process relaunched seconds ago there is nobody who could have typed there, and
-// the fall-through means the worst case is the old behaviour.
+// A timeout returns false without sending keys. The caller keeps the message
+// available to retry rather than pasting into a draft, dialog or unreadable pane.
+// Joining a resume can leave another turn or a human draft in this process, so
+// a newly spawned pty alone is never a reason to bypass the input guard.
+// Deliberate sends to a live pane during startup use `requireEmpty: false` to
+// check that input has painted without treating an existing draft as not ready.
 export async function waitForComposerReady(name, socket, agent, {
   timeoutMs = READY_TIMEOUT_MS,
   pollMs = READY_POLL_MS,
@@ -53,9 +56,11 @@ export async function waitForComposerReady(name, socket, agent, {
   if (!name) return false;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const pane = await capture(name, requireEmpty ? 6 : 60, socket);
+    const pane = await capture(name, 60, socket);
     if (requireEmpty) {
-      if (paneComposerIsEmpty(pane, agent)) return true;
+      const { status } = classify(pane, { tailLines: 60, strictWorking: true });
+      if ((status === 'idle' || status === 'working')
+        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: agent === 'codex' })) return true;
     } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you'
       && paneComposerIsReady(pane, agent)) {
       return true;

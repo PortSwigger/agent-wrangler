@@ -58,7 +58,8 @@ export function createDeferralTracker({ log = defaultLog } = {}) {
   };
 }
 
-// Process every due settle window and deliver only to live, idle recipients.
+// Process every due settle window and notify live recipients over their transport.
+// Terminal delivery protects drafts and dialogs; Claude's paste fallback waits idle.
 // Dormant mail stays unread and is retried until the session is resumed.
 // `takeDueSettles` durably marks attempts in progress and load recovery re-opens
 // them after a server restart. The in-flight guard prevents overlapping sweeps.

@@ -220,14 +220,15 @@ test('a live session whose composer holds a draft has its nudge held, not pasted
 // making createPaneDeferral agent-aware (agentFor); this proves the fix at the
 // same boundary deliverPrNudge itself is wired through, not just in
 // pane-deferral.test.js's generic gate coverage.
-test('a live Codex owner with a confirmed-empty composer receives the PR nudge', async () => {
+test('a live working Codex owner with a confirmed-empty composer receives the PR nudge', async () => {
   const sent = [];
   const d = deps({ message: 'PR #7 failing', live: { c1: { tmux: 'cx_one', socket: '' } } });
   const pd = createPaneDeferral({
     tmuxFor: d.tmuxFor,
     socketFor: d.socketFor,
     agentFor: () => 'codex',
-    capture: async () => `${'\x1b'}[1m›${'\x1b'}[0m ${'\x1b'}[2mAsk Codex to do anything${'\x1b'}[0m`,
+    statusFor: () => 'working',
+    capture: async () => `${'\x1b'}[1m•${'\x1b'}[0m Working (12s · esc to interrupt)\n${'\x1b'}[1m›${'\x1b'}[0m ${'\x1b'}[2mAsk Codex to do anything${'\x1b'}[0m`,
     sendText: async (name, text, socket) => { sent.push({ name, text, socket }); },
   });
   d.paneDeferral = pd;

@@ -82,6 +82,11 @@ URL. BMP and other formats the browser can draw are converted to PNG before uplo
 converted to PNG by the server, which needs macOS. An image on another site is fetched by your browser
 only if that site allows it; otherwise use Copy Image instead.
 
+When a message resumes a dormant Codex session, Wrangler waits for its terminal
+input to be ready, including during an active turn. If a draft, dialog or unreadable
+terminal prevents delivery, the chat reports the uncertainty and keeps your message
+available to retry.
+
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
 ## Snooze, suspend, archive, and search

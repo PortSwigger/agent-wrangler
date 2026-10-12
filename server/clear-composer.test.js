@@ -79,7 +79,7 @@ test('clearComposer: an unreadable pane is treated as NOT empty (fail safe), nev
   assert.equal(ok, false);
 });
 
-function deps({ live = true } = {}) {
+function deps({ live = true, ready = true } = {}) {
   const calls = [];
   return {
     calls,
@@ -88,6 +88,10 @@ function deps({ live = true } = {}) {
     clearComposer: async (name, socket) => { calls.push({ verb: 'clear', name, socket }); return true; },
     prefillPane: async (name, text) => { calls.push({ verb: 'prefill', text }); },
     sendText: async (name, text) => { calls.push({ verb: 'sendText', text }); },
+    // These routing tests use fake pane names; readiness and submission must
+    // be stubbed alongside the other terminal I/O.
+    waitForComposerReady: async () => ready,
+    ensureSubmitted: async () => true,
     sessionManager: {
       entryFor: () => ({ agent: 'claude', cwd: '/tmp', liveSessionId: 'live-1', socket: 'sockA' }),
       isResuming: () => false,
@@ -123,4 +127,11 @@ test('deliverMessage: a clear request forces the paste route on a dormant sessio
   const r = await deliverMessage('CARD1', 'edited after interrupt', d, { clearComposer: true });
   assert.equal(r.mode, 'dormant');
   assert.deepEqual(d.calls.map((c) => c.verb), ['resume', 'clear', 'sendText']);
+});
+
+test('deliverMessage: a readiness failure never clears a resumed draft', async () => {
+  const d = deps({ live: false, ready: false });
+  const r = await deliverMessage('CARD1', 'edited after interrupt', d, { clearComposer: true });
+  assert.equal(r.outcome, 'unknown');
+  assert.deepEqual(d.calls.map((c) => c.verb), ['resume']);
 });

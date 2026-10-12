@@ -76,8 +76,10 @@ async function liveTransport(id, entry, tmux, text, socket, paneDeferral, before
       } catch { /* fall back to the paste below */ }
     }
   }
+  // Codex accepts guidance during a turn, but the paste still needs clear input
+  // and no dialog. Claude's paste fallback continues to wait until idle.
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false, beforeSend, onDefer,
+    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: entry.agent === 'codex', queueOnDefer: false, beforeSend, onDefer,
   });
 }
 

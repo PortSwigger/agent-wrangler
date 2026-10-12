@@ -132,6 +132,14 @@ test('a working Codex pane is not safe to notify yet', () => {
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
 });
 
+test('active-turn mail can opt into an empty Codex composer without changing the default guard', () => {
+  const pane = `${E}[1m•${E}[0m Working (12s · esc to interrupt)\n${codexPlaceholder}`;
+  assert.equal(paneComposerIsEmpty(pane, 'codex', { allowWhileWorking: true }), true);
+  assert.equal(paneComposerIsEmpty(pane, 'codex'), false);
+  const draft = `${E}[1m›${E}[0m half a prompt`;
+  assert.equal(paneComposerIsEmpty(`${pane}\n${draft}`, 'codex', { allowWhileWorking: true }), false);
+});
+
 test('a long-running Codex status with background-terminal text is not an empty composer', () => {
   const working = `${E}[1m•${E}[0m Working ${E}[2m(27m 09s • esc to interrupt)${E}[0m · 1 background terminal running · /ps to…`;
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);

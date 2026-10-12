@@ -85,6 +85,12 @@ unresolved review threads.
 per session. It nudges the agent about failing checks, conflicts, and new unresolved threads without
 repeating unchanged failures.
 
+PR notices can reach Codex during an active turn. This includes check and review
+status changes, new unresolved threads, conflicts, merged or closed PRs, and
+auto-merge results. Notices wait while the terminal holds a draft, shows a dialog,
+or cannot be read; once the input clears they arrive together. Board toasts and
+auto-merge actions do not wait for the session's input to clear.
+
 ## Auto-merge
 
 **Auto-merge when checks pass** is an off-by-default session option and Workflow launch setting. It

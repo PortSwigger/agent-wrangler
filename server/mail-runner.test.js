@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MailboxStore, SETTLE_MS } from './mailbox-store.js';
 import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS, DRAFT_SURFACE_AFTER_MS } from './mail-runner.js';
+import { createPaneDeferral } from './pane-deferral.js';
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-mailrunner-')), 'mailbox.json');
@@ -53,6 +54,72 @@ test('sweepDueSettles: fan-in batch — one notification for the whole batch, no
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
   assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
+});
+
+test('Codex mail held for a draft survives restart and delivers once during the same active turn', async () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  store.append('CARD1', { from: 'sess_a', body: 'one' }, 0);
+  const d = deps({
+    mailStore: store,
+    live: { CARD1: { tmux: 'cx_one', socket: '/s' } },
+    entries: { CARD1: { agent: 'codex' } },
+  });
+  const E = '\x1b';
+  const working = `${E}[1m•${E}[0m Working (20m · esc to interrupt)`;
+  let composer = `${E}[1m›${E}[0m a human draft`;
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'codex',
+    statusFor: () => 'working', capture: async () => `${working}\n${composer}`,
+    sendText: d.sendText,
+  });
+
+  assert.equal(await sweepDueSettles(d, SETTLE_MS), 0);
+  assert.equal(store.list('CARD1')[0].state, 'unread');
+  assert.deepEqual(d.paneDeferral.pending('CARD1'), []);
+  assert.deepEqual(d.sent, []);
+
+  d.mailStore = new MailboxStore(file);
+  d.mailStore.append('CARD1', { from: 'sess_b', body: 'two' }, SETTLE_MS + 1);
+  composer = `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(await sweepDueSettles(d, 2 * SETTLE_MS), 1);
+  assert.equal(d.sent.length, 1);
+  assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
+  assert.equal(d.mailStore.boxes.get('CARD1').lastNotifiedAt, 2 * SETTLE_MS);
+  assert.equal(d.mailStore.unreadMessages('CARD1').length, 2, 'notification does not mark mail read');
+  assert.equal(await sweepDueSettles(d, 3 * SETTLE_MS), 0);
+  assert.equal(d.sent.length, 1, 'the notified batch must not be pasted again');
+});
+
+test('a working Codex draft surfaces the held-mail warning and clears it on delivery', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'guidance' }, 0);
+  const d = deps({
+    mailStore: store,
+    live: { CARD1: { tmux: 'cx_one', socket: '/s' } },
+    entries: { CARD1: { agent: 'codex' } },
+  });
+  const E = '\x1b';
+  let composer = `${E}[1m›${E}[0m a human draft`;
+  d.deferrals = createDeferralTracker({ log: () => {} });
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'codex',
+    statusFor: () => 'working',
+    capture: async () => `${E}[1m•${E}[0m Working (3m • esc to interrupt)\n${composer}`,
+    sendText: d.sendText,
+  });
+  for (let now = SETTLE_MS; now <= SETTLE_MS + DRAFT_SURFACE_AFTER_MS; now += SETTLE_MS) {
+    assert.equal(await sweepDueSettles(d, now), 0);
+    assert.equal(d.deferrals.draftBlocked('CARD1', now), now === SETTLE_MS + DRAFT_SURFACE_AFTER_MS);
+  }
+  assert.deepEqual(d.sent, []);
+
+  composer = `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  const deliveredAt = DRAFT_SURFACE_AFTER_MS + 2 * SETTLE_MS;
+  assert.equal(await sweepDueSettles(d, deliveredAt), 1);
+  assert.equal(d.deferrals.draftBlocked('CARD1', deliveredAt), false);
+  assert.equal(d.sent.length, 1);
+  assert.equal(store.unreadMessages('CARD1').length, 1, 'notification does not read the mail');
 });
 
 test('sweepDueSettles: deferred live delivery stays unread and retries the latest batch', async () => {
