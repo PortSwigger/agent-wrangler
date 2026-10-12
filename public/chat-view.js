@@ -61,7 +61,7 @@ export function echoMatchesEvent(echo, event) {
 
 const UNQUEUE_REPLY_TIMEOUT_MS = 5000;
 
-export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
+export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor, agentFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   // The base directory a relative `.md` path linkifies against — read through
@@ -348,13 +348,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           event: { text: e.text, images: e.images.map((name) => ({ label: 'Image', name })) },
         });
         e.node.dataset.pending = e.state;
-        const dismiss = document.createElement('button');
-        dismiss.type = 'button';
-        dismiss.className = 'chat-queue-dismiss';
-        dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
-        dismiss.setAttribute('title', 'Dismiss');
-        dismiss.addEventListener('click', () => requestUnqueue(e));
-        e.node.appendChild(dismiss);
+        // Codex gives no way to take a queued prompt back, so offering to dismiss one
+        // would only hide a prompt that still runs.
+        if (agentFor?.(e.sessionId) !== 'codex') {
+          const dismiss = document.createElement('button');
+          dismiss.type = 'button';
+          dismiss.className = 'chat-queue-dismiss';
+          dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
+          dismiss.setAttribute('title', 'Dismiss');
+          dismiss.addEventListener('click', () => requestUnqueue(e));
+          e.node.appendChild(dismiss);
+        }
       }
     }
     placeLast(queueTray, [queueHead, ...list.map((e) => e.node)]);
@@ -1012,7 +1016,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       unqueueTokens.delete(msg.token);
       unqueueBusy.delete(msg.sessionId);
       // The server re-queues the others when it can; otherwise everything came back.
-      const gone = msg.scope === 'one' ? [request.echo] : (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued');
+      // Nothing was taken out of the agent's queue for 'unsupported', so the bubbles stay.
+      const gone = msg.source === 'unsupported' ? []
+        : msg.scope === 'one' ? [request.echo]
+          : (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued');
       for (const e of gone) removeEcho(e);
       if (msg.sessionId !== sessionId) {
         if (msg.text) {
@@ -1029,7 +1036,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         if (msg.cleared === false) paneRestoreArmed = true;
         setPasteNote('Queued prompt moved back into the box.');
       } else if (msg.source === 'unsupported') {
-        setPasteNote('Hidden here only: this agent cannot take a queued prompt back, so it will still run.');
+        setPasteNote('This agent cannot take a queued prompt back, so it will still run.');
       } else {
         setPasteNote('Already picked up by the agent.');
       }

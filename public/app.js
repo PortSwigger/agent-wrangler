@@ -6636,6 +6636,7 @@ const chatView = initChatView({
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
   cwdFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.cwd || null,
+  agentFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.agent || null,
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
