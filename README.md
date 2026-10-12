@@ -325,7 +325,8 @@ cadence. A schedule is **a saved action + a "when"**, and the action is one of t
 
 Agents can create schedules too, via the **`schedule_session` MCP tool** — including
 scheduling their own wake-up ("resume me at 3pm to check the deploy"): an existing-session
-action's target defaults to the calling session.
+action's target defaults to the calling session. One-off schedules delete themselves
+once they fire (or are missed); **`cancel_schedule`** removes a pending one-off or a cron.
 
 Scheduling adds a dependency (`cron-parser`); a running background service needs a
 **restart** to pick it up (the startup dependency sync handles the install).

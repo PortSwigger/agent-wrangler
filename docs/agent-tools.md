@@ -49,6 +49,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | Tool | Purpose |
 | --- | --- |
 | `schedule_session` | Create a one-off or cron schedule that launches a new session, resumes a dormant one, or messages a live one. |
+| `cancel_schedule` | Delete a schedule by id (from `schedule_session`) — retract a pending one-off or stop a cron. One-offs delete themselves after firing. |
 | `create_terminal` | Open a plain shell in the caller's directory and optionally prefill, but never execute, one command. |
 
 ## Shared checklist

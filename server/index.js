@@ -743,6 +743,9 @@ async function fireSchedule(id, { manual = false } = {}) {
   try {
     const { sessionId } = await performScheduleAction(snap.action, now);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
+    // A one-off that fired cleanly has nothing left to show; delete it so agents'
+    // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
+    if (!manual && snap.when.kind === 'once') scheduleStore.delete(id);
     broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
     scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
@@ -767,7 +770,8 @@ async function fireDueSchedules() {
   let any = false;
   for (const s of scheduleStore.due(now)) {
     if (s.when.kind === 'once' && now - Date.parse(s.when.runAt) > STALE_MS) {
-      scheduleStore.markMissed(s.id);
+      // Missed one-offs are deleted too: the schedule-missed toast is the only record wanted.
+      scheduleStore.delete(s.id);
       broadcast({ type: 'schedule-missed', id: s.id, name: s.name });
       any = true;
       continue;
