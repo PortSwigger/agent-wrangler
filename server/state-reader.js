@@ -500,6 +500,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent,
       createdAt: mapEntry?.createdAt || null,
       model: mapEntry?.model || null,
+      effort: mapEntry?.effort || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, mapEntry?.model),
       autoCompactTokens: mapEntry?.autoCompactTokens || null,
@@ -666,6 +667,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent: appEntry?.intent || '',
       createdAt: appEntry?.createdAt || null,
       model: appEntry?.model || null,
+      effort: appEntry?.effort || null,
       currentModel: enr?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
       autoCompactTokens: appEntry?.autoCompactTokens || null,
@@ -763,6 +765,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent: entry.intent || '',
       createdAt: entry.createdAt || null,
       model: entry.model || null,
+      effort: entry.effort || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, entry.model),
       autoCompactTokens: entry.autoCompactTokens || null,
@@ -832,7 +835,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // ever rising on the board it was measured on), so every field is paid for over the
   // entire archive on every send. Each has exactly one consumer in public/app.js:
   // cwd + archivedAt the dispatch dialog's recent-folder list, cwd + sessionId its
-  // per-task default repo, model the quick-launch button ranking, label +
+  // per-task default repo, model the quick-launch button ranking (model + effort
+  // also an extension quick-launch's, via dispatch.field's graph), label +
   // viaTaskArchive the sessions a task's Restore names. It USED to mirror the board
   // node (agent/name/intent/createdAt/task/worktree/workflow/parentSession/spawnedBy)
   // to feed the Search view's archived rows; Search now builds its own rows
@@ -847,6 +851,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     cwd: e.cwd || null,
     archivedAt: e.archivedAt,
     model: e.model || null,
+    effort: e.effort || null,
     viaTaskArchive: e.viaTaskArchive || null,
   }));
 
