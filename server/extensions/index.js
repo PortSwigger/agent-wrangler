@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
 import adversarialReview from './builtin/adversarial-review/index.js';
@@ -233,6 +234,18 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       if (!DISPATCH_FIELDS.has(f)) fail(ext, `unknown dispatch field "${f}" (known: ${[...DISPATCH_FIELDS].sort().join(', ')})`);
     }
   }
+  // The keys this extension's browser half may bind via api.keys.bind (1.26.0):
+  // `[{ combo, scope }]`. The disclosure half, like hideDispatchField — the
+  // board drops any bind() whose combo+scope isn't declared here.
+  if (ext.keybindings != null) {
+    if (!Array.isArray(ext.keybindings) || ext.keybindings.some((k) => !k || typeof k !== 'object' || typeof k.combo !== 'string' || typeof k.scope !== 'string')) {
+      fail(ext, 'keybindings must be an array of { combo, scope }');
+    }
+    for (const k of ext.keybindings) {
+      try { parseCombo(k.combo); } catch (err) { fail(ext, `keybindings: ${err.message}`); }
+      if (!KEY_SCOPES.includes(k.scope)) fail(ext, `keybindings: unknown scope "${k.scope}" (known: ${KEY_SCOPES.join(', ')})`);
+    }
+  }
   // The host API range this manifest was written against. Only its SHAPE is
   // checked here — whether the served version satisfies it is buildHostApi's
   // call, since this leaf does not know what version is served. Duplicated
@@ -397,13 +410,14 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 // one of them through `textContent`.
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
-    id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField,
+    id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField, keybindings,
     quarantine, external, description, author, homepage, provenance, requires, settings, runtimes,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
     handlerTypes: [...(handlerTypes || [])],
     hideDispatchField: [...(hideDispatchField || [])],
+    keybindings: (keybindings || []).map(({ combo, scope }) => ({ combo, scope })),
     quarantine: quarantine || null,
     external: Boolean(external),
     description: description || '',
@@ -559,6 +573,7 @@ function quarantinedEntry(ext, quarantine) {
     skills: [],
     handlerTypes: [],
     hideDispatchField: [],
+    keybindings: [],
     runtimes: [],
     external: Boolean(ext?.external),
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
@@ -624,6 +639,8 @@ function stageExtension(ext, { cfg, out, reg }) {
     // it after the fact. Claims no name in `reg` and stages nothing, so
     // unregisterExtension has nothing to take back.
     hideDispatchField: [...(ext.hideDispatchField || [])],
+    // Same: copied so the declared keys can't widen after validation.
+    keybindings: (ext.keybindings || []).map(({ combo, scope }) => ({ combo, scope })),
     // `{ id, label }` per contributed runtime, filled below once they have all
     // claimed their ids — so a disabled row carries none, and unregister
     // empties it again.
@@ -735,6 +752,8 @@ function stageExtension(ext, { cfg, out, reg }) {
       // may veto — same two inputs, same reason, and omitted when empty so an
       // extension that hides nothing keeps a byte-identical entry.
       ...(listEntry.hideDispatchField.length ? { hideDispatchField: [...listEntry.hideDispatchField] } : {}),
+      // The declared keybindings, for api.keys.bind — same reason, omitted when empty.
+      ...(listEntry.keybindings.length ? { keybindings: listEntry.keybindings.map((k) => ({ ...k })) } : {}),
       // The capability grant, for the same fail-closed reason as handlerTypes:
       // a client-only capability (cards:hideChips) is checked by slots.js, which
       // must know the grant before the first graph. Omitted when empty.
