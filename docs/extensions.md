@@ -929,6 +929,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a session likewise restores its task's tile first, so a session in a minimised
   task is no longer opened behind the tray. A notification's "Go to" is an
   ordinary action that calls one of these when its answer comes back.
+  **`api.openDiff(sessionId, { onClose })`** (1.27.0) does what `openSession`
+  does, then opens that card's diff panel over the grid (after the restore, for
+  an archived card). `onClose` is called once, when that panel closes by any
+  route, so an extension can reopen whatever the reader left. It never fires if
+  the panel never opened (a refused restore) or a later `openSession`/`openDiff`
+  replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
   `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and

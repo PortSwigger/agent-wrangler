@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { dispatchModePresentation } from './dispatch-mode.js';
+import { createBoardOpen } from './board-open.js';
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
 const dispatch = html.match(/<div id="m-dispatch-fields">([\s\S]*?)<\/div>\s*<div id="m-subagent"/)?.[1];
@@ -485,7 +486,7 @@ function scheduledFocusHarness(sessions = []) {
     "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
     { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {},
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
-      isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; } },
+      isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen: createBoardOpen() },
   );
   app.state.sessions = sessions;
   return { ...app, selected, views, notices, diff, clock };
@@ -534,4 +535,83 @@ test('scheduled focus expires after a failed resume instead of jumping to a late
   assert.deepEqual(app.selected, []);
   assert.deepEqual(app.views, {});
   assert.equal(app.diff.open, true);
+});
+
+// ── openSessionInBoard: api.openSession / api.openDiff from an extension view ──
+function boardOpenHarness(sessions = [], { minimised = [], tiles = {} } = {}) {
+  const log = [];
+  const boardOpen = createBoardOpen();
+  const minimisedIds = new Set(minimised);
+  const app = loadApp(
+    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {'],
+    ['openSessionInBoard', 'tryFulfillPending', 'state'],
+    "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
+    {
+      boardOpen, minimisedIds, CSS: { escape: (x) => x },
+      setView: (v) => { log.push(`view:${v}`); app.state.view = v; },
+      send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
+      toast: () => {},
+      assignedTaskId: (sid) => tiles[sid] || null,
+      unminimise: (id) => { minimisedIds.delete(id); log.push(`unminimise:${id}`); },
+      focusSession: (sid) => log.push(`focus:${sid}`),
+      selectSession: (sid) => log.push(`select:${sid}`),
+      document: { querySelector: (sel) => ({ scrollIntoView: () => log.push(`scroll:${sel.match(/data-sid="([^"]+)"/)[1]}`) }) },
+      setMaximized: (on) => log.push(`maximized:${on}`),
+      openDiffPanel: (sid) => log.push(`diff:${sid}`),
+    },
+  );
+  app.state.sessions = sessions;
+  return { ...app, log, boardOpen, minimisedIds };
+}
+
+test('openSession on a live card shows the grid, restores its tile from the tray and scrolls to it', () => {
+  const app = boardOpenHarness([{ sessionId: 'S1' }], { minimised: ['T1'], tiles: { S1: 'T1' } });
+  app.openSessionInBoard('S1');
+  assert.deepEqual(app.log, ['view:grid', 'unminimise:T1', 'focus:S1', 'scroll:S1']);
+});
+
+test('openSession on an archived card restores it, then lands on it when the graph brings it back', () => {
+  const app = boardOpenHarness([], { minimised: ['adhoc'] });
+  app.openSessionInBoard('S1');
+  assert.deepEqual(app.log, ['view:grid', 'send:resume:S1']);
+  assert.equal(app.state.pending, 'S1');
+  app.tryFulfillPending();
+  assert.equal(app.log.length, 2, 'nothing to land on until the card is back');
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  // selectSession, not focusSession: the card has just been resumed, so it must
+  // not be resumed again.
+  assert.deepEqual(app.log.slice(2), ['unminimise:adhoc', 'select:S1', 'scroll:S1']);
+});
+
+test('openDiff on a live card lands on it, then opens its diff panel and reports the close', () => {
+  const app = boardOpenHarness([{ sessionId: 'S1' }]);
+  app.state.maximized = true;
+  let closed = 0;
+  app.openSessionInBoard('S1', { diff: true, onClose: () => { closed += 1; } });
+  assert.deepEqual(app.log, ['view:grid', 'focus:S1', 'scroll:S1', 'maximized:false', 'diff:S1']);
+  app.boardOpen.diffClosed('S1');
+  assert.equal(closed, 1);
+});
+
+test('openDiff on an archived card opens the diff only once the restored card is back', () => {
+  const app = boardOpenHarness([]);
+  let closed = 0;
+  app.openSessionInBoard('S1', { diff: true, onClose: () => { closed += 1; } });
+  assert.ok(!app.log.includes('diff:S1'));
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  assert.deepEqual(app.log.slice(-3), ['select:S1', 'scroll:S1', 'diff:S1']);
+  app.boardOpen.diffClosed('S1');
+  assert.equal(closed, 1);
+});
+
+test('a live card asked for while another is restoring drops the restore\'s pending jump', () => {
+  const app = boardOpenHarness([{ sessionId: 'S2' }]);
+  app.openSessionInBoard('S1', { diff: true });
+  app.openSessionInBoard('S2');
+  assert.equal(app.state.pending, null);
+  app.state.sessions = [{ sessionId: 'S1' }, { sessionId: 'S2' }];
+  app.tryFulfillPending();
+  assert.ok(!app.log.includes('select:S1') && !app.log.includes('diff:S1'), 'S1 coming back does not steal the board');
 });

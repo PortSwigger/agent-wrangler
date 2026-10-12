@@ -231,7 +231,16 @@ import semver from 'semver';
 // `api.keys.bind({ combo, scope, when, run, description })`: an extension's
 // shortcuts go through the board's keybinding registry (public/keybindings.js)
 // and are listed in Settings → Shortcuts. A manifest using either declares `^1.26.0`.
-export const HOST_API_VERSION = '1.26.0';
+//
+// 1.27.0 adds the client `api.openDiff(sessionId, { onClose })`: openSession,
+// then that card's diff panel over the grid, with `onClose` called once when
+// that panel closes, so a review started from an extension's own view can
+// return there. The diff panel is app.js view state no frame can reach, so only
+// the base api can open it. The same minor makes openSession land on the card
+// rather than only select it: its tile out of the tray and the card scrolled
+// into view, for a restored card as well as a live one. A manifest calling
+// openDiff declares `^1.27.0`.
+export const HOST_API_VERSION = '1.27.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

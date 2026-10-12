@@ -235,6 +235,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             selection and the core `resume` frame — none of which `send`
   //             may reach, since it is bound to the extension's own types. A
   //             non-id argument is reported and dropped, like a refused send.
+  //   openDiff — openSession, then that card's diff panel over the grid
+  //             (1.27.0). `{ onClose }` is called once, when THAT panel closes
+  //             by any route (its close button, Escape, leaving the grid,
+  //             another card's diff replacing it), so an extension can return
+  //             the reader to wherever they came from. Never called if the
+  //             panel never opened (a restore the server refused), or if a
+  //             later openSession/openDiff superseded the request first. A
+  //             throwing onClose is reported, the same as a throwing listener.
   //   openTask — the task counterpart of openSession (1.24.0): show this task's
   //             tile, out of the tray if it was minimised, scrolled into view
   //             and pulsed. Returns whether the task is on the live board; an
@@ -300,6 +308,18 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             return;
           }
           baseApi.openSession?.(sessionId);
+        },
+        openDiff: (sessionId, opts) => {
+          if (typeof sessionId !== 'string' || !sessionId) {
+            onError(`[ext:${extId}] openDiff refused: expected a session id, got ${JSON.stringify(sessionId)}`);
+            return;
+          }
+          const onClose = isPlainObject(opts) && typeof opts.onClose === 'function' ? opts.onClose : null;
+          baseApi.openDiff?.(sessionId, {
+            onClose: onClose && (() => {
+              try { onClose(); } catch (err) { onError(`[ext:${extId}] openDiff onClose threw: ${err?.message || err}`); }
+            }),
+          });
         },
         openTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {
