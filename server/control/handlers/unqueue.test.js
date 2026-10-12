@@ -20,7 +20,7 @@ function ctx({ agent = 'claude', panes = [HINT, PULLED], tmux = 'cc_abc' } = {})
     socketFor: () => 'sock',
     sendKeys: (name, keys) => { calls.push(['keys', ...keys]); },
     capturePaneStyled: async () => panes[Math.min(n++, panes.length - 1)],
-    clearComposer: async () => { calls.push(['clear']); },
+    clearComposer: async () => { calls.push(['clear']); return true; },
     reply: (o) => replies.push(o),
     sleep: async () => {},
   };
@@ -30,7 +30,7 @@ test('pulls every queued prompt back with Up, clears the pane, and returns them 
   const c = ctx();
   await unqueueHandler.handler({ sessionId: 's', token: 't' }, c);
   assert.deepEqual(c.calls, [['keys', 'Up'], ['clear']]);
-  assert.deepEqual(c.replies, [{ type: 'unqueue-result', sessionId: 's', token: 't', text: 'queued one\nqueued two', source: 'pane' }]);
+  assert.deepEqual(c.replies, [{ type: 'unqueue-result', sessionId: 's', token: 't', text: 'queued one\nqueued two', source: 'pane', cleared: true }]);
 });
 
 test('never sends Up without the queued hint — it would walk the prompt history', async () => {

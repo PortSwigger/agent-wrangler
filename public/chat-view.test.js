@@ -1223,3 +1223,34 @@ test('a queued prompt can be dismissed more than once in a row', async () => {
     input.value = '';
   }
 });
+
+test('a dismiss reply landing after the view moved on is kept as that session\'s draft', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.value = 'rescue me';
+  send(input);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+  const req = sent.find((m) => m.type === 'unqueue');
+  view.mount('sess-2');
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'rescue me', source: 'pane', cleared: true });
+  assert.equal(input.value, '');
+  view.mount('sess-1');
+  assert.equal(input.value, 'rescue me');
+  assert.equal(echoNodes(byId).length, 0);
+});
+
+test('an unconfirmed pane clear arms the next send to clear it', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  input.value = 'x';
+  send(input);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+  const req = sent.find((m) => m.type === 'unqueue');
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'x', source: 'pane', cleared: false });
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, true);
+});

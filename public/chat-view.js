@@ -271,7 +271,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // The in-flight interrupt's token, and whether the composer already held
   // something when it was sent.
   let restoreToken = null;
-  let unqueueToken = null;
+  // Dismiss requests awaiting their reply, per session. By the time a reply exists
+  // the pane's queue has already been emptied, so it is honoured even after the
+  // view has moved on or the busy window below has lapsed — dropping it would lose
+  // the prompt. `unqueueBusy` only stops a second click while one is in flight.
+  const unqueueTokens = new Map();
+  const unqueueBusy = new Set();
   let unqueueSeq = 0;
   let restoreSeq = 0;
   let restoreOverDraft = false;
@@ -369,17 +374,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // still runs. The server pulls the queue back off the pane; the reply is what
   // clears the bubbles, so a failed pull leaves them standing.
   function requestUnqueue() {
-    if (!sessionId || unqueueToken) return;
+    if (!sessionId || unqueueBusy.has(sessionId)) return;
+    const id = sessionId;
     const token = `${requestEra}#${++unqueueSeq}`;
-    unqueueToken = token;
-    if (!send({ type: 'unqueue', sessionId, token })) {
-      unqueueToken = null;
+    if (!send({ type: 'unqueue', sessionId: id, token })) {
       setPasteNote('Not dismissed: connection unavailable.');
       return;
     }
+    unqueueTokens.set(id, new Set([...(unqueueTokens.get(id) || []), token]));
+    unqueueBusy.add(id);
     // A reply that never comes (a dropped socket, a server that predates the
     // request) must not leave every later dismiss ignored.
-    setTimeout(() => { if (unqueueToken === token) unqueueToken = null; }, UNQUEUE_REPLY_TIMEOUT_MS);
+    setTimeout(() => unqueueBusy.delete(id), UNQUEUE_REPLY_TIMEOUT_MS);
   }
 
   function echoMatches(echo, item) {
@@ -995,17 +1001,26 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         });
       }
     },
-    // The answer to an interrupt: what to put back in the composer, resolved
-    // server-side from the pane (authoritative when Claude Code restored the
-    // prompt there) or else from a fresh transcript read. `source` is carried so
-    // this view never has to guess which it got.
     onUnqueueResult(msg) {
-      if (!unqueueToken || msg.token !== unqueueToken || msg.sessionId !== sessionId) return;
-      unqueueToken = null;
-      for (const e of echoList().filter((x) => x.state === 'queued')) removeEcho(e);
+      const tokens = unqueueTokens.get(msg.sessionId);
+      if (!tokens?.has(msg.token)) return;
+      tokens.delete(msg.token);
+      if (!tokens.size) unqueueTokens.delete(msg.sessionId);
+      unqueueBusy.delete(msg.sessionId);
+      for (const e of (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued')) removeEcho(e);
+      if (msg.sessionId !== sessionId) {
+        if (msg.text) {
+          const held = drafts.get(msg.sessionId);
+          drafts.set(msg.sessionId, { text: held?.text.trim() ? `${msg.text}\n${held.text}` : msg.text, attachments: held?.attachments || [] });
+        }
+        return;
+      }
       if (msg.text) {
         const draft = input.value.trim();
         loadComposer(draft ? `${msg.text}\n${draft}` : msg.text);
+        // The pane could not be confirmed empty, so what is still in it would fuse
+        // onto the next paste; the next send clears it first.
+        if (msg.cleared === false) paneRestoreArmed = true;
         setPasteNote('Queued prompt moved back into the box.');
       } else if (msg.source === 'unsupported') {
         setPasteNote('Hidden here only: this agent cannot take a queued prompt back, so it will still run.');
@@ -1015,6 +1030,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderSuggestion();
       renderSendability();
     },
+    // The answer to an interrupt: what to put back in the composer, resolved
+    // server-side from the pane (authoritative when Claude Code restored the
+    // prompt there) or else from a fresh transcript read. `source` is carried so
+    // this view never has to guess which it got.
     onInterruptRestore(msg) {
       // Exactly one in-flight interrupt per view, so an unmatched token means the
       // reply belongs to a superseded request or another session's era.
@@ -1077,7 +1096,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // what makes its reply unmatchable, so it can never be typed into the
       // composer of whichever session is open by the time it lands.
       restoreToken = null;
-      unqueueToken = null;
       restoreOverDraft = false;
       paneRestoreArmed = false;
       wrap.hidden = false;
@@ -1142,7 +1160,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // what makes its reply unmatchable, so it can never be typed into the
       // composer of whichever session is open by the time it lands.
       restoreToken = null;
-      unqueueToken = null;
       restoreOverDraft = false;
       paneRestoreArmed = false;
       // Saved against the card being closed so reopening it restores the draft,

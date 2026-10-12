@@ -27,7 +27,7 @@ export const unqueueHandler = {
     const settleMs = Number.isFinite(ctx.unqueueSettleMs) ? ctx.unqueueSettleMs : UNQUEUE_SETTLE_MS;
     const pollMs = Number.isFinite(ctx.unqueuePollMs) ? ctx.unqueuePollMs : UNQUEUE_POLL_MS;
     const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
-    const reply = (text, source) => ctx.reply({ type: 'unqueue-result', sessionId: msg.sessionId, token: msg.token ?? null, text, source });
+    const reply = (text, source, extra = {}) => ctx.reply({ type: 'unqueue-result', sessionId: msg.sessionId, token: msg.token ?? null, text, source, ...extra });
 
     const target = ctx.tmuxFor?.(msg.sessionId);
     if (!target) { reply(null, 'drained'); return; }
@@ -46,7 +46,7 @@ export const unqueueHandler = {
     if (!text) { reply(null, 'drained'); return; }
     // The text is the chat view's now; leaving it in the pane would fuse it onto
     // whatever is pasted next.
-    await clearComposer(target, socket);
-    reply(text, 'pane');
+    const cleared = await clearComposer(target, socket);
+    reply(text, 'pane', { cleared: cleared === true });
   },
 };
