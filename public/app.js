@@ -324,6 +324,8 @@ const extApi = {
   renderSampleCard,
   // Backs `api.openDispatch`: the dispatch modal as a promise.
   openDispatchAcked,
+  // Backs `api.dispatch.submit` (throws; slots turns that into a rejection).
+  submitDispatchFromExt,
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
   withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
@@ -3862,7 +3864,7 @@ registerCoreBindings(keybindings, {
   },
   'dispatch.submit': { when: inDispatchModal, run: () => submitDispatch() },
   'dispatch.quickLaunch': {
-    when: (e) => inDispatchModal(e) && !scheduleMode(),
+    when: (e) => inDispatchModal(e) && !scheduleMode() && !dispatchFieldHidden('quickLaunch'),
     run: (e) => {
       const n = Number(e.key) || Number(String(e.code || '').replace('Digit', ''));
       quickLaunch(quickLaunchModels[n - 1]);
@@ -5301,19 +5303,27 @@ function dispatchFieldCtx(core = readCoreDispatchFields()) {
   };
 }
 
-// Which core row each hideable dispatch field lives in (index.html): model,
-// effort, autoCompactTokens, runtime and worktree. Growing DISPATCH_FIELDS
+// Which core row each hideable dispatch field lives in (index.html): quickLaunch,
+// model, effort, autoCompactTokens, runtime and worktree. `quickLaunch`'s row is
+// an outer wrapper round #m-quick-launch, which syncQuickLaunch hides itself in
+// schedule mode. Growing DISPATCH_FIELDS
 // server-side means adding a row id here and a wrapper there. `worktree`'s row
 // is an OUTER wrapper round .worktree-box, because syncWorkflow already toggles
 // the box's own `hidden` for workflow/review mode — the veto and that toggle
 // each own one element and never undo each other.
 const DISPATCH_FIELD_ROWS = {
+  quickLaunch: 'm-quick-launch-row',
   model: 'm-model-row',
   effort: 'm-effort-row',
   autoCompactTokens: 'm-auto-compact-row',
   runtime: 'm-runtime-row',
   worktree: 'm-worktree-box-row',
 };
+
+// The last veto applied — read by the dispatch.quickLaunch binding, so hiding
+// `quickLaunch` also hands ⌘1–⌘3 to extension bindings.
+let vetoedDispatchFields = new Set();
+function dispatchFieldHidden(name) { return vetoedDispatchFields.has(name); }
 
 // Recomputed WHOLE every call, never incrementally: that is what lifts the veto
 // of a contribution slots.js has thrown out, and what clears everything in the
@@ -5329,6 +5339,7 @@ const DISPATCH_FIELD_ROWS = {
 // contribution has just been torn down and so no `hides` is ever called.
 function applyDispatchFieldVeto(ctx) {
   const hidden = new Set(slots.hiddenDispatchFields(ctx));
+  vetoedDispatchFields = hidden;
   for (const [name, id] of Object.entries(DISPATCH_FIELD_ROWS)) {
     document.getElementById(id)?.classList.toggle('hidden', hidden.has(name));
   }
@@ -5351,7 +5362,9 @@ function syncDispatchExtFields() {
   const ctx = modalMode === 'subagent' ? null : dispatchFieldCtx();
   const entries = ctx === null ? [] : [...document.querySelectorAll('.ext-dispatch-slot')]
     .map((host) => ({ host, at: host.dataset.at, session: ctx }));
-  slots.syncHosts('dispatch.field', entries, extApi, latestGraph);
+  // The graph only carries `history` on ticks where it changed (history-gate.js),
+  // so hand contributions the cached copy rather than whatever the last tick had.
+  slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
 }
 
@@ -5518,32 +5531,59 @@ function onSubagentDetail(msg) {
   document.getElementById('m-sa-result').textContent = msg.result || '(no result recorded)';
 }
 
+// Returns true only when the dispatch was sent (callers other than
+// submitDispatchFromExt ignore it).
 function submitDispatch() {
-  if (modal.classList.contains('hidden')) return;
-  if (modalMode === 'subagent') return; // read-only view: no primary action
-  if (scheduleMode()) return submitSchedule();
+  if (modal.classList.contains('hidden')) return false;
+  if (modalMode === 'subagent') return false; // read-only view: no primary action
+  if (scheduleMode()) { submitSchedule(); return false; }
   const fields = readDispatchFields();
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdBlocked()) { renderCwdState(); return; }
-  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return; }
-  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return; }
+  if (cwdBlocked()) { renderCwdState(); return false; }
+  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
+  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
-    return; // can't create a worktree here — let the user untick or fix the folder
+    return false; // can't create a worktree here — let the user untick or fix the folder
   }
   // A classified target the server says is impossible (branch busy / folder occupied)
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
-  if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return;
+  if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return false;
   send({ type: 'dispatch', ...fields });
   dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
-  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return; }
+  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return true; }
   modal.classList.add('hidden');
   document.getElementById('m-intent').value = '';
   toast('Launching session…');
+  return true;
+}
+
+// api.dispatch.submit({ model?, effort? }): launch the open dispatch modal as
+// the human would, optionally on a given model/effort (each must be offered).
+// Resolves once the dispatch is SENT, not launched — a worktree/workflow
+// dispatch is still pending then; openDispatch's promise carries the ack.
+function submitDispatchFromExt({ model, effort } = {}) {
+  if (modal.classList.contains('hidden') || modalMode !== 'launch') throw new Error('dispatch modal is not open in launch mode');
+  if (model != null) {
+    const sel = document.getElementById('m-model');
+    if (![...sel.options].some((o) => o.value === model)) throw new Error(`model not offered: ${model}`);
+    sel.value = model;
+    modelEdited = true;
+    syncRuntimeToggle();
+    populateEffortSelect();
+  }
+  if (effort != null) {
+    const eff = document.getElementById('m-effort');
+    if (![...eff.options].some((o) => o.value === effort)) throw new Error(`effort not offered: ${effort}`);
+    eff.value = effort;
+    effortEdited = true;
+  }
+  if (!submitDispatch()) throw new Error('dispatch blocked by validation');
+  return true;
 }
 
 // Save a schedule: compile the picker → `when`, read the same dispatch fields a

@@ -254,7 +254,7 @@ async function dispatchExtHarness() {
     };
     return el;
   };
-  const els = Object.fromEntries(['m-runtime', 'm-model-row', 'm-effort-row', 'm-auto-compact-row', 'm-runtime-row', 'm-worktree-box-row', 'worktree-box']
+  const els = Object.fromEntries(['m-runtime', 'm-quick-launch-row', 'm-quick-launch', 'm-model-row', 'm-effort-row', 'm-auto-compact-row', 'm-runtime-row', 'm-worktree-box-row', 'worktree-box']
     .map((id) => [id, make()]));
   els['m-runtime'].value = 'local';
   const top = make(); top.dataset.at = 'top';
@@ -263,16 +263,18 @@ async function dispatchExtHarness() {
     querySelectorAll: (q) => (q === '.ext-dispatch-slot' ? [top] : []),
     createElement: () => make(),
   };
-  const slots = createSlots({ document, storage: null, onError: () => {}, hideDispatchFieldsFor: (id) => (id === 'x' ? ['worktree', 'runtime'] : []) });
+  const slots = createSlots({ document, storage: null, onError: () => {}, hideDispatchFieldsFor: (id) => (id === 'x' ? ['worktree', 'runtime'] : id === 'q' ? ['quickLaunch'] : []) });
   const wiring = appSrc.match(/^document\.getElementById\('m-runtime'\)\.addEventListener\('change', syncDispatchExtFields\);$/m)?.[0];
   assert.ok(wiring, 'app.js should wire #m-runtime change to syncDispatchExtFields');
   const app = loadApp(
-    ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {', 'function openDispatchExtFields(saved) {', 'function scheduleMode() {'],
-    ['syncDispatchExtFields', 'openDispatchExtFields', 'setModalMode'],
+    ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldHidden(name) {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {', 'function openDispatchExtFields(saved) {', 'function scheduleMode() {'],
+    ['syncDispatchExtFields', 'openDispatchExtFields', 'setModalMode', 'dispatchFieldHidden', 'setGraph'],
     `let modalMode = 'launch'; const setModalMode = (m) => { modalMode = m; };
      const availableAgents = [];
      const readCoreDispatchFields = () => ({ runtime: document.getElementById('m-runtime').value });
-     const extApi = {}; const latestGraph = null;
+     let vetoedDispatchFields = new Set();
+     const extApi = {}; let latestGraph = null; let latestHistory = [];
+     const setGraph = (g, h) => { latestGraph = g; if (h) latestHistory = h; };
      ${wiring}`,
     { document, slots },
   );
@@ -614,4 +616,121 @@ test('a live card asked for while another is restoring drops the restore\'s pend
   app.state.sessions = [{ sessionId: 'S1' }, { sessionId: 'S2' }];
   app.tryFulfillPending();
   assert.ok(!app.log.includes('select:S1') && !app.log.includes('diff:S1'), 'S1 coming back does not steal the board');
+});
+
+// ── quickLaunch as a hideable field (1.28.0) ───────────────────────────────
+test('#m-quick-launch sits inside its own #m-quick-launch-row wrapper in .modal-actions', () => {
+  const actions = html.slice(html.indexOf('<div class="modal-actions">'));
+  const row = actions.indexOf('<div class="dispatch-field quick-launch-row" id="m-quick-launch-row">');
+  const inner = actions.indexOf('<div class="quick-launch" id="m-quick-launch">');
+  const cancel = actions.indexOf('id="m-cancel"');
+  assert.ok(row >= 0 && row < inner && inner < cancel);
+});
+
+test('a quickLaunch veto hides #m-quick-launch-row and gates the ⌘1–⌘3 binding; removing it brings both back', async () => {
+  const { els, slots, syncDispatchExtFields, dispatchFieldHidden } = await dispatchExtHarness();
+  slots.register('dispatch.field', 'q', { id: 'ql', at: 'top', mount() {}, hides: ['quickLaunch'] });
+  els['m-quick-launch'].classList.toggle('hidden', true); // syncQuickLaunch's schedule-mode state
+  syncDispatchExtFields();
+  assert.equal(els['m-quick-launch-row'].classList.contains('hidden'), true);
+  assert.equal(dispatchFieldHidden('quickLaunch'), true);
+  slots.removeExtension('q');
+  syncDispatchExtFields();
+  assert.equal(els['m-quick-launch-row'].classList.contains('hidden'), false);
+  assert.equal(dispatchFieldHidden('quickLaunch'), false);
+  assert.equal(els['m-quick-launch'].classList.contains('hidden'), true, 'the veto must not touch the inner group');
+  // The core binding's `when` reads the same veto, so it falls through to an
+  // extension binding on the same keys (keybindings.js tries the next candidate).
+  const binding = appSrc.slice(appSrc.indexOf("'dispatch.quickLaunch': {"));
+  assert.match(binding.slice(0, binding.indexOf('run:')), /when: \(e\) => inDispatchModal\(e\) && !scheduleMode\(\) && !dispatchFieldHidden\('quickLaunch'\)/);
+});
+
+test('dispatch.field update sees the cached history on a tick whose graph carried none', async () => {
+  const { slots, syncDispatchExtFields, setGraph } = await dispatchExtHarness();
+  const seen = [];
+  slots.register('dispatch.field', 'x', { id: 'a', at: 'top', mount() {}, update: (el, ctx, graph) => seen.push(graph) });
+  setGraph({ sessions: [{ sessionId: 's' }] }, [{ sessionId: 'h', model: 'opus', effort: 'high' }]);
+  syncDispatchExtFields();
+  assert.deepEqual(seen.at(-1).history, [{ sessionId: 'h', model: 'opus', effort: 'high' }]);
+  assert.deepEqual(seen.at(-1).sessions, [{ sessionId: 's' }]);
+});
+
+// ── submitDispatchFromExt (api.dispatch.submit, 1.28.0) ────────────────────
+function extSubmitHarness({ mode = 'launch', hidden = false } = {}) {
+  const model = stubSelect(['opus', 'sonnet']);
+  const effort = stubSelect(['', 'low', 'high']);
+  const modalClasses = new Set(hidden ? ['hidden'] : []);
+  const sent = []; const calls = [];
+  const state = { cwdBlocked: false, effortsAfterModel: null };
+  const els = { 'm-model': model, 'm-effort': effort, 'm-intent': { value: 'x' } };
+  const document = { getElementById: (id) => els[id] || { classList: { remove() {}, add() {} } } };
+  const app = loadApp(
+    ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch() {', 'function submitDispatchFromExt({ model, effort } = {}) {'],
+    ['submitDispatchFromExt', 'flags'],
+    `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
+     let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
+     const flags = () => ({ modelEdited, effortEdited });
+     const readCoreDispatchFields = () => ({ model: document.getElementById('m-model').value, effort: document.getElementById('m-effort').value || undefined, worktree: false, addDirs: [] });
+     const syncRuntimeToggle = () => calls.push('syncRuntimeToggle');
+     const populateEffortSelect = () => { calls.push('populateEffortSelect'); if (state.effortsAfterModel) { const e = document.getElementById('m-effort'); e.options.length = 0; for (const v of state.effortsAfterModel) e.appendChild(stubOption(v)); } };`,
+    {
+      document, stubOption, calls, state,
+      modal: { classList: { contains: (c) => modalClasses.has(c), add: (c) => modalClasses.add(c) } },
+      slots: { dispatchFields: () => ({ extra: 1 }) },
+      cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
+      additionalFolders: { invalid: () => false },
+      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast() {},
+      submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},
+    },
+  );
+  return { app, sent, calls, state, modalClasses };
+}
+
+test('dispatch.submit rejects unless the modal is open in launch mode', () => {
+  for (const opts of [{ hidden: true }, { mode: 'schedule-create' }, { mode: 'schedule-edit' }, { mode: 'subagent' }]) {
+    const { app, sent, calls } = extSubmitHarness(opts);
+    assert.throws(() => app.submitDispatchFromExt({}), /not open in launch mode/);
+    assert.deepEqual(sent, []);
+    assert.ok(!calls.includes('submitSchedule'));
+  }
+});
+
+test('dispatch.submit sets model + effort, marks both edited, and sends them with the fields() merge', () => {
+  const { app, sent, calls, modalClasses } = extSubmitHarness();
+  assert.equal(app.submitDispatchFromExt({ model: 'sonnet', effort: 'high' }), true);
+  assert.deepEqual(app.flags(), { modelEdited: true, effortEdited: true });
+  assert.deepEqual(calls, ['syncRuntimeToggle', 'populateEffortSelect']);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'dispatch');
+  assert.equal(sent[0].model, 'sonnet');
+  assert.equal(sent[0].effort, 'high');
+  assert.equal(sent[0].extra, 1);
+  assert.ok(modalClasses.has('hidden'), 'a plain launch closes the modal');
+});
+
+test('dispatch.submit with no options launches whatever the modal holds', () => {
+  const { app, sent } = extSubmitHarness();
+  app.submitDispatchFromExt();
+  assert.equal(sent[0].model, 'opus');
+  assert.deepEqual(app.flags(), { modelEdited: false, effortEdited: false });
+});
+
+test('dispatch.submit rejects a model or effort the modal does not offer', () => {
+  let h = extSubmitHarness();
+  assert.throws(() => h.app.submitDispatchFromExt({ model: 'haiku' }), /model not offered: haiku/);
+  assert.deepEqual(h.sent, []);
+  h = extSubmitHarness();
+  assert.throws(() => h.app.submitDispatchFromExt({ effort: 'max' }), /effort not offered: max/);
+  assert.deepEqual(h.sent, []);
+  // Efforts are checked AFTER the model change repopulates them.
+  h = extSubmitHarness();
+  h.state.effortsAfterModel = ['', 'low'];
+  assert.throws(() => h.app.submitDispatchFromExt({ model: 'sonnet', effort: 'high' }), /effort not offered: high/);
+});
+
+test('dispatch.submit rejects when core validation blocks the launch', () => {
+  const { app, sent, state } = extSubmitHarness();
+  state.cwdBlocked = true;
+  assert.throws(() => app.submitDispatchFromExt({ model: 'opus' }), /dispatch blocked by validation/);
+  assert.deepEqual(sent, []);
 });

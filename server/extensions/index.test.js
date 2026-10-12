@@ -1004,12 +1004,12 @@ test('hideDispatchField must be an array of known dispatch field names', () => {
   rejects(manifest({ hideDispatchField: 'effort' }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [7] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [''] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
-  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, runtime, worktree\)/);
+  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, quickLaunch, runtime, worktree\)/);
   assert.ok(validateManifest(manifest({ hideDispatchField: [...DISPATCH_FIELDS] })));
 });
 
 test('the dispatch field vocabulary is closed', () => {
-  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'runtime', 'worktree']);
+  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'quickLaunch', 'runtime', 'worktree']);
 });
 
 test('the declared hideDispatchField lands on the entry, the announcement and the graph, as a COPY', () => {

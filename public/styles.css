@@ -714,6 +714,8 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .modal-card input.input-error { border-color: var(--danger-strong); }
 .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
 /* Quick-launch shortcuts sit at the bottom-left; margin-right:auto pushes Cancel/Launch to the right. */
+/* The extension-veto wrapper (#m-quick-launch-row) stays out of the flex layout. */
+.quick-launch-row { display: contents; }
 .quick-launch { display: flex; gap: 8px; margin-right: auto; }
 .quick-launch.hidden { display: none; }
 /* Accent border + icon tie these to the primary Launch button: each one launches too. */
