@@ -1172,13 +1172,15 @@ runtimes: [{
 }],
 ```
 
-Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, worktree, workflow,
-launchContext })` (decorate the agent's command) or `buildLaunch({ phase, intent, cwd,
+Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, parentId, worktree,
+workflow, launchContext })` (decorate the agent's command; `parentId`, 1.27.0, is the
+parent card's id and is passed on fork only) or `buildLaunch({ phase, intent, cwd,
 sessionId, model, ext })` (return the whole pane command instead). Optional:
 `preflight` (return a string to refuse the dispatch before anything is created),
 `readLive({ entry, tmuxName, socket })`, `analyze({ entry, liveSid })`,
 `deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
 `launchStatus({ entry })` (1.22.0; return `{ state, error?, url? }` or null),
+`cost({ entry, liveSid })` (1.27.0; return `{ usd }` or null),
 `resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.
@@ -1199,8 +1201,17 @@ Maintainer notes:
   whose functions call `fn({ ...hookPayloadFor(extId, args), host, settings })` and
   re-check `hostApis.has(extId)` per call, so it is inert whichever of deactivate and
   the registry runs first: `preflight` refuses, `wrapLaunch`/`buildLaunch`/`deliver`
-  throw "extension <id> is not active", `readLive`/`analyze`/`launchStatus` return null.
+  throw "extension <id> is not active", `readLive`/`analyze`/`cost`/`launchStatus` return null.
   `deactivateExtension` calls `unregisterRuntimesFor`, so enable and disable are live.
+- **`cost` replaces only `usd`.** For a runtime that prices requests itself (e.g. a
+  gateway). `state-reader.applyRuntimeCost` runs after `analyze`/transcript costing on
+  every graph tick, for live and dormant cards, so cache per tick. A finite,
+  non-negative `usd` becomes the card's total; tokens, sub-agents, advisor spend and
+  activity still come from the transcript (the sub-agent and advisor figures are
+  breakdowns, never added to `usd`). null, a throw or an off-shape answer keeps the
+  transcript figure. The cost chip, `get_session_cost` and anything reading graph `usd`
+  see the override; `host.usage.byCard()` and the `cost-report` skill recompute from
+  transcripts and do not.
 - **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
   It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
   that path skips the preset live id, the adapter's command, `wrapLaunch` and live-id
