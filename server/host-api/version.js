@@ -241,12 +241,19 @@ import semver from 'semver';
 // into view, for a restored card as well as a live one. A manifest calling
 // openDiff declares `^1.27.0`.
 //
-// 1.28.0 adds an optional `cost({ entry, liveSid })` to the runtime contract,
+// 1.28.0 is what an extension quick-launch needs: `effort` (the launch effort,
+// null when unrecorded) on graph session and history nodes, the cached
+// `history` on every `dispatch.field` update graph (not only ticks where it
+// changed), the client `api.dispatch.submit({ model?, effort? })`, and
+// `quickLaunch` in the hideable dispatch fields (hiding it also frees ⌘1–⌘3
+// for the extension's own bindings). A manifest using any declares `^1.28.0`.
+//
+// 1.29.0 adds an optional `cost({ entry, liveSid })` to the runtime contract,
 // whose `{ usd }` replaces only the card's transcript-priced total, and passes
 // `parentId` to `wrapLaunch` on fork. An older server ignores `cost` (its loader
 // only checks the keys it knows), so the runtime still loads but shows the
-// transcript cost; a manifest that needs its own figure declares `^1.28.0`.
-export const HOST_API_VERSION = '1.28.0';
+// transcript cost; a manifest that needs its own figure declares `^1.29.0`.
+export const HOST_API_VERSION = '1.29.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

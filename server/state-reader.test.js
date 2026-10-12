@@ -306,6 +306,17 @@ test('buildGraph derives a short model pill from the transcript model', async ()
   assert.deepEqual(node.modelPill, { label: 'sonnet', title: 'claude-sonnet-4' });
 });
 
+test('buildGraph carries the launch effort onto board session nodes, null when absent', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'eff-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'opus', effort: 'xhigh' },
+    { sessionId: 'noeff-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y', model: 'opus' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['eff-sid'].effort, 'xhigh');
+  assert.equal(byId['noeff-sid'].effort, null);
+});
+
 test('buildGraph falls back to the launch model when no transcript model is available', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'launch-model-sid', agent: 'codex', cwd: '/nonexistent/c', intent: 'x', model: 'gpt-5.6-sol' },
@@ -444,22 +455,28 @@ function makeArchiveManager(entries) {
   };
 }
 
-test('buildGraph history record carries exactly the six fields the client reads', async () => {
+test('buildGraph history record carries exactly the seven fields the client reads', async () => {
   const mgr = makeArchiveManager([
     { sessionId: 'arch-sid', agent: 'claude', name: 'Named', intent: 'a very long dispatch intent',
-      cwd: '/x', archivedAt: 9, createdAt: 1, model: 'opus', task: { id: 'T1', name: 'Task' },
+      cwd: '/x', archivedAt: 9, createdAt: 1, model: 'opus', effort: 'high', task: { id: 'T1', name: 'Task' },
       worktree: { path: '/x-worktree-f', branch: 'f' }, parentSession: 'p',
       workflow: { issue: 'ENT-1', phase: { label: 'opened PR' } } },
   ]);
   const graph = await buildGraph(mgr, async () => ({}));
   assert.deepEqual(
     Object.keys(graph.history[0]).sort(),
-    ['archivedAt', 'cwd', 'label', 'model', 'sessionId', 'viaTaskArchive'],
+    ['archivedAt', 'cwd', 'effort', 'label', 'model', 'sessionId', 'viaTaskArchive'],
     'a field added here is paid for over the whole archive on every send — it needs a consumer in app.js',
   );
   assert.deepEqual(graph.history[0], {
-    sessionId: 'arch-sid', label: 'Named', cwd: '/x', archivedAt: 9, model: 'opus', viaTaskArchive: null,
+    sessionId: 'arch-sid', label: 'Named', cwd: '/x', archivedAt: 9, model: 'opus', effort: 'high', viaTaskArchive: null,
   });
+});
+
+test('buildGraph history record carries effort as null when the entry has none', async () => {
+  const mgr = makeArchiveManager([{ sessionId: 'no-eff', agent: 'claude', cwd: '/x', archivedAt: 1 }]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  assert.equal(graph.history[0].effort, null);
 });
 
 test('buildGraph history record carries viaTaskArchive, null when absent', async () => {
@@ -898,7 +915,7 @@ test('buildGraph: a live-but-UNdiscovered LOCAL tmux is NOT synthesized (runtime
 // above — this exercises it directly rather than trusting the three copies
 // stay in sync by inspection alone.
 test('buildGraph (synthesized/discovered branch): carries autoCompactTokens and infers modelContextWindow, same as the dormant branch', async () => {
-  const entry = { sessionId: 'ctxdisc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1', model: 'sonnet[1m]', autoCompactTokens: 500000 };
+  const entry = { sessionId: 'ctxdisc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1', model: 'sonnet[1m]', effort: 'low', autoCompactTokens: 500000 };
   const mgr = makeDiscoveredManager(entry, 'cc_ctxdisc');
   const discover = async () => [{ tmuxName: 'cc_ctxdisc', socket: '', claudePid: 8181, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --resume L1', paneTitle: '' }];
   const capture = async () => '';
@@ -908,6 +925,7 @@ test('buildGraph (synthesized/discovered branch): carries autoCompactTokens and 
   const node = graph.sessions.find((s) => s.sessionId === 'ctxdisc');
   assert.ok(node, 'synthesized node present');
   assert.equal(node.autoCompactTokens, 500000);
+  assert.equal(node.effort, 'low');
   // Also doubles as an integration check for the launch-model-disambiguates-
   // the-transcript-prefix fix: sonnet and sonnet[1m] share "claude-sonnet-".
   assert.equal(node.modelContextWindow, 1_000_000);

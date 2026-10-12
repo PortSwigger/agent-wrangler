@@ -1297,6 +1297,32 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
   await assert.rejects(api2.openDispatch({}), /not available/);
 });
 
+// ── dispatch.submit (1.28.0) ─────────────────────────────────────────────────
+
+test('api.dispatch.submit validates model/effort, passes them through and rejects when the base throws or is absent', async () => {
+  const { slots } = harness();
+  let api; const seen = []; let fail = null;
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), {
+    submitDispatchFromExt: (o) => { seen.push(o); if (fail) throw new Error(fail); return true; },
+  });
+  assert.equal(await api.dispatch.submit({ model: 'opus', effort: 'high' }), true);
+  assert.deepEqual(seen[0], { model: 'opus', effort: 'high' });
+  await api.dispatch.submit();
+  assert.deepEqual(seen[1], { model: undefined, effort: undefined });
+  await assert.rejects(api.dispatch.submit({ model: 5 }), /model must be a non-empty string/);
+  await assert.rejects(api.dispatch.submit({ model: '' }), /model must be a non-empty string/);
+  await assert.rejects(api.dispatch.submit({ effort: 3 }), /effort must be a string/);
+  assert.equal(seen.length, 2, 'bad input never reaches the base');
+  fail = 'model not offered: x';
+  await assert.rejects(api.dispatch.submit({ model: 'x' }), /\[ext:ext1\] dispatch\.submit: model not offered: x/);
+  const { slots: s2 } = harness();
+  let api2;
+  s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
+  s2.mountInto('panel.section', harness().document.make(), {});
+  await assert.rejects(api2.dispatch.submit({}), /not available/);
+});
+
 test('api.requestBoardRender calls the base api and tolerates its absence', () => {
   const { slots } = harness();
   let api; let n = 0;

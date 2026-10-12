@@ -101,15 +101,17 @@ export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
 // each name is a field the core draws AND a commitment that app.js has a row id
 // for it (DISPATCH_FIELD_ROWS) and index.html a wrapper. Widening it is a MINOR
 // and three more edits; `worktree` (1.19.0) is the fifth, for a runtime that
-// cannot honour a worktree at all — keep it at five unless a real extension
-// needs more.
+// cannot honour a worktree at all. `quickLaunch` (1.28.0) is the sixth: the
+// ⌘1–⌘3 buttons, for an extension that ranks its own quick launches — hiding
+// it also frees those keys for the extension's bindings. Keep it at six unless
+// a real extension needs more.
 //
 // A STATIC array on the manifest, not a function, for the same reason
 // `requires` is: the board has to know what an extension may suppress before
 // any of its code runs, and a function could answer differently per call. (A
 // contribution's own `hides` MAY be a function of the draft — that only picks
 // WHEN to hide, inside the ceiling this array declares.)
-export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime', 'model', 'worktree']);
+export const DISPATCH_FIELDS = new Set(['effort', 'autoCompactTokens', 'runtime', 'model', 'worktree', 'quickLaunch']);
 
 // `onBeforeDispatch` is the one hook that runs while the session does not yet
 // exist anywhere: it fires after dispatch has settled the card id, cwd and

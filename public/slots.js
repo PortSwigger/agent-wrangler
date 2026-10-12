@@ -382,6 +382,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
           return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
         },
+        // Launch the already-open dispatch modal (1.28.0), optionally on an
+        // offered model/effort. Resolves once SENT; rejects when the modal is
+        // not open in launch mode, the model/effort is not offered, or core
+        // validation blocks the launch. See app.js submitDispatchFromExt.
+        dispatch: Object.freeze({
+          submit: (opts = {}) => {
+            if (typeof baseApi.submitDispatchFromExt !== 'function') return Promise.reject(new Error(`[ext:${extId}] dispatch.submit is not available`));
+            const o = opts && typeof opts === 'object' ? opts : {};
+            if (o.model != null && (typeof o.model !== 'string' || !o.model)) return Promise.reject(new Error(`[ext:${extId}] dispatch.submit model must be a non-empty string`));
+            if (o.effort != null && typeof o.effort !== 'string') return Promise.reject(new Error(`[ext:${extId}] dispatch.submit effort must be a string`));
+            try {
+              return Promise.resolve(baseApi.submitDispatchFromExt({ model: o.model ?? undefined, effort: o.effort ?? undefined }));
+            } catch (err) {
+              return Promise.reject(new Error(`[ext:${extId}] dispatch.submit: ${err?.message || err}`));
+            }
+          },
+        }),
         // Ask the board to re-render (and so re-size its tiles): the
         // task.body counterpart of requestPanelRender.
         requestBoardRender: () => { baseApi.requestBoardRender?.(); },
