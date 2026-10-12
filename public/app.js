@@ -62,11 +62,13 @@ import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
+import { keybindings } from './keybindings.js';
+import { registerCoreBindings } from './core-keybindings.js';
 
 let currentView = 'grid';
 
-// Mac-style glyphs for the board's Ctrl+Cmd+<key> shortcut family (see the
-// window keydown listener near moveSessionFocus) — shown as trailing hints in
+// Mac-style glyphs for the board's Ctrl+Cmd+<key> shortcut family (registered
+// in keybindings.js via core-keybindings.js) — shown as trailing hints in
 // the Actions dropdown and button tooltips, so each binding's letter lives in
 // one place instead of being duplicated across every place it's displayed.
 const kbd = (glyph) => `<span class="kbd-hint">${glyph}</span>`;
@@ -180,6 +182,11 @@ const extHideDispatchFields = new Map();
 // And each extension's `requires` grant, for the client-only capabilities
 // slots.js checks (cards:hideChips). Same two inputs, same fail-closed default.
 const extRequires = new Map();
+// And each extension's declared `keybindings` ([{ combo, scope }]) — the ceiling
+// api.keys.bind is checked against, like extHideDispatchFields.
+const extKeybindings = new Map();
+// Extension labels, for the Shortcuts tab's group titles.
+const extLabels = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -190,6 +197,8 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
     if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
+    if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
+    if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -202,6 +211,9 @@ const slots = createSlots({
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
   requiresFor: (id) => extRequires.get(id) || [],
+  keybindingsFor: (id) => extKeybindings.get(id) || [],
+  labelFor: (id) => extLabels.get(id) || id,
+  keys: keybindings,
   coreChips: CORE_CHIPS,
   // An extension's hideChips (or its removal) changed the veto: redraw the
   // board, which re-syncs the pills too (wireGridEvents → mountCardPills).
@@ -3452,36 +3464,13 @@ function isTypingTargetForChords(el) {
 // have been affected — there just isn't one. Grid view only, and inert while a
 // modal, context menu, or a real text input is in play. preventDefault stops
 // the browser's own shift+cmd+←/→ text-selection/scroll.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.shiftKey || e.ctrlKey || e.altKey) return;
-  // The "Flip navigating task / session hotkeys" setting swaps the axes; read live.
-  const dirs = getSetting('flipNavHotkeys')
-    ? { ArrowUp: 'taskPrev', ArrowDown: 'taskNext', ArrowLeft: 'sessPrev', ArrowRight: 'sessNext' }
-    : { ArrowLeft: 'taskPrev', ArrowRight: 'taskNext', ArrowUp: 'sessPrev', ArrowDown: 'sessNext' };
-  const action = dirs[e.key];
-  if (!action) return;
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  if (action === 'taskPrev') moveTaskFocus(-1);
-  else if (action === 'taskNext') moveTaskFocus(1);
-  else if (action === 'sessPrev') moveSessionFocus(-1);
-  else moveSessionFocus(1);
-});
+// (Registered as `board.nav` in registerCoreBindings below.)
 
 // Enter while the keyboard selection sits on a "new session" slot opens the
 // dispatch dialog for that tile (Unassigned → no preset task). Same gating as the
 // nav shortcut; a no-op when a real session (or nothing) is selected, so it never
 // shadows the input-scoped Enter handlers (modal/rename/todo — all excluded here).
-window.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-  if (selectedNewSlot == null) return;
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.activeElement?.closest?.('.snooze-toggle')) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot);
-});
+// (Registered as `board.openSlot` in registerCoreBindings below.)
 
 // Ctrl+Cmd family: board actions that must fire even while the terminal holds
 // focus. Ctrl+Cmd+N opens the new-session dialog; Ctrl+Cmd+Delete (or
@@ -3541,47 +3530,8 @@ window.addEventListener('keydown', (e) => {
 // can't help when the listener never runs. Listening in the CAPTURE phase runs us
 // at the very first dispatch step — ahead of the textarea and its default action —
 // so the page wins the race for every chord in the family, terminal-focused or not.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
-  const key = e.key.toLowerCase();
-  if (!CTRL_CMD_KEYS.has(key)) return;
-  // Pre-gate preventDefault is scoped to 'g' ONLY (the diff chord): kept from when
-  // this was Ctrl+Cmd+D — macOS's "Look Up" chord that the OS consumed before the
-  // browser ever saw the keydown, so no web handler could open the diff. Ctrl+Cmd+G
-  // is NOT OS-reserved, but we keep the early swallow for consistency so the diff
-  // opens even in Search view / a modal / while typing. The REST of the family
-  // (n/t/b/r/m/s/delete/backspace) keep their original POST-gate preventDefault below,
-  // so in those contexts they don't over-suppress the browser/OS shortcuts on those
-  // same chords (they fall through the gate untouched).
-  if (key === 'g') e.preventDefault();
-  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  // Past the gate the chord is definitely ours — suppress the browser/OS default for
-  // the whole family (this is the original, pre-diff-feature behaviour for the rest;
-  // 'g' was already prevented above and re-preventing is a no-op).
-  e.preventDefault();
-  if (key === 'n') { openDispatch(currentTaskSelection()); return; }
-  if (key === 't') {
-    if (!selectedSessionId) return;
-    if (currentShellTerm && currentShellTerm.sessionId === selectedSessionId) { closeShellTerminal(); return; }
-    const ts = latestSessions.find((x) => x.sessionId === selectedSessionId);
-    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
-    return;
-  }
-  if (key === 'b') { if (selectedSessionId) openFork(selectedSessionId); return; }
-  // Restart matches its menu gate — only a live (managed) session, since a dormant
-  // one already offers Resume. Peer review works on any session, like its menu row.
-  if (key === 'r') {
-    const rs = selectedSessionId && latestSessions.find((x) => x.sessionId === selectedSessionId);
-    if (rs?.managed) restartSession(selectedSessionId);
-    return;
-  }
-  if (key === 'p') { if (selectedSessionId) peerReviewSession(selectedSessionId); return; }
-  if (key === 'm') { if (selectedSessionId) toggleMaximize(); return; }
-  if (key === 's') { if (selectedSessionId) snoozeSelected(selectedSessionId); return; }
-  if (key === 'g') { if (selectedSessionId) toggleDiffPanel(selectedSessionId); return; }
-  if (selectedSessionId) archiveSession(selectedSessionId);
-}, true);
+// (Registered as the `chord.*` bindings in registerCoreBindings below — capture
+// phase, for the reason above.)
 
 // `/` opens the Search view (which focuses its input on entry — see
 // onEnterSearchView; pressing it while already there just refocuses the box).
@@ -3589,16 +3539,7 @@ window.addEventListener('keydown', (e) => {
 // is open, and while typing — including the xterm helper textarea, which
 // isTypingTarget deliberately exempts for the chord family but which must
 // swallow a bare "/" (it's an ordinary character to type at an agent).
-window.addEventListener('keydown', (e) => {
-  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
-  const el = document.activeElement;
-  if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
-  if (cardMenuEl) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  if (currentView !== 'search') setView('search');
-  else onEnterSearchView();
-});
+// (Registered as `search.open` in registerCoreBindings below.)
 
 // ---- Hint jump (⌃⌘A) --------------------------------------------------
 // Label every session on the board with a letter, then type it to open that
@@ -3814,16 +3755,94 @@ function onHintKey(e) {
 // xterm helper textarea nor the chat composer counts) — and capture phase for
 // the same reason the family is, so it fires with the terminal OR the chat
 // composer focused.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
-  if (e.key.toLowerCase() !== 'a') return;
-  if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
-  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  activateHints();
-}, true);
+// ---- Keybinding registry wiring ----------------------------------------
+// Every board-level shortcut is a registry entry (public/keybindings.js,
+// definitions in core-keybindings.js). The gating each one had as a bare
+// window listener lives on in its `when`, unchanged: the registry's scopes
+// pick which bindings are candidates, `when` keeps the exact old conditions.
+const anyModalOpen = () => Boolean(document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)'));
+// The nav / Enter gate: grid view, no card menu, no modal, and not typing in a
+// real text field (the xterm helper textarea doesn't count — see isTypingTarget).
+const boardIdle = () => currentView === 'grid' && !cardMenuEl && !isTypingTarget(document.activeElement) && !anyModalOpen();
+// The ⌃⌘ family's gate: as boardIdle but the chat composer doesn't count either.
+const chordGate = () => currentView === 'grid' && !cardMenuEl && !isTypingTargetForChords(document.activeElement) && !anyModalOpen();
+const dispatchModalEl = document.getElementById('modal');
+keybindings.configure({
+  isDispatchOpen: () => Boolean(dispatchModalEl && !dispatchModalEl.classList.contains('hidden')),
+  isModalOpen: () => Boolean(cardMenuEl) || anyModalOpen(),
+  isBoardIdle: boardIdle,
+});
+keybindings.install(window);
+const withSelected = (fn) => ({ when: chordGate, run: () => { if (selectedSessionId) fn(selectedSessionId); } });
+// Dispatch-dialog bindings only act on keys aimed at the dialog itself, like
+// the modal-scoped listener they replace.
+const inDispatchModal = (e) => Boolean(dispatchModalEl?.contains(e.target));
+registerCoreBindings(keybindings, {
+  'board.nav': {
+    when: boardIdle,
+    run: (e) => {
+      // The "Flip navigating task / session hotkeys" setting swaps the axes; read live.
+      const dirs = getSetting('flipNavHotkeys')
+        ? { ArrowUp: 'taskPrev', ArrowDown: 'taskNext', ArrowLeft: 'sessPrev', ArrowRight: 'sessNext' }
+        : { ArrowLeft: 'taskPrev', ArrowRight: 'taskNext', ArrowUp: 'sessPrev', ArrowDown: 'sessNext' };
+      const action = dirs[e.key];
+      if (action === 'taskPrev') moveTaskFocus(-1);
+      else if (action === 'taskNext') moveTaskFocus(1);
+      else if (action === 'sessPrev') moveSessionFocus(-1);
+      else if (action === 'sessNext') moveSessionFocus(1);
+    },
+  },
+  'board.openSlot': {
+    when: () => selectedNewSlot != null && boardIdle() && !document.activeElement?.closest?.('.snooze-toggle'),
+    run: () => openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot),
+  },
+  'chord.new': { when: chordGate, run: () => openDispatch(currentTaskSelection()) },
+  'chord.terminal': withSelected((sid) => {
+    if (currentShellTerm && currentShellTerm.sessionId === sid) { closeShellTerminal(); return; }
+    const ts = latestSessions.find((x) => x.sessionId === sid);
+    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: sid });
+  }),
+  'chord.fork': withSelected((sid) => openFork(sid)),
+  // Restart matches its menu gate — only a live (managed) session, since a dormant
+  // one already offers Resume. Peer review works on any session, like its menu row.
+  'chord.restart': withSelected((sid) => {
+    if (latestSessions.find((x) => x.sessionId === sid)?.managed) restartSession(sid);
+  }),
+  'chord.peerReview': withSelected((sid) => peerReviewSession(sid)),
+  'chord.maximize': withSelected(() => toggleMaximize()),
+  'chord.snooze': withSelected((sid) => snoozeSelected(sid)),
+  'chord.diff': withSelected((sid) => toggleDiffPanel(sid)),
+  'chord.archive': withSelected((sid) => archiveSession(sid)),
+  // A toggle: while hint mode is up the same chord takes the labels down,
+  // whatever else is going on. Stops immediate propagation so hint mode's own
+  // capture listener doesn't also see it.
+  'chord.hints': {
+    when: () => Boolean(hintMode) || chordGate(),
+    run: (e) => {
+      e.stopImmediatePropagation();
+      if (hintMode) deactivateHints(); else activateHints();
+    },
+  },
+  // Inert while typing anywhere — including the xterm helper textarea, where a
+  // bare "/" is an ordinary character for the agent — and behind a modal or menu.
+  'search.open': {
+    when: () => {
+      const el = document.activeElement;
+      if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return false;
+      return !cardMenuEl && !anyModalOpen();
+    },
+    run: () => { if (currentView !== 'search') setView('search'); else onEnterSearchView(); },
+  },
+  'dispatch.submit': { when: inDispatchModal, run: () => submitDispatch() },
+  'dispatch.quickLaunch': {
+    when: (e) => inDispatchModal(e) && !scheduleMode(),
+    run: (e) => {
+      const n = Number(e.key) || Number(String(e.code || '').replace('Digit', ''));
+      quickLaunch(quickLaunchModels[n - 1]);
+    },
+  },
+  'dispatch.cancel': { when: inDispatchModal, run: () => cancelModal() },
+});
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
 // keyboard shortcut has no click position to anchor the duration picker at —
@@ -6030,13 +6049,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
 });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 enhanceSelects(document.getElementById('modal'));
-modal.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
-  else if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key) && !scheduleMode()) {
-    e.preventDefault(); quickLaunch(quickLaunchModels[Number(e.key) - 1]);
-  }
-  else if (e.key === 'Escape') { e.preventDefault(); cancelModal(); }
-});
+// ⌘Enter / ⌘1–⌘3 / Escape are `dispatch.*` registry bindings (see registerCoreBindings).
 (() => {
   const input = document.getElementById('m-cwd');
   const box = document.getElementById('folder-suggest');

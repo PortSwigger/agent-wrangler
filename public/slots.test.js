@@ -1377,3 +1377,38 @@ test('openTask hands a task id to the base api and returns its answer', () => {
   assert.equal(h.errors.length, 2);
   assert.match(h.errors[0], /\[ext:fake\] openTask refused: expected a task id, got ""/);
 });
+
+// ── api.keys.bind (1.26.0) ──
+test('api.keys.bind registers a declared combo+scope under the extension, refuses an undeclared one, and unbinds on removal', async () => {
+  const { createKeybindings } = await import('./keybindings.js');
+  const keys = createKeybindings({ mac: true });
+  const { slots, errors } = harness({
+    keys,
+    keybindingsFor: (id) => (id === 'ql' ? [{ combo: 'mod+shift+l', scope: 'dispatch' }] : []),
+    labelFor: (id) => (id === 'ql' ? 'Quick launch' : id),
+  });
+  const api = slots.forExtension('ql').api;
+  let ran = 0;
+  const off = api.keys.bind({ combo: 'cmd+shift+l', scope: 'dispatch', run: () => { ran += 1; }, description: 'Launch' });
+  // Declared as mod+…, bound as cmd+… — not the same combo, so refused.
+  assert.match(errors.at(-1), /keys\.bind refused: "cmd\+shift\+l" \(dispatch\) is not in this extension's manifest keybindings \(mod\+shift\+l \(dispatch\)\)/);
+  assert.equal(typeof off, 'function');
+  api.keys.bind({ combo: 'mod+shift+l', scope: 'global', run: () => {} });
+  assert.match(errors.at(-1), /not in this extension's manifest keybindings/);
+  api.keys.bind({ combo: 'mod+shift+l', scope: 'dispatch', run: () => { ran += 1; }, description: 'Launch' });
+  assert.deepEqual(keys.describe(), [{ group: 'Quick launch', owner: 'ql', rows: [{ keys: '⇧⌘L', description: 'Launch' }] }]);
+  keys.configure({ isDispatchOpen: () => true });
+  const e = { key: 'L', metaKey: true, shiftKey: true, preventDefault() {}, stopPropagation() {} };
+  assert.equal(keys.dispatch(e), true);
+  assert.equal(ran, 1);
+  slots.removeExtension('ql');
+  assert.deepEqual(keys.describe(), []);
+  assert.equal(keys.dispatch(e), false);
+});
+
+test('api.keys.bind with no registry reports instead of throwing', () => {
+  const { slots, errors } = harness({ keybindingsFor: () => [{ combo: 'ctrl+k', scope: 'global' }] });
+  const off = slots.forExtension('x').api.keys.bind({ combo: 'ctrl+k', scope: 'global', run: () => {} });
+  assert.equal(typeof off, 'function');
+  assert.match(errors.at(-1), /no keybinding registry/);
+});

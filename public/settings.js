@@ -26,10 +26,11 @@
 // control WS — so this module stays free of app.js imports.
 //
 // The modal is split into focused tabs. Appearance includes bespoke widgets owned
-// by theme.js/app.js; Shortcuts includes the static reference from shortcuts.js.
+// by theme.js/app.js; Shortcuts renders the keybinding registry via shortcuts.js.
 
 import { esc } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
+import { keybindings } from './keybindings.js';
 
 const STORE_PREFIX = 'cm-setting-';
 
@@ -541,6 +542,12 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   openModal = open;
 
   if (btn) btn.addEventListener('click', () => open());
+  // An extension binding keys (or unloading) changes the Shortcuts tab; redraw
+  // just that list so an open modal keeps its tab and scroll position.
+  keybindings.subscribe(() => {
+    const list = body.querySelector('.shortcuts-list');
+    if (list) list.innerHTML = shortcutsHtml();
+  });
   closeBtn?.addEventListener('click', () => { if (detail) finishDetail(); else close(); });
   window.addEventListener('keydown', (e) => {
     if (!isOpenSettingsKey(e)) return;
