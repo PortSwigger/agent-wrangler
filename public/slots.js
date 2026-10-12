@@ -382,7 +382,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
           return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
         },
-        // Launch the already-open dispatch modal (1.27.0), optionally on an
+        // Launch the already-open dispatch modal (1.28.0), optionally on an
         // offered model/effort. Resolves once SENT; rejects when the modal is
         // not open in launch mode, the model/effort is not offered, or core
         // validation blocks the launch. See app.js submitDispatchFromExt.

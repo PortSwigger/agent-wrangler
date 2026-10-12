@@ -101,7 +101,7 @@ export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
 // each name is a field the core draws AND a commitment that app.js has a row id
 // for it (DISPATCH_FIELD_ROWS) and index.html a wrapper. Widening it is a MINOR
 // and three more edits; `worktree` (1.19.0) is the fifth, for a runtime that
-// cannot honour a worktree at all. `quickLaunch` (1.27.0) is the sixth: the
+// cannot honour a worktree at all. `quickLaunch` (1.28.0) is the sixth: the
 // ⌘1–⌘3 buttons, for an extension that ranks its own quick launches — hiding
 // it also frees those keys for the extension's bindings. Keep it at six unless
 // a real extension needs more.

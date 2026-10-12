@@ -1297,7 +1297,7 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
   await assert.rejects(api2.openDispatch({}), /not available/);
 });
 
-// ── dispatch.submit (1.27.0) ─────────────────────────────────────────────────
+// ── dispatch.submit (1.28.0) ─────────────────────────────────────────────────
 
 test('api.dispatch.submit validates model/effort, passes them through and rejects when the base throws or is absent', async () => {
   const { slots } = harness();
