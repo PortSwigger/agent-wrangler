@@ -51,7 +51,8 @@ import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
+import { createBoardOpen } from './board-open.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
@@ -227,18 +228,40 @@ const slots = createSlots({
   version: () => hostApiVersion,
 });
 let chipsRenderQueued = false;
-function openSessionInBoard(sessionId) {
+function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) {
-    const tile = assignedTaskId(sessionId) || ADHOC_ID;
-    if (minimisedIds.has(tile)) unminimise(tile);
-    focusSession(sessionId);
+    const dropped = boardOpen.drop();
+    if (dropped && pendingSelect === dropped) pendingSelect = null;
+    landOnCard(sessionId, { diff, onClose }, focusSession);
     return;
   }
+  boardOpen.request(sessionId, { diff, onClose });
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
+
+// The rest of openSessionInBoard, once the card is on the board: now for a live
+// one, or from tryFulfillPending when a restored one comes back. Selecting alone
+// is not landing on it — its tile may be in the tray, and a long task list can
+// leave the card below the tile's fold — and `diff` then lays the card's diff
+// panel over the grid. The watch goes on first so a panel this replaces does not
+// fire the old caller's onClose (board-open.js).
+function landOnCard(sessionId, { diff, onClose }, select) {
+  if (diff) boardOpen.watchDiff(sessionId, onClose);
+  const tile = assignedTaskId(sessionId) || ADHOC_ID;
+  if (minimisedIds.has(tile)) unminimise(tile);
+  select(sessionId);
+  document.querySelector(`#grid .session-card[data-sid="${CSS.escape(sessionId)}"]`)
+    ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (!diff) return;
+  // A maximised session pane and the diff panel each hide the other's surface.
+  if (maximized) setMaximized(false);
+  openDiffPanel(sessionId);
+}
+const boardOpen = createBoardOpen();
+onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
 
 // Show a task's tile: the grid, the tile out of the tray if it was minimised,
 // scrolled into view with the restore pulse. A task that is not on the live
@@ -275,7 +298,9 @@ const extApi = {
   // graph brings it back — the same sequence as a Search result's Restore. openTask is the
   // task counterpart. They are the only board navigation an extension has;
   // slots.apiFor exposes them and has already refused anything that is not an id.
-  openSession: openSessionInBoard,
+  openSession: (sessionId) => openSessionInBoard(sessionId),
+  // openSession, then the card's diff panel; slots.apiFor has wrapped onClose.
+  openDiff: (sessionId, { onClose } = {}) => openSessionInBoard(sessionId, { diff: true, onClose }),
   openTask: openTaskInBoard,
   // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
   // on the live board counts (an archived or unknown id would sit in the
@@ -3283,7 +3308,9 @@ function tryFulfillPending() {
   if (currentView !== 'grid') setView('grid');
   const target = pendingSelect;
   pendingSelect = null;
-  selectSession(target);
+  const req = boardOpen.claim(target);
+  if (req) landOnCard(target, req, selectSession);
+  else selectSession(target);
 }
 
 window.addEventListener('hashchange', () => {

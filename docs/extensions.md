@@ -929,6 +929,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a session likewise restores its task's tile first, so a session in a minimised
   task is no longer opened behind the tray. A notification's "Go to" is an
   ordinary action that calls one of these when its answer comes back.
+  **`api.openDiff(sessionId, { onClose })`** (1.27.0) does what `openSession`
+  does, then opens that card's diff panel over the grid (after the restore, for
+  an archived card). `onClose` is called once, when that panel closes by any
+  route, so an extension can reopen whatever the reader left. It never fires if
+  the panel never opened (a refused restore) or a later `openSession`/`openDiff`
+  replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
   `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
@@ -1173,14 +1179,14 @@ runtimes: [{
 ```
 
 Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, parentId, worktree,
-workflow, launchContext })` (decorate the agent's command; `parentId`, 1.27.0, is the
+workflow, launchContext })` (decorate the agent's command; `parentId`, 1.28.0, is the
 parent card's id and is passed on fork only) or `buildLaunch({ phase, intent, cwd,
 sessionId, model, ext })` (return the whole pane command instead). Optional:
 `preflight` (return a string to refuse the dispatch before anything is created),
 `readLive({ entry, tmuxName, socket })`, `analyze({ entry, liveSid })`,
 `deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
 `launchStatus({ entry })` (1.22.0; return `{ state, error?, url? }` or null),
-`cost({ entry, liveSid })` (1.27.0; return `{ usd }` or null),
+`cost({ entry, liveSid })` (1.28.0; return `{ usd }` or null),
 `resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.

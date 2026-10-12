@@ -2157,7 +2157,8 @@ test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude
   let captured = '';
   sm._newSession = async (_t, _d, inner) => { captured = inner; };
   await sm.dispatch({ cwd: repo, intent: 'fix the bug', worktree: true, worktreeAuto: true }); // default agent: claude
-  assert.doesNotMatch(captured, /worktrees/);
+  assert.ok(!captured.includes(path.join(repo, '.git')), captured);
+  assert.ok(!captured.includes('--add-dir'), captured);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

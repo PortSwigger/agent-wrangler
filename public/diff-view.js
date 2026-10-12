@@ -108,6 +108,17 @@ export function isDiffPanelOpen() { return openSid !== null; }
 // session's terminal, so a stale diff shouldn't linger over another).
 export function diffPanelSessionId() { return openSid; }
 
+// Told the session id of every panel that closes — by closeDiffPanel, or by
+// openDiffPanel switching to another session, which closes the first one's panel
+// just as surely. app.js uses it to call an extension's openDiff onClose.
+const closeListeners = new Set();
+export function onDiffPanelClosed(fn) { closeListeners.add(fn); }
+function notifyClosed(sessionId) {
+  for (const fn of closeListeners) {
+    try { fn(sessionId); } catch (err) { console.error('diff panel close listener threw', err); }
+  }
+}
+
 // Menu / shortcut entry point. Opens the panel for a session (switching if it was
 // showing a different one) and kicks off the first diff request. Idempotent for
 // the same session — a re-request just refreshes.
@@ -115,6 +126,7 @@ export function openDiffPanel(sessionId) {
   if (!sessionId) return;
   const alreadyOpenSame = openSid === sessionId;
   const switching = openSid && openSid !== sessionId;
+  const previous = openSid;
   openSid = sessionId;
   if (switching) { cancelDrag(); resetSessionState(); clearSubmit(); }
   // Reset the mode toggle back to the default on every genuinely fresh open (a new
@@ -142,6 +154,7 @@ export function openDiffPanel(sessionId) {
   renderLoading();
   requestDiff();
   startPolling();
+  if (switching) notifyClosed(previous);
 }
 
 // Ctrl+Cmd+D: a toggle — close if already showing this session, else open.
@@ -152,6 +165,7 @@ export function toggleDiffPanel(sessionId) {
 
 export function closeDiffPanel() {
   if (openSid === null) return;
+  const closed = openSid;
   openSid = null;
   stopPolling();
   cancelDrag();
@@ -178,6 +192,7 @@ export function closeDiffPanel() {
     // collapsed to one column until the next ~4s poll.
     renderGridIfVisible();
   }, reducedMotion() ? 0 : 220);
+  notifyClosed(closed);
 }
 
 // The diff panel's own fullscreen: hides #sidebar so the diff fills the whole
