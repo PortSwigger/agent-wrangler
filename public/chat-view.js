@@ -329,6 +329,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           event: { text: e.text, images: e.images.map((name) => ({ label: 'Image', name })) },
         });
         e.node.dataset.pending = e.state;
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'chat-queue-dismiss';
+        dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
+        dismiss.setAttribute('title', 'Dismiss');
+        dismiss.addEventListener('click', () => {
+          removeEcho(e);
+          renderSuggestion();
+        });
+        e.node.appendChild(dismiss);
       }
       queueTray.appendChild(e.node);
     }

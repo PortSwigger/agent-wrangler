@@ -1151,3 +1151,21 @@ test('a terminal-origin prompt already shown cannot acknowledge a later identica
   reply();
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
 });
+
+test('a queued prompt can be dismissed, a sending one cannot', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = 'stuck';
+  send(input);
+  const [bubble] = echoNodes(byId);
+  assert.equal(bubble.dataset.pending, '1');
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  assert.equal(bubble.dataset.pending, 'queued');
+  const dismiss = bubble.children.find((c) => c.className === 'chat-queue-dismiss');
+  dismiss.dispatchEvent({ type: 'click' });
+  assert.equal(echoNodes(byId).length, 0);
+  view.unmount();
+  view.mount('sess-1');
+  assert.equal(echoNodes(byId).length, 0);
+});
