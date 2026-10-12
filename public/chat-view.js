@@ -59,9 +59,7 @@ export function echoMatchesEvent(echo, event) {
   return false;
 }
 
-const UNQUEUE_REPLY_TIMEOUT_MS = 5000;
-
-export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor, agentFor } = {}) {
+export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   // The base directory a relative `.md` path linkifies against — read through
@@ -271,13 +269,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // The in-flight interrupt's token, and whether the composer already held
   // something when it was sent.
   let restoreToken = null;
-  // Dismiss requests awaiting their reply, per session. By the time a reply exists
-  // the pane's queue has already been emptied, so it is honoured even after the
-  // view has moved on or the busy window below has lapsed — dropping it would lose
-  // the prompt. `unqueueBusy` only stops a second click while one is in flight.
-  const unqueueTokens = new Map(); // token -> { sessionId, echo }
-  const unqueueBusy = new Set();
-  let unqueueSeq = 0;
   let restoreSeq = 0;
   let restoreOverDraft = false;
   let messageSeq = 0;
@@ -324,21 +315,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // The tail of the stream is always the working row, then the tray. Queued
   // prompts belong after everything the agent is still producing, whatever order
   // the nodes were appended in.
-  // Re-appending a node that is already last still detaches and reinserts it, and a
-  // click whose target is reinserted between mousedown and mouseup never fires — pinTail
-  // runs on every poll, so a node is only moved when it is actually out of place.
-  function placeLast(parent, nodes) {
-    const kids = parent.children;
-    const start = kids.length - nodes.length;
-    if (start >= 0 && nodes.every((n, i) => kids[start + i] === n)) return;
-    for (const n of nodes) parent.appendChild(n);
-  }
-
   function pinTail() {
+    if (live) stream.appendChild(live);
     const list = echoList();
     if (!list.length) {
       queueTray.remove();
-      if (live) placeLast(stream, [live]);
       return;
     }
     for (const e of list) {
@@ -348,24 +329,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           event: { text: e.text, images: e.images.map((name) => ({ label: 'Image', name })) },
         });
         e.node.dataset.pending = e.state;
-        // Codex gives no way to take a queued prompt back, so offering to dismiss one
-        // would only hide a prompt that still runs.
-        if (agentFor?.(e.sessionId) !== 'codex') {
-          const dismiss = document.createElement('button');
-          dismiss.type = 'button';
-          dismiss.className = 'chat-queue-dismiss';
-          dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
-          dismiss.setAttribute('title', 'Dismiss');
-          dismiss.addEventListener('click', () => requestUnqueue(e));
-          e.node.appendChild(dismiss);
-        }
       }
+      queueTray.appendChild(e.node);
     }
-    placeLast(queueTray, [queueHead, ...list.map((e) => e.node)]);
     const queued = list.filter((e) => e.state === 'queued').length;
-    const heading = queued ? `Queued · ${queued} waiting for the agent` : 'Sending…';
-    if (queueHead.textContent !== heading) queueHead.textContent = heading;
-    placeLast(stream, live ? [live, queueTray] : [queueTray]);
+    queueHead.textContent = queued
+      ? `Queued · ${queued} waiting for the agent`
+      : 'Sending…';
+    stream.appendChild(queueTray);
   }
 
   const eventKey = (event) => `${event.ts}|${event.text}`;
@@ -373,29 +344,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // by a remount cannot acknowledge a newer identical prompt.
   const ackedEvents = new Map();
   const ACKED_MAX = 200;
-
-  // Dismissing a queued prompt has to take it out of the AGENT's queue too, or it
-  // still runs. The server pulls the queue back off the pane; the reply is what
-  // clears the bubbles, so a failed pull leaves them standing.
-  function requestUnqueue(echo) {
-    if (!sessionId || unqueueBusy.has(sessionId)) return;
-    const id = sessionId;
-    const token = `${requestEra}#${++unqueueSeq}`;
-    // Which one was clicked is only worth saying when the server can act on it:
-    // the others have to be re-queued as plain text, so an attachment rules it out.
-    const queued = echoList().filter((e) => e.state === 'queued');
-    const scoped = queued.length > 1 && queued.every((e) => !e.images.length);
-    const which = scoped ? { queue: queued.map((e) => e.text), index: queued.indexOf(echo) } : {};
-    if (!send({ type: 'unqueue', sessionId: id, token, ...which })) {
-      setPasteNote('Not dismissed: connection unavailable.');
-      return;
-    }
-    unqueueTokens.set(token, { sessionId: id, echo });
-    unqueueBusy.add(id);
-    // A reply that never comes (a dropped socket, a server that predates the
-    // request) must not leave every later dismiss ignored.
-    setTimeout(() => unqueueBusy.delete(id), UNQUEUE_REPLY_TIMEOUT_MS);
-  }
 
   function echoMatches(echo, item) {
     if (ackedEvents.get(echo.sessionId)?.has(eventKey(item.event || {}))) return false;
@@ -1009,39 +957,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           error: 'connection closed; check the terminal before sending again',
         });
       }
-    },
-    onUnqueueResult(msg) {
-      const request = unqueueTokens.get(msg.token);
-      if (!request || request.sessionId !== msg.sessionId) return;
-      unqueueTokens.delete(msg.token);
-      unqueueBusy.delete(msg.sessionId);
-      // The server re-queues the others when it can; otherwise everything came back.
-      // Nothing was taken out of the agent's queue for 'unsupported', so the bubbles stay.
-      const gone = msg.source === 'unsupported' ? []
-        : msg.scope === 'one' ? [request.echo]
-          : (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued');
-      for (const e of gone) removeEcho(e);
-      if (msg.sessionId !== sessionId) {
-        if (msg.text) {
-          const held = drafts.get(msg.sessionId);
-          drafts.set(msg.sessionId, { text: held?.text.trim() ? `${msg.text}\n${held.text}` : msg.text, attachments: held?.attachments || [] });
-        }
-        return;
-      }
-      if (msg.text) {
-        const draft = input.value.trim();
-        loadComposer(draft ? `${msg.text}\n${draft}` : msg.text);
-        // The pane could not be confirmed empty, so what is still in it would fuse
-        // onto the next paste; the next send clears it first.
-        if (msg.cleared === false) paneRestoreArmed = true;
-        setPasteNote('Queued prompt moved back into the box.');
-      } else if (msg.source === 'unsupported') {
-        setPasteNote('This agent cannot take a queued prompt back, so it will still run.');
-      } else {
-        setPasteNote('Already picked up by the agent.');
-      }
-      renderSuggestion();
-      renderSendability();
     },
     // The answer to an interrupt: what to put back in the composer, resolved
     // server-side from the pane (authoritative when Claude Code restored the

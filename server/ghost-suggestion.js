@@ -176,7 +176,7 @@ export function paneHasWorkingStatus(paneText) {
 // `…segment-s` / `gment-…`. There is no way to tell the two cases apart after the
 // fact, so any line that reaches the full pane width means the reconstruction is
 // unsafe and this returns null.
-export function paneComposerDraft(paneText, { lineBreaks = false } = {}) {
+export function paneComposerDraft(paneText) {
   if (typeof paneText !== 'string' || !paneText.includes(ESC)) return null;
   const lines = paneText.split('\n');
   // The composer sits between the last two horizontal rules. Locating it by the
@@ -217,26 +217,12 @@ export function paneComposerDraft(paneText, { lineBreaks = false } = {}) {
     if (text) parts.push(text);
   }
   if (!parts.length) return null;
-  // Every line was checked above to stop short of the pane width, so a break the
-  // composer shows is a real one — what a caller pulling back SEVERAL queued
-  // messages needs to keep them apart.
-  const text = parts.join(lineBreaks ? '\n' : ' ');
+  const text = parts.join(' ');
   // A collapsed paste is a placeholder, not the text — reporting it would put
   // "[Pasted text #2 +31 lines]" in the composer as if it were the prompt.
   if (/^\[Pasted text #\d+/.test(text)) return null;
   if (text.length > MAX_COMPOSER_DRAFT) return null;
   return text;
-}
-
-// Whether Claude Code's composer is showing the "Press up to edit queued
-// messages" hint — i.e. prompts are waiting in its queue and the composer itself
-// is empty, which is the only state where Up pulls the queue back rather than
-// walking the prompt history.
-export function paneHasQueuedHint(paneText) {
-  if (typeof paneText !== 'string') return false;
-  const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
-  if (!line) return false;
-  return QUEUE_HINT.test(visible(line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length)));
 }
 
 // `paneText` must come from `capture-pane -e` — WITHOUT the escape sequences

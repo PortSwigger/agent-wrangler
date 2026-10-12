@@ -132,7 +132,7 @@ function stubDom() {
   return { document, byId, listeners };
 }
 
-async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacIntel', agent = 'claude' } = {}) {
+async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacIntel' } = {}) {
   const { document, byId } = stubDom();
   globalThis.document = document;
   // Just enough markdown-it for createRenderer's constructor dance. This suite is
@@ -178,7 +178,6 @@ async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacInte
     onPickModel() {},
     onOpenFile: (p) => opened.push(p),
     cwdFor: () => cwd,
-    agentFor: () => agent,
   });
   const input = byId.get('chat-input');
   // Wire the auto-grow listener's dependency the way a browser would.
@@ -1151,121 +1150,4 @@ test('a terminal-origin prompt already shown cannot acknowledge a later identica
   view.mount('sess-1');
   reply();
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
-});
-
-test('dismissing a queued prompt asks the server to pull it back, and loads it into the box', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  input.value = 'stuck';
-  send(input);
-  const [bubble] = echoNodes(byId);
-  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  bubble.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-  const req = sent.find((m) => m.type === 'unqueue');
-  assert.equal(req.sessionId, 'sess-1');
-  assert.equal(echoNodes(byId).length, 1);
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: 'other', text: 'x', source: 'pane' });
-  assert.equal(echoNodes(byId).length, 1);
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'stuck', source: 'pane' });
-  assert.equal(echoNodes(byId).length, 0);
-  assert.equal(input.value, 'stuck');
-  view.unmount();
-  view.mount('sess-1');
-  assert.equal(echoNodes(byId).length, 0);
-});
-
-test('an agent that cannot give a queued prompt back leaves it listed, and says so', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  input.value = 'stuck';
-  send(input);
-  const [bubble] = echoNodes(byId);
-  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  bubble.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-  const req = sent.find((m) => m.type === 'unqueue');
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: null, source: 'unsupported' });
-  assert.equal(echoNodes(byId).length, 1);
-  assert.equal(input.value, '');
-  assert.match(byId.get('chat-hint').textContent, /will still run/);
-});
-
-test('a queued prompt can be dismissed more than once in a row', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  for (let round = 1; round <= 3; round += 1) {
-    input.value = 'same message';
-    send(input);
-    view.onMessageResult({ requestId: sent.filter((m) => m.type === 'message').at(-1).requestId, sessionId: 'sess-1', ok: true });
-    echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-    const requests = sent.filter((m) => m.type === 'unqueue');
-    assert.equal(requests.length, round);
-    view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: requests.at(-1).token, text: 'same message', source: 'pane' });
-    assert.equal(echoNodes(byId).length, 0);
-    input.value = '';
-  }
-});
-
-test('a dismiss reply landing after the view moved on is kept as that session\'s draft', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  input.value = 'rescue me';
-  send(input);
-  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-  const req = sent.find((m) => m.type === 'unqueue');
-  view.mount('sess-2');
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'rescue me', source: 'pane', cleared: true });
-  assert.equal(input.value, '');
-  view.mount('sess-1');
-  assert.equal(input.value, 'rescue me');
-  assert.equal(echoNodes(byId).length, 0);
-});
-
-test('an unconfirmed pane clear arms the next send to clear it', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  input.value = 'x';
-  send(input);
-  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  echoNodes(byId)[0].children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-  const req = sent.find((m) => m.type === 'unqueue');
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'x', source: 'pane', cleared: false });
-  send(input);
-  assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, true);
-});
-
-test('dismissing one of two queued prompts sends the queue and the index, and removes only that one', async () => {
-  const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
-  view.setStatus('working');
-  for (const text of ['first', 'second']) {
-    input.value = text;
-    send(input);
-    view.onMessageResult({ requestId: sent.filter((m) => m.type === 'message').at(-1).requestId, sessionId: 'sess-1', ok: true });
-  }
-  const second = echoNodes(byId).find((n) => n.children.some((c) => c.textContent === 'second' || c.data === 'second')) || echoNodes(byId)[1];
-  second.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
-  const req = sent.find((m) => m.type === 'unqueue');
-  assert.deepEqual(req.queue, ['first', 'second']);
-  assert.equal(req.index, 1);
-  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'second', source: 'pane', cleared: true, scope: 'one' });
-  assert.equal(echoNodes(byId).length, 1);
-  assert.equal(input.value, 'second');
-});
-
-test('a Codex session offers no dismiss button, since a queued prompt cannot be taken back', async () => {
-  const { view, input, sent, byId } = await mountView({ agent: 'codex' });
-  view.mount('sess-1');
-  view.setStatus('working');
-  input.value = 'queued';
-  send(input);
-  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
-  const [bubble] = echoNodes(byId);
-  assert.equal(bubble.dataset.pending, 'queued');
-  assert.equal(bubble.children.some((c) => c.className === 'chat-queue-dismiss'), false);
 });

@@ -2590,18 +2590,6 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   align-self: flex-end; max-width: 84%; margin-top: 26px;
   display: flex; flex-direction: column; align-items: flex-end; gap: 9px;
 }
-/* Only a queued prompt can be dismissed: while one is still sending, the send is
-   in flight and removing the bubble would hide it, not cancel it. */
-.chat-user[data-pending] { position: relative; }
-.chat-queue-dismiss {
-  display: none; position: absolute; top: -7px; left: -7px; width: 18px; height: 18px; padding: 0;
-  align-items: center; justify-content: center; border-radius: 50%; cursor: pointer;
-  border: 1px solid var(--border-muted); background: var(--surface-2); color: var(--fg-subtle);
-  font-size: 13px; line-height: 1;
-}
-.chat-queue-dismiss::before { content: "\00d7"; }
-.chat-queue-dismiss:hover { color: var(--fg); border-color: var(--border); }
-.chat-user[data-pending="queued"] .chat-queue-dismiss { display: inline-flex; }
 .chat-queue-head { font-size: 0.75em; color: var(--fg-subtle); }
 .chat-queue > .chat-user { margin-top: 0; max-width: 100%; }
 

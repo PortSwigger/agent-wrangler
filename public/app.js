@@ -6457,7 +6457,6 @@ function connect() {
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
     else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
-    else if (msg.type === 'unqueue-result') chatView.onUnqueueResult(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
@@ -6636,7 +6635,6 @@ const chatView = initChatView({
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
   cwdFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.cwd || null,
-  agentFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.agent || null,
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();

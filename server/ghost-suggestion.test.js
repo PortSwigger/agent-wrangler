@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import { parseGhostSuggestion, paneComposerIsEmpty, paneHasQueuedHint, paneComposerDraft } from './ghost-suggestion.js';
+import { parseGhostSuggestion, paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const E = '\x1b';
 // Reproduced from a real `capture-pane -e` of a live Claude Code session that was
@@ -203,17 +203,4 @@ test('an unreadable capture is never reported as empty', () => {
   assert.equal(paneComposerIsEmpty(''), false);
   assert.equal(paneComposerIsEmpty(null), false);
   assert.equal(paneComposerIsEmpty(`${E}[39msome output with no composer`), false);
-});
-
-test('paneHasQueuedHint sees the hint only as the composer line', () => {
-  assert.equal(paneHasQueuedHint([FRAME, composer(`${E}[2mPress up to edit queued messages${E}[0m`), FRAME].join('\n')), true);
-  assert.equal(paneHasQueuedHint([FRAME, composer(''), FRAME].join('\n')), false);
-  assert.equal(paneHasQueuedHint([FRAME, composer('something typed'), FRAME].join('\n')), false);
-});
-
-test('paneComposerDraft keeps real line breaks when asked', () => {
-  const rule = '─'.repeat(60);
-  const pane = [rule, `${E}[39m❯ queued one`, '  queued two', rule].join('\n');
-  assert.equal(paneComposerDraft(pane), 'queued one queued two');
-  assert.equal(paneComposerDraft(pane, { lineBreaks: true }), 'queued one\nqueued two');
 });
