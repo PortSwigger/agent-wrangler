@@ -54,6 +54,11 @@ const MAX_SUGGESTION = 300;
 // return a screenful of misparsed conversation.
 const MAX_COMPOSER_DRAFT = 4000;
 
+// While prompts are queued, Claude Code fills its empty composer with faint
+// instruction text, drawn exactly like a suggestion. It is a hint about the TUI,
+// not a prompt, and loading it into the composer would send those words.
+const QUEUE_HINT = /^press\s+\S+\s+to\s+edit\s+queued\s+messages?$/i;
+
 const visible = (s) => s.replace(ANSI, '').trim();
 
 // CSI, then OSC (a hyperlink, say) up to its BEL or ST terminator, then any
@@ -248,7 +253,7 @@ export function parseGhostSuggestion(paneText) {
   if (close === -1) return null;
 
   const text = visible(rest.slice(0, close));
-  if (!text || text.length > MAX_SUGGESTION) return null;
+  if (!text || text.length > MAX_SUGGESTION || QUEUE_HINT.test(text)) return null;
   // Trailing visible text after the faint run is a shape this parser does not
   // model — bail rather than assume the leading part was the whole suggestion.
   if (visible(rest.slice(close))) return null;
