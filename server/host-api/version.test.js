@@ -41,6 +41,7 @@ test('the served version is 1.29.0, and every 1.x manifest range it can honour p
   assert.equal(HOST_API_VERSION, '1.29.0');
   assert.equal(servesRange('^1.29.0'), true);
   assert.equal(servesRange('^1.28.0'), true);
+  assert.equal(servesRange('^1.28.0'), true);
   assert.equal(servesRange('^1.27.0'), true);
   assert.equal(servesRange('^1.26.0'), true);
   assert.equal(servesRange('^1.25.0'), true);
