@@ -913,6 +913,24 @@ test('next stays enabled just short of the bottom, where a jump can still move',
   assert.equal(byId.get('chat-jump-next').disabled, false);
 });
 
+test('next from the last user message scrolls to the bottom', async () => {
+  const { view, byId } = await mountView();
+  view.mount('s1');
+  const streamEl = byId.get('chat-stream');
+  streamEl._rect = { top: 0, bottom: 400 };
+  userReply(view, 1, 'one');
+  const [one] = streamEl.children.filter((c) => c.className === 'chat-user');
+  one._rect = { top: 0, bottom: 40 };
+  streamEl.scrollHeight = 1000;
+  streamEl.scrollTop = 100;
+  streamEl.clientHeight = 400;
+  streamEl.dispatchEvent({ type: 'scroll' });
+  assert.equal(byId.get('chat-jump-next').disabled, false);
+  byId.get('chat-jump-next').dispatchEvent({ type: 'click' });
+  assert.equal(streamEl.scrollTop, 1000);
+  assert.equal(one._scrolledIntoViewWith, undefined);
+});
+
 test('the jump highlight only ever clears the bubble it was actually pulsing', async () => {
   const { view, byId, runTimers } = await mountView();
   view.mount('s1');

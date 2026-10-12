@@ -217,8 +217,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     }
     // Scrolling is clamped at the bottom, so stepping "down" there would
     // leave the view where it is and the button would look dead.
-    if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 1) next = null;
-    return { prev, next };
+    if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 1) return { prev, next: null };
+    // Past the last user message, down means the end of the conversation.
+    return { prev, next: next || 'bottom' };
   }
 
   function updateJumpVisibility() {
@@ -231,6 +232,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   function jumpTo(target) {
     if (!target) return;
+    if (target === 'bottom') {
+      if (typeof stream.scrollTo === 'function') stream.scrollTo({ top: stream.scrollHeight, behavior: 'smooth' });
+      else stream.scrollTop = stream.scrollHeight;
+      updateJumpVisibility();
+      return;
+    }
     target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     target.classList?.remove('chat-jump-target');
     void target.offsetWidth; // restart the animation if pressed again mid-pulse
