@@ -27,6 +27,10 @@ test('a runtime is bound per call to its own façade, and deactivate unregisters
   assert.match(SRC, /function deactivateExtension\(id\) \{[\s\S]*?unregisterRuntimesFor\(id\);[\s\S]*?\n\}/, 'a live disable takes the runtime away');
 });
 
+test('a runtime cost hook is bound like analyze: no opinion while inactive', () => {
+  assert.match(SRC, /cost: bind\(rt\.cost, \(\) => null\)/);
+});
+
 test('every sweep an activation starts is held, and deactivate clears them', () => {
   assert.match(SRC, /const sweepHandles = new Map\(\)/);
   assert.match(SRC, /for \(const t of sweepHandles\.get\(id\) \|\| \[\]\) clearInterval\(t\)/, 'a disabled extension must stop ticking against a façade it no longer has');

@@ -1264,7 +1264,7 @@ export class SessionManager {
       codexPolicy,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
-      inner, cwd: dir, sessionId, worktree: parentEntry?.worktree, launchContext,
+      inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext,
     });
     const launchedAt = Date.now();
     await this._newSession(tmux, dir, launchCmd, this.socket);

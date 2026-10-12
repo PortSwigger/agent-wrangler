@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, resolveRuntimeForGraph } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, applyRuntimeCost, resolveRuntimeForGraph } from './state-reader.js';
 import { SessionManager } from './session-manager.js';
 import { workerStatusWord } from '../public/cards.js';
 import { SESSIONS_DIR as HOOK_SESSIONS_DIR } from './claude-paths.js';
@@ -975,4 +975,42 @@ test('buildGraph bounds a dormant fork\'s enrichment at its createdAt, and leave
   await buildGraph(mgr, async (sid, opts) => { seen.set(sid, opts); return {}; });
   assert.deepEqual(seen.get('fork-live'), { since: 4242 }, 'a fork must not be billed for the parent history replayed into its transcript');
   assert.deepEqual(seen.get('plain-live'), { since: 0 });
+});
+
+// ── runtime `cost` hook: replaces only usd ──
+const TRANSCRIPT = () => ({ usd: 9.99, tokens: { input: 5, output: 6, cacheWrite: 0, cacheRead: 0 }, subAgents: [{ id: 'a' }] });
+
+test('applyRuntimeCost: a valid usd overrides; null, throw, NaN, negative and off-shape keep the transcript figure', async () => {
+  const run = (cost) => applyRuntimeCost({ cost }, { entry: {}, liveSid: 'L' }, TRANSCRIPT());
+  const ok = await run(async () => ({ usd: 1.23 }));
+  assert.equal(ok.usd, 1.23);
+  assert.deepEqual(ok.tokens, TRANSCRIPT().tokens);
+  assert.deepEqual(ok.subAgents, TRANSCRIPT().subAgents);
+  assert.equal((await run(async () => ({ usd: 0 }))).usd, 0);
+  for (const bad of [async () => null, async () => { throw new Error('x'); }, async () => ({ usd: NaN }), async () => ({ usd: -1 }), async () => ({ usd: '2' }), async () => ({ usd: Infinity })]) {
+    assert.equal((await run(bad)).usd, 9.99);
+  }
+  assert.deepEqual(await applyRuntimeCost({}, {}, TRANSCRIPT()), TRANSCRIPT(), 'no hook: unchanged');
+  assert.deepEqual(await applyRuntimeCost({ cost: async () => ({ usd: 2 }) }, {}, null), { usd: 2 }, 'no enrichment still gets a usd');
+});
+
+test('buildGraph: a runtime cost hook overrides usd on a dormant card and keeps transcript tokens', async () => {
+  const seen = [];
+  const runtimeResolver = (id) => (id === 'gw' ? { cost: async (args) => { seen.push(args); return { usd: 1.23 }; } } : {});
+  const mgr = makeDormantManager([{ sessionId: 'gw-sid', agent: 'claude', runtime: 'gw', cwd: '/nonexistent/c', intent: 'x', liveSessionId: 'L1' }]);
+  const graph = await buildGraph(mgr, async () => TRANSCRIPT(), { runtimeResolver });
+  const node = graph.sessions.find((s) => s.sessionId === 'gw-sid');
+  assert.equal(node.usd, 1.23);
+  assert.equal(seen[0].liveSid, 'L1');
+  assert.equal(seen[0].entry.sessionId, 'gw-sid');
+});
+
+test('buildGraph: a runtime cost hook overrides usd on a live card', async () => {
+  const entry = { sessionId: 'gw-live', agent: 'claude', runtime: 'gw', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_gwlive');
+  const discover = async () => [{ tmuxName: 'cc_gwlive', socket: '', claudePid: 9998, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => TRANSCRIPT(), cost: async () => ({ usd: 1.23 }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture: async () => '' });
+  const node = graph.sessions.find((s) => s.sessionId === 'gw-live');
+  assert.equal(node.usd, 1.23);
 });
