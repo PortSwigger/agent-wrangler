@@ -233,8 +233,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   function jumpTo(target) {
     if (!target) return;
     if (target === 'bottom') {
-      if (typeof stream.scrollTo === 'function') stream.scrollTo({ top: stream.scrollHeight, behavior: 'smooth' });
-      else stream.scrollTop = stream.scrollHeight;
+      // Instant, not smooth: a poll landing mid-animation would see us not
+      // yet at the bottom and stop auto-following, stranding the view short.
+      stream.scrollTop = stream.scrollHeight;
       updateJumpVisibility();
       return;
     }
