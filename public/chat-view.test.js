@@ -901,12 +901,12 @@ test('next stays enabled just short of the bottom, where a jump can still move',
   view.mount('s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
-  streamEl.scrollHeight = 1000;
-  streamEl.scrollTop = 565;
-  streamEl.clientHeight = 400;
   userReply(view, 1, 'one');
   userReply(view, 2, 'two');
   const [one, two] = streamEl.children.filter((c) => c.className === 'chat-user');
+  streamEl.scrollHeight = 1000;
+  streamEl.scrollTop = 565;
+  streamEl.clientHeight = 400;
   one._rect = { top: -300, bottom: -260 };
   two._rect = { top: 50, bottom: 90 };
   streamEl.dispatchEvent({ type: 'scroll' });
