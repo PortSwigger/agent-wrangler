@@ -116,3 +116,8 @@ The complete list is under **Settings → Shortcuts**. Common shortcuts are:
 | `Control+Command+A` | Label cards for keyboard jump |
 | `Control+Command+,` | Open Settings |
 | `/` | Open Search and focus its input |
+| `Command+Enter` (dispatch dialog) | Launch the session |
+| `Command+1`–`3` (dispatch dialog) | Quick-launch with the first, second or third model |
+
+Shortcuts added by enabled extensions are listed under each extension's name in
+**Settings → Shortcuts**.
