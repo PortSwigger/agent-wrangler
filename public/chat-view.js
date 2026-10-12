@@ -217,7 +217,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     }
     // Scrolling is clamped at the bottom, so stepping "down" there would
     // leave the view where it is and the button would look dead.
-    if (atBottom()) next = null;
+    if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 1) next = null;
     return { prev, next };
   }
 
