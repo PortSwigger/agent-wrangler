@@ -1254,3 +1254,22 @@ test('an unconfirmed pane clear arms the next send to clear it', async () => {
   send(input);
   assert.equal(sent.filter((m) => m.type === 'message').at(-1).clearComposer, true);
 });
+
+test('dismissing one of two queued prompts sends the queue and the index, and removes only that one', async () => {
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('working');
+  for (const text of ['first', 'second']) {
+    input.value = text;
+    send(input);
+    view.onMessageResult({ requestId: sent.filter((m) => m.type === 'message').at(-1).requestId, sessionId: 'sess-1', ok: true });
+  }
+  const second = echoNodes(byId).find((n) => n.children.some((c) => c.textContent === 'second' || c.data === 'second')) || echoNodes(byId)[1];
+  second.children.find((c) => c.className === 'chat-queue-dismiss').dispatchEvent({ type: 'click' });
+  const req = sent.find((m) => m.type === 'unqueue');
+  assert.deepEqual(req.queue, ['first', 'second']);
+  assert.equal(req.index, 1);
+  view.onUnqueueResult({ type: 'unqueue-result', sessionId: 'sess-1', token: req.token, text: 'second', source: 'pane', cleared: true, scope: 'one' });
+  assert.equal(echoNodes(byId).length, 1);
+  assert.equal(input.value, 'second');
+});

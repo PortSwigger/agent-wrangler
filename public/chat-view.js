@@ -275,7 +275,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // the pane's queue has already been emptied, so it is honoured even after the
   // view has moved on or the busy window below has lapsed — dropping it would lose
   // the prompt. `unqueueBusy` only stops a second click while one is in flight.
-  const unqueueTokens = new Map();
+  const unqueueTokens = new Map(); // token -> { sessionId, echo }
   const unqueueBusy = new Set();
   let unqueueSeq = 0;
   let restoreSeq = 0;
@@ -353,7 +353,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         dismiss.className = 'chat-queue-dismiss';
         dismiss.setAttribute('aria-label', 'Dismiss queued prompt');
         dismiss.setAttribute('title', 'Dismiss');
-        dismiss.addEventListener('click', requestUnqueue);
+        dismiss.addEventListener('click', () => requestUnqueue(e));
         e.node.appendChild(dismiss);
       }
     }
@@ -373,15 +373,20 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // Dismissing a queued prompt has to take it out of the AGENT's queue too, or it
   // still runs. The server pulls the queue back off the pane; the reply is what
   // clears the bubbles, so a failed pull leaves them standing.
-  function requestUnqueue() {
+  function requestUnqueue(echo) {
     if (!sessionId || unqueueBusy.has(sessionId)) return;
     const id = sessionId;
     const token = `${requestEra}#${++unqueueSeq}`;
-    if (!send({ type: 'unqueue', sessionId: id, token })) {
+    // Which one was clicked is only worth saying when the server can act on it:
+    // the others have to be re-queued as plain text, so an attachment rules it out.
+    const queued = echoList().filter((e) => e.state === 'queued');
+    const scoped = queued.length > 1 && queued.every((e) => !e.images.length);
+    const which = scoped ? { queue: queued.map((e) => e.text), index: queued.indexOf(echo) } : {};
+    if (!send({ type: 'unqueue', sessionId: id, token, ...which })) {
       setPasteNote('Not dismissed: connection unavailable.');
       return;
     }
-    unqueueTokens.set(id, new Set([...(unqueueTokens.get(id) || []), token]));
+    unqueueTokens.set(token, { sessionId: id, echo });
     unqueueBusy.add(id);
     // A reply that never comes (a dropped socket, a server that predates the
     // request) must not leave every later dismiss ignored.
@@ -1002,12 +1007,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       }
     },
     onUnqueueResult(msg) {
-      const tokens = unqueueTokens.get(msg.sessionId);
-      if (!tokens?.has(msg.token)) return;
-      tokens.delete(msg.token);
-      if (!tokens.size) unqueueTokens.delete(msg.sessionId);
+      const request = unqueueTokens.get(msg.token);
+      if (!request || request.sessionId !== msg.sessionId) return;
+      unqueueTokens.delete(msg.token);
       unqueueBusy.delete(msg.sessionId);
-      for (const e of (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued')) removeEcho(e);
+      // The server re-queues the others when it can; otherwise everything came back.
+      const gone = msg.scope === 'one' ? [request.echo] : (echoStore.get(msg.sessionId) || []).filter((x) => x.state === 'queued');
+      for (const e of gone) removeEcho(e);
       if (msg.sessionId !== sessionId) {
         if (msg.text) {
           const held = drafts.get(msg.sessionId);

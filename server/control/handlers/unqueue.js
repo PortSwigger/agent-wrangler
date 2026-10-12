@@ -1,4 +1,4 @@
-import { sendKeys as realSendKeys, capturePaneStyled as realCapture, clearComposer as realClearComposer } from '../../tmux-scraper.js';
+import { sendKeys as realSendKeys, capturePaneStyled as realCapture, clearComposer as realClearComposer, sendText as realSendText } from '../../tmux-scraper.js';
 import { paneComposerDraft, paneHasQueuedHint } from '../../ghost-suggestion.js';
 
 export const UNQUEUE_SETTLE_MS = 700;
@@ -15,6 +15,13 @@ export const UNQUEUE_POLL_MS = 100;
 // never sent unless the hint is seen first. Codex's Up only cycles its history
 // (the queue is left intact), so there is nothing to pull back there.
 //
+// Up always empties the WHOLE queue, so dismissing one prompt of several is done by
+// pulling them all back, then re-queueing the others in order. The client says
+// what it believes is queued (`queue`) and which one is being dismissed (`index`);
+// that is only trusted when the text pulled back is exactly that queue — anything
+// else in it (a prompt typed in the terminal, an attachment) means the client's
+// picture is wrong, so everything is handed back instead (`scope: 'all'`).
+//
 // `source` says what happened: 'pane' (text pulled back, the pane composer is
 // cleared again), 'drained' (nothing queued any more — the agent already took it),
 // or 'unsupported' (this agent cannot give a queued prompt back).
@@ -24,6 +31,7 @@ export const unqueueHandler = {
     const sendKeys = ctx.sendKeys || realSendKeys;
     const capturePaneStyled = ctx.capturePaneStyled || realCapture;
     const clearComposer = ctx.clearComposer || realClearComposer;
+    const sendText = ctx.sendText || realSendText;
     const settleMs = Number.isFinite(ctx.unqueueSettleMs) ? ctx.unqueueSettleMs : UNQUEUE_SETTLE_MS;
     const pollMs = Number.isFinite(ctx.unqueuePollMs) ? ctx.unqueuePollMs : UNQUEUE_POLL_MS;
     const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -46,7 +54,15 @@ export const unqueueHandler = {
     if (!text) { reply(null, 'drained'); return; }
     // The text is the chat view's now; leaving it in the pane would fuse it onto
     // whatever is pasted next.
+    const queue = Array.isArray(msg.queue) && msg.queue.every((t) => typeof t === 'string') ? msg.queue : null;
+    const index = Number.isInteger(msg.index) ? msg.index : -1;
+    const one = queue && index >= 0 && index < queue.length && queue.length > 1 && text === queue.join('\n');
     const cleared = await clearComposer(target, socket);
-    reply(text, 'pane', { cleared: cleared === true });
+    if (!one) { reply(text, 'pane', { cleared: cleared === true, scope: 'all' }); return; }
+    // Not re-queued onto a composer that could not be emptied: the pasted text would
+    // fuse with what is left in it.
+    if (cleared !== true) { reply(text, 'pane', { cleared: false, scope: 'all' }); return; }
+    for (const [i, t] of queue.entries()) if (i !== index) await sendText(target, t, socket);
+    reply(queue[index], 'pane', { cleared: true, scope: 'one' });
   },
 };

@@ -19,6 +19,7 @@ function ctx({ agent = 'claude', panes = [HINT, PULLED], tmux = 'cc_abc' } = {})
     tmuxFor: () => tmux,
     socketFor: () => 'sock',
     sendKeys: (name, keys) => { calls.push(['keys', ...keys]); },
+    sendText: async (name, text) => { calls.push(['queue', text]); },
     capturePaneStyled: async () => panes[Math.min(n++, panes.length - 1)],
     clearComposer: async () => { calls.push(['clear']); return true; },
     reply: (o) => replies.push(o),
@@ -30,7 +31,7 @@ test('pulls every queued prompt back with Up, clears the pane, and returns them 
   const c = ctx();
   await unqueueHandler.handler({ sessionId: 's', token: 't' }, c);
   assert.deepEqual(c.calls, [['keys', 'Up'], ['clear']]);
-  assert.deepEqual(c.replies, [{ type: 'unqueue-result', sessionId: 's', token: 't', text: 'queued one\nqueued two', source: 'pane', cleared: true }]);
+  assert.deepEqual(c.replies, [{ type: 'unqueue-result', sessionId: 's', token: 't', text: 'queued one\nqueued two', source: 'pane', cleared: true, scope: 'all' }]);
 });
 
 test('never sends Up without the queued hint — it would walk the prompt history', async () => {
@@ -52,4 +53,19 @@ test('a dormant session has nothing queued', async () => {
   const c = ctx({ tmux: null });
   await unqueueHandler.handler({ sessionId: 's', token: 't' }, c);
   assert.equal(c.replies[0].source, 'drained');
+});
+
+test('dismissing one of several re-queues the others in order and returns only that one', async () => {
+  const c = ctx({ panes: [HINT, pane(`${ESC}[39m❯ a`, '  b', '  c')] });
+  await unqueueHandler.handler({ sessionId: 's', token: 't', queue: ['a', 'b', 'c'], index: 1 }, c);
+  assert.deepEqual(c.calls, [['keys', 'Up'], ['clear'], ['queue', 'a'], ['queue', 'c']]);
+  assert.deepEqual(c.replies, [{ type: 'unqueue-result', sessionId: 's', token: 't', text: 'b', source: 'pane', cleared: true, scope: 'one' }]);
+});
+
+test('a pulled-back queue that is not what the client expected is handed back whole', async () => {
+  const c = ctx({ panes: [HINT, pane(`${ESC}[39m❯ a`, '  typed in the terminal')] });
+  await unqueueHandler.handler({ sessionId: 's', token: 't', queue: ['a', 'b'], index: 1 }, c);
+  assert.deepEqual(c.calls, [['keys', 'Up'], ['clear']]);
+  assert.equal(c.replies[0].scope, 'all');
+  assert.equal(c.replies[0].text, 'a\ntyped in the terminal');
 });
