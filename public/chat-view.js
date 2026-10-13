@@ -279,15 +279,39 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // reader was actually trying to recover.
   //
   // Held per card id rather than simply cleared, so switching away does not throw
-  // away work in progress. In memory only, and deliberately not localStorage: an
-  // unsent prompt is a thing of the moment, and surviving a reload would put words
-  // in the composer the reader has long forgotten writing.
+  // away work in progress. Mirrored to localStorage so a reload (e.g. the UI
+  // restarting for an update) does not lose a long message either.
   //
   // Attachments travel WITH the text, because a pasted image's filename is only
   // meaningful inside the session whose pastes folder holds it — restoring the
   // prose without them would silently drop the images it refers to, and carrying
   // them to a DIFFERENT session is the leak this whole store exists to stop.
-  const drafts = new Map();
+  const DRAFTS_KEY = 'aw.chatDrafts';
+  const DRAFTS_MAX = 50;
+  function readStoredDrafts() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((e) => Array.isArray(e) && typeof e[0] === 'string' && typeof e[1]?.text === 'string' && Array.isArray(e[1].attachments)) : [];
+    } catch { return []; }
+  }
+  class PersistedDrafts extends Map {
+    set(k, v) {
+      super.set(k, v);
+      this.persist();
+      return this;
+    }
+    delete(k) {
+      const had = super.delete(k);
+      if (had) this.persist();
+      return had;
+    }
+    persist() {
+      while (this.size > DRAFTS_MAX) super.delete(this.keys().next().value);
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...this])); } catch { /* storage unavailable */ }
+    }
+  }
+  const drafts = new PersistedDrafts();
+  for (const [k, v] of readStoredDrafts()) Map.prototype.set.call(drafts, k, v);
 
   // Set when THIS view interrupted a turn: the interrupt is what may leave a
   // restored prompt in the PANE's composer, so the next send must clear it. Armed
@@ -690,7 +714,13 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       interruptAndRestore();
     }
   });
-  input.addEventListener('input', () => {
+  let draftTimer = null;
+  input.addEventListener('input', (e) => {
+    if (e.isTrusted && sessionId) {
+      clearTimeout(draftTimer);
+      const id = sessionId;
+      draftTimer = setTimeout(() => { if (sessionId === id) saveDraft(id); }, 400);
+    }
     input.style.height = 'auto';
     // An unrendered element (display:none somewhere above — the sidebar hidden by
     // the diff view's fullscreen, the pane hidden on unmount) reports scrollHeight
