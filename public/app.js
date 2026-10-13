@@ -997,20 +997,14 @@ let dragActive = false;
 let draggedCard = null;
 let placeholderEl = null;
 
-// Task reorder drag-and-drop: tiles are column-packed in a 2-D grid, so dropping
-// one tile onto another SWAPS them (a linear insert would drag a tile across
-// columns and unbalance them). While dragging, `taskSwapTargetId` is the tile
-// under the cursor; the grid re-renders to preview the swap — the dragged tile
-// becomes a dashed placeholder in the target's slot and the target moves to the
-// dragged tile's origin. `taskDragActive` guards background re-renders, like
-// `dragActive` does for sessions.
 let taskDragActive = false;
 let draggedTaskId = null;
-let taskSwapTargetId = null;
-// The canonical (pre-swap) tile geometry, snapshotted once at drag-start — see
+let taskDropTargetId = null;
+// The canonical tile geometry, snapshotted once at drag-start — see
 // taskTargetAt for why hit-testing needs a fixed reference instead of the live,
 // preview-swapped DOM.
 let taskCellRects = null;
+let taskDropAfter = false;
 
 // One reusable placeholder, moved (never duplicated) during a reorder drag.
 function ensurePlaceholder() {
@@ -1509,23 +1503,17 @@ function renderGrid() {
   // nominal size and the correction must not be adopted (see refinePerRow).
   const { perRow, canonical } = refinePerRow(sessionsPerRow(el), buildTiles, el.clientHeight);
   let { placed, cols, rows, scroll } = canonical;
-  // Mid-drag preview: swap the dragged tile and the hovered target WITHOUT
-  // re-running computeLayout on the whole board — see localSwapPlacement for
-  // why a full repack can strand the preview in a column neither tile was ever
-  // in. Only the tile(s) in the two affected columns move; everything else
-  // keeps its canonical position untouched. (The COMMIT still does a plain
-  // order-swap, not this — see commitTaskSwap for why that mismatch is a known,
-  // separate limitation rather than something fixed here.)
-  if (taskDragActive && draggedTaskId && taskSwapTargetId && taskSwapTargetId !== draggedTaskId) {
-    const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskSwapTargetId);
-    if (swapped) {
-      placed = swapped.placed;
-      rows = swapped.rows;
-      scroll = swapped.scroll;
-      if (cols === 1) {
-        const height = taskCellRects?.find((cell) => cell.id === draggedTaskId)?.rect.height;
-        placed = placed.map((tile) => tile.kind === 'placeholder' ? { ...tile, placeholderHeight: height } : tile);
-      }
+  if (taskDragActive && draggedTaskId && taskDropTargetId && taskDropTargetId !== draggedTaskId) {
+    if (cols === 1) {
+      const height = taskCellRects?.find((cell) => cell.id === draggedTaskId)?.rect.height;
+      placed = canonical.placed.map((tile) => {
+        if (tile.id === draggedTaskId) return { ...tile, kind: 'placeholder', placeholderHeight: height };
+        if (tile.id === taskDropTargetId) return { ...tile, moveTarget: true, moveAfter: taskDropAfter };
+        return tile;
+      });
+    } else {
+      const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskDropTargetId);
+      if (swapped) { placed = swapped.placed; rows = swapped.rows; scroll = swapped.scroll; }
     }
   }
 
@@ -2458,25 +2446,22 @@ function wireGridDnd(el) {
       if (!taskDragActive) return;
       e.preventDefault();
       const t = taskTargetAt(e.clientX, e.clientY);
+      const rect = taskCellRects?.find((cell) => cell.id === t)?.rect;
+      const after = el.classList.contains('single-column') && rect
+        ? e.clientY + el.scrollTop >= (rect.top + rect.bottom) / 2 : false;
       // Over a gap/placeholder → keep the current target so the preview is steady.
       if (t === draggedTaskId) {
-        // Back over the tile's OWN origin (its slot in the snapshot taken at
-        // drag-start) → clear the preview so a drop here is a genuine no-op.
-        // Without this, hovering back over your own start left the LAST real
-        // target sticky: commitTaskSwap swaps with whatever you hovered over
-        // last, not with "nowhere," so dropping back "where it was" silently
-        // performed the earlier swap anyway — there was no way to cancel a
-        // preview short of aborting the whole drag (Escape / drop off-board).
-        if (taskSwapTargetId !== null) { taskSwapTargetId = null; renderGrid(); }
-      } else if (t && t !== taskSwapTargetId) {
-        taskSwapTargetId = t;
+        if (taskDropTargetId !== null) { taskDropTargetId = null; renderGrid(); }
+      } else if (t && (t !== taskDropTargetId || after !== taskDropAfter)) {
+        taskDropTargetId = t;
+        taskDropAfter = after;
         renderGrid();
       }
     });
     el.addEventListener('drop', (e) => {
       if (!taskDragActive) return;
       e.preventDefault();
-      commitTaskSwap();
+      commitTaskReorder();
     });
   }
 
@@ -2538,13 +2523,14 @@ function wireGridDnd(el) {
       e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'task', taskId: id }));
       draggedTaskId = id;
       taskDragActive = true;
-      taskSwapTargetId = null; // no swap previewed until the cursor reaches a tile
+      taskDropTargetId = null;
+      taskDropAfter = false;
       taskCellRects = snapshotTaskCellRects(); // see taskTargetAt
     });
     head.addEventListener('dragend', () => {
       taskDragActive = false;
       draggedTaskId = null;
-      taskSwapTargetId = null;
+      taskDropTargetId = null;
       taskCellRects = null;
       // Rebuild from canonical order (a committed drop updated it optimistically).
       if (currentView === 'grid') renderGrid();
@@ -2654,29 +2640,21 @@ function taskTargetAt(x, y) {
   return taskAtPoint(rects, x, y, document.getElementById('grid'));
 }
 
-// Swap the dragged tile with the hovered target in the order. Optimistic —
-// server confirms on the next graph push.
-//
-// Deliberately NOT sending the full localSwapPlacement-derived order here: a
-// mixed-span, cross-column swap's local restack can leave one column past the
-// board's total/cols "fair share" target, and computeLayout's fresh recompute
-// on ANY resulting order (this plain swap or a column-serialized one — tried
-// both) then reshuffles tiles that were never part of the drag to force
-// everything back near-equal — so the committed layout can differ from the
-// live preview regardless of which order we send. Fixing that needs the
-// server to persist an explicit 2-D position, not infer one from a 1-D order;
-// out of scope here. This plain swap is the smallest correct thing: it's
-// exactly what full order-serialization reduces to for same-span and
-// same-column swaps (the cases that DO commit consistently today).
-function commitTaskSwap() {
-  if (!draggedTaskId || !taskSwapTargetId || taskSwapTargetId === draggedTaskId) return;
+function commitTaskReorder() {
+  if (!draggedTaskId || !taskDropTargetId || taskDropTargetId === draggedTaskId) return;
   const order = currentOrder();
   const i = order.indexOf(draggedTaskId);
-  const j = order.indexOf(taskSwapTargetId);
+  const j = order.indexOf(taskDropTargetId);
   if (i < 0 || j < 0) return;
-  [order[i], order[j]] = [order[j], order[i]];
+  const move = document.getElementById('grid').classList.contains('single-column');
+  if (move) {
+    order.splice(i, 1);
+    const target = order.indexOf(taskDropTargetId);
+    order.splice(target + (taskDropAfter ? 1 : 0), 0, draggedTaskId);
+  } else [order[i], order[j]] = [order[j], order[i]];
   latestTasks.order = order;
-  send({ type: 'task-reorder', taskId: draggedTaskId, targetId: taskSwapTargetId });
+  send({ type: 'task-reorder', taskId: draggedTaskId, targetId: taskDropTargetId,
+    ...(move ? { mode: 'move', after: taskDropAfter } : {}) });
 }
 
 // Swap a task's name span for an inline input. Enter/blur commits, Escape cancels.

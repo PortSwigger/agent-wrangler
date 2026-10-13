@@ -1094,6 +1094,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   border: 1px dotted var(--border); border-radius: 10px;
   background: var(--tile-bg); overflow: hidden;
 }
+.task-move-target { position: relative; border-style: solid; border-color: var(--blue); }
+.task-move-target::after { content: ''; position: absolute; left: 0; right: 0; height: 3px; background: var(--blue); pointer-events: none; }
+.task-move-before::after { top: 0; }
+.task-move-after::after { bottom: 0; }
 .task-cell.drop-target { border-color: var(--blue); border-style: solid; background: color-mix(in srgb, var(--blue) 6%, transparent); }
 /* One-shot halo when a restored task lands back on the board (flashRestoredTask
    in app.js) — a ring/glow rather than a background swap, since --tile-bg

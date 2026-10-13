@@ -303,32 +303,51 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     }
 
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
-    const drag = await evaluateChecked(`(() => {
-      const grid = document.getElementById('grid');
-      grid.scrollTop = 0;
-      const cells = [...grid.querySelectorAll('.task-cell')];
-      const extra = document.createElement('div');
-      extra.style.height = '700px';
-      cells[0].querySelector('.task-body').append(extra);
-      const sourceHeight = cells[0].getBoundingClientRect().height;
-      const header = cells[0].querySelector('.task-head');
-      const transfer = new DataTransfer();
-      header.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
-      grid.scrollTop = cells[2].getBoundingClientRect().top - grid.getBoundingClientRect().top + grid.scrollTop;
-      const scroll = grid.scrollTop;
-      const target = cells[2].getBoundingClientRect();
-      grid.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true,
-        dataTransfer: transfer, clientX: target.left + 20, clientY: target.top + 10 }));
-      const placeholder = grid.querySelector('.task-placeholder');
-      const result = { sourceHeight, scroll, scrollAfter: grid.scrollTop,
-        placeholderHeight: placeholder?.getBoundingClientRect().height,
-        placeholderRow: placeholder?.style.gridRow };
-      header.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
-      return result;
-    })()`);
-    assert.ok(drag.scroll > 0 && Math.abs(drag.placeholderHeight - drag.sourceHeight) < 1
-      && drag.scrollAfter === drag.scroll && drag.placeholderRow.startsWith('3 /'),
-    `scrolling a task drag must preserve its height and target the third task: ${JSON.stringify(drag)}`);
+    const dragTask = async (sourceId, targetId, after) => {
+      const result = await evaluateChecked(`(() => {
+        const style = document.createElement('style');
+        style.textContent = '.task-cell[data-taskid="layout-2"] .task-body { min-height: 1200px; }';
+        document.head.append(style);
+        const grid = document.getElementById('grid');
+        const source = grid.querySelector('[data-taskid="${sourceId}"]');
+        const targetCell = grid.querySelector('[data-taskid="${targetId}"]');
+        const sourceHeight = source.getBoundingClientRect().height;
+        const header = source.querySelector('.task-head');
+        const transfer = new DataTransfer();
+        header.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+        grid.scrollTop += targetCell.getBoundingClientRect().top - grid.getBoundingClientRect().top - 14;
+        const scroll = grid.scrollTop;
+        const target = targetCell.getBoundingClientRect();
+        const y = ${after} ? target.bottom - 10 : target.top + 10;
+        grid.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true,
+          dataTransfer: transfer, clientX: target.left + 20, clientY: y }));
+        const placeholder = grid.querySelector('.task-placeholder');
+        const marker = grid.querySelector('.task-move-${after ? 'after' : 'before'}');
+        const preview = { sourceHeight, scroll, scrollAfter: grid.scrollTop,
+          placeholderHeight: placeholder?.getBoundingClientRect().height,
+          targetId: marker?.dataset.taskid, targetTop: target.top,
+          markerTop: marker?.getBoundingClientRect().top, pointerY: y, viewportHeight: innerHeight };
+        grid.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+        header.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
+        style.remove();
+        return preview;
+      })()`);
+      assert.ok(Math.abs(result.placeholderHeight - result.sourceHeight) < 1
+        && result.scrollAfter === result.scroll && result.targetId === targetId
+        && Math.abs(result.markerTop - result.targetTop) < 1
+        && result.pointerY > 0 && result.pointerY < result.viewportHeight,
+      `move preview must stay on its target without shifting the stack: ${JSON.stringify(result)}`);
+    };
+    await dragTask('layout-0', 'layout-2', false);
+    const firstOrder = ['layout-1', 'layout-0', 'layout-2', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
+    assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(firstOrder)), 'moving before must persist the shifted order');
+    await ack('Page.reload');
+    const renderedOrder = `JSON.stringify([...document.querySelectorAll('#grid .task-cell')].map((cell) => cell.dataset.taskid || 'adhoc'))`;
+    assert.ok(await waitFor(() => evaluate(renderedOrder).then((order) => order === JSON.stringify(firstOrder))), 'the moved order must survive reload');
+    await dragTask('layout-2', 'layout-1', true);
+    const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
+    assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');
+
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {
