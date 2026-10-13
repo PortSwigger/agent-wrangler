@@ -253,7 +253,14 @@ import semver from 'semver';
 // `parentId` to `wrapLaunch` on fork. An older server ignores `cost` (its loader
 // only checks the keys it knows), so the runtime still loads but shows the
 // transcript cost; a manifest that needs its own figure declares `^1.29.0`.
-export const HOST_API_VERSION = '1.29.0';
+//
+// 1.30.0 adds an optional `validateModel({ agent, model, coreModelError })` to the
+// runtime contract: a runtime that defines it owns the model vocabulary for its
+// sessions, so spawn_session asks it instead of core's per-agent check and hands
+// the accepted model over as `ext.<extId>.model`. An older server ignores the key,
+// so spawn_session still rejects the runtime's models against the agent's list; a
+// manifest that needs MCP spawns with its own models declares `^1.30.0`.
+export const HOST_API_VERSION = '1.30.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

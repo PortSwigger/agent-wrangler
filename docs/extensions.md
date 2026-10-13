@@ -1209,6 +1209,10 @@ sessionId, model, ext })` (return the whole pane command instead). Optional:
 `deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
 `launchStatus({ entry })` (1.22.0; return `{ state, error?, url? }` or null),
 `cost({ entry, liveSid })` (1.29.0; return `{ usd }` or null),
+`validateModel({ agent, model, coreModelError })` (1.30.0; return an error string or null —
+define it and the runtime owns its sessions' model vocabulary: `spawn_session` skips core's
+per-agent check, asks this instead, and passes the accepted model as `ext.<yourId>.model`;
+`coreModelError(agent, model)` is core's own check, to reuse),
 `resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.

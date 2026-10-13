@@ -418,6 +418,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         analyze: bind(rt.analyze, () => null),
         cost: bind(rt.cost, () => null),
         launchStatus: bind(rt.launchStatus, () => null),
+        validateModel: bind(rt.validateModel, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
       }, id);
     }
     // Lifecycle: where a store's watcher or an event subscription is started.
