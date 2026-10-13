@@ -341,6 +341,17 @@ export function classify(paneText, { tailLines = 12, strictWorking = false } = {
   ) {
     return { status: 'needs-you', waitingFor: 'Codex is asking whether to trust this folder' };
   }
+  // Codex's "Replace goal?" confirmation, raised when /goal is sent while a goal
+  // already exists. Same hazard as the dialogs above: TUI chrome never written
+  // to the rollout, defaulting to option 1 on a bare Enter, so without this the
+  // chat view's Send sits queued with no hint that the terminal is blocked.
+  if (
+    /^[\s›]*1\.\s*replace\s+current\s+goal\b/im.test(recent)
+    && /^[\s›]*2\.\s*cancel\b/im.test(recent)
+    && /^[\s›]*enter\s+select\b/im.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: 'Codex is asking whether to replace the current goal' };
+  }
   // A COLD devcontainer dispatch runs `devcontainer up` + postCreateCommand (1-2 min)
   // in the pane before claude starts. That window shows CLI/build output, not claude,
   // so without this it reads as idle and the suspend gate could reap it; surface it as

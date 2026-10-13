@@ -304,6 +304,16 @@ test('classify: the footer phrase in ordinary prose plus two option-shaped lines
   assert.equal(classify(pane).status, 'idle');
 });
 
+test('classify: Codex\'s "Replace goal?" dialog reads as needs-you with a reason', () => {
+  const pane = '• Worked for 17m 31s\n\n  Replace goal?\n  New objective: complete each of the 6 checklist items we\'ve defined\n\n› 1. Replace current goal  Set the new objective and start it now\n  2. Cancel                Keep the current goal\n\n  enter select · esc back';
+  const c = classify(pane);
+  assert.equal(c.status, 'needs-you');
+  assert.match(c.waitingFor, /replace the current goal/i);
+});
+test('classify: prose listing goal options without the dialog footer stays idle', () => {
+  assert.equal(classify('1. Replace current goal\n2. Cancel').status, 'idle');
+});
+
 test('matches the original session tmux launched with --session-id', () => {
   const discovered = [
     { tmuxName: 'cc_c7980336', command: `claude --session-id ${ID} --permission-mode auto do a thing` },
