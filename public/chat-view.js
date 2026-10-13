@@ -862,7 +862,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     e.preventDefault();
     const id = sessionId;
     const era = requestEra;
-    const current = () => sessionId === id && requestEra === era;
+    const current = () => sessionId === id && requestEra === era && !pendingMessages.has(id);
     navigator.clipboard.read().then(async (clipItems) => {
       if (!current()) return;
       const files = [];
