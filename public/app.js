@@ -1526,8 +1526,14 @@ function renderGrid() {
   // column (the bug this fixes).
   const hasTray = minimisedIds.size > 0;
   const trayRow = hasTray ? ' auto' : '';
+  const singleColumn = cols === 1;
+  el.classList.toggle('single-column', singleColumn);
   el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  if (scroll) {
+  if (singleColumn) {
+    el.classList.add('scrolling');
+    el.style.gridTemplateRows = '';
+    el.style.gridAutoRows = 'max-content';
+  } else if (scroll) {
     // Past 3×3: lock cell height to the 3-row size and let the board scroll.
     el.classList.add('scrolling');
     const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
@@ -1584,7 +1590,7 @@ function renderFocusedTile(el, id) {
     ? { kind: 'notask', id: ADHOC_ID, sessions, span: 1 }
     : { kind: 'task', id, task: latestTasks.tasks.find((t) => t.id === id), sessions, span: 1 };
   el.classList.add('focus-mode');
-  el.classList.remove('scrolling');
+  el.classList.remove('scrolling', 'single-column');
   el.style.gridTemplateColumns = '';
   el.style.gridTemplateRows = '';
   el.style.gridAutoRows = '';
