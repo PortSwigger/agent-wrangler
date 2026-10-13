@@ -58,6 +58,8 @@ import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onA
 import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
+import { createTerminalImagePaste } from './terminal-image-paste.js';
+import { createIntentImages } from './intent-images.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
@@ -4416,6 +4418,7 @@ function closeTerminal() {
   try { current.ws.close(); } catch {}
   try { current.term.dispose(); } catch {}
   document.getElementById('term').removeEventListener('click', current.clickHandler);
+  current.detachImagePaste?.();
   current = null;
 }
 
@@ -4661,6 +4664,9 @@ function openTerminal(s) {
   const clickHandler = () => { term.focus(); acknowledge(s.sessionId); };
   el.addEventListener('click', clickHandler);
   term.textarea?.addEventListener('focus', () => acknowledge(s.sessionId));
+  // Text that rode along with a pasted image goes through xterm's own paste, so
+  // it is bracketed exactly as a plain text paste would be.
+  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, pasteText: (t) => term.paste(t) });
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
@@ -4739,7 +4745,7 @@ function openTerminal(s) {
   ws.onopen = () => syncSize(true);
   const ro = new ResizeObserver(() => syncSize(false));
   ro.observe(el);
-  current = { term, ws, fit, ro, clickHandler, sessionId: s.sessionId };
+  current = { term, ws, fit, ro, clickHandler, detachImagePaste, sessionId: s.sessionId };
   // Selecting a session lands keyboard focus on the Claude input so the user can
   // type immediately — without this they'd have to click the terminal a second
   // time. The textarea focus listener above marks the session user-attended.
@@ -5429,6 +5435,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
+  intentImages.reset();
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
@@ -5555,6 +5562,10 @@ function submitDispatch() {
   if (cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
+  if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
+  const imageNames = intentImages.names();
+  if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
+  if (imageNames.length) fields.imageNames = imageNames;
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
@@ -5563,6 +5574,8 @@ function submitDispatch() {
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return false;
   send({ type: 'dispatch', ...fields });
+  // The names now belong to this dispatch; a relaunch must not claim them again.
+  intentImages.reset();
   dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
@@ -6466,7 +6479,7 @@ function connect() {
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
-    else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
+    else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg)) chatView.onPasteImageResult(msg); }
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
@@ -6623,6 +6636,18 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
 initStyles();
+
+// Constructed once; openTerminal attaches it to each agent terminal it opens.
+const terminalImagePaste = createTerminalImagePaste({ send, toast });
+// The dispatch dialog's intent box. Off for schedules: a staged image is pruned
+// within a week, and a schedule can fire long after that.
+const intentImages = createIntentImages({
+  input: document.getElementById('m-intent'),
+  listEl: document.getElementById('m-intent-attachments'),
+  send,
+  toast,
+  enabled: () => !scheduleMode() && modalMode !== 'subagent',
+});
 
 // Constructed once: renderSidebar/applySessionView mount/unmount it per session,
 // and the WS dispatch below feeds it every 'chat' poll reply.

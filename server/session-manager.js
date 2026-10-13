@@ -1781,7 +1781,7 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false } = {}) {
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
@@ -1888,10 +1888,15 @@ export class SessionManager {
     // two paths can't drift in what they announce.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
+    // `deferIntent` launches with no first prompt while still recording the intent
+    // as the card's: the caller pastes it into the booted composer itself, which is
+    // the only way a first prompt can carry images (dispatch-runner.js). A launch
+    // argument has no composer for an image path to be absorbed into.
+    const launchIntent = deferIntent ? '' : intent;
     const inner = builds
-      ? await rt.buildLaunch({ phase: 'dispatch', intent, cwd, sessionId, model, ext: ext || null })
+      ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
-        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy }),
+        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
       });
     const launchedAt = Date.now();

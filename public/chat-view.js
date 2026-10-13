@@ -9,6 +9,7 @@
 import { groupChatEvents } from './chat-group.js';
 import { createChatDom } from './chat-dom.js';
 import { createRenderer } from './markdown-preview.js';
+import { imageSources, imageMimeOf, sourceToFrame, MAX_IMAGES_PER_PASTE } from './clipboard-images.js';
 
 export const POLL_MS = 2000;
 // Send → "my own message is on screen" waits on two things: the TUI writing the
@@ -760,10 +761,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // the agent auto-attaches it. Verified against a live pane: a path inside
   // pasted prompt text becomes a real inline image, not a Read tool call.
   //
-  // Bounded per paste. A clipboard can hold a whole screenshot burst, and each
-  // one costs a base64 frame plus a file, so a slip is capped rather than
-  // unbounded — the human can always paste again.
-  const MAX_IMAGES_PER_PASTE = 4;
   // Tokens are era-stamped so a reply that lands after the view moved to another
   // session is dropped rather than typing a stale path into someone else's
   // composer. Same reasoning as the poll's token, different reply type, so
@@ -810,49 +807,48 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     });
   }
 
-  function attachImageFiles(files) {
-    const take = files.slice(0, MAX_IMAGES_PER_PASTE);
-    const skipped = files.length - take.length;
+  // Paste and drop share one path: both hand over a DataTransfer, and what a
+  // source puts in it (see clipboard-images.js) does not depend on which gesture
+  // delivered it.
+  function attachFrom(e, dt) {
+    if (!sessionId) return;
+    const { sources, text } = imageSources(dt);
+    // No image means an ordinary text paste or drop, which must fall through
+    // untouched — preventDefault here would break pasting text.
+    if (!sources.length) return;
+    e.preventDefault();
+    // Markup with an image in it (a copied selection) still carries words the
+    // human meant to paste, and preventDefault just swallowed them.
+    // setRangeText fires no input event, so raise one for the resize and Send.
+    if (text) {
+      input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+      input.dispatchEvent(new Event('input'));
+      scheduleDraftSave();
+    }
+    attachSources(sources);
+  }
+
+  function attachSources(sources) {
+    const take = sources.slice(0, MAX_IMAGES_PER_PASTE);
+    const skipped = sources.length - take.length;
     setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
-    for (const file of take) {
+    for (const source of take) {
       const token = `${requestEra}#${++pasteSeq}`;
       pendingPastes.add(token);
-      const reader = new FileReader();
-      reader.onerror = () => {
-        pendingPastes.delete(token);
-        setPasteNote('Could not read that image from the clipboard.');
-      };
-      reader.onload = () => {
-        // readAsDataURL gives "data:<mime>;base64,<payload>" — split once on the
-        // first comma so a payload containing one cannot truncate the split.
-        const raw = String(reader.result || '');
-        const comma = raw.indexOf(',');
-        const mime = /^data:([^;,]+)/.exec(raw)?.[1] || file.type;
-        if (comma < 0) {
-          pendingPastes.delete(token);
-          setPasteNote('Could not read that image from the clipboard.');
-          return;
-        }
-        send({ type: 'paste-image', sessionId, token, mime, dataBase64: raw.slice(comma + 1) });
-      };
-      reader.readAsDataURL(file);
+      sourceToFrame(source).then(
+        (frame) => {
+          // Gone stale while the image was being read or converted.
+          if (!pendingPastes.has(token)) return;
+          send({ type: 'paste-image', sessionId, token, ...frame });
+        },
+        (err) => {
+          if (!pendingPastes.delete(token)) return;
+          setPasteNote(err?.message || 'Could not read that image.');
+        },
+      );
     }
     if (skipped > 0) setPasteNote(`Attaching ${take.length} images — ${skipped} more were skipped.`);
   }
-
-  input.addEventListener('paste', (e) => {
-    if (!sessionId) return;
-    const items = Array.from(e.clipboardData?.items || []);
-    const files = items
-      .filter((it) => it.kind === 'file' && typeof it.type === 'string' && it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter(Boolean);
-    // No image on the clipboard means this is an ordinary text paste, which must
-    // fall through untouched — preventDefault here would break pasting text.
-    if (!files.length) return;
-    e.preventDefault();
-    attachImageFiles(files);
-  });
 
   // Ctrl+V is the terminal's paste key, and on macOS the browser fires no paste
   // event for it, so muscle memory from the terminal pasted nothing here.
@@ -873,7 +869,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         else if (item.types.includes('text/plain')) text += await (await item.getType('text/plain')).text();
       }
       if (!current()) return;
-      if (files.length) attachImageFiles(files);
+      if (files.length) attachSources(files.map((file) => ({ kind: 'file', file, mime: imageMimeOf(file) })));
       else if (text) {
         input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
         input.dispatchEvent(new InputEvent('input', { bubbles: true }));
@@ -881,6 +877,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       }
     }).catch(() => setPasteNote('Clipboard access was blocked — use Cmd+V to paste.'));
   });
+
+  input.addEventListener('paste', (e) => attachFrom(e, e.clipboardData));
+  // The whole view is the drop target rather than just the composer, which is a
+  // thin strip that is easy to miss with a file in hand. dragover has to cancel
+  // for the drop to fire at all, but only when files are coming, so dragging
+  // text around the composer keeps its native behaviour.
+  wrap.addEventListener('dragover', (e) => {
+    if (sessionId && Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
+  });
+  wrap.addEventListener('drop', (e) => attachFrom(e, e.dataTransfer));
 
   modelEl.addEventListener('click', () => {
     if (!sessionId || modelEl.disabled) return;

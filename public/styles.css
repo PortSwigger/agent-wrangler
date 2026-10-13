@@ -2876,6 +2876,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* Composer attachments: the pending counterpart of .chat-user-image, sitting
    above the box until the prompt is sent. em-relative for the same reason. */
 .chat-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+/* The same chips under the dispatch dialog's intent box. 7px plus the textarea's
+   3px baseline gap matches the 10px above the next field's label. */
+#m-intent-attachments { margin: 7px 0 0; }
 .chat-attachment {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 4px 2px 8px; border-radius: 999px;
