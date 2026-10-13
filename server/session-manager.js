@@ -22,6 +22,7 @@ import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
+import { gentleKill } from './tmux-gentle-kill.js';
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -550,7 +551,7 @@ export class SessionManager {
       // "nothing to kill" signal — so pairing its result with the has-session
       // check below separates a real teardown from a stale name at no extra cost
       // in tmux calls.
-      const killOk = await this._tmux(socket, ['kill-session', '-t', name]).then(() => true).catch(() => false);
+      const killOk = await gentleKill((a) => this._tmux(socket, a), { session: name }).then(() => true).catch(() => false);
       const survived = await this._tmux(socket, ['has-session', '-t', name]).then(() => true).catch(() => false);
       if (survived) logWarn(`[wrangler] kill-session left ${name} alive (session ${sessionId})`);
       else if (killOk) confirmed.push(name);
@@ -1190,7 +1191,7 @@ export class SessionManager {
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
     if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
-      await this._tmux(this.socket, ['kill-session', '-t', tmux]).catch(() => {});
+      await gentleKill((a) => this._tmux(this.socket, a), { session: tmux }).catch(() => {});
       throw new Error(`Session ${sessionId} was archived or snoozed during resume; relaunch discarded.`);
     }
     // Rebuild the entry without `archivedAt` (so it returns to the board) while
@@ -1487,7 +1488,7 @@ export class SessionManager {
   // "No server running" is not an error.
   async killTmuxServer() {
     if (!this.socket) return;
-    await this._tmux(this.socket, ['kill-server']).catch(() => {});
+    await gentleKill((a) => this._tmux(this.socket, a), { all: true }).catch(() => {});
     await this.refreshAlive();
   }
 
