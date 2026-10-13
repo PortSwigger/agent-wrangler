@@ -792,17 +792,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     });
   }
 
-  input.addEventListener('paste', (e) => {
-    if (!sessionId) return;
-    const items = Array.from(e.clipboardData?.items || []);
-    const files = items
-      .filter((it) => it.kind === 'file' && typeof it.type === 'string' && it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter(Boolean);
-    // No image on the clipboard means this is an ordinary text paste, which must
-    // fall through untouched — preventDefault here would break pasting text.
-    if (!files.length) return;
-    e.preventDefault();
+  function attachImageFiles(files) {
     const take = files.slice(0, MAX_IMAGES_PER_PASTE);
     const skipped = files.length - take.length;
     setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
@@ -830,6 +820,44 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       reader.readAsDataURL(file);
     }
     if (skipped > 0) setPasteNote(`Attaching ${take.length} images — ${skipped} more were skipped.`);
+  }
+
+  input.addEventListener('paste', (e) => {
+    if (!sessionId) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const files = items
+      .filter((it) => it.kind === 'file' && typeof it.type === 'string' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter(Boolean);
+    // No image on the clipboard means this is an ordinary text paste, which must
+    // fall through untouched — preventDefault here would break pasting text.
+    if (!files.length) return;
+    e.preventDefault();
+    attachImageFiles(files);
+  });
+
+  // Ctrl+V is the terminal's paste key, and on macOS the browser fires no paste
+  // event for it, so muscle memory from the terminal pasted nothing here.
+  input.addEventListener('keydown', (e) => {
+    if (!isMac || !sessionId || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'v') return;
+    if (!navigator.clipboard?.read) return;
+    e.preventDefault();
+    const id = sessionId;
+    navigator.clipboard.read().then(async (clipItems) => {
+      if (sessionId !== id) return;
+      const files = [];
+      let text = '';
+      for (const item of clipItems) {
+        const imgType = item.types.find((t) => t.startsWith('image/'));
+        if (imgType) files.push(new File([await item.getType(imgType)], 'paste', { type: imgType }));
+        else if (item.types.includes('text/plain')) text += await (await item.getType('text/plain')).text();
+      }
+      if (files.length) attachImageFiles(files);
+      else if (text) {
+        input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+        input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }
+    }).catch(() => setPasteNote('Clipboard access was blocked — use Cmd+V to paste.'));
   });
 
   modelEl.addEventListener('click', () => {
