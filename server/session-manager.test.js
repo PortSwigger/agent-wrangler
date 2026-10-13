@@ -1084,7 +1084,7 @@ test('_doResume: automatic discards a relaunch when the card was archived mid-la
   sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
   await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived or snoozed during resume/);
   assert.equal(sm.map.get('c1').archivedAt, 5);
-  assert.deepEqual(tmuxCalls, [['kill-session', '-t', launched]]);
+  assert.deepEqual(tmuxCalls.filter((a) => a[0] !== 'list-panes'), [['kill-session', '-t', launched]]);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -1102,7 +1102,7 @@ test('_doResume: automatic discards a relaunch when a snooze appeared mid-launch
   sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
   await assert.rejects(() => sm._doResume('c1', dir, { automatic: true }), /archived or snoozed during resume/);
   assert.deepEqual(sm.map.get('c1').snooze, snooze);
-  assert.equal(tmuxCalls.length, 1);
+  assert.equal(tmuxCalls.filter((a) => a[0] === 'kill-session').length, 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -3082,3 +3082,18 @@ for (const mode of ['buildLaunch', 'wrapLaunch']) {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+test('killForSession lists the pane processes before kill-session so the agent is stopped first', async () => {
+  const sm = new SessionManager();
+  sm.map.set('CARD', { tmux: 'cc_live', socket: '' });
+  sm.scanSockets = () => [''];
+  sm.refreshAlive = async () => {};
+  const verbs = [];
+  sm._tmux = async (_socket, a) => {
+    verbs.push(a[0]);
+    if (a[0] === 'has-session') throw new Error('gone now');
+    return { stdout: '' };
+  };
+  await sm.killForSession('CARD');
+  assert.deepEqual(verbs, ['list-panes', 'kill-session', 'has-session']);
+});

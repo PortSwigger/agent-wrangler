@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
+import { gentleKill } from './tmux-gentle-kill.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { paneComposerIsEmpty, paneHasWorkingStatus } from './ghost-suggestion.js';
 
@@ -576,7 +577,7 @@ export async function paneTitle(name, socket = '') {
 }
 
 export async function killSession(name, socket = '') {
-  await tmux(socket, ['kill-session', '-t', name]);
+  await gentleKill((a) => tmux(socket, a), { session: name });
 }
 
 // Deliver a (possibly multi-line) follow-up message via the paste buffer (avoids the

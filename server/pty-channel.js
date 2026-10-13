@@ -5,6 +5,7 @@ import ptyPkg from 'node-pty';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { attachEnv } from './session-manager.js';
+import { gentleKill } from './tmux-gentle-kill.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { logError } from './log.js';
 import { sendGuarded } from './ws-backpressure.js';
@@ -193,7 +194,7 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
     if (shellTermEntry) {
       const { terminalId, tmuxName, socket } = shellTermEntry;
       terminalRegistry?.remove(terminalId);
-      exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), 'kill-session', '-t', tmuxName]).catch(() => {});
+      gentleKill((a) => exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), ...a]), { session: tmuxName }).catch(() => {});
     }
   });
 }
