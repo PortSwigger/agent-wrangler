@@ -288,30 +288,39 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // them to a DIFFERENT session is the leak this whole store exists to stop.
   const DRAFTS_KEY = 'aw.chatDrafts';
   const DRAFTS_MAX = 50;
-  function readStoredDrafts() {
+  function parseStoredDrafts(raw) {
     try {
-      const parsed = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '[]');
+      const parsed = JSON.parse(raw || '[]');
       return Array.isArray(parsed) ? parsed.filter((e) => Array.isArray(e) && typeof e[0] === 'string' && typeof e[1]?.text === 'string' && Array.isArray(e[1].attachments)) : [];
     } catch { return []; }
   }
-  class PersistedDrafts extends Map {
+  // Every read and write goes through storage rather than a private snapshot, so a
+  // second board tab never overwrites this one's drafts (or resurrects a sent one)
+  // from a stale copy. The in-memory map is only the fallback when storage is
+  // unavailable.
+  class PersistedDrafts {
+    constructor() { this.fallback = new Map(); }
+    read() {
+      try { return new Map(parseStoredDrafts(localStorage.getItem(DRAFTS_KEY))); } catch { return this.fallback; }
+    }
+    write(map) {
+      while (map.size > DRAFTS_MAX) map.delete(map.keys().next().value);
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...map])); } catch { this.fallback = map; }
+    }
+    get(k) { return this.read().get(k); }
     set(k, v) {
-      super.set(k, v);
-      this.persist();
+      const map = this.read();
+      map.delete(k);
+      map.set(k, v);
+      this.write(map);
       return this;
     }
     delete(k) {
-      const had = super.delete(k);
-      if (had) this.persist();
-      return had;
-    }
-    persist() {
-      while (this.size > DRAFTS_MAX) super.delete(this.keys().next().value);
-      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...this])); } catch { /* storage unavailable */ }
+      const map = this.read();
+      if (map.delete(k)) this.write(map);
     }
   }
   const drafts = new PersistedDrafts();
-  for (const [k, v] of readStoredDrafts()) Map.prototype.set.call(drafts, k, v);
 
   // Set when THIS view interrupted a turn: the interrupt is what may leave a
   // restored prompt in the PANE's composer, so the next send must clear it. Armed
@@ -715,12 +724,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     }
   });
   let draftTimer = null;
+  // Explicit rather than driven by every input event: mount's loadDraft dispatches
+  // a synthetic input, and treating that hydration as an edit would file one
+  // card's draft under another.
+  function scheduleDraftSave() {
+    if (!sessionId) return;
+    clearTimeout(draftTimer);
+    const id = sessionId;
+    const era = requestEra;
+    draftTimer = setTimeout(() => { if (sessionId === id && requestEra === era) saveDraft(id); }, 400);
+  }
   input.addEventListener('input', (e) => {
-    if (e.isTrusted && sessionId) {
-      clearTimeout(draftTimer);
-      const id = sessionId;
-      draftTimer = setTimeout(() => { if (sessionId === id) saveDraft(id); }, 400);
-    }
+    if (e.isTrusted) scheduleDraftSave();
     input.style.height = 'auto';
     // An unrendered element (display:none somewhere above — the sidebar hidden by
     // the diff view's fullscreen, the pane hidden on unmount) reports scrollHeight
@@ -786,6 +801,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         attachments = attachments.filter((x) => x !== a);
         renderAttachments();
         renderSendability();
+        scheduleDraftSave();
       });
       chip.appendChild(drop);
       attachEl.appendChild(chip);
@@ -843,8 +859,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     if (!navigator.clipboard?.read) return;
     e.preventDefault();
     const id = sessionId;
+    const era = requestEra;
+    const current = () => sessionId === id && requestEra === era;
     navigator.clipboard.read().then(async (clipItems) => {
-      if (sessionId !== id) return;
+      if (!current()) return;
       const files = [];
       let text = '';
       for (const item of clipItems) {
@@ -852,10 +870,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         if (imgType) files.push(new File([await item.getType(imgType)], 'paste', { type: imgType }));
         else if (item.types.includes('text/plain')) text += await (await item.getType('text/plain')).text();
       }
+      if (!current()) return;
       if (files.length) attachImageFiles(files);
       else if (text) {
         input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
         input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+        scheduleDraftSave();
       }
     }).catch(() => setPasteNote('Clipboard access was blocked — use Cmd+V to paste.'));
   });
@@ -1072,6 +1092,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       attachments.push({ name: msg.name });
       renderAttachments();
       renderSendability();
+      scheduleDraftSave();
       input.focus();
       // Cleared only once nothing is still in flight, so a multi-image paste does
       // not flash "done" while the rest are still uploading.
