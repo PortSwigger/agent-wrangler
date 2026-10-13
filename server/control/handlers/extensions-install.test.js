@@ -97,7 +97,7 @@ function fakeClone({
 }
 
 function useFakes(opts = {}) {
-  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {} });
+  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: opts.commits || (async () => ({ commits: [], truncated: false })) });
 }
 
 const URL_NOTES = 'https://example.invalid/notes.git';
@@ -227,6 +227,8 @@ test('an update diffs against the recorded consent, and only a WIDENED requires 
   assert.deepEqual(nd.addedCapabilities, []);
   assert.deepEqual(nd.removedCapabilities, ['memory:read']);
   assert.equal(nd.priorSha, 'a'.repeat(40));
+  assert.deepEqual(nd.commits, []);
+  assert.equal(nd.commitsTruncated, false);
   // The diff, not the full lists: `left` bumped (direct, so listed), `deep`
   // arrived transitively (counted only), `gone` left the tree entirely.
   assert.deepEqual(nd.addedDependencies, ['left@1.0.0']);

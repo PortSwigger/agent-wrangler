@@ -588,15 +588,33 @@ test('an UPDATE renders capability and dependency DIFFS, not full lists', () => 
     assert.equal(all.includes('deep@2.0.0'), false, 'an unchanged dependency is not drawn');
     // 9 added and 3 removed, 1 of each listed ⇒ 10 transitive entries hidden.
     assert.ok(all.some((t) => /the 10 not listed are transitive/.test(t)));
-    assert.ok(all.includes('was aaaaaaaa'), 'the previous commit is named');
+    assert.ok(all.includes('aaaaaaaa') && all.includes('bbbbbbbb'), 'both commits are named');
+    // A widened update re-makes the consent, so the trust statement returns.
+    assert.ok(all.some((t) => /full access to this machine/.test(t)));
   });
 });
 
 test('an update that widens nothing says so rather than showing an empty diff', () => {
   withDom(() => {
     const all = texts(consentBodyEl({ id: 'x', label: 'X', update: true, reconsentNeeded: false, addedCapabilities: [], removedCapabilities: [], addedCount: 0, removedCount: 0 }));
-    assert.ok(all.includes('Capabilities unchanged'));
-    assert.ok(all.includes('Nothing changed.'));
+    assert.ok(all.includes('No new capabilities or dependencies.'));
+    assert.equal(all.includes('Capabilities changed'), false);
+    assert.equal(all.includes('Dependencies changed'), false);
+    assert.equal(all.some((t) => /full access to this machine/.test(t)), false, 'the trust statement is not repeated on a no-new-consent update');
+  });
+});
+
+test('an update lists the commits it brings in, and says when older ones are cut off', () => {
+  withDom(() => {
+    const all = texts(consentBodyEl({
+      id: 'x', label: 'X', update: true, reconsentNeeded: false,
+      commits: [{ sha: 'bbbbbbbb', subject: 'Fix the thing' }, { sha: 'cccccccc', subject: 'Add a tab' }],
+    }));
+    assert.ok(all.includes('2 new commits'));
+    assert.ok(all.includes('bbbbbbbb') && all.some((t) => /Fix the thing/.test(t)));
+    const cut = texts(consentBodyEl({ id: 'x', update: true, commits: [{ sha: 'b', subject: 's' }], commitsTruncated: true }));
+    assert.ok(cut.includes('1+ new commits'));
+    assert.ok(cut.includes('Older commits not shown.'));
   });
 });
 

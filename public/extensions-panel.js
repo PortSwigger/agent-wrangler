@@ -857,48 +857,83 @@ export function updateStatusText(status) {
 // the caller's Approve/Cancel. An UPDATE shows CHANGES only — the decision on
 // an update is what changed, and the full list is noise that hides it.
 export function consentBodyEl(payload) {
-  const wrap = el('div', 'ext-consent');
+  return payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+}
+
+function trustEl(lead) {
   const trust = el('div', 'ext-consent-trust');
   trust.setAttribute('role', 'note');
-  trust.append(el('div', 'ext-consent-trust-lead', payload.update
-    ? `Update ${payload.label || payload.id}?`
-    : `Install ${payload.label || payload.id}?`));
+  trust.append(el('div', 'ext-consent-trust-lead', lead));
   trust.append(el('div', 'ext-consent-trust-body', TRUST_STATEMENT));
-  wrap.append(trust);
+  return trust;
+}
 
+const NPM_SCRIPTS_NOTE = 'Dependencies are installed with npm install scripts disabled. That stops install-time hooks only — every dependency\'s code still runs inside the wrangler once the extension loads.';
+
+function installConsentEl(payload) {
+  const wrap = el('div', 'ext-consent');
+  wrap.append(trustEl(`Install ${payload.label || payload.id}?`));
   // The commit and author are dropped from the installed row but kept HERE: on
   // the row they were unactionable clutter, while this is the one screen where
   // "which code exactly, and whose" is the decision being made.
   const id = el('div', 'ext-consent-meta');
   if (payload.author) id.append(el('span', 'ext-row-author', payload.author));
   if (payload.sha) id.append(el('span', 'ext-row-sha', payload.sha.slice(0, 8)));
-  if (payload.update && payload.priorSha) id.append(el('span', 'ext-row-sha', `was ${payload.priorSha.slice(0, 8)}`));
   const home = originNode(payload.homepage);
   if (home) id.append(home);
   if (id.childNodes.length) wrap.append(id);
   if (payload.description) wrap.append(el('div', 'ext-row-desc', payload.description));
+  section(wrap, 'Capabilities requested', (payload.capabilities || []).length
+    ? capabilitiesEl(payload.capabilities)
+    : el('div', 'ext-consent-none', 'None — it asks the wrangler for nothing.'));
+  const deps = el('div');
+  if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
+  deps.append(el('div', 'ext-consent-note', dependencyCountText(payload)));
+  section(wrap, 'Dependencies', deps);
+  wrap.append(el('div', 'ext-consent-note', NPM_SCRIPTS_NOTE));
+  return wrap;
+}
 
-  if (payload.update) {
-    const added = payload.addedCapabilities || [];
-    const removed = payload.removedCapabilities || [];
-    if (added.length || removed.length) {
-      section(wrap, 'Capabilities changed');
-      if (added.length) wrap.append(chipsEl(added.map((c) => `+ ${c}`), 'ext-chip ext-chip-add'));
-      if (removed.length) wrap.append(chipsEl(removed.map((c) => `− ${c}`), 'ext-chip ext-chip-remove'));
-    } else {
-      section(wrap, 'Capabilities unchanged', el('div', 'ext-consent-none', 'It asks for nothing it was not already granted.'));
+// An update is a decision about what CHANGED: the commits it brings in, then
+// any capability or dependency change. The trust statement and npm note were
+// read at install, so they come back only when the update asks for something
+// new and the consent itself is being re-made.
+function updateConsentEl(payload) {
+  const wrap = el('div', 'ext-consent');
+  const name = payload.label || payload.id;
+  // The modal title already says "Update extension"; the name rides on the sha line.
+  if (payload.reconsentNeeded) wrap.append(trustEl(`Update ${name}?`));
+  const id = el('div', 'ext-consent-meta');
+  if (!payload.reconsentNeeded) id.append(el('strong', null, name));
+  if (payload.priorSha) id.append(el('span', 'ext-row-sha', payload.priorSha.slice(0, 8)), document.createTextNode(' → '));
+  if (payload.sha) id.append(el('span', 'ext-row-sha', payload.sha.slice(0, 8)));
+  const home = originNode(payload.homepage);
+  if (home) id.append(home);
+  if (id.childNodes.length) wrap.append(id);
+
+  const commits = payload.commits || [];
+  if (commits.length) {
+    const list = el('ul', 'update-commits');
+    for (const { sha, subject } of commits) {
+      const item = el('li');
+      item.append(el('span', 'ext-row-sha', sha), document.createTextNode(` ${subject}`));
+      list.append(item);
     }
-    section(wrap, 'Dependencies changed', dependencyDiffEl(payload));
-  } else {
-    section(wrap, 'Capabilities requested', (payload.capabilities || []).length
-      ? capabilitiesEl(payload.capabilities)
-      : el('div', 'ext-consent-none', 'None — it asks the wrangler for nothing.'));
-    const deps = el('div');
-    if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
-    deps.append(el('div', 'ext-consent-note', dependencyCountText(payload)));
-    section(wrap, 'Dependencies', deps);
+    if (payload.commitsTruncated) list.append(el('li', 'ext-consent-note', 'Older commits not shown.'));
+    section(wrap, `${commits.length}${payload.commitsTruncated ? '+' : ''} new commit${commits.length === 1 && !payload.commitsTruncated ? '' : 's'}`, list);
   }
-  wrap.append(el('div', 'ext-consent-note', 'Dependencies are installed with npm install scripts disabled. That stops install-time hooks only — every dependency\'s code still runs inside the wrangler once the extension loads.'));
+
+  const added = payload.addedCapabilities || [];
+  const removed = payload.removedCapabilities || [];
+  if (added.length || removed.length) {
+    section(wrap, 'Capabilities changed');
+    if (added.length) wrap.append(chipsEl(added.map((c) => `+ ${c}`), 'ext-chip ext-chip-add'));
+    if (removed.length) wrap.append(chipsEl(removed.map((c) => `− ${c}`), 'ext-chip ext-chip-remove'));
+  }
+  const depsChanged = (payload.addedCount ?? (payload.addedDependencies || []).length) || (payload.removedCount ?? (payload.removedDependencies || []).length);
+  if (depsChanged) section(wrap, 'Dependencies changed', dependencyDiffEl(payload));
+  if (!added.length && !removed.length && !depsChanged) wrap.append(el('div', 'ext-consent-none', 'No new capabilities or dependencies.'));
+  if (payload.reconsentNeeded) wrap.append(el('div', 'ext-consent-note', NPM_SCRIPTS_NOTE));
   return wrap;
 }
 

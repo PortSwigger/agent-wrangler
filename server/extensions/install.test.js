@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, lockDependencies, npmCi, readDeclaration,
+  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, commitsSince, lockDependencies, npmCi, readDeclaration,
   MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
@@ -198,4 +198,29 @@ test('readDeclaration reads the disclosure statically, without importing anythin
   // it through textContent, where undefined would print as "undefined".
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes' } }));
   assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [] });
+});
+
+test('commitsSince deepens the shallow clone and logs only what the update brings in', async () => {
+  const calls = [];
+  const git = async (args) => {
+    calls.push(args);
+    if (args.includes('log')) return { stdout: `${'b'.repeat(40)}\tFix the thing\n${'c'.repeat(40)}\tAdd a tab\tto the panel\n` };
+    return { stdout: '' };
+  };
+  const { commits, truncated } = await commitsSince('/clone', 'a'.repeat(40), { git });
+  assert.equal(truncated, false);
+  assert.deepEqual(commits, [{ sha: 'bbbbbbbb', subject: 'Fix the thing' }, { sha: 'cccccccc', subject: 'Add a tab\tto the panel' }]);
+  assert.ok(calls[0].includes('protocol.file.allow=never') && calls[0].includes('--deepen=50'));
+  assert.ok(calls.at(-1).includes(`${'a'.repeat(40)}..HEAD`));
+});
+
+test('commitsSince marks the list truncated when the installed commit is out of reach', async () => {
+  const git = async (args) => {
+    if (args.includes('fetch')) throw new Error('offline');
+    if (args.includes('merge-base')) throw new Error('not an ancestor');
+    return { stdout: `${'b'.repeat(40)}\tNewest\n` };
+  };
+  const { commits, truncated } = await commitsSince('/clone', 'a'.repeat(40), { git });
+  assert.equal(truncated, true);
+  assert.equal(commits.length, 1);
 });

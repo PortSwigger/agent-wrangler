@@ -5974,7 +5974,7 @@ function openExtConsent(payload) {
   // An update that widens `requires` needs a fresh yes; one that does not is
   // still shown, because a human asked for it and the dependency diff is worth
   // reading — but the button says which of the two this is.
-  ok.textContent = payload.reconsentNeeded ? 'Approve & install' : 'Install';
+  ok.textContent = payload.reconsentNeeded ? (payload.update ? 'Approve & update' : 'Approve & install') : (payload.update ? 'Update' : 'Install');
   modal.classList.remove('hidden');
   cancel.focus();
   const done = (approve) => {

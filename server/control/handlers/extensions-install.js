@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { validateManifest } from '../../extensions/index.js';
 import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
-import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
+import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { log } from '../../log.js';
 
 // Installing an external extension, in two frames with a human decision between
@@ -64,7 +64,7 @@ const pending = new Map();
 // with no process and no network. Deliberately a MODULE seam and never an option
 // on the incoming frame: a control frame is browser-supplied, so a `_clone` a
 // client could set would be arbitrary code execution offered as an API.
-const REAL_RUNNERS = { clone: cloneTo, head: readHead, npm: npmCi, lsRemote: lsRemoteHead };
+const REAL_RUNNERS = { clone: cloneTo, head: readHead, npm: npmCi, lsRemote: lsRemoteHead, commits: commitsSince };
 let runners = REAL_RUNNERS;
 
 export function _setInstallRunnersForTests(next = null) {
@@ -303,6 +303,8 @@ export const extInstallHandler = {
         throw err;
       }
       const existing = recordFor(declared.id);
+      // Best effort: a missing list costs the human context, not the update.
+      const history = existing ? await runners.commits(dir, existing.sha || '').catch(() => null) : null;
       const reply = {
         type: 'ext-install-disclosure',
         tempId,
@@ -311,6 +313,7 @@ export const extInstallHandler = {
         dependencies: deps.direct,
         dependencyCount: deps.all.length,
         ...(existing ? updateDiff(existing, declared, deps) : { update: false, reconsentNeeded: true }),
+        ...(history ? { commits: history.commits, commitsTruncated: history.truncated } : {}),
       };
       pending.set(tempId, { url, sha, declared, deps, dir });
       busy.awaitingConsent = true;

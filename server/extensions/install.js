@@ -98,6 +98,36 @@ export async function lsRemoteHead(url, { git = defaultGit } = {}) {
   return parseSha(stdout, `git ls-remote ${url}`);
 }
 
+// The commits an update brings in, newest first, for the update consent modal.
+// The clone is shallow, so it is deepened just far enough to reach the
+// installed commit; `truncated` says the prior sha was not within reach (or the
+// history was rewritten) and the list is only the newest COMMIT_LIMIT. Best
+// effort: a failure here only loses the list, never the update.
+export const COMMIT_LIMIT = 50;
+export async function commitsSince(dir, priorSha, { git = defaultGit, limit = COMMIT_LIMIT } = {}) {
+  try {
+    await git([
+      '-c', 'protocol.ext.allow=never',
+      '-c', 'protocol.file.allow=never',
+      'fetch', '--quiet', `--deepen=${limit}`, '--no-recurse-submodules', 'origin',
+    ], { cwd: dir });
+  } catch { /* an already-complete or unreachable history still logs what it has */ }
+  let reachable = false;
+  if (priorSha) {
+    try {
+      await git(['merge-base', '--is-ancestor', priorSha, 'HEAD'], { cwd: dir });
+      reachable = true;
+    } catch { /* not an ancestor, or not fetched */ }
+  }
+  const range = reachable ? [`${priorSha}..HEAD`] : ['HEAD'];
+  const { stdout } = await git(['log', `--max-count=${limit}`, '--format=%H%x09%s', ...range], { cwd: dir });
+  const commits = String(stdout || '').split('\n').filter(Boolean).map((line) => {
+    const tab = line.indexOf('\t');
+    return { sha: line.slice(0, tab).slice(0, 8), subject: line.slice(tab + 1) };
+  });
+  return { commits, truncated: !reachable };
+}
+
 function parseSha(stdout, what) {
   const m = String(stdout || '').match(/\b[0-9a-f]{7,40}\b/);
   if (!m) throw new Error(`Could not parse a commit sha out of ${what}`);
