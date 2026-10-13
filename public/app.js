@@ -61,6 +61,7 @@ import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.j
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
 import { createIntentImages } from './intent-images.js';
+import { createExtImageStaging } from './ext-image-staging.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
@@ -314,6 +315,8 @@ const extApi = {
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs `api.images.stage`.
+  stageImage: (file) => extImageStaging.stage(file),
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
   // Backs slots' per-extension `api.settings()`, which binds the id.
@@ -6467,7 +6470,7 @@ function connect() {
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
-    else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg)) chatView.onPasteImageResult(msg); }
+    else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg) && !extImageStaging.onResult(msg)) chatView.onPasteImageResult(msg); }
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
@@ -6629,6 +6632,7 @@ initStyles();
 const terminalImagePaste = createTerminalImagePaste({ send, toast });
 // The dispatch dialog's intent box. Off for schedules: a staged image is pruned
 // within a week, and a schedule can fire long after that.
+const extImageStaging = createExtImageStaging({ send });
 const intentImages = createIntentImages({
   input: document.getElementById('m-intent'),
   listEl: document.getElementById('m-intent-attachments'),

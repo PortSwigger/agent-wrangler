@@ -528,3 +528,63 @@ test('events: delivery to an extension stops when it is deactivated (offOwner) o
   events.emit('core:thing');
   assert.deepEqual(seen, ['a', 'b', 'b']);
 });
+
+// -- images (sessions:spawn `images`, images:keep) ---------------------------
+import fs from 'node:fs';
+import path from 'node:path';
+import { STAGED_PASTES_DIR } from '../paste-store.js';
+
+const stagedImage = (name) => {
+  fs.mkdirSync(STAGED_PASTES_DIR, { recursive: true });
+  fs.writeFileSync(path.join(STAGED_PASTES_DIR, name), 'img');
+};
+
+test('spawn images defers the intent, claims the images and hands them to the first-prompt delivery', async () => {
+  const name = 'paste-1787651576100-aaaa0001.png';
+  stagedImage(name);
+  const delivered = [];
+  const w = wiring({ deliverFirstPrompt: async (a) => { delivered.push(a); } });
+  const seen = [];
+  w.core.sessionManager.dispatch = async (o) => { seen.push(o); return { sessionId: 'IMG1', tmux: 'cc_img', cwd: '/a' }; };
+  const host = buildHostApi({ id: 'imgx', requires: ['sessions:spawn'], ...w });
+  await host.sessions.spawn({ cwd: '/a', intent: 'look at this', images: [name] });
+  assert.equal(seen[0].deferIntent, true);
+  assert.equal(seen[0].intent, 'look at this');
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].tmux, 'cc_img');
+  assert.equal(delivered[0].text, 'look at this');
+  assert.equal(delivered[0].agent, 'claude');
+  assert.deepEqual(delivered[0].imagePaths.map((p) => path.basename(p)), [name]);
+});
+
+test('spawn without images launches as before and never touches first-prompt delivery', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/a', intent: 'x' });
+  assert.equal('deferIntent' in seen.dispatch[0], false);
+});
+
+test('spawn refuses bad images before launching anything', async () => {
+  const { seen, host } = spawnWiring();
+  await assert.rejects(host.sessions.spawn({ images: 'nope' }), /images must be an array/);
+  await assert.rejects(host.sessions.spawn({ images: ['/etc/passwd'] }), /staged image names/);
+  await assert.rejects(host.sessions.spawn({ images: ['paste-1-deadbeef.png'] }), /not staged or kept/);
+  await assert.rejects(host.sessions.spawn({ images: Array(9).fill('paste-1-deadbeef.png') }), /at most 8/);
+  assert.equal(seen.dispatch.length, 0);
+});
+
+test('images:keep keeps, reads back and removes an extension\'s own copy, and spawn copies from it twice', async () => {
+  const name = 'paste-1787651576101-aaaa0002.png';
+  stagedImage(name);
+  const delivered = [];
+  const w = wiring({ deliverFirstPrompt: async (a) => { delivered.push(a); } });
+  const host = buildHostApi({ id: 'keeper', requires: ['images:keep', 'sessions:spawn'], ...w });
+  assert.equal(host.images.keep(name), true);
+  fs.rmSync(path.join(STAGED_PASTES_DIR, name));
+  assert.equal(host.images.read(name).mime, 'image/png');
+  await host.sessions.spawn({ cwd: '/a', intent: 'one', images: [name] });
+  await host.sessions.spawn({ cwd: '/a', intent: 'two', images: [name] });
+  assert.equal(delivered.length, 2);
+  assert.equal(host.images.remove(name), true);
+  assert.equal(host.images.read(name), null);
+  assert.equal('images' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
+});

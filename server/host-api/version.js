@@ -260,7 +260,15 @@ import semver from 'semver';
 // the accepted model over as `ext.<extId>.model`. An older server ignores the key,
 // so spawn_session still rejects the runtime's models against the agent's list; a
 // manifest that needs MCP spawns with its own models declares `^1.30.0`.
-export const HOST_API_VERSION = '1.30.0';
+//
+// 1.31.0 lets an extension put images in a session's first prompt: the client
+// `api.images.stage(file)` (staging upload, resolves the server-minted name), the
+// `images` option on `host.sessions.spawn()` (each pasted ahead of the prompt
+// once the TUI has booted, the dispatch dialog's path) and the `images:keep`
+// capability (`host.images.keep/read/remove`, the extension's own copies, which a
+// spawn copies from instead of consuming, so one set of images can seed many
+// sessions). A manifest using any declares `^1.31.0`.
+export const HOST_API_VERSION = '1.31.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

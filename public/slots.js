@@ -367,6 +367,15 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
+        // Upload an image into paste-image's staging dir (1.31.0); resolves
+        // { name } for host.sessions.spawn({ images }) / host.images.keep.
+        images: Object.freeze({
+          stage: (file) => {
+            if (typeof baseApi.stageImage !== 'function') return Promise.reject(new Error(`[ext:${extId}] images.stage is not available`));
+            if (!file || typeof file !== 'object' || typeof file.size !== 'number') return Promise.reject(new Error(`[ext:${extId}] images.stage expects a File or Blob`));
+            return Promise.resolve(baseApi.stageImage(file));
+          },
+        }),
         // Mark `el` as carrying an extension-owned drag: the board treats any
         // [data-ext-drag] element as "a drag is in progress" and holds its
         // background re-renders (app.js gridEditing) so the gesture is not torn

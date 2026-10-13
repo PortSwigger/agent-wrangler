@@ -3,6 +3,9 @@ import { deepFreeze, projectSession, projectTask, worktreeSummary } from './proj
 import { cachedScan } from '../usage-scan-memo.js';
 import { ADHOC } from '../task-store.js';
 import { linkMatches } from '../mcp/links.js';
+import { MAX_ATTACHMENTS_PER_MESSAGE, isPasteFileName } from '../paste-image.js';
+import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeKeptPaste } from '../paste-store.js';
+import { deliverFirstPrompt } from '../dispatch-runner.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -97,7 +100,22 @@ function checkAddDirs(addDirs) {
   return { addDirs };
 }
 
-const sessionsSpawn = ({ core }) => ({
+// Names, never paths: each must be a name this server minted, held in the
+// staging dir (client `api.images.stage`) or in this extension's own kept store.
+// Checked BEFORE the launch, because a session started without the images its
+// caller meant it to have cannot be told apart from one that never wanted them.
+function checkImages(extId, images) {
+  if (images === undefined || images === null) return [];
+  if (!Array.isArray(images)) spawnError('images must be an array of staged image names');
+  if (images.length > MAX_ATTACHMENTS_PER_MESSAGE) spawnError(`images holds at most ${MAX_ATTACHMENTS_PER_MESSAGE} entries (got ${images.length})`);
+  for (const n of images) {
+    if (!isPasteFileName(n)) spawnError(`images entries must be staged image names (got ${JSON.stringify(n)})`);
+    if (!imageAvailable(extId, n)) spawnError(`image ${n} is not staged or kept (staged images are pruned after a week)`);
+  }
+  return images.slice();
+}
+
+const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPrompt }) => ({
   sessions: {
     // `parentSession` may name a card this extension did not create. Deliberate,
     // resolved decision — board nesting is not ownership, and the board itself
@@ -111,10 +129,11 @@ const sessionsSpawn = ({ core }) => ({
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
       const addDirsOpt = checkAddDirs(addDirs);
+      const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
       for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks]]) {
         if (v !== undefined && typeof v !== 'boolean') spawnError(`${name} must be a boolean`);
@@ -139,8 +158,18 @@ const sessionsSpawn = ({ core }) => ({
         // sees it, so an assign after the fact would leave a Codex session
         // writing into its own scratch memory.
         ...(taskId ? { taskId } : {}),
+        // Images need the booted composer, so the intent is held back from the
+        // launch command and pasted after them (dispatch-runner.js).
+        ...(imageNames.length ? { deferIntent: true } : {}),
         launchReason: 'spawn',
       });
+      if (imageNames.length) {
+        const agentId = agent || 'claude';
+        const imagePaths = claimExtImages(id, result.sessionId, agentId, imageNames);
+        // Not awaited, as in runDispatch: the TUI can take seconds to boot, and
+        // deliverFirstPrompt never throws.
+        deliver({ tmux: result.tmux, socket: core.sessionManager.entryFor(result.sessionId)?.socket ?? '', agent: agentId, text: intent || '', imagePaths });
+      }
       // The other half of that binding, exactly as the spawn_* tools and the
       // board's own dispatch do it — a no-op if the task was archived meanwhile,
       // so the session falls back to Ad-hoc rather than failing the launch. It
@@ -192,6 +221,19 @@ const sessionsInterrupt = ({ interruptSession }) => ({
 const sessionsBill = ({ core }) => ({
   sessions: {
     bill: (sid, liveSessionId) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId),
+  },
+});
+
+// An extension's own copies of staged images. Staging is single-use (the first
+// session to claim a file takes it), so work that spawns several sessions with
+// the same pictures keeps them here and passes the names to spawn({ images }),
+// which copies a kept name rather than moving it. Per-extension by construction:
+// `id` is closed over, so a name only resolves in the caller's own store.
+const imagesKeep = ({ id }) => ({
+  images: {
+    keep: (name) => keepStagedPaste(id, name),
+    read: (name) => readKeptPaste(id, name),
+    remove: (name) => removeKeptPaste(id, name),
   },
 });
 
@@ -425,4 +467,5 @@ export const V1_BUILDERS = {
   'sessions:bill': sessionsBill,
   'sessions:interrupt': sessionsInterrupt,
   'links:write': linksWrite,
+  'images:keep': imagesKeep,
 };

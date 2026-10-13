@@ -1161,6 +1161,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   hook answers `undefined` or throws, or when the card does not exist (an unknown
   id is never adopted, unlike `set_links`). An existing link matching by
   `linkMatches` is replaced in place, otherwise it is appended; the board rebuilds.
+- **Images in a first prompt** (1.31.0). `api.images.stage(file)` (client, takes a
+  `File`/`Blob`, rejects a non-image) uploads through the same `paste-image`
+  `staged` path as the dispatch dialog's intent box (magic-byte sniff, mime
+  allowlist, 10 MB cap) and resolves `{ name }`, a server-minted name, never a
+  path. `host.sessions.spawn({ images: [name, ...] })` (at most 8) launches with
+  the prompt held back and then pastes each image ahead of the prompt text once
+  the TUI has booted, as `runDispatch` does; a name that is not a minted name, or
+  is neither staged nor kept, throws before anything launches. Staged names are
+  single-use (the session takes the file) and pruned after a week, so work that
+  seeds several sessions with the same images keeps its own copies: capability
+  **`images:keep`** gives `host.images.keep(name)` (copies a staged image into
+  the extension's own store, `false` if it is not staged), `read(name)` →
+  `{ mime, bytes }` or `null` (to show it back), and `remove(name)`. `spawn`
+  resolves a name in the extension's kept store first and COPIES from it, so the
+  same name can go into any number of spawns. Kept images are never pruned; the
+  extension removes them. Images need a local launch. A manifest using any of
+  these declares `^1.31.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and

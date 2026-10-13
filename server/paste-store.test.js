@@ -107,3 +107,46 @@ test('resolvePasteNames: caps the batch and tolerates a non-array', async () => 
   assert.deepEqual(resolvePasteNames(sid, 'claude', 'not-an-array'), []);
   assert.deepEqual(resolvePasteNames(sid, 'claude', undefined), []);
 });
+
+// -- extension-kept images --------------------------------------------------
+import { STAGED_PASTES_DIR, keepStagedPaste, readKeptPaste, removeKeptPaste, imageAvailable, claimExtImages } from './paste-store.js';
+
+const stage = (name, body = 'png-bytes') => {
+  fs.mkdirSync(STAGED_PASTES_DIR, { recursive: true });
+  fs.writeFileSync(path.join(STAGED_PASTES_DIR, name), body);
+};
+
+test('keepStagedPaste copies a staged image into the extension\'s own store and leaves the staged file', () => {
+  const name = 'paste-1787651576001-aaaa1111.png';
+  stage(name);
+  assert.equal(keepStagedPaste('ext-a', name), true);
+  assert.deepEqual(readKeptPaste('ext-a', name), { mime: 'image/png', bytes: Buffer.from('png-bytes') });
+  assert.ok(fs.existsSync(path.join(STAGED_PASTES_DIR, name)));
+  assert.equal(readKeptPaste('ext-b', name), null, 'a name only resolves in its owner\'s store');
+});
+
+test('keepStagedPaste refuses a name that is not a minted one, or is not staged', () => {
+  assert.equal(keepStagedPaste('ext-a', '../../etc/passwd'), false);
+  assert.equal(keepStagedPaste('ext-a', 'paste-1-deadbeef.png'), false);
+  assert.throws(() => keepStagedPaste('../evil', 'paste-1-deadbeef.png'), /invalid extension id/);
+});
+
+test('claimExtImages copies a kept name (so it can seed many sessions) and moves a staged one', () => {
+  _resetLaunchContextForTests();
+  const kept = 'paste-1787651576002-bbbb2222.png';
+  const staged = 'paste-1787651576003-cccc3333.png';
+  stage(kept);
+  keepStagedPaste('ext-c', kept);
+  stage(staged);
+  const first = claimExtImages('ext-c', 'ps-claim-1', 'claude', [kept, staged]);
+  const second = claimExtImages('ext-c', 'ps-claim-2', 'claude', [kept, staged]);
+  assert.equal(first.length, 2);
+  assert.ok(fs.existsSync(first[0]) && fs.existsSync(first[1]));
+  assert.deepEqual(second.map((p) => path.basename(p)), [kept], 'the staged file was consumed, the kept one was not');
+  assert.equal(imageAvailable('ext-c', kept), true);
+  assert.equal(imageAvailable('ext-c', staged), false);
+  assert.equal(removeKeptPaste('ext-c', kept), true);
+  assert.equal(imageAvailable('ext-c', kept), true, 'the staged original is still there until it is pruned');
+  fs.rmSync(path.join(STAGED_PASTES_DIR, kept));
+  assert.equal(imageAvailable('ext-c', kept), false);
+});
