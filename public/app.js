@@ -2824,6 +2824,14 @@ function armNewTask(on) {
     if (currentView !== 'grid') setView('grid');
     createTask();
   });
+  const grid = document.getElementById('grid');
+  if (grid) {
+    grid.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.task-cell')) return;
+      e.preventDefault();
+      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+    });
+  }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });
   btn.addEventListener('dragleave', () => btn.classList.remove('drop'));
   btn.addEventListener('drop', (e) => {
