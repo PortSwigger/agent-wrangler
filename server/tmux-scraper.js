@@ -6,6 +6,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
+import { boundedPs } from './bounded-ps.js';
+import { logWarn } from './log.js';
 import { paneComposerIsEmpty, paneHasWorkingStatus } from './ghost-suggestion.js';
 
 const exec = promisify(execFile);
@@ -68,25 +70,28 @@ export function claudeTitle(paneTitle) {
 }
 
 // Build a pid -> {ppid, command} forest from a single `ps` call.
-async function processTree() {
+export async function processTree(opts) {
   const children = new Map();
   const cmd = new Map();
-  try {
-    const { stdout } = await exec('ps', ['-axo', 'pid=,ppid=,command=']);
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
-      if (!m) continue;
-      const pid = Number(m[1]);
-      const ppid = Number(m[2]);
-      cmd.set(pid, m[3]);
-      if (!children.has(ppid)) children.set(ppid, []);
-      children.get(ppid).push(pid);
-    }
-  } catch {
-    /* ps failed */
+  const stdout = await boundedPs(['-axo', 'pid=,ppid=,command='], opts);
+  if (stdout === null) {
+    if (!treeSkipped) logWarn('process tree scan skipped');
+    treeSkipped = true;
+    return { children, cmd };
+  }
+  treeSkipped = false;
+  for (const line of stdout.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    cmd.set(pid, m[3]);
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(pid);
   }
   return { children, cmd };
 }
+let treeSkipped = false;
 
 // Walk a pane's process subtree to find an agent pid, if any → { pid, agent }.
 // Checks the executable matcher first (a plain host agent process), then the

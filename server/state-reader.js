@@ -2,8 +2,6 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
@@ -14,24 +12,29 @@ import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { usageSince } from './transcript-reader.js';
 import { autoFixPrChecksDefault } from './config-store.js';
-
-const execp = promisify(execFile);
+import { boundedPs } from './bounded-ps.js';
+import { logWarn } from './log.js';
 
 // pid -> { tty, cpu } for every process, from one `ps` call. A real `ttysNNN`
 // means the session lives in an open terminal window; `??` means background.
-async function procInfo() {
+export async function procInfo(opts) {
   const map = new Map();
-  try {
-    const { stdout } = await execp('ps', ['-axo', 'pid=,tty=,%cpu=']);
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)/);
-      if (m) map.set(Number(m[1]), { tty: m[2], cpu: parseFloat(m[3]) });
-    }
-  } catch {
-    /* ps unavailable */
+  const stdout = await boundedPs(['-axo', 'pid=,tty=,%cpu='], opts);
+  if (stdout === null) {
+    // A wedged tty makes ps hang unkillably; boot must not wait on it. Warn once
+    // per outage, not on every graph rebuild.
+    if (!procInfoSkipped) logWarn('session tty scan skipped');
+    procInfoSkipped = true;
+    return map;
+  }
+  procInfoSkipped = false;
+  for (const line of stdout.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)/);
+    if (m) map.set(Number(m[1]), { tty: m[2], cpu: parseFloat(m[3]) });
   }
   return map;
 }
+let procInfoSkipped = false;
 
 const ROSTER = path.join(CLAUDE_DIR, 'daemon', 'roster.json');
 const JOBS_DIR = path.join(CLAUDE_DIR, 'jobs');
