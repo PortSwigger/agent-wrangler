@@ -3,6 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
+import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
@@ -58,6 +59,8 @@ import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onA
 import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
+import { createTerminalImagePaste } from './terminal-image-paste.js';
+import { createIntentImages } from './intent-images.js';
 import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
@@ -994,20 +997,14 @@ let dragActive = false;
 let draggedCard = null;
 let placeholderEl = null;
 
-// Task reorder drag-and-drop: tiles are column-packed in a 2-D grid, so dropping
-// one tile onto another SWAPS them (a linear insert would drag a tile across
-// columns and unbalance them). While dragging, `taskSwapTargetId` is the tile
-// under the cursor; the grid re-renders to preview the swap — the dragged tile
-// becomes a dashed placeholder in the target's slot and the target moves to the
-// dragged tile's origin. `taskDragActive` guards background re-renders, like
-// `dragActive` does for sessions.
 let taskDragActive = false;
 let draggedTaskId = null;
-let taskSwapTargetId = null;
-// The canonical (pre-swap) tile geometry, snapshotted once at drag-start — see
+let taskDropTargetId = null;
+// The canonical tile geometry, snapshotted once at drag-start — see
 // taskTargetAt for why hit-testing needs a fixed reference instead of the live,
 // preview-swapped DOM.
 let taskCellRects = null;
+let taskDropAfter = false;
 
 // One reusable placeholder, moved (never duplicated) during a reorder drag.
 function ensurePlaceholder() {
@@ -1506,16 +1503,18 @@ function renderGrid() {
   // nominal size and the correction must not be adopted (see refinePerRow).
   const { perRow, canonical } = refinePerRow(sessionsPerRow(el), buildTiles, el.clientHeight);
   let { placed, cols, rows, scroll } = canonical;
-  // Mid-drag preview: swap the dragged tile and the hovered target WITHOUT
-  // re-running computeLayout on the whole board — see localSwapPlacement for
-  // why a full repack can strand the preview in a column neither tile was ever
-  // in. Only the tile(s) in the two affected columns move; everything else
-  // keeps its canonical position untouched. (The COMMIT still does a plain
-  // order-swap, not this — see commitTaskSwap for why that mismatch is a known,
-  // separate limitation rather than something fixed here.)
-  if (taskDragActive && draggedTaskId && taskSwapTargetId && taskSwapTargetId !== draggedTaskId) {
-    const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskSwapTargetId);
-    if (swapped) { placed = swapped.placed; rows = swapped.rows; scroll = swapped.scroll; }
+  if (taskDragActive && draggedTaskId && taskDropTargetId && taskDropTargetId !== draggedTaskId) {
+    if (cols === 1) {
+      const height = taskCellRects?.find((cell) => cell.id === draggedTaskId)?.rect.height;
+      placed = canonical.placed.map((tile) => {
+        if (tile.id === draggedTaskId) return { ...tile, kind: 'placeholder', placeholderHeight: height };
+        if (tile.id === taskDropTargetId) return { ...tile, moveTarget: true, moveAfter: taskDropAfter };
+        return tile;
+      });
+    } else {
+      const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskDropTargetId);
+      if (swapped) { placed = swapped.placed; rows = swapped.rows; scroll = swapped.scroll; }
+    }
   }
 
   // The tray (if any minimised tiles) rides one extra full-width row below the
@@ -1524,8 +1523,14 @@ function renderGrid() {
   // column (the bug this fixes).
   const hasTray = minimisedIds.size > 0;
   const trayRow = hasTray ? ' auto' : '';
+  const singleColumn = cols === 1;
+  el.classList.toggle('single-column', singleColumn);
   el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  if (scroll) {
+  if (singleColumn) {
+    el.classList.add('scrolling');
+    el.style.gridTemplateRows = '';
+    el.style.gridAutoRows = 'max-content';
+  } else if (scroll) {
     // Past 3×3: lock cell height to the 3-row size and let the board scroll.
     el.classList.add('scrolling');
     const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
@@ -1582,7 +1587,7 @@ function renderFocusedTile(el, id) {
     ? { kind: 'notask', id: ADHOC_ID, sessions, span: 1 }
     : { kind: 'task', id, task: latestTasks.tasks.find((t) => t.id === id), sessions, span: 1 };
   el.classList.add('focus-mode');
-  el.classList.remove('scrolling');
+  el.classList.remove('scrolling', 'single-column');
   el.style.gridTemplateColumns = '';
   el.style.gridTemplateRows = '';
   el.style.gridAutoRows = '';
@@ -2441,25 +2446,22 @@ function wireGridDnd(el) {
       if (!taskDragActive) return;
       e.preventDefault();
       const t = taskTargetAt(e.clientX, e.clientY);
+      const rect = taskCellRects?.find((cell) => cell.id === t)?.rect;
+      const after = el.classList.contains('single-column') && rect
+        ? e.clientY + el.scrollTop >= (rect.top + rect.bottom) / 2 : false;
       // Over a gap/placeholder → keep the current target so the preview is steady.
       if (t === draggedTaskId) {
-        // Back over the tile's OWN origin (its slot in the snapshot taken at
-        // drag-start) → clear the preview so a drop here is a genuine no-op.
-        // Without this, hovering back over your own start left the LAST real
-        // target sticky: commitTaskSwap swaps with whatever you hovered over
-        // last, not with "nowhere," so dropping back "where it was" silently
-        // performed the earlier swap anyway — there was no way to cancel a
-        // preview short of aborting the whole drag (Escape / drop off-board).
-        if (taskSwapTargetId !== null) { taskSwapTargetId = null; renderGrid(); }
-      } else if (t && t !== taskSwapTargetId) {
-        taskSwapTargetId = t;
+        if (taskDropTargetId !== null) { taskDropTargetId = null; renderGrid(); }
+      } else if (t && (t !== taskDropTargetId || after !== taskDropAfter)) {
+        taskDropTargetId = t;
+        taskDropAfter = after;
         renderGrid();
       }
     });
     el.addEventListener('drop', (e) => {
       if (!taskDragActive) return;
       e.preventDefault();
-      commitTaskSwap();
+      commitTaskReorder();
     });
   }
 
@@ -2521,13 +2523,14 @@ function wireGridDnd(el) {
       e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'task', taskId: id }));
       draggedTaskId = id;
       taskDragActive = true;
-      taskSwapTargetId = null; // no swap previewed until the cursor reaches a tile
+      taskDropTargetId = null;
+      taskDropAfter = false;
       taskCellRects = snapshotTaskCellRects(); // see taskTargetAt
     });
     head.addEventListener('dragend', () => {
       taskDragActive = false;
       draggedTaskId = null;
-      taskSwapTargetId = null;
+      taskDropTargetId = null;
       taskCellRects = null;
       // Rebuild from canonical order (a committed drop updated it optimistically).
       if (currentView === 'grid') renderGrid();
@@ -2619,10 +2622,7 @@ function wireGridDnd(el) {
 // Snapshot of every task-cell's id + rect, taken once at drag-start (before any
 // swap preview has ever applied) — the canonical, un-swapped geometry.
 function snapshotTaskCellRects() {
-  return [...document.getElementById('grid').querySelectorAll('.task-cell')].map((c) => ({
-    id: c.dataset.entity === 'no-task' ? ADHOC_ID : c.dataset.taskid,
-    rect: c.getBoundingClientRect(),
-  }));
+  return snapshotTaskRects(document.getElementById('grid'), ADHOC_ID);
 }
 
 // The tile id under the cursor at (x, y), or null over a gap/ghost/placeholder.
@@ -2637,35 +2637,24 @@ function snapshotTaskCellRects() {
 // when the cursor actually moves to a different cell in the ORIGINAL layout.
 function taskTargetAt(x, y) {
   const rects = taskCellRects || snapshotTaskCellRects();
-  for (const { id, rect: r } of rects) {
-    if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return id;
-  }
-  return null;
+  return taskAtPoint(rects, x, y, document.getElementById('grid'));
 }
 
-// Swap the dragged tile with the hovered target in the order. Optimistic —
-// server confirms on the next graph push.
-//
-// Deliberately NOT sending the full localSwapPlacement-derived order here: a
-// mixed-span, cross-column swap's local restack can leave one column past the
-// board's total/cols "fair share" target, and computeLayout's fresh recompute
-// on ANY resulting order (this plain swap or a column-serialized one — tried
-// both) then reshuffles tiles that were never part of the drag to force
-// everything back near-equal — so the committed layout can differ from the
-// live preview regardless of which order we send. Fixing that needs the
-// server to persist an explicit 2-D position, not infer one from a 1-D order;
-// out of scope here. This plain swap is the smallest correct thing: it's
-// exactly what full order-serialization reduces to for same-span and
-// same-column swaps (the cases that DO commit consistently today).
-function commitTaskSwap() {
-  if (!draggedTaskId || !taskSwapTargetId || taskSwapTargetId === draggedTaskId) return;
+function commitTaskReorder() {
+  if (!draggedTaskId || !taskDropTargetId || taskDropTargetId === draggedTaskId) return;
   const order = currentOrder();
   const i = order.indexOf(draggedTaskId);
-  const j = order.indexOf(taskSwapTargetId);
+  const j = order.indexOf(taskDropTargetId);
   if (i < 0 || j < 0) return;
-  [order[i], order[j]] = [order[j], order[i]];
+  const move = document.getElementById('grid').classList.contains('single-column');
+  if (move) {
+    order.splice(i, 1);
+    const target = order.indexOf(taskDropTargetId);
+    order.splice(target + (taskDropAfter ? 1 : 0), 0, draggedTaskId);
+  } else [order[i], order[j]] = [order[j], order[i]];
   latestTasks.order = order;
-  send({ type: 'task-reorder', taskId: draggedTaskId, targetId: taskSwapTargetId });
+  send({ type: 'task-reorder', taskId: draggedTaskId, targetId: taskDropTargetId,
+    ...(move ? { mode: 'move', after: taskDropAfter } : {}) });
 }
 
 // Swap a task's name span for an inline input. Enter/blur commits, Escape cancels.
@@ -2824,6 +2813,14 @@ function armNewTask(on) {
     if (currentView !== 'grid') setView('grid');
     createTask();
   });
+  const grid = document.getElementById('grid');
+  if (grid) {
+    grid.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.task-cell')) return;
+      e.preventDefault();
+      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+    });
+  }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });
   btn.addEventListener('dragleave', () => btn.classList.remove('drop'));
   btn.addEventListener('drop', (e) => {
@@ -3268,7 +3265,8 @@ export function deselectSession() {
 // The session id deep-linked in the URL hash (#session=<id>), or null.
 function hashSessionId() {
   const m = (location.hash || '').match(/^#session=(.+)$/);
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
 }
 
 // The view a hash deep-links (#view=search), else null. Mutually exclusive with
@@ -4408,6 +4406,7 @@ function closeTerminal() {
   try { current.ws.close(); } catch {}
   try { current.term.dispose(); } catch {}
   document.getElementById('term').removeEventListener('click', current.clickHandler);
+  current.detachImagePaste?.();
   current = null;
 }
 
@@ -4653,6 +4652,9 @@ function openTerminal(s) {
   const clickHandler = () => { term.focus(); acknowledge(s.sessionId); };
   el.addEventListener('click', clickHandler);
   term.textarea?.addEventListener('focus', () => acknowledge(s.sessionId));
+  // Text that rode along with a pasted image goes through xterm's own paste, so
+  // it is bracketed exactly as a plain text paste would be.
+  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, pasteText: (t) => term.paste(t) });
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
@@ -4731,7 +4733,7 @@ function openTerminal(s) {
   ws.onopen = () => syncSize(true);
   const ro = new ResizeObserver(() => syncSize(false));
   ro.observe(el);
-  current = { term, ws, fit, ro, clickHandler, sessionId: s.sessionId };
+  current = { term, ws, fit, ro, clickHandler, detachImagePaste, sessionId: s.sessionId };
   // Selecting a session lands keyboard focus on the Claude input so the user can
   // type immediately — without this they'd have to click the terminal a second
   // time. The textarea focus listener above marks the session user-attended.
@@ -5421,6 +5423,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
+  intentImages.reset();
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
@@ -5547,6 +5550,10 @@ function submitDispatch() {
   if (cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
+  if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
+  const imageNames = intentImages.names();
+  if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
+  if (imageNames.length) fields.imageNames = imageNames;
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
@@ -5555,6 +5562,8 @@ function submitDispatch() {
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return false;
   send({ type: 'dispatch', ...fields });
+  // The names now belong to this dispatch; a relaunch must not claim them again.
+  intentImages.reset();
   dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
@@ -6458,7 +6467,7 @@ function connect() {
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
-    else if (msg.type === 'paste-image-result') chatView.onPasteImageResult(msg);
+    else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg)) chatView.onPasteImageResult(msg); }
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
     else if (msg.type === 'search-results') onSearchResults(msg);
@@ -6615,6 +6624,18 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
 initStyles();
+
+// Constructed once; openTerminal attaches it to each agent terminal it opens.
+const terminalImagePaste = createTerminalImagePaste({ send, toast });
+// The dispatch dialog's intent box. Off for schedules: a staged image is pruned
+// within a week, and a schedule can fire long after that.
+const intentImages = createIntentImages({
+  input: document.getElementById('m-intent'),
+  listEl: document.getElementById('m-intent-attachments'),
+  send,
+  toast,
+  enabled: () => !scheduleMode() && modalMode !== 'subagent',
+});
 
 // Constructed once: renderSidebar/applySessionView mount/unmount it per session,
 // and the WS dispatch below feeds it every 'chat' poll reply.

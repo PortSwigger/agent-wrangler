@@ -9,6 +9,7 @@
 import { groupChatEvents } from './chat-group.js';
 import { createChatDom } from './chat-dom.js';
 import { createRenderer } from './markdown-preview.js';
+import { imageSources, imageMimeOf, sourceToFrame, MAX_IMAGES_PER_PASTE } from './clipboard-images.js';
 
 export const POLL_MS = 2000;
 // Send → "my own message is on screen" waits on two things: the TUI writing the
@@ -69,7 +70,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // and the agent's rendered markdown must linkify identically.
   const baseDir = () => (sessionId ? cwdFor?.(sessionId) : null) || null;
   const dom = createChatDom({
-    renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir }),
+    renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir, boardOrigin: window.location?.origin }),
     baseDir,
   });
 
@@ -279,15 +280,49 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // reader was actually trying to recover.
   //
   // Held per card id rather than simply cleared, so switching away does not throw
-  // away work in progress. In memory only, and deliberately not localStorage: an
-  // unsent prompt is a thing of the moment, and surviving a reload would put words
-  // in the composer the reader has long forgotten writing.
+  // away work in progress. Mirrored to localStorage so a reload (e.g. the UI
+  // restarting for an update) does not lose a long message either.
   //
   // Attachments travel WITH the text, because a pasted image's filename is only
   // meaningful inside the session whose pastes folder holds it — restoring the
   // prose without them would silently drop the images it refers to, and carrying
   // them to a DIFFERENT session is the leak this whole store exists to stop.
-  const drafts = new Map();
+  const DRAFTS_KEY = 'aw.chatDrafts';
+  const DRAFTS_MAX = 50;
+  function parseStoredDrafts(raw) {
+    try {
+      const parsed = JSON.parse(raw || '[]');
+      return Array.isArray(parsed) ? parsed.filter((e) => Array.isArray(e) && typeof e[0] === 'string' && typeof e[1]?.text === 'string' && Array.isArray(e[1].attachments)) : [];
+    } catch { return []; }
+  }
+  // Every read and write goes through storage rather than a private snapshot, so a
+  // second board tab never overwrites this one's drafts (or resurrects a sent one)
+  // from a stale copy. After a storage write fails, the in-memory map takes over
+  // so drafts still survive card switches.
+  class PersistedDrafts {
+    constructor() { this.memory = null; }
+    read() {
+      if (this.memory) return this.memory;
+      try { return new Map(parseStoredDrafts(localStorage.getItem(DRAFTS_KEY))); } catch { return new Map(); }
+    }
+    write(map) {
+      while (map.size > DRAFTS_MAX) map.delete(map.keys().next().value);
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...map])); } catch { this.memory = map; }
+    }
+    get(k) { return this.read().get(k); }
+    set(k, v) {
+      const map = this.read();
+      map.delete(k);
+      map.set(k, v);
+      this.write(map);
+      return this;
+    }
+    delete(k) {
+      const map = this.read();
+      if (map.delete(k)) this.write(map);
+    }
+  }
+  const drafts = new PersistedDrafts();
 
   // Set when THIS view interrupted a turn: the interrupt is what may leave a
   // restored prompt in the PANE's composer, so the next send must clear it. Armed
@@ -565,6 +600,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // fire, so a multi-line suggestion would land in a one-row box that hides
     // most of itself.
     input.dispatchEvent(new Event('input'));
+    scheduleDraftSave();
   }
 
   function renderSuggestion() {
@@ -690,7 +726,19 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       interruptAndRestore();
     }
   });
-  input.addEventListener('input', () => {
+  let draftTimer = null;
+  // Explicit rather than driven by every input event: mount's loadDraft dispatches
+  // a synthetic input, and treating that hydration as an edit would file one
+  // card's draft under another.
+  function scheduleDraftSave() {
+    if (!sessionId) return;
+    clearTimeout(draftTimer);
+    const id = sessionId;
+    const era = requestEra;
+    draftTimer = setTimeout(() => { if (sessionId === id && requestEra === era && !pendingMessages.has(id)) saveDraft(id); }, 400);
+  }
+  input.addEventListener('input', (e) => {
+    if (e.isTrusted) scheduleDraftSave();
     input.style.height = 'auto';
     // An unrendered element (display:none somewhere above — the sidebar hidden by
     // the diff view's fullscreen, the pane hidden on unmount) reports scrollHeight
@@ -713,10 +761,6 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // the agent auto-attaches it. Verified against a live pane: a path inside
   // pasted prompt text becomes a real inline image, not a Read tool call.
   //
-  // Bounded per paste. A clipboard can hold a whole screenshot burst, and each
-  // one costs a base64 frame plus a file, so a slip is capped rather than
-  // unbounded — the human can always paste again.
-  const MAX_IMAGES_PER_PASTE = 4;
   // Tokens are era-stamped so a reply that lands after the view moved to another
   // session is dropped rather than typing a stale path into someone else's
   // composer. Same reasoning as the poll's token, different reply type, so
@@ -756,51 +800,93 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         attachments = attachments.filter((x) => x !== a);
         renderAttachments();
         renderSendability();
+        scheduleDraftSave();
       });
       chip.appendChild(drop);
       attachEl.appendChild(chip);
     });
   }
 
-  input.addEventListener('paste', (e) => {
+  // Paste and drop share one path: both hand over a DataTransfer, and what a
+  // source puts in it (see clipboard-images.js) does not depend on which gesture
+  // delivered it.
+  function attachFrom(e, dt) {
     if (!sessionId) return;
-    const items = Array.from(e.clipboardData?.items || []);
-    const files = items
-      .filter((it) => it.kind === 'file' && typeof it.type === 'string' && it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter(Boolean);
-    // No image on the clipboard means this is an ordinary text paste, which must
-    // fall through untouched — preventDefault here would break pasting text.
-    if (!files.length) return;
+    const { sources, text } = imageSources(dt);
+    // No image means an ordinary text paste or drop, which must fall through
+    // untouched — preventDefault here would break pasting text.
+    if (!sources.length) return;
     e.preventDefault();
-    const take = files.slice(0, MAX_IMAGES_PER_PASTE);
-    const skipped = files.length - take.length;
+    // Markup with an image in it (a copied selection) still carries words the
+    // human meant to paste, and preventDefault just swallowed them.
+    // setRangeText fires no input event, so raise one for the resize and Send.
+    if (text) {
+      input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+      input.dispatchEvent(new Event('input'));
+      scheduleDraftSave();
+    }
+    attachSources(sources);
+  }
+
+  function attachSources(sources) {
+    const take = sources.slice(0, MAX_IMAGES_PER_PASTE);
+    const skipped = sources.length - take.length;
     setPasteNote(take.length > 1 ? `Attaching ${take.length} images…` : 'Attaching image…');
-    for (const file of take) {
+    for (const source of take) {
       const token = `${requestEra}#${++pasteSeq}`;
       pendingPastes.add(token);
-      const reader = new FileReader();
-      reader.onerror = () => {
-        pendingPastes.delete(token);
-        setPasteNote('Could not read that image from the clipboard.');
-      };
-      reader.onload = () => {
-        // readAsDataURL gives "data:<mime>;base64,<payload>" — split once on the
-        // first comma so a payload containing one cannot truncate the split.
-        const raw = String(reader.result || '');
-        const comma = raw.indexOf(',');
-        const mime = /^data:([^;,]+)/.exec(raw)?.[1] || file.type;
-        if (comma < 0) {
-          pendingPastes.delete(token);
-          setPasteNote('Could not read that image from the clipboard.');
-          return;
-        }
-        send({ type: 'paste-image', sessionId, token, mime, dataBase64: raw.slice(comma + 1) });
-      };
-      reader.readAsDataURL(file);
+      sourceToFrame(source).then(
+        (frame) => {
+          // Gone stale while the image was being read or converted.
+          if (!pendingPastes.has(token)) return;
+          send({ type: 'paste-image', sessionId, token, ...frame });
+        },
+        (err) => {
+          if (!pendingPastes.delete(token)) return;
+          setPasteNote(err?.message || 'Could not read that image.');
+        },
+      );
     }
     if (skipped > 0) setPasteNote(`Attaching ${take.length} images — ${skipped} more were skipped.`);
+  }
+
+  // Ctrl+V is the terminal's paste key, and on macOS the browser fires no paste
+  // event for it, so muscle memory from the terminal pasted nothing here.
+  input.addEventListener('keydown', (e) => {
+    if (!isMac || !sessionId || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'v') return;
+    if (!navigator.clipboard?.read) return;
+    e.preventDefault();
+    const id = sessionId;
+    const era = requestEra;
+    const current = () => sessionId === id && requestEra === era && !pendingMessages.has(id);
+    navigator.clipboard.read().then(async (clipItems) => {
+      if (!current()) return;
+      const files = [];
+      let text = '';
+      for (const item of clipItems) {
+        const imgType = item.types.find((t) => t.startsWith('image/'));
+        if (imgType) files.push(new File([await item.getType(imgType)], 'paste', { type: imgType }));
+        else if (item.types.includes('text/plain')) text += await (await item.getType('text/plain')).text();
+      }
+      if (!current()) return;
+      if (files.length) attachSources(files.map((file) => ({ kind: 'file', file, mime: imageMimeOf(file) })));
+      else if (text) {
+        input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+        input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+        scheduleDraftSave();
+      }
+    }).catch(() => setPasteNote('Clipboard access was blocked — use Cmd+V to paste.'));
   });
+
+  input.addEventListener('paste', (e) => attachFrom(e, e.clipboardData));
+  // The whole view is the drop target rather than just the composer, which is a
+  // thin strip that is easy to miss with a file in hand. dragover has to cancel
+  // for the drop to fire at all, but only when files are coming, so dragging
+  // text around the composer keeps its native behaviour.
+  wrap.addEventListener('dragover', (e) => {
+    if (sessionId && Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
+  });
+  wrap.addEventListener('drop', (e) => attachFrom(e, e.dataTransfer));
 
   modelEl.addEventListener('click', () => {
     if (!sessionId || modelEl.disabled) return;
@@ -957,6 +1043,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           attachments = pending.draft.attachments.slice();
           input.dispatchEvent(new Event('input'));
           renderAttachments();
+          saveDraft(msg.sessionId);
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
           renderSendability();
@@ -1014,6 +1101,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       attachments.push({ name: msg.name });
       renderAttachments();
       renderSendability();
+      scheduleDraftSave();
       input.focus();
       // Cleared only once nothing is still in flight, so a multi-image paste does
       // not flash "done" while the rest are still uploading.

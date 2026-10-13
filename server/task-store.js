@@ -288,18 +288,16 @@ export class TaskStore {
     return true;
   }
 
-  // Drag-and-drop reorder over the combined `order` (tasks + the ADHOC sentinel):
-  // dropping `id` onto `targetId` SWAPS their two positions. Swap (not insert)
-  // because the tiles are column-packed in 2-D — exchanging two tiles keeps the
-  // columns balanced and matches the gesture, whereas a linear insert would pull
-  // a tile across columns and unbalance them. `id`/`targetId` may be the ADHOC
-  // sentinel. Returns false on no-op / unknown.
-  reorderTask(id, targetId) {
+  reorderTask(id, targetId, { move = false, after = false } = {}) {
     if (!targetId || id === targetId) return false;
     const i = this.order.indexOf(id);
     const j = this.order.indexOf(targetId);
     if (i < 0 || j < 0) return false;
-    [this.order[i], this.order[j]] = [this.order[j], this.order[i]];
+    if (move) {
+      this.order.splice(i, 1);
+      const target = this.order.indexOf(targetId);
+      this.order.splice(target + (after ? 1 : 0), 0, id);
+    } else [this.order[i], this.order[j]] = [this.order[j], this.order[i]];
     this._save();
     return true;
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -93,6 +93,8 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
+  const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
+  writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -255,6 +257,97 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       await evaluateChecked(`[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules]}catch{return []}}).some(r=>r.selectorText==='.diff-row')`),
       'the .diff-row side-by-side rule is missing from the stylesheet',
     );
+
+    const resize = async (width) => {
+      await ack('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column') === ${width < 800}`)), 'board did not switch column mode');
+    };
+    await resize(500);
+    assert.equal(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    const sizing = await evaluateChecked(`(() => {
+      const grid = document.getElementById('grid');
+      const cells = [...grid.querySelectorAll('.task-cell')];
+      const body = cells[0].querySelector('.task-body');
+      const extra = document.createElement('div');
+      extra.style.height = '700px';
+      body.append(extra);
+      const first = cells[0].getBoundingClientRect();
+      const next = cells[1].getBoundingClientRect();
+      return { firstHeight: first.height, gap: next.top - first.bottom, expectedGap: parseFloat(getComputedStyle(grid).rowGap),
+        gridScrollHeight: grid.scrollHeight, gridHeight: grid.clientHeight,
+        bodyScrollHeight: body.scrollHeight, bodyHeight: body.clientHeight };
+    })()`);
+    assert.ok(sizing.firstHeight >= 700 && Math.abs(sizing.gap - sizing.expectedGap) < 1
+      && sizing.gridScrollHeight > sizing.gridHeight && sizing.bodyScrollHeight <= sizing.bodyHeight,
+    `single-column tasks should fit their contents and scroll at board level: ${JSON.stringify(sizing)}`);
+    await resize(1400);
+    assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    await resize(500);
+    const action = async (label) => {
+      await evaluateChecked(`document.querySelector('.task-actions-btn').click()`);
+      await evaluateChecked(`[...document.querySelectorAll('.context-menu-item')].find((el) => el.textContent.trim() === ${JSON.stringify(label)}).click()`);
+    };
+    await action('Focus');
+    assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode') && !document.getElementById('grid').classList.contains('single-column')`), 'focus mode must clear single-column sizing');
+    await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
+    assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column')`)), 'restoring tasks must restore single-column mode');
+    for (let i = 0; i < 3; i++) {
+      await action('Minimise');
+      assert.ok(await evaluateChecked(`(() => {
+        const grid = document.getElementById('grid');
+        const cells = [...grid.querySelectorAll('.task-cell')];
+        const last = cells.at(-1).getBoundingClientRect();
+        const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();
+        return tray.top >= last.bottom && tray.width >= last.width - 1;
+      })()`), 'the minimised-task tray must sit below the stacked tasks');
+    }
+
+    await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
+    const dragTask = async (sourceId, targetId, after) => {
+      const result = await evaluateChecked(`(() => {
+        const style = document.createElement('style');
+        style.textContent = '.task-cell[data-taskid="layout-2"] .task-body { min-height: 1200px; }';
+        document.head.append(style);
+        const grid = document.getElementById('grid');
+        const source = grid.querySelector('[data-taskid="${sourceId}"]');
+        const targetCell = grid.querySelector('[data-taskid="${targetId}"]');
+        const sourceHeight = source.getBoundingClientRect().height;
+        const header = source.querySelector('.task-head');
+        const transfer = new DataTransfer();
+        header.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+        grid.scrollTop += targetCell.getBoundingClientRect().top - grid.getBoundingClientRect().top - 14;
+        const scroll = grid.scrollTop;
+        const target = targetCell.getBoundingClientRect();
+        const y = ${after} ? target.bottom - 10 : target.top + 10;
+        grid.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true,
+          dataTransfer: transfer, clientX: target.left + 20, clientY: y }));
+        const placeholder = grid.querySelector('.task-placeholder');
+        const marker = grid.querySelector('.task-move-${after ? 'after' : 'before'}');
+        const preview = { sourceHeight, scroll, scrollAfter: grid.scrollTop,
+          placeholderHeight: placeholder?.getBoundingClientRect().height,
+          targetId: marker?.dataset.taskid, targetTop: target.top,
+          markerTop: marker?.getBoundingClientRect().top, pointerY: y, viewportHeight: innerHeight };
+        grid.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+        header.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
+        style.remove();
+        return preview;
+      })()`);
+      assert.ok(Math.abs(result.placeholderHeight - result.sourceHeight) < 1
+        && result.scrollAfter === result.scroll && result.targetId === targetId
+        && Math.abs(result.markerTop - result.targetTop) < 1
+        && result.pointerY > 0 && result.pointerY < result.viewportHeight,
+      `move preview must stay on its target without shifting the stack: ${JSON.stringify(result)}`);
+    };
+    await dragTask('layout-0', 'layout-2', false);
+    const firstOrder = ['layout-1', 'layout-0', 'layout-2', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
+    assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(firstOrder)), 'moving before must persist the shifted order');
+    await ack('Page.reload');
+    const renderedOrder = `JSON.stringify([...document.querySelectorAll('#grid .task-cell')].map((cell) => cell.dataset.taskid || 'adhoc'))`;
+    assert.ok(await waitFor(() => evaluate(renderedOrder).then((order) => order === JSON.stringify(firstOrder))), 'the moved order must survive reload');
+    await dragTask('layout-2', 'layout-1', true);
+    const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
+    assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');
+
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {

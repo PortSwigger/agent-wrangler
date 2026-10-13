@@ -74,6 +74,14 @@ prompts, images, Markdown previews, drafts, model switching for idle Claude sess
 interrupt-and-edit, context display, and suggested prompts. Use Terminal for permission prompts,
 streaming output, or direct TUI control.
 
+Paste or drop an image into the Chat composer, the agent terminal, or the new-session dialog's
+**Intent / first prompt** box (local launches; the session starts and then receives the images with
+its first prompt): screenshots, Copy Image from a
+browser or Slack, image files copied in Finder, a selection containing images, or a `data:` image
+URL. BMP and other formats the browser can draw are converted to PNG before upload; HEIC and TIFF are
+converted to PNG by the server, which needs macOS. An image on another site is fetched by your browser
+only if that site allows it; otherwise use Copy Image instead.
+
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
 ## Snooze, suspend, archive, and search

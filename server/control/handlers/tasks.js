@@ -122,7 +122,7 @@ export const taskAssignHandler = {
 export const taskReorderHandler = {
   type: 'task-reorder',
   async handler(msg, ctx) {
-    ctx.taskStore.reorderTask(msg.taskId, msg.targetId || null);
+    ctx.taskStore.reorderTask(msg.taskId, msg.targetId || null, { move: msg.mode === 'move', after: msg.after === true });
     await ctx.rebuild();
   },
 };

@@ -211,10 +211,6 @@ test('computeLayout: a maxCols cap of 1 stacks every tile into one column', () =
   assert.deepEqual(placed.map((p) => p.rowStart), [0, 1, 2]);
 });
 
-// A cap of 1 forces tall columns, so a board that fit before may now exceed
-// MAX_FIT_ROWS — it must report scroll rather than silently overflowing. (Piece 2 of
-// this work revisits what a 1-column board SHOULD do here; the cap itself must at
-// least be honest about it.)
 test('computeLayout: a capped board that no longer fits reports scroll', () => {
   const tiles = Array.from({ length: MAX_FIT_ROWS + 2 }, (_, i) => ({ id: `t${i}`, span: 1 }));
   const { cols, rows, scroll } = computeLayout(tiles, 1);
@@ -703,4 +699,22 @@ test('tileSpan: body weight is added to the tile when present, and an absent wei
   assert.equal(tileSpan(sessions, perRow, 0, phaseOf), 1);
   assert.equal(tileSpan(sessions, perRow, 0, phaseOf), tileSpan(sessions, perRow, undefined, phaseOf));
   assert.ok(tileSpan(sessions, perRow, 200, phaseOf) > 1);
+});
+
+test('computeLayout: one column gives each task one content-sized track regardless of card budget', () => {
+  const tiles = [{ id: 'large', span: 3 }, { id: 'small', span: 1 }, { id: 'medium', span: 2 }];
+  const layout = computeLayout(tiles, 1);
+  assert.deepEqual(layout.placed.map(({ id, col, rowStart, span }) => ({ id, col, rowStart, span })), [
+    { id: 'large', col: 0, rowStart: 0, span: 1 },
+    { id: 'small', col: 0, rowStart: 1, span: 1 },
+    { id: 'medium', col: 0, rowStart: 2, span: 1 },
+  ]);
+  assert.equal(layout.rows, 3);
+});
+
+test('refinePerRow: one-column content tracks do not shrink the card budget', () => {
+  const tiles = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, span: 3 }));
+  const { perRow, canonical } = refinePerRow(4, () => computeLayout(tiles, 1), 600);
+  assert.equal(perRow, 4);
+  assert.equal(canonical.rows, 5);
 });

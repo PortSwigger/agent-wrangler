@@ -656,7 +656,7 @@ test('dispatch.field update sees the cached history on a tick whose graph carrie
 });
 
 // ── submitDispatchFromExt (api.dispatch.submit, 1.28.0) ────────────────────
-function extSubmitHarness({ mode = 'launch', hidden = false } = {}) {
+function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false } = {}) {
   const model = stubSelect(['opus', 'sonnet']);
   const effort = stubSelect(['', 'low', 'high']);
   const modalClasses = new Set(hidden ? ['hidden'] : []);
@@ -681,6 +681,7 @@ function extSubmitHarness({ mode = 'launch', hidden = false } = {}) {
       additionalFolders: { invalid: () => false },
       send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast() {},
       submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},
+      intentImages: { busy: () => imagesBusy, names: () => images.slice(), reset: () => { state.imageResets = (state.imageResets || 0) + 1; } },
     },
   );
   return { app, sent, calls, state, modalClasses };
@@ -733,4 +734,20 @@ test('dispatch.submit rejects when core validation blocks the launch', () => {
   state.cwdBlocked = true;
   assert.throws(() => app.submitDispatchFromExt({ model: 'opus' }), /dispatch blocked by validation/);
   assert.deepEqual(sent, []);
+});
+
+test('dispatch carries the intent box images by name, then clears them so a relaunch cannot reuse them', () => {
+  const { app, sent, state } = extSubmitHarness({ images: ['paste-1-abcd.png'] });
+  assert.equal(app.submitDispatchFromExt(), true);
+  assert.deepEqual(sent[0].imageNames, ['paste-1-abcd.png']);
+  assert.equal(state.imageResets, 1);
+  const plain = extSubmitHarness();
+  plain.app.submitDispatchFromExt();
+  assert.equal('imageNames' in plain.sent[0], false, 'no images, no field');
+});
+
+test('dispatch waits while an intent image is still uploading', () => {
+  const { app, sent } = extSubmitHarness({ images: [], imagesBusy: true });
+  assert.throws(() => app.submitDispatchFromExt(), /blocked/);
+  assert.equal(sent.length, 0);
 });

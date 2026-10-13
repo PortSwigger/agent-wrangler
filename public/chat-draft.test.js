@@ -114,3 +114,35 @@ test('saveDraft with no session id is a no-op (nothing to file it under)', () =>
   s.saveDraft(null);
   assert.equal(s.drafts.size, 0);
 });
+
+test('drafts persisted by one tab are not overwritten or resurrected by another tab\'s stale snapshot', async () => {
+  const store = new Map();
+  globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  const src = (await import('node:fs')).readFileSync(new URL('./chat-view.js', import.meta.url), 'utf8');
+  const start = src.indexOf('  const DRAFTS_KEY');
+  const end = src.indexOf('  const drafts = new PersistedDrafts();');
+  const make = new Function('localStorage', `${src.slice(start, end)}; return new PersistedDrafts();`);
+  const tabA = make(globalThis.localStorage);
+  const tabB = make(globalThis.localStorage);
+  tabA.set('a', { text: 'prompt', attachments: [] });
+  tabA.delete('a');
+  tabB.set('b', { text: 'other', attachments: [] });
+  assert.equal(tabB.get('a'), undefined);
+  tabA.set('c', { text: 'newer', attachments: [] });
+  assert.equal(tabB.get('c').text, 'newer');
+  assert.equal(tabB.get('b').text, 'other');
+  delete globalThis.localStorage;
+});
+
+test('when storage writes fail but reads succeed, drafts stay available in memory', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('./chat-view.js', import.meta.url), 'utf8');
+  const start = src.indexOf('  const DRAFTS_KEY');
+  const end = src.indexOf('  const drafts = new PersistedDrafts();');
+  const ls = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+  const make = new Function('localStorage', `${src.slice(start, end)}; return new PersistedDrafts();`);
+  const d = make(ls);
+  d.set('s1', { text: 'kept', attachments: [] });
+  assert.equal(d.get('s1').text, 'kept');
+  d.delete('s1');
+  assert.equal(d.get('s1'), undefined);
+});

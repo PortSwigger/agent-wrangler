@@ -128,6 +128,7 @@ test('spawn_session joins the caller’s current task by default', async () => {
   assert.deepEqual(d.calls.assign, [{ sid: 'NEWCARD', taskId: 'T1' }]);
   assert.equal(d.calls.rebuild, 1);
   assert.equal(out.structuredContent.sessionId, 'NEWCARD');
+  assert.equal(out.structuredContent.link, '#session=NEWCARD');
   assert.deepEqual(out.structuredContent.task, { id: 'T1', name: 'Login' });
   assert.equal(out.content[0].type, 'text');
 });

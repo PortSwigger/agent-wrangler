@@ -60,3 +60,38 @@ export function resolvePasteNames(sessionId, agent, names) {
   }
   return out;
 }
+
+// Images pasted into the dispatch dialog's intent box. There is no session yet,
+// so no pastes dir to write into: they wait here, under a name the server minted,
+// until the dispatch that carries those names claims them into the new session's
+// own dir (claimStagedPastes). The leading underscore keeps it apart from the
+// per-session fallback folders beside it, whose names are UUIDs. Abandoned ones
+// are pruned by age like any other paste.
+export const STAGED_PASTES_DIR = path.join(PASTES_DIR, '_dispatch-staging');
+
+// Moves each named staged image into `sessionId`'s pastes dir and returns the
+// agent-facing paths, in order. The same gate as resolvePasteNames: a name must
+// have exactly the minted shape and exist in the staging dir, or it is dropped —
+// so a dispatch frame can only ever claim a file this server staged.
+export function claimStagedPastes(sessionId, agent, names) {
+  if (!Array.isArray(names) || !names.length) return [];
+  const { realDir, agentDir } = pasteDirs(sessionId, agent);
+  const out = [];
+  for (const name of names.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)) {
+    if (!isPasteFileName(name)) continue;
+    const from = path.join(STAGED_PASTES_DIR, name);
+    try {
+      if (!fs.statSync(from).isFile()) continue;
+      fs.mkdirSync(realDir, { recursive: true });
+      try { fs.renameSync(from, path.join(realDir, name)); }
+      catch (err) {
+        // The task-memory grant can sit on another volume than the data dir.
+        if (err?.code !== 'EXDEV') throw err;
+        fs.copyFileSync(from, path.join(realDir, name));
+        fs.rmSync(from, { force: true });
+      }
+    } catch { continue; }
+    out.push(path.join(agentDir, name));
+  }
+  return out;
+}
