@@ -1082,7 +1082,7 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
    the same way it used to on #sidebar, which then wins over this rule. */
 main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
-#grid.single-column { align-content: start; }
+#grid.single-column { align-content: start; min-height: 0; }
 #grid.single-column .task-body { flex: 0 0 auto; overflow-y: visible; }
 #grid.hidden { display: none; }
 

@@ -264,7 +264,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     };
     await resize(500);
     assert.equal(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
-    assert.ok(await evaluateChecked(`(() => {
+    const sizing = await evaluateChecked(`(() => {
       const grid = document.getElementById('grid');
       const cells = [...grid.querySelectorAll('.task-cell')];
       const body = cells[0].querySelector('.task-body');
@@ -273,9 +273,13 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       body.append(extra);
       const first = cells[0].getBoundingClientRect();
       const next = cells[1].getBoundingClientRect();
-      return first.height >= 700 && Math.abs(next.top - first.bottom - 12) < 1
-        && grid.scrollHeight > grid.clientHeight && body.scrollHeight <= body.clientHeight;
-    })()`), 'single-column tasks should fit their contents and scroll at board level');
+      return { firstHeight: first.height, gap: next.top - first.bottom,
+        gridScrollHeight: grid.scrollHeight, gridHeight: grid.clientHeight,
+        bodyScrollHeight: body.scrollHeight, bodyHeight: body.clientHeight };
+    })()`);
+    assert.ok(sizing.firstHeight >= 700 && Math.abs(sizing.gap - 12) < 1
+      && sizing.gridScrollHeight > sizing.gridHeight && sizing.bodyScrollHeight <= sizing.bodyHeight,
+    `single-column tasks should fit their contents and scroll at board level: ${JSON.stringify(sizing)}`);
     await resize(1400);
     assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
     await resize(500);
