@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -93,6 +93,8 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
+  const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
+  writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -255,6 +257,46 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       await evaluateChecked(`[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules]}catch{return []}}).some(r=>r.selectorText==='.diff-row')`),
       'the .diff-row side-by-side rule is missing from the stylesheet',
     );
+
+    const resize = async (width) => {
+      await ack('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column') === ${width < 800}`)), 'board did not switch column mode');
+    };
+    await resize(500);
+    assert.equal(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    assert.ok(await evaluateChecked(`(() => {
+      const grid = document.getElementById('grid');
+      const cells = [...grid.querySelectorAll('.task-cell')];
+      const body = cells[0].querySelector('.task-body');
+      const extra = document.createElement('div');
+      extra.style.height = '700px';
+      body.append(extra);
+      const first = cells[0].getBoundingClientRect();
+      const next = cells[1].getBoundingClientRect();
+      return first.height >= 700 && Math.abs(next.top - first.bottom - 12) < 1
+        && grid.scrollHeight > grid.clientHeight && body.scrollHeight <= body.clientHeight;
+    })()`), 'single-column tasks should fit their contents and scroll at board level');
+    await resize(1400);
+    assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    await resize(500);
+    const action = async (label) => {
+      await evaluateChecked(`document.querySelector('.task-actions-btn').click()`);
+      await evaluateChecked(`[...document.querySelectorAll('.context-menu-item')].find((el) => el.textContent.trim() === ${JSON.stringify(label)}).click()`);
+    };
+    await action('Focus');
+    assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode') && !document.getElementById('grid').classList.contains('single-column')`), 'focus mode must clear single-column sizing');
+    await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
+    assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column')`)), 'restoring tasks must restore single-column mode');
+    for (let i = 0; i < 3; i++) {
+      await action('Minimise');
+      assert.ok(await evaluateChecked(`(() => {
+        const grid = document.getElementById('grid');
+        const cells = [...grid.querySelectorAll('.task-cell')];
+        const last = cells.at(-1).getBoundingClientRect();
+        const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();
+        return tray.top >= last.bottom && tray.width >= last.width - 1;
+      })()`), 'the minimised-task tray must sit below the stacked tasks');
+    }
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {

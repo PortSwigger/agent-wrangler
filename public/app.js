@@ -3,6 +3,7 @@ import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
+import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import {
@@ -1517,7 +1518,15 @@ function renderGrid() {
   // separate limitation rather than something fixed here.)
   if (taskDragActive && draggedTaskId && taskSwapTargetId && taskSwapTargetId !== draggedTaskId) {
     const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskSwapTargetId);
-    if (swapped) { placed = swapped.placed; rows = swapped.rows; scroll = swapped.scroll; }
+    if (swapped) {
+      placed = swapped.placed;
+      rows = swapped.rows;
+      scroll = swapped.scroll;
+      if (cols === 1) {
+        const height = taskCellRects?.find((cell) => cell.id === draggedTaskId)?.rect.height;
+        placed = placed.map((tile) => tile.kind === 'placeholder' ? { ...tile, placeholderHeight: height } : tile);
+      }
+    }
   }
 
   // The tray (if any minimised tiles) rides one extra full-width row below the
@@ -2627,10 +2636,7 @@ function wireGridDnd(el) {
 // Snapshot of every task-cell's id + rect, taken once at drag-start (before any
 // swap preview has ever applied) — the canonical, un-swapped geometry.
 function snapshotTaskCellRects() {
-  return [...document.getElementById('grid').querySelectorAll('.task-cell')].map((c) => ({
-    id: c.dataset.entity === 'no-task' ? ADHOC_ID : c.dataset.taskid,
-    rect: c.getBoundingClientRect(),
-  }));
+  return snapshotTaskRects(document.getElementById('grid'), ADHOC_ID);
 }
 
 // The tile id under the cursor at (x, y), or null over a gap/ghost/placeholder.
@@ -2645,10 +2651,7 @@ function snapshotTaskCellRects() {
 // when the cursor actually moves to a different cell in the ORIGINAL layout.
 function taskTargetAt(x, y) {
   const rects = taskCellRects || snapshotTaskCellRects();
-  for (const { id, rect: r } of rects) {
-    if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return id;
-  }
-  return null;
+  return taskAtPoint(rects, x, y, document.getElementById('grid'));
 }
 
 // Swap the dragged tile with the hovered target in the order. Optimistic —

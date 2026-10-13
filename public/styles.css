@@ -1084,7 +1084,6 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
 #grid.single-column { align-content: start; }
 #grid.single-column .task-body { flex: 0 0 auto; overflow-y: visible; }
-#grid.single-column .task-placeholder { min-height: 90px; }
 #grid.hidden { display: none; }
 
 #new-task.armed { border: 1px dashed var(--blue); color: var(--blue-fg); }

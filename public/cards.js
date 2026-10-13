@@ -642,7 +642,8 @@ export function taskBodyHostHtml(key) {
 export function tileHtml(tile, ctx, { focusMode } = {}) {
   const pos = focusMode ? '' : `grid-column:${tile.col + 1}; grid-row:${tile.rowStart + 1} / span ${tile.span};`;
   if (tile.kind === 'placeholder') {
-    return `<div class="task-placeholder" style="${pos}"></div>`;
+    const height = Number.isFinite(tile.placeholderHeight) ? `height:${tile.placeholderHeight}px;` : '';
+    return `<div class="task-placeholder" style="${pos}${height}"></div>`;
   }
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
   const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
