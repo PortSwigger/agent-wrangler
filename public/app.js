@@ -3278,7 +3278,8 @@ export function deselectSession() {
 // The session id deep-linked in the URL hash (#session=<id>), or null.
 function hashSessionId() {
   const m = (location.hash || '').match(/^#session=(.+)$/);
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
 }
 
 // The view a hash deep-links (#view=search), else null. Mutually exclusive with

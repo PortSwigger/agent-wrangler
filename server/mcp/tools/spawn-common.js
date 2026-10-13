@@ -112,6 +112,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   const label = deps.graph?.()?.sessions?.find((s) => s.sessionId === result.sessionId)?.label ?? null;
   const structuredContent = {
     sessionId: result.sessionId,
+    link: `#session=${result.sessionId}`,
     label,
     cwd: result.cwd ?? null,
     agent,

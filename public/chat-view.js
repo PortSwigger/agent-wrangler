@@ -70,7 +70,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // and the agent's rendered markdown must linkify identically.
   const baseDir = () => (sessionId ? cwdFor?.(sessionId) : null) || null;
   const dom = createChatDom({
-    renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir }),
+    renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir, boardOrigin: window.location?.origin }),
     baseDir,
   });
 

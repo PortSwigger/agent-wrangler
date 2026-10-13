@@ -8,7 +8,7 @@ function deps() {
     graph: () => ({
       sessions: [
         {
-          sessionId: 'CARD1', label: 'Alpha', agent: 'claude', status: 'idle', cwd: '/a', managed: true,
+          sessionId: 'CARD1', label: 'Alpha', link: '#session=CARD1', agent: 'claude', status: 'idle', cwd: '/a', managed: true,
           parentSession: 'ORCH', spawnedBy: null, autoCompactTokens: 120000,
         },
         {
@@ -30,7 +30,7 @@ test('list_sessions maps the board and flags the caller', async () => {
   assert.equal(out.structuredContent.sessions.length, 2);
   const alpha = out.structuredContent.sessions.find((s) => s.sessionId === 'CARD1');
   assert.deepEqual(alpha, {
-    sessionId: 'CARD1', label: 'Alpha', agent: 'claude', status: 'idle', managed: true, cwd: '/a',
+    sessionId: 'CARD1', label: 'Alpha', link: '#session=CARD1', agent: 'claude', status: 'idle', managed: true, cwd: '/a',
     task: { id: 'T1', name: 'Login' }, parentSession: 'ORCH', spawnedBy: null, autoCompactTokens: 120000, isCaller: true,
   });
   const beta = out.structuredContent.sessions.find((s) => s.sessionId === 'CARD2');

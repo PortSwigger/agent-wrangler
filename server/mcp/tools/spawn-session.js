@@ -31,7 +31,9 @@ export const spawnSessionTool = {
     + 'itself, not a channel for briefing another session. Returns the new session id and its '
     + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
     + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
-    + 'with a short id. For a runtime whose launch can fail after the card is created (e.g. '
+    + 'with a short id. To point the user at the new session, write a markdown link to the returned '
+    + '`link` field, e.g. `[label](#session=<id>)`; clicking it selects the session on the board. '
+    + 'For a runtime whose launch can fail after the card is created (e.g. '
     + '`cloud`), the tool waits up to 15 s for the outcome and returns it as `launch` '
     + '(`state`: ok, failed, pending or unknown); a failed launch is returned as an error that '
     + 'still carries the new session id.',
