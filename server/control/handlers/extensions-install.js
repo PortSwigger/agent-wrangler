@@ -130,6 +130,10 @@ function reclaim(lock) {
 // missed. Routed through ctx.broadcast, which is sendGuarded-backed like every
 // other broadcast.
 function progress(ctx, phase, extra = {}) {
+  // Released BEFORE the terminal frame goes out: "Update all" starts the next
+  // install the moment it sees one, and the handler still has a rebuild to
+  // await, so a release left to its `finally` would refuse that next install.
+  if (phase === 'done' || phase === 'failed' || phase === 'cancelled') busy = null;
   ctx.broadcast?.({ type: 'ext-install-progress', phase, ...extra });
 }
 
@@ -391,8 +395,6 @@ export const extConsentHandler = {
       rmQuiet(dir);
       progress(ctx, 'failed', { id: declared.id, message: String(err?.message || err) });
       throw err;
-    } finally {
-      busy = null;
     }
   },
 };
