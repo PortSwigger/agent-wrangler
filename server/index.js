@@ -416,6 +416,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         deliver: bind(rt.deliver, notActive),
         readLive: bind(rt.readLive, () => null),
         analyze: bind(rt.analyze, () => null),
+        cost: bind(rt.cost, () => null),
         launchStatus: bind(rt.launchStatus, () => null),
       }, id);
     }

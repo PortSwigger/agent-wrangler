@@ -43,6 +43,11 @@ test('an unterminated faint run is a wrapped suggestion, so it is dropped', () =
   assert.equal(parseGhostSuggestion(composer(`${E}[2mexplain the whole of book nine in`)), null);
 });
 
+test('the TUI\'s queued-messages hint is not a suggestion', () => {
+  assert.equal(parseGhostSuggestion(composer(`${E}[2mPress up to edit queued messages${E}[0m`)), null);
+  assert.equal(parseGhostSuggestion(composer(`${E}[2mpress up to edit queued messages${E}[0m`)), null);
+});
+
 test('SGR 22 closes the run as well as SGR 0', () => {
   assert.equal(parseGhostSuggestion(composer(`${E}[2mpoint 5${E}[22m`)), 'point 5');
 });

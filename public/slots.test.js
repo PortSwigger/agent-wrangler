@@ -462,6 +462,57 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   assert.deepEqual(h.errors, []);
 });
 
+// ── openDiff (1.27.0): openSession plus the card's diff panel ────────────────
+function diffHarness() {
+  const opened = [];
+  const h = harness();
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), { openDiff: (sid, opts) => opened.push({ sid, opts }) });
+  return { ...h, opened, api: captured };
+}
+
+test('openDiff hands the session id and a wrapped onClose to the base api', () => {
+  const { api, opened, errors } = diffHarness();
+  let closed = 0;
+  api.openDiff('abc123', { onClose: () => { closed += 1; } });
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].sid, 'abc123');
+  opened[0].opts.onClose();
+  assert.equal(closed, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('openDiff without an onClose passes none, and a throwing onClose is reported', () => {
+  const { api, opened, errors } = diffHarness();
+  api.openDiff('a');
+  api.openDiff('b', { onClose: 'not a function' });
+  assert.equal(opened[0].opts.onClose, null);
+  assert.equal(opened[1].opts.onClose, null);
+  api.openDiff('c', { onClose: () => { throw new Error('boom'); } });
+  assert.doesNotThrow(() => opened[2].opts.onClose());
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /\[ext:fake\] openDiff onClose threw: boom/);
+});
+
+test('openDiff refuses anything that is not a session id, and reports it', () => {
+  const { api, opened, errors } = diffHarness();
+  api.openDiff('');
+  api.openDiff({ sessionId: 'abc123' });
+  assert.deepEqual(opened, []);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /\[ext:fake\] openDiff refused: expected a session id, got ""/);
+});
+
+test('openDiff is a no-op against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
+  h.slots.mountInto('panel.section', h.document.make(), { send() {} });
+  assert.doesNotThrow(() => captured.openDiff('abc123', { onClose() {} }));
+  assert.deepEqual(h.errors, []);
+});
+
 // ── settings (1.13.0): the extension's own current values, read live ─────────
 test('settings reads this extension\'s own values live, as a copy', () => {
   const h = harness();
@@ -1246,6 +1297,32 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
   await assert.rejects(api2.openDispatch({}), /not available/);
 });
 
+// ── dispatch.submit (1.28.0) ─────────────────────────────────────────────────
+
+test('api.dispatch.submit validates model/effort, passes them through and rejects when the base throws or is absent', async () => {
+  const { slots } = harness();
+  let api; const seen = []; let fail = null;
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), {
+    submitDispatchFromExt: (o) => { seen.push(o); if (fail) throw new Error(fail); return true; },
+  });
+  assert.equal(await api.dispatch.submit({ model: 'opus', effort: 'high' }), true);
+  assert.deepEqual(seen[0], { model: 'opus', effort: 'high' });
+  await api.dispatch.submit();
+  assert.deepEqual(seen[1], { model: undefined, effort: undefined });
+  await assert.rejects(api.dispatch.submit({ model: 5 }), /model must be a non-empty string/);
+  await assert.rejects(api.dispatch.submit({ model: '' }), /model must be a non-empty string/);
+  await assert.rejects(api.dispatch.submit({ effort: 3 }), /effort must be a string/);
+  assert.equal(seen.length, 2, 'bad input never reaches the base');
+  fail = 'model not offered: x';
+  await assert.rejects(api.dispatch.submit({ model: 'x' }), /\[ext:ext1\] dispatch\.submit: model not offered: x/);
+  const { slots: s2 } = harness();
+  let api2;
+  s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
+  s2.mountInto('panel.section', harness().document.make(), {});
+  await assert.rejects(api2.dispatch.submit({}), /not available/);
+});
+
 test('api.requestBoardRender calls the base api and tolerates its absence', () => {
   const { slots } = harness();
   let api; let n = 0;
@@ -1376,4 +1453,39 @@ test('openTask hands a task id to the base api and returns its answer', () => {
   assert.deepEqual(opened, ['t1', 'gone']);
   assert.equal(h.errors.length, 2);
   assert.match(h.errors[0], /\[ext:fake\] openTask refused: expected a task id, got ""/);
+});
+
+// ── api.keys.bind (1.26.0) ──
+test('api.keys.bind registers a declared combo+scope under the extension, refuses an undeclared one, and unbinds on removal', async () => {
+  const { createKeybindings } = await import('./keybindings.js');
+  const keys = createKeybindings({ mac: true });
+  const { slots, errors } = harness({
+    keys,
+    keybindingsFor: (id) => (id === 'ql' ? [{ combo: 'mod+shift+l', scope: 'dispatch' }] : []),
+    labelFor: (id) => (id === 'ql' ? 'Quick launch' : id),
+  });
+  const api = slots.forExtension('ql').api;
+  let ran = 0;
+  const off = api.keys.bind({ combo: 'cmd+shift+l', scope: 'dispatch', run: () => { ran += 1; }, description: 'Launch' });
+  // Declared as mod+…, bound as cmd+… — not the same combo, so refused.
+  assert.match(errors.at(-1), /keys\.bind refused: "cmd\+shift\+l" \(dispatch\) is not in this extension's manifest keybindings \(mod\+shift\+l \(dispatch\)\)/);
+  assert.equal(typeof off, 'function');
+  api.keys.bind({ combo: 'mod+shift+l', scope: 'global', run: () => {} });
+  assert.match(errors.at(-1), /not in this extension's manifest keybindings/);
+  api.keys.bind({ combo: 'mod+shift+l', scope: 'dispatch', run: () => { ran += 1; }, description: 'Launch' });
+  assert.deepEqual(keys.describe(), [{ group: 'Quick launch', owner: 'ql', rows: [{ keys: '⇧⌘L', description: 'Launch' }] }]);
+  keys.configure({ isDispatchOpen: () => true });
+  const e = { key: 'L', metaKey: true, shiftKey: true, preventDefault() {}, stopPropagation() {} };
+  assert.equal(keys.dispatch(e), true);
+  assert.equal(ran, 1);
+  slots.removeExtension('ql');
+  assert.deepEqual(keys.describe(), []);
+  assert.equal(keys.dispatch(e), false);
+});
+
+test('api.keys.bind with no registry reports instead of throwing', () => {
+  const { slots, errors } = harness({ keybindingsFor: () => [{ combo: 'ctrl+k', scope: 'global' }] });
+  const off = slots.forExtension('x').api.keys.bind({ combo: 'ctrl+k', scope: 'global', run: () => {} });
+  assert.equal(typeof off, 'function');
+  assert.match(errors.at(-1), /no keybinding registry/);
 });

@@ -51,7 +51,8 @@ import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
+import { createBoardOpen } from './board-open.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
@@ -62,11 +63,13 @@ import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
+import { keybindings } from './keybindings.js';
+import { registerCoreBindings } from './core-keybindings.js';
 
 let currentView = 'grid';
 
-// Mac-style glyphs for the board's Ctrl+Cmd+<key> shortcut family (see the
-// window keydown listener near moveSessionFocus) — shown as trailing hints in
+// Mac-style glyphs for the board's Ctrl+Cmd+<key> shortcut family (registered
+// in keybindings.js via core-keybindings.js) — shown as trailing hints in
 // the Actions dropdown and button tooltips, so each binding's letter lives in
 // one place instead of being duplicated across every place it's displayed.
 const kbd = (glyph) => `<span class="kbd-hint">${glyph}</span>`;
@@ -180,6 +183,11 @@ const extHideDispatchFields = new Map();
 // And each extension's `requires` grant, for the client-only capabilities
 // slots.js checks (cards:hideChips). Same two inputs, same fail-closed default.
 const extRequires = new Map();
+// And each extension's declared `keybindings` ([{ combo, scope }]) — the ceiling
+// api.keys.bind is checked against, like extHideDispatchFields.
+const extKeybindings = new Map();
+// Extension labels, for the Shortcuts tab's group titles.
+const extLabels = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -190,6 +198,8 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.handlerTypes)) extHandlerTypes.set(e.id, e.handlerTypes);
     if (Array.isArray(e.hideDispatchField)) extHideDispatchFields.set(e.id, e.hideDispatchField);
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
+    if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
+    if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -202,6 +212,9 @@ const slots = createSlots({
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
   requiresFor: (id) => extRequires.get(id) || [],
+  keybindingsFor: (id) => extKeybindings.get(id) || [],
+  labelFor: (id) => extLabels.get(id) || id,
+  keys: keybindings,
   coreChips: CORE_CHIPS,
   // An extension's hideChips (or its removal) changed the veto: redraw the
   // board, which re-syncs the pills too (wireGridEvents → mountCardPills).
@@ -215,18 +228,40 @@ const slots = createSlots({
   version: () => hostApiVersion,
 });
 let chipsRenderQueued = false;
-function openSessionInBoard(sessionId) {
+function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) {
-    const tile = assignedTaskId(sessionId) || ADHOC_ID;
-    if (minimisedIds.has(tile)) unminimise(tile);
-    focusSession(sessionId);
+    const dropped = boardOpen.drop();
+    if (dropped && pendingSelect === dropped) pendingSelect = null;
+    landOnCard(sessionId, { diff, onClose }, focusSession);
     return;
   }
+  boardOpen.request(sessionId, { diff, onClose });
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
+
+// The rest of openSessionInBoard, once the card is on the board: now for a live
+// one, or from tryFulfillPending when a restored one comes back. Selecting alone
+// is not landing on it — its tile may be in the tray, and a long task list can
+// leave the card below the tile's fold — and `diff` then lays the card's diff
+// panel over the grid. The watch goes on first so a panel this replaces does not
+// fire the old caller's onClose (board-open.js).
+function landOnCard(sessionId, { diff, onClose }, select) {
+  if (diff) boardOpen.watchDiff(sessionId, onClose);
+  const tile = assignedTaskId(sessionId) || ADHOC_ID;
+  if (minimisedIds.has(tile)) unminimise(tile);
+  select(sessionId);
+  document.querySelector(`#grid .session-card[data-sid="${CSS.escape(sessionId)}"]`)
+    ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (!diff) return;
+  // A maximised session pane and the diff panel each hide the other's surface.
+  if (maximized) setMaximized(false);
+  openDiffPanel(sessionId);
+}
+const boardOpen = createBoardOpen();
+onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
 
 // Show a task's tile: the grid, the tile out of the tray if it was minimised,
 // scrolled into view with the restore pulse. A task that is not on the live
@@ -263,7 +298,9 @@ const extApi = {
   // graph brings it back — the same sequence as a Search result's Restore. openTask is the
   // task counterpart. They are the only board navigation an extension has;
   // slots.apiFor exposes them and has already refused anything that is not an id.
-  openSession: openSessionInBoard,
+  openSession: (sessionId) => openSessionInBoard(sessionId),
+  // openSession, then the card's diff panel; slots.apiFor has wrapped onClose.
+  openDiff: (sessionId, { onClose } = {}) => openSessionInBoard(sessionId, { diff: true, onClose }),
   openTask: openTaskInBoard,
   // Tuck a task tile into the tray, as its header's Minimise does. Only a tile
   // on the live board counts (an archived or unknown id would sit in the
@@ -287,6 +324,8 @@ const extApi = {
   renderSampleCard,
   // Backs `api.openDispatch`: the dispatch modal as a promise.
   openDispatchAcked,
+  // Backs `api.dispatch.submit` (throws; slots turns that into a rejection).
+  submitDispatchFromExt,
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
   withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
@@ -3271,7 +3310,9 @@ function tryFulfillPending() {
   if (currentView !== 'grid') setView('grid');
   const target = pendingSelect;
   pendingSelect = null;
-  selectSession(target);
+  const req = boardOpen.claim(target);
+  if (req) landOnCard(target, req, selectSession);
+  else selectSession(target);
 }
 
 window.addEventListener('hashchange', () => {
@@ -3452,36 +3493,13 @@ function isTypingTargetForChords(el) {
 // have been affected — there just isn't one. Grid view only, and inert while a
 // modal, context menu, or a real text input is in play. preventDefault stops
 // the browser's own shift+cmd+←/→ text-selection/scroll.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.shiftKey || e.ctrlKey || e.altKey) return;
-  // The "Flip navigating task / session hotkeys" setting swaps the axes; read live.
-  const dirs = getSetting('flipNavHotkeys')
-    ? { ArrowUp: 'taskPrev', ArrowDown: 'taskNext', ArrowLeft: 'sessPrev', ArrowRight: 'sessNext' }
-    : { ArrowLeft: 'taskPrev', ArrowRight: 'taskNext', ArrowUp: 'sessPrev', ArrowDown: 'sessNext' };
-  const action = dirs[e.key];
-  if (!action) return;
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  if (action === 'taskPrev') moveTaskFocus(-1);
-  else if (action === 'taskNext') moveTaskFocus(1);
-  else if (action === 'sessPrev') moveSessionFocus(-1);
-  else moveSessionFocus(1);
-});
+// (Registered as `board.nav` in registerCoreBindings below.)
 
 // Enter while the keyboard selection sits on a "new session" slot opens the
 // dispatch dialog for that tile (Unassigned → no preset task). Same gating as the
 // nav shortcut; a no-op when a real session (or nothing) is selected, so it never
 // shadows the input-scoped Enter handlers (modal/rename/todo — all excluded here).
-window.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-  if (selectedNewSlot == null) return;
-  if (currentView !== 'grid' || cardMenuEl || isTypingTarget(document.activeElement)) return;
-  if (document.activeElement?.closest?.('.snooze-toggle')) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot);
-});
+// (Registered as `board.openSlot` in registerCoreBindings below.)
 
 // Ctrl+Cmd family: board actions that must fire even while the terminal holds
 // focus. Ctrl+Cmd+N opens the new-session dialog; Ctrl+Cmd+Delete (or
@@ -3541,47 +3559,8 @@ window.addEventListener('keydown', (e) => {
 // can't help when the listener never runs. Listening in the CAPTURE phase runs us
 // at the very first dispatch step — ahead of the textarea and its default action —
 // so the page wins the race for every chord in the family, terminal-focused or not.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
-  const key = e.key.toLowerCase();
-  if (!CTRL_CMD_KEYS.has(key)) return;
-  // Pre-gate preventDefault is scoped to 'g' ONLY (the diff chord): kept from when
-  // this was Ctrl+Cmd+D — macOS's "Look Up" chord that the OS consumed before the
-  // browser ever saw the keydown, so no web handler could open the diff. Ctrl+Cmd+G
-  // is NOT OS-reserved, but we keep the early swallow for consistency so the diff
-  // opens even in Search view / a modal / while typing. The REST of the family
-  // (n/t/b/r/m/s/delete/backspace) keep their original POST-gate preventDefault below,
-  // so in those contexts they don't over-suppress the browser/OS shortcuts on those
-  // same chords (they fall through the gate untouched).
-  if (key === 'g') e.preventDefault();
-  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  // Past the gate the chord is definitely ours — suppress the browser/OS default for
-  // the whole family (this is the original, pre-diff-feature behaviour for the rest;
-  // 'g' was already prevented above and re-preventing is a no-op).
-  e.preventDefault();
-  if (key === 'n') { openDispatch(currentTaskSelection()); return; }
-  if (key === 't') {
-    if (!selectedSessionId) return;
-    if (currentShellTerm && currentShellTerm.sessionId === selectedSessionId) { closeShellTerminal(); return; }
-    const ts = latestSessions.find((x) => x.sessionId === selectedSessionId);
-    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: selectedSessionId });
-    return;
-  }
-  if (key === 'b') { if (selectedSessionId) openFork(selectedSessionId); return; }
-  // Restart matches its menu gate — only a live (managed) session, since a dormant
-  // one already offers Resume. Peer review works on any session, like its menu row.
-  if (key === 'r') {
-    const rs = selectedSessionId && latestSessions.find((x) => x.sessionId === selectedSessionId);
-    if (rs?.managed) restartSession(selectedSessionId);
-    return;
-  }
-  if (key === 'p') { if (selectedSessionId) peerReviewSession(selectedSessionId); return; }
-  if (key === 'm') { if (selectedSessionId) toggleMaximize(); return; }
-  if (key === 's') { if (selectedSessionId) snoozeSelected(selectedSessionId); return; }
-  if (key === 'g') { if (selectedSessionId) toggleDiffPanel(selectedSessionId); return; }
-  if (selectedSessionId) archiveSession(selectedSessionId);
-}, true);
+// (Registered as the `chord.*` bindings in registerCoreBindings below — capture
+// phase, for the reason above.)
 
 // `/` opens the Search view (which focuses its input on entry — see
 // onEnterSearchView; pressing it while already there just refocuses the box).
@@ -3589,16 +3568,7 @@ window.addEventListener('keydown', (e) => {
 // is open, and while typing — including the xterm helper textarea, which
 // isTypingTarget deliberately exempts for the chord family but which must
 // swallow a bare "/" (it's an ordinary character to type at an agent).
-window.addEventListener('keydown', (e) => {
-  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
-  const el = document.activeElement;
-  if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
-  if (cardMenuEl) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  if (currentView !== 'search') setView('search');
-  else onEnterSearchView();
-});
+// (Registered as `search.open` in registerCoreBindings below.)
 
 // ---- Hint jump (⌃⌘A) --------------------------------------------------
 // Label every session on the board with a letter, then type it to open that
@@ -3814,16 +3784,94 @@ function onHintKey(e) {
 // xterm helper textarea nor the chat composer counts) — and capture phase for
 // the same reason the family is, so it fires with the terminal OR the chat
 // composer focused.
-window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || !e.ctrlKey || e.shiftKey || e.altKey) return;
-  if (e.key.toLowerCase() !== 'a') return;
-  if (hintMode) { e.preventDefault(); e.stopImmediatePropagation(); deactivateHints(); return; }
-  if (currentView !== 'grid' || cardMenuEl || isTypingTargetForChords(document.activeElement)) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  activateHints();
-}, true);
+// ---- Keybinding registry wiring ----------------------------------------
+// Every board-level shortcut is a registry entry (public/keybindings.js,
+// definitions in core-keybindings.js). The gating each one had as a bare
+// window listener lives on in its `when`, unchanged: the registry's scopes
+// pick which bindings are candidates, `when` keeps the exact old conditions.
+const anyModalOpen = () => Boolean(document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)'));
+// The nav / Enter gate: grid view, no card menu, no modal, and not typing in a
+// real text field (the xterm helper textarea doesn't count — see isTypingTarget).
+const boardIdle = () => currentView === 'grid' && !cardMenuEl && !isTypingTarget(document.activeElement) && !anyModalOpen();
+// The ⌃⌘ family's gate: as boardIdle but the chat composer doesn't count either.
+const chordGate = () => currentView === 'grid' && !cardMenuEl && !isTypingTargetForChords(document.activeElement) && !anyModalOpen();
+const dispatchModalEl = document.getElementById('modal');
+keybindings.configure({
+  isDispatchOpen: () => Boolean(dispatchModalEl && !dispatchModalEl.classList.contains('hidden')),
+  isModalOpen: () => Boolean(cardMenuEl) || anyModalOpen(),
+  isBoardIdle: boardIdle,
+});
+keybindings.install(window);
+const withSelected = (fn) => ({ when: chordGate, run: () => { if (selectedSessionId) fn(selectedSessionId); } });
+// Dispatch-dialog bindings only act on keys aimed at the dialog itself, like
+// the modal-scoped listener they replace.
+const inDispatchModal = (e) => Boolean(dispatchModalEl?.contains(e.target));
+registerCoreBindings(keybindings, {
+  'board.nav': {
+    when: boardIdle,
+    run: (e) => {
+      // The "Flip navigating task / session hotkeys" setting swaps the axes; read live.
+      const dirs = getSetting('flipNavHotkeys')
+        ? { ArrowUp: 'taskPrev', ArrowDown: 'taskNext', ArrowLeft: 'sessPrev', ArrowRight: 'sessNext' }
+        : { ArrowLeft: 'taskPrev', ArrowRight: 'taskNext', ArrowUp: 'sessPrev', ArrowDown: 'sessNext' };
+      const action = dirs[e.key];
+      if (action === 'taskPrev') moveTaskFocus(-1);
+      else if (action === 'taskNext') moveTaskFocus(1);
+      else if (action === 'sessPrev') moveSessionFocus(-1);
+      else if (action === 'sessNext') moveSessionFocus(1);
+    },
+  },
+  'board.openSlot': {
+    when: () => selectedNewSlot != null && boardIdle() && !document.activeElement?.closest?.('.snooze-toggle'),
+    run: () => openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot),
+  },
+  'chord.new': { when: chordGate, run: () => openDispatch(currentTaskSelection()) },
+  'chord.terminal': withSelected((sid) => {
+    if (currentShellTerm && currentShellTerm.sessionId === sid) { closeShellTerminal(); return; }
+    const ts = latestSessions.find((x) => x.sessionId === sid);
+    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: sid });
+  }),
+  'chord.fork': withSelected((sid) => openFork(sid)),
+  // Restart matches its menu gate — only a live (managed) session, since a dormant
+  // one already offers Resume. Peer review works on any session, like its menu row.
+  'chord.restart': withSelected((sid) => {
+    if (latestSessions.find((x) => x.sessionId === sid)?.managed) restartSession(sid);
+  }),
+  'chord.peerReview': withSelected((sid) => peerReviewSession(sid)),
+  'chord.maximize': withSelected(() => toggleMaximize()),
+  'chord.snooze': withSelected((sid) => snoozeSelected(sid)),
+  'chord.diff': withSelected((sid) => toggleDiffPanel(sid)),
+  'chord.archive': withSelected((sid) => archiveSession(sid)),
+  // A toggle: while hint mode is up the same chord takes the labels down,
+  // whatever else is going on. Stops immediate propagation so hint mode's own
+  // capture listener doesn't also see it.
+  'chord.hints': {
+    when: () => Boolean(hintMode) || chordGate(),
+    run: (e) => {
+      e.stopImmediatePropagation();
+      if (hintMode) deactivateHints(); else activateHints();
+    },
+  },
+  // Inert while typing anywhere — including the xterm helper textarea, where a
+  // bare "/" is an ordinary character for the agent — and behind a modal or menu.
+  'search.open': {
+    when: () => {
+      const el = document.activeElement;
+      if (el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return false;
+      return !cardMenuEl && !anyModalOpen();
+    },
+    run: () => { if (currentView !== 'search') setView('search'); else onEnterSearchView(); },
+  },
+  'dispatch.submit': { when: inDispatchModal, run: () => submitDispatch() },
+  'dispatch.quickLaunch': {
+    when: (e) => inDispatchModal(e) && !scheduleMode() && !dispatchFieldHidden('quickLaunch'),
+    run: (e) => {
+      const n = Number(e.key) || Number(String(e.code || '').replace('Digit', ''));
+      quickLaunch(quickLaunchModels[n - 1]);
+    },
+  },
+  'dispatch.cancel': { when: inDispatchModal, run: () => cancelModal() },
+});
 
 // Ctrl+Cmd+S: same Snooze…/Unsnooze branch as the Actions menu's row, but a
 // keyboard shortcut has no click position to anchor the duration picker at —
@@ -5255,19 +5303,27 @@ function dispatchFieldCtx(core = readCoreDispatchFields()) {
   };
 }
 
-// Which core row each hideable dispatch field lives in (index.html): model,
-// effort, autoCompactTokens, runtime and worktree. Growing DISPATCH_FIELDS
+// Which core row each hideable dispatch field lives in (index.html): quickLaunch,
+// model, effort, autoCompactTokens, runtime and worktree. `quickLaunch`'s row is
+// an outer wrapper round #m-quick-launch, which syncQuickLaunch hides itself in
+// schedule mode. Growing DISPATCH_FIELDS
 // server-side means adding a row id here and a wrapper there. `worktree`'s row
 // is an OUTER wrapper round .worktree-box, because syncWorkflow already toggles
 // the box's own `hidden` for workflow/review mode — the veto and that toggle
 // each own one element and never undo each other.
 const DISPATCH_FIELD_ROWS = {
+  quickLaunch: 'm-quick-launch-row',
   model: 'm-model-row',
   effort: 'm-effort-row',
   autoCompactTokens: 'm-auto-compact-row',
   runtime: 'm-runtime-row',
   worktree: 'm-worktree-box-row',
 };
+
+// The last veto applied — read by the dispatch.quickLaunch binding, so hiding
+// `quickLaunch` also hands ⌘1–⌘3 to extension bindings.
+let vetoedDispatchFields = new Set();
+function dispatchFieldHidden(name) { return vetoedDispatchFields.has(name); }
 
 // Recomputed WHOLE every call, never incrementally: that is what lifts the veto
 // of a contribution slots.js has thrown out, and what clears everything in the
@@ -5283,6 +5339,7 @@ const DISPATCH_FIELD_ROWS = {
 // contribution has just been torn down and so no `hides` is ever called.
 function applyDispatchFieldVeto(ctx) {
   const hidden = new Set(slots.hiddenDispatchFields(ctx));
+  vetoedDispatchFields = hidden;
   for (const [name, id] of Object.entries(DISPATCH_FIELD_ROWS)) {
     document.getElementById(id)?.classList.toggle('hidden', hidden.has(name));
   }
@@ -5305,7 +5362,9 @@ function syncDispatchExtFields() {
   const ctx = modalMode === 'subagent' ? null : dispatchFieldCtx();
   const entries = ctx === null ? [] : [...document.querySelectorAll('.ext-dispatch-slot')]
     .map((host) => ({ host, at: host.dataset.at, session: ctx }));
-  slots.syncHosts('dispatch.field', entries, extApi, latestGraph);
+  // The graph only carries `history` on ticks where it changed (history-gate.js),
+  // so hand contributions the cached copy rather than whatever the last tick had.
+  slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
 }
 
@@ -5472,32 +5531,59 @@ function onSubagentDetail(msg) {
   document.getElementById('m-sa-result').textContent = msg.result || '(no result recorded)';
 }
 
+// Returns true only when the dispatch was sent (callers other than
+// submitDispatchFromExt ignore it).
 function submitDispatch() {
-  if (modal.classList.contains('hidden')) return;
-  if (modalMode === 'subagent') return; // read-only view: no primary action
-  if (scheduleMode()) return submitSchedule();
+  if (modal.classList.contains('hidden')) return false;
+  if (modalMode === 'subagent') return false; // read-only view: no primary action
+  if (scheduleMode()) { submitSchedule(); return false; }
   const fields = readDispatchFields();
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdBlocked()) { renderCwdState(); return; }
-  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return; }
-  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return; }
+  if (cwdBlocked()) { renderCwdState(); return false; }
+  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
+  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
-    return; // can't create a worktree here — let the user untick or fix the folder
+    return false; // can't create a worktree here — let the user untick or fix the folder
   }
   // A classified target the server says is impossible (branch busy / folder occupied)
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
-  if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return;
+  if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return false;
   send({ type: 'dispatch', ...fields });
   dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
-  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return; }
+  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return true; }
   modal.classList.add('hidden');
   document.getElementById('m-intent').value = '';
   toast('Launching session…');
+  return true;
+}
+
+// api.dispatch.submit({ model?, effort? }): launch the open dispatch modal as
+// the human would, optionally on a given model/effort (each must be offered).
+// Resolves once the dispatch is SENT, not launched — a worktree/workflow
+// dispatch is still pending then; openDispatch's promise carries the ack.
+function submitDispatchFromExt({ model, effort } = {}) {
+  if (modal.classList.contains('hidden') || modalMode !== 'launch') throw new Error('dispatch modal is not open in launch mode');
+  if (model != null) {
+    const sel = document.getElementById('m-model');
+    if (![...sel.options].some((o) => o.value === model)) throw new Error(`model not offered: ${model}`);
+    sel.value = model;
+    modelEdited = true;
+    syncRuntimeToggle();
+    populateEffortSelect();
+  }
+  if (effort != null) {
+    const eff = document.getElementById('m-effort');
+    if (![...eff.options].some((o) => o.value === effort)) throw new Error(`effort not offered: ${effort}`);
+    eff.value = effort;
+    effortEdited = true;
+  }
+  if (!submitDispatch()) throw new Error('dispatch blocked by validation');
+  return true;
 }
 
 // Save a schedule: compile the picker → `when`, read the same dispatch fields a
@@ -6030,13 +6116,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
 });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
 enhanceSelects(document.getElementById('modal'));
-modal.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitDispatch(); }
-  else if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key) && !scheduleMode()) {
-    e.preventDefault(); quickLaunch(quickLaunchModels[Number(e.key) - 1]);
-  }
-  else if (e.key === 'Escape') { e.preventDefault(); cancelModal(); }
-});
+// ⌘Enter / ⌘1–⌘3 / Escape are `dispatch.*` registry bindings (see registerCoreBindings).
 (() => {
   const input = document.getElementById('m-cwd');
   const box = document.getElementById('folder-suggest');

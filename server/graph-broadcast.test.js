@@ -71,7 +71,7 @@ test('the archived list rides the first graph and is omitted by every unchanged 
     assert.equal(graphs[0].history.length, 3);
     assert.deepEqual(
       Object.keys(graphs[0].history[0]).sort(),
-      ['archivedAt', 'cwd', 'label', 'model', 'sessionId', 'viaTaskArchive'],
+      ['archivedAt', 'cwd', 'effort', 'label', 'model', 'sessionId', 'viaTaskArchive'],
     );
     const later = graphs.slice(1, 4).map((g) => 'history' in g);
     assert.deepEqual(later, [false, false, false], 'nothing archived between these ticks, so none may re-send the list');

@@ -836,6 +836,27 @@ test('fork: a devcontainer parent forks into a devcontainer-wrapped launch', asy
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('fork: wrapLaunch receives the parent card id; dispatch does not', async () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._newSession = async () => {};
+  const seen = [];
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async (args) => { seen.push(args); return args.inner; } }, 'toy', async () => {
+    const { sessionId } = await sm.fork({ sourceId: 'L0', parentId: 'PARENT', parentEntry: { agent: 'claude', runtime: 'toyrt' }, cwd: os.tmpdir() });
+    assert.equal(seen[0].parentId, 'PARENT');
+    assert.equal(seen[0].sessionId, sessionId);
+  });
+  const sd = smForDispatch();
+  sd._newSession = async () => {};
+  seen.length = 0;
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async (args) => { seen.push(args); return args.inner; } }, 'toy', async () => {
+    await sd.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' });
+  });
+  assert.equal(seen[0].parentId, undefined);
+});
+
 test('fork() re-threads the parent entry\'s effort into buildFork', async () => {
   const sm = new SessionManager();
   let captured = '';
@@ -2136,7 +2157,8 @@ test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude
   let captured = '';
   sm._newSession = async (_t, _d, inner) => { captured = inner; };
   await sm.dispatch({ cwd: repo, intent: 'fix the bug', worktree: true, worktreeAuto: true }); // default agent: claude
-  assert.doesNotMatch(captured, /worktrees/);
+  assert.ok(!captured.includes(path.join(repo, '.git')), captured);
+  assert.ok(!captured.includes('--add-dir'), captured);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

@@ -812,6 +812,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   null); while a launch awaits its ack the second call REJECTS, since two acks cannot
   be told apart. An error reply to a launch whose modal is still open makes it
   retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
+- **`api.dispatch.submit({ model?, effort? })` (1.28.0)** launches the dispatch
+  modal that is ALREADY open, as Launch would, optionally on a given model and
+  effort. It works only in launch mode (rejects when the modal is closed, or in
+  schedule or sub-agent mode). `model` must be an option the modal offers, and
+  `effort` one it offers after that model is selected; anything else rejects
+  without sending. Both are marked as the human's explicit choice. Core
+  validation still applies (blocked folder, bad worktree, …), and a blocked
+  launch rejects `dispatch blocked by validation`. It resolves once the
+  dispatch is SENT, not launched: a worktree or workflow dispatch is still
+  pending then, so an extension that needs the `dispatched` ack opens the modal
+  with `openDispatch` and awaits that promise. `dispatch.field` contributions'
+  `fields()` merge into the payload as usual.
+- **Graph `effort` (1.28.0).** Board session nodes and `graph.history` nodes
+  carry `effort`, the effort the session was launched with (`null` when none
+  was recorded, e.g. the agent's default or an adopted session). Resume and
+  fork keep the original's. `dispatch.field`'s `update(el, ctx, graph)` always
+  gets the cached `history`, even on a tick whose graph did not resend it.
 - **`dispatch.field` is the first slot that shapes a CORE form.** Three anchor
   hosts (`top`/`model`/`advanced`) inside `#m-dispatch-fields`, and `at` is
   REQUIRED at register — unlike a panel chip a form has no sensible default
@@ -872,7 +889,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `worktree` (1.19.0) is the fifth, for a runtime that cannot honour a worktree:
   its wrapper `#m-worktree-box-row` sits OUTSIDE `.worktree-box`, because
   `syncWorkflow` already toggles the box's own `hidden` and the two must never
-  undo each other. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
+  undo each other. `quickLaunch` (1.28.0) is the sixth: the ⌘1–⌘3 quick-launch
+  buttons, wrapped in `#m-quick-launch-row` (outside `#m-quick-launch`, which
+  `syncQuickLaunch` hides in schedule mode). Hiding it also turns off core's
+  ⌘1–⌘3 binding, so an extension's own `keys.bind` on those combos in the
+  `dispatch` scope owns them, for an extension that ranks its own quick
+  launches with `api.dispatch.submit`. Since 1.19.0 `fields(el, ctx)` and `ext(el, ctx)` also get
   the ctx as a second argument.
   **`open(el, ctx)` (1.20.0) is the per-open call, and it exists because
   neither `mount` nor `update` can be one.** The anchor hosts are static
@@ -929,6 +951,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a session likewise restores its task's tile first, so a session in a minimised
   task is no longer opened behind the tray. A notification's "Go to" is an
   ordinary action that calls one of these when its answer comes back.
+  **`api.openDiff(sessionId, { onClose })`** (1.27.0) does what `openSession`
+  does, then opens that card's diff panel over the grid (after the restore, for
+  an archived card). `onClose` is called once, when that panel closes by any
+  route, so an extension can reopen whatever the reader left. It never fires if
+  the panel never opened (a refused restore) or a later `openSession`/`openDiff`
+  replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
   `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
@@ -938,6 +966,33 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
+- **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
+  adds a keyboard shortcut through the board's keybinding registry
+  (`public/keybindings.js`) and returns an unbind function. The manifest must
+  declare every combo+scope it binds in a static `keybindings` array —
+  `keybindings: [{ combo: 'mod+shift+l', scope: 'dispatch' }]` — and a bind
+  not on that list is dropped and reported, the same disclosure rule as
+  `hideDispatchField`. The server validates the array at load (a parsable
+  combo, a known scope) and quarantines a bad one.
+  - **Combos** are `+`-joined, case-insensitive: modifiers `mod` (⌘ on Mac,
+    Ctrl elsewhere), `cmd`/`meta`, `ctrl`, `shift`, `alt`, then one key — a
+    letter, a digit, `/ , . ; [ ] - = \``, or `enter`, `escape`, `left`,
+    `right`, `up`, `down`, `backspace`, `delete`, `space`, `tab`. `mod+k` and
+    `cmd+k` are different declarations.
+  - **Scopes**: `dispatch` (the dispatch dialog is open), `modal` (any other
+    dialog or the card menu is open), `board` (grid view, nothing typed into a
+    text field), `global` (always considered, after the active scope).
+  - **Precedence**: for a keypress, the active scope's bindings are tried, then
+    `global`'s; within a scope extension bindings come before core. The first
+    whose `when(e)` passes (or has none) runs, and the key is
+    `preventDefault`ed. A `when` that returns false falls through to the next
+    candidate, core included.
+  - **Collisions**: if another extension already holds the same combo+scope,
+    the later bind is dropped and reported; the first keeps it. A throwing
+    `run` is reported and the binding kept. Bindings go when the extension is
+    disabled or uninstalled.
+  - Bindings are listed under the extension's label in Settings → Shortcuts.
+  A manifest using either half declares `^1.26.0`.
 - **`api.settings()`** (1.13.0) returns the extension's own current setting
   values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL
@@ -1145,13 +1200,15 @@ runtimes: [{
 }],
 ```
 
-Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, worktree, workflow,
-launchContext })` (decorate the agent's command) or `buildLaunch({ phase, intent, cwd,
+Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, parentId, worktree,
+workflow, launchContext })` (decorate the agent's command; `parentId`, 1.29.0, is the
+parent card's id and is passed on fork only) or `buildLaunch({ phase, intent, cwd,
 sessionId, model, ext })` (return the whole pane command instead). Optional:
 `preflight` (return a string to refuse the dispatch before anything is created),
 `readLive({ entry, tmuxName, socket })`, `analyze({ entry, liveSid })`,
 `deliver({ entry, from, text })` (return `{ ok: true }` or `{ ok: false, error }`),
 `launchStatus({ entry })` (1.22.0; return `{ state, error?, url? }` or null),
+`cost({ entry, liveSid })` (1.29.0; return `{ usd }` or null),
 `resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.
@@ -1172,8 +1229,17 @@ Maintainer notes:
   whose functions call `fn({ ...hookPayloadFor(extId, args), host, settings })` and
   re-check `hostApis.has(extId)` per call, so it is inert whichever of deactivate and
   the registry runs first: `preflight` refuses, `wrapLaunch`/`buildLaunch`/`deliver`
-  throw "extension <id> is not active", `readLive`/`analyze`/`launchStatus` return null.
+  throw "extension <id> is not active", `readLive`/`analyze`/`cost`/`launchStatus` return null.
   `deactivateExtension` calls `unregisterRuntimesFor`, so enable and disable are live.
+- **`cost` replaces only `usd`.** For a runtime that prices requests itself (e.g. a
+  gateway). `state-reader.applyRuntimeCost` runs after `analyze`/transcript costing on
+  every graph tick, for live and dormant cards, so cache per tick. A finite,
+  non-negative `usd` becomes the card's total; tokens, sub-agents, advisor spend and
+  activity still come from the transcript (the sub-agent and advisor figures are
+  breakdowns, never added to `usd`). null, a throw or an off-shape answer keeps the
+  transcript figure. The cost chip, `get_session_cost` and anything reading graph `usd`
+  see the override; `host.usage.byCard()` and the `cost-report` skill recompute from
+  transcripts and do not.
 - **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
   It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
   that path skips the preset live id, the adapter's command, `wrapLaunch` and live-id

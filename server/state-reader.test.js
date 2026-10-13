@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, resolveRuntimeForGraph } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, applyRuntimeCost, resolveRuntimeForGraph } from './state-reader.js';
 import { SessionManager } from './session-manager.js';
 import { workerStatusWord } from '../public/cards.js';
 import { SESSIONS_DIR as HOOK_SESSIONS_DIR } from './claude-paths.js';
@@ -306,6 +306,17 @@ test('buildGraph derives a short model pill from the transcript model', async ()
   assert.deepEqual(node.modelPill, { label: 'sonnet', title: 'claude-sonnet-4' });
 });
 
+test('buildGraph carries the launch effort onto board session nodes, null when absent', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'eff-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', model: 'opus', effort: 'xhigh' },
+    { sessionId: 'noeff-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y', model: 'opus' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['eff-sid'].effort, 'xhigh');
+  assert.equal(byId['noeff-sid'].effort, null);
+});
+
 test('buildGraph falls back to the launch model when no transcript model is available', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'launch-model-sid', agent: 'codex', cwd: '/nonexistent/c', intent: 'x', model: 'gpt-5.6-sol' },
@@ -444,22 +455,28 @@ function makeArchiveManager(entries) {
   };
 }
 
-test('buildGraph history record carries exactly the six fields the client reads', async () => {
+test('buildGraph history record carries exactly the seven fields the client reads', async () => {
   const mgr = makeArchiveManager([
     { sessionId: 'arch-sid', agent: 'claude', name: 'Named', intent: 'a very long dispatch intent',
-      cwd: '/x', archivedAt: 9, createdAt: 1, model: 'opus', task: { id: 'T1', name: 'Task' },
+      cwd: '/x', archivedAt: 9, createdAt: 1, model: 'opus', effort: 'high', task: { id: 'T1', name: 'Task' },
       worktree: { path: '/x-worktree-f', branch: 'f' }, parentSession: 'p',
       workflow: { issue: 'ENT-1', phase: { label: 'opened PR' } } },
   ]);
   const graph = await buildGraph(mgr, async () => ({}));
   assert.deepEqual(
     Object.keys(graph.history[0]).sort(),
-    ['archivedAt', 'cwd', 'label', 'model', 'sessionId', 'viaTaskArchive'],
+    ['archivedAt', 'cwd', 'effort', 'label', 'model', 'sessionId', 'viaTaskArchive'],
     'a field added here is paid for over the whole archive on every send — it needs a consumer in app.js',
   );
   assert.deepEqual(graph.history[0], {
-    sessionId: 'arch-sid', label: 'Named', cwd: '/x', archivedAt: 9, model: 'opus', viaTaskArchive: null,
+    sessionId: 'arch-sid', label: 'Named', cwd: '/x', archivedAt: 9, model: 'opus', effort: 'high', viaTaskArchive: null,
   });
+});
+
+test('buildGraph history record carries effort as null when the entry has none', async () => {
+  const mgr = makeArchiveManager([{ sessionId: 'no-eff', agent: 'claude', cwd: '/x', archivedAt: 1 }]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  assert.equal(graph.history[0].effort, null);
 });
 
 test('buildGraph history record carries viaTaskArchive, null when absent', async () => {
@@ -898,7 +915,7 @@ test('buildGraph: a live-but-UNdiscovered LOCAL tmux is NOT synthesized (runtime
 // above — this exercises it directly rather than trusting the three copies
 // stay in sync by inspection alone.
 test('buildGraph (synthesized/discovered branch): carries autoCompactTokens and infers modelContextWindow, same as the dormant branch', async () => {
-  const entry = { sessionId: 'ctxdisc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1', model: 'sonnet[1m]', autoCompactTokens: 500000 };
+  const entry = { sessionId: 'ctxdisc', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1', model: 'sonnet[1m]', effort: 'low', autoCompactTokens: 500000 };
   const mgr = makeDiscoveredManager(entry, 'cc_ctxdisc');
   const discover = async () => [{ tmuxName: 'cc_ctxdisc', socket: '', claudePid: 8181, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude --resume L1', paneTitle: '' }];
   const capture = async () => '';
@@ -908,6 +925,7 @@ test('buildGraph (synthesized/discovered branch): carries autoCompactTokens and 
   const node = graph.sessions.find((s) => s.sessionId === 'ctxdisc');
   assert.ok(node, 'synthesized node present');
   assert.equal(node.autoCompactTokens, 500000);
+  assert.equal(node.effort, 'low');
   // Also doubles as an integration check for the launch-model-disambiguates-
   // the-transcript-prefix fix: sonnet and sonnet[1m] share "claude-sonnet-".
   assert.equal(node.modelContextWindow, 1_000_000);
@@ -975,4 +993,42 @@ test('buildGraph bounds a dormant fork\'s enrichment at its createdAt, and leave
   await buildGraph(mgr, async (sid, opts) => { seen.set(sid, opts); return {}; });
   assert.deepEqual(seen.get('fork-live'), { since: 4242 }, 'a fork must not be billed for the parent history replayed into its transcript');
   assert.deepEqual(seen.get('plain-live'), { since: 0 });
+});
+
+// ── runtime `cost` hook: replaces only usd ──
+const TRANSCRIPT = () => ({ usd: 9.99, tokens: { input: 5, output: 6, cacheWrite: 0, cacheRead: 0 }, subAgents: [{ id: 'a' }] });
+
+test('applyRuntimeCost: a valid usd overrides; null, throw, NaN, negative and off-shape keep the transcript figure', async () => {
+  const run = (cost) => applyRuntimeCost({ cost }, { entry: {}, liveSid: 'L' }, TRANSCRIPT());
+  const ok = await run(async () => ({ usd: 1.23 }));
+  assert.equal(ok.usd, 1.23);
+  assert.deepEqual(ok.tokens, TRANSCRIPT().tokens);
+  assert.deepEqual(ok.subAgents, TRANSCRIPT().subAgents);
+  assert.equal((await run(async () => ({ usd: 0 }))).usd, 0);
+  for (const bad of [async () => null, async () => { throw new Error('x'); }, async () => ({ usd: NaN }), async () => ({ usd: -1 }), async () => ({ usd: '2' }), async () => ({ usd: Infinity })]) {
+    assert.equal((await run(bad)).usd, 9.99);
+  }
+  assert.deepEqual(await applyRuntimeCost({}, {}, TRANSCRIPT()), TRANSCRIPT(), 'no hook: unchanged');
+  assert.deepEqual(await applyRuntimeCost({ cost: async () => ({ usd: 2 }) }, {}, null), { usd: 2 }, 'no enrichment still gets a usd');
+});
+
+test('buildGraph: a runtime cost hook overrides usd on a dormant card and keeps transcript tokens', async () => {
+  const seen = [];
+  const runtimeResolver = (id) => (id === 'gw' ? { cost: async (args) => { seen.push(args); return { usd: 1.23 }; } } : {});
+  const mgr = makeDormantManager([{ sessionId: 'gw-sid', agent: 'claude', runtime: 'gw', cwd: '/nonexistent/c', intent: 'x', liveSessionId: 'L1' }]);
+  const graph = await buildGraph(mgr, async () => TRANSCRIPT(), { runtimeResolver });
+  const node = graph.sessions.find((s) => s.sessionId === 'gw-sid');
+  assert.equal(node.usd, 1.23);
+  assert.equal(seen[0].liveSid, 'L1');
+  assert.equal(seen[0].entry.sessionId, 'gw-sid');
+});
+
+test('buildGraph: a runtime cost hook overrides usd on a live card', async () => {
+  const entry = { sessionId: 'gw-live', agent: 'claude', runtime: 'gw', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_gwlive');
+  const discover = async () => [{ tmuxName: 'cc_gwlive', socket: '', claudePid: 9998, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => TRANSCRIPT(), cost: async () => ({ usd: 1.23 }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture: async () => '' });
+  const node = graph.sessions.find((s) => s.sessionId === 'gw-live');
+  assert.equal(node.usd, 1.23);
 });

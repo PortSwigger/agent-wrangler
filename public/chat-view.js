@@ -151,7 +151,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const suggestionBtn = document.getElementById('chat-suggestion');
   const modelEl = document.getElementById('chat-current-model');
   const attachEl = document.getElementById('chat-attachments');
-  const jumpBtn = document.getElementById('chat-jump-last');
+  const jumpNav = document.getElementById('chat-jump-nav');
+  const jumpPrevBtn = document.getElementById('chat-jump-prev');
+  const jumpNextBtn = document.getElementById('chat-jump-next');
   const exitNoticeEl = document.getElementById('chat-exit-notice');
 
   // s.exitOutput (state-reader.js) off the graph node — the one thing this view
@@ -187,41 +189,67 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     exitNoticeEl.appendChild(body);
   }
 
-  // The node for the most recently appended `chat-user` item, so the jump
-  // pill has something to scroll to. Reset wherever the stream itself is
-  // cleared (mount, unmount, rebuildStream) — otherwise it would dangle at a
-  // node no longer in the document.
-  let lastUserEl = null;
+  // Every human-typed `chat-user` node, oldest first, so the jump buttons can
+  // step between them. Reset wherever the stream itself is cleared (mount,
+  // unmount, rebuildStream) — otherwise it would dangle at nodes no longer in
+  // the document.
+  let userEls = [];
+
+  // Wider than .chat-user's scroll-margin-top (20px): a message the last jump
+  // landed on sits that far below the top edge and must not count as "next".
+  const NAV_SLACK_PX = 28;
 
   // getBoundingClientRect rather than offsetTop/scrollTop math: the stream is
-  // now position:absolute inside .chat-stream-wrap (see styles.css) so this
-  // stays correct regardless of that positioning, and it degrades safely
-  // (guarded below) against the test suite's DOM stub, which has neither.
-  function jumpTargetOffscreen() {
-    if (!lastUserEl) return false;
-    if (typeof lastUserEl.getBoundingClientRect !== 'function' || typeof stream.getBoundingClientRect !== 'function') return false;
-    const r = lastUserEl.getBoundingClientRect();
+  // position:absolute inside .chat-stream-wrap (see styles.css) so this stays
+  // correct regardless of that positioning, and it degrades safely (guarded
+  // below) against the test suite's DOM stub, which has neither.
+  function navTargets() {
+    const none = { prev: null, next: null };
+    if (!userEls.length || typeof stream.getBoundingClientRect !== 'function') return none;
     const sr = stream.getBoundingClientRect();
-    return r.bottom <= sr.top || r.top >= sr.bottom;
+    let prev = null;
+    let next = null;
+    for (const el of userEls) {
+      if (typeof el.getBoundingClientRect !== 'function') return none;
+      const top = el.getBoundingClientRect().top - sr.top;
+      if (top < -NAV_SLACK_PX) prev = el;
+      else if (top > NAV_SLACK_PX && !next) next = el;
+    }
+    // Scrolling is clamped at the bottom, so stepping "down" there would
+    // leave the view where it is and the button would look dead.
+    if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 1) return { prev, next: null };
+    // Past the last user message, down means the end of the conversation.
+    return { prev, next: next || 'bottom' };
   }
 
   function updateJumpVisibility() {
-    jumpBtn.hidden = !jumpTargetOffscreen();
+    const { prev, next } = navTargets();
+    jumpPrevBtn.disabled = !prev;
+    jumpNextBtn.disabled = !next;
+    jumpNav.hidden = !prev && !next;
   }
   stream.addEventListener('scroll', updateJumpVisibility);
-  jumpBtn.addEventListener('click', () => {
-    // Captured rather than read again after the scroll/timeout below: a new
-    // user message could arrive and reassign lastUserEl before either fires,
-    // and this click must only ever act on the bubble it was pressed for.
-    const target = lastUserEl;
+
+  function jumpTo(target) {
     if (!target) return;
+    if (target === 'bottom') {
+      // Instant, not smooth: a poll landing mid-animation would see us not
+      // yet at the bottom and stop auto-following, stranding the view short.
+      stream.scrollTop = stream.scrollHeight;
+      updateJumpVisibility();
+      return;
+    }
     target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     target.classList?.remove('chat-jump-target');
-    void target.offsetWidth; // restart the animation if the pill is clicked again mid-pulse
+    void target.offsetWidth; // restart the animation if pressed again mid-pulse
     target.classList?.add('chat-jump-target');
+    // `target` is captured so a later press only ever clears the bubble it
+    // pulsed, not whichever one is current when the timeout fires.
     setTimeout(() => target.classList?.remove('chat-jump-target'), 950);
     updateJumpVisibility();
-  });
+  }
+  jumpPrevBtn.addEventListener('click', () => jumpTo(navTargets().prev));
+  jumpNextBtn.addEventListener('click', () => jumpTo(navTargets().next));
 
   wrap.addEventListener('click', (e) => {
     if (input.contains(e.target)) return;
@@ -819,7 +847,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // it must not overwrite a genuine human message with one that only
       // looks like one, even though it renders in the same bubble style.
       if (item.type === 'user' && isHumanTypedUserItem(item)) {
-        lastUserEl = node;
+        userEls.push(node);
         const hit = echoList().find((e) => echoMatches(e, item));
         noteAcked(sessionId, item.event);
         if (hit) {
@@ -899,8 +927,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     detachEchoNodes();
     // Same dangling-reference reasoning as `live` below: the node this pointed
     // at was just cleared out of the document.
-    lastUserEl = null;
-    jumpBtn.hidden = true;
+    userEls = [];
+    jumpNav.hidden = true;
     // The row was a child of the stream just cleared, so the handle is dangling —
     // dropped here so the next render appends a fresh one instead of a detached
     // node with a live timer against it.
@@ -1005,8 +1033,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       stream.textContent = '';
       detachEchoNodes();
       pruneEchoes();
-      lastUserEl = null;
-      jumpBtn.hidden = true;
+      userEls = [];
+      jumpNav.hidden = true;
       // A new era starts with no known pending call or status — otherwise the
       // previous session's working line would flash on screen until this
       // session's own setStatus/onChatReply arrives.
@@ -1072,8 +1100,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       wrap.hidden = true;
       stream.textContent = '';
       detachEchoNodes();
-      lastUserEl = null;
-      jumpBtn.hidden = true;
+      userEls = [];
+      jumpNav.hidden = true;
       lastPending = null;
       lastStatus = null;
       lastWaitingReason = null;

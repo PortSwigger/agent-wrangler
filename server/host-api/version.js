@@ -226,7 +226,34 @@ import semver from 'semver';
 // dispatch dialog's agent/model/effort list, sourced from the live catalogs,
 // so an extension offering its own model picker stops hand-copying the
 // vocabulary. A manifest calling it declares `^1.25.0`.
-export const HOST_API_VERSION = '1.25.0';
+//
+// 1.26.0 adds the manifest `keybindings` field and the client
+// `api.keys.bind({ combo, scope, when, run, description })`: an extension's
+// shortcuts go through the board's keybinding registry (public/keybindings.js)
+// and are listed in Settings → Shortcuts. A manifest using either declares `^1.26.0`.
+//
+// 1.27.0 adds the client `api.openDiff(sessionId, { onClose })`: openSession,
+// then that card's diff panel over the grid, with `onClose` called once when
+// that panel closes, so a review started from an extension's own view can
+// return there. The diff panel is app.js view state no frame can reach, so only
+// the base api can open it. The same minor makes openSession land on the card
+// rather than only select it: its tile out of the tray and the card scrolled
+// into view, for a restored card as well as a live one. A manifest calling
+// openDiff declares `^1.27.0`.
+//
+// 1.28.0 is what an extension quick-launch needs: `effort` (the launch effort,
+// null when unrecorded) on graph session and history nodes, the cached
+// `history` on every `dispatch.field` update graph (not only ticks where it
+// changed), the client `api.dispatch.submit({ model?, effort? })`, and
+// `quickLaunch` in the hideable dispatch fields (hiding it also frees ⌘1–⌘3
+// for the extension's own bindings). A manifest using any declares `^1.28.0`.
+//
+// 1.29.0 adds an optional `cost({ entry, liveSid })` to the runtime contract,
+// whose `{ usd }` replaces only the card's transcript-priced total, and passes
+// `parentId` to `wrapLaunch` on fork. An older server ignores `cost` (its loader
+// only checks the keys it knows), so the runtime still loads but shows the
+// transcript cost; a manifest that needs its own figure declares `^1.29.0`.
+export const HOST_API_VERSION = '1.29.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

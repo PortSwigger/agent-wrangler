@@ -1,3 +1,4 @@
+import { parseCombo } from './keybindings.js';
 // The client half of the extensions API: named slots an extension's client
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
@@ -131,7 +132,13 @@ function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null }) {
+// A combo's identity for comparing a bind() against the manifest's declaration.
+function canonCombo(str) {
+  const p = parseCombo(str);
+  return [p.mod, p.meta, p.ctrl, p.shift, p.alt, p.key].join('|');
+}
+
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
   // board hides the UNION (hiddenChips()); a removed extension's set goes with
@@ -160,6 +167,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const costReported = new Set();
   // `extId:id` of task.body contributions whose weight() already threw.
   const weightReported = new Set();
+  // extId -> Set<unregister fn>: each extension's api.keys.bind() bindings,
+  // dropped by removeExtension.
+  const keyUnbinds = new Map();
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -225,6 +235,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             selection and the core `resume` frame — none of which `send`
   //             may reach, since it is bound to the extension's own types. A
   //             non-id argument is reported and dropped, like a refused send.
+  //   openDiff — openSession, then that card's diff panel over the grid
+  //             (1.27.0). `{ onClose }` is called once, when THAT panel closes
+  //             by any route (its close button, Escape, leaving the grid,
+  //             another card's diff replacing it), so an extension can return
+  //             the reader to wherever they came from. Never called if the
+  //             panel never opened (a restore the server refused), or if a
+  //             later openSession/openDiff superseded the request first. A
+  //             throwing onClose is reported, the same as a throwing listener.
   //   openTask — the task counterpart of openSession (1.24.0): show this task's
   //             tile, out of the tray if it was minimised, scrolled into view
   //             and pulsed. Returns whether the task is on the live board; an
@@ -291,6 +309,18 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           baseApi.openSession?.(sessionId);
         },
+        openDiff: (sessionId, opts) => {
+          if (typeof sessionId !== 'string' || !sessionId) {
+            onError(`[ext:${extId}] openDiff refused: expected a session id, got ${JSON.stringify(sessionId)}`);
+            return;
+          }
+          const onClose = isPlainObject(opts) && typeof opts.onClose === 'function' ? opts.onClose : null;
+          baseApi.openDiff?.(sessionId, {
+            onClose: onClose && (() => {
+              try { onClose(); } catch (err) { onError(`[ext:${extId}] openDiff onClose threw: ${err?.message || err}`); }
+            }),
+          });
+        },
         openTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {
             onError(`[ext:${extId}] openTask refused: expected a task id, got ${JSON.stringify(taskId)}`);
@@ -352,15 +382,75 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
           return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
         },
+        // Launch the already-open dispatch modal (1.28.0), optionally on an
+        // offered model/effort. Resolves once SENT; rejects when the modal is
+        // not open in launch mode, the model/effort is not offered, or core
+        // validation blocks the launch. See app.js submitDispatchFromExt.
+        dispatch: Object.freeze({
+          submit: (opts = {}) => {
+            if (typeof baseApi.submitDispatchFromExt !== 'function') return Promise.reject(new Error(`[ext:${extId}] dispatch.submit is not available`));
+            const o = opts && typeof opts === 'object' ? opts : {};
+            if (o.model != null && (typeof o.model !== 'string' || !o.model)) return Promise.reject(new Error(`[ext:${extId}] dispatch.submit model must be a non-empty string`));
+            if (o.effort != null && typeof o.effort !== 'string') return Promise.reject(new Error(`[ext:${extId}] dispatch.submit effort must be a string`));
+            try {
+              return Promise.resolve(baseApi.submitDispatchFromExt({ model: o.model ?? undefined, effort: o.effort ?? undefined }));
+            } catch (err) {
+              return Promise.reject(new Error(`[ext:${extId}] dispatch.submit: ${err?.message || err}`));
+            }
+          },
+        }),
         // Ask the board to re-render (and so re-size its tiles): the
         // task.body counterpart of requestPanelRender.
         requestBoardRender: () => { baseApi.requestBoardRender?.(); },
         // Always present (the api is built once), but every call throws unless
         // the manifest's `requires` granted cards:hideChips — see cardsApi.
         cards: cardsApi(extId, baseApi),
+        keys: keysApi(extId),
       });
     }
     return apis.get(extId);
+  }
+
+  // api.keys.bind (1.26.0): a shortcut through the board's keybinding registry
+  // (keybindings.js), owned by this extension and listed under its label in
+  // Settings → Shortcuts. Only a combo+scope the manifest declared in
+  // `keybindings` is accepted — the disclosure half, like hideDispatchField.
+  // Returns an unbind function; removeExtension unbinds whatever is left.
+  function keysApi(extId) {
+    return Object.freeze({
+      bind: (opts) => {
+        const o = isPlainObject(opts) ? opts : {};
+        if (!keys) { onError(`[ext:${extId}] keys.bind refused: no keybinding registry`); return () => {}; }
+        if (typeof o.combo !== 'string' || typeof o.scope !== 'string' || typeof o.run !== 'function') {
+          onError(`[ext:${extId}] keys.bind refused: needs a combo string, a scope and a run function`);
+          return () => {};
+        }
+        const declared = keybindingsFor(extId) || [];
+        let want;
+        try { want = canonCombo(o.combo); } catch (err) { onError(`[ext:${extId}] keys.bind refused: ${err.message}`); return () => {}; }
+        const ok = declared.some((d) => {
+          try { return d.scope === o.scope && canonCombo(d.combo) === want; } catch { return false; }
+        });
+        if (!ok) {
+          onError(`[ext:${extId}] keys.bind refused: "${o.combo}" (${o.scope}) is not in this extension's manifest keybindings (${declared.map((d) => `${d.combo} (${d.scope})`).join(', ') || 'none'})`);
+          return () => {};
+        }
+        let off;
+        try {
+          off = keys.register({
+            id: `${extId}:${o.combo}:${o.scope}`,
+            combo: o.combo, scope: o.scope, run: o.run, when: typeof o.when === 'function' ? o.when : undefined,
+            description: typeof o.description === 'string' ? o.description : '',
+            owner: extId, ownerLabel: labelFor(extId) || extId, group: labelFor(extId) || extId,
+          });
+        } catch (err) { onError(`[ext:${extId}] keys.bind refused: ${err.message}`); return () => {}; }
+        if (!keyUnbinds.has(extId)) keyUnbinds.set(extId, new Set());
+        const set = keyUnbinds.get(extId);
+        const unbind = () => { if (set.delete(unbind)) off(); };
+        set.add(unbind);
+        return unbind;
+      },
+    });
   }
 
   function unionHidden() {
@@ -709,6 +799,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       listeners.delete(extId);
       settingsListeners.delete(extId);
       agentsListeners.delete(extId);
+      for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
+      keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
       try { onExtensionRemoved(extId); } catch (err) { onError(`[ext:${extId}] cleanup failed`, err); }
     },

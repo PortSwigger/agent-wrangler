@@ -115,7 +115,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
-    hideDispatchField: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
+    hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -747,7 +747,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
-    handlerTypes: [], hideDispatchField: [], runtimes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
+    handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1004,12 +1004,12 @@ test('hideDispatchField must be an array of known dispatch field names', () => {
   rejects(manifest({ hideDispatchField: 'effort' }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [7] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
   rejects(manifest({ hideDispatchField: [''] }), /Extension fake: hideDispatchField must be an array of dispatch field names/);
-  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, runtime, worktree\)/);
+  rejects(manifest({ hideDispatchField: ['cwd'] }), /Extension fake: unknown dispatch field "cwd" \(known: autoCompactTokens, effort, model, quickLaunch, runtime, worktree\)/);
   assert.ok(validateManifest(manifest({ hideDispatchField: [...DISPATCH_FIELDS] })));
 });
 
 test('the dispatch field vocabulary is closed', () => {
-  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'runtime', 'worktree']);
+  assert.deepEqual([...DISPATCH_FIELDS].sort(), ['autoCompactTokens', 'effort', 'model', 'quickLaunch', 'runtime', 'worktree']);
 });
 
 test('the declared hideDispatchField lands on the entry, the announcement and the graph, as a COPY', () => {
@@ -1134,9 +1134,11 @@ test('a bad runtime shape quarantines', () => {
   rejects(manifest({ runtimes: [toyRuntime({ deliver: 'yes' })] }), /runtime toyrt deliver must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ preflight: {} })] }), /runtime toyrt preflight must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ launchStatus: 'ok' })] }), /runtime toyrt launchStatus must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ cost: { usd: 1 } })] }), /runtime toyrt cost must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ resumable: 'no' })] }), /runtime toyrt resumable must be a boolean/);
   rejects(manifest({ runtimes: [toyRuntime({ skipsHostResumeGuard: 1 })] }), /skipsHostResumeGuard must be a boolean/);
   rejects(manifest({ runtimes: [toyRuntime(), toyRuntime({ label: 'Again' })] }), /duplicate runtime id "toyrt"/);
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ cost: async () => null })] })));
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: false, deliver: async () => ({ ok: true }) })] })));
 });
 
@@ -1168,4 +1170,23 @@ test('onTaskDelete: an extension with no façade at fire time is skipped', async
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ tools: [], handlers: [], stores: {}, graph: undefined, session: undefined, skills: [], onTaskDelete: ({ taskId }) => { seen.push(taskId); } })] });
   await createTaskDeleteNotifier(loaded, () => undefined)('t_1');
   assert.deepEqual(seen, []);
+});
+
+// ── `keybindings` — the disclosure half of api.keys.bind ──
+test('keybindings must be an array of { combo, scope } with a parsable combo and a known scope', () => {
+  rejects(manifest({ keybindings: 'ctrl+k' }), /Extension fake: keybindings must be an array of \{ combo, scope \}/);
+  rejects(manifest({ keybindings: [{ combo: 'ctrl+k' }] }), /keybindings must be an array of \{ combo, scope \}/);
+  rejects(manifest({ keybindings: [{ combo: 'hyper+k', scope: 'board' }] }), /keybindings: unknown modifier "hyper"/);
+  rejects(manifest({ keybindings: [{ combo: 'ctrl+k', scope: 'everywhere' }] }), /keybindings: unknown scope "everywhere" \(known: dispatch, modal, board, global\)/);
+  assert.ok(validateManifest(manifest({ keybindings: [{ combo: 'mod+shift+l', scope: 'dispatch' }, { combo: 'ctrl+cmd+k', scope: 'global' }] })));
+});
+
+test('declared keybindings land on the announcement and the graph as copies, omitted when empty', () => {
+  const ext = manifest({ client: 'public/index.js', keybindings: [{ combo: 'ctrl+cmd+k', scope: 'global' }] });
+  const out = loadExtensions({ cfg: {}, builtin: [ext] });
+  ext.keybindings.push({ combo: 'ctrl+cmd+j', scope: 'global' });
+  assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', handlerTypes: ['fake-do'], keybindings: [{ combo: 'ctrl+cmd+k', scope: 'global' }] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].keybindings, [{ combo: 'ctrl+cmd+k', scope: 'global' }]);
+  const none = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
+  assert.deepEqual(none.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
 });

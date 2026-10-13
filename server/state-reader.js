@@ -274,6 +274,18 @@ export function apiErrorPromotion(status, apiError) {
 // extension that has since been disabled or uninstalled reads as a host (local)
 // session for status and cost, rather than taking buildGraph down for every card.
 // Resume/fork still refuse it by name (relaunchRefusal).
+// A runtime's optional `cost` hook replaces ONLY the card's `usd` (e.g. a gateway
+// that prices requests itself); every other enrichment field stands. null, a
+// throw or an off-shape answer means "no opinion" and the transcript figure stays.
+export async function applyRuntimeCost(runtime, args, enr) {
+  if (!runtime?.cost) return enr;
+  let ans;
+  try { ans = await runtime.cost(args); } catch { return enr; }
+  const usd = ans?.usd;
+  if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) return enr;
+  return { ...(enr || {}), usd };
+}
+
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
 export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore } = {}) {
@@ -500,6 +512,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent,
       createdAt: mapEntry?.createdAt || null,
       model: mapEntry?.model || null,
+      effort: mapEntry?.effort || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, mapEntry?.model),
       autoCompactTokens: mapEntry?.autoCompactTokens || null,
@@ -604,8 +617,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // the abandoned conversation (stale label once dormant, and Resume brings the
     // abandoned one back). No-ops when unchanged; see noteLiveSessionId.
     if (live?.liveSid) await sessionManager?.noteLiveSessionId?.(realSid, live.liveSid);
-    const enr = (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: live?.liveSid || appEntry?.liveSessionId }) : null)
-      || await adapter.analyze(live?.liveSid || appEntry?.liveSessionId || realSid, { since: usageSince(appEntry) });
+    const costSid = live?.liveSid || appEntry?.liveSessionId;
+    const enr = await applyRuntimeCost(runtime, { entry: appEntry, liveSid: costSid },
+      (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: costSid }) : null)
+        || await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) }));
     // A recognized live status wins (Claude's mapped status, or Codex's). Else
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
@@ -666,6 +681,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent: appEntry?.intent || '',
       createdAt: appEntry?.createdAt || null,
       model: appEntry?.model || null,
+      effort: appEntry?.effort || null,
       currentModel: enr?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
       autoCompactTokens: appEntry?.autoCompactTokens || null,
@@ -729,10 +745,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // their cost/age. Legacy entries have no liveSessionId → fall back to the card id
     // (which for them is the live id). Mirrors the Codex branch.
     const runtime = runtimeResolver(entry.runtime);
-    const enrichment = (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
+    const enrichment = await applyRuntimeCost(runtime, { entry, liveSid: entry.liveSessionId || sid }, (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
       || ((entry.agent && entry.agent !== 'claude')
         ? await adapterFor(entry.agent).analyze(entry.liveSessionId || sid, { since: usageSince(entry) })
-        : (enrich ? await enrich(entry.liveSessionId || sid, { since: usageSince(entry) }) : null));
+        : (enrich ? await enrich(entry.liveSessionId || sid, { since: usageSince(entry) }) : null)));
     const label = sessionLabel({
       agent: agentId,
       names: [entry.name, entry.lastLabel],
@@ -763,6 +779,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       intent: entry.intent || '',
       createdAt: entry.createdAt || null,
       model: entry.model || null,
+      effort: entry.effort || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, entry.model),
       autoCompactTokens: entry.autoCompactTokens || null,
@@ -832,7 +849,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // ever rising on the board it was measured on), so every field is paid for over the
   // entire archive on every send. Each has exactly one consumer in public/app.js:
   // cwd + archivedAt the dispatch dialog's recent-folder list, cwd + sessionId its
-  // per-task default repo, model the quick-launch button ranking, label +
+  // per-task default repo, model the quick-launch button ranking (model + effort
+  // also an extension quick-launch's, via dispatch.field's graph), label +
   // viaTaskArchive the sessions a task's Restore names. It USED to mirror the board
   // node (agent/name/intent/createdAt/task/worktree/workflow/parentSession/spawnedBy)
   // to feed the Search view's archived rows; Search now builds its own rows
@@ -847,6 +865,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     cwd: e.cwd || null,
     archivedAt: e.archivedAt,
     model: e.model || null,
+    effort: e.effort || null,
     viaTaskArchive: e.viaTaskArchive || null,
   }));
 

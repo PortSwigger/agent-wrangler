@@ -14,11 +14,13 @@ import { devcontainer } from './devcontainer.js';
 //                `runtime === 'local' ? undefined : runtime`), so back-compat holds.
 //   label        (required) what the dispatch dialog's Runtime select shows, and
 //                what a refusal names the runtime by.
-//   wrapLaunch   async ({ inner, cwd, sessionId, worktree, workflow, launchContext })
+//   wrapLaunch   async ({ inner, cwd, sessionId, parentId, worktree, workflow, launchContext })
 //                → the command tmux actually runs. Receives the agent's already-built
 //                inner command and returns it decorated (local: identity;
 //                devcontainer: a `devcontainer up && docker cp && exec` script).
-//                `workflow` is absent on fork (forks don't carry it).
+//                `workflow` is absent on fork (forks don't carry it). `parentId` is
+//                present on fork ONLY: the parent card's id, so a runtime can find
+//                state it keyed by the parent (onFork fires after the launch).
 //   buildLaunch  async ({ phase, intent, cwd, sessionId, model, ext }) → the WHOLE
 //                pane command, replacing the agent adapter's (for a runtime whose
 //                agent is not a local process at all, e.g. a hand-off to a remote
@@ -55,6 +57,12 @@ import { devcontainer } from './devcontainer.js';
 //   analyze      (optional) async ({ entry, liveSid }) → a cost/token enrichment or
 //                null. Overrides host transcript costing when the transcript is
 //                in-container. Absent ⇒ state-reader costs the host transcript.
+//   cost         (optional) async ({ entry, liveSid }) → { usd } or null. A finite,
+//                non-negative `usd` replaces ONLY the card's `usd` (after analyze /
+//                transcript costing); tokens, subAgents, lastActivity etc. stand.
+//                null, a throw or an off-shape answer keeps the transcript figure.
+//                Called on every graph tick for every live and dormant card on the
+//                runtime, so it must be cheap (cache per tick).
 //   deliver      (optional) async ({ entry, from, text }) → { ok: true } |
 //                { ok: false, error } — how a peer message (send_message) reaches a
 //                card whose agent has no local pane to paste into. `from` is the

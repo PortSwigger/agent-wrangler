@@ -19,7 +19,7 @@ Optional launch controls include:
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
-- **Quick launch:** use a model button or `Command+1` through `Command+3`.
+- **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
 Discoverable sessions launched elsewhere also appear. They can be searched and adopted, but gain an
 attachable terminal only after being resumed through the board.
@@ -116,3 +116,8 @@ The complete list is under **Settings → Shortcuts**. Common shortcuts are:
 | `Control+Command+A` | Label cards for keyboard jump |
 | `Control+Command+,` | Open Settings |
 | `/` | Open Search and focus its input |
+| `Command+Enter` (dispatch dialog) | Launch the session |
+| `Command+1`–`3` (dispatch dialog) | Quick-launch with the first, second or third model |
+
+Shortcuts added by enabled extensions are listed under each extension's name in
+**Settings → Shortcuts**.
