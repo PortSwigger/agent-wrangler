@@ -296,16 +296,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
   // Every read and write goes through storage rather than a private snapshot, so a
   // second board tab never overwrites this one's drafts (or resurrects a sent one)
-  // from a stale copy. The in-memory map is only the fallback when storage is
-  // unavailable.
+  // from a stale copy. After a storage write fails, the in-memory map takes over
+  // so drafts still survive card switches.
   class PersistedDrafts {
-    constructor() { this.fallback = new Map(); }
+    constructor() { this.memory = null; }
     read() {
-      try { return new Map(parseStoredDrafts(localStorage.getItem(DRAFTS_KEY))); } catch { return this.fallback; }
+      if (this.memory) return this.memory;
+      try { return new Map(parseStoredDrafts(localStorage.getItem(DRAFTS_KEY))); } catch { return new Map(); }
     }
     write(map) {
       while (map.size > DRAFTS_MAX) map.delete(map.keys().next().value);
-      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...map])); } catch { this.fallback = map; }
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify([...map])); } catch { this.memory = map; }
     }
     get(k) { return this.read().get(k); }
     set(k, v) {
@@ -598,6 +599,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // fire, so a multi-line suggestion would land in a one-row box that hides
     // most of itself.
     input.dispatchEvent(new Event('input'));
+    scheduleDraftSave();
   }
 
   function renderSuggestion() {
@@ -732,7 +734,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     clearTimeout(draftTimer);
     const id = sessionId;
     const era = requestEra;
-    draftTimer = setTimeout(() => { if (sessionId === id && requestEra === era) saveDraft(id); }, 400);
+    draftTimer = setTimeout(() => { if (sessionId === id && requestEra === era && !pendingMessages.has(id)) saveDraft(id); }, 400);
   }
   input.addEventListener('input', (e) => {
     if (e.isTrusted) scheduleDraftSave();
@@ -1035,6 +1037,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           attachments = pending.draft.attachments.slice();
           input.dispatchEvent(new Event('input'));
           renderAttachments();
+          saveDraft(msg.sessionId);
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
           renderSendability();

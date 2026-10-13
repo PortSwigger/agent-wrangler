@@ -133,3 +133,16 @@ test('drafts persisted by one tab are not overwritten or resurrected by another 
   assert.equal(tabB.get('b').text, 'other');
   delete globalThis.localStorage;
 });
+
+test('when storage writes fail but reads succeed, drafts stay available in memory', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('./chat-view.js', import.meta.url), 'utf8');
+  const start = src.indexOf('  const DRAFTS_KEY');
+  const end = src.indexOf('  const drafts = new PersistedDrafts();');
+  const ls = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+  const make = new Function('localStorage', `${src.slice(start, end)}; return new PersistedDrafts();`);
+  const d = make(ls);
+  d.set('s1', { text: 'kept', attachments: [] });
+  assert.equal(d.get('s1').text, 'kept');
+  d.delete('s1');
+  assert.equal(d.get('s1'), undefined);
+});
