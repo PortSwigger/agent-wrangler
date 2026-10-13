@@ -41,6 +41,15 @@ import { devcontainer } from './devcontainer.js';
 //                runtime's own slice by its binding (null when none was sent), and
 //                the whole bag for a built-in. A runtime that doesn't care ignores
 //                them, as devcontainer does.
+//   validateModel (optional) async ({ agent, model, coreModelError }) → a human-facing
+//                error string, or null when `model` is acceptable. A runtime that
+//                defines it OWNS the model vocabulary for its sessions (Bifrost takes
+//                OpenAI ids the Claude adapter has never heard of): spawn_session
+//                skips core's per-agent model check, asks this instead, and hands the
+//                accepted model to the runtime as `ext.<extId>.model` rather than to
+//                the agent CLI's `--model`. `coreModelError(agent, model)` is core's own
+//                check, for a runtime that wants to accept the agent's models too.
+//                Absent ⇒ core validates against the agent's models as before.
 //   resumable    (optional, default true) false ⇒ resume and fork are refused up
 //                front (relaunchRefusal) and the graph tick never adopts a live
 //                conversation id for the card (noteLiveSessionId).

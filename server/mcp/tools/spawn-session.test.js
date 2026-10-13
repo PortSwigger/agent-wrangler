@@ -49,6 +49,48 @@ test('spawn_session passes a registered extension runtime through to dispatch', 
   }
 });
 
+test('spawn_session asks a runtime that owns its models, and hands the model over as ext', async () => {
+  const seen = [];
+  registerRuntime({
+    id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner,
+    validateModel: ({ agent, model, coreModelError }) => { seen.push({ agent, model, core: typeof coreModelError }); return model === 'bad' ? 'Toy: no such model' : null; },
+  }, 'toy');
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt', model: 'gpt-6-sol' });
+    assert.equal(out.isError, undefined);
+    assert.deepEqual(seen, [{ agent: 'claude', model: 'gpt-6-sol', core: 'function' }]);
+    assert.deepEqual(d.calls.dispatch[0].ext, { toy: { model: 'gpt-6-sol' } });
+    assert.equal(d.calls.dispatch[0].model, undefined);
+
+    const bad = deps();
+    const refused = await spawnSessionTool.handler({ deps: bad, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt', model: 'bad' });
+    assert.equal(refused.isError, true);
+    assert.equal(refused.content[0].text, 'Toy: no such model');
+    assert.equal(bad.calls.dispatch.length, 0);
+
+    // No model given: the caller's own model is not inherited into a runtime that owns its own.
+    const none = deps();
+    await spawnSessionTool.handler({ deps: none, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+    assert.equal(none.calls.dispatch[0].model, undefined);
+    assert.equal(none.calls.dispatch[0].ext, undefined);
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
+});
+
+test('spawn_session still checks the agent\'s models for a runtime without validateModel', async () => {
+  registerRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner }, 'toy');
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt', model: 'gpt-6-sol' });
+    assert.equal(out.isError, true);
+    assert.equal(d.calls.dispatch.length, 0);
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
+});
+
 test('spawn_session refuses an unknown runtime, listing the known ones, without dispatching', async () => {
   const d = deps();
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });

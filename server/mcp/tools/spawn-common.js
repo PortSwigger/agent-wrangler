@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { autoCompactTokensError, expandTilde } from '../../session-manager.js';
-import { launchTargetError } from '../../agents/index.js';
+import { launchTargetError, modelError } from '../../agents/index.js';
+import { findRuntime } from '../../runtimes/index.js';
 import { awaitLaunchStatus } from '../../runtimes/launch-status.js';
 
 // Shared plumbing for the spawn_* tools (spawn_session, spawn_workflow). Both
@@ -28,8 +29,23 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // the inheritance fallback below: an existing entry may carry a model value
   // since dropped from an adapter, and failing a spawn over a string the caller
   // never supplied would break the inheritance this tool is meant to provide.
-  const badTarget = launchTargetError(agent, args.model, args.effort);
+  //
+  // A runtime that defines `validateModel` owns the model vocabulary for its
+  // sessions, so core's per-agent check is skipped for it and the runtime is
+  // asked instead; the accepted model reaches it as `ext.<extId>.model`.
+  const rt = args.runtime ? findRuntime(args.runtime) : null;
+  const ownsModel = typeof rt?.validateModel === 'function';
+  const badTarget = launchTargetError(agent, ownsModel ? undefined : args.model, args.effort);
   if (badTarget) return errorResult(badTarget);
+  if (ownsModel) {
+    let modelErr;
+    try {
+      modelErr = await rt.validateModel({ agent, model: args.model ?? null, coreModelError: modelError });
+    } catch (e) {
+      modelErr = e?.message || 'Model validation failed';
+    }
+    if (modelErr) return errorResult(modelErr);
+  }
   const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
   if (autoCompactError) return errorResult(autoCompactError);
 
@@ -44,8 +60,14 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   let { model, effort } = args;
   const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;
   if (callerEntry && (callerEntry.agent || 'claude') === agent) {
-    if (model == null) model = callerEntry.model || undefined;
+    // The caller's model belongs to the caller's agent, not to a runtime that owns its own.
+    if (model == null && !ownsModel) model = callerEntry.model || undefined;
     if (effort == null) effort = callerEntry.effort || undefined;
+  }
+  let ext;
+  if (ownsModel) {
+    if (model != null) ext = { [rt.extId]: { model } };
+    model = undefined;
   }
 
   let addDirs;
@@ -62,6 +84,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       model,
       effort,
       agent,
+      ext,
       addDirs,
       autoCompactTokens: args.auto_compact_tokens,
       ...buildDispatch({ caller, callerEntry }),
