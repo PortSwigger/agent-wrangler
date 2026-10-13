@@ -273,11 +273,11 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       body.append(extra);
       const first = cells[0].getBoundingClientRect();
       const next = cells[1].getBoundingClientRect();
-      return { firstHeight: first.height, gap: next.top - first.bottom,
+      return { firstHeight: first.height, gap: next.top - first.bottom, expectedGap: parseFloat(getComputedStyle(grid).rowGap),
         gridScrollHeight: grid.scrollHeight, gridHeight: grid.clientHeight,
         bodyScrollHeight: body.scrollHeight, bodyHeight: body.clientHeight };
     })()`);
-    assert.ok(sizing.firstHeight >= 700 && Math.abs(sizing.gap - 12) < 1
+    assert.ok(sizing.firstHeight >= 700 && Math.abs(sizing.gap - sizing.expectedGap) < 1
       && sizing.gridScrollHeight > sizing.gridHeight && sizing.bodyScrollHeight <= sizing.bodyHeight,
     `single-column tasks should fit their contents and scroll at board level: ${JSON.stringify(sizing)}`);
     await resize(1400);
@@ -301,6 +301,34 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
         return tray.top >= last.bottom && tray.width >= last.width - 1;
       })()`), 'the minimised-task tray must sit below the stacked tasks');
     }
+
+    await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
+    const drag = await evaluateChecked(`(() => {
+      const grid = document.getElementById('grid');
+      grid.scrollTop = 0;
+      const cells = [...grid.querySelectorAll('.task-cell')];
+      const extra = document.createElement('div');
+      extra.style.height = '700px';
+      cells[0].querySelector('.task-body').append(extra);
+      const sourceHeight = cells[0].getBoundingClientRect().height;
+      const header = cells[0].querySelector('.task-head');
+      const transfer = new DataTransfer();
+      header.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+      grid.scrollTop = cells[2].getBoundingClientRect().top - grid.getBoundingClientRect().top + grid.scrollTop;
+      const scroll = grid.scrollTop;
+      const target = cells[2].getBoundingClientRect();
+      grid.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true,
+        dataTransfer: transfer, clientX: target.left + 20, clientY: target.top + 10 }));
+      const placeholder = grid.querySelector('.task-placeholder');
+      const result = { sourceHeight, scroll, scrollAfter: grid.scrollTop,
+        placeholderHeight: placeholder?.getBoundingClientRect().height,
+        placeholderRow: placeholder?.style.gridRow };
+      header.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
+      return result;
+    })()`);
+    assert.ok(drag.scroll > 0 && Math.abs(drag.placeholderHeight - drag.sourceHeight) < 1
+      && drag.scrollAfter === drag.scroll && drag.placeholderRow.startsWith('3 /'),
+    `scrolling a task drag must preserve its height and target the third task: ${JSON.stringify(drag)}`);
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {
