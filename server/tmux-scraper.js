@@ -515,6 +515,9 @@ export async function sendKeys(name, keys, socket = '') {
 // per agent. Ordering keeps sendText's trailing Enter a submit and not a swallowed
 // newline: the end marker precedes it on the same byte stream.
 async function pasteBlock(name, text, socket = '', run = tmux) {
+  // tmux's load-buffer of an empty file creates no buffer, so the paste-buffer
+  // after it fails with "no buffer" — an image-only message has no prose to paste.
+  if (!text) return;
   const tmpFile = path.join(os.tmpdir(), `cm-${crypto.randomBytes(5).toString('hex')}.txt`);
   const buf = `cm${crypto.randomBytes(3).toString('hex')}`;
   fs.writeFileSync(tmpFile, text, 'utf8');

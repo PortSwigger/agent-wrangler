@@ -758,3 +758,10 @@ test('sendText pads a trailing backslash so Enter submits instead of continuing 
   await sendText('cc_y', 'see src/', '', run, { wait: async () => {} });
   assert.deepEqual(pasted, ['see src\\ ', 'see src/']);
 });
+
+test('sendText with empty text skips the paste (tmux has no buffer for an empty file) but still presses Enter', async () => {
+  const calls = [];
+  const run = async (socket, args) => { calls.push(args[0]); return { stdout: '' }; };
+  await sendText('cc_z', '', '', run, { wait: async () => {} });
+  assert.deepEqual(calls, ['send-keys']);
+});
