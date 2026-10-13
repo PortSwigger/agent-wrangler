@@ -768,3 +768,9 @@ test('ctx.hiddenChips hides exactly those keys, keeps the pill host, and keys th
   assert.match(html, /<span class="card-meta-ext"><\/span>/);
   assert.match(html, /data-chip="jira:jira">/);
 });
+
+
+test('tileHtml: a drag placeholder preserves the tall task height', () => {
+  const html = tileHtml({ kind: 'placeholder', col: 0, rowStart: 1, span: 1, placeholderHeight: 617 }, ctx());
+  assert.match(html, /height:617px/);
+});

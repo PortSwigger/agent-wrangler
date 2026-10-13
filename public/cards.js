@@ -642,8 +642,10 @@ export function taskBodyHostHtml(key) {
 export function tileHtml(tile, ctx, { focusMode } = {}) {
   const pos = focusMode ? '' : `grid-column:${tile.col + 1}; grid-row:${tile.rowStart + 1} / span ${tile.span};`;
   if (tile.kind === 'placeholder') {
-    return `<div class="task-placeholder" style="${pos}"></div>`;
+    const height = Number.isFinite(tile.placeholderHeight) ? `height:${tile.placeholderHeight}px;` : '';
+    return `<div class="task-placeholder" style="${pos}${height}"></div>`;
   }
+  const moveClass = tile.moveTarget ? ` task-move-target task-move-${tile.moveAfter ? 'after' : 'before'}` : '';
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
   const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
   const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
@@ -670,7 +672,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const body = (hint) => (cards || emptyBody(hint)) + slotRow + bodyHost;
   if (tile.kind === 'notask') {
     const noTaskFlash = ctx.ADHOC_ID === ctx.restoredTaskId ? ' task-restored-flash' : '';
-    return `<div class="task-cell no-task${noTaskFlash}" data-entity="no-task" style="${pos}">
+    return `<div class="task-cell no-task${noTaskFlash}${moveClass}" data-entity="no-task" style="${pos}">
       <div class="task-head" draggable="true">
         <span class="task-name">Unassigned</span>
         ${newSess}
@@ -686,7 +688,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
       + `<button class="link-overflow" hidden></button></span>`
     : '';
   const restoredFlash = tile.task.id === ctx.restoredTaskId ? ' task-restored-flash' : '';
-  return `<div class="task-cell${restoredFlash}" data-taskid="${esc(tile.task.id)}" style="${pos}">
+  return `<div class="task-cell${restoredFlash}${moveClass}" data-taskid="${esc(tile.task.id)}" style="${pos}">
     <div class="task-head" draggable="true">
       <span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
       ${linkBadge}

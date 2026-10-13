@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { createRenderer } from './markdown-preview.js';
+import { createRenderer, sessionHashHref } from './markdown-preview.js';
 
 // Load the vendored markdown-it UMD the same way the browser's classic <script>
 // does — by executing it for its side effect of assigning module.exports. We
@@ -134,4 +134,37 @@ test('text around a preview control is still escaped', () => {
 test('renders empty string for null/undefined source', () => {
   assert.equal(render(null), '');
   assert.equal(render(undefined), '');
+});
+
+// ── session deep links ────────────────────────────────────────────────────────
+test('a #session= link stays a same-tab fragment link', () => {
+  const html = createRenderer(markdownit, { boardOrigin: 'http://localhost:7777' })('[x](#session=abc-123)');
+  assert.match(html, /<a href="#session=abc-123">x<\/a>/);
+  assert.doesNotMatch(html, /target=/);
+});
+test('an absolute same-origin session URL is rewritten to the fragment, no new tab', () => {
+  const html = createRenderer(markdownit, { boardOrigin: 'http://localhost:7777' })('[x](http://localhost:7777/#session=abc)');
+  assert.match(html, /<a href="#session=abc">x<\/a>/);
+  assert.doesNotMatch(html, /target=/);
+});
+test('a session URL on another origin stays an external new-tab link', () => {
+  const html = createRenderer(markdownit, { boardOrigin: 'http://localhost:7777' })('[x](http://evil.test/#session=abc)');
+  assert.match(html, /target="_blank"/);
+  assert.match(html, /href="http:\/\/evil.test\/#session=abc"/);
+});
+test('a 127.0.0.1 session URL counts as the localhost board, but not on another port', () => {
+  assert.equal(sessionHashHref('http://127.0.0.1:7777/#session=a', 'http://localhost:7777'), '#session=a');
+  assert.equal(sessionHashHref('http://127.0.0.1:8888/#session=a', 'http://localhost:7777'), null);
+});
+test('sessionHashHref rejects non-session fragments and bad input', () => {
+  assert.equal(sessionHashHref('#session='), null);
+  assert.equal(sessionHashHref('#view=search', 'http://a'), null);
+  assert.equal(sessionHashHref('http://a/#view=search', 'http://a'), null);
+  assert.equal(sessionHashHref('not a url', 'http://a'), null);
+  assert.equal(sessionHashHref('http://a/#session=x'), null);
+});
+test('an IPv6 loopback session URL is rewritten after markdown-it encodes its brackets', () => {
+  const html = createRenderer(markdownit, { boardOrigin: 'http://localhost:7777' })('[x](http://[::1]:7777/#session=abc)');
+  assert.match(html, /<a href="#session=abc">x<\/a>/);
+  assert.doesNotMatch(html, /target=/);
 });

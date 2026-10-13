@@ -392,3 +392,20 @@ test('a file without todos is saved without a todos key', () => {
   store.createTask({ name: 'Work' });
   assert.equal('todos' in JSON.parse(fs.readFileSync(file, 'utf8')), false);
 });
+
+
+test('reorderTask move inserts before or after its target and persists the shifted order', () => {
+  const file = tmpFile();
+  const store = new TaskStore(file);
+  const a = store.createTask({ name: 'A' });
+  const b = store.createTask({ name: 'B' });
+  const c = store.createTask({ name: 'C' });
+  store.reorderTask(a.id, c.id, { move: true, after: true });
+  assert.deepEqual(orderNames(store), ['adhoc', 'B', 'C', 'A']);
+  store.reorderTask(a.id, b.id, { move: true });
+  assert.deepEqual(orderNames(store), ['adhoc', 'A', 'B', 'C']);
+  store.reorderTask(ADHOC, c.id, { move: true, after: true });
+  assert.deepEqual(orderNames(new TaskStore(file)), ['A', 'B', 'C', 'adhoc']);
+  assert.equal(store.reorderTask(a.id, a.id, { move: true }), false);
+  assert.equal(store.reorderTask(a.id, 'missing', { move: true }), false);
+});

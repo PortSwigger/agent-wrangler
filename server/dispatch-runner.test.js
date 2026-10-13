@@ -154,3 +154,54 @@ test('an ext bag passes through to sessionManager.dispatch; a non-object is drop
   assert.deepEqual(d.calls.dispatch[0].ext, { a: { usd: 5 } });
   assert.equal(d.calls.dispatch[1].ext, undefined);
 });
+
+test('images in the intent: launch defers the intent, claims the staged files, and pastes images then prose', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { STAGED_PASTES_DIR } = await import('./paste-store.js');
+  fs.mkdirSync(STAGED_PASTES_DIR, { recursive: true });
+  fs.writeFileSync(path.join(STAGED_PASTES_DIR, 'paste-1-aaaa.png'), 'x');
+  const delivered = [];
+  const d = deps({ deliverFirstPrompt: async (args) => { delivered.push(args); } });
+  d.sessionManager.dispatch = async (opts) => { d.calls.dispatch.push(opts); return { sessionId: 'IMGCARD', tmux: 'cc_img' }; };
+  const { firstPrompt } = await runDispatch({ cwd: '/repo', intent: 'what is this?', imageNames: ['paste-1-aaaa.png', '../../etc/passwd', 'paste-2-bbbb.png'] }, d);
+  await firstPrompt;
+  assert.equal(d.calls.dispatch[0].intent, 'what is this?', 'the card still records the intent');
+  assert.equal(d.calls.dispatch[0].deferIntent, true);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].tmux, 'cc_img');
+  assert.equal(delivered[0].text, 'what is this?');
+  assert.equal(delivered[0].imagePaths.length, 1, 'only the real staged file survives the name gate');
+  assert.equal(path.basename(delivered[0].imagePaths[0]), 'paste-1-aaaa.png');
+  assert.ok(fs.existsSync(delivered[0].imagePaths[0]), 'moved into the session pastes dir');
+  assert.ok(!fs.existsSync(path.join(STAGED_PASTES_DIR, 'paste-1-aaaa.png')), 'and out of staging');
+});
+
+test('no images: the intent rides the launch as before and nothing is pasted', async () => {
+  const d = deps({ deliverFirstPrompt: async () => assert.fail('nothing to paste') });
+  const { firstPrompt } = await runDispatch({ cwd: '/repo', intent: 'x', imageNames: [] }, d);
+  assert.equal(firstPrompt, undefined);
+  assert.equal(d.calls.dispatch[0].deferIntent, undefined);
+});
+
+test('images in the intent need a local launch', async () => {
+  const d = deps();
+  await assert.rejects(runDispatch({ cwd: '/repo', intent: 'x', runtime: 'devcontainer', imageNames: ['paste-1-aaaa.png'] }, d), /local launch/);
+  assert.equal(d.calls.dispatch.length, 0);
+});
+
+test('deliverFirstPrompt waits for the composer, pastes each image alone, then sends the prose once', async () => {
+  const { deliverFirstPrompt } = await import('./dispatch-runner.js');
+  const steps = [];
+  await deliverFirstPrompt({ tmux: 'cc_x', socket: 's', agent: 'claude', text: 'hi', imagePaths: ['/p/1.png', '/p/2.png'] }, {
+    waitReady: async (t, s, a) => steps.push(['ready', t, s, a]),
+    prefill: async (t, p, s) => steps.push(['prefill', p]),
+    send: async (t, text) => steps.push(['send', text]),
+    confirm: async () => true,
+    log: (m) => steps.push(['log', m]),
+  });
+  assert.deepEqual(steps, [['ready', 'cc_x', 's', 'claude'], ['prefill', '/p/1.png'], ['prefill', '/p/2.png'], ['send', 'hi']]);
+  const logs = [];
+  await deliverFirstPrompt({ tmux: 'cc_y', agent: 'claude', text: 'hi', imagePaths: [] }, { waitReady: async () => { throw new Error('gone'); }, log: (m) => logs.push(m) });
+  assert.match(logs[0], /could not deliver/);
+});

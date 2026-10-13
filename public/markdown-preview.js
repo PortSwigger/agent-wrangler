@@ -24,6 +24,33 @@ function localMarkdownHref(href, baseDir) {
   return resolveTerminalPath(decoded, baseDir);
 }
 
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// Agents often guess 127.0.0.1 for the board's own localhost address, so two
+// loopback hosts on the same protocol and port count as the same board.
+function sameBoard(u, origin) {
+  if (u.origin === origin) return true;
+  let b;
+  try { b = new URL(origin); } catch { return false; }
+  return LOOPBACK.has(u.hostname) && LOOPBACK.has(b.hostname)
+    && u.protocol === b.protocol && u.port === b.port;
+}
+
+// A link to a board session, `#session=<id>`, as the bare fragment that the app's
+// hashchange handler selects in place. An absolute URL counts only when it is on
+// the board's own origin; anything else is an ordinary external link.
+export function sessionHashHref(href, origin = null) {
+  const h = String(href || '');
+  if (/^#session=[^&]+$/.test(h)) return h;
+  if (!origin) return null;
+  let u;
+  // markdown-it percent-encodes an IPv6 host's brackets; put them back to parse it.
+  const authority = (m) => m.replace(/%5B/gi, '[').replace(/%5D/gi, ']');
+  try { u = new URL(h.replace(/^https?:\/\/[^/?#]*/i, authority)); } catch { return null; }
+  if (!sameBoard(u, origin) || !/^#session=[^&]+$/.test(u.hash)) return null;
+  return u.hash;
+}
+
 // Renderer rules run over a flat token array, so "am I inside a link?" is answered
 // by counting the unclosed link_open tokens before this one. Without it, a path in
 // a link's own label would nest a <button> inside an <a> — invalid, and the inner
@@ -41,7 +68,7 @@ function insideLink(tokens, idx) {
 // hand over one renderer that follows whichever session is on screen). Omit it and
 // nothing changes: the memory preview pane renders exactly as it always has, with
 // no path linkification and no preview buttons.
-export function createRenderer(markdownit, { mdPathBase = null } = {}) {
+export function createRenderer(markdownit, { mdPathBase = null, boardOrigin = null } = {}) {
   const md = markdownit({ html: false, linkify: true, typographer: false, breaks: false });
   const esc = md.utils.escapeHtml;
   const baseOf = () => (typeof mdPathBase === 'function' ? mdPathBase() : mdPathBase) || null;
@@ -57,6 +84,11 @@ export function createRenderer(markdownit, { mdPathBase = null } = {}) {
   md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
     const token = tokens[idx];
     const href = token.attrGet('href') || '';
+    const sessionHash = sessionHashHref(href, boardOrigin);
+    if (sessionHash) {
+      token.attrSet('href', sessionHash);
+      return defaultLinkOpen(tokens, idx, options, env, self);
+    }
     if (/^https?:\/\//i.test(href)) {
       token.attrSet('target', '_blank');
       token.attrSet('rel', 'noopener noreferrer');

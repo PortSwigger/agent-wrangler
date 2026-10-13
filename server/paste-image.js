@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-// Validation and naming for an image pasted into the chat composer. Pure and
-// fs-free (the caller does the writing) so it unit-tests without touching disk,
-// the same split file-preview.js uses for GET /file.
+// Validation and naming for an image pasted into the chat composer or the
+// terminal. Pure and fs-free (the caller does the writing) so it unit-tests
+// without touching disk, the same split file-preview.js uses for GET /file — the
+// one exception is convertToPng, which needs a temp file for `sips`.
 //
 // Why a file at all: Claude Code's own Cmd+V image paste reads the HOST
 // clipboard, so it is unreachable from a browser — the bytes are in the page, not
@@ -23,6 +28,17 @@ const EXT_BY_MIME = new Map([
   ['image/webp', 'webp'],
 ]);
 
+// Formats accepted only to be CONVERTED to PNG before anything is written. They
+// are here because Chromium cannot decode them, so the composer has no way to
+// re-encode them itself (see public/clipboard-images.js); every other format the
+// browser can draw arrives already as PNG. Never stored as-is: the agent is
+// handed PNG, and the stored-name allowlist below stays the original four.
+const CONVERT_BY_MIME = new Map([
+  ['image/heic', 'heic'],
+  ['image/heif', 'heic'],
+  ['image/tiff', 'tiff'],
+]);
+
 // Generous, because the agent — not the wrangler — decides what is too big to
 // send (Claude Code downscales oversized images itself). This cap exists to stop
 // a runaway or hostile frame filling the disk, not to second-guess the model.
@@ -36,14 +52,21 @@ function sniff(buf) {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
   if (buf.length >= 6 && buf.subarray(0, 6).toString('latin1').match(/^GIF8[79]a$/)) return 'gif';
   if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  // ISO-BMFF `ftyp` box with a HEIF-family major brand. AVIF shares the box but
+  // not these brands, and the browser decodes AVIF itself, so it never comes here.
+  if (buf.length >= 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
+    && /^(?:heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/.test(buf.subarray(8, 12).toString('latin1'))) return 'heic';
+  if (buf.length >= 4 && (buf.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 0x2a, 0x00])) || buf.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0x00, 0x2a])))) return 'tiff';
   return null;
 }
 
-// Returns { bytes, ext } or { error }. `error` is a sentence shown to the human,
-// so it says what to do rather than naming a field.
+// Returns { bytes, ext }, { bytes, ext, convert: true } for a HEIC/TIFF the caller
+// must turn into PNG (convertToPng) before writing, or { error }. `error` is a
+// sentence shown to the human, so it says what to do rather than naming a field.
 export function decodePasteImage({ mime, dataBase64 } = {}) {
-  const ext = EXT_BY_MIME.get(typeof mime === 'string' ? mime.toLowerCase().trim() : '');
-  if (!ext) return { error: 'Only PNG, JPEG, GIF and WebP images can be pasted.' };
+  const key = typeof mime === 'string' ? mime.toLowerCase().trim() : '';
+  const ext = EXT_BY_MIME.get(key) || CONVERT_BY_MIME.get(key);
+  if (!ext) return { error: 'Only PNG, JPEG, GIF, WebP, HEIC and TIFF images can be pasted.' };
   if (typeof dataBase64 !== 'string' || !dataBase64) return { error: 'The pasted image was empty.' };
   // Length-checked BEFORE decoding: base64 is 4/3 of the payload, so this refuses
   // an oversized frame without first materialising it as a Buffer.
@@ -63,7 +86,37 @@ export function decodePasteImage({ mime, dataBase64 } = {}) {
   const actual = sniff(bytes);
   if (!actual) return { error: 'That does not look like an image file.' };
   if (actual !== ext) return { error: `That file is a ${actual.toUpperCase()}, not a ${ext.toUpperCase()}.` };
-  return { bytes, ext };
+  return CONVERT_BY_MIME.has(key) ? { bytes, ext, convert: true } : { bytes, ext };
+}
+
+// HEIC/TIFF → PNG with macOS's own `sips`, the one converter guaranteed to be on
+// a Mac without a new dependency. Only ever called with bytes decodePasteImage
+// has already sniffed as HEIC or TIFF, it runs with fixed arguments and no shell,
+// in a private temp dir that is removed afterwards, and its OUTPUT is sniffed
+// again — so what lands in the pastes dir is a PNG or nothing. Elsewhere it
+// refuses with a sentence that says what to do instead. `run` and `platform` are
+// test seams.
+export async function convertToPng(bytes, ext, {
+  platform = process.platform,
+  run = (cmd, args) => promisify(execFile)(cmd, args, { timeout: 20_000 }),
+} = {}) {
+  const label = ext.toUpperCase();
+  if (platform !== 'darwin') return { error: `${label} images can only be converted on macOS — convert it to PNG first.` };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-paste-'));
+  try {
+    const src = path.join(dir, `in.${ext}`);
+    const out = path.join(dir, 'out.png');
+    fs.writeFileSync(src, bytes);
+    await run('/usr/bin/sips', ['-s', 'format', 'png', src, '--out', out]);
+    const png = fs.readFileSync(out);
+    if (sniff(png) !== 'png') return { error: `Could not convert that ${label} image.` };
+    if (png.length > MAX_PASTE_BYTES) return { error: 'That image is over 10 MB once converted to PNG.' };
+    return { bytes: png, ext: 'png' };
+  } catch {
+    return { error: `Could not convert that ${label} image.` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // Flat, sortable and collision-proof without a stat: the millisecond keeps
