@@ -146,7 +146,6 @@ body {
 .rail-top { gap: 5px; }
 .rail-bottom { gap: 8px; }
 .rail-mid { display: flex; flex-direction: column; align-items: center; gap: 5px; }
-.rail-mid.hidden { display: none; }
 .rail-sep { width: 28px; height: 1px; background: var(--border-muted); margin: 3px 0; }
 .layouts { display: flex; flex-direction: column; align-items: center; gap: 5px; }
 #nav-rail button {

@@ -777,8 +777,6 @@ function setView(view) {
   // ALL of them on every setView rather than just the pair being swapped, so a
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
-  const mid = document.querySelector('.rail-mid');
-  if (mid) mid.classList.toggle('hidden', view !== 'grid');
   if (view === 'grid') renderGrid();
   else if (view === 'search') {
     // Search is a no-session view: drop any open terminal so it doesn't dangle
@@ -2820,7 +2818,12 @@ function armNewTask(on) {
 (function initNewTask() {
   const btn = document.getElementById('new-task');
   if (!btn) return;
-  btn.addEventListener('click', () => createTask());
+  // The new task opens straight into renaming its cell, which only the board
+  // shows — so pressed from Search or an extension view, go back to it first.
+  btn.addEventListener('click', () => {
+    if (currentView !== 'grid') setView('grid');
+    createTask();
+  });
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });
   btn.addEventListener('dragleave', () => btn.classList.remove('drop'));
   btn.addEventListener('drop', (e) => {
