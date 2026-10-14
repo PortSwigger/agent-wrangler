@@ -80,6 +80,7 @@ function handlerCtx(entry, { graphCwd = os.tmpdir(), clearReturns = true } = {})
       // the sweep having already claimed (and relaunched-with-intent) this session —
       // the entry.snooze is gone, so the manual side must NOT deliver again.
       clearSnooze: (sid) => { calls.clear.push(sid); delete entry.snooze; return clearReturns; },
+      clearSnoozeDescendants: () => 0,
       snoozeGeneration: () => 0,
       restoreSnooze: (sid, claim) => { calls.restore.push(sid); entry.snooze = claim.snooze; return true; },
       resume: async (sid, dir, opts) => {
@@ -203,4 +204,14 @@ test('resume: a refused restore (missing launch dir) leaves the snooze note uncl
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('resume: wakes the descendants with the claimed target; a refused launch dir leaves them snoozed', async () => {
+  const entry = { cwd: os.tmpdir(), socket: 'sockR', snooze: { until: 1 } };
+  const c = handlerCtx(entry);
+  const woke = [];
+  c.sessionManager.activeEntries = () => [{ sessionId: 'S1' }, { sessionId: 'K1', parentSession: 'S1' }];
+  c.sessionManager.clearSnoozeDescendants = (ids) => { woke.push(ids); return ids.length; };
+  await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
+  assert.deepEqual(woke, [['K1']]);
 });

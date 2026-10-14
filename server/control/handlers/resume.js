@@ -1,7 +1,7 @@
 import { resolveResumeDir } from '../../transcript-reader.js';
 import { ensureLaunchDir } from './resume-dir.js';
 import { prefillPane, paneTitle, claudeTitle } from '../../tmux-scraper.js';
-import { nudgeAndWaitForJobs } from './archive.js';
+import { nudgeAndWaitForJobs, descendantIdsOf } from './archive.js';
 
 const READY_TIMEOUT_MS = 20000;
 const READY_POLL_MS = 400;
@@ -90,6 +90,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
     if (claimed) ctx.sessionManager.restoreSnooze(sessionId, claim);
     return;
   }
+  if (claimed) ctx.sessionManager.clearSnoozeDescendants(descendantIdsOf(sessionId, ctx.sessionManager));
   // (The launch context — per-task state like task-memory's symlink — is
   // collected inside resume() itself, keyed on the owner id (sessionId), stable
   // across the fork, per the resume-fork invariant.)

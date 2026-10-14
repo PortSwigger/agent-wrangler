@@ -718,3 +718,10 @@ test('refinePerRow: one-column content tracks do not shrink the card budget', ()
   assert.equal(perRow, 4);
   assert.equal(canonical.rows, 5);
 });
+
+test('sortAsleepLast: a snoozed parent is followed directly by its snoozed children', () => {
+  const asleep = (id, parentSession) => ({ sessionId: id, parentSession, snooze: { until: 5000 } });
+  const sessions = [asleep('K1', 'P'), asleep('Z'), asleep('P'), asleep('K2', 'K1'), { sessionId: 'A' }];
+  const phaseOf = (s) => (s.snooze ? 'asleep' : null);
+  assert.deepEqual(sortAsleepLast(sessions, phaseOf).map((s) => s.sessionId), ['A', 'Z', 'P', 'K1', 'K2']);
+});

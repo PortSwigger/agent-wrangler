@@ -9,6 +9,7 @@ function ctx(graphSession, { entry = null, clearSnoozeReturns = true } = {}) {
     sessionManager: {
       setSnooze: (sid, until, meta) => calls.setSnooze.push({ sid, until, meta }),
       clearSnooze: (sid) => { calls.clearSnooze.push(sid); return clearSnoozeReturns; },
+      clearSnoozeDescendants: () => 0,
       suspend: async (sid) => { calls.suspend.push(sid); },
       markSuspendPending: (sid) => { calls.pending.push(sid); },
       entryFor: () => entry,
@@ -157,4 +158,46 @@ test('snooze-set: a >=1h snooze of an idle session with a live background shell 
   await snoozeSetHandler.handler({ type: 'snooze-set', sessionId: 'S1', until }, c);
   assert.deepEqual(c.calls.pending, ['S1']);
   assert.deepEqual(c.calls.suspend, []);
+});
+
+function treeCtx({ clearSnoozeReturns = true } = {}) {
+  const c = ctx({ cwd: '/repo', intent: 'work' }, { clearSnoozeReturns });
+  const tree = [
+    { sessionId: 'P' },
+    { sessionId: 'K1', parentSession: 'P' },
+    { sessionId: 'K2', parentSession: 'K1' },
+    { sessionId: 'X' },
+  ];
+  c.calls.clearDesc = [];
+  c.sessionManager.activeEntries = () => tree;
+  c.sessionManager.clearSnoozeDescendants = (ids) => { c.calls.clearDesc.push(ids); return ids.length; };
+  return c;
+}
+
+test('snooze-set: also snoozes every transitive descendant with the same until, note on the target only', async () => {
+  const until = Date.now() + 10 * 60 * 1000;
+  const c = treeCtx();
+  await snoozeSetHandler.handler({ type: 'snooze-set', sessionId: 'P', until, comment: 'later' }, c);
+  assert.deepEqual(c.calls.setSnooze.map((x) => [x.sid, x.until, x.meta.comment]), [
+    ['P', until, 'later'], ['K1', until, undefined], ['K2', until, undefined],
+  ]);
+  assert.equal(c.calls.rebuild, 1);
+});
+
+test('snooze-set: a long snooze flags suspend pending per session for the whole subtree', async () => {
+  const c = treeCtx();
+  await snoozeSetHandler.handler({ type: 'snooze-set', sessionId: 'P', until: Date.now() + 3 * 3600_000 }, c);
+  assert.deepEqual(c.calls.pending.sort(), ['K1', 'K2', 'P']);
+});
+
+test('snooze-clear: wakes the descendants together with the claimed target', async () => {
+  const c = treeCtx();
+  await snoozeClearHandler.handler({ type: 'snooze-clear', sessionId: 'P' }, c);
+  assert.deepEqual(c.calls.clearDesc, [['K1', 'K2']]);
+});
+
+test('snooze-clear: a lost claim leaves the descendants alone', async () => {
+  const c = treeCtx({ clearSnoozeReturns: false });
+  await snoozeClearHandler.handler({ type: 'snooze-clear', sessionId: 'P' }, c);
+  assert.deepEqual(c.calls.clearDesc, []);
 });

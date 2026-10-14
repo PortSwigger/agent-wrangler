@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText } from './tmux-scraper.js';
+import { descendantIdsOf } from './control/handlers/archive.js';
 
 // Automated snooze wake. A snooze that has ELAPSED (until <= now) AND carries a
 // non-empty comment auto-wakes: the note is delivered auto-submitted and the snooze
@@ -62,6 +63,7 @@ export async function wakeCommentedSnooze(sessionId, deps) {
   // delivery. The comment used below is the local read captured BEFORE the clear.
   const claimed = sessionManager.clearSnooze(sessionId);
   if (!claimed) return { sessionId, mode: 'skip' };
+  sessionManager.clearSnoozeDescendants(descendantIdsOf(sessionId, sessionManager));
 
   // LIVE: deliver into the running pane (paste + Enter). We already own the claim, so
   // a concurrent Unsnooze that arrives now sees clearSnooze→false and won't re-paste.

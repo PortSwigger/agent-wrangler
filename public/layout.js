@@ -361,13 +361,27 @@ export function sortByLastActivity(sessions) {
 // Active order is preserved (stable sort on a 0/1 key). `phaseOf` is injected so
 // this stays pure (app.js passes its Date.now()-backed phaseOf).
 export function sortAsleepLast(sessions, phaseOf) {
-  return [...sessions].sort((a, b) => {
+  const sorted = [...sessions].sort((a, b) => {
     const aa = phaseOf(a) === 'asleep' ? 1 : 0;
     const ab = phaseOf(b) === 'asleep' ? 1 : 0;
     if (aa !== ab) return aa - ab;
     if (aa && ab) return (a.snooze.until || 0) - (b.snooze.until || 0);
     return 0;
   });
+  const asleep = sorted.filter((s) => phaseOf(s) === 'asleep');
+  const ids = new Set(asleep.map((s) => s.sessionId));
+  const kids = new Map();
+  for (const s of asleep) {
+    if (s.parentSession && ids.has(s.parentSession)) {
+      kids.set(s.parentSession, [...(kids.get(s.parentSession) || []), s]);
+    }
+  }
+  if (!kids.size) return sorted;
+  const placed = [];
+  const emit = (s) => { if (placed.includes(s)) return; placed.push(s); for (const k of kids.get(s.sessionId) || []) emit(k); };
+  for (const s of asleep) if (!(s.parentSession && ids.has(s.parentSession))) emit(s);
+  for (const s of asleep) emit(s);
+  return [...sorted.filter((s) => phaseOf(s) !== 'asleep'), ...placed];
 }
 
 // The board's visible tiles: the display order minus any minimised id. The board

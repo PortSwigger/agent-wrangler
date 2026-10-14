@@ -1,5 +1,6 @@
 import { SUSPEND_MIN_SNOOZE_MS, suspendEnabled } from '../../session-manager.js';
 import { readConfig } from '../../config-store.js';
+import { descendantIdsOf } from './archive.js';
 import { prefillPane } from '../../tmux-scraper.js';
 
 export const snoozeSetHandler = {
@@ -11,7 +12,12 @@ export const snoozeSetHandler = {
     const now = Date.now(); // one reading: keeps the future-check and the 1h gate consistent
     if (Number.isFinite(until) && until > now) {
       const s = ctx.sessionFromGraph(msg.sessionId);
+      const descendantIds = descendantIdsOf(msg.sessionId, ctx.sessionManager);
       ctx.sessionManager.setSnooze(msg.sessionId, until, { cwd: s?.cwd, intent: s?.intent, comment: msg.comment });
+      for (const id of descendantIds) {
+        const d = ctx.sessionFromGraph(id);
+        ctx.sessionManager.setSnooze(id, until, { cwd: d?.cwd, intent: d?.intent });
+      }
       // A long snooze (>= 1h) also reclaims RAM by suspending the session — but
       // never synchronously here. Just flag it pending and let the next
       // reconcileSuspend tick (<=60s) do the actual teardown through
@@ -27,7 +33,7 @@ export const snoozeSetHandler = {
       // entirely (the card still hides), so a disabled install never reclaims
       // RAM behind the user's back.
       if (until - now >= SUSPEND_MIN_SNOOZE_MS && suspendEnabled(readConfig())) {
-        ctx.sessionManager.markSuspendPending(msg.sessionId);
+        for (const id of [msg.sessionId, ...descendantIds]) ctx.sessionManager.markSuspendPending(id);
       }
       await ctx.rebuild();
     }
@@ -54,6 +60,7 @@ export const snoozeClearHandler = {
     const node = ctx.sessionFromGraph(msg.sessionId);
     const comment = ctx.sessionManager.entryFor(msg.sessionId)?.snooze?.comment;
     const claimed = ctx.sessionManager.clearSnooze(msg.sessionId);
+    if (claimed) ctx.sessionManager.clearSnoozeDescendants(descendantIdsOf(msg.sessionId, ctx.sessionManager));
     if (claimed && comment && node?.tmux) {
       // ctx.prefillPane is a test seam (undefined in prod → the real tmux impl).
       await (ctx.prefillPane || prefillPane)(node.tmux, comment, ctx.socketFor(msg.sessionId)).catch(() => {});

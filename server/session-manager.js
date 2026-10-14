@@ -715,6 +715,16 @@ export class SessionManager {
     return true;
   }
 
+  // Wake `descendantIds` together with their already-claimed parent: one
+  // synchronous pass, so no subtree is ever half-awake. The parent's own
+  // clearSnooze return stays the single delivery claim; descendants never
+  // deliver a note here.
+  clearSnoozeDescendants(descendantIds) {
+    let cleared = 0;
+    for (const id of descendantIds) if (this.clearSnooze(id)) cleared += 1;
+    return cleared;
+  }
+
   // Bumped by every setSnooze, so a claim taken before it can tell its snooze was
   // superseded. In-memory only: a restart drops any in-flight claim anyway.
   snoozeGeneration(sessionId) {

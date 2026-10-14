@@ -39,6 +39,7 @@ function deps(overrides = {}) {
       entryFor: () => entry,
       resume: async (sid, dir, opts) => { calls.resume.push({ sid, dir, opts }); delete entry.snooze; return { tmux: 'cc_new' }; },
       clearSnooze: (sid) => { calls.clear.push(sid); delete entry.snooze; return true; },
+      clearSnoozeDescendants: () => 0,
     },
   };
 }
@@ -160,6 +161,7 @@ test('fireDueSnoozeWakes: wakes a live commented snooze and reports one woken; i
       entryFor: (id) => byId[id],
       resume: async () => ({ tmux: 'x' }),
       clearSnooze: (id) => { calls.clear.push(id); delete byId[id].snooze; return true; },
+      clearSnoozeDescendants: () => 0,
     },
   };
   const woken = await fireDueSnoozeWakes(d, NOW);
@@ -190,6 +192,7 @@ test('fireDueSnoozeWakes: a failing wake surfaces an error, clears the snooze (n
       entryFor: (id) => byId[id],
       resume: async () => ({ tmux: 'x' }),
       clearSnooze: (id) => { cleared.push(id); delete byId[id].snooze; return true; },
+      clearSnoozeDescendants: () => 0,
     },
   };
   const woken = await fireDueSnoozeWakes(d, NOW);
@@ -221,6 +224,7 @@ test('createSnoozeWakeSweeper: a tick arriving mid-sweep is skipped — no concu
       entryFor: () => entry,
       resume: async () => ({ tmux: 'x' }),
       clearSnooze: () => { delete entry.snooze; return true; },
+      clearSnoozeDescendants: () => 0,
     },
   };
   const sweep = createSnoozeWakeSweeper(deps, { onWoken: () => { rebuilds += 1; } });
@@ -239,4 +243,21 @@ test('createSnoozeWakeSweeper: a tick arriving mid-sweep is skipped — no concu
   // The guard is released after the sweep, so a later tick runs normally (nothing due now).
   const third = await sweep(NOW);
   assert.deepEqual(third, { skipped: false, woken: 0 });
+});
+
+test('wake: the claimed target wakes its descendants too; a lost claim does not', async () => {
+  const d = deps({ tmuxFor: () => 'cc_live' });
+  const woke = [];
+  d.sessionManager.activeEntries = () => [{ sessionId: 'S1' }, { sessionId: 'K1', parentSession: 'S1' }, { sessionId: 'K2', parentSession: 'K1' }];
+  d.sessionManager.clearSnoozeDescendants = (ids) => { woke.push(ids); return ids.length; };
+  await wakeCommentedSnooze('S1', d);
+  assert.deepEqual(woke, [['K1', 'K2']]);
+
+  const lost = deps();
+  const wokeLost = [];
+  lost.sessionManager.activeEntries = d.sessionManager.activeEntries;
+  lost.sessionManager.clearSnooze = () => false;
+  lost.sessionManager.clearSnoozeDescendants = (ids) => { wokeLost.push(ids); return 0; };
+  await wakeCommentedSnooze('S1', lost);
+  assert.deepEqual(wokeLost, []);
 });

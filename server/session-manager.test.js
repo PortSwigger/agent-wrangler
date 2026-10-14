@@ -1841,6 +1841,19 @@ test('clearSnooze removes the field but keeps the entry', () => {
   assert.equal(sm.clearSnooze('sess-x'), false); // no-op second time
 });
 
+test('clearSnoozeDescendants wakes every listed session, clearing their pending suspend, and skips unsnoozed ones', () => {
+  const sm = freshManager();
+  sm.setSnooze('p', 2_000_000, { cwd: '/y' });
+  sm.setSnooze('c1', 2_000_000, { cwd: '/y' });
+  sm.setSnooze('c2', 2_000_000, { cwd: '/y' });
+  sm.markSuspendPending('c1');
+  assert.equal(sm.clearSnoozeDescendants(['c1', 'c2', 'awake', 'unmapped']), 2);
+  assert.equal(sm.entryFor('c1').snooze, undefined);
+  assert.equal(sm.entryFor('c1').suspendPending, undefined);
+  assert.equal(sm.entryFor('c2').snooze, undefined);
+  assert.ok(sm.entryFor('p').snooze, 'the parent is not touched');
+});
+
 function claimSnooze(sm, id) {
   const entry = sm.entryFor(id);
   const claim = { snooze: entry.snooze, suspendPending: entry.suspendPending, generation: sm.snoozeGeneration(id) };

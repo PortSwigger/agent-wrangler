@@ -193,6 +193,7 @@ function unarchiveCtx({ archivedEntries = [] } = {}) {
       archivedEntries: () => archivedEntries,
       entryFor: (sid) => entriesById.get(sid),
       clearSnooze: () => true,
+      clearSnoozeDescendants: () => 0,
       snoozeGeneration: () => 0,
       resume: async (sid, dir) => { calls.resume.push({ sid, dir }); return { tmux: 'cc_new' }; },
     },

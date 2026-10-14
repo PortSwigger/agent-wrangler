@@ -84,6 +84,10 @@ export function descendantsOf(target, sessions) {
   return result;
 }
 
+export function descendantIdsOf(sessionId, sessionManager) {
+  return descendantsOf(sessionId, sessionManager.activeEntries?.() ?? []).map((d) => d.sessionId);
+}
+
 // Archive a list of session ids in order, auto-detecting each one's OWN live
 // background shell (via the graph's `hasBackgroundShell`) rather than trusting a
 // blanket flag — the "no human to ask, always take the safe path" pattern the
