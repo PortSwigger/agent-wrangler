@@ -481,18 +481,19 @@ test('session schedule includes focus only when checked; dispatch ignores it', (
 function scheduledFocusHarness(sessions = []) {
   const selected = [], landed = [], views = {}, notices = [];
   const diff = { open: false };
+  const boardOpen = createBoardOpen();
   const clock = { now: 0 };
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
+    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
     { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
       landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
-      isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen: createBoardOpen() },
+      isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen },
   );
   app.state.sessions = sessions;
-  return { ...app, selected, landed, views, notices, diff, clock };
+  return { ...app, boardOpen, selected, landed, views, notices, diff, clock };
 }
 
 test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
@@ -527,6 +528,15 @@ test('scheduled focus dismisses a diff panel so the target terminal is visible',
   assert.deepEqual(app.selected, ['CARD1']);
 });
 
+
+test('scheduled focus discards an older pending select and board-open request', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
+  app.state.pendingSelect = 'OLD';
+  app.boardOpen.request('OLD', { diff: true, onClose: null });
+  app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
+  assert.equal(app.state.pendingSelect, null);
+  assert.equal(app.boardOpen.claim('OLD'), null);
+});
 
 test('scheduled focus expires after a failed resume instead of jumping to a later wake', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: false }]);
