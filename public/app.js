@@ -6342,8 +6342,9 @@ function tryFulfillScheduledFocus() {
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
   setSessionView(target, 'terminal');
-  pendingSelect = target;
-  tryFulfillPending();
+  if (currentView !== 'grid') setView('grid');
+  if (maximized) setMaximized(false);
+  landOnCard(target, { diff: false, onClose: null }, selectSession);
 }
 
 // --- websocket control ---

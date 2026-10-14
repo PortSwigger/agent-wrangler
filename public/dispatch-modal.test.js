@@ -479,19 +479,20 @@ test('session schedule includes focus only when checked; dispatch ignores it', (
 });
 
 function scheduledFocusHarness(sessions = []) {
-  const selected = [], views = {}, notices = [];
+  const selected = [], landed = [], views = {}, notices = [];
   const diff = { open: false };
   const clock = { now: 0 };
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
-    { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {},
+    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; } };",
+    { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
+      landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
       isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen: createBoardOpen() },
   );
   app.state.sessions = sessions;
-  return { ...app, selected, views, notices, diff, clock };
+  return { ...app, selected, landed, views, notices, diff, clock };
 }
 
 test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
@@ -501,6 +502,7 @@ test('focused schedule opens the live target terminal, unfocused schedule leaves
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
   assert.deepEqual(app.selected, ['CARD1']);
   assert.equal(app.views.CARD1, 'terminal');
+  assert.deepEqual(app.landed, ['CARD1']);
   assert.equal(app.state.pending, null);
 });
 
