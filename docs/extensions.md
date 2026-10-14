@@ -1166,6 +1166,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
   sessions keep their env until relaunched.
+- **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
+  cwd, repoRoot, willCreateWorktree, agent, host }`, returns `void | { abort?:
+  string, warnings?: string[] }` (or a Promise). It runs for a NEW dispatch
+  (manual, scheduled, `spawn_session`) after the cwd is resolved and BEFORE the
+  worktree is created, so a hook can bring the repo up to date (`git pull
+  --ff-only`) and the worktree then branches from it. `repoRoot` is `git
+  rev-parse --show-toplevel` of `cwd`, or `null` outside a repository. Enabled
+  extensions are awaited in order. `abort` fails the dispatch with that message
+  through the usual dispatch error path, with no worktree or pane created
+  (later extensions are not asked); `warnings` toast on the board and the
+  launch goes ahead. A hook that throws or takes over 60s is logged and
+  skipped. Resume and fork never fire it. `server/session-prepare.js`.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled

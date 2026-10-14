@@ -6481,6 +6481,7 @@ function connect() {
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
     else if (msg.type === 'schedule-fired') onScheduleFired(msg);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
+    else if (msg.type === 'prepare-warnings') for (const w of msg.warnings || []) toast(w, true);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);

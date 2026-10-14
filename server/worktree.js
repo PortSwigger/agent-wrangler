@@ -140,6 +140,17 @@ export async function gitDirs(cwd) {
   }
 }
 
+// `git rev-parse --show-toplevel` of `cwd`, or null outside a repository (or
+// when cwd does not exist yet).
+export async function repoRootOf(cwd) {
+  try {
+    const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function gitCommonDir(cwd) {
   const dirs = await gitDirs(cwd);
   return dirs.at(-1) || null;

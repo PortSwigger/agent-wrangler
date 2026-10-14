@@ -35,12 +35,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.28.0 node `effort`, `api.dispatch.submit` and the `quickLaunch` field,
 // 1.29.0 the runtime `cost` hook and fork `parentId` on `wrapLaunch`,
 // 1.30.0 the runtime `validateModel` hook,
-// and 1.31.0 `images:keep`, `spawn({ images })` and the client `api.images.stage`,
+// 1.31.0 `images:keep`, `spawn({ images })` and the client `api.images.stage`,
+// and 1.32.0 the `session.prepare` hook,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.31.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.31.0');
+test('the served version is 1.32.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.32.0');
+  assert.equal(servesRange('^1.32.0'), true);
   assert.equal(servesRange('^1.31.0'), true);
   assert.equal(servesRange('^1.30.0'), true);
   assert.equal(servesRange('^1.29.0'), true);

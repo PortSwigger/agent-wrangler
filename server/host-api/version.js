@@ -268,7 +268,11 @@ import semver from 'semver';
 // capability (`host.images.keep/read/remove`, the extension's own copies, which a
 // spawn copies from instead of consuming, so one set of images can seed many
 // sessions). A manifest using any declares `^1.31.0`.
-export const HOST_API_VERSION = '1.31.0';
+//
+// 1.32.0 adds the `session.prepare` hook (server/session-prepare.js): awaited
+// before a new session's worktree is created, it may abort the dispatch or
+// return warnings. A manifest declaring it declares `^1.32.0`.
+export const HOST_API_VERSION = '1.32.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -9,7 +9,7 @@ import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/clau
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, isValidBranchName } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -436,6 +436,11 @@ export class SessionManager {
     // the loader and façades closed over; the default answers nothing, so every
     // existing launch is byte-identical and every test stays inert.
     this._launchContext = async () => ({ env: {}, addDirs: [] });
+    // Seam for the `session.prepare` hook (server/session-prepare.js): asked by
+    // a NEW dispatch before any worktree or pane exists, answering
+    // `{ abort, warnings }`. server/index.js binds collectPrepare and toasts the
+    // warnings; the default answers nothing, so every test stays inert.
+    this._prepare = async () => ({ abort: null, warnings: [] });
     // Seam for "which task is this session on" — session-manager does not know
     // the task store. Bound to taskStore.taskFor by server/index.js.
     this._taskFor = () => null;
@@ -1829,6 +1834,13 @@ export class SessionManager {
     const sessionId = crypto.randomUUID();
     const adapter = adapterFor(agent);
     const tmux = this._tmuxName(agent, short);
+
+    // Extensions' `session.prepare`, after cwd is settled and before the
+    // worktree: an abort fails the dispatch with nothing created.
+    const prepared = await this._prepare({
+      sessionId, taskId: taskId || null, cwd, repoRoot: await repoRootOf(cwd), willCreateWorktree: Boolean(worktree), agent,
+    });
+    if (prepared?.abort) throw new Error(prepared.abort);
 
     // Worktree mode: create the worktree BEFORE launch and start the session in
     // it. Throws WorktreeError on refusal — abort the whole dispatch (no tmux, no
