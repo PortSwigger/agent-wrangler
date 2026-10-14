@@ -137,11 +137,14 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
 //   session.launchContext({ sid, task, agent, runtime, reason, host })
 //     -> { env?, addDirs? } | Promise of it — see server/launch-context.js.
+//   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, host })
+//     -> void | { abort?, warnings? } | Promise of it — awaited in order before a
+//     NEW session's worktree is created; see server/session-prepare.js.
 //   links.normalise({ link, host })
 //     -> the stored link | undefined — a SYNCHRONOUS claim on a link type. Return
 //     undefined for a type that is not yours; throw to reject an invalid link of
 //     yours. See server/mcp/links.js.
-export const VALUE_HOOKS = ['session.launchContext', 'links.normalise'];
+export const VALUE_HOOKS = ['session.launchContext', 'session.prepare', 'links.normalise'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -432,7 +435,9 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // quarantined row, like `handlerTypes`), and the client ALSO filters to an
     // enabled, non-quarantined entry, so a toggle-off drops the option on the
     // next tick even before its unregister has settled.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel }) => ({ id: rid, label: rlabel })),
+    // `ownsModel` (1.33.0): the runtime defines `validateModel`, so a model
+    // given with it to api.dispatch.submit rides `ext.<extId>.model`.
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel) })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -706,7 +711,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function' });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

@@ -752,7 +752,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 }
 .settings-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .settings-tabs {
-  display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 14px;
+  display: flex; flex: 0 0 auto; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 14px;
   overflow-x: auto;
 }
 .settings-tab {
