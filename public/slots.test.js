@@ -1299,7 +1299,7 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
 
 // ── dispatch.submit (1.28.0) ─────────────────────────────────────────────────
 
-test('api.dispatch.submit validates model/effort, passes them through and rejects when the base throws or is absent', async () => {
+test('api.dispatch.submit validates model/effort/runtime, passes them through and rejects when the base throws or is absent', async () => {
   const { slots } = harness();
   let api; const seen = []; let fail = null;
   slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
@@ -1307,13 +1307,17 @@ test('api.dispatch.submit validates model/effort, passes them through and reject
     submitDispatchFromExt: (o) => { seen.push(o); if (fail) throw new Error(fail); return true; },
   });
   assert.equal(await api.dispatch.submit({ model: 'opus', effort: 'high' }), true);
-  assert.deepEqual(seen[0], { model: 'opus', effort: 'high' });
+  assert.deepEqual(seen[0], { model: 'opus', effort: 'high', runtime: undefined });
   await api.dispatch.submit();
-  assert.deepEqual(seen[1], { model: undefined, effort: undefined });
+  assert.deepEqual(seen[1], { model: undefined, effort: undefined, runtime: undefined });
+  await api.dispatch.submit({ model: 'gpt-5.4', runtime: 'bifrost' });
+  assert.deepEqual(seen[2], { model: 'gpt-5.4', effort: undefined, runtime: 'bifrost' });
   await assert.rejects(api.dispatch.submit({ model: 5 }), /model must be a non-empty string/);
   await assert.rejects(api.dispatch.submit({ model: '' }), /model must be a non-empty string/);
   await assert.rejects(api.dispatch.submit({ effort: 3 }), /effort must be a string/);
-  assert.equal(seen.length, 2, 'bad input never reaches the base');
+  await assert.rejects(api.dispatch.submit({ runtime: '' }), /runtime must be a non-empty string/);
+  await assert.rejects(api.dispatch.submit({ runtime: 1 }), /runtime must be a non-empty string/);
+  assert.equal(seen.length, 3, 'bad input never reaches the base');
   fail = 'model not offered: x';
   await assert.rejects(api.dispatch.submit({ model: 'x' }), /\[ext:ext1\] dispatch\.submit: model not offered: x/);
   const { slots: s2 } = harness();
@@ -1321,6 +1325,23 @@ test('api.dispatch.submit validates model/effort, passes them through and reject
   s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
   s2.mountInto('panel.section', harness().document.make(), {});
   await assert.rejects(api2.dispatch.submit({}), /not available/);
+});
+
+test('api.runtimes returns a fresh copy of the base list, and [] when the base has none', () => {
+  const { slots } = harness();
+  let api;
+  const list = [{ id: 'local', label: 'Local', ownsModel: false }, { id: 'bifrost', label: 'Bifrost', ownsModel: true }];
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), { runtimes: () => list });
+  const got = api.runtimes();
+  assert.deepEqual(got, list);
+  got[0].id = 'x';
+  assert.equal(list[0].id, 'local');
+  const { slots: s2 } = harness();
+  let api2;
+  s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
+  s2.mountInto('panel.section', harness().document.make(), {});
+  assert.deepEqual(api2.runtimes(), []);
 });
 
 test('api.requestBoardRender calls the base api and tolerates its absence', () => {

@@ -1101,8 +1101,13 @@ test('a valid runtime stages: claimed in _reg, tagged on out.runtimes, listed {i
   assert.equal(out.list[0].quarantine, null);
   assert.ok(out._reg.runtimeIds.has('toyrt'));
   assert.deepEqual(out.runtimes.map((r) => [r.id, r.extId, typeof r.wrapLaunch]), [['toyrt', 'fake', 'function']]);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false }]);
+});
+
+test('a runtime that defines validateModel is listed with ownsModel: true, for api.dispatch.submit', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime({ validateModel: () => null })] })], ...CORE_RUNTIMES });
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: true }]);
 });
 
 test('a runtime colliding with a built-in quarantines the extension', () => {
@@ -1151,7 +1156,7 @@ test('unregister releases a runtime id, so a re-enable re-stages it', () => {
   assert.deepEqual(out.list[0].runtimes, []);
   registerExtension(out, manifest({ runtimes: [toyRuntime()] }), { cfg: {} });
   assert.deepEqual(out.runtimes.map((r) => r.id), ['toyrt']);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy' }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false }]);
 });
 
 test('a disabled extension claims no runtime id', () => {

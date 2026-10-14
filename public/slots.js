@@ -266,6 +266,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             fresh deep copy per call. `agents.onChange(fn)` fires when the
   //             server re-sends it (on connect, and on a catalog refresh), so
   //             an extension never has to mirror the model vocabulary.
+  //   runtimes — the dispatch dialog's Runtime options (1.33.0): `[{ id,
+  //             label, ownsModel }]`, built-ins first, as a fresh copy per call.
   //   ui      — rendering helpers the board owns (frozen). `markdownPreview(md)`
   //             returns sanitised HTML for a markdown string, from the same
   //             renderer as the chat view and file preview; a non-string is
@@ -367,6 +369,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
+        // The dispatch dialog's Runtime options (1.33.0), fresh per call.
+        runtimes: () => copyAgents(baseApi.runtimes?.()),
         // Upload an image into paste-image's staging dir (1.31.0); resolves
         // { name } for host.sessions.spawn({ images }) / host.images.keep.
         images: Object.freeze({
@@ -392,7 +396,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
         },
         // Launch the already-open dispatch modal (1.28.0), optionally on an
-        // offered model/effort. Resolves once SENT; rejects when the modal is
+        // offered model/effort, and (1.33.0) runtime. Resolves once SENT; rejects when the modal is
         // not open in launch mode, the model/effort is not offered, or core
         // validation blocks the launch. See app.js submitDispatchFromExt.
         dispatch: Object.freeze({
@@ -401,8 +405,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             const o = opts && typeof opts === 'object' ? opts : {};
             if (o.model != null && (typeof o.model !== 'string' || !o.model)) return Promise.reject(new Error(`[ext:${extId}] dispatch.submit model must be a non-empty string`));
             if (o.effort != null && typeof o.effort !== 'string') return Promise.reject(new Error(`[ext:${extId}] dispatch.submit effort must be a string`));
+            if (o.runtime != null && (typeof o.runtime !== 'string' || !o.runtime)) return Promise.reject(new Error(`[ext:${extId}] dispatch.submit runtime must be a non-empty string`));
             try {
-              return Promise.resolve(baseApi.submitDispatchFromExt({ model: o.model ?? undefined, effort: o.effort ?? undefined }));
+              return Promise.resolve(baseApi.submitDispatchFromExt({ model: o.model ?? undefined, effort: o.effort ?? undefined, runtime: o.runtime ?? undefined }));
             } catch (err) {
               return Promise.reject(new Error(`[ext:${extId}] dispatch.submit: ${err?.message || err}`));
             }

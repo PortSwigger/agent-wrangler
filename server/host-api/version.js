@@ -272,7 +272,14 @@ import semver from 'semver';
 // 1.32.0 adds the `session.prepare` hook (server/session-prepare.js): awaited
 // before a new session's worktree is created, it may abort the dispatch or
 // return warnings. A manifest declaring it declares `^1.32.0`.
-export const HOST_API_VERSION = '1.32.0';
+//
+// 1.33.0 adds `runtime` to the client's `api.dispatch.submit({ model, effort,
+// runtime })`, the client `api.runtimes()`, and `ownsModel` on
+// graph.extensions[].runtimes: for a runtime that
+// owns its models, `model` goes to `ext.<extId>.model` as spawn_session sends it.
+// An older client ignores `runtime` and launches on whatever runtime is selected,
+// so a manifest that passes it declares `^1.33.0`.
+export const HOST_API_VERSION = '1.33.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

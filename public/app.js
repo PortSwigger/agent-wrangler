@@ -332,6 +332,8 @@ const extApi = {
   openDispatchAcked,
   // Backs `api.dispatch.submit` (throws; slots turns that into a rejection).
   submitDispatchFromExt,
+  // Backs `api.runtimes()`: the Runtime select's options, as offered for a Claude model.
+  runtimes: listDispatchRuntimes,
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
   withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
@@ -5541,12 +5543,18 @@ function onSubagentDetail(msg) {
 }
 
 // Returns true only when the dispatch was sent (callers other than
-// submitDispatchFromExt ignore it).
-function submitDispatch() {
+// submitDispatchFromExt ignore it). `over.ext` (submitDispatchFromExt only)
+// merges over each extension's own slice.
+function submitDispatch(over) {
   if (modal.classList.contains('hidden')) return false;
   if (modalMode === 'subagent') return false; // read-only view: no primary action
   if (scheduleMode()) { submitSchedule(); return false; }
   const fields = readDispatchFields();
+  for (const [extId, slice] of Object.entries(over?.ext || {})) {
+    fields.ext ||= {};
+    const prev = fields.ext[extId];
+    fields.ext[extId] = prev && typeof prev === 'object' && !Array.isArray(prev) ? { ...prev, ...slice } : slice;
+  }
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
@@ -5577,12 +5585,25 @@ function submitDispatch() {
   return true;
 }
 
-// api.dispatch.submit({ model?, effort? }): launch the open dispatch modal as
-// the human would, optionally on a given model/effort (each must be offered).
+// api.dispatch.submit({ model?, effort?, runtime? }): launch the open dispatch
+// modal as the human would, optionally on a given model/effort/runtime (each
+// must be offered). A runtime that owns its models (`ownsModel`, i.e. it
+// defines validateModel) takes `model` as `ext.<extId>.model` instead, exactly
+// as spawn_session hands it over; its own preflight validates it.
 // Resolves once the dispatch is SENT, not launched — a worktree/workflow
 // dispatch is still pending then; openDispatch's promise carries the ack.
-function submitDispatchFromExt({ model, effort } = {}) {
+function submitDispatchFromExt({ model, effort, runtime } = {}) {
   if (modal.classList.contains('hidden') || modalMode !== 'launch') throw new Error('dispatch modal is not open in launch mode');
+  let extModel = null;
+  if (runtime != null) {
+    const rt = document.getElementById('m-runtime');
+    const opt = [...rt.options].find((o) => o.value === runtime);
+    if (!opt || opt.disabled) throw new Error(`runtime not offered: ${runtime}`);
+    if (opt.dataset.ext && model != null && runtimeOwnsModel(opt.dataset.ext, runtime)) {
+      extModel = { extId: opt.dataset.ext, model };
+      model = undefined;
+    }
+  }
   if (model != null) {
     const sel = document.getElementById('m-model');
     if (![...sel.options].some((o) => o.value === model)) throw new Error(`model not offered: ${model}`);
@@ -5597,8 +5618,32 @@ function submitDispatchFromExt({ model, effort } = {}) {
     eff.value = effort;
     effortEdited = true;
   }
-  if (!submitDispatch()) throw new Error('dispatch blocked by validation');
+  // After the model, whose agent gates the runtime options. A runtime outside
+  // that agent's set is refused rather than snapped back to Local.
+  if (runtime != null) {
+    const rt = document.getElementById('m-runtime');
+    rt.value = runtime;
+    syncRuntimeToggle();
+    if (rt.value !== runtime) throw new Error(`runtime not offered for this model: ${runtime}`);
+    syncDispatchExtFields();
+  }
+  if (!submitDispatch(extModel ? { ext: { [extModel.extId]: { model: extModel.model } } } : undefined)) throw new Error('dispatch blocked by validation');
   return true;
+}
+
+// [{ id, label, ownsModel }] for every #m-runtime option, whatever the
+// current model's agent disables (a quick launch picks its own model).
+function listDispatchRuntimes() {
+  return [...document.getElementById('m-runtime').options].map((o) => ({
+    id: o.value,
+    label: o.textContent,
+    ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
+  }));
+}
+
+function runtimeOwnsModel(extId, runtimeId) {
+  const e = latestExtensions.find((x) => x.id === extId);
+  return Boolean(e?.runtimes?.find((r) => r?.id === runtimeId)?.ownsModel);
 }
 
 // Save a schedule: compile the picker → `when`, read the same dispatch fields a
@@ -6158,7 +6203,7 @@ initSettings({
   updates: { mount: mountUpdatePanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
-document.getElementById('m-go').addEventListener('click', submitDispatch);
+document.getElementById('m-go').addEventListener('click', () => submitDispatch());
 [1, 2, 3].forEach((n) =>
   document.getElementById(`m-quick-${n}`).addEventListener('click', () => quickLaunch(quickLaunchModels[n - 1])));
 document.getElementById('m-worktree').addEventListener('change', syncWorktreeFields);

@@ -844,7 +844,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   null); while a launch awaits its ack the second call REJECTS, since two acks cannot
   be told apart. An error reply to a launch whose modal is still open makes it
   retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
-- **`api.dispatch.submit({ model?, effort? })` (1.28.0)** launches the dispatch
+- **`api.dispatch.submit({ model?, effort?, runtime? })` (1.28.0)** launches the dispatch
   modal that is ALREADY open, as Launch would, optionally on a given model and
   effort. It works only in launch mode (rejects when the modal is closed, or in
   schedule or sub-agent mode). `model` must be an option the modal offers, and
@@ -856,6 +856,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pending then, so an extension that needs the `dispatched` ack opens the modal
   with `openDispatch` and awaits that promise. `dispatch.field` contributions'
   `fields()` merge into the payload as usual.
+  **`runtime` (1.33.0)** selects an offered Runtime option first (`local`, a
+  built-in, or an extension's), after `model`, so a runtime the model's agent
+  can't use rejects `runtime not offered for this model`. For an extension
+  runtime that owns its models (it defines `validateModel`; the client sees
+  `ownsModel: true` on `graph.extensions[].runtimes`), `model` is NOT checked
+  against the core select: it is sent as `ext.<extId>.model`, merged over that
+  extension's own slice, exactly as `spawn_session` hands it over, and the
+  runtime's preflight validates it. Without `runtime` the modal's current
+  selection is used, which may be a runtime the dialog restored from the last
+  launch — pass `runtime: 'local'` to be sure.
 - **Graph `effort` (1.28.0).** Board session nodes and `graph.history` nodes
   carry `effort`, the effort the session was launched with (`null` when none
   was recorded, e.g. the agent's default or an adopted session). Resume and
@@ -998,6 +1008,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
+- **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
+  `[{ id, label, ownsModel }]` (`local` and the built-ins first, then enabled
+  extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
+  that defines `validateModel`, whose model `api.dispatch.submit` sends as
+  `ext.<extId>.model`.
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must

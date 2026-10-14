@@ -435,7 +435,9 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // quarantined row, like `handlerTypes`), and the client ALSO filters to an
     // enabled, non-quarantined entry, so a toggle-off drops the option on the
     // next tick even before its unregister has settled.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel }) => ({ id: rid, label: rlabel })),
+    // `ownsModel` (1.33.0): the runtime defines `validateModel`, so a model
+    // given with it to api.dispatch.submit rides `ext.<extId>.model`.
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel) })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -709,7 +711,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function' });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

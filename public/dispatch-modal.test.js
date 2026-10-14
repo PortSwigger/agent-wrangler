@@ -668,27 +668,31 @@ test('dispatch.field update sees the cached history on a tick whose graph carrie
 });
 
 // ── submitDispatchFromExt (api.dispatch.submit, 1.28.0) ────────────────────
-function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false } = {}) {
+function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false, runtimeAgentGate = true } = {}) {
   const model = stubSelect(['opus', 'sonnet']);
+  const runtime = stubSelect(['local', 'devcontainer']);
+  for (const [id, ext] of [['bifrost', 'bifrost'], ['toy', 'toy']]) { const o = runtime.appendChild(stubOption(id)); o.dataset.ext = ext; }
   const effort = stubSelect(['', 'low', 'high']);
   const modalClasses = new Set(hidden ? ['hidden'] : []);
   const sent = []; const calls = [];
   const state = { cwdBlocked: false, effortsAfterModel: null };
-  const els = { 'm-model': model, 'm-effort': effort, 'm-intent': { value: 'x' } };
+  const els = { 'm-model': model, 'm-effort': effort, 'm-intent': { value: 'x' }, 'm-runtime': runtime };
   const document = { getElementById: (id) => els[id] || { classList: { remove() {}, add() {} } } };
   const app = loadApp(
-    ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch() {', 'function submitDispatchFromExt({ model, effort } = {}) {'],
+    ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch(over) {', 'function submitDispatchFromExt({ model, effort, runtime } = {}) {', 'function runtimeOwnsModel(extId, runtimeId) {'],
     ['submitDispatchFromExt', 'flags'],
     `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
      let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
      const flags = () => ({ modelEdited, effortEdited });
-     const readCoreDispatchFields = () => ({ model: document.getElementById('m-model').value, effort: document.getElementById('m-effort').value || undefined, worktree: false, addDirs: [] });
-     const syncRuntimeToggle = () => calls.push('syncRuntimeToggle');
+     const latestExtensions = [{ id: 'bifrost', runtimes: [{ id: 'bifrost', ownsModel: true }] }, { id: 'toy', runtimes: [{ id: 'toy', ownsModel: false }] }];
+     const readCoreDispatchFields = () => { const rt = document.getElementById('m-runtime').value; return { model: document.getElementById('m-model').value, effort: document.getElementById('m-effort').value || undefined, worktree: false, addDirs: [], runtime: rt !== 'local' ? rt : undefined }; };
+     const syncRuntimeToggle = () => { calls.push('syncRuntimeToggle'); if (state.snapRuntime) document.getElementById('m-runtime').value = 'local'; };
+     const syncDispatchExtFields = () => calls.push('syncDispatchExtFields');
      const populateEffortSelect = () => { calls.push('populateEffortSelect'); if (state.effortsAfterModel) { const e = document.getElementById('m-effort'); e.options.length = 0; for (const v of state.effortsAfterModel) e.appendChild(stubOption(v)); } };`,
     {
       document, stubOption, calls, state,
       modal: { classList: { contains: (c) => modalClasses.has(c), add: (c) => modalClasses.add(c) } },
-      slots: { dispatchFields: () => ({ extra: 1 }) },
+      slots: { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }) },
       cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
       additionalFolders: { invalid: () => false },
       send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast() {},
@@ -739,6 +743,42 @@ test('dispatch.submit rejects a model or effort the modal does not offer', () =>
   h = extSubmitHarness();
   h.state.effortsAfterModel = ['', 'low'];
   assert.throws(() => h.app.submitDispatchFromExt({ model: 'sonnet', effort: 'high' }), /effort not offered: high/);
+});
+
+test('dispatch.submit sets an offered runtime and lets the ext fields redraw for it', () => {
+  const { app, sent, calls } = extSubmitHarness();
+  assert.equal(app.submitDispatchFromExt({ model: 'sonnet', runtime: 'devcontainer' }), true);
+  assert.deepEqual(calls, ['syncRuntimeToggle', 'populateEffortSelect', 'syncRuntimeToggle', 'syncDispatchExtFields']);
+  assert.equal(sent[0].runtime, 'devcontainer');
+  assert.equal(sent[0].model, 'sonnet');
+  assert.equal('ext' in sent[0], false);
+});
+
+test('dispatch.submit hands a model-owning runtime its model as ext.<extId>.model, leaving the core model alone', () => {
+  const { app, sent, state } = extSubmitHarness();
+  state.extSlices = { bifrost: { other: 1 } };
+  assert.equal(app.submitDispatchFromExt({ model: 'gpt-5.4', effort: 'high', runtime: 'bifrost' }), true);
+  assert.equal(sent[0].runtime, 'bifrost');
+  assert.equal(sent[0].model, 'opus', 'the core select is untouched');
+  assert.equal(sent[0].effort, 'high');
+  assert.deepEqual(sent[0].ext, { bifrost: { other: 1, model: 'gpt-5.4' } });
+  assert.deepEqual(app.flags(), { modelEdited: false, effortEdited: true });
+});
+
+test('dispatch.submit still checks the model against the modal for a runtime that does not own its models', () => {
+  const { app, sent } = extSubmitHarness();
+  assert.throws(() => app.submitDispatchFromExt({ model: 'gpt-5.4', runtime: 'toy' }), /model not offered: gpt-5.4/);
+  assert.deepEqual(sent, []);
+});
+
+test('dispatch.submit rejects a runtime the modal does not offer, or one the model\'s agent snaps back', () => {
+  let h = extSubmitHarness();
+  assert.throws(() => h.app.submitDispatchFromExt({ runtime: 'nope' }), /runtime not offered: nope/);
+  assert.deepEqual(h.sent, []);
+  h = extSubmitHarness();
+  h.state.snapRuntime = true;
+  assert.throws(() => h.app.submitDispatchFromExt({ runtime: 'devcontainer' }), /runtime not offered for this model: devcontainer/);
+  assert.deepEqual(h.sent, []);
 });
 
 test('dispatch.submit rejects when core validation blocks the launch', () => {
