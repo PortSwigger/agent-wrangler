@@ -1,4 +1,5 @@
 import { COPY_ICON, CHECK_ICON, PROMOTE_ICON, RESTART_ICON, GITHUB_ICON, STAR_ICON } from './icons.js';
+import { changesText } from './update-panel.js';
 
 // The Extensions settings tab and the install/update consent modal. Pure DOM
 // builders with no app state, like toast.js and system-banner.js: settings.js
@@ -155,6 +156,8 @@ export function extensionListItemEl(entry, { selected, status, pendingRemoval, o
   pick.addEventListener('click', () => onSelect?.(entry.id));
   row.append(pick);
   if (hasUpdate(entry, status, pendingRemoval)) {
+    // Only the background check counts changes; Check all's ls-remote cannot.
+    if (status.commits) row.append(el('span', 'ext-update-count', changesText(status.commits, status.capped)));
     row.append(iconButtonEl('ext-btn ext-btn-dark ext-btn-square', PROMOTE_ICON, `Update ${nameOf(entry)}`, () => onUpdate?.(entry)));
   }
   return row;
@@ -841,11 +844,11 @@ export function extensionsPanelEl({
   return wrap;
 }
 
-// The line an ext-check-updates reply (or the wait for one) adds to a row.
-// Nothing is fetched on a schedule, so this only ever appears around a press of
-// the button — which is why it is a per-row note rather than a badge the row is
-// built with, and why app.js clears the settled ones again after a few seconds:
-// "Up to date." describes a check that happened, not a standing property.
+// The line a check adds to a row: an ext-check-updates reply (or the wait for
+// one), or the core update tick's background check in Notify or Auto mode.
+// app.js clears Check all's settled ones again after a few seconds, since "Up
+// to date." describes a check that happened; the background result underneath
+// stands until the next tick replaces it.
 export function updateStatusText(status) {
   if (!status) return '';
   if (status.checking) return 'Checking…';

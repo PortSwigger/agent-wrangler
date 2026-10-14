@@ -177,3 +177,55 @@ test('drift reaches the board with the running version and how to restart by han
   assert.match(updateSupport({ installManager: 'homebrew' }).reason, /`brew services restart agent-wrangler`/);
   assert.equal(installDriftStatus(drift, { manager: null }).restartHint, 'Stop and start it the way you launched it.');
 });
+
+const outdatedExts = { extensions: [{ id: 'jira-links', behind: true, commits: 4 }], outdated: 1, commitsBehind: 4, capped: false };
+
+test('a notify tick also checks extensions and publishes what it found', async () => {
+  const published = [];
+  const { svc } = service({ mode: () => 'notify', checkExtensions: async () => outdatedExts, onExtensions: (s) => published.push(s) });
+  await svc.tick();
+  assert.equal(published.length, 1);
+  assert.equal(published[0].outdated, 1);
+  assert.equal(published[0].commitsBehind, 4);
+  assert.equal(typeof published[0].checkedAt, 'number');
+  assert.equal(svc.extensions(), published[0]);
+});
+
+test('an off tick checks no extensions', async () => {
+  let checks = 0;
+  const { svc } = service({ mode: () => 'off', checkExtensions: async () => { checks += 1; return outdatedExts; } });
+  await svc.tick();
+  assert.equal(checks, 0);
+  assert.equal(svc.extensions(), null);
+});
+
+test('an auto tick applies only the wrangler update, never an extension one', async () => {
+  const applies = [];
+  const upToDate = { head: 'h0', remote: 'h0', behind: 0, commits: [], blocked: null };
+  const { svc, events } = service({
+    check: async () => upToDate,
+    apply: async (...args) => { applies.push(args); return { ...upToDate, updated: false }; },
+    checkExtensions: async () => outdatedExts,
+  });
+  await svc.tick();
+  assert.equal(applies.length, 0);
+  assert.equal(events.applied.length, 0);
+  assert.equal(svc.extensions().outdated, 1);
+});
+
+test('extensions are checked before an auto-apply restarts, and even when the core check fails', async () => {
+  const order = [];
+  const { svc } = service({ checkExtensions: async () => { order.push('ext'); return outdatedExts; }, onApplied: () => order.push('applied') });
+  await svc.tick();
+  assert.deepEqual(order, ['ext', 'applied']);
+  const offline = service({ check: async () => { throw new Error('offline'); }, checkExtensions: async () => outdatedExts });
+  await offline.svc.tick();
+  assert.equal(offline.svc.extensions().outdated, 1);
+});
+
+test('a failing extension check is logged and leaves the core tick alone', async () => {
+  const { svc, events } = service({ mode: () => 'notify', checkExtensions: async () => { throw new Error('dns'); } });
+  const status = await svc.tick();
+  assert.equal(status.behind, 2);
+  assert.match(events.logs[0], /extension update check failed: dns/);
+});

@@ -31,7 +31,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText } from './update-panel.js';
+import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -5704,10 +5704,14 @@ function syncStandingBanner() {
   if (rollback) showSystemBanner(`⚠ ${rollback}`, { level: 1, kind: `update-rollback:${rolledBackUpdate.target}`, forever: true });
 }
 
-// Extensions panel state. All of it is per-browser and in memory: the update
-// check is on-demand only, the progress line describes a run that cannot outlive
-// this tab's socket, and the mount point is rebuilt on every settings open.
+// Extensions panel state. All of it is per-browser and in memory: Check all's
+// results, the progress line describes a run that cannot outlive this tab's
+// socket, and the mount point is rebuilt on every settings open.
 let extUpdateStatuses = {};
+// The server's last background extension check (Notify and Auto only), from the
+// connect config and `ext-update-status`. It fills the rows Check all would, so
+// an outdated extension shows its Update button without a manual check.
+let extBgUpdates = null;
 let extChecking = false;
 let extInstallProgress = '';
 let extInstallPhase = '';
@@ -5769,10 +5773,33 @@ function mountUpdatePanel(host) {
     onCheck: () => { updatePhase = 'checking'; send({ type: 'update-check' }); remountUpdatePanel(); },
     onApply: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); },
   }));
+  const exts = extUpdatesEl({ summary: extBgUpdates, mode: autoUpdate, onOpen: () => openSettings('extensions') });
+  if (exts) host.append(exts);
+}
+
+// Off means no background check, so a result left over from before the switch
+// lights nothing.
+const outdatedExtCount = () => (autoUpdate === 'off' ? 0 : outdatedExtensions(extBgUpdates).length);
+
+// The Extensions tab label carries the outdated count while Settings is open.
+function syncExtTabCount() {
+  const tab = document.getElementById('settings-tab-extensions');
+  if (!tab) return;
+  const n = outdatedExtCount();
+  let badge = tab.querySelector('.settings-tab-count');
+  if (!n) { badge?.remove(); return; }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'settings-tab-count';
+    tab.append(badge);
+  }
+  badge.textContent = String(n);
+  badge.title = `${n} out of date`;
 }
 
 const remountUpdatePanel = () => {
-  document.getElementById('settings-btn')?.classList.toggle('has-update', updateAvailable(updateStatus) || Boolean(installDrift));
+  document.getElementById('settings-btn')?.classList.toggle('has-update', updateAvailable(updateStatus) || Boolean(installDrift) || outdatedExtCount() > 0);
+  syncExtTabCount();
   if (updatePanelHost?.isConnected) mountUpdatePanel(updatePanelHost);
 };
 
@@ -5782,13 +5809,57 @@ function readUpdateToasted() {
   try { return localStorage.getItem(UPDATE_TOASTED_KEY); } catch { return null; }
 }
 
+const EXT_UPDATE_TOASTED_KEY = 'aw-ext-update-toasted';
+const UPDATE_TOAST_MS = 15000;
+// There is one toast slot, so a core update and extension updates found in the
+// same check share it: whichever lands second re-shows the first's toast with
+// both folded in, keeping the core toast's actions.
+let shownUpdateToast = null;
+
+function showUpdateToast({ core = null, ext = null }) {
+  const recent = shownUpdateToast && Date.now() - shownUpdateToast.at < UPDATE_TOAST_MS ? shownUpdateToast : {};
+  core = core || recent.core || null;
+  ext = ext || recent.ext || null;
+  shownUpdateToast = { at: Date.now(), core, ext };
+  if (!core) {
+    toast(extUpdateToastText(ext), false, { actions: [{ label: 'View', onClick: () => openSettings('extensions') }], duration: UPDATE_TOAST_MS });
+    return;
+  }
+  const text = (ext && extUpdateToastText(ext, { core: true })) || updateToastText(core);
+  const actions = [{ label: 'View', onClick: () => openSettings('updates') }];
+  if (core.canApply) actions.push({ label: 'Update now', onClick: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); } });
+  toast(text, false, { actions, duration: UPDATE_TOAST_MS });
+}
+
 function toastNewUpdate(status, { userAsked }) {
   const text = updateToastText(status, { lastToasted: readUpdateToasted(), userAsked });
   try { if (updateAvailable(status)) localStorage.setItem(UPDATE_TOASTED_KEY, status.remote); } catch { /* private window — it may toast again next load */ }
-  if (!text) return;
-  const actions = [{ label: 'View', onClick: () => openSettings('updates') }];
-  if (status.canApply) actions.push({ label: 'Update now', onClick: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); } });
-  toast(text, false, { actions, duration: 15000 });
+  if (text) showUpdateToast({ core: status });
+}
+
+// Deduped on the set of id@remote-head, so only an extension newly behind (or a
+// remote that moved again) toasts; one updated away never does.
+function toastNewExtUpdates(summary) {
+  if (autoUpdate === 'off') return;
+  let last = [];
+  try { last = JSON.parse(localStorage.getItem(EXT_UPDATE_TOASTED_KEY) || '[]'); } catch { /* unreadable — treat as never toasted */ }
+  try { localStorage.setItem(EXT_UPDATE_TOASTED_KEY, JSON.stringify(extUpdateKeys(summary))); } catch { /* private window — it may toast again next load */ }
+  if (extUpdateIsNew(summary, Array.isArray(last) ? last : [])) showUpdateToast({ ext: summary });
+}
+
+function applyExtUpdateStatus(summary) {
+  if (!summary) return;
+  extBgUpdates = summary;
+  toastNewExtUpdates(summary);
+  remountUpdatePanel();
+  remountExtensions();
+}
+
+// What the Extensions rows are drawn from: the background check underneath,
+// Check all's fresher answer on top.
+function extRowStatuses() {
+  const bg = autoUpdate === 'off' ? [] : (extBgUpdates?.extensions || []);
+  return { ...Object.fromEntries(bg.map((e) => [e.id, e])), ...extUpdateStatuses };
 }
 
 function applyUpdateStatus(status) {
@@ -5819,6 +5890,7 @@ function noteConfigUpdate(msg) {
   installDriftRestarting = false;
   noteCodeVersion(msg.codeVersion);
   applyUpdateStatus(msg.update);
+  applyExtUpdateStatus(msg.extensionUpdates);
   noteRolledBack(msg.updateRolledBack);
   // applyUpdateStatus skips a null status, and a restart that cleared the drift
   // must still take its notice and the Settings dot away.
@@ -5922,9 +5994,10 @@ function mountExtensionsPanel(host) {
     pruneSampleHosts();
   }
   host.textContent = '';
+  syncExtTabCount();
   host.append(extensionsPanelEl({
     entries: latestExtensions,
-    statuses: extUpdateStatuses,
+    statuses: extRowStatuses(),
     checking: extChecking,
     progress: extInstallProgress,
     busy: extInstallBusy,
@@ -6047,6 +6120,8 @@ initSettings({
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });
+        remountUpdatePanel();
+        remountExtensions();
       } else if (id === 'refreshSessionsAfterUpdate') {
         refreshSessionsAfterUpdate = Boolean(value);
         send({ type: 'set-refresh-sessions-after-update', enabled: refreshSessionsAfterUpdate });
@@ -6353,6 +6428,8 @@ function connect() {
         // on purpose. Left in place it re-offers the update just applied, and a
         // second Update clones the same sha again.
         delete extUpdateStatuses[msg.id];
+        if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
+        remountUpdatePanel();
         if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
@@ -6374,6 +6451,7 @@ function connect() {
       clearExtTransientLater();
       remountExtensions();
     }
+    else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
     else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
     else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
     else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }

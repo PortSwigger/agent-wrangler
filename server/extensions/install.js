@@ -128,6 +128,30 @@ export async function commitsSince(dir, priorSha, { git = defaultGit, limit = CO
   return { commits, truncated: !reachable };
 }
 
+// How many commits the remote's default branch is ahead of the installed one,
+// for the background update notice. Fetches the remote HEAD into the INSTALLED
+// clone (objects and FETCH_HEAD only; the working tree and HEAD are untouched),
+// from the recorded origin rather than the clone's own remote config, under the
+// same allow-list. Shallow, so a prior commit more than `limit` back, or a
+// rewritten history, reports `capped` and the count is only what was fetched.
+export async function countCommitsBehind(dir, priorSha, url, { git = defaultGit, limit = COMMIT_LIMIT } = {}) {
+  assertAllowedUrl(url);
+  await git([
+    '-c', 'protocol.ext.allow=never',
+    '-c', 'protocol.file.allow=never',
+    'fetch', '--quiet', `--depth=${limit}`, '--no-tags', '--no-recurse-submodules', '--', url, 'HEAD',
+  ], { cwd: dir });
+  let reachable = false;
+  try {
+    await git(['merge-base', '--is-ancestor', priorSha, 'FETCH_HEAD'], { cwd: dir });
+    reachable = true;
+  } catch { /* not an ancestor, or beyond the fetched depth */ }
+  const { stdout } = await git(['rev-list', '--count', `--max-count=${limit}`, reachable ? `${priorSha}..FETCH_HEAD` : 'FETCH_HEAD'], { cwd: dir });
+  const commits = Number.parseInt(String(stdout).trim(), 10);
+  if (!Number.isFinite(commits)) throw new Error('Could not parse a commit count out of git rev-list');
+  return { commits, capped: !reachable || commits >= limit };
+}
+
 function parseSha(stdout, what) {
   const m = String(stdout || '').match(/\b[0-9a-f]{7,40}\b/);
   if (!m) throw new Error(`Could not parse a commit sha out of ${what}`);

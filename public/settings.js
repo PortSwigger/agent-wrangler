@@ -128,7 +128,7 @@ export const SETTINGS = [
     scope: 'server',
     options: [{ value: 'off', label: 'Off' }, { value: 'notify', label: 'Notify' }, { value: 'auto', label: 'Auto' }],
     label: 'Automatic updates',
-    help: 'Notify checks origin/main hourly and puts a dot on Settings when an update is ready. Auto also installs it and restarts, if the checkout is clean and no session is launching or about to start on a schedule. If an update fails to start, the wrangler rolls back and skips that commit.',
+    help: 'Notify checks origin/main and your installed extensions hourly and puts a dot on Settings when an update is ready. Auto also installs wrangler updates and restarts, if the checkout is clean and no session is launching or about to start on a schedule. Extensions are never updated automatically; update them from Extensions. If an update fails to start, the wrangler rolls back and skips that commit.',
     default: 'notify',
   },
   {

@@ -481,10 +481,11 @@ export const extUninstallHandler = {
 export const extCheckUpdatesHandler = {
   type: 'ext-check-updates',
   async handler(msg, ctx) {
-    // ON DEMAND ONLY — one `git ls-remote` per installed extension, off a
-    // button. No sweep, no background network, and nothing logged: a periodic
-    // check would be per-tick noise in the log and unasked-for traffic to
-    // whatever host an extension came from.
+    // One `git ls-remote` per installed extension, off a button, and nothing
+    // logged. The only background check is the core update tick's in Notify or
+    // Auto mode (extensions/update-check.js), which the user opted into there;
+    // with Automatic updates Off this button is the only traffic to whatever
+    // host an extension came from.
     const provenance = readProvenance();
     const out = [];
     for (const entry of ctx.ext.list) {

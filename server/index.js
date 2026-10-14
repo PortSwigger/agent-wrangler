@@ -72,6 +72,7 @@ import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
+import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight } from './headless-claude.js';
@@ -1123,7 +1124,7 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() }));
+  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() }));
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1237,6 +1238,8 @@ async function main() {
       broadcast({ type: 'update-applied', head: result.head });
       exitForRestart(`updated to ${result.head}`);
     },
+    checkExtensions: createExtensionUpdateCheck({ list: () => ext.list }),
+    onExtensions: (summary) => broadcast({ type: 'ext-update-status', ...summary }),
     log,
   });
   await sessionManager.init();

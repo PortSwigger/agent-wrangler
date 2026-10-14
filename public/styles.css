@@ -3294,6 +3294,17 @@ a.ext-row-origin { color: var(--blue-fg); }
 .update-error { color: var(--danger-strong); }
 .update-commits { margin: 6px 0 0; padding-left: 18px; max-height: 240px; overflow-y: auto; font-size: 12px; color: var(--fg-subtle); }
 .update-commits li { margin: 2px 0; overflow-wrap: anywhere; }
+.update-auto-note { color: var(--warn-fg); }
+/* Background-check counts: the Extensions tab's outdated count and a row's missing changes. */
+.settings-tab-count {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px; border-radius: 8px;
+  font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  background: var(--accent); color: var(--accent-fg);
+}
+.ext-update-count {
+  flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+}
 #settings-btn.has-update::after {
   content: ''; position: absolute; top: 7px; right: 7px;
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);

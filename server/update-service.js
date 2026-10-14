@@ -58,10 +58,16 @@ export function createUpdateService({
   rolledBack = null,
   onStatus = () => {},
   onApplied = () => {},
+  // Installed extensions ride the same tick, notify only: there is no apply
+  // path for them here in any mode (see extensions/update-check.js).
+  checkExtensions = null,
+  onExtensions = () => {},
   log = () => {},
 } = {}) {
   let busy = false;
   let latest = null;
+  let latestExtensions = null;
+  let checkingExtensions = false;
 
   async function exclusive(fn) {
     if (busy) throw new UpdateBusyError();
@@ -99,6 +105,19 @@ export function createUpdateService({
     return result;
   });
 
+  async function tickExtensions() {
+    if (!checkExtensions || checkingExtensions) return;
+    checkingExtensions = true;
+    try {
+      latestExtensions = { ...(await checkExtensions()), checkedAt: Date.now() };
+      onExtensions(latestExtensions);
+    } catch (err) {
+      log(`[agent-wrangler] extension update check failed: ${err?.message || err}`);
+    } finally {
+      checkingExtensions = false;
+    }
+  }
+
   async function tick() {
     // An unavailable updater makes no check at all: a Notify or Auto mode
     // carried over in config.json must not fetch, and must not log a failed
@@ -106,14 +125,15 @@ export function createUpdateService({
     if (!support.available) return null;
     const current = mode();
     if (current === 'off' || busy) return null;
-    let status;
+    let status = null;
     try {
       status = await runCheck();
     } catch (err) {
       log(`[agent-wrangler] update check failed: ${err?.message || err}`);
-      return null;
     }
-    if (current !== 'auto' || !canAutoApply(status, rolledBack) || !isQuiet()) return status;
+    // Before any auto-apply, which restarts the process.
+    await tickExtensions();
+    if (!status || current !== 'auto' || !canAutoApply(status, rolledBack) || !isQuiet()) return status;
     try {
       return await runApply({ automatic: true });
     } catch (err) {
@@ -127,6 +147,7 @@ export function createUpdateService({
     apply: runApply,
     tick,
     latest: () => latest,
+    extensions: () => latestExtensions,
     unavailable: () => (support.available ? null : support.reason),
     rolledBack: () => rolledBack,
   };

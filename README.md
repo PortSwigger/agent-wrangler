@@ -65,7 +65,9 @@ otherwise it behaves exactly as a Claude-only board.
 - **Updates from the board** — for a Git checkout, Settings › Updates checks `origin/main`, lists
   the new commits, fast-forwards the checkout and restarts it in one click. Sessions keep running
   through the restart, and open tabs reload onto the new code. It checks hourly and can install on
-  its own (Off / Notify / Auto). If an update can't start, the next restart rolls back to the commit
+  its own (Off / Notify / Auto). Notify and Auto also check installed extensions and say how many
+  are out of date and how many changes they're missing; extensions are never updated automatically,
+  only from Settings › Extensions. If an update can't start, the next restart rolls back to the commit
   it came from. Installing needs the background service below (which also installs changed
   dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
   checkout, such as one managed by a package manager, shows updates as unavailable and never runs

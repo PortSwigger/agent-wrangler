@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldReloadForVersion, updateSummary, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, installDriftNotice } from './update-panel.js';
+import { shouldReloadForVersion, updateSummary, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
 
 test('a page reloads only when a known code version changes', () => {
   assert.equal(shouldReloadForVersion(null, 'abc'), false, 'first connect just records it');
@@ -79,4 +79,41 @@ test('the drift notice leaves out versions it cannot tell apart, and says when t
   assert.match(installDriftNotice({ drift: { ...base, version: null, runningVersion: '0.1.0' } }).text, /^An upgrade has landed, but/);
   assert.match(installDriftNotice({ drift: { ...base, version: '0.1.0', runningVersion: '0.1.0' } }).text, /^An upgrade has landed, but/);
   assert.match(installDriftNotice({ drift: { ...base, target: null, version: null } }).text, /\/opt\/aw cannot be resolved, so an upgrade may be in progress/);
+});
+
+const ext = (id, label, commits, extra = {}) => ({ id, label, sha: `${id}0`, remoteSha: `${id}1`, behind: true, commits, ...extra });
+const many = { extensions: [ext('jira', 'Jira links', 7), ext('w2', 'Wrangler squared', 4), ext('slack', 'Slack digest', 1), { id: 'usage', behind: false }, { id: 'down', error: 'offline' }] };
+
+test('extension notices count only outdated extensions that were reached', () => {
+  assert.deepEqual(outdatedExtensions(many).map((e) => e.id), ['jira', 'w2', 'slack']);
+  assert.deepEqual(outdatedExtensions(null), []);
+  assert.equal(changesText(1), '1 change');
+  assert.equal(changesText(4), '4 changes');
+  assert.equal(changesText(50, true), '50+ changes');
+});
+
+test('the extension toast copy follows the approved design', () => {
+  assert.equal(extUpdateToastText(many), '3 extensions out of date · 12 changes missing');
+  assert.equal(extUpdateToastText({ extensions: [ext('jira', 'Jira links', 1)] }), 'Jira links has an update · 1 change missing');
+  assert.equal(extUpdateToastText({ extensions: [ext('jira', 'Jira links', 4)] }), 'Jira links has an update · 4 changes missing');
+  assert.equal(extUpdateToastText(many, { core: true }), 'Update available · 3 extensions out of date');
+  assert.equal(extUpdateToastText({ extensions: [ext('jira', 'Jira links', 50, { capped: true }), ext('w2', 'W2', 2)] }), '2 extensions out of date · 52+ changes missing');
+  assert.equal(extUpdateToastText({ extensions: [{ id: 'usage', behind: false }] }), '');
+});
+
+test('the Updates tab line says how many are out of date, or that all are current', () => {
+  assert.equal(extUpdateLineText(many), '3 extensions out of date · 12 changes missing.');
+  assert.equal(extUpdateLineText({ extensions: [ext('jira', 'Jira links', 4)] }), '1 extension out of date · 4 changes missing.');
+  assert.equal(extUpdateLineText({ extensions: [{ id: 'a', behind: false }, { id: 'b', behind: false }, { id: 'c', error: 'x' }] }), 'All 2 extensions up to date.');
+});
+
+test('the extension toast fires only when something newly falls behind', () => {
+  const keys = extUpdateKeys(many);
+  assert.deepEqual(keys, ['jira@jira1', 'slack@slack1', 'w2@w21']);
+  assert.equal(extUpdateIsNew(many, []), true);
+  assert.equal(extUpdateIsNew(many, keys), false);
+  // Fewer outdated after an update is not news.
+  assert.equal(extUpdateIsNew({ extensions: [ext('jira', 'Jira links', 7)] }, keys), false);
+  // A remote that moved again is.
+  assert.equal(extUpdateIsNew({ extensions: [{ ...ext('jira', 'Jira links', 9), remoteSha: 'jira2' }] }, keys), true);
 });

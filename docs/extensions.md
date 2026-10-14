@@ -16,7 +16,11 @@ The tab is a list beside a detail pane. The list groups **Core** extensions (the
 wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
 **Filter** narrows it by name. **Check all** in the Installed heading checks every installed extension
 for a newer commit; when one is found, **Update all** appears beside it and the extension gets its own
-update button in the list. Select an extension to see its **Enabled** switch, **Uninstall…** (installed
+update button in the list. With Settings › Updates on Notify or Auto, the hourly update check also
+checks installed extensions: an outdated one shows its update button and how many changes it is
+missing without pressing Check all, the Extensions tab and the Settings button are badged, and a
+toast says so once per new commit. Extensions are never updated automatically, even on Auto.
+Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Source** (type, repository and commit) and its **Settings**.
 
 **+ Add extension** also lists public GitHub repositories tagged with the
@@ -301,9 +305,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   since a real tree churns by hundreds of entries. Removals can only be filtered to
   "the package name left the tree entirely" — the record stores a flat list with no
   direct/transitive mark, and adding one would only help installs made from then on.
-  "Check all" is one `git ls-remote` per installed extension, **on demand
-  only** — no sweep, no background traffic to whatever host an extension came from,
-  nothing logged — and a record-less extension is skipped.
+  "Check all" is one `git ls-remote` per installed extension, on demand, nothing
+  logged, and a record-less extension is skipped. The only background check is the
+  core update tick in Notify or Auto mode (`extensions/update-check.js`), which the
+  user opted into there: the same `ls-remote`, plus a shallow fetch into the
+  installed clone to count the missing commits, once per new remote head. It
+  never installs; Off keeps extensions strictly on demand.
 - **One install at a time per instance, REFUSED not queued, behind an in-memory
   lock.** The staging dir (`<DATA_DIR>/extensions/.tmp/<tempId>/`) is the only
   durable artefact an interrupted install leaves, and boot sweeps it

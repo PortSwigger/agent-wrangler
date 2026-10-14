@@ -120,3 +120,84 @@ export function updatePanelEl({ phase = 'idle', status = null, error = '', unava
   if (rollback) wrap.append(el('div', 'update-summary update-error', rollback));
   return wrap;
 }
+
+// ── Installed extensions, from the core tick's background check ──
+// Notify only in every mode: nothing here offers to apply an extension update,
+// because each one goes through its consent screen in the Extensions tab.
+
+export function outdatedExtensions(summary) {
+  return (summary?.extensions || []).filter((e) => e.behind && !e.error);
+}
+
+// "4 changes", or "50+ changes" when the count stopped short of the installed commit.
+export function changesText(n, capped = false) {
+  return `${n}${capped ? '+' : ''} change${n === 1 && !capped ? '' : 's'}`;
+}
+
+function totalChanges(exts) {
+  return changesText(exts.reduce((n, e) => n + (e.commits || 0), 0), exts.some((e) => e.capped));
+}
+
+// What the toast dedupes on: a toast is due only when an extension falls behind
+// that was not behind before, or a remote moves again.
+export function extUpdateKeys(summary) {
+  return outdatedExtensions(summary).map((e) => `${e.id}@${e.remoteSha}`).sort();
+}
+
+export function extUpdateIsNew(summary, lastToasted = []) {
+  const seen = new Set(lastToasted);
+  return extUpdateKeys(summary).some((k) => !seen.has(k));
+}
+
+// The toast line. With a core update in the same check the extensions fold into
+// its text, since there is one toast slot.
+export function extUpdateToastText(summary, { core = false } = {}) {
+  const exts = outdatedExtensions(summary);
+  if (!exts.length) return '';
+  if (core) return `Update available · ${exts.length} extension${exts.length === 1 ? '' : 's'} out of date`;
+  if (exts.length === 1) return `${exts[0].label || exts[0].id} has an update · ${changesText(exts[0].commits || 0, exts[0].capped)} missing`;
+  return `${exts.length} extensions out of date · ${totalChanges(exts)} missing`;
+}
+
+export function extUpdateLineText(summary) {
+  const exts = outdatedExtensions(summary);
+  if (!exts.length) {
+    const checked = (summary?.extensions || []).filter((e) => !e.error).length;
+    return checked === 1 ? 'Your 1 extension is up to date.' : `All ${checked} extensions up to date.`;
+  }
+  return `${exts.length} extension${exts.length === 1 ? '' : 's'} out of date · ${totalChanges(exts)} missing.`;
+}
+
+function checkedAgoText(at, now) {
+  const mins = Math.floor(Math.max(0, now - at) / 60000);
+  if (mins < 1) return 'Checked just now.';
+  if (mins < 60) return `Checked ${mins} minute${mins === 1 ? '' : 's'} ago.`;
+  const hours = Math.floor(mins / 60);
+  return `Checked ${hours} hour${hours === 1 ? '' : 's'} ago.`;
+}
+
+// The Extensions block under Manual update. Null with Automatic updates Off
+// (there is no background check to report) and before the first check.
+export function extUpdatesEl({ summary = null, mode = 'notify', onOpen, now = Date.now() } = {}) {
+  if (mode === 'off' || !summary?.extensions?.length) return null;
+  const exts = outdatedExtensions(summary);
+  const wrap = el('div', 'update-panel');
+  const head = el('div', 'update-panel-head');
+  head.append(el('div', 'setting-label', 'Extensions'));
+  if (exts.length) head.append(button('Open Extensions', 'ext-btn', { onClick: onOpen }));
+  wrap.append(head);
+  wrap.append(el('div', 'update-summary', extUpdateLineText(summary)));
+  if (exts.length > 1) {
+    const list = el('ul', 'update-commits');
+    for (const e of exts) {
+      const item = el('li');
+      item.append(el('b', null, e.label || e.id), document.createTextNode(` · ${changesText(e.commits || 0, e.capped)}`));
+      list.append(item);
+    }
+    wrap.append(list);
+  }
+  if (mode === 'auto' && exts.length) wrap.append(el('div', 'update-summary update-auto-note', 'Auto mode installs wrangler updates only. Extension updates wait for you.'));
+  const at = summary.checkedAt ? `${checkedAgoText(summary.checkedAt, now)} ` : '';
+  wrap.append(el('div', 'setting-help', `${at}Built-in extensions are not checked.`));
+  return wrap;
+}

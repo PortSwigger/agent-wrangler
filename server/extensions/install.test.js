@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, commitsSince, lockDependencies, npmCi, readDeclaration,
+  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
   MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
@@ -229,4 +229,35 @@ test('commitsSince marks the list truncated when the installed commit is out of 
   const { commits, truncated } = await commitsSince('/clone', 'a'.repeat(40), { git });
   assert.equal(truncated, true);
   assert.equal(commits.length, 1);
+});
+
+test('countCommitsBehind fetches the recorded origin into the clone and counts from the installed commit', async () => {
+  const calls = [];
+  const git = async (args, opts) => {
+    calls.push({ args, opts });
+    if (args.includes('rev-list')) return { stdout: '4\n' };
+    return { stdout: '' };
+  };
+  const result = await countCommitsBehind('/installed', 'a'.repeat(40), 'https://github.com/org/repo.git', { git });
+  assert.deepEqual(result, { commits: 4, capped: false });
+  const fetch = calls[0].args;
+  assert.ok(fetch.includes('protocol.ext.allow=never') && fetch.includes('--depth=50'));
+  assert.equal(fetch[fetch.indexOf('--') + 1], 'https://github.com/org/repo.git');
+  assert.ok(calls.every((c) => c.opts.cwd === '/installed'));
+  assert.ok(calls.at(-1).args.includes(`${'a'.repeat(40)}..FETCH_HEAD`));
+});
+
+test('countCommitsBehind caps the count when the installed commit is out of reach', async () => {
+  const git = async (args) => {
+    if (args.includes('merge-base')) throw new Error('not an ancestor');
+    if (args.includes('rev-list')) return { stdout: '50\n' };
+    return { stdout: '' };
+  };
+  assert.deepEqual(await countCommitsBehind('/installed', 'a'.repeat(40), 'https://github.com/org/repo.git', { git }), { commits: 50, capped: true });
+});
+
+test('countCommitsBehind refuses a disallowed origin before running git', async () => {
+  let ran = 0;
+  await assert.rejects(() => countCommitsBehind('/installed', 'a', 'ext::sh -c id', { git: async () => { ran += 1; return { stdout: '' }; } }), /Refusing/);
+  assert.equal(ran, 0);
 });
