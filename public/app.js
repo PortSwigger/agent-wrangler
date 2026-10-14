@@ -5984,6 +5984,14 @@ function extSettingsEl(entry) {
   return content;
 }
 
+// Every Settings open lands the tab on the add pane, so the GitHub browser is
+// the first thing it shows; remounts after that keep whatever was picked since.
+function openExtensionsPanel(host) {
+  extAdding = true;
+  if (!extBrowse) searchExtBrowse();
+  mountExtensionsPanel(host);
+}
+
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
@@ -6146,7 +6154,7 @@ initSettings({
     onFontSize: setTermFontSize,
     onChatFontSize: setChatFontSize,
   },
-  extensions: { mount: mountExtensionsPanel },
+  extensions: { mount: openExtensionsPanel },
   updates: { mount: mountUpdatePanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);

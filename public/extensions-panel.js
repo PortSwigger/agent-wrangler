@@ -744,7 +744,9 @@ export function extensionsPanelEl({
   const statusOf = (entry) => (checking && entry.external && entry.origin ? { checking: true } : statuses[entry.id]);
   const core = entries.filter((e) => !e.external);
   const installed = entries.filter((e) => e.external);
-  const selected = adding ? null : (entries.find((e) => e.id === selectedId) || entries[0] || null);
+  // Nothing selected (or the selection since uninstalled) shows the add pane,
+  // which is also where the tab opens.
+  const selected = adding ? null : (entries.find((e) => e.id === selectedId) || null);
 
   // ── List pane ──
   const list = el('div', 'ext-list');
@@ -810,7 +812,7 @@ export function extensionsPanelEl({
   applyFilter(filter);
   search.addEventListener('input', () => { applyFilter(search.value); onFilter?.(search.value); });
 
-  const add = el('button', `ext-btn ext-add-btn${adding ? ' selected' : ''}`, '+ Add extension');
+  const add = el('button', `ext-btn ext-add-btn${selected ? '' : ' selected'}`, '+ Add extension');
   add.type = 'button';
   add.addEventListener('click', () => onAdd?.());
   list.append(add);

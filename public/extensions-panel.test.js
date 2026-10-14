@@ -88,6 +88,8 @@ const BEHIND = { updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40)
 const listIds = (node) => byClass(node, 'ext-list-row').map((r) => r.dataset.extId);
 const groupTitles = (node) => byClass(node, 'ext-group-title').map((n) => n._text);
 const detailOf = (node) => byClass(node, 'ext-detail')[0];
+// A panel with `entry` selected, as a click on its row leaves it.
+const showing = (entry, opts = {}) => extensionsPanelEl({ entries: [entry], selectedId: entry.id, ...opts });
 const buttonTexts = (node) => byClass(node, 'ext-btn').map((b) => b._text || texts(b).join(''));
 // The only innerHTML the panel writes is a static icon from icons.js.
 const assertNoThirdPartyHtml = (node) => {
@@ -136,9 +138,15 @@ test('the selected extension is highlighted and shown; clicking another selects 
     assert.ok(texts(detailOf(panel)).includes('One'));
     byClass(rows[0], 'ext-list-item')[0].fire('click');
     assert.deepEqual(picked, ['a']);
-    // Nothing (or something gone) selected falls back to the first entry.
-    const fallback = extensionsPanelEl({ entries: [BUILTIN_A, EXT1], selectedId: 'gone' });
-    assert.ok(byClass(fallback, 'ext-list-row')[0].classList.contains('selected'));
+    // Nothing (or something gone) selected shows the add pane and its browser,
+    // with + Add extension highlighted and no row.
+    for (const selectedId of ['', 'gone']) {
+      const fallback = extensionsPanelEl({ entries: [BUILTIN_A, EXT1], selectedId, browse: { repos: [] } });
+      assert.deepEqual(byClass(fallback, 'ext-list-row').map((r) => r.classList.contains('selected')), [false, false]);
+      assert.ok(byClass(fallback, 'ext-add-btn')[0].classList.contains('selected'));
+      assert.equal(byClass(detailOf(fallback), 'ext-install-url').length, 1);
+      assert.equal(byClass(detailOf(fallback), 'ext-gh').length, 1);
+    }
   });
 });
 
@@ -200,7 +208,7 @@ test('Update all and a per-item update button appear only once a check found a n
 test('the detail header: name, description, the enable toggle settings.js drives, and Uninstall for external only', () => {
   withDom(() => {
     const removed = [];
-    const panel = extensionsPanelEl({ entries: [EXT1], onUninstall: (e) => removed.push(e.id) });
+    const panel = showing(EXT1, { onUninstall: (e) => removed.push(e.id) });
     const head = byClass(panel, 'ext-detail-head')[0];
     assert.equal(head.dataset.id, 'ext:ext1', 'settings.js\'s delegated flip handler finds the def by this id');
     assert.ok(head.classList.contains('setting-row'));
@@ -210,7 +218,7 @@ test('the detail header: name, description, the enable toggle settings.js drives
     assert.equal(uninstall._text, 'Uninstall…');
     uninstall.fire('click');
     assert.deepEqual(removed, ['ext1']);
-    const core = byClass(extensionsPanelEl({ entries: [BUILTIN_A] }), 'ext-detail-head')[0];
+    const core = byClass(showing(BUILTIN_A), 'ext-detail-head')[0];
     assert.equal(byClass(core, 'ext-btn-danger').length, 0);
     assert.ok(byClass(core, 'setting-toggle')[0]);
   });
@@ -218,18 +226,18 @@ test('the detail header: name, description, the enable toggle settings.js drives
 
 test('the Source section: type, repository with an https-only Open link, and short commit', () => {
   withDom(() => {
-    const detail = detailOf(extensionsPanelEl({ entries: [INSTALLED] }));
+    const detail = detailOf(showing(INSTALLED));
     const all = texts(detail);
     for (const t of ['Source', 'Type', 'Installed from git', 'Repository', 'https://example.invalid/notes.git', 'Commit', 'abcdef01']) assert.ok(all.includes(t), t);
     assert.equal(all.includes('A Colleague'), false, 'no author');
     const open = byClass(detail, 'ext-kv-open')[0];
     assert.equal(open.href, 'https://example.invalid/notes.git');
     for (const bad of ['http://example.invalid', 'ssh://git@example.invalid/x.git', 'javascript:alert(1)']) {
-      const d = detailOf(extensionsPanelEl({ entries: [{ ...INSTALLED, origin: bad }] }));
+      const d = detailOf(showing({ ...INSTALLED, origin: bad }));
       assert.equal(byClass(d, 'ext-kv-open').length, 0, bad);
       assert.ok(texts(d).includes(bad));
     }
-    const core = texts(detailOf(extensionsPanelEl({ entries: [BUILTIN_A] })));
+    const core = texts(detailOf(showing(BUILTIN_A)));
     assert.ok(core.includes('Core'));
     assert.equal(core.includes('Repository'), false);
     assert.equal(core.includes('Commit'), false);
@@ -238,7 +246,7 @@ test('the Source section: type, repository with an https-only Open link, and sho
 
 test('quarantine is stated plainly in the detail pane, and only via textContent', () => {
   withDom(() => {
-    const panel = extensionsPanelEl({ entries: [{ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' }] });
+    const panel = showing({ ...INSTALLED, quarantine: 'tool name "list_sessions" is already registered' });
     assert.ok(texts(panel).includes('tool name "list_sessions" is already registered'));
     assert.equal(byClass(panel, 'ext-row-quarantine')[0].getAttribute('role'), 'status');
   });
@@ -255,7 +263,7 @@ test('hostile third-party strings are inert text, not markup', () => {
 
 test('an uninstalled extension says so in its detail, with nothing left to toggle or uninstall', () => {
   withDom(() => {
-    const detail = detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], pendingRemoval: ['notes'] }));
+    const detail = detailOf(showing(WITH_SETTINGS, { pendingRemoval: ['notes'] }));
     assert.ok(texts(detail).some((t) => /Uninstalled\. .*stays in memory until the wrangler restarts/.test(t)));
     assert.equal(byClass(detail, 'setting-toggle').length, 0);
     assert.equal(byClass(detail, 'ext-btn-danger').length, 0);
@@ -296,15 +304,15 @@ const WITH_SETTINGS = {
 test('the selected extension\'s settings render inline under Settings; none means no section', () => {
   withDom(() => {
     const seen = [];
-    const detail = detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], onSettingChange: (c) => seen.push(c) }));
+    const detail = detailOf(showing(WITH_SETTINGS, { onSettingChange: (c) => seen.push(c) }));
     assert.ok(texts(detail).includes('Settings'));
     assert.deepEqual(byClass(detail, 'ext-setting-row').map((r) => r.dataset.key), ['registryUrl', 'pollMs', 'auto']);
     byClass(detail, 'setting-toggle').at(-1).fire('click');
     assert.deepEqual(seen, [{ id: 'notes', key: 'auto', value: false }]);
-    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [INSTALLED] }))).includes('Settings'), false);
+    assert.equal(texts(detailOf(showing(INSTALLED))).includes('Settings'), false);
     // Only hidden defs (a settings.panel manages them) is still nothing to draw.
     const hiddenOnly = { ...INSTALLED, settings: [{ key: 'k', type: 'text', label: 'K', hidden: true }] };
-    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [hiddenOnly] }))).includes('Settings'), false);
+    assert.equal(texts(detailOf(showing(hiddenOnly))).includes('Settings'), false);
   });
 });
 
@@ -313,17 +321,17 @@ test('a caller-supplied settingsEl replaces the default rows, and null omits the
     const custom = document.createElement('div');
     custom.textContent = 'custom';
     const asked = [];
-    const panel = extensionsPanelEl({ entries: [INSTALLED], settingsEl: (e) => { asked.push(e.id); return custom; } });
+    const panel = showing(INSTALLED, { settingsEl: (e) => { asked.push(e.id); return custom; } });
     assert.deepEqual(asked, ['notes']);
     assert.ok(walk(detailOf(panel)).includes(custom));
-    assert.equal(texts(detailOf(extensionsPanelEl({ entries: [WITH_SETTINGS], settingsEl: () => null }))).includes('Settings'), false);
+    assert.equal(texts(detailOf(showing(WITH_SETTINGS, { settingsEl: () => null }))).includes('Settings'), false);
   });
 });
 
 test('+ Add extension opens the install form in the detail pane', () => {
   withDom(() => {
     let adds = 0;
-    const panel = extensionsPanelEl({ entries: [INSTALLED], onAdd: () => { adds += 1; } });
+    const panel = showing(INSTALLED, { onAdd: () => { adds += 1; } });
     assert.equal(byClass(panel, 'ext-install-url').length, 0);
     byClass(panel, 'ext-add-btn')[0].fire('click');
     assert.equal(adds, 1);

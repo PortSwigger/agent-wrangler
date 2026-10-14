@@ -12,7 +12,7 @@ Open **Settings → Extensions**, choose **+ Add extension**, paste a git URL, a
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
-The tab is a list beside a detail pane. The list groups **Core** extensions (they ship with the
+The tab is a list beside a detail pane, and opens on the **+ Add extension** pane. The list groups **Core** extensions (they ship with the
 wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
 **Filter** narrows it by name. **Check all** in the Installed heading checks every installed extension
 for a newer commit; when one is found, **Update all** appears beside it and the extension gets its own
@@ -27,7 +27,7 @@ only), its **Source** (type, repository and commit) and its **Settings**.
 [`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
 the owner's avatar, description, stars, language and last update. **Install…** on a card goes through
 the same review as a pasted URL; repositories you already have are marked **Installed**. The list is
-searched when the pane opens and on **Refresh**. Anyone can tag a repository, so a listing is not a
+searched the first time the tab opens and on **Refresh**. Anyone can tag a repository, so a listing is not a
 review or an endorsement; check the code and its author before installing.
 
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
