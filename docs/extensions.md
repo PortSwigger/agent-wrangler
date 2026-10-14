@@ -29,6 +29,13 @@ review or an endorsement; check the code and its author before installing.
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
 possible; updating loaded code or fully unloading it requires a restart.
 
+An install or update whose `engines.wranglerApi` range this Agent Wrangler's host API version does not
+satisfy is refused before anything changes: the clone is discarded, nothing is offered for consent, and
+the panel says why, for example "requires a newer Agent Wrangler (needs host API ^2.0.0, this is
+1.31.0)". For an update, that line replaces the extension's update button until the next check and the
+installed version keeps running. Update Agent Wrangler, or wait for a compatible release of the
+extension.
+
 ## Core extensions
 
 Some extensions ship inside Agent Wrangler itself. They are listed under **Core** in the same
@@ -57,7 +64,8 @@ An installable repository needs `package.json` and an `index.js` with a default 
     "label": "Example",
     "description": "Adds an example capability to Agent Wrangler.",
     "author": "Your team",
-    "requires": []
+    "requires": [],
+    "engines": { "wranglerApi": "^1.31.0" }
   }
 }
 ```
@@ -69,6 +77,7 @@ export default {
   description: 'Adds an example capability to Agent Wrangler.',
   author: 'Your team',
   requires: [],
+  engines: { wranglerApi: '^1.31.0' },
   defaultEnabled: true,
 };
 ```
@@ -107,6 +116,9 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 - Declare every capability in `requires`; undeclared host surfaces are structurally absent.
 - Keep `package.json`'s `wranglerExtension` aligned with the manifest; runtime capabilities cannot be
   broader.
+- Declare `engines.wranglerApi` (optional) in both places: the `package.json` copy lets install and update
+  refuse an incompatible version before asking for consent, and the manifest's copy is checked again
+  after consent and at every boot.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
 
@@ -215,6 +227,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `requires` wider than was disclosed. The provenance record's consented `requires`
   is therefore the **DISCLOSED** list, never the manifest's — that is what the human
   approved.
+- **An install or update the host API version does not serve is REFUSED, never
+  applied.** Applying it would replace a working version with one that fails at
+  activation or the next boot (see the failure posture below). `ext-install` checks
+  the declaration's `engines.wranglerApi` copy right after `readDeclaration`, before
+  the disclosure; `ext-consent` checks the imported manifest's own range after
+  `assertManifestMatchesDeclaration` and before anything touches the installed
+  directory, which catches a repo that declares it only in `index.js`. Either way the
+  staging clone is removed, `failed` is broadcast (releasing the lock and advancing
+  **Update all**) and the reply is `ext-install-incompatible` `{ id, update, range,
+  hostVersion, message }` — a refusal frame rather than a thrown error, which the
+  panel shows on the row in place of the update button. `ext-check-updates` stays
+  `ls-remote` only, so it cannot know a remote commit's range: the button is offered
+  and the refusal arrives when it is pressed.
 - **A disclosure awaiting consent is RECLAIMABLE after `PENDING_CONSENT_TTL_MS`
   (10 min), and the gate is `awaitingConsent`, never age alone.** The install lock is
   held across the human's decision because the staging dir is what a second install

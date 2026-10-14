@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
 import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
+import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
 
 // Installing an external extension, in two frames with a human decision between
@@ -190,6 +192,31 @@ function updateDiff(record, declared, deps) {
   };
 }
 
+// Why an extension declaring host API `range` cannot run on this server, or null
+// when it can. Applying one anyway is no refusal at all: the install or update
+// lands, then fails at activation or at the next BOOT (host-api/index.js), with
+// an update having already replaced the version that worked. Said in terms of
+// the wrangler rather than the API, because "update Agent Wrangler" is the
+// thing a human can actually do about it.
+function engineMismatch(range) {
+  if (servesRange(range)) return null;
+  if (!isValidRange(range)) return `declares engines.wranglerApi ${JSON.stringify(range)}, which is not a valid semver range`;
+  if (semver.gtr(HOST_API_VERSION, range)) return `was written for an older Agent Wrangler (needs host API ${range}, this is ${HOST_API_VERSION})`;
+  return `requires a newer Agent Wrangler (needs host API ${range}, this is ${HOST_API_VERSION})`;
+}
+
+// A REFUSAL, not a failure: nothing went wrong, this server simply cannot run
+// that code, so the reply is its own frame (the panel puts the reason where
+// the update button was) rather than a thrown error toast. The `failed` phase
+// is still broadcast, because it is what releases the lock and moves "Update
+// all" on to the next one. Every caller has already removed its staging dir.
+function refuseIncompatible(ctx, { id, label, range, reason }) {
+  const update = Boolean(recordFor(id));
+  const message = `${label || id} ${reason}. ${update ? 'The installed version was left as it is.' : 'Nothing was installed.'}`;
+  progress(ctx, 'failed', { id, message });
+  ctx.reply({ type: 'ext-install-incompatible', id, update, range, hostVersion: HOST_API_VERSION, message });
+}
+
 // Loaded ONLY after consent and `npm ci`, which is the first moment the
 // manifest's own imports resolve and the first moment running its code is
 // something the human has agreed to. `declared` is what they agreed to, so the
@@ -291,6 +318,16 @@ export const extInstallHandler = {
         if (err instanceof MissingDeclarationError) throw new Error('This repository declares no "wranglerExtension" block in its package.json. An external extension must declare its id, label and requires there so they can be shown to you without running any of its code.');
         throw err;
       }
+      // Refused BEFORE anything else is read or shown: there is no point asking
+      // a human to consent to an update this server would then fail to load.
+      // This reads the package.json copy of the range; ext-consent checks the
+      // manifest's own once it can be imported, for a repo that only put it there.
+      const mismatch = engineMismatch(declared.range);
+      if (mismatch) {
+        rmQuiet(dir);
+        refuseIncompatible(ctx, { id: declared.id, label: declared.label, range: declared.range, reason: mismatch });
+        return;
+      }
       const sha = await runners.head(dir);
       // Refused BEFORE consent and before any registry fetch: an extension
       // whose dependency set is unpinned cannot be disclosed honestly, so there
@@ -354,6 +391,16 @@ export const extConsentHandler = {
       // manifest is validated and held to what was disclosed.
       const manifest = await loadStagedManifest(dir);
       assertManifestMatchesDeclaration(manifest, declared);
+      // The authoritative engines check — the declaration's copy is optional and
+      // may be missing or stale. Still before anything touches `dest`, so a
+      // refused update leaves the installed version exactly where it was.
+      const range = manifest.engines?.wranglerApi ?? null;
+      const mismatch = engineMismatch(range);
+      if (mismatch) {
+        rmQuiet(dir);
+        refuseIncompatible(ctx, { id: declared.id, label: declared.label, range, reason: mismatch });
+        return;
+      }
       const dest = safeExtPath(manifest.id);
       // Anything with a row already — an update, a reinstall over a live
       // install, or a fix-by-reinstall of a QUARANTINED one — takes the restart

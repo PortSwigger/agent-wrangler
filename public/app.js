@@ -6324,6 +6324,14 @@ function connect() {
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
     }
     else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
+    // The server refused it — the extension needs a host API this wrangler does
+    // not serve. Nothing changed on disk. An update's reason replaces its update
+    // button (hasUpdate) and sits on its row until the next check; the `failed`
+    // progress broadcast already carries the same line for a fresh install.
+    else if (msg.type === 'ext-install-incompatible') {
+      if (msg.update) extUpdateStatuses[msg.id] = { ...extUpdateStatuses[msg.id], incompatible: msg.message };
+      remountExtensions();
+    }
     else if (msg.type === 'ext-install-done') {
       extInstallBusy = false;
       // An install is live now — the server registers and activates it in

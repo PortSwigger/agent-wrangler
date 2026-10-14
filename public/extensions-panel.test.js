@@ -190,6 +190,10 @@ test('Update all and a per-item update button appear only once a check found a n
     assert.deepEqual(seen, [['one', 'ext2'], ['all', ['ext2']]]);
     // A pending removal is past updating.
     assert.equal(byClass(extensionsPanelEl({ ...opts, statuses: { ext2: BEHIND }, pendingRemoval: ['ext2'] }), 'ext-btn-square').length, 0);
+    // So is one the server refused as needing a newer host API.
+    const refused = extensionsPanelEl({ ...opts, statuses: { ext2: { ...BEHIND, incompatible: 'Two requires a newer Agent Wrangler.' } } });
+    assert.equal(byClass(refused, 'ext-btn-square').length, 0);
+    assert.deepEqual(buttonTexts(byClass(refused, 'ext-group-head')[1]), ['Check all']);
   });
 });
 
@@ -623,6 +627,7 @@ test('updateStatusText distinguishes behind, current, unreachable and provenance
   assert.equal(updateStatusText({ updatable: true, sha: 'a'.repeat(40), remoteSha: 'a'.repeat(40), behind: false }), 'Up to date.');
   assert.match(updateStatusText({ updatable: true, error: 'host unreachable' }), /Could not reach the origin: host unreachable/);
   assert.match(updateStatusText({ updatable: false }), /placed here by hand/);
+  assert.equal(updateStatusText({ updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40), behind: true, incompatible: 'Two requires a newer Agent Wrangler (needs host API ^2.0.0, this is 1.31.0).' }), 'Two requires a newer Agent Wrangler (needs host API ^2.0.0, this is 1.31.0).');
   assert.equal(updateStatusText(null), '');
 });
 

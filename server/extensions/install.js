@@ -263,6 +263,14 @@ export function readDeclaration(dir) {
   if (d.requires != null && (!Array.isArray(d.requires) || d.requires.some((c) => typeof c !== 'string' || !c))) {
     throw new Error('wranglerExtension.requires must be an array of capability names');
   }
+  // The host API range, duplicated from the manifest's `engines.wranglerApi`
+  // for the same reason as everything else here: the install handler refuses
+  // an extension this server cannot run BEFORE consent, and the manifest is not
+  // importable until after it. Only its type is checked in this leaf; whether
+  // it is a valid range this server serves is the handler's call.
+  const engines = d.engines;
+  if (engines != null && (typeof engines !== 'object' || Array.isArray(engines))) throw new Error('wranglerExtension.engines must be an object');
+  if (engines?.wranglerApi != null && typeof engines.wranglerApi !== 'string') throw new Error('wranglerExtension.engines.wranglerApi must be a semver range string');
   // Prose only, and third-party: type-checked here, rendered via textContent
   // everywhere downstream. Capability NAMES are not validated against
   // CAPABILITIES here — this leaf cannot import the loader's vocabulary without
@@ -275,6 +283,7 @@ export function readDeclaration(dir) {
     author: str(d.author),
     homepage: str(d.homepage),
     requires: [...(d.requires || [])],
+    range: engines?.wranglerApi ?? null,
   };
 }
 

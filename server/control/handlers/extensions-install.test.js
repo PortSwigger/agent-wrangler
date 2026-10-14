@@ -10,6 +10,7 @@ import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions
 import { loadExtensions, registerExtension, unregisterExtension } from '../../extensions/index.js';
 import { discoverExternal } from '../../extensions/external.js';
 import { DATA_DIR } from '../../data-dir.js';
+import { HOST_API_VERSION } from '../../host-api/version.js';
 
 // AW_DATA_DIR is a per-process temp dir (server/test-setup.js), so every path
 // below is throwaway. No git and no npm ever runs: the clone is faked by writing
@@ -66,12 +67,13 @@ function reply(c, type) {
 function fakeClone({
   id = 'notes', requires = [], lock = true, declaration = true, deps = true,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
+  range = null, declaredRange = range,
 } = {}) {
   return async (_url, dest) => {
     fs.mkdirSync(dest, { recursive: true });
     const body = indexThrows
       ? "throw new Error('index.js executed at disclosure time');\n"
-      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  defaultEnabled: ${JSON.stringify(defaultEnabled)},\n  requires: ${JSON.stringify(requires)},\n};\n`;
+      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  defaultEnabled: ${JSON.stringify(defaultEnabled)},\n  requires: ${JSON.stringify(requires)},\n${range ? `  engines: { wranglerApi: ${JSON.stringify(range)} },\n` : ''}};\n`;
     fs.writeFileSync(path.join(dest, 'index.js'), body);
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
@@ -80,6 +82,7 @@ function fakeClone({
       ...(declaration ? {
         wranglerExtension: {
           id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
+          ...(declaredRange ? { engines: { wranglerApi: declaredRange } } : {}),
         },
       } : {}),
     }));
@@ -448,5 +451,71 @@ test('a same-id reinstall after an uninstall goes live again', async () => {
   await install(c, { id: 'recycled' });
   assert.deepEqual(c.loaded.list.map((e) => e.id), ['recycled'], 'the id was released, so it stages again');
   assert.equal(reply(c, 'ext-install-done').active, true);
+  reset();
+});
+
+test('an update needing a newer host API is refused before consent, and the installed version is untouched', async () => {
+  reset();
+  await install(ctx());
+  const installedSha = readProvenance().notes.sha;
+  const c = ctx([{ id: 'notes', external: true }]);
+  useFakes({ range: '^99.0.0', sha: 'd'.repeat(40) });
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c);
+  assert.equal(reply(c, 'ext-install-disclosure'), undefined, 'nothing is offered for consent');
+  const refused = reply(c, 'ext-install-incompatible');
+  assert.equal(refused.id, 'notes');
+  assert.equal(refused.update, true);
+  assert.equal(refused.range, '^99.0.0');
+  assert.equal(refused.hostVersion, HOST_API_VERSION);
+  assert.match(refused.message, new RegExp(`requires a newer Agent Wrangler \\(needs host API \\^99\\.0\\.0, this is ${HOST_API_VERSION.replace(/\./g, '\\.')}\\)`));
+  assert.match(refused.message, /installed version was left as it is/);
+  assert.equal(c.calls.broadcasts.at(-1).phase, 'failed', 'the failed phase releases the lock and moves Update all on');
+  assert.deepEqual(fs.readdirSync(tmpDir()), [], 'the staging clone is discarded');
+  assert.equal(readProvenance().notes.sha, installedSha);
+  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  // The lock was released, so the next install proceeds.
+  assert.ok(await disclose(ctx()));
+  reset();
+});
+
+test('a fresh install whose range this server does not serve is refused the same way', async () => {
+  reset();
+  const c = ctx();
+  useFakes({ range: '^0.1.0' });
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c);
+  const refused = reply(c, 'ext-install-incompatible');
+  assert.equal(refused.update, false);
+  assert.match(refused.message, /written for an older Agent Wrangler.*Nothing was installed/s);
+  assert.deepEqual(fs.readdirSync(tmpDir()), []);
+
+  const bad = ctx();
+  useFakes({ range: 'not a range' });
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, bad);
+  assert.match(reply(bad, 'ext-install-incompatible').message, /not a valid semver range/);
+  reset();
+});
+
+test('a range only the manifest declares is still enforced at consent, before the install is replaced', async () => {
+  reset();
+  await install(ctx());
+  const installedSha = readProvenance().notes.sha;
+  const c = ctx([{ id: 'notes', external: true }]);
+  const disclosure = await disclose(c, { range: '^99.0.0', declaredRange: null, sha: 'd'.repeat(40) });
+  assert.ok(disclosure, 'with no range in package.json the disclosure cannot know');
+  await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c);
+  assert.equal(reply(c, 'ext-install-done'), undefined);
+  assert.match(reply(c, 'ext-install-incompatible').message, /requires a newer Agent Wrangler/);
+  assert.equal(readProvenance().notes.sha, installedSha);
+  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.deepEqual(fs.readdirSync(tmpDir()), []);
+  assert.equal(c.calls.rebuild, 0);
+  reset();
+});
+
+test('a range this server serves installs normally', async () => {
+  reset();
+  const c = ctx();
+  await install(c, { range: `^${HOST_API_VERSION}` });
+  assert.equal(reply(c, 'ext-install-done').installed, true);
   reset();
 });

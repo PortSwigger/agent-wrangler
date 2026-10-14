@@ -191,13 +191,19 @@ test('readDeclaration reads the disclosure statically, without importing anythin
     wranglerExtension: { id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'] },
   }));
   assert.deepEqual(readDeclaration(dir), {
-    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'],
+    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'], range: null,
   });
+
+  // The declared host API range rides along for the pre-consent engines gate.
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', engines: { wranglerApi: '^9.0.0' } } }));
+  assert.equal(readDeclaration(dir).range, '^9.0.0');
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', engines: { wranglerApi: 9 } } }));
+  assert.throws(() => readDeclaration(dir), /engines\.wranglerApi must be a semver range string/);
 
   // Absent prose normalises to '' rather than undefined: every consumer renders
   // it through textContent, where undefined would print as "undefined".
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes' } }));
-  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [] });
+  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [], range: null });
 });
 
 test('commitsSince deepens the shallow clone and logs only what the update brings in', async () => {

@@ -134,7 +134,10 @@ const nameOf = (entry) => entry.label || entry.id;
 
 // Only an extension whose last check found a newer commit, and that is still
 // here to update.
-const hasUpdate = (entry, status, removing) => Boolean(entry.external && entry.origin && status?.behind && !removing);
+// `incompatible` is the server's refusal of that update (ext-install-incompatible):
+// the newer commit needs a host API this wrangler does not serve, so offering
+// the button again would only clone it to be refused a second time.
+const hasUpdate = (entry, status, removing) => Boolean(entry.external && entry.origin && status?.behind && !status.incompatible && !removing);
 
 // One entry in the left pane: a status dot (filled = enabled, hollow =
 // disabled) and the name, plus — when the last check found a newer commit — a
@@ -848,6 +851,7 @@ export function updateStatusText(status) {
   if (status.checking) return 'Checking…';
   if (!status.updatable) return 'No origin recorded — this one was placed here by hand, so there is nothing to check.';
   if (status.error) return `Could not reach the origin: ${status.error}`;
+  if (status.incompatible) return status.incompatible;
   if (!status.sha) return 'No installed commit recorded.';
   return status.behind ? `A newer commit is available (${status.remoteSha.slice(0, 8)}).` : 'Up to date.';
 }
