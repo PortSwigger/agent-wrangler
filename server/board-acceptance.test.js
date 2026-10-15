@@ -298,8 +298,11 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
         const cells = [...grid.querySelectorAll('.task-cell')];
         const last = cells.at(-1).getBoundingClientRect();
         const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();
-        return tray.top >= last.bottom && tray.width >= last.width - 1;
-      })()`), 'the minimised-task tray must sit below the stacked tasks');
+        grid.scrollTop = grid.scrollHeight;
+        const end = grid.getBoundingClientRect().bottom - parseFloat(getComputedStyle(grid).paddingBottom);
+        const placed = grid.querySelector('.focus-switcher').getBoundingClientRect();
+        return tray.top >= last.bottom && tray.width >= last.width - 1 && Math.abs(placed.bottom - end) < 2;
+      })()`), 'the minimised-task tray must sit below the stacked tasks, at the bottom of the board');
     }
 
     await evaluateChecked(`(() => {
