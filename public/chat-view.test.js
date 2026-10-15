@@ -1213,6 +1213,10 @@ test('prompts the agent folded into one message are all matched by it', async ()
   assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thing', ts: 4000 }), []);
   assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thingsecond thing and more', ts: 4000 }), []);
   assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thingsecond thing', ts: -5000 }), []);
+  assert.deepEqual(echoRunMatchingEvent([e('yes', 1000), e('yes', 5000)], { text: 'yesyes', ts: 2000 }), []);
+  const img = { text: '', images: ['x.png'], sentAt: 1000 };
+  assert.deepEqual(echoRunMatchingEvent([img, b], { text: '[Image #1]second thing', ts: 4000 }), [img, b]);
+  assert.deepEqual(echoRunMatchingEvent([e('', 1000), b], { text: 'second thing', ts: 4000 }), []);
   assert.deepEqual(echoRunMatchingEvent([{ ...a, images: ['x.png'] }, b], { text: '[Image #1]first thingsecond thing', ts: 4000 }), [{ ...a, images: ['x.png'] }, b]);
 });
 

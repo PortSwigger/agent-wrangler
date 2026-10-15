@@ -65,15 +65,20 @@ export function echoMatchesEvent(echo, event) {
 // consecutive echoes whose texts concatenate (whitespace aside) to the event
 // text is that fold; returns the run, or [] when none is.
 export function echoRunMatchingEvent(echoes, event) {
-  if (Number.isFinite(event.ts) && echoes.every((e) => event.ts < e.sentAt - 2000)) return [];
+  const recordedAfter = (echo) => !Number.isFinite(event.ts) || event.ts >= echo.sentAt - 2000;
   for (let start = 0; start < echoes.length - 1; start += 1) {
-    if (Number.isFinite(event.ts) && event.ts < echoes[start].sentAt - 2000) continue;
     let rest = String(event.text || '').trim();
     const run = [];
     for (let i = start; i < echoes.length; i += 1) {
       const echo = echoes[i];
-      for (let m = 0; m < echo.images.length && LEADING_IMAGE_MARKER.test(rest); m += 1) rest = rest.replace(LEADING_IMAGE_MARKER, '');
-      if (!echo.text || !rest.startsWith(echo.text)) break;
+      if (!recordedAfter(echo)) break;
+      let markers = 0;
+      while (markers < echo.images.length && LEADING_IMAGE_MARKER.test(rest)) {
+        rest = rest.replace(LEADING_IMAGE_MARKER, '');
+        markers += 1;
+      }
+      if (!echo.text && !markers) break;
+      if (!rest.startsWith(echo.text)) break;
       rest = rest.slice(echo.text.length).trimStart();
       run.push(echo);
       if (!rest) return run.length >= 2 ? run : [];
