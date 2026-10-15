@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CLAUDE_DIR } from './claude-paths.js';
 import { costUsd } from './pricing.js';
 import { stripPastedContentWrapper } from './pasted-content.js';
+import { isRequestDump } from './claude-request-dump.js';
 
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 
@@ -182,7 +183,7 @@ async function headMeta(file) {
         }
         if (!cwd && typeof entry.cwd === 'string' && entry.cwd) cwd = entry.cwd;
         const msg = entry.message;
-        if (!summary && msg && (entry.type === 'user' || msg.role === 'user') && !entry.isMeta) {
+        if (!summary && msg && (entry.type === 'user' || msg.role === 'user') && !entry.isMeta && !isRequestDump(entry)) {
           let text = '';
           if (typeof msg.content === 'string') text = msg.content;
           else if (Array.isArray(msg.content)) {
@@ -434,7 +435,7 @@ export function scanLine(line, state) {
   }
 
   // First real user message → a human-readable summary for unnamed sessions.
-  if (!state.summary && (entry.type === 'user' || msg.role === 'user') && !entry.isMeta) {
+  if (!state.summary && (entry.type === 'user' || msg.role === 'user') && !entry.isMeta && !isRequestDump(entry)) {
     let text = '';
     if (typeof msg.content === 'string') text = msg.content;
     else if (Array.isArray(msg.content)) {
