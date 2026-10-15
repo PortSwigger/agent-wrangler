@@ -1201,6 +1201,21 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
 });
 
+test('prompts the agent folded into one message are all matched by it', async () => {
+  const { echoRunMatchingEvent } = await import('./chat-view.js');
+  const e = (text, sentAt) => ({ text, images: [], sentAt });
+  const a = e('first thing', 1000);
+  const b = e('second thing', 2000);
+  const c = e('third', 3000);
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thingsecond thing', ts: 4000 }), [a, b]);
+  assert.deepEqual(echoRunMatchingEvent([a, b, c], { text: 'first thing\n\nsecond thing\nthird', ts: 4000 }), [a, b, c]);
+  assert.deepEqual(echoRunMatchingEvent([a, b, c], { text: 'second thingthird', ts: 4000 }), [b, c]);
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thing', ts: 4000 }), []);
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thingsecond thing and more', ts: 4000 }), []);
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'first thingsecond thing', ts: -5000 }), []);
+  assert.deepEqual(echoRunMatchingEvent([{ ...a, images: ['x.png'] }, b], { text: '[Image #1]first thingsecond thing', ts: 4000 }), [{ ...a, images: ['x.png'] }, b]);
+});
+
 test('history replayed by a remount cannot acknowledge a newer identical prompt', async () => {
   const { view, input, sent, byId } = await mountView();
   view.mount('sess-1');

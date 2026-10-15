@@ -60,6 +60,28 @@ export function echoMatchesEvent(echo, event) {
   return false;
 }
 
+// Codex folds prompts queued mid-turn into one user message, joined with no
+// separator, so no single echo equals the recorded text. A run of two or more
+// consecutive echoes whose texts concatenate (whitespace aside) to the event
+// text is that fold; returns the run, or [] when none is.
+export function echoRunMatchingEvent(echoes, event) {
+  if (Number.isFinite(event.ts) && echoes.every((e) => event.ts < e.sentAt - 2000)) return [];
+  for (let start = 0; start < echoes.length - 1; start += 1) {
+    if (Number.isFinite(event.ts) && event.ts < echoes[start].sentAt - 2000) continue;
+    let rest = String(event.text || '').trim();
+    const run = [];
+    for (let i = start; i < echoes.length; i += 1) {
+      const echo = echoes[i];
+      for (let m = 0; m < echo.images.length && LEADING_IMAGE_MARKER.test(rest); m += 1) rest = rest.replace(LEADING_IMAGE_MARKER, '');
+      if (!echo.text || !rest.startsWith(echo.text)) break;
+      rest = rest.slice(echo.text.length).trimStart();
+      run.push(echo);
+      if (!rest) return run.length >= 2 ? run : [];
+    }
+  }
+  return [];
+}
+
 export const ECHOES_KEY = 'aw.chatEchoes';
 export const ECHO_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -978,11 +1000,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (item.type === 'user' && isHumanTypedUserItem(item)) {
         userEls.push(node);
         const hit = echoList().find((e) => echoMatches(e, item));
+        const folded = hit ? [] : ackedEvents.get(sessionId)?.has(eventKey(item.event || {})) ? [] : echoRunMatchingEvent(echoList(), item.event || {});
         noteAcked(sessionId, item.event);
-        if (hit) {
-          removeEcho(hit);
-          renderSuggestion();
-        }
+        const hits = hit ? [hit] : folded;
+        for (const h of hits) removeEcho(h);
+        if (hits.length) renderSuggestion();
       }
       if (item.type === 'subagent') {
         node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
