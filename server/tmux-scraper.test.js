@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState, isCompacting } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -764,4 +764,11 @@ test('sendText with empty text skips the paste (tmux has no buffer for an empty 
   const run = async (socket, args) => { calls.push(args[0]); return { stdout: '' }; };
   await sendText('cc_z', '', '', run, { wait: async () => {} });
   assert.deepEqual(calls, ['send-keys']);
+});
+
+test('isCompacting: needs both the compaction text and the working footer', () => {
+  assert.equal(isCompacting('✻ Compacting conversation… (8s · esc to interrupt)\n'), true);
+  assert.equal(isCompacting('• Compacting context (3s • esc to interrupt)\n'), true);
+  assert.equal(isCompacting('I read about Compacting conversation earlier\n❯ \n'), false);
+  assert.equal(isCompacting('✻ Thinking… (esc to interrupt)\n'), false);
 });

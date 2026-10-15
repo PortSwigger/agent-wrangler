@@ -1,4 +1,4 @@
-import { capturePaneStyled, classify, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
+import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
@@ -6,6 +6,8 @@ const READY_POLL_MS = 250;
 const SUBMIT_ATTEMPTS = 3;
 const SUBMIT_WINDOW_MS = 2000;
 const SUBMIT_POLL_MS = 300;
+const COMPACT_TIMEOUT_MS = 300000;
+const COMPACT_POLL_MS = 1000;
 
 // Hold a paste until the freshly-relaunched agent's TUI has actually painted its
 // composer — the fix for a silent, measured message loss.
@@ -148,4 +150,25 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   const mark = agent === 'codex' ? '\u203a' : '\u276f';
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
+}
+
+// A pane that is compacting its context does not take a prompt: the paste is
+// swallowed or discarded when the compaction rewrites the screen, and the chat
+// view has already drawn the message as queued. Wait the compaction out so the
+// paste lands in a composer that is accepting input. Resolves 'idle' when no
+// compaction was running, 'finished' after waiting one out, and 'timeout' when it
+// is still running at the deadline (the caller must NOT paste then).
+export async function waitForCompactionEnd(name, socket, {
+  timeoutMs = COMPACT_TIMEOUT_MS,
+  pollMs = COMPACT_POLL_MS,
+  capture = capturePane,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  if (!name || !isCompacting(await capture(name, 30, socket))) return 'idle';
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await sleep(pollMs);
+    if (!isCompacting(await capture(name, 30, socket))) return 'finished';
+    if (Date.now() >= deadline) return 'timeout';
+  }
 }

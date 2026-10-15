@@ -195,6 +195,17 @@ export async function capturePaneStyled(name, lines = 6, socket = '') {
   }
 }
 
+// Both agents summarise their context mid-turn ("Compacting conversation…" in
+// Claude Code, "Compacting context" in Codex) while still showing the working
+// footer. Requiring the working status as well keeps prose that merely mentions
+// the phrase from reading as a compaction in progress.
+export function isCompacting(paneText, { tailLines = 12 } = {}) {
+  const plain = stripAnsi(paneText);
+  const recent = plain.split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
+  return /compacting\s+(?:conversation|context)|compacting(?:\u2026|\.\.\.)/i.test(recent)
+    && classify(plain).status === 'working';
+}
+
 export function codexUpdateState(paneText) {
   const text = stripAnsi(paneText);
   const starts = [...text.matchAll(/^(?:Updating\b|🎉)/gm)];

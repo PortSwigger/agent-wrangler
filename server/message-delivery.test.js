@@ -264,3 +264,39 @@ test('dormant target: recreates a missing launch dir rather than stranding the r
   assert.equal(d.resumed[0].dir, missing);
   fs.rmdirSync(missing);
 });
+
+test('live target mid-compaction: waits for compaction to end, then pastes and confirms the turn', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } }, entries: { CARD1: { agent: 'codex' } } });
+  d.waitForCompactionEnd = async () => 'finished';
+  const result = await deliverMessage('CARD1', 'first after idle', d);
+  assert.deepEqual(result, { mode: 'live' });
+  assert.equal(d.ready.length, 1);
+  assert.equal(d.sent.length, 1);
+  assert.deepEqual(d.submitted.map((s) => [s.text, s.agent]), [['first after idle', 'codex']]);
+});
+
+test('live target still compacting at the deadline: nothing is pasted and the send is rejected so the draft is restored', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } } });
+  d.waitForCompactionEnd = async () => 'timeout';
+  const result = await deliverMessage('CARD1', 'too early', d);
+  assert.equal(result.mode, 'error');
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.error, /compacting/);
+  assert.equal(d.sent.length, 0);
+});
+
+test('live target: a post-compaction send that never becomes a turn is reported unknown', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } }, submitResult: false });
+  d.waitForCompactionEnd = async () => 'finished';
+  const result = await deliverMessage('CARD1', 'hello', d);
+  assert.equal(result.outcome, 'unknown');
+  assert.equal(result.mode, 'live');
+});
+
+test('live target with no compaction: no readiness wait, no submit check', async () => {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '' } } });
+  d.waitForCompactionEnd = async () => 'idle';
+  await deliverMessage('CARD1', 'plain', d);
+  assert.equal(d.ready.length, 0);
+  assert.equal(d.submitted.length, 0);
+});

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
-import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted } from './pane-ready.js';
+import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
@@ -44,6 +44,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   const clearComposer = deps.clearComposer ?? defaultClearComposer;
   const waitForComposerReady = deps.waitForComposerReady ?? defaultWaitForComposerReady;
   const ensureSubmitted = deps.ensureSubmitted ?? defaultEnsureSubmitted;
+  const waitForCompactionEnd = deps.waitForCompactionEnd ?? defaultWaitForCompactionEnd;
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the
@@ -61,8 +62,25 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // pasting into a pty spawned milliseconds ago, has the readiness problem.
   const target = tmuxFor(id);
   if (target) {
-    await attach(target, socketFor(id));
-    await sendText(target, text, socketFor(id));
+    const socket = socketFor(id);
+    // The first message after a long idle often lands while the agent is
+    // auto-compacting, and a prompt pasted into a compacting pane is lost with no
+    // error. Wait the compaction out; if it outlasts the wait, refuse BEFORE
+    // pasting so the chat view restores the draft instead of showing a queued
+    // message that will never arrive.
+    const compaction = await waitForCompactionEnd(target, socket);
+    if (compaction === 'timeout') {
+      return { mode: 'error', outcome: 'rejected', error: 'The agent is still compacting its context, so the message was not sent. Send it again once compaction finishes.' };
+    }
+    if (compaction === 'finished') await waitForComposerReady(target, socket, sessionManager.entryFor?.(id)?.agent);
+    await attach(target, socket);
+    await sendText(target, text, socket);
+    // Only a send that followed a compaction is verified: the pane was just
+    // rewritten, so a dropped CR is plausible there, while an ordinary live send
+    // is unchanged.
+    if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: sessionManager.entryFor?.(id)?.agent })) {
+      return { mode: 'live', outcome: 'unknown', error: 'Sent the message after compaction but could not confirm it started a turn — check the terminal before sending again.' };
+    }
     return { mode: 'live' };
   }
 

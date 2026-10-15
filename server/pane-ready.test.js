@@ -213,3 +213,13 @@ test('ensureSubmitted never captures or sends when handed no pane', async () => 
   assert.equal(ok, false);
   assert.equal(touched, false);
 });
+
+test('waitForCompactionEnd: idle pane returns immediately; compacting pane waits, then reports finished; stuck times out', async () => {
+  const { waitForCompactionEnd } = await import('./pane-ready.js');
+  const compacting = '✻ Compacting conversation… (12s · esc to interrupt)\n';
+  const idle = '❯ \n';
+  assert.equal(await waitForCompactionEnd('p', '', { capture: async () => idle, sleep: async () => {} }), 'idle');
+  const frames = [compacting, compacting, idle];
+  assert.equal(await waitForCompactionEnd('p', '', { capture: async () => frames.shift() ?? idle, sleep: async () => {} }), 'finished');
+  assert.equal(await waitForCompactionEnd('p', '', { capture: async () => compacting, sleep: async () => {}, timeoutMs: -1 }), 'timeout');
+});
