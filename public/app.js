@@ -425,6 +425,9 @@ function syncClientExtensions() {
   // follow every enable/disable/quarantine whether or not the extension ships
   // a browser half at all.
   syncExtRuntimeOptions();
+  // An update (and the restart after it) re-announces a mounted id with new
+  // asset URLs; the old module can't be swapped out in place, so start over.
+  if (clientExtensions.staleIds(extClientManifest).length) { location.reload(); return; }
   const enabled = new Set(latestExtensions.filter((e) => e.enabled).map((e) => e.id));
   let unmounted = false;
   for (const { id } of extClientManifest) {

@@ -25,6 +25,12 @@
 // installed or newly enabled extension's client module arrives here on its own
 // — there is nothing left that a reload would fix.
 //
+// Except a changed module under an id that is already mounted: an update
+// re-announces the id with a new `?v=` on its asset URLs, but registering the
+// new module beside the old one's DOM and listeners is not something a client
+// half can be asked to survive. `staleIds` names those ids so app.js can reload
+// the page, as it does when the core's own codeVersion moves.
+//
 // `styles` is the manifest's stylesheet (server/extensions/<id>/public/*.css,
 // served from the same /ext/<id>/ route as the module) and is loaded as a plain
 // <link>, not injected text: the browser dedupes, caches and — the point here —
@@ -42,7 +48,7 @@ export function createClientExtensionLoader(slots, {
   // exposes `api` at register() time (1.14.0).
   api = {},
 } = {}) {
-  const loaded = new Set();
+  const loaded = new Map(); // id -> assetKey of what was mounted
   const sheets = new Map(); // id -> the <link> element, so unload can remove it
 
   function addStyles(id, href) {
@@ -71,7 +77,7 @@ export function createClientExtensionLoader(slots, {
       // ever lists an extension that has one — and is skipped rather than
       // marked loaded, which would swallow the real entry on a later connect.
       if (typeof id !== 'string' || !id || (!mod && !css) || loaded.has(id)) continue;
-      loaded.add(id);
+      loaded.set(id, assetKey(entry));
       // Before the import, so a module's first render already has its rules —
       // a stylesheet that lands after mount is a visible flash of unstyled UI.
       addStyles(id, css);
@@ -100,5 +106,26 @@ export function createClientExtensionLoader(slots, {
     return true;
   }
 
-  return { load, unload, isLoaded: (id) => loaded.has(id), loadedIds: () => [...loaded] };
+  return {
+    load,
+    unload,
+    staleIds: (list) => staleExtensionIds(loaded, list),
+    isLoaded: (id) => loaded.has(id),
+    loadedIds: () => [...loaded.keys()],
+  };
+}
+
+// What identifies the code an entry would mount: its asset URLs, which carry an
+// installed extension's pinned commit as `?v=`.
+const assetKey = (entry) => `${entry?.client || ''}|${entry?.styles || ''}`;
+
+// The ids in `list` already mounted (`loaded`: id -> assetKey) from different
+// asset URLs than the ones now announced.
+function staleExtensionIds(loaded, list) {
+  const out = [];
+  for (const entry of Array.isArray(list) ? list : []) {
+    const id = entry?.id;
+    if (loaded.has(id) && loaded.get(id) !== assetKey(entry)) out.push(id);
+  }
+  return out;
 }

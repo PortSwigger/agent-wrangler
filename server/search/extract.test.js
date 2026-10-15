@@ -54,6 +54,13 @@ test('injected turns are skipped', () => {
   assert.equal(codexEnv.record, undefined);
 });
 
+test('an api-request-blob is skipped: it repeats real turns plus injected reminders', () => {
+  const blob = { type: 'api-request-blob', sessionId: 's', message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>memory</system-reminder>' }, { type: 'text', text: 'hello' }] } };
+  assert.equal(extractLine(claude(blob), 'claude')?.record, undefined);
+  const { type, ...rest } = blob;
+  assert.equal(extractLine(JSON.stringify({ ...rest, type }), 'claude').record, undefined);
+});
+
 test('a pasted_content wrapper is stripped before indexing, so a search snippet cannot surface it', () => {
   const user = extractLine(claude({
     type: 'user',
