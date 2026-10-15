@@ -302,6 +302,28 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       })()`), 'the minimised-task tray must sit below the stacked tasks');
     }
 
+    await evaluateChecked(`(() => {
+      const style = document.createElement('style');
+      style.id = 'tray-scroll-probe';
+      style.textContent = '.task-cell .task-body { min-height: 1200px; }';
+      document.head.append(style);
+      const grid = document.getElementById('grid');
+      grid.scrollTop = grid.scrollHeight;
+    })()`);
+    const restoredId = await evaluateChecked(`(() => {
+      const pill = document.querySelector('.switcher-pill');
+      const id = pill.dataset.taskid;
+      pill.click();
+      return id;
+    })()`);
+    assert.ok(await waitFor(() => evaluate(`(() => {
+      const grid = document.getElementById('grid').getBoundingClientRect();
+      const cell = document.querySelector('#grid .task-cell[data-taskid="${restoredId}"]');
+      const r = cell?.getBoundingClientRect();
+      return !!r && r.bottom > grid.top && r.top < grid.bottom;
+    })()`)), 'a task restored from the tray must be scrolled into view');
+    await evaluateChecked(`document.getElementById('tray-scroll-probe').remove()`);
+
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
     const dragTask = async (sourceId, targetId, after) => {
       const result = await evaluateChecked(`(() => {

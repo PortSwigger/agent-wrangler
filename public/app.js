@@ -267,6 +267,11 @@ function landOnCard(sessionId, { diff, onClose }, select) {
 const boardOpen = createBoardOpen();
 onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
 
+function scrollTaskIntoView(taskId) {
+  const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
+  document.querySelector(sel)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
 // Show a task's tile: the grid, the tile out of the tray if it was minimised,
 // scrolled into view with the restore pulse. A task that is not on the live
 // board (archived, deleted) toasts instead.
@@ -282,8 +287,7 @@ function openTaskInBoard(taskId) {
   const reveal = () => {
     if (currentView !== 'grid' || maximized || gridHidden()) return;
     flashRestoredTask(taskId);
-    const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
-    document.querySelector(sel)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    scrollTaskIntoView(taskId);
   };
   if (gridHidden()) setTimeout(reveal, 300); else reveal();
   return true;
@@ -1648,7 +1652,11 @@ function wireTray(el) {
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
   el.querySelectorAll('.switcher-pill').forEach((b) =>
-    b.addEventListener('click', (e) => e.shiftKey ? focusOnly(b.dataset.taskid) : unminimise(b.dataset.taskid)));
+    b.addEventListener('click', (e) => {
+      if (e.shiftKey) return focusOnly(b.dataset.taskid);
+      unminimise(b.dataset.taskid);
+      scrollTaskIntoView(b.dataset.taskid);
+    }));
   const restore = el.querySelector('.tray-restore-all');
   if (restore) restore.addEventListener('click', restoreAll);
 }
