@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  listedAsleep,
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
   SNOOZE_STRIDE_PX, SNOOZE_DIVIDER_PX,
@@ -122,4 +123,11 @@ test('tileWeight: a collapsed snoozed block keeps only its divider', () => {
   const stride = 80;
   const expected = (2 * stride + SNOOZE_DIVIDER_PX) / stride;
   assert.equal(tileWeight({ activeCount: 2, snoozedCount: 3, cardStride: stride, snoozedCollapsed: true }), expected);
+});
+
+test('listedAsleep: lists a snoozed parent but not its snoozed descendants', () => {
+  const phaseOf = (s) => (s.snooze ? 'asleep' : null);
+  const asleep = (id, parentSession) => ({ sessionId: id, parentSession, snooze: { until: 1 } });
+  const sessions = [asleep('P'), asleep('K1', 'P'), asleep('K2', 'K1'), asleep('Z'), { sessionId: 'A', parentSession: 'P' }];
+  assert.deepEqual(listedAsleep(sessions, phaseOf).map((s) => s.sessionId), ['P', 'Z']);
 });

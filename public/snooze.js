@@ -19,6 +19,14 @@ export function snoozePhase(snooze, now) {
   return now >= snooze.until ? 'awake' : 'asleep';
 }
 
+// Asleep sessions that get a row in the snoozed list: a snoozed child rides
+// along under its snoozed parent, so only the parent is listed.
+export function listedAsleep(sessions, phaseOf) {
+  const asleep = sessions.filter((s) => phaseOf(s) === 'asleep');
+  const ids = new Set(asleep.map((s) => s.sessionId));
+  return asleep.filter((s) => !(s.parentSession && ids.has(s.parentSession)));
+}
+
 // Resolve a preset to an absolute `until` (epoch ms), or null for an unknown
 // choice. Presets: '1h' | '4h' | 'tomorrow' | 'next-week'.
 export function resolveUntil(choice, now) {

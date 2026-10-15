@@ -774,3 +774,17 @@ test('tileHtml: a drag placeholder preserves the tall task height', () => {
   const html = tileHtml({ kind: 'placeholder', col: 0, rowStart: 1, span: 1, placeholderHeight: 617 }, ctx());
   assert.match(html, /height:617px/);
 });
+
+test('tileHtml: a snoozed child is not listed under the snoozed divider with its snoozed parent', () => {
+  const tile = {
+    kind: 'task', col: 0, rowStart: 0, span: 1,
+    sessions: [
+      sess({ sessionId: 'p', snooze: { until: 1 } }),
+      sess({ sessionId: 'k', parentSession: 'p', snooze: { until: 1 } }),
+    ],
+    task: { id: 'T1', name: 'T', links: [] },
+  };
+  const html = tileHtml(tile, ctx());
+  assert.equal((html.match(/class="snoozed-row/g) || []).length, 1);
+  assert.match(html, /snoozed 1</);
+});

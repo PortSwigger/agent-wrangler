@@ -13,7 +13,7 @@ import {
 import {
   esc, timeAgo, throbDelayStyle, locationLabel, isWorktree, branchBadge, safeHttpUrl, displayStatus,
 } from './util.js';
-import { wakeLabel } from './snooze.js';
+import { wakeLabel, listedAsleep } from './snooze.js';
 import { isWorkflowRun, sessionGroups } from './workflow.js';
 import { formatAutoCompactTokens } from './auto-compact-presets.js';
 
@@ -647,7 +647,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   }
   const moveClass = tile.moveTarget ? ` task-move-target task-move-${tile.moveAfter ? 'after' : 'before'}` : '';
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
-  const asleep = tile.sessions.filter((s) => ctx.phaseOf(s) === 'asleep');
+  const asleep = listedAsleep(tile.sessions, ctx.phaseOf);
   const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
   const snoozedCollapsed = ctx.collapsedSnoozed.has(tileKey);
   const snoozePill = `<button class="snooze-label snooze-toggle" data-tile="${esc(tileKey)}" title="${snoozedCollapsed ? 'Show snoozed' : 'Hide snoozed'}">snoozed ${asleep.length}<span class="snooze-toggle-icon">${snoozedCollapsed ? PLUS_ICON : MINUS_ICON}</span></button>`;
