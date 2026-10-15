@@ -295,6 +295,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       await action('Minimise');
       assert.ok(await evaluateChecked(`(() => {
         const grid = document.getElementById('grid');
+        grid.scrollTop = grid.scrollHeight;
         const cells = [...grid.querySelectorAll('.task-cell')];
         const last = cells.at(-1).getBoundingClientRect();
         const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();

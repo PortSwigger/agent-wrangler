@@ -1540,13 +1540,13 @@ function renderGrid() {
   el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   if (singleColumn) {
     el.classList.add('scrolling');
-    el.style.gridTemplateRows = '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, max-content) minmax(0, 1fr) max(0px, calc(var(--tray-h, 0px) - 12px))` : '';
     el.style.gridAutoRows = 'max-content';
   } else if (scroll) {
     // Past 3×3: lock cell height to the 3-row size and let the board scroll.
     el.classList.add('scrolling');
     const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
-    el.style.gridTemplateRows = '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${cellH}px) minmax(0, 1fr) max(0px, calc(var(--tray-h, 0px) - 12px))` : '';
     el.style.gridAutoRows = `${cellH}px`;
   } else {
     el.classList.remove('scrolling');
@@ -1567,7 +1567,9 @@ function renderGrid() {
   // scrolling layout there's no explicit track for it, so place it just past the
   // last tile row; the implicit gridAutoRows track sizes it (capped by CSS).
   const tray = el.querySelector(':scope > .focus-switcher');
-  if (tray) tray.style.gridRow = scroll ? `${rows + 1}` : '';
+  const trayPinned = !!tray && el.classList.contains('scrolling');
+  if (tray) tray.style.gridRow = trayPinned ? '1 / -1' : '';
+  el.style.setProperty('--tray-h', trayPinned ? `${tray.offsetHeight}px` : '0px');
   wireGridEvents(el);
   wireTray(el);
   restoreScrollState(el, scrollState);
