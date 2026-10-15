@@ -28,6 +28,7 @@ const SYNTHETIC_PREFIXES = [
   '<environment_context>', '<user_instructions>', '<environment_details>',
   '<command-name>', '<command-message>', '<command-args>',
   '<local-command-stdout>', '<local-command-stderr>', '<local-command-caveat>',
+  '<bash-stdout>', '<bash-stderr>',
   // Belt-and-suspenders with the queued_command commandMode check below: THAT
   // check only guards the attachment on its way in, but a notification that
   // gets absorbed mid-turn and then still surfaces as its own genuine
@@ -37,6 +38,17 @@ const SYNTHETIC_PREFIXES = [
   // this whole prefix list exists to keep off screen.
   '<task-notification>',
 ];
+// A `!cmd` typed at the prompt is recorded as the command wrapped in a tag, not
+// as the text the human typed. Rebuilding `!cmd` is what lets the chat view's
+// local echo of the send find its transcript line and retire.
+const CLAUDE_BASH_INPUT_RE = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/;
+const CODEX_SHELL_COMMAND_RE = /^\s*<user_shell_command>\s*<command>\n?([\s\S]*?)\n?<\/command>\s*<result>/;
+function shellCommandText(text, re) {
+  const m = re.exec(text);
+  const cmd = m?.[1].trim();
+  return cmd ? `!${cmd}` : null;
+}
+
 function isSynthetic(text) {
   const head = text.slice(0, 40).trimStart();
   return SYNTHETIC_PREFIXES.some((p) => head.startsWith(p));
@@ -364,7 +376,8 @@ function pushClaude(entry, state) {
         if (notice) out.push({ ...notice, ts });
       }
     }
-    const { text, rawText, images } = userTextAndImages(msg.content);
+    const { text: plainText, rawText, images } = userTextAndImages(msg.content);
+    const text = shellCommandText(rawText, CLAUDE_BASH_INPUT_RE) ?? plainText;
     if (entry.isCompactSummary) {
       if (text) out.push({ kind: 'context', label: 'Conversation compacted', text, ts });
       state.prevTs = ts;
@@ -373,7 +386,7 @@ function pushClaude(entry, state) {
     // `images.length` is part of the emit test, not just a decoration: an
     // image-only paste can leave no prose at all, and gating on text alone would
     // drop that turn from the stream entirely.
-    if ((text || images.length) && !isSynthetic(rawText)) {
+    if ((text || images.length) && (text !== plainText || !isSynthetic(rawText))) {
       // Already drawn when it was queued. Consumed rather than merely checked, so
       // the same text queued twice still shows twice — and the emit above always
       // precedes this line, since a prompt is enqueued before it can run.
@@ -509,6 +522,14 @@ function pushCodex(entry, state) {
       const internal = CODEX_INTERNAL_CONTEXT_RE.exec(text);
       if (internal) {
         out.push({ kind: 'context', label: `Codex ${internal[1]}`, text, ts });
+        state.prevTs = ts;
+        return out;
+      }
+    }
+    if (role === 'user') {
+      const bang = shellCommandText(text, CODEX_SHELL_COMMAND_RE);
+      if (bang) {
+        out.push({ kind: 'user', text: bang, ts });
         state.prevTs = ts;
         return out;
       }

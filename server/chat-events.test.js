@@ -1004,3 +1004,33 @@ test('claude: a queued slash command stays in the pane, like a typed one', () =>
   const line = claudeLines(queued('<command-name>/compact</command-name>'));
   assert.deepEqual(scanChatText(line, 'claude').events, []);
 });
+
+test('claude: a !command is rebuilt as the typed text and its output is dropped', () => {
+  const text = claudeLines(
+    { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: '<bash-input>echo hi</bash-input>' } },
+    { type: 'user', timestamp: '2026-08-14T10:00:01.000Z', message: { role: 'user', content: '<bash-stdout>hi</bash-stdout><bash-stderr></bash-stderr>' } },
+  );
+  assert.deepEqual(scanChatText(text, 'claude').events.map((e) => [e.kind, e.text]), [['user', '!echo hi']]);
+});
+
+test('codex: a !command is rebuilt as the typed text', () => {
+  const text = codexLines(
+    { type: 'response_item', timestamp: '2026-08-14T10:00:01.000Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<user_shell_command>\n<command>\necho hi\n</command>\n<result>\nExit code: 0\nOutput:\nhi\n\n</result>\n</user_shell_command>' }] } },
+  );
+  assert.deepEqual(scanChatText(text, 'codex').events.map((e) => [e.kind, e.text]), [['user', '!echo hi']]);
+});
+
+test('claude: a queued !command is not drawn twice when its turn arrives', () => {
+  const text = claudeLines(
+    { type: 'attachment', timestamp: '2026-08-14T10:00:00.000Z', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '!echo hi' } },
+    { type: 'user', timestamp: '2026-08-14T10:00:05.000Z', message: { role: 'user', content: '<bash-input>echo hi</bash-input>' } },
+  );
+  assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.text), ['!echo hi']);
+});
+
+test('claude: a !command containing its own closing tag is rebuilt whole', () => {
+  const text = claudeLines(
+    { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: "<bash-input>printf '</bash-input>'</bash-input>" } },
+  );
+  assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.text), ["!printf '</bash-input>'"]);
+});
