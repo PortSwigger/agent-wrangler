@@ -1242,3 +1242,71 @@ test('a terminal-origin prompt already shown cannot acknowledge a later identica
   reply();
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
 });
+
+function stubLocalStorage() {
+  const store = new Map();
+  globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+  return store;
+}
+
+test('queued prompts survive a reload and are dropped once the transcript records them', async () => {
+  stubLocalStorage();
+  try {
+    const first = await mountView();
+    first.view.mount('sess-1');
+    first.view.setStatus('idle');
+    first.input.value = 'still waiting';
+    send(first.input);
+    first.view.onMessageResult({ requestId: first.sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+
+    const reloaded = await mountView();
+    reloaded.view.mount('sess-1');
+    const [bubble] = echoNodes(reloaded.byId);
+    assert.equal(bubble.children.map((c) => c.textContent ?? c.data ?? c.nodeValue).join(''), 'still waiting');
+    assert.equal(bubble.dataset.pending, 'queued');
+
+    const chat = reloaded.sent.find((m) => m.type === 'chat');
+    reloaded.view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 10, events: [{ kind: 'user', text: 'still waiting' }] });
+    assert.equal(echoNodes(reloaded.byId)[0].dataset.pending, undefined);
+
+    const afterRecorded = await mountView();
+    afterRecorded.view.mount('sess-1');
+    assert.equal(echoNodes(afterRecorded.byId).length, 0);
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test('a failed delivery is not persisted', async () => {
+  const store = stubLocalStorage();
+  try {
+    const { view, input, sent } = await mountView();
+    view.mount('sess-1');
+    view.setStatus('idle');
+    input.value = 'nope';
+    send(input);
+    view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: false, error: 'x' });
+    const { parseStoredEchoes } = await import('./chat-view.js');
+    assert.equal(parseStoredEchoes(store.get('aw.chatEchoes')).size, 0);
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test('parseStoredEchoes drops expired and malformed entries and marks the rest queued', async () => {
+  const { parseStoredEchoes, serializeEchoes, ECHO_MAX_AGE_MS } = await import('./chat-view.js');
+  const now = 10_000_000;
+  const raw = JSON.stringify([
+    ['a', [{ requestId: 'r1', text: 'fresh', images: ['x.png'], sentAt: now - 1000 }, { text: 'old', sentAt: now - ECHO_MAX_AGE_MS - 1 }, { text: 5, sentAt: now }]],
+    ['b', [{ text: 'old', sentAt: 0 }]],
+    'junk',
+  ]);
+  const out = parseStoredEchoes(raw, now);
+  assert.deepEqual([...out.keys()], ['a']);
+  assert.equal(out.get('a').length, 1);
+  assert.equal(out.get('a')[0].state, 'queued');
+  assert.equal(out.get('a')[0].sessionId, 'a');
+  assert.equal(parseStoredEchoes('not json', now).size, 0);
+  assert.equal(parseStoredEchoes('{}', now).size, 0);
+  assert.equal(parseStoredEchoes(serializeEchoes(out), now).get('a')[0].text, 'fresh');
+});

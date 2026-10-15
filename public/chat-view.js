@@ -60,6 +60,39 @@ export function echoMatchesEvent(echo, event) {
   return false;
 }
 
+export const ECHOES_KEY = 'aw.chatEchoes';
+export const ECHO_MAX_AGE_MS = 60 * 60 * 1000;
+
+export function parseStoredEchoes(raw, now = Date.now()) {
+  const out = new Map();
+  let parsed;
+  try { parsed = JSON.parse(raw || '[]'); } catch { return out; }
+  if (!Array.isArray(parsed)) return out;
+  for (const entry of parsed) {
+    if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !Array.isArray(entry[1])) continue;
+    const list = entry[1]
+      .filter((e) => e && typeof e.text === 'string' && Number.isFinite(e.sentAt) && e.sentAt >= now - ECHO_MAX_AGE_MS)
+      .map((e) => ({
+        sessionId: entry[0],
+        requestId: e.requestId,
+        text: e.text,
+        images: Array.isArray(e.images) ? e.images.filter((n) => typeof n === 'string') : [],
+        sentAt: e.sentAt,
+        state: 'queued',
+        node: null,
+      }));
+    if (list.length) out.set(entry[0], list);
+  }
+  return out;
+}
+
+export function serializeEchoes(store) {
+  return JSON.stringify([...store].map(([sessionId, list]) => [
+    sessionId,
+    list.map((e) => ({ requestId: e.requestId, text: e.text, images: e.images, sentAt: e.sentAt })),
+  ]));
+}
+
 export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
@@ -341,8 +374,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // prompt, which then replaces it. Held by session rather than by the DOM so
   // leaving the view (to the terminal, or another card) and coming back redraws
   // them; `node` is null whenever the stream they were drawn in has been cleared.
-  const echoStore = new Map();
-  const ECHO_MAX_AGE_MS = 60 * 60 * 1000;
+  // Mirrored to localStorage so a reload does not lose prompts the agent has not
+  // yet recorded (e.g. while it auto-compacts). A prompt whose send was still in
+  // flight at reload has no delivery verdict left to await, so it comes back as
+  // queued.
+  const echoStore = (() => {
+    try { return parseStoredEchoes(localStorage.getItem(ECHOES_KEY)); } catch { return new Map(); }
+  })();
+  function persistEchoes() {
+    try { localStorage.setItem(ECHOES_KEY, serializeEchoes(echoStore)); } catch {}
+  }
   const echoList = () => echoStore.get(sessionId) || [];
 
   function detachEchoNodes() {
@@ -359,6 +400,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const list = (echoStore.get(echo.sessionId) || []).filter((e) => e !== echo);
     if (list.length) echoStore.set(echo.sessionId, list);
     else echoStore.delete(echo.sessionId);
+    persistEchoes();
     if (echo.sessionId === sessionId) pinTail();
   }
 
@@ -675,6 +717,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const echo = { sessionId: pending.sessionId, requestId: pending.requestId, text, images: sentAttachments.map((a) => a.name), sentAt: Date.now(), state: '1', node: null };
     pending.echo = echo;
     echoStore.set(echo.sessionId, [...echoList(), echo]);
+    persistEchoes();
     pinTail();
     stream.scrollTop = stream.scrollHeight;
     updateJumpVisibility();
