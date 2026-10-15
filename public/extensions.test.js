@@ -174,3 +174,26 @@ test('the loader hands the registrar the base api it was given, as registrar.api
   assert.equal(await loader.load([{ id: 'a', client: '/ext/a/index.js' }]), true);
   assert.deepEqual(got, { k: 'v' });
 });
+
+test('a mounted id re-announced with a new ?v= is stale; an unchanged or unmounted one is not', async () => {
+  const { loader } = harness({ '/ext/a/index.js?v=old': good('a'), '/ext/b/index.js': good('b') });
+  await loader.load([{ id: 'a', client: '/ext/a/index.js?v=old' }, { id: 'b', client: '/ext/b/index.js' }]);
+  assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js?v=old' }, { id: 'b', client: '/ext/b/index.js' }]), []);
+  assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js?v=new' }, { id: 'c', client: '/ext/c/index.js' }]), ['a']);
+  // Unloading (the settings toggle) forgets it, so a re-enable at the new URL just loads.
+  loader.unload('a');
+  assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js?v=new' }]), []);
+});
+
+test('a changed stylesheet URL alone makes an id stale', async () => {
+  const { loader } = harness({ '/ext/a/index.js': good('a') });
+  await loader.load([{ id: 'a', client: '/ext/a/index.js', styles: '/ext/a/a.css?v=old' }]);
+  assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js', styles: '/ext/a/a.css?v=new' }]), ['a']);
+  assert.deepEqual(loader.staleIds(null), []);
+});
+
+test('a failed load leaves nothing to call stale', async () => {
+  const { loader } = harness({});
+  await loader.load([{ id: 'a', client: '/ext/a/index.js?v=old' }]);
+  assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js?v=new' }]), []);
+});
