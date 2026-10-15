@@ -710,6 +710,220 @@ test('claude: a parallel tool fan-out is NOT a rewind — the newest line and it
   assert.deepEqual(events.filter((e) => e.kind === 'tool').map((e) => e.output), ['out toolu_a', 'out toolu_b']);
 });
 
+test('claude: an interrupt marker sibling does not prune the typed prompt queued during a tool call', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'look at the screenshots'),
+    at(4, 3, { type: 'attachment', attachment: { type: 'image' } }),
+    result(5, 2, 'toolu_interrupt'),
+    say(6, 5, '[Request interrupted by user for tool use]'),
+    said(7, 6, 'continuing after the interruption'),
+    say(8, 7, 'the next real prompt'),
+    said(9, 8, 'the next reply'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'look at the screenshots', 'Bash',
+    '[Request interrupted by user for tool use]', 'continuing after the interruption',
+    'the next real prompt', 'the next reply',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), false);
+});
+
+test('claude: multiple prompts queued before an interrupt stay live without rewinding', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'first queued prompt'),
+    say(4, 2, 'second queued prompt'),
+    result(5, 2, 'toolu_interrupt'),
+    say(6, 5, '[Request interrupted by user for tool use]'),
+    said(7, 6, 'continuing after the interruption'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'first queued prompt', 'second queued prompt', 'Bash',
+    '[Request interrupted by user for tool use]', 'continuing after the interruption',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) {
+    scanner.pushTagged(JSON.stringify(line));
+    assert.equal(scanner.takeRewound(), false);
+  }
+});
+
+test('claude: an interrupt marker on the tool result line does not rewind', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'queued prompt'),
+    at(4, 2, {
+      type: 'user',
+      timestamp: '2026-08-27T09:00:03.000Z',
+      message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'toolu_interrupt', content: 'out toolu_interrupt' },
+        { type: 'text', text: '[Request interrupted by user for tool use]' },
+      ] },
+    }),
+    said(5, 4, 'continuing after the interruption'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'queued prompt', 'Bash', '[Request interrupted by user for tool use]',
+    'continuing after the interruption',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) {
+    scanner.pushTagged(JSON.stringify(line));
+    assert.equal(scanner.takeRewound(), false);
+  }
+});
+
+test('claude: multiple prompts queued before a tool result stay live', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'first queued prompt'),
+    say(4, 2, 'second queued prompt'),
+    result(5, 2, 'toolu_interrupt'),
+    said(6, 5, 'tool finished'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'first queued prompt', 'second queued prompt', 'Bash', 'tool finished',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) {
+    scanner.pushTagged(JSON.stringify(line));
+    assert.equal(scanner.takeRewound(), false);
+  }
+});
+
+test('claude: multiple prompts below a running tool stay live before its result', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_running'),
+    say(3, 2, 'first queued prompt'),
+    say(4, 2, 'second queued prompt'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'first queued prompt', 'second queued prompt',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) {
+    scanner.pushTagged(JSON.stringify(line));
+    assert.equal(scanner.takeRewound(), false);
+  }
+});
+
+test('claude: an edit below a tool use without a result is still a rewind', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_orphan'),
+    say(3, 2, 'first prompt'),
+    said(4, 3, 'first reply'),
+    say(5, 2, 'edited prompt'),
+    said(6, 5, 'edited reply'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'edited prompt', 'edited reply',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), true);
+});
+
+test('claude: a tool-only reply below an orphaned tool use still marks an edit as a rewind', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_orphan'),
+    say(3, 2, 'first prompt'),
+    uses(4, 3, 'toolu_nested'),
+    result(5, 4, 'toolu_nested'),
+    say(6, 2, 'edited prompt'),
+    said(7, 6, 'edited reply'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'edited prompt', 'edited reply',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), true);
+});
+
+test('claude: rewinding to a queued prompt prunes both interrupted branches', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'look at the screenshots'),
+    at(4, 3, { type: 'attachment', attachment: { type: 'image' } }),
+    result(5, 2, 'toolu_interrupt'),
+    say(6, 5, '[Request interrupted by user for tool use]'),
+    said(7, 6, 'continuing after the interruption'),
+    say(8, 7, 'the next real prompt'),
+    said(9, 8, 'the next reply'),
+    say(10, 2, 'look at the screenshots again'),
+    said(11, 10, 'reply to the edited prompt'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'look at the screenshots again', 'reply to the edited prompt',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), true);
+});
+
+test('claude: rewinding after an interruption keeps the queued prompt', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'look at the screenshots'),
+    at(4, 3, { type: 'attachment', attachment: { type: 'image' } }),
+    result(5, 2, 'toolu_interrupt'),
+    say(6, 5, '[Request interrupted by user for tool use]'),
+    said(7, 6, 'continuing after the interruption'),
+    say(8, 7, 'the next real prompt'),
+    said(9, 8, 'the next reply'),
+    say(10, 7, 'the edited next prompt'),
+    said(11, 10, 'reply to the edited next prompt'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'look at the screenshots', 'Bash', '[Request interrupted by user for tool use]',
+    'continuing after the interruption', 'the edited next prompt', 'reply to the edited next prompt',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), true);
+});
+
+test('claude: editing a queued prompt without an interrupt marker reports a rewind', () => {
+  const lines = [
+    say(1, null, 'start'),
+    uses(2, 1, 'toolu_interrupt'),
+    say(3, 2, 'look at the screenshots'),
+    at(4, 3, { type: 'attachment', attachment: { type: 'image' } }),
+    result(5, 2, 'toolu_interrupt'),
+    said(6, 5, 'tool finished'),
+    say(7, 2, 'look at the screenshots again'),
+    said(8, 7, 'reply to the edited prompt'),
+  ];
+  const { events } = scanChatText(claudeLines(...lines), 'claude');
+  assert.deepEqual(events.map((e) => e.text ?? e.name), [
+    'start', 'Bash', 'tool finished', 'look at the screenshots again', 'reply to the edited prompt',
+  ]);
+  const scanner = createChatScanner('claude');
+  for (const line of lines) scanner.pushTagged(JSON.stringify(line));
+  assert.equal(scanner.takeRewound(), true);
+});
+
 test('claude: a compact_boundary root continues the conversation instead of replacing it', () => {
   // /compact starts a second root, same as a rewind-to-the-very-start does. Letting
   // it compete hid 2104 pre-compact messages of a real session.

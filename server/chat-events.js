@@ -613,6 +613,8 @@ function pushCodex(entry, state) {
 // is left alone. At such a point every prompt-bearing child but the LAST is
 // dead, along with its whole subtree. Against the same corpus this prunes 1.7%
 // of message lines and never drops a line the spine would have kept.
+// A prompt typed below an unfinished tool use is queued input when it precedes
+// a prompt on the tool-result branch, so it stays until a later sibling proves a rewind.
 //
 // `parentUuid: null` lines are grouped under one synthetic parent and compete
 // the same way: rewinding to before the very first prompt starts a whole second
@@ -655,18 +657,36 @@ export function lineUuids(line) {
   return { uuid, parent: afterKey(line, '"parentUuid":"') || ROOT };
 }
 
+function hasClaudeBlock(entry, type) {
+  const content = entry.message?.content;
+  return Array.isArray(content) && content.some((block) => block?.type === type);
+}
+
 function track(line, state) {
   const ids = lineUuids(line);
   if (!ids || state.overflow) return ids;
   state.parents.set(ids.uuid, ids.parent);
   if (line.includes(COMPACT_MARKER)) state.walls.add(ids.uuid);
+  const queuedAncestor = state.walls.has(ids.parent) ? null : state.queuedAncestor.get(ids.parent);
+  if (queuedAncestor) state.queuedAncestor.set(ids.uuid, queuedAncestor);
   if (state.parents.size > MAX_TRACKED_LINES) {
     state.overflow = true;
     state.parents.clear();
     state.walls.clear();
     state.promptChild.clear();
+    state.queuedPromptChildren.clear();
+    state.answeredQueuedPrompts.clear();
+    state.queuedAncestor.clear();
+    state.toolUses.clear();
+    state.toolResults.clear();
+    state.toolResultParents.clear();
   }
   return ids;
+}
+
+function markQueuedPromptAnswered(uuid, state) {
+  const prompt = state.queuedAncestor.get(uuid);
+  if (prompt) state.answeredQueuedPrompts.add(prompt);
 }
 
 // Called for a line that emitted a human prompt. Walks up recording which child
@@ -679,9 +699,22 @@ function markPrompt(uuid, state) {
   let node = state.parents.get(uuid);
   while (node) {
     const seen = state.promptChild.get(node);
-    if (seen === child) return;
-    if (seen !== undefined) state.rewound = true;
-    state.promptChild.set(node, child);
+    const directPrompt = child === uuid && state.toolUses.has(node) && !state.toolResults.has(uuid);
+    const queued = state.queuedPromptChildren.get(node);
+    const hasAnsweredQueued = queued && [...queued].some((id) => state.answeredQueuedPrompts.has(id));
+    if (directPrompt && !state.toolResultParents.has(node) && !hasAnsweredQueued) {
+      if (queued) {
+        queued.add(child);
+      } else {
+        state.queuedPromptChildren.set(node, new Set([child]));
+      }
+      state.queuedAncestor.set(child, child);
+    } else {
+      if (directPrompt && queued?.size) state.rewound = true;
+      if (seen === child) return;
+      if (seen !== undefined) state.rewound = true;
+      state.promptChild.set(node, child);
+    }
     if (state.walls.has(node)) return;
     child = node;
     node = state.parents.get(node);
@@ -696,7 +729,7 @@ export function createChatScanner(agent = 'claude') {
     agent, model: null, pending: new Map(),
     // Branch state, Claude only: a Codex rollout is a flat list with no parent
     // links and no rewind representation, so there is nothing to prune.
-    parents: new Map(), walls: new Set(), promptChild: new Map(),
+    parents: new Map(), walls: new Set(), promptChild: new Map(), queuedPromptChildren: new Map(), answeredQueuedPrompts: new Set(), queuedAncestor: new Map(), toolUses: new Set(), toolResults: new Set(), toolResultParents: new Set(),
     overflow: false, rewound: false,
     // Queued prompts already emitted, counted rather than a Set: the same text
     // really is queued twice in one conversation (101 extra copies across 257
@@ -717,6 +750,14 @@ export function createChatScanner(agent = 'claude') {
       return uuid ? { uuid, events: [] } : NO_LINE; // a half-written trailing line is normal for a live session
     }
     const events = agent === 'codex' ? pushCodex(entry, state) : pushClaude(entry, state);
+    if (uuid && agent === 'claude' && !state.overflow) {
+      if (hasClaudeBlock(entry, 'tool_use')) state.toolUses.add(uuid);
+      if (hasClaudeBlock(entry, 'tool_result')) {
+        state.toolResults.add(uuid);
+        state.toolResultParents.add(ids.parent);
+      }
+      if (entry.message?.role === 'assistant') markQueuedPromptAnswered(uuid, state);
+    }
     // "This line is a human prompt" is read off the emitted event rather than
     // re-derived from the JSON: `kind: 'user'` already encodes isMeta, the
     // synthetic slash-command wrappers and tool_result-only content, and a second
@@ -767,16 +808,29 @@ export function createChatScanner(agent = 'claude') {
       // is always written to the transcript ahead of its children — so one pass
       // is enough to lift "has a prompt below it" up the tree.
       const order = [...state.parents.keys()];
+      const position = new Map(order.map((uuid, index) => [uuid, index]));
       const bearing = new Set();
       for (let i = order.length - 1; i >= 0; i -= 1) {
         const uuid = order[i];
-        if (prompts.has(uuid) || (kids.get(uuid) || []).some((c) => bearing.has(c))) bearing.add(uuid);
+        if (prompts.has(uuid) || (kids.get(uuid) || []).some((child) => bearing.has(child))) bearing.add(uuid);
       }
       const deadRoots = new Set();
-      for (const list of kids.values()) {
+      for (const [parent, list] of kids) {
         if (list.length < 2) continue;
-        const rivals = list.filter((c) => bearing.has(c) && !state.walls.has(c));
-        for (let i = 0; i < rivals.length - 1; i += 1) deadRoots.add(rivals[i]);
+        const firstResult = state.toolUses.has(parent)
+          ? Math.min(...list.filter((c) => state.toolResults.has(c)).map((c) => position.get(c)))
+          : Infinity;
+        const hasResult = firstResult !== Infinity;
+        const hasAnsweredQueued = list.some((c) => state.answeredQueuedPrompts.has(c));
+        const queued = new Set(state.toolUses.has(parent)
+          ? list.filter((c) => prompts.has(c) && (hasResult ? position.get(c) < firstResult : !hasAnsweredQueued))
+          : []);
+        const rivals = list.filter((c) => bearing.has(c) && !state.walls.has(c) && !queued.has(c));
+        const promptAfterResult = list.some((c) => prompts.has(c) && position.get(c) > firstResult);
+        if (rivals.length > 1 || (queued.size && promptAfterResult)) {
+          for (let i = 0; i < rivals.length - 1; i += 1) deadRoots.add(rivals[i]);
+          for (const child of queued) deadRoots.add(child);
+        }
       }
       if (!deadRoots.size) return tagged.flatMap((t) => t.events);
       const dead = new Set();
