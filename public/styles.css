@@ -1196,21 +1196,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   min-width: 0;
   padding: 8px 2px 2px;
 }
-/* In the scrolling board the tray stays pinned to the bottom edge instead of
-   scrolling away with the tiles. It spans every row (sticky is confined to a grid
-   item's own area) and a final row of its own height reserves its resting space. */
-#grid.scrolling:has(> .focus-switcher) { padding-bottom: 0; }
-#grid.scrolling > .focus-switcher {
-  position: sticky;
-  bottom: 0;
-  align-self: end;
-  z-index: 2;
-  margin: 0 -14px;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border);
-  background: var(--tile-bg);
-  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-}
+/* The scrolling board's tray sits in the last row, below a flexible spacer row, so a
+   short board still ends with it at the bottom. The spacer adds a second row gap;
+   the negative margin takes it back. */
+#grid.scrolling > .focus-switcher { margin-top: -12px; }
 /* Restore-all + one pill per minimised task, all wrapping and scrolling together.
    min-width:0 lets this box shrink so overflow scrolls inside it instead of pushing
    the strip past the board (the flex min-width trap that let pills run off-screen). */

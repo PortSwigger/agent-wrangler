@@ -1540,13 +1540,13 @@ function renderGrid() {
   el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   if (singleColumn) {
     el.classList.add('scrolling');
-    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, max-content) minmax(0, 1fr) max(0px, calc(var(--tray-h, 0px) - 12px))` : '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, max-content) minmax(0, 1fr) auto` : '';
     el.style.gridAutoRows = 'max-content';
   } else if (scroll) {
     // Past 3×3: lock cell height to the 3-row size and let the board scroll.
     el.classList.add('scrolling');
     const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
-    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${cellH}px) minmax(0, 1fr) max(0px, calc(var(--tray-h, 0px) - 12px))` : '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${cellH}px) minmax(0, 1fr) auto` : '';
     el.style.gridAutoRows = `${cellH}px`;
   } else {
     el.classList.remove('scrolling');
@@ -1564,12 +1564,10 @@ function renderGrid() {
   const ctx = cardCtx();
   el.innerHTML = placed.map((t) => tileHtml(t, ctx)).join('') + ghosts.map(ghostHtml).join('') + trayHtml(visible);
   // Pin the tray to its own row spanning every column (grid-column via CSS). In the
-  // scrolling layout there's no explicit track for it, so place it just past the
-  // last tile row; the implicit gridAutoRows track sizes it (capped by CSS).
+  // scrolling layout it takes the last explicit track, after the spacer row that
+  // keeps it at the bottom when the tiles don't fill the board.
   const tray = el.querySelector(':scope > .focus-switcher');
-  const trayPinned = !!tray && el.classList.contains('scrolling');
-  if (tray) tray.style.gridRow = trayPinned ? '1 / -1' : '';
-  el.style.setProperty('--tray-h', trayPinned ? `${tray.offsetHeight}px` : '0px');
+  if (tray) tray.style.gridRow = el.classList.contains('scrolling') ? `${rows + 2}` : '';
   wireGridEvents(el);
   wireTray(el);
   restoreScrollState(el, scrollState);
