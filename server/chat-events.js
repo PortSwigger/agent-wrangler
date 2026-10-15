@@ -8,6 +8,7 @@
 // Consequence: it unit-tests from a jsonl string with no server and no DOM.
 
 import { stripPastedContentWrapper } from './pasted-content.js';
+import { isRequestDump, isRequestDumpLine } from './claude-request-dump.js';
 
 // Tool input/output is capped because a single Read of a large file, or an
 // `npm test` dump, arrives as one tool_result. Without the cap one file read
@@ -289,6 +290,9 @@ export function mightCarryChat(line, agent) {
   // its own marker has to be in the gate or the recap never reaches the parser.
   // queued_command carries no `message` either — a prompt typed while the session
   // is mid-turn is recorded as an `attachment`, so neither role check can see it.
+  // A request dump carries `"role":"user"` but is never a turn (see
+  // claude-request-dump.js), so it is rejected before the role checks.
+  if (isRequestDumpLine(line)) return false;
   return line.includes('"role":"user"') || line.includes('"role":"assistant"')
     || line.includes('"away_summary"') || line.includes('"queued_command"');
 }
@@ -333,7 +337,7 @@ function pushClaude(entry, state) {
     return out;
   }
   const msg = entry.message;
-  if (!msg || typeof msg !== 'object' || entry.isMeta) return out;
+  if (!msg || typeof msg !== 'object' || entry.isMeta || isRequestDump(entry)) return out;
   const ts = tsOf(entry.timestamp);
   if (msg.role === 'user') {
     if (Array.isArray(msg.content)) {

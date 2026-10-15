@@ -1,5 +1,6 @@
 import { ROLE_USER, ROLE_ASSISTANT } from './records.js';
 import { stripPastedContentWrapper } from '../pasted-content.js';
+import { isRequestDump, isRequestDumpLine } from '../claude-request-dump.js';
 
 // One transcript line in → the conversation text worth searching, or null.
 //
@@ -23,6 +24,7 @@ import { stripPastedContentWrapper } from '../pasted-content.js';
 // than parsing it to find that out.
 export function mightCarryText(line, agent) {
   if (agent === 'codex') return line.includes('"type":"message"');
+  if (isRequestDumpLine(line)) return false;
   return line.includes('"role":"user"') || line.includes('"role":"assistant"');
 }
 
@@ -80,7 +82,7 @@ export function extractClaudeLine(entry) {
   if (typeof entry.gitBranch === 'string' && entry.gitBranch) meta.branch = entry.gitBranch;
 
   const msg = entry.message;
-  if (!msg || typeof msg !== 'object' || entry.isMeta) return { meta };
+  if (!msg || typeof msg !== 'object' || entry.isMeta || isRequestDump(entry)) return { meta };
   const role = msg.role === 'user' ? ROLE_USER : msg.role === 'assistant' ? ROLE_ASSISTANT : null;
   if (role === null) return { meta };
   const rawText = claudeText(msg.content).trim();

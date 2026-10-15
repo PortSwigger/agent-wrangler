@@ -38,6 +38,22 @@ test('claude: isMeta and synthetic user turns are dropped', () => {
   assert.deepEqual(scanChatText(text, 'claude').events, []);
 });
 
+test('claude: an api-request-blob is a copy of the request, not a turn, so its reminders never draw', () => {
+  const blob = { type: 'api-request-blob', sessionId: 's', hash: 'h', message: { role: 'user', content: [
+    { type: 'text', text: '<system-reminder>\nContents of MEMORY.md …\n</system-reminder>' },
+    { type: 'text', text: 'why two keys?' },
+  ] } };
+  const text = claudeLines(
+    { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: 'why two keys?' } },
+    blob,
+  );
+  assert.equal(mightCarryChat(JSON.stringify(blob), 'claude'), false);
+  assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.text), ['why two keys?']);
+  // The parsed-entry check catches it even when `type` is not the first key.
+  const { type, ...rest } = blob;
+  assert.deepEqual(scanChatText(JSON.stringify({ ...rest, type }), 'claude').events, []);
+});
+
 test('claude: a compact summary becomes a collapsed context event, not a user bubble', () => {
   const summary = 'This session is being continued from a previous conversation that ran out of context.';
   const { events } = scanChatText(claudeLines(
