@@ -3090,8 +3090,8 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    from the outline "Check all" beside it. */
 .ext-btn-dark { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 .ext-btn-dark:hover:not(:disabled) { border-color: var(--fg); opacity: 0.85; }
-.ext-btn-square { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; margin-right: 4px; }
-.ext-btn-square .icon { width: 13px; height: 13px; }
+.ext-btn.ext-btn-square { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; margin-right: 4px; }
+.ext-btn.ext-btn-square .icon { width: 13px; height: 13px; flex: 0 0 auto; }
 .ext-detail { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 14px 18px; }
 .ext-notices { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
 .ext-notices .ext-row-note, .ext-notices .ext-install-progress { margin-top: 0; }
