@@ -34,7 +34,7 @@ Each task also has:
 - **TODOs:** add, complete, reorder, and collapse task-level work items. TODOs are an optional builtin extension (`todos`, on by default); turning it off in Settings → Extensions removes the zone, tools, and skill without deleting stored TODOs.
 - **Task memory:** shared Markdown that humans and agents can update across sessions or repositories. It is the built-in `task-memory` extension (Settings > Extensions); turning it off removes the memory button, the `AW_TASK_MEMORY` variable, the extra directory grant and the skill, and keeps the notes on disk.
 - **Links:** Jira issues and pull requests shared by the task.
-- **Focus, minimise, and activity sort:** controls for a busy board.
+- **Focus, minimise, and activity sort:** controls for a busy board. Minimise is in both the header menu and the tile's right-click menu.
 - **Archive task:** removes the task and live sessions while preserving resumable history.
 
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or

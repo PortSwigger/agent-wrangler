@@ -2432,12 +2432,15 @@ export async function restoreTaskWithPrompt(taskId, name) {
 function openTaskMenu(cell, x, y) {
   const isNoTask = cell.dataset.entity === 'no-task';
   const taskId = isNoTask ? null : cell.dataset.taskid;
-  const extItems = extTaskMenuItems(taskId, isNoTask);
+  // Minimise is core here; an extension that still contributes its own (the old
+  // minimise-task extension) is dropped so the menu does not show two.
+  const extItems = extTaskMenuItems(taskId, isNoTask).filter((it) => it.label !== 'Minimise');
   const items = [
     { label: 'New session', icon: TERMINAL_ICON, run: () => openDispatch(taskId) },
     ...(!isNoTask ? [
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
+    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(isNoTask ? ADHOC_ID : taskId) },
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },

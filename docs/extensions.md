@@ -978,7 +978,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   guards cannot drift between the two. It feeds ONLY the tile's right-click menu
   (`app.js openTaskMenu`, between the task's own actions and Archive task) — NOT
   the header kebab (`openTaskActionsMenu`), which already carries core's
-  Minimise/Focus and would show an extension's duplicate beside it. The no-task
+  Minimise/Focus and would show an extension's duplicate beside it. The right-click
+  menu carries core's Minimise too, and drops any `task.action` item labelled
+  `Minimise` so the older `minimise-task` extension still loads without a duplicate. The no-task
   tile is included, as `adhoc: true` with the reserved `ADHOC_ID`, because it
   can be minimised too. **`api.minimiseTask(taskId)`** (1.11.0) is the action it
   exists for: base-api-only for `openSession`'s reason (the minimised set is
