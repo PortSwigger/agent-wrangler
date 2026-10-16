@@ -101,6 +101,14 @@ export function trustCodexLaunchCwd(cfg = readConfig()) {
   return cfg.trustCodexLaunchCwd !== false;
 }
 
+// Whether a Claude launch/resume/fork first marks the scratch-session dir
+// (~/.agent-wrangler/sessions, the parent of every blank-cwd launch) trusted in
+// ~/.claude.json, so Claude's "trust this folder?" dialog never appears there.
+// Default on; `trustClaudeLaunchCwd: false` restores the normal prompt.
+export function trustClaudeLaunchCwd(cfg = readConfig()) {
+  return cfg.trustClaudeLaunchCwd !== false;
+}
+
 // Whether a newly-nested CHILD session (parentSession set — a workflow worker or
 // any other nested child, never a merely-`spawnedBy` top-level session) starts
 // rendered as a full card (like a top-level session) instead of the default

@@ -14,8 +14,9 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd, childFullViewByDefault } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { ensureCodexTrust } from './codex-trust.js';
+import { ensureClaudeTrust } from './claude-trust.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -413,6 +414,7 @@ export class SessionManager {
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
     this._ensureCodexTrust = ensureCodexTrust;
+    this._ensureClaudeTrust = ensureClaudeTrust; // same seam, for ~/.claude.json
     // Seam (like _ensureCodexTrust) for archive()'s fire-and-forget "review this
     // transcript into task memory" side effect — a no-op by default so every
     // existing archive-path test stays inert; server/index.js binds the real
@@ -1171,6 +1173,7 @@ export class SessionManager {
     // a live session running.
     await this.killForSession(sessionId);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) this._ensureClaudeTrust(SESSIONS_DIR);
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
@@ -1258,6 +1261,7 @@ export class SessionManager {
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) this._ensureClaudeTrust(SESSIONS_DIR);
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
@@ -1880,6 +1884,7 @@ export class SessionManager {
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) this._ensureClaudeTrust(SESSIONS_DIR);
     // The launch context (env + directory grants from the enabled extensions),
     // collected before the command is built. dispatch mints sessionId, so the
     // caller names the task by `taskId` (before its own assign lands) rather than

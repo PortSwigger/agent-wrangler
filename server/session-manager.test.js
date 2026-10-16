@@ -2175,6 +2175,15 @@ test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('dispatch trusts SESSIONS_DIR (never the launch cwd) for a claude session, and not for codex', async () => {
+  const sm = smForDispatch();
+  const trusted = [];
+  sm._ensureClaudeTrust = (p) => trusted.push(p);
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  assert.deepEqual(trusted, [SESSIONS_DIR]);
+});
+
 test('dispatch never calls ensureCodexTrust for a claude session', async () => {
   const sm = smForDispatch();
   let called = false;
