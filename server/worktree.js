@@ -102,8 +102,17 @@ export async function isLinkedWorktree(cwd) {
   }
 }
 
+// New worktrees live in `<parent>/worktrees.noindex/<repo>-<branch>`: Spotlight
+// skips any directory ending `.noindex`, so each job's node_modules goes unindexed.
+// Older `<repo>-worktree-<branch>` siblings are still recognised, never migrated.
+export const NOINDEX_DIR = 'worktrees.noindex';
+
 export function worktreeDirName(repoRoot, branch) {
-  return `${path.basename(repoRoot)}-worktree-${flatBranch(branch)}`;
+  return `${path.basename(repoRoot)}-${flatBranch(branch)}`;
+}
+
+export function worktreeFolder(repoRoot, branch) {
+  return path.join(path.dirname(repoRoot), NOINDEX_DIR, worktreeDirName(repoRoot, branch));
 }
 
 // A branch may carry `/` (fix/…, feat/…); the worktree is one directory, never
@@ -215,8 +224,8 @@ export async function classifyWorktreeTarget({ repoRoot, folder, branch }) {
   return { status: bExists ? 'existing-branch' : 'new' };
 }
 
-// Create or adopt a sibling worktree. `folderName` (basename) defaults to
-// `<repo>-worktree-<branch>`. When `auto`, a colliding branch/folder is bumped
+// Create or adopt a worktree. `folderName` (basename) defaults to
+// `<parent>/worktrees.noindex/<repo>-<branch>`. When `auto`, a colliding branch/folder is bumped
 // with the smallest free numeric suffix (so auto only ever produces a fresh
 // `new`). Otherwise classifyWorktreeTarget drives the action: a fresh target is
 // created (`-b` for a new branch, plain `add` to check out an existing one), an
@@ -228,12 +237,11 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
   if (!repoRoot) throw new WorktreeError('Not a git repository');
   const parent = path.dirname(repoRoot);
   // A user-supplied `folderName` may be an absolute path (placed anywhere they
-  // like) or a bare name (a sibling of the repo). The auto-derived default is a
-  // bare name → sibling. `auto` always derives from the branch so the suffix loop
-  // can advance.
+  // like) or a bare name (a sibling of the repo). The default is the noindex
+  // folder. `auto` always derives from the branch so the suffix loop can advance.
   const folderFor = (b) => {
-    const fn = (!auto && folderName) ? folderName : worktreeDirName(repoRoot, b);
-    return path.isAbsolute(fn) ? fn : path.join(parent, fn);
+    if (auto || !folderName) return worktreeFolder(repoRoot, b);
+    return path.isAbsolute(folderName) ? folderName : path.join(parent, folderName);
   };
 
   let b = branch;
@@ -261,6 +269,7 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
     : ['-C', repoRoot, 'worktree', 'add', ...(baseRef ? ['--no-track'] : []), '-b', b, f];
   if (status === 'new' && baseRef) addArgs.push(baseRef);
   try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
     await exec('git', addArgs);
   } catch (e) {
     throw new WorktreeError(`git worktree add failed: ${(e.stderr || e.message || '').toString().trim()}`);
@@ -278,8 +287,8 @@ export async function createWorktree({ cwd, branch, folderName = '', auto = fals
 
 // Best-effort main-repo root for a (possibly already-removed) worktree entry.
 // Prefers the root stored at creation, then a live git query (works only while
-// the dir survives), then the `<repo>-worktree-<branch>` naming convention as a
-// last resort for legacy entries whose dir is already gone. Null when none hold.
+// the dir survives), then the `<repo>-<branch>` (in worktrees.noindex) or legacy
+// `<repo>-worktree-<branch>` naming convention as a last resort for legacy entries whose dir is already gone. Null when none hold.
 export async function repoRootForWorktree({ path: wtPath, branch, repoRoot } = {}) {
   if (repoRoot) return repoRoot;
   if (wtPath && fs.existsSync(wtPath)) {
@@ -287,9 +296,12 @@ export async function repoRootForWorktree({ path: wtPath, branch, repoRoot } = {
     if (r) return r;
   }
   if (wtPath && branch) {
-    const suffix = `-worktree-${flatBranch(branch)}`;
     const base = path.basename(wtPath);
-    if (base.endsWith(suffix)) return path.join(path.dirname(wtPath), base.slice(0, -suffix.length));
+    const dir = path.dirname(wtPath);
+    const legacy = `-worktree-${flatBranch(branch)}`;
+    const current = `-${flatBranch(branch)}`;
+    if (base.endsWith(legacy)) return path.join(dir, base.slice(0, -legacy.length));
+    if (path.basename(dir) === NOINDEX_DIR && base.endsWith(current)) return path.join(path.dirname(dir), base.slice(0, -current.length));
   }
   return null;
 }
@@ -303,6 +315,7 @@ export async function worktreeStatus(wt) {
   return {
     path: wt.path,
     branch: wt.branch || null,
+    repoRoot,
     dirExists: fs.existsSync(wt.path),
     branchExists: Boolean(repoRoot && wt.branch && (await branchExists(repoRoot, wt.branch))),
   };
@@ -351,7 +364,7 @@ export async function deleteBranch({ repoRoot, branch, force = false }) {
 // once an autopilot run understands its issue it renames to something concise via
 // name_branch → SessionManager → here. `desired` is sanitised to a ref-safe slug
 // and auto-suffixed on collision. We do NOT move the directory — the live shell
-// sits in it — so the dir keeps its `-worktree-<oldbranch>` name; that's inert
+// sits in it — so the dir keeps its `<oldbranch>` name; that's inert
 // because modern entries store `repoRoot` (cleanup never re-derives it from the
 // dir). The board's branch badge reads HEAD live, so the rename shows at once;
 // the caller syncs `entry.worktree.branch` for cleanup/status. Returns the final

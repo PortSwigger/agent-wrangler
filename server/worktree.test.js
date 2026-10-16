@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, gitDirs, gitCommonDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
+import { slugFromIntent, sanitizeBranch, isValidBranchName, gitRepoRoot, worktreeDirName, worktreeFolder, branchExists, createWorktree, renameBranch, WorktreeError, worktreeGuardrailPrompt, isLinkedWorktree, gitDirs, gitCommonDir, removeWorktree, deleteBranch, repoRootForWorktree, worktreeStatus, classifyWorktreeTarget } from './worktree.js';
 
 test('slugFromIntent: drops stopwords, keeps content words for a descriptive slug', () => {
   assert.equal(slugFromIntent('Please fix the broken auth flow on the login page'), 'fix-broken-auth-flow-login-page');
@@ -86,9 +86,10 @@ test('gitRepoRoot: returns null for a non-git directory', async () => {
   assert.equal(await gitRepoRoot(dir), null);
 });
 
-test('worktreeDirName: <repo>-worktree-<branch>, a slashed branch folded into one dir name', () => {
-  assert.equal(worktreeDirName('/a/b/myproj', 'fix-auth'), 'myproj-worktree-fix-auth');
-  assert.equal(worktreeDirName('/a/b/myproj', 'fix/AUTH-12-auth'), 'myproj-worktree-fix-AUTH-12-auth');
+test('worktreeDirName: <repo>-<branch>, a slashed branch folded into one dir name', () => {
+  assert.equal(worktreeDirName('/a/b/myproj', 'fix-auth'), 'myproj-fix-auth');
+  assert.equal(worktreeDirName('/a/b/myproj', 'fix/AUTH-12-auth'), 'myproj-fix-AUTH-12-auth');
+  assert.equal(worktreeFolder('/a/b/myproj', 'fix-auth'), '/a/b/worktrees.noindex/myproj-fix-auth');
 });
 
 test('isValidBranchName: accepts what git check-ref-format --branch accepts, refuses the rest, never reshapes', () => {
@@ -142,12 +143,11 @@ test('gitDirs: includes both linked worktree metadata directories', async () => 
   assert.deepEqual(await gitDirs(wt), [privateDir, path.join(repo, '.git')]);
 });
 
-test('createWorktree: creates a sibling worktree on a new branch', async () => {
+test('createWorktree: creates the worktree in <parent>/worktrees.noindex on a new branch', async () => {
   const { repo } = tempRepo();
   const res = await createWorktree({ cwd: repo, branch: 'fix-auth', auto: false });
   assert.equal(res.branch, 'fix-auth');
-  assert.equal(path.basename(res.path), 'myproj-worktree-fix-auth');
-  assert.equal(path.dirname(res.path), path.dirname(repo)); // sibling of repo
+  assert.equal(res.path, path.join(path.dirname(repo), 'worktrees.noindex', 'myproj-fix-auth'));
   assert.ok(fs.existsSync(path.join(res.path, 'README.md')));
   assert.equal(await branchExists(repo, 'fix-auth'), true);
 });
@@ -165,7 +165,7 @@ test('renameBranch: renames the worktree branch in place and keeps the dir', asy
   assert.equal(await branchExists(repo, 'improve-branch-names'), true);
   assert.equal(await branchExists(repo, 'placeholder-slug'), false);
   // dir is NOT moved (the live shell sits in it) — its name still has the old branch
-  assert.equal(path.basename(wt.path), 'myproj-worktree-placeholder-slug');
+  assert.equal(path.basename(wt.path), 'myproj-placeholder-slug');
   assert.ok(fs.existsSync(wt.path));
   // HEAD now points at the renamed branch
   const head = execFileSync('git', ['-C', wt.path, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' }).toString().trim();
@@ -312,7 +312,7 @@ test('createWorktree: checks out an existing branch into a new folder (no -b)', 
   makeBranch(repo, 'existing');
   const res = await createWorktree({ cwd: repo, branch: 'existing', auto: false });
   assert.equal(res.branch, 'existing');
-  assert.equal(path.basename(res.path), 'myproj-worktree-existing');
+  assert.equal(path.basename(res.path), 'myproj-existing');
   assert.ok(fs.existsSync(path.join(res.path, 'README.md')));
   // HEAD of the worktree is on the existing branch.
   const head = execFileSync('git', ['-C', res.path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -354,7 +354,8 @@ test('createWorktree: auto-suffixes the default on collision', async () => {
   await createWorktree({ cwd: repo, branch: 'dup', auto: false });
   const res = await createWorktree({ cwd: repo, branch: 'dup', auto: true });
   assert.equal(res.branch, 'dup-2');
-  assert.equal(path.basename(res.path), 'myproj-worktree-dup-2');
+  assert.equal(path.basename(res.path), 'myproj-dup-2');
+  assert.equal(path.basename(path.dirname(res.path)), 'worktrees.noindex');
 });
 
 test('createWorktree: honors an absolute folderName (place the worktree anywhere)', async () => {
@@ -378,7 +379,8 @@ test('createWorktree: auto-suffixes even when a default folderName is supplied (
   // Auto retry with the same default folderName must bump, not hang.
   const res = await createWorktree({ cwd: repo, branch: 'dup', folderName: 'myproj-worktree-dup', auto: true });
   assert.equal(res.branch, 'dup-2');
-  assert.equal(path.basename(res.path), 'myproj-worktree-dup-2');
+  assert.equal(path.basename(res.path), 'myproj-dup-2');
+  assert.equal(path.basename(path.dirname(res.path)), 'worktrees.noindex');
 });
 
 test('createWorktree: returns the main repo root for later cleanup', async () => {
@@ -474,16 +476,43 @@ test('repoRootForWorktree: prefers the stored root, else derives from the dir na
   assert.equal(await repoRootForWorktree({ path: '/x/myproj-worktree-feat', branch: 'feat', repoRoot: '/stored' }), '/stored');
   // No stored root, dir gone → strip the -worktree-<branch> suffix.
   assert.equal(await repoRootForWorktree({ path: '/x/myproj-worktree-feat', branch: 'feat' }), '/x/myproj');
+  // The worktrees.noindex layout strips -<branch> and steps out of the folder.
+  assert.equal(await repoRootForWorktree({ path: '/x/worktrees.noindex/my-proj-feat', branch: 'feat' }), '/x/my-proj');
+  assert.equal(await repoRootForWorktree({ path: '/x/worktrees.noindex/my-proj-fix-it', branch: 'fix/it' }), '/x/my-proj');
+  // A bare -<branch> suffix outside worktrees.noindex is not a worktree name.
+  assert.equal(await repoRootForWorktree({ path: '/x/myproj-feat', branch: 'feat' }), null);
+});
+
+test('createWorktree: adopts a legacy sibling worktree via folderName, and removes it', async () => {
+  const { repo } = tempRepo();
+  const legacy = path.join(path.dirname(repo), 'myproj-worktree-old');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', legacy, '-b', 'old'], { stdio: 'pipe' });
+  const res = await createWorktree({ cwd: repo, branch: 'old', folderName: 'myproj-worktree-old', auto: false });
+  assert.deepEqual(res, { path: legacy, branch: 'old', repoRoot: repo });
+  assert.equal(await repoRootForWorktree({ path: legacy, branch: 'old' }), repo);
+  assert.deepEqual(await removeWorktree({ worktreePath: legacy }), { ok: true });
+  assert.equal(fs.existsSync(legacy), false);
+});
+
+test('createWorktree: adopts a noindex worktree via folderName and creates the folder on demand', async () => {
+  const { repo } = tempRepo();
+  const noindex = path.join(path.dirname(repo), 'worktrees.noindex');
+  assert.equal(fs.existsSync(noindex), false);
+  const wt = await createWorktree({ cwd: repo, branch: 'fresh', auto: false });
+  assert.ok(fs.statSync(noindex).isDirectory());
+  const res = await createWorktree({ cwd: repo, branch: 'fresh', folderName: 'worktrees.noindex/myproj-fresh', auto: false });
+  assert.deepEqual(res, { path: wt.path, branch: 'fresh', repoRoot: repo });
+  assert.deepEqual(await removeWorktree({ worktreePath: wt.path }), { ok: true });
 });
 
 test('worktreeStatus: reports dir + branch existence; null for non-worktree', async () => {
   const { repo } = tempRepo();
   const wt = await createWorktree({ cwd: repo, branch: 'status', auto: false });
   const live = await worktreeStatus({ path: wt.path, branch: 'status', repoRoot: repo });
-  assert.deepEqual(live, { path: wt.path, branch: 'status', dirExists: true, branchExists: true });
+  assert.deepEqual(live, { path: wt.path, branch: 'status', repoRoot: repo, dirExists: true, branchExists: true });
   await removeWorktree({ worktreePath: wt.path, repoRoot: repo });
   const removed = await worktreeStatus({ path: wt.path, branch: 'status', repoRoot: repo });
-  assert.deepEqual(removed, { path: wt.path, branch: 'status', dirExists: false, branchExists: true });
+  assert.deepEqual(removed, { path: wt.path, branch: 'status', repoRoot: repo, dirExists: false, branchExists: true });
   assert.equal(await worktreeStatus(null), null);
 });
 

@@ -1685,7 +1685,7 @@ test('resolveWorktree creates a worktree and returns its path + branch', async (
     cwd: repo, intent: 'fix the bug', branch: '', folderName: '', auto: true, short: 'abcd1234',
   });
   assert.equal(res.branch, 'fix-bug');
-  assert.equal(path.basename(res.cwd), 'proj-worktree-fix-bug');
+  assert.equal(path.basename(res.cwd), 'proj-fix-bug');
   assert.equal(res.worktree.path, res.cwd);
 });
 

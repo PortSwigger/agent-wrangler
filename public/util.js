@@ -77,17 +77,32 @@ export function fmtDuration(ms) {
 }
 
 const WORKTREE_MARKER = '/.claude/worktrees/';
-// Collapse a worktree path (<repo>/.claude/worktrees/<branch> or a wrangler
+const NOINDEX_MARKER = '/worktrees.noindex/';
+// Collapse a worktree path (<repo>/.claude/worktrees/<branch>, a wrangler
+// `<parent>/worktrees.noindex/<repo>-<branch>` dir or a legacy
 // `<repo>-worktree-<branch>` sibling) to its repo root; non-worktree paths pass
-// through. Worktrees are ephemeral, so they fold into the owning repo for both
-// location labels and folder suggestions. The real checked-out branch comes from
+// through. A noindex dir name can't be split into repo and branch by itself, so
+// `wt` (the session's `worktree` status: its stored repoRoot, else its branch)
+// resolves it; without that hint the path is left as is. Worktrees are
+// ephemeral, so they fold into the owning repo for both location labels and
+// folder suggestions. The real checked-out branch comes from
 // s.branch (server-read), rendered via branchBadge — not inferred from the path.
-export function repoRoot(cwd) {
+export function repoRoot(cwd, wt) {
   // Normalise away trailing slashes first, else `some/path` and `some/path/`
   // read as distinct (the dedup keys diverge, `.pop()` below returns ''), so the
   // folder suggester shows both. Keep the filesystem root `/` intact.
   cwd = cwd.replace(/\/+$/, '') || '/';
   if (cwd.includes(WORKTREE_MARKER)) return cwd.split(WORKTREE_MARKER)[0];
+  if (cwd.includes(NOINDEX_MARKER)) {
+    if (wt?.repoRoot && wt.path === cwd) return wt.repoRoot;
+    const suffix = wt?.branch ? `-${wt.branch.replaceAll('/', '-')}` : '';
+    const dir = cwd.slice(0, cwd.lastIndexOf('/'));
+    const base = cwd.slice(dir.length + 1);
+    if (dir.endsWith(NOINDEX_MARKER.slice(0, -1)) && suffix && base.endsWith(suffix)) {
+      return `${dir.slice(0, -NOINDEX_MARKER.length + 1)}/${base.slice(0, -suffix.length)}`;
+    }
+    return cwd;
+  }
   const seg = cwd.split('/').pop();
   if (seg && seg.includes('-worktree-')) {
     const repo = seg.slice(0, seg.indexOf('-worktree-'));
@@ -104,11 +119,11 @@ export function locationLabel(cwd) {
 }
 
 // Whether a session runs inside a git worktree (cwd is a wrangler-created
-// `<repo>-worktree-<branch>` sibling or a `.claude/worktrees/` dir). Surfaced as
-// the `⌥ wt` pill on the card meta line.
+// `worktrees.noindex/` dir, a legacy `<repo>-worktree-<branch>` sibling or a
+// `.claude/worktrees/` dir). Surfaced as the `⌥ wt` pill on the card meta line.
 export function isWorktree(s) {
   const cwd = s.cwd || '';
-  return cwd.includes('-worktree-') || cwd.includes('/.claude/worktrees/');
+  return cwd.includes('-worktree-') || cwd.includes('/.claude/worktrees/') || cwd.includes(NOINDEX_MARKER);
 }
 
 // A git-branch glyph + branch name, in purple. Shared by the detail header and
@@ -124,7 +139,7 @@ export function mostCommonCwd(sessions, sessionsDir) {
   for (const s of sessions) {
     if (!s.cwd) continue;
     if (isScratch(s.cwd)) { scratchCount++; continue; }
-    const cwd = repoRoot(s.cwd);
+    const cwd = repoRoot(s.cwd, s.worktree);
     const cur = stats.get(cwd) || { count: 0, at: 0 };
     cur.count += 1;
     cur.at = Math.max(cur.at, s.lastActivity || 0);

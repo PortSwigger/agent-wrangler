@@ -5017,14 +5017,14 @@ function refreshWorktreeDefaults() {
   if (!wtFolderEdited) {
     const branch = branchEl.value || 'work';
     if (wtValidation && wtValidation.ok && wtValidation.repoRoot) {
-      // Full path: a sibling of the repo by default, but the user can edit it to
-      // place the worktree anywhere.
+      // Full path: in the repo's sibling worktrees.noindex folder by default, but
+      // the user can edit it to place the worktree anywhere.
       const parent = wtValidation.repoRoot.replace(/\/[^/]*$/, '');
-      folderEl.value = `${parent}/${wtValidation.repoName}-worktree-${branch}`;
+      folderEl.value = `${parent}/worktrees.noindex/${wtValidation.repoName}-${branch}`;
     } else {
       // Before validation lands we don't know the repo root — show a bare name.
       const repo = (cwdField() || proposedCwd || '').replace(/\/+$/, '').split('/').pop() || 'repo';
-      folderEl.value = `${repo}-worktree-${branch}`;
+      folderEl.value = `worktrees.noindex/${repo}-${branch}`;
     }
   }
 }
@@ -5435,7 +5435,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
     const hidden = hiddenRecents();
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd)))));
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { expandTilde } from '../../session-manager.js';
-import { gitRepoRoot, isLinkedWorktree, worktreeDirName, classifyWorktreeTarget } from '../../worktree.js';
+import { gitRepoRoot, isLinkedWorktree, worktreeFolder, classifyWorktreeTarget } from '../../worktree.js';
 
 export const validateWorktreeHandler = {
   type: 'validate-worktree',
@@ -17,7 +17,7 @@ export const validateWorktreeHandler = {
     // the existing-branch / adopt / blocked message live as they type.
     const branch = msg.branch && String(msg.branch).trim();
     if (branch) {
-      const folder = path.join(path.dirname(repoRoot), worktreeDirName(repoRoot, branch));
+      const folder = worktreeFolder(repoRoot, branch);
       const cls = await classifyWorktreeTarget({ repoRoot, folder, branch });
       reply.status = cls.status;
       reply.folderPath = folder;

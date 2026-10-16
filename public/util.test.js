@@ -59,6 +59,12 @@ test('repoRoot: collapses a -worktree- sibling path to its repo', () => {
     '/Users/j/vcs/myrepo',
   );
 });
+test('repoRoot: folds a worktrees.noindex dir via the stored repoRoot or the branch', () => {
+  const cwd = '/Users/j/vcs/worktrees.noindex/my-repo-fix-x';
+  assert.equal(repoRoot(cwd, { path: cwd, repoRoot: '/Users/j/vcs/my-repo', branch: 'renamed' }), '/Users/j/vcs/my-repo');
+  assert.equal(repoRoot(cwd, { path: cwd, branch: 'fix-x' }), '/Users/j/vcs/my-repo');
+  assert.equal(repoRoot(cwd), cwd);
+});
 test('repoRoot: passes through a non-worktree path unchanged', () => {
   assert.equal(repoRoot('/Users/j/vcs/myrepo'), '/Users/j/vcs/myrepo');
 });
@@ -87,6 +93,9 @@ test('locationLabel: returns empty string for falsy cwd', () => {
 // ── isWorktree ────────────────────────────────────────────────────────────────
 test('isWorktree: true for .claude/worktrees path', () => {
   assert.equal(isWorktree({ cwd: '/vcs/repo/.claude/worktrees/feat' }), true);
+});
+test('isWorktree: true for a worktrees.noindex dir', () => {
+  assert.equal(isWorktree({ cwd: '/vcs/worktrees.noindex/repo-feat' }), true);
 });
 test('isWorktree: true for -worktree- sibling', () => {
   assert.equal(isWorktree({ cwd: '/vcs/repo-worktree-feat' }), true);
