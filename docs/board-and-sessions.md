@@ -103,7 +103,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, the default folder for new sessions, and completion sounds.
-- PR auto-fix, Codex folder trust, and optional extraction of archive learnings into task memory.
+- PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
 - Extension installation, enablement, updates, and extension-specific settings. The per-session
   checklist is a builtin extension, so its on/off switch lives here (an older `checklistEnabled: false`
   is carried over automatically).

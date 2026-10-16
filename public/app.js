@@ -144,6 +144,7 @@ export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
+let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
@@ -654,6 +655,7 @@ function applyGraph(graph) {
   latestSchedules = graph.schedules || { schedules: [] };
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
+  trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
@@ -6144,6 +6146,7 @@ initSettings({
     get: (id) => {
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
+      if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
@@ -6168,6 +6171,9 @@ initSettings({
       } else if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
+      } else if (id === 'trustClaudeLaunchCwd') {
+        trustClaudeLaunchCwd = Boolean(value);
+        send({ type: 'set-trust-claude-launch-cwd', enabled: trustClaudeLaunchCwd });
       } else if (id === 'childFullViewByDefault') {
         childFullViewByDefault = Boolean(value);
         send({ type: 'set-child-full-view-default', enabled: childFullViewByDefault });
