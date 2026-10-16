@@ -47,7 +47,7 @@ function setup(t, initial = {}, { holdReads = false } = {}) {
     slots.mountInto('settings.panel', host, api, { onlyExt: 'sounds' });
     return { slots, host };
   }
-  return { ...createBrowser(), read: () => store.read(), createBrowser, resumeReads: () => { holdReads = false; }, pauseSaves: () => { paused = true; }, flushSave: () => { const { msg, reply } = delayed.shift(); setSoundsHandler.handler(msg, server, reply); } };
+  return { ...createBrowser(), read: () => store.read(), createBrowser, resumeReads: () => { holdReads = false; }, pauseSaves: () => { paused = true; }, flushSave: () => { paused = false; const { msg, reply } = delayed.shift(); setSoundsHandler.handler(msg, server, reply); } };
 }
 
 test('settings have no second toggle and reset shared audio on save', async (t) => {
