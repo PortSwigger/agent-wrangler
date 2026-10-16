@@ -47,7 +47,12 @@ export async function routeControlMessage(raw, ctx, { handlers = null } = {}) {
     // A core handler is untagged and keeps `ctx`. The error envelope below is
     // unchanged for both: an extension handler throwing must still reply
     // {type:'error'} rather than tear down the socket.
-    await (entry.extId ? entry.handler(msg, ctx.hostApiFor?.(entry.extId)) : entry.handler(msg, ctx));
+    if (entry.extId) {
+      const reply = (payload) => ctx.reply({ ...payload, type: `ext:${entry.extId}` });
+      await entry.handler(msg, ctx.hostApiFor?.(entry.extId), reply);
+    } else {
+      await entry.handler(msg, ctx);
+    }
   } catch (err) {
     ctx.reply({ type: 'error', message: String(err.message || err) });
   }

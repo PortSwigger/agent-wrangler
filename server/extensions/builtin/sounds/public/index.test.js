@@ -38,15 +38,16 @@ function setup(t, initial = {}, { holdReads = false } = {}) {
     clients.push(slots);
     const api = { send(msg) {
       if (msg.type === 'sounds-get' && holdReads) return;
-      if (msg.type === 'sounds-set' && paused) delayed.push(structuredClone(msg));
-      else (msg.type === 'sounds-set' ? setSoundsHandler : getSoundsHandler).handler(msg, server);
+      const reply = (response) => slots.dispatchMessage({ ...response, type: 'ext:sounds' });
+      if (msg.type === 'sounds-set' && paused) delayed.push({ msg: structuredClone(msg), reply });
+      else (msg.type === 'sounds-set' ? setSoundsHandler : getSoundsHandler).handler(msg, server, reply);
     } };
     client.register(slots.forExtension('sounds', api));
     const host = document.createElement('div');
     slots.mountInto('settings.panel', host, api, { onlyExt: 'sounds' });
     return { slots, host };
   }
-  return { ...createBrowser(), read: () => store.read(), createBrowser, resumeReads: () => { holdReads = false; }, pauseSaves: () => { paused = true; }, flushSave: () => setSoundsHandler.handler(delayed.shift(), server) };
+  return { ...createBrowser(), read: () => store.read(), createBrowser, resumeReads: () => { holdReads = false; }, pauseSaves: () => { paused = true; }, flushSave: () => { const { msg, reply } = delayed.shift(); setSoundsHandler.handler(msg, server, reply); } };
 }
 
 test('settings have no second toggle and reset shared audio on save', async (t) => {
@@ -117,7 +118,8 @@ test('an edit made while saving stays unsaved after the acknowledgement', async 
   descendants(host).find((el) => el.textContent === 'Use default').listeners.click();
   flushSave();
   await saving;
-  createBrowser();
+  const peer = createBrowser();
+  await peer.slots.savePanels(peer.host);
   assert.equal(descendants(host).some((el) => el.textContent === 'saved.wav'), false);
 });
 

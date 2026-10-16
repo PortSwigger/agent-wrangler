@@ -286,7 +286,7 @@ import semver from 'semver';
 // the way a `buildLaunch` runtime already does. An older server quarantines no
 // unknown runtime key, so the card silently reads as dormant there; a manifest
 // that needs it declares `^1.34.0`.
-// 1.34.0 adds the client notification.cue value slot and api.onConnect.
+// 1.34.0 adds notification.cue, api.onConnect and per-request extension handler replies.
 export const HOST_API_VERSION = '1.34.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and

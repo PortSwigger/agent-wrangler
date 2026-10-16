@@ -97,3 +97,15 @@ test('invalidateHandlerMap is what makes a live-registered handler routable', as
   _resetExtensionsForTests();
   _resetRouterForTests();
 });
+
+test('extension handlers can reply only to the requesting socket with their own frame type', async () => {
+  const requester = ctx({ hostApiFor: () => ({}) });
+  const peer = ctx();
+  await routeControlMessage(JSON.stringify({ type: 'sounds-get' }), requester, {
+    handlers: [{ type: 'sounds-get', extId: 'sounds', handler(_msg, _host, reply) {
+      reply({ type: 'graph', kind: 'sounds', sounds: {} });
+    } }],
+  });
+  assert.deepEqual(requester.sent, [{ type: 'ext:sounds', kind: 'sounds', sounds: {} }]);
+  assert.deepEqual(peer.sent, []);
+});

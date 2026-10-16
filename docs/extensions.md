@@ -1056,6 +1056,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
     disabled or uninstalled.
   - Bindings are listed under the extension's label in Settings → Shortcuts.
   A manifest using either half declares `^1.26.0`.
+- **Control handler `reply(payload)`** (1.34.0) is the third argument of an extension’s
+  `handler(msg, host, reply)`. It sends only to the requesting control socket and forces the
+  frame type to `ext:<id>`, delivered through the client’s `api.onMessage`. Use it for reads
+  and request errors; `host.broadcast` remains the way to publish shared updates to all tabs.
 - **`notification.cue`** (1.34.0) is a client value slot: `{ id, cue(kind, api) }`.
   Core calls it with `finished` once per poll with an eligible working → idle transition,
   and `needs-you` when a session raises its attention notification. Both honor focus-mode
