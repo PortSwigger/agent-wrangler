@@ -1056,18 +1056,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
     disabled or uninstalled.
   - Bindings are listed under the extension's label in Settings → Shortcuts.
   A manifest using either half declares `^1.26.0`.
-- **Control handler `reply(payload)`** (1.34.0) is the third argument of an extension’s
+- **Control handler `reply(payload)`** (1.35.0) is the third argument of an extension’s
   `handler(msg, host, reply)`. It sends only to the requesting control socket and forces the
   frame type to `ext:<id>`, delivered through the client’s `api.onMessage`. Use it for reads
   and request errors; `host.broadcast` remains the way to publish shared updates to all tabs.
-- **`notification.cue`** (1.34.0) is a client value slot: `{ id, cue(kind, api) }`.
+- **`notification.cue`** (1.35.0) is a client value slot: `{ id, cue(kind, api) }`.
   Core calls it with `finished` once per poll with an eligible working → idle transition,
   and `needs-you` when a session raises its attention notification. Both honor focus-mode
   suppression before dispatch; the first board load does not emit finish cues. Extensions
   own their playback. A thrown or rejected callback is reported without interrupting
   the board or other contributors. Removing an extension removes its callbacks immediately.
-  A manifest using this slot declares `^1.34.0`.
-- **`api.onConnect(fn)`** (1.34.0) subscribes to subsequent control-socket connections,
+  A manifest using this slot declares `^1.35.0`.
+- **`api.onConnect(fn)`** (1.35.0) subscribes to subsequent control-socket connections,
   so a client can refresh shared state after reconnecting. Returns an unsubscribe function;
   disabling or removing the extension drops its listeners. It does not fire immediately on
   registration: a module should also request its initial state when it registers.
