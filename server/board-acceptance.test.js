@@ -284,8 +284,13 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
     await resize(500);
     const action = async (label) => {
-      await evaluateChecked(`document.querySelector('.task-actions-btn').click()`);
-      await evaluateChecked(`[...document.querySelectorAll('.context-menu-item')].find((el) => el.textContent.trim() === ${JSON.stringify(label)}).click()`);
+      // Keep this programmatic action in one browser task. The layout probes
+      // scroll the grid; a pending scroll event can dismiss the menu between
+      // two separate CDP calls, before the second call can select its item.
+      await evaluateChecked(`(() => {
+        document.querySelector('.task-actions-btn').click();
+        [...document.querySelectorAll('.context-menu-item')].find((el) => el.textContent.trim() === ${JSON.stringify(label)}).click();
+      })()`);
     };
     await action('Focus');
     assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode') && !document.getElementById('grid').classList.contains('single-column')`), 'focus mode must clear single-column sizing');
