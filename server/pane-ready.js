@@ -1,5 +1,5 @@
 import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
-import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
 const READY_POLL_MS = 250;
@@ -53,13 +53,12 @@ export async function waitForComposerReady(name, socket, agent, {
   if (!name) return false;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const pane = await capture(name, 6, socket);
+    const pane = await capture(name, requireEmpty ? 6 : 60, socket);
     if (requireEmpty) {
       if (paneComposerIsEmpty(pane, agent)) return true;
-    } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you') {
-      const mark = agent === 'codex' ? '›' : '❯';
-      if (stripAnsi(pane).split('\n').filter((line) => line.trim()).slice(-6)
-        .some((line) => new RegExp(`^\\s*${mark}(?:\\s|$)`, 'u').test(line))) return true;
+    } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you'
+      && paneComposerIsReady(pane, agent)) {
+      return true;
     }
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);

@@ -110,6 +110,21 @@ function codexComposerIsEmpty(paneText) {
   return rest.map((cell) => cell.ch).join('').trim() === CODEX_PLACEHOLDER;
 }
 
+export function paneComposerIsReady(paneText, agent = 'claude') {
+  if (typeof paneText !== 'string' || !paneText) return false;
+  if (agent === 'codex') {
+    const line = styledLines(paneText).filter((cells) => cells[0]?.ch === CODEX_PROMPT_MARK).pop();
+    return Boolean(line?.[0]?.bold && !line[0].dim);
+  }
+  const lines = paneText.split('\n').map(visible);
+  const rules = lines.map((line, i) => /^─{10,}$/.test(line) ? i : -1).filter((i) => i >= 0);
+  if (rules.length < 2) return false;
+  const top = rules.at(-2);
+  const bottom = rules.at(-1);
+  const mark = lines.findLastIndex((line) => line.startsWith(PROMPT_MARK));
+  return mark > top && mark < bottom && lines.slice(top + 1, mark).every((line) => !line);
+}
+
 // Whether the pane's composer is CONFIRMED empty — nothing typed and no
 // suggestion accepted into it. Its own function rather than a negation of
 // parseGhostSuggestion, because the two ask different questions: that one wants

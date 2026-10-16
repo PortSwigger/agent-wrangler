@@ -20,6 +20,8 @@ time.sleep(1)
 termios.tcflush(0, termios.TCIFLUSH)
 prompt = '\\x1b[1m›\\x1b[0m \\x1b[2mAsk Codex to do anything\\x1b[0m' if agent == 'codex' else '\\x1b[0m❯\\u00a0'
 working = '• Working (1s • esc to interrupt)' if agent == 'codex' else '✶ Climbing the T-Rex skeleton… (1s · ↓ 3 tokens)'
+if agent == 'claude':
+    prompt = '─' * 60 + '\\r\\n' + prompt + '\\r\\n' + '─' * 60
 os.write(1, ('\\x1b[2J\\x1b[H\\x1b[?2004h' + prompt).encode())
 text = b''
 while True:

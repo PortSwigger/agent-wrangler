@@ -225,7 +225,7 @@ test('waitForCompactionEnd: idle pane returns immediately; compacting pane waits
 });
 
 test('startup readiness accepts a working composer and an existing draft without requiring emptiness', async () => {
-  for (const pane of [`${working}\n${codexEmpty}`, codexHolding, `${claudeEmpty}restored draft`, `${ESC}[0m❯\u00a0`]) {
+  for (const pane of [`${working}\n${codexEmpty}`, codexHolding, claudeComposer('restored draft'), claudeComposer('\u00a0')]) {
     assert.equal(await waitForComposerReady('p', '', pane.includes('❯') ? 'claude' : 'codex', {
       requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
     }), true);
@@ -238,4 +238,32 @@ test('startup readiness needs a composer even when a working status is present',
       requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
     }), false);
   }
+});
+
+const claudeRule = '─'.repeat(60);
+const claudeComposer = (draft = '') => `${claudeRule}\n${claudeEmpty}${draft}\n${claudeRule}\nHaiku 5.5\nauto mode on`;
+
+test('startup readiness rejects selection cursors and history echoes', async () => {
+  const panes = [
+    ['Resume this session?', '❯ 1. Resume from summary (recommended)', '  2. Resume full session as-is', "  3. Don't ask me again"].join('\n'),
+    ['Resume this session?', '❯ Resume from summary (recommended)', '  Resume full session as-is', "  Don't ask me again"].join('\n'),
+    ['Allow this tool?', '❯ 1. Yes', '  2. No'].join('\n'),
+    ['❯ fix the flaky test', '⏺ Done'].join('\n'),
+  ];
+  for (const pane of panes) {
+    assert.equal(await waitForComposerReady('p', '', 'claude', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+    }), false, pane);
+  }
+  assert.equal(await waitForComposerReady('p', '', 'codex', {
+    requireEmpty: false, capture: async () => `${ESC}[1;2m› old prompt${ESC}[0m\nDone`, timeoutMs: 0,
+  }), false);
+});
+
+test('startup readiness accepts a framed Claude draft with several wrapped lines', async () => {
+  assert.equal(await waitForComposerReady('p', '', 'claude', {
+    requireEmpty: false,
+    capture: async () => claudeComposer('first line\n  second line\n  third line\n  fourth line\n  fifth line'),
+    timeoutMs: 0,
+  }), true);
 });
