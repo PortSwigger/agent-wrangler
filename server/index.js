@@ -22,7 +22,7 @@ import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
-import { createMailSettleSweeper } from './mail-runner.js';
+import { createMailSettleSweeper, createDeferralTracker } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
@@ -831,8 +831,9 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // report to (the send already returned queued:true) and Phase 1 tracks no
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
+const mailDeferrals = createDeferralTracker();
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant,
+  mailStore, deferrals: mailDeferrals, sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 });
 
@@ -1016,7 +1017,7 @@ async function rebuildOnce() {
     task: taskStore.taskFor(sid),
     label: lastGraph?.sessions?.find((s) => s.sessionId === sid)?.label,
   }));
-  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore });
+  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now) });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
