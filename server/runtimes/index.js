@@ -59,6 +59,12 @@ import { devcontainer } from './devcontainer.js';
 //                can't see it, e.g. devcontainer). A runtime whose transcript lands
 //                host-side (e.g. via a bind-mount) leaves this FALSE and keeps the
 //                guard — copying devcontainer's `true` blindly would drop protection.
+//   liveByTmux   (optional, default falsey) when true, an owned tmux that is alive
+//                but not discovered as an agent still reads as a LIVE card
+//                (state-reader's tmux-liveness fallback), as a buildLaunch runtime's
+//                always does. For a wrapLaunch runtime whose pane runs a wrapper that
+//                hides the agent from process discovery (e.g. `sbx exec … sh -lc`).
+//                Without it such a card reads as dormant while it runs.
 //   readLive     (optional) async ({ entry, tmuxName, socket }) → a live-status blob
 //                { liveSid, status, rawStatus, waitingFor, name, updatedAt } or null.
 //                Overrides the host liveState/pane-scrape when the status file is

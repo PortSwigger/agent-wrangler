@@ -334,10 +334,15 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // A `buildLaunch` runtime (server/runtimes/index.js) qualifies for the same reason: its
   // pane runs the extension's own command, never a `claude` this discovery would match (a
   // cloud card's pane holds on a `sleep` once the create client exits), so without this it
-  // would read as dormant and offer a Resume that relaunchRefusal then refuses.
+  // would read as dormant and offer a Resume that relaunchRefusal then refuses. A
+  // `wrapLaunch` runtime opts in with `liveByTmux: true` (1.34.0) when its pane runs a
+  // wrapper discovery can't see through (e.g. a sandbox's `exec` client around the agent).
   const discoveredTmux = new Set(discovered.map((d) => d.tmuxName));
   for (const entry of sessionManager?.activeEntries?.() || []) {
-    if (entry.runtime !== 'devcontainer' && !runtimeResolver(entry.runtime)?.buildLaunch) continue;
+    if (entry.runtime !== 'devcontainer') {
+      const rt = runtimeResolver(entry.runtime);
+      if (!rt?.buildLaunch && !rt?.liveByTmux) continue;
+    }
     const tmuxName = sessionManager?.tmuxNameFor?.(entry.sessionId);
     if (!tmuxName || discoveredTmux.has(tmuxName)) continue;
     discovered.push({ tmuxName, socket: sessionManager?.socketOf?.(tmuxName) ?? '', claudePid: null, agent: entry.agent || 'claude', cwd: entry.cwd, command: '', paneTitle: '' });

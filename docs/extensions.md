@@ -1292,7 +1292,8 @@ sessionId, model, ext })` (return the whole pane command instead). Optional:
 define it and the runtime owns its sessions' model vocabulary: `spawn_session` skips core's
 per-agent check, asks this instead, and passes the accepted model as `ext.<yourId>.model`;
 `coreModelError(agent, model)` is core's own check, to reuse),
-`resumable` (default `true`) and `skipsHostResumeGuard`. Every function is also handed
+`resumable` (default `true`), `skipsHostResumeGuard` and `liveByTmux` (1.34.0, default
+`false`; see below). Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.
 
@@ -1340,6 +1341,12 @@ Maintainer notes:
   is `findRuntime`, falling back to local for status and cost. A `buildLaunch` card
   whose tmux is alive is kept live by tmux liveness, like a devcontainer bring-up,
   because its pane never runs a `claude` that discovery would match.
+- **`liveByTmux: true` (1.34.0) opts a `wrapLaunch` runtime into that same fallback.**
+  Use it when the pane runs a wrapper that hides the agent from process discovery, such
+  as `sbx exec -it <sandbox> sh -lc '<agent>'`: without it the card reads as dormant
+  while it runs and offers a Resume. Discovery and costing are otherwise unchanged, so
+  the agent's transcript must still land on the host. An older server ignores the key,
+  so a manifest that needs it declares `^1.34.0`.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
   the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
   the "reply with send_message" line, since that agent has no wrangler MCP. A card whose

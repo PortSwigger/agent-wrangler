@@ -865,6 +865,38 @@ test('buildGraph: a live-but-UNdiscovered buildLaunch-runtime tmux is synthesize
   assert.equal(node.tmux, 'cc_cl1');
 });
 
+// A `wrapLaunch` runtime whose pane runs a wrapper (`sbx exec … sh -lc '<agent>'`)
+// hides the agent from discovery too. `liveByTmux: true` opts it into the same
+// fallback; without the flag the same card stays dormant.
+const sandboxGraph = async (rt) => {
+  const entry = { sessionId: 'sb1', agent: 'claude', runtime: 'sbx', cwd: '/nonexistent/repo', liveSessionId: 'L9', tmux: 'cc_sb1' };
+  const mgr = {
+    activeEntries: () => [entry],
+    archivedEntries: () => [],
+    entryFor: (id) => (id === 'sb1' ? entry : undefined),
+    entryByTmux: (t) => (t === 'cc_sb1' ? entry : null),
+    tmuxNameFor: (id) => (id === 'sb1' ? 'cc_sb1' : null),
+    tmuxOwner: () => null, deadTmuxNameFor: () => null,
+    isArchived: () => false, scanSockets: () => [''], socketOf: () => '',
+  };
+  const runtimeResolver = (id) => (id === 'sbx' ? rt : {});
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover: async () => [], capture: async () => '' });
+  return graph.sessions.find((s) => s.sessionId === 'sb1');
+};
+
+test('buildGraph: a live-but-UNdiscovered wrapLaunch runtime with liveByTmux reads live', async () => {
+  const node = await sandboxGraph({ id: 'sbx', wrapLaunch: async ({ inner }) => inner, liveByTmux: true });
+  assert.ok(node, 'node present');
+  assert.equal(node.managed, true);
+  assert.equal(node.tmux, 'cc_sb1');
+});
+
+test('buildGraph: the same wrapLaunch runtime WITHOUT liveByTmux reads dormant', async () => {
+  const node = await sandboxGraph({ id: 'sbx', wrapLaunch: async ({ inner }) => inner });
+  assert.ok(node, 'node present');
+  assert.equal(node.managed, false);
+});
+
 // Negative: the fallback is scoped to a devcontainer entry with a genuinely
 // alive tmux. A devcontainer entry whose `tmuxNameFor` returns null (no tmux, or
 // a dead one) must NOT be synthesized — it stays on the ordinary dormant path

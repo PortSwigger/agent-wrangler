@@ -279,7 +279,14 @@ import semver from 'semver';
 // owns its models, `model` goes to `ext.<extId>.model` as spawn_session sends it.
 // An older client ignores `runtime` and launches on whatever runtime is selected,
 // so a manifest that passes it declares `^1.33.0`.
-export const HOST_API_VERSION = '1.33.0';
+//
+// 1.34.0 adds an optional `liveByTmux` boolean to the runtime contract: a
+// `wrapLaunch` runtime whose pane runs a wrapper process discovery can't see
+// through (a sandbox's `exec` client) reads as live while its tmux is alive,
+// the way a `buildLaunch` runtime already does. An older server quarantines no
+// unknown runtime key, so the card silently reads as dormant there; a manifest
+// that needs it declares `^1.34.0`.
+export const HOST_API_VERSION = '1.34.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

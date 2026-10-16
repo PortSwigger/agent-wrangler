@@ -370,7 +370,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       for (const k of ['wrapLaunch', 'buildLaunch', 'preflight', 'readLive', 'analyze', 'cost', 'deliver', 'launchStatus', 'validateModel']) {
         if (rt[k] != null && typeof rt[k] !== 'function') fail(ext, `runtime ${rt.id} ${k} must be a function`);
       }
-      for (const k of ['resumable', 'skipsHostResumeGuard']) {
+      for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux']) {
         if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
       }
       if (rt.buildLaunch && rt.resumable !== false) fail(ext, `runtime ${rt.id} uses buildLaunch, so it must declare resumable: false`);

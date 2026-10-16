@@ -1142,6 +1142,8 @@ test('a bad runtime shape quarantines', () => {
   rejects(manifest({ runtimes: [toyRuntime({ cost: { usd: 1 } })] }), /runtime toyrt cost must be a function/);
   rejects(manifest({ runtimes: [toyRuntime({ resumable: 'no' })] }), /runtime toyrt resumable must be a boolean/);
   rejects(manifest({ runtimes: [toyRuntime({ skipsHostResumeGuard: 1 })] }), /skipsHostResumeGuard must be a boolean/);
+  rejects(manifest({ runtimes: [toyRuntime({ liveByTmux: 'yes' })] }), /runtime toyrt liveByTmux must be a boolean/);
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ liveByTmux: true })] })));
   rejects(manifest({ runtimes: [toyRuntime(), toyRuntime({ label: 'Again' })] }), /duplicate runtime id "toyrt"/);
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ cost: async () => null })] })));
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: false, deliver: async () => ({ ok: true }) })] })));

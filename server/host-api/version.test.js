@@ -37,12 +37,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.30.0 the runtime `validateModel` hook,
 // 1.31.0 `images:keep`, `spawn({ images })` and the client `api.images.stage`,
 // 1.32.0 the `session.prepare` hook,
-// and 1.33.0 `runtime` on `api.dispatch.submit` and runtime `ownsModel`,
+// 1.33.0 `runtime` on `api.dispatch.submit` and runtime `ownsModel`,
+// and 1.34.0 the runtime `liveByTmux` flag,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.33.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.33.0');
+test('the served version is 1.34.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.34.0');
+  assert.equal(servesRange('^1.34.0'), true);
   assert.equal(servesRange('^1.33.0'), true);
   assert.equal(servesRange('^1.32.0'), true);
   assert.equal(servesRange('^1.31.0'), true);

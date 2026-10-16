@@ -419,6 +419,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         label: rt.label,
         ...(rt.resumable === undefined ? {} : { resumable: rt.resumable }),
         skipsHostResumeGuard: Boolean(rt.skipsHostResumeGuard),
+        liveByTmux: Boolean(rt.liveByTmux),
         preflight: bind(rt.preflight, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
         wrapLaunch: bind(rt.wrapLaunch, notActive),
         buildLaunch: bind(rt.buildLaunch, notActive),
