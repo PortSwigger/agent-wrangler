@@ -300,3 +300,30 @@ test('live target with no compaction: no readiness wait, no submit check', async
   assert.equal(d.ready.length, 0);
   assert.equal(d.submitted.length, 0);
 });
+
+test('recently restarted live target: rejects before pasting while the composer is still loading', async () => {
+  const d = deps({
+    live: { CARD1: { tmux: 'cx_loading', socket: '/s/cx' } },
+    entries: { CARD1: { agent: 'codex', relaunchedAt: Date.now() - 28000 } },
+    readyResult: false,
+  });
+  d.waitForCompactionEnd = async () => 'idle';
+  const result = await deliverMessage('CARD1', 'hello during restore', d);
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.error, /still starting/);
+  assert.equal(d.sent.length, 0);
+});
+
+test('recently restarted live target: a ready send does not require an observable working indicator', async () => {
+  const d = deps({
+    live: { CARD1: { tmux: 'cx_loading', socket: '/s/cx' } },
+    entries: { CARD1: { agent: 'codex', relaunchedAt: Date.now() - 28000 } },
+    submitResult: false,
+  });
+  d.waitForCompactionEnd = async () => 'idle';
+  const result = await deliverMessage('CARD1', 'hello during restore', d);
+  assert.deepEqual(d.ready, [{ name: 'cx_loading', socket: '/s/cx', agent: 'codex', order: 0 }]);
+  assert.equal(d.sent.length, 1);
+  assert.deepEqual(result, { mode: 'live' });
+  assert.deepEqual(d.submitted, []);
+});

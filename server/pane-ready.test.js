@@ -223,3 +223,19 @@ test('waitForCompactionEnd: idle pane returns immediately; compacting pane waits
   assert.equal(await waitForCompactionEnd('p', '', { capture: async () => frames.shift() ?? idle, sleep: async () => {} }), 'finished');
   assert.equal(await waitForCompactionEnd('p', '', { capture: async () => compacting, sleep: async () => {}, timeoutMs: -1 }), 'timeout');
 });
+
+test('startup readiness accepts a working composer and an existing draft without requiring emptiness', async () => {
+  for (const pane of [`${working}\n${codexEmpty}`, codexHolding, `${claudeEmpty}restored draft`, `${ESC}[0m❯\u00a0`]) {
+    assert.equal(await waitForComposerReady('p', '', pane.includes('❯') ? 'claude' : 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), true);
+  }
+});
+
+test('startup readiness needs a composer even when a working status is present', async () => {
+  for (const pane of [booting, working, `${updateMenu}\n${codexEmpty}`]) {
+    assert.equal(await waitForComposerReady('p', '', 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), false);
+  }
+});

@@ -5,6 +5,8 @@ import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearCo
 import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
 
+const STARTUP_WINDOW_MS = 60000;
+
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
 // shared primitive behind send_message (MCP) and the `message` WS control handler.
 // Unlike deliverPrNudge (an AUTOMATED nudge that skips snoozed targets), THIS is
@@ -56,13 +58,12 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     for (const p of imagePaths) await prefillPane(tmux, p, socket);
   };
 
-  // A LIVE pane needs neither pane gate: it is long past its TUI boot, and a human
-  // pressing Send chose this moment (this path also owns its own clearComposer
-  // semantics for the interrupt-restore case). Only the post-resume path below,
-  // pasting into a pty spawned milliseconds ago, has the readiness problem.
   const target = tmuxFor(id);
   if (target) {
     const socket = socketFor(id);
+    const entry = sessionManager.entryFor?.(id);
+    const launchedAt = entry?.relaunchedAt ?? entry?.createdAt;
+    const starting = Number.isFinite(launchedAt) && Date.now() - launchedAt < STARTUP_WINDOW_MS;
     // The first message after a long idle often lands while the agent is
     // auto-compacting, and a prompt pasted into a compacting pane is lost with no
     // error. Wait the compaction out; if it outlasts the wait, refuse BEFORE
@@ -72,13 +73,14 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (compaction === 'timeout') {
       return { mode: 'error', outcome: 'rejected', error: 'The agent is still compacting its context, so the message was not sent. Send it again once compaction finishes.' };
     }
-    if (compaction === 'finished') await waitForComposerReady(target, socket, sessionManager.entryFor?.(id)?.agent);
+    if (starting) {
+      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: false })) {
+        return { mode: 'error', outcome: 'rejected', error: 'The agent is still starting, so the message was not sent. Send it again once the terminal is ready.' };
+      }
+    } else if (compaction === 'finished') await waitForComposerReady(target, socket, entry?.agent);
     await attach(target, socket);
     await sendText(target, text, socket);
-    // Only a send that followed a compaction is verified: the pane was just
-    // rewritten, so a dropped CR is plausible there, while an ordinary live send
-    // is unchanged.
-    if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: sessionManager.entryFor?.(id)?.agent })) {
+    if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: entry?.agent })) {
       return { mode: 'live', outcome: 'unknown', error: 'Sent the message after compaction but could not confirm it started a turn — check the terminal before sending again.' };
     }
     return { mode: 'live' };

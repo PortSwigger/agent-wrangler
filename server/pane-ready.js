@@ -46,13 +46,21 @@ const COMPACT_POLL_MS = 1000;
 export async function waitForComposerReady(name, socket, agent, {
   timeoutMs = READY_TIMEOUT_MS,
   pollMs = READY_POLL_MS,
+  requireEmpty = true,
   capture = capturePaneStyled,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
   if (!name) return false;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (paneComposerIsEmpty(await capture(name, 6, socket), agent)) return true;
+    const pane = await capture(name, 6, socket);
+    if (requireEmpty) {
+      if (paneComposerIsEmpty(pane, agent)) return true;
+    } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you') {
+      const mark = agent === 'codex' ? '›' : '❯';
+      if (stripAnsi(pane).split('\n').filter((line) => line.trim()).slice(-6)
+        .some((line) => new RegExp(`^\\s*${mark}(?:\\s|$)`, 'u').test(line))) return true;
+    }
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
   }
