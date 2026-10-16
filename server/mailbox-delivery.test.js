@@ -41,6 +41,84 @@ test('live recipient: delivers into the pane without resuming it', async () => {
   assert.equal(d.resumed.length, 0);
 });
 
+// A Claude recipient with a published socket, recording socket sends.
+function socketDeps({ agent, socket = { socketPath: '/s/x.sock', keyPath: '/s/x.key' }, sendFails = false } = {}) {
+  const d = deps({ live: { CARD1: { tmux: 'cc_one', socket: '/s/a' } }, entries: { CARD1: { agent, liveSessionId: 'LIVE1' } } });
+  d.socketSent = [];
+  d.socketLookups = [];
+  d.findSocket = (id) => { d.socketLookups.push(id); return socket; };
+  d.sendSocket = async (target, text) => {
+    if (sendFails) throw new Error('socket send failed: ECONNREFUSED');
+    d.socketSent.push({ target, text });
+  };
+  return d;
+}
+
+test('live Claude recipient is delivered over its socket and never pasted', async () => {
+  const d = socketDeps({ agent: 'claude' });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.socketSent, [{ target: { socketPath: '/s/x.sock', keyPath: '/s/x.key' }, text: 'you have mail' }]);
+  assert.deepEqual(d.socketLookups, ['LIVE1']);
+  assert.deepEqual(d.sent, []);
+});
+
+test('an entry with no agent recorded is treated as Claude', async () => {
+  const d = socketDeps({});
+  await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(d.socketSent.length, 1);
+  assert.deepEqual(d.sent, []);
+});
+
+test('live Codex recipient is pasted, never sent over a socket', async () => {
+  const d = socketDeps({ agent: 'codex' });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.socketSent, []);
+  assert.deepEqual(d.socketLookups, []);
+  assert.equal(d.sent.length, 1);
+});
+
+test('Claude recipient with no published socket falls back to the paste', async () => {
+  const d = socketDeps({ agent: 'claude', socket: null });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.socketSent, []);
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'you have mail', socket: '/s/a' }]);
+});
+
+test('a failed socket send falls back to the paste', async () => {
+  const d = socketDeps({ agent: 'claude', sendFails: true });
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'live' });
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'you have mail', socket: '/s/a' }]);
+});
+
+test('the paste fallback still defers behind a draft when the socket send fails', async () => {
+  const d = socketDeps({ agent: 'claude', sendFails: true });
+  d.paneDeferral = { deliverOrDefer: async ({ onDefer }) => { onDefer('composer not confirmed empty'); return 'deferred'; } };
+  const mode = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.deepEqual(mode, { mode: 'deferred', reason: 'composer not confirmed empty' });
+});
+
+test('the MCP-ready wait runs before a socket send', async () => {
+  const d = socketDeps({ agent: 'claude' });
+  d.sessionManager.entryFor = () => ({ agent: 'claude', liveSessionId: 'LIVE1', relaunchedAt: Date.now() });
+  d.mcpConnectsAfterPolls = 2;
+  let polls = 0;
+  d.mcpSeenAt = () => { polls += 1; return polls > 2 ? Date.now() + 1000 : 0; };
+  d.sendSocket = async () => { d.socketSent.push({ pollsBefore: polls }); };
+  await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.ok(d.socketSent[0].pollsBefore > 2);
+});
+
+test('a snoozed or archived recipient never reaches the socket', async () => {
+  const d = socketDeps({ agent: 'claude' });
+  d.sessionManager.entryFor = () => ({ agent: 'claude', archivedAt: 1 });
+  assert.deepEqual(await deliverMailNotification('CARD1', 'x', d), { mode: 'skip' });
+  assert.deepEqual(d.socketSent, []);
+});
+
 test('dormant recipient keeps its mail unread without being resumed', async () => {
   const d = deps({ entries: { CARD1: { cwd: '/tmp/session' } } });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);

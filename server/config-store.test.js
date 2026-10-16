@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -72,6 +72,12 @@ test('subagentsExpandedByDefault defaults to off (collapsed); only an explicit t
   assert.equal(subagentsExpandedByDefault({}), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: false }), false);
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: true }), true);
+});
+
+test('trustClaudeLaunchCwd defaults to on; only an explicit false disables', () => {
+  assert.equal(trustClaudeLaunchCwd({}), true);
+  assert.equal(trustClaudeLaunchCwd({ trustClaudeLaunchCwd: true }), true);
+  assert.equal(trustClaudeLaunchCwd({ trustClaudeLaunchCwd: false }), false);
 });
 
 // Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.

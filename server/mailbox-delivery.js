@@ -2,6 +2,7 @@ import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
+import { findClaudeSocket as defaultFindSocket, sendToClaudeSocket as defaultSendSocket } from './claude-socket.js';
 
 // Deliver mail to a live session. A dormant recipient keeps its mail unread
 // until it is resumed by a human or another workflow, unless `wakesDormant()`
@@ -33,7 +34,7 @@ export async function deliverMailNotification(to, text, deps) {
   };
   let reason = null;
   const onDefer = (r) => { reason = r; };
-  const delivery = await liveTransport(to, target, text, socketFor(to), paneDeferral, beforeSend, onDefer);
+  const delivery = await liveTransport(to, entry, target, text, socketFor(to), paneDeferral, beforeSend, onDefer, deps);
   return delivery === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
 }
 
@@ -58,13 +59,23 @@ async function wakeDormant(to, entry, deps) {
   return { mode: 'deferred', reason: 'woken dormant session, delivering next sweep' };
 }
 
-// Today's only live transport: paste into the pane, gated by paneDeferral so it
-// can never land in the middle of a half-typed prompt. The swap point for a live
-// Claude session to instead use Claude Code's SendMessage socket (deferred past
-// Phase 1 — see the spec's "Claude Code cross-session messaging" section); that
-// swap would make the gate unnecessary for Claude, since a socket message does
-// not go through the composer at all.
-function liveTransport(id, tmux, text, socket, paneDeferral, beforeSend, onDefer) {
+// A live Claude session gets the notification over its cross-session socket: the
+// session reads it between tool calls or starts a turn when idle, and it never
+// touches the composer, so a half-typed draft is safe. Codex, a session with no
+// socket, or a failed send falls back to the pane paste, gated by paneDeferral so
+// it can never land in the middle of a prompt. beforeSend (the MCP-ready wait
+// after a relaunch) runs before either.
+async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps) {
+  if ((entry.agent || 'claude') === 'claude') {
+    const target = (deps.findSocket ?? defaultFindSocket)(entry.liveSessionId || id);
+    if (target) {
+      try {
+        await beforeSend();
+        await (deps.sendSocket ?? defaultSendSocket)(target, text);
+        return 'sent';
+      } catch { /* fall back to the paste below */ }
+    }
+  }
   return paneDeferral.deliverOrDefer({
     id, text, tmux, socket, deferWhileWorking: true, queueOnDefer: false, beforeSend, onDefer,
   });

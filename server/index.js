@@ -34,7 +34,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -1021,6 +1021,7 @@ async function rebuildOnce() {
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
+  graph.trustClaudeLaunchCwd = trustClaudeLaunchCwd();
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();

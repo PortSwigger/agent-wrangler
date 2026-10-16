@@ -185,6 +185,12 @@ test('claude launch injects the PR-attach hook on Bash + the attach-url env', ()
   assert.match(cmd, /AW_PR_ATTACH_URL='http:\/\/127\.0\.0\.1:\d+\/pr-attach'/);
 });
 
+test('claude launch accepts inbound cross-session messages for this session only', () => {
+  const cmd = claude.buildLaunch({ sessionId: 'CARD', liveSessionId: 'LIVE', intent: '' });
+  assert.match(cmd, /crossSessionInbound/);
+  assert.match(cmd, /accept/);
+});
+
 test('claude resume + fork also inject the PR-attach hook (all paths share buildInnerCommand)', () => {
   const resume = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' });
   const fork = claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FORKLIVE', sourceId: 'SRC' });

@@ -27,6 +27,7 @@ test('each registered setting appears in exactly one tab', () => {
     'defaultSessionCwd',
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
+    'trustClaudeLaunchCwd',
     'archiveReviewEnabled',
     'mailWakesDormant',
     'flipNavHotkeys',

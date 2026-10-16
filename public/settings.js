@@ -67,6 +67,14 @@ export const SETTINGS = [
     default: true,
   },
   {
+    id: 'trustClaudeLaunchCwd',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Skip Claude\'s trust-folder prompt for scratch sessions',
+    help: 'Blank-cwd Claude launches run in a fresh folder under ~/.agent-wrangler/sessions, which would ask "Do you trust this folder?" every time. This marks that sessions folder (only that one, never your own project folders or worktrees) as trusted in Claude\'s ~/.claude.json before launch, which also covers every scratch folder inside it. Off restores Claude\'s normal prompt.',
+    default: true,
+  },
+  {
     id: 'archiveReviewEnabled',
     type: 'toggle',
     scope: 'server',
@@ -157,7 +165,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
+    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
