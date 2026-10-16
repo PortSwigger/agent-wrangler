@@ -32,9 +32,14 @@ export const PR_HOOK_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-hook.js');
 //     spawned pane never falls back to the inline renderer, whatever the user set.
 //   - the PR-attach hook on Bash; a user's own hooks still run alongside it. Passive:
 //     the hook exits 0 with no stdout, never blocking a tool.
+//   - crossSessionInbound: 'accept' lets the board's socket messages (mail
+//     notifications) through. These sessions bypass permissions, so without it
+//     Claude holds every inbound message for approval, then drops it. Set here,
+//     per session, never in the user's own settings.
 function launchSettings() {
   return JSON.stringify({
     tui: 'fullscreen',
+    crossSessionInbound: 'accept',
     hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] },
   });
 }
