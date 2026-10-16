@@ -1882,6 +1882,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .mail-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 10px; color: var(--fg-subtle); padding: 1px 4px; }
 .mail-badge svg { width: 12px; height: 12px; }
 .mail-badge.stale { color: var(--mail-fg); }
+.card-tag.mail-blocked { color: var(--mail-fg); white-space: normal; text-align: left; }
 .session-card.selected .mail-badge { color: var(--fg); }
 .session-card.selected .mail-badge.stale { color: var(--mail-fg); }
 .worker-row.selected .mail-badge { color: var(--fg); }

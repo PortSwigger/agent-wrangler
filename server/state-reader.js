@@ -291,13 +291,17 @@ export async function applyRuntimeCost(runtime, args, enr) {
 
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore } = {}) {
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore, mailDraftBlocked } = {}) {
   const now = Date.now();
   // The mail pill's data, keyed on card id like every other per-session field —
   // omitted entirely (undefined) when no mailStore is injected, so a caller that
   // doesn't pass one (most tests) sees no `mail` field rather than a fabricated
   // empty one.
-  const mailInfo = (sid) => (mailStore ? mailStore.unreadInfo(sid, now) : undefined);
+  const mailInfo = (sid) => {
+    if (!mailStore) return undefined;
+    const info = mailStore.unreadInfo(sid, now);
+    return info.unread && mailDraftBlocked?.(sid, now) ? { ...info, draftBlocked: true } : info;
+  };
   // The install-wide fallback every card's autoFixPrChecks resolves against when it
   // has no explicit per-session choice. Read ONCE per build (readConfig is a sync
   // file read and this is per-session, three times over), so a mid-build settings

@@ -26,6 +26,10 @@ import { paneComposerIsEmpty } from './ghost-suggestion.js';
 // trade for not adding a JSON store for text whose board toast already fired.
 export const MAX_PENDING_PER_CARD = 200;
 
+// The defer reason for a prompt box that holds (or may hold) an unsent draft.
+// Exported so the mail deferral tracker can tell it from a merely busy session.
+export const COMPOSER_BLOCKED_REASON = 'composer not confirmed empty';
+
 // Enough pane history for both composer parsing and the working-state marker.
 const CAPTURE_LINES = 60;
 
@@ -69,7 +73,7 @@ export function createPaneDeferral({
       if (!pane) return 'pane capture empty';
       const paneStatus = classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status;
       if (paneStatus !== 'idle') return `pane classified ${paneStatus}`;
-      if (!paneComposerIsEmpty(pane, agentFor(id))) return 'composer not confirmed empty';
+      if (!paneComposerIsEmpty(pane, agentFor(id))) return COMPOSER_BLOCKED_REASON;
       return null;
     } catch (err) {
       return `pane check failed: ${err?.message || err}`;
@@ -78,7 +82,7 @@ export function createPaneDeferral({
 
   async function blocker(id, tmux, socket, deferWhileWorking) {
     if (deferWhileWorking) return notifyBlocker(id, tmux, socket);
-    return (await composerIsClear(id, tmux, socket)) ? null : 'composer not confirmed empty';
+    return (await composerIsClear(id, tmux, socket)) ? null : COMPOSER_BLOCKED_REASON;
   }
 
   // Paste `text` into the card's pane if its composer is confirmed empty,

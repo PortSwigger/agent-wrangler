@@ -1,10 +1,15 @@
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { composeMailNotification } from './mail-notification.js';
+import { COMPOSER_BLOCKED_REASON } from './pane-deferral.js';
 import { log as defaultLog } from './log.js';
 
 // A held notification is silent by design, so one stuck for good looks exactly
 // like one waiting out a long turn. After this long, say why — once.
 export const DEFER_LOG_AFTER_MS = 60_000;
+// A notification held this long by a non-empty prompt box is surfaced on the
+// card: the human is the only one who can clear it, and the log line is not
+// where they look.
+export const DRAFT_SURFACE_AFTER_MS = 120_000;
 // A recipient not deferred for this long has been delivered, read or dropped by
 // some other path, so its next deferral starts a fresh episode. Comfortably
 // above the ~10s settle retry so a live episode is never split.
@@ -29,10 +34,22 @@ export function createDeferralTracker({ log = defaultLog } = {}) {
       }
       ep.unread = new Set(unreadIds);
       ep.lastAt = now;
+      // The reason can flip (busy, then idle with a draft); only an unbroken
+      // run of the draft reason counts towards surfacing it.
+      if (reason?.startsWith(COMPOSER_BLOCKED_REASON)) ep.draftSince ??= now;
+      else ep.draftSince = null;
       if (!ep.logged && now - ep.since >= DEFER_LOG_AFTER_MS) {
         ep.logged = true;
         log(`[mail] notification to ${to} deferred ${Math.round((now - ep.since) / 1000)}s: ${reason || 'unknown reason'}`);
       }
+    },
+    // True while a live episode has been held by a draft for DRAFT_SURFACE_AFTER_MS.
+    // Cleared by resolved() on delivery, or once the episode stops being retried.
+    draftBlocked(to, now = Date.now()) {
+      const ep = episodes.get(to);
+      return !!ep && ep.draftSince != null
+        && now - ep.lastAt <= DEFER_EPISODE_GAP_MS
+        && now - ep.draftSince >= DRAFT_SURFACE_AFTER_MS;
     },
     resolved(to) { episodes.delete(to); },
     prune(now) {

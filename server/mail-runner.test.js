@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MailboxStore, SETTLE_MS } from './mailbox-store.js';
-import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS } from './mail-runner.js';
+import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS, DRAFT_SURFACE_AFTER_MS } from './mail-runner.js';
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-mailrunner-')), 'mailbox.json');
@@ -316,4 +316,37 @@ test('reading part of a held batch keeps its deferral episode running', () => {
   assert.deepEqual(logs, []);
   t.deferred('CARD1', 'pane classified working', 60_000, ['mail_c']);
   assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: pane classified working']);
+});
+
+test('a draft-held notification is surfaced only after the threshold', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  const draft = 'composer not confirmed empty';
+  for (let now = 0; now < DRAFT_SURFACE_AFTER_MS; now += 10_000) {
+    t.deferred('CARD1', draft, now);
+    assert.equal(t.draftBlocked('CARD1', now), false, `${now}ms`);
+  }
+  t.deferred('CARD1', draft, DRAFT_SURFACE_AFTER_MS);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), true);
+});
+
+test('the draft notice clears on delivery and when retries stop', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now <= DRAFT_SURFACE_AFTER_MS; now += 10_000) t.deferred('CARD1', 'composer not confirmed empty (after beforeSend)', now);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), true);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS + 60_000), false, 'stale episode');
+  t.resolved('CARD1');
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), false);
+});
+
+test('other deferral reasons never surface the draft notice', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now <= DRAFT_SURFACE_AFTER_MS * 2; now += 10_000) t.deferred('CARD1', 'pane classified working', now);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS * 2), false);
+});
+
+test('a draft reason only counts from when it began, not from a busy start', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now < 100_000; now += 10_000) t.deferred('CARD1', 'pane classified working', now);
+  t.deferred('CARD1', 'composer not confirmed empty', 100_000);
+  assert.equal(t.draftBlocked('CARD1', 100_000), false);
 });

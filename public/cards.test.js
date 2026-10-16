@@ -5,7 +5,7 @@ import {
   STATUS_WORDS, PR_DOT_TITLE,
   linkChipsHtml, drawableLinks, visibleTaskLinkCount, sessionCardHtml, devcontainerChip, workerStatusWord, workerRowHtml,
   workflowBoxHtml, renderTileCards, snoozedRowHtml, taskBodyHostHtml,
-  tileHtml, ghostHtml, mailBadgeHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
+  tileHtml, ghostHtml, mailBadgeHtml, mailBlockedHtml, modelPillHtml, compactPillHtml, tokenChipHtml, cardPillHostHtml,
   visibleSubAgents, SUBAGENT_RECENT_MS, subagentZoneHtml, subagentPillHtml, subagentRowHtml,
   subagentDividerHtml, CORE_CHIPS,
 } from './cards.js';
@@ -787,4 +787,11 @@ test('tileHtml: a snoozed child is not listed under the snoozed divider with its
   const html = tileHtml(tile, ctx());
   assert.equal((html.match(/class="snoozed-row/g) || []).length, 1);
   assert.match(html, /snoozed 1</);
+});
+
+test('mailBlockedHtml: only unread mail held by a draft shows the notice', () => {
+  assert.equal(mailBlockedHtml(sess({ mail: null })), '');
+  assert.equal(mailBlockedHtml(sess({ mail: { unread: 1 } })), '');
+  assert.equal(mailBlockedHtml(sess({ mail: { unread: 0, draftBlocked: true } })), '');
+  assert.match(mailBlockedHtml(sess({ mail: { unread: 1, draftBlocked: true } })), /Mail waiting: an unsent draft in the prompt box is blocking it/);
 });
