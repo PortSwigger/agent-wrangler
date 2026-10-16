@@ -182,7 +182,7 @@ export function lastActiveAt(c) {
 
 // Pure decision: which live (managed) sessions to tear down. A candidate is
 // { sessionId, managed, attached, status, hasBackgroundShell, suspendPending,
-// lastActivity, relaunchedAt, createdAt }. Rules: only managed (has a live tmux to
+// lastActivity, hasTranscript, relaunchedAt, createdAt }. Rules: only managed (has a live tmux to
 // kill); never while a client is attached; only when idle (never working/needs-you
 // — killing those loses work or the human's place); never with a live background
 // shell (the pane kill leaves no transcript trace of the kill, which is what
@@ -196,6 +196,7 @@ export function suspendableSessions(candidates, { idleMs, now }) {
   return candidates.filter((c) => {
     if (!c.managed || c.attached || c.status !== 'idle' || c.hasBackgroundShell) return false;
     if (c.suspendPending) return true;
+    if (c.hasTranscript && c.lastActivity == null) return false;
     const since = lastActiveAt(c);
     if (idleMs == null || since == null) return false;
     return (now - since) >= idleMs;
@@ -1736,6 +1737,7 @@ export class SessionManager {
       hasBackgroundShell: Boolean(s.hasBackgroundShell),
       suspendPending: Boolean(this.map.get(s.sessionId)?.suspendPending),
       lastActivity: s.lastActivity,
+      hasTranscript: Boolean(s.hasTranscript),
       // Manager-owned, read off the entry exactly as suspendPending is above — so
       // the relaunch floor costs no graph/state-reader coupling.
       relaunchedAt: this.map.get(s.sessionId)?.relaunchedAt,

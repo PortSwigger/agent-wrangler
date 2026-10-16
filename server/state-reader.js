@@ -544,6 +544,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       tasks: readJobInFlight(s.jobId),
       updatedAt: s.updatedAt || null,
       lastActivity: enrichment?.lastActivity ?? null,
+      hasTranscript: enrichment?.hasTranscript ?? false,
       tty: proc.get(s.pid)?.tty ?? null,
       cpu: proc.get(s.pid)?.cpu ?? null,
       managed: Boolean(tmux),
@@ -717,6 +718,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       // pure-scrape session (no live file) falls back to its last activity.
       updatedAt: live?.updatedAt ?? enr?.lastActivity ?? null,
       lastActivity: enr?.lastActivity ?? null,
+      hasTranscript: enr?.hasTranscript ?? false,
       tty: proc.get(d.claudePid)?.tty ?? null,
       cpu: proc.get(d.claudePid)?.cpu ?? null,
       managed: true,

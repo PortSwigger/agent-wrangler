@@ -605,6 +605,17 @@ function makeDiscoveredManager(entry, tmuxName) {
   };
 }
 
+test('buildGraph carries transcript availability from a discovered session enrichment', async () => {
+  const entry = { sessionId: 'codex-sid', agent: 'codex', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cx_s1');
+  const discover = async () => [{ tmuxName: 'cx_s1', claudePid: 4242, agent: 'codex', command: 'codex' }];
+  const runtimeResolver = () => ({ analyze: async () => ({ hasTranscript: true, lastActivity: null }) });
+
+  const graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => '' });
+
+  assert.equal(graph.sessions.find((s) => s.sessionId === entry.sessionId).hasTranscript, true);
+});
+
 test('buildGraph: live Codex self-update status reaches the board with its restart reason', async () => {
   const entry = { sessionId: 'codex-update', agent: 'codex', liveSessionId: 'L1' };
   const mgr = makeDiscoveredManager(entry, 'cx_update');

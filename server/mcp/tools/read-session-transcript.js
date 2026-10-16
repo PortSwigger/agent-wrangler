@@ -1,7 +1,8 @@
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
 import { adapterFor } from '../../agents/index.js';
-import { scanChatText } from '../../chat-events.js';
+import { createChatScanner, scanChatText } from '../../chat-events.js';
+import { forEachRolloutLine } from '../../agents/codex-rollout.js';
 import { sessionLabel } from '../../state-reader.js';
 
 const HEAD_MESSAGES = 5;
@@ -41,6 +42,35 @@ export function summariseTranscript(text, agent) {
   };
 }
 
+async function summariseCodexRollout(file) {
+  const scanner = createChatScanner('codex');
+  const head = [];
+  const tail = [];
+  let total = 0;
+  await forEachRolloutLine(file, (line) => {
+    for (const event of scanner.push(line)) {
+      if (event.kind !== 'user' && event.kind !== 'assistant' || !event.text) continue;
+      const turn = {
+        role: event.kind,
+        ts: event.ts ? new Date(event.ts).toISOString() : null,
+        text: clipText(event.text),
+      };
+      total += 1;
+      if (head.length < HEAD_MESSAGES) head.push(turn);
+      else {
+        tail.push(turn);
+        if (tail.length > TAIL_MESSAGES) tail.shift();
+      }
+    }
+  });
+  if (total <= HEAD_MESSAGES + TAIL_MESSAGES) return { total, omitted: 0, messages: [...head, ...tail] };
+  return {
+    total,
+    omitted: total - HEAD_MESSAGES - TAIL_MESSAGES,
+    messages: [...head, ...tail],
+  };
+}
+
 export const readSessionTranscriptTool = {
   name: 'read_session_transcript',
   description:
@@ -70,33 +100,37 @@ export const readSessionTranscriptTool = {
       if (p) earlierTranscriptPaths.push(p);
     }
 
-    let text;
     try {
-      text = await fsp.readFile(transcriptPath, 'utf8');
+      const summary = agent === 'codex'
+        ? await summariseCodexRollout(transcriptPath)
+        : summariseTranscript(await fsp.readFile(transcriptPath, 'utf8'), agent);
+      const { total, omitted, messages } = summary;
+      return transcriptResult({ args, entry, agent, transcriptPath, earlierTranscriptPaths, total, omitted, messages });
     } catch (err) {
       return errorResult(`Could not read ${transcriptPath}: ${err.message}`);
     }
-    const { total, omitted, messages } = summariseTranscript(text, agent);
-
-    const structuredContent = {
-      sessionId: args.sessionId,
-      label: sessionLabel({ agent, names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: args.sessionId.slice(0, 8) }) || null,
-      agent,
-      cwd: entry.cwd ?? null,
-      archived: Boolean(entry.archivedAt),
-      totalMessages: total,
-      omittedMessages: omitted,
-      messages,
-      transcriptPath,
-      earlierTranscriptPaths,
-      note: `This is a condensed view. If you need the full transcript, read ${transcriptPath}.`,
-    };
-    return {
-      content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
-      structuredContent,
-    };
   },
 };
+
+function transcriptResult({ args, entry, agent, transcriptPath, earlierTranscriptPaths, total, omitted, messages }) {
+  const structuredContent = {
+    sessionId: args.sessionId,
+    label: sessionLabel({ agent, names: [entry.name, entry.lastLabel], intent: entry.intent, cwd: entry.cwd, fallback: args.sessionId.slice(0, 8) }) || null,
+    agent,
+    cwd: entry.cwd ?? null,
+    archived: Boolean(entry.archivedAt),
+    totalMessages: total,
+    omittedMessages: omitted,
+    messages,
+    transcriptPath,
+    earlierTranscriptPaths,
+    note: `This is a condensed view. If you need the full transcript, read ${transcriptPath}.`,
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent,
+  };
+}
 
 function errorResult(message) {
   return { content: [{ type: 'text', text: message }], isError: true };

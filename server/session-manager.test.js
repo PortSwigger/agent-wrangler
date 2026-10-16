@@ -2578,6 +2578,14 @@ test('suspendable: a relaunched session qualifies again once the relaunch itself
   assert.equal(out.length, 1);
 });
 
+test('suspendable: a known transcript with unknown activity is not suspended on the timer', () => {
+  const now = 20 * 60 * 60 * 1000;
+  const out = suspendableSessions(
+    [cand({ hasTranscript: true, lastActivity: null, relaunchedAt: now - 2 * 60 * 60 * 1000 })],
+    { idleMs: 60 * 60 * 1000, now });
+  assert.deepEqual(out, []);
+});
+
 // A fork's transcript REPLAYS its parent's history (same timestamps), so a
 // seconds-old fork inherits an ancient lastActivity. createdAt covers it — and
 // dispatch — without either constructor needing its own stamp.
@@ -2596,6 +2604,13 @@ test('suspendPending: fires on a freshly relaunched session regardless of the fl
   const out = suspendableSessions(
     [cand({ suspendPending: true, relaunchedAt: now, lastActivity: now })],
     { idleMs: null, now });
+  assert.equal(out.length, 1);
+});
+
+test('suspendPending: overrides unknown transcript activity', () => {
+  const out = suspendableSessions(
+    [cand({ suspendPending: true, hasTranscript: true, lastActivity: null })],
+    { idleMs: null, now: 1000 });
   assert.equal(out.length, 1);
 });
 
@@ -2727,6 +2742,14 @@ test('reconcileSuspend: suspends an idle-past-threshold session and returns its 
   const ids = await sm.reconcileSuspend(sessions, { suspendIdleHours: 4 });
   assert.deepEqual(ids, ['s1']);
   assert.deepEqual(sm.suspended, ['s1']);
+});
+
+test('reconcileSuspend: skips a known transcript whose activity is unavailable', async () => {
+  const sm = smForReconcile([{ sessionId: 's1' }]);
+  const sessions = [{ sessionId: 's1', tmux: 'cc_s1', status: 'idle', lastActivity: null, hasTranscript: true }];
+  const ids = await sm.reconcileSuspend(sessions, { suspendIdleHours: 4 });
+  assert.deepEqual(ids, []);
+  assert.deepEqual(sm.suspended, []);
 });
 
 test('reconcileSuspend: skips an attached session and a working one', async () => {

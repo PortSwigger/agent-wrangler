@@ -41,6 +41,46 @@ test('analyzeCodex uses cumulative total_token_usage (last), nets out cache, est
   assert.deepEqual(r.subAgents, []);
 });
 
+test('analyzeCodex streams a rollout with a multi-megabyte record', async (t) => {
+  const { root, uuid } = fixtureSessions();
+  const file = path.join(root, '2026', '06', '10', `rollout-2026-06-10T09-00-00-${uuid}.jsonl`);
+  fs.appendFileSync(file, JSON.stringify({ type: 'response_item', payload: {
+    type: 'custom_tool_call_output', output: [{ type: 'input_text', text: 'x'.repeat(5 * 1024 * 1024) }],
+  } }) + '\n');
+  const readFile = fsp.readFile;
+  t.mock.method(fsp, 'readFile', async (target, ...args) => {
+    if (target === file) throw new Error('rollouts must not use readFile');
+    return readFile(target, ...args);
+  });
+
+  const r = await analyzeCodex(uuid, { sessionsDir: root });
+
+  assert.equal(r.tokens.input, 1300);
+  assert.equal(r.summary, 'Fix the parser bug');
+  assert.notEqual(r.lastActivity, null);
+});
+
+test('analyzeCodex preserves transcript availability when its stream cannot be opened', async (t) => {
+  const { root, uuid } = fixtureSessions();
+  const index = await buildRolloutIndex(root);
+  const file = index.get(uuid);
+  const createReadStream = fs.createReadStream;
+  let attempted = false;
+  t.mock.method(fs, 'createReadStream', (target, ...args) => {
+    if (target === file) {
+      attempted = true;
+      throw new Error('rollout unavailable');
+    }
+    return createReadStream(target, ...args);
+  });
+
+  const r = await analyzeCodex(uuid, { sessionsDir: root, index });
+
+  assert.equal(attempted, true);
+  assert.equal(r.hasTranscript, true);
+  assert.equal(r.lastActivity, null);
+});
+
 function resumedUsageFixture(oldCounts, newCounts, kind = 'rewind') {
   const interrupt = kind === 'interrupt';
   const uuid = interrupt ? '01a0c473-2740-7970-8667-e6f359444905' : '01a0e9b4-6b88-7e81-98c4-3db1929502a3';
@@ -488,6 +528,7 @@ test('analyzeCodex returns nulls for an unknown id', async () => {
   const r = await analyzeCodex('00000000-0000-0000-0000-000000000000', { sessionsDir: root });
   assert.equal(r.usd, null);
   assert.equal(r.tokens, null);
+  assert.equal(r.hasTranscript, false);
 });
 
 test('analyzeCodex keeps the latest completed turn model when a new turn is pending', async () => {
