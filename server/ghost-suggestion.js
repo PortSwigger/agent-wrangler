@@ -76,20 +76,23 @@ const STYLED_TOKEN = new RegExp(
 function styledLines(paneText) {
   let bold = false;
   let dim = false;
+  let reverse = false;
   const lines = [[]];
   for (const [token] of paneText.matchAll(STYLED_TOKEN)) {
     if (token === '\n') { lines.push([]); continue; }
-    if (token[0] !== ESC) { lines.at(-1).push({ ch: token, bold, dim }); continue; }
+    if (token[0] !== ESC) { lines.at(-1).push({ ch: token, bold, dim, reverse }); continue; }
     if (!token.endsWith('m') || token.includes('?')) continue;
     const params = token.slice(2, -1).split(';');
     for (let i = 0; i < params.length; i += 1) {
       const p = params[i];
       if (p.includes(':')) continue;
       const n = p === '' ? 0 : Number(p);
-      if (n === 0) { bold = false; dim = false; }
+      if (n === 0) { bold = false; dim = false; reverse = false; }
       else if (n === 1) bold = true;
       else if (n === 2) dim = true;
+      else if (n === 7) reverse = true;
       else if (n === 22) { bold = false; dim = false; }
+      else if (n === 27) reverse = false;
       else if (n === 38 || n === 48 || n === 58) {
         if (params[i + 1] === '5') i += 2;
         else if (params[i + 1] === '2') i += 4;
@@ -113,8 +116,11 @@ function codexComposerIsEmpty(paneText) {
 export function paneComposerIsReady(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText) return false;
   if (agent === 'codex') {
-    const line = styledLines(paneText).filter((cells) => cells[0]?.ch === CODEX_PROMPT_MARK).pop();
-    return Boolean(line?.[0]?.bold && !line[0].dim);
+    const lines = styledLines(paneText);
+    const line = lines.filter((cells) => cells[0]?.ch === CODEX_PROMPT_MARK).pop();
+    if (!line?.[0]?.bold || line[0].dim || line[0].reverse) return false;
+    const footer = lines.map((cells) => cells.map((cell) => cell.ch).join('').trim()).filter(Boolean).pop();
+    return !/^(?:press\s+)?enter\b.*\besc\b/i.test(footer || '');
   }
   const lines = paneText.split('\n').map(visible);
   const rules = lines.map((line, i) => /^─{10,}$/.test(line) ? i : -1).filter((i) => i >= 0);

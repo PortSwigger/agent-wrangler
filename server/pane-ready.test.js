@@ -267,3 +267,23 @@ test('startup readiness accepts a framed Claude draft with several wrapped lines
     timeoutMs: 0,
   }), true);
 });
+
+test('startup readiness rejects styled Codex startup and selection menus', async () => {
+  const panes = [
+    `Trust this folder?\n${ESC}[1m› 1. Trust and continue${ESC}[0m\n  2. Quit\n  enter continue · esc quit`,
+    `Background server settings differ\n  1. Run without daemon this time\n  2. Restart with these settings\n${ESC}[1;7m› 3. Cancel${ESC}[0m`,
+    `${codexEmpty}\n  ? for shortcuts\nReplace goal?\n${ESC}[1m› 1. Replace current goal${ESC}[0m\n  2. Cancel\n  enter select · esc back`,
+  ];
+  for (const pane of panes) {
+    assert.equal(await waitForComposerReady('p', '', 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+    }), false, pane);
+  }
+});
+
+test('startup readiness accepts a numbered Codex draft and selection hints quoted inside it', async () => {
+  const pane = `${ESC}[1m›${ESC}[0m 1. first item\n  2. second item\n  enter continue · esc quit\n  GPT-6-Luna medium · /tmp/example\n  warnings`;
+  assert.equal(await waitForComposerReady('p', '', 'codex', {
+    requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+  }), true);
+});
