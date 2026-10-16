@@ -1,20 +1,3 @@
-// Audible cues for board events, synthesized with WebAudio rather than shipped
-// as an audio file: a cue is three numbers per note here, versus a binary blob
-// to vendor, fetch and cache-bust. Two cues, deliberately distinguishable
-// without being told which is which — a rising two-note chime when a session
-// FINISHES (working → idle) and a lower double-beep on one pitch when a session
-// starts WAITING on you (needs-you).
-//
-// Opt-in and per-browser: the `soundOnFinish` setting gates both call sites in
-// app.js, which is also where focus-mode suppression lives. This module never
-// reads the setting — staying pure of settings/DOM is what makes it testable
-// under `node --test`, where there is no WebAudio at all.
-//
-// Everything here fails SILENT and returns false. No WebAudio, an AudioContext
-// the autoplay policy still has suspended, a constructor that throws: none of
-// it may propagate into the render path that called us, and none of it deserves
-// a toast — the user asked for a sound, not for an error about a sound.
-
 // [pitch Hz, start offset s, duration s] per note. Pitches sit in the middle of
 // the audible range: high enough to cut through, low enough not to pierce.
 export const TONES = {
@@ -62,7 +45,7 @@ export function playSound(kind, Ctor) {
     // resume() is async and may never settle (the tab was never clicked), so
     // fire it and schedule regardless rather than awaiting: this cue may be
     // lost, but the one after the next click won't be.
-    if (ac.state === 'suspended') ac.resume?.();
+    if (ac.state === 'suspended') ac.resume?.()?.catch?.(() => {});
     const now = ac.currentTime || 0;
     for (const [freq, at, dur] of notes) {
       const osc = ac.createOscillator();

@@ -43,7 +43,7 @@ extension.
 ## Core extensions
 
 Some extensions ship inside Agent Wrangler itself. They are listed under **Core** in the same
-tab, are on by default, and can be turned off or configured like any other, but they have no origin to
+tab, can be turned on, turned off or configured like any other, but they have no origin to
 update from and cannot be uninstalled.
 
 | Extension | What it adds | Settings |
@@ -51,7 +51,20 @@ update from and cannot be uninstalled.
 | **Per-session checklist** | The session checklist panel and chip, its four MCP tools and the `checklist` skill. See [Board and sessions](board-and-sessions.md). | None. |
 | **TODOs** | Board TODOs for each task and the Unassigned tile, their MCP tools and the `archive-to-todo` skill. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). | None. |
 | **Jira** | The `jira` link type and its board chip: agents attach a Jira issue to a session or task with `set_links`, and the chip links to the issue. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). Off, stored Jira links are kept (and survive `set_links`) but draw no chip and no new ones can be set. | **Jira base URL**: what a bare issue key is appended to, e.g. `https://yourcompany.atlassian.net/browse/`. Empty uses `AW_JIRA_BASE_URL` if set; a bare key otherwise renders without a link. The old `jiraBaseUrl` config value, or `AW_JIRA_BASE_URL`, is copied into it at boot. |
+| **Sounds** | Browser audio cues when sessions finish or need attention. Focus mode silences other tasks. | Extension enablement controls playback. Audio-file uploads for each cue (up to 1 MB each), preview and reset to built-in tones are shared across browsers. |
 | **Adversarial PR review** | The `adversarial-pr-review` skill and its reviewer's `adversarial_review_process` tool. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | **Review process**: what the reviewer checks and how. Empty uses the built-in process; anything written replaces it. |
+
+### Sound cues
+
+Open **Settings → Extensions → Sounds** and turn the extension on to hear sound cues.
+Turning it off silences both cues. Sounds is off by default; the first browser with an existing
+sound preference migrates that preference into the shared extension switch. An explicit extension
+choice always wins, so another browser’s old preference cannot change it.
+
+For **Session finished** and **Session needs you**, choose **Upload audio** to select a browser-supported
+audio file up to 1 MB. **Preview** plays the selected cue before saving, and **Use default** restores
+its built-in tone. Press **Save** to keep the changes. Files are stored on the server and shared
+across browsers; turning the extension off keeps the uploaded files for next time.
 
 ## Minimal external extension
 
@@ -1043,6 +1056,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
     disabled or uninstalled.
   - Bindings are listed under the extension's label in Settings → Shortcuts.
   A manifest using either half declares `^1.26.0`.
+- **`notification.cue`** (1.34.0) is a client value slot: `{ id, cue(kind, api) }`.
+  Core calls it with `finished` once per poll with an eligible working → idle transition,
+  and `needs-you` when a session raises its attention notification. Both honor focus-mode
+  suppression before dispatch; the first board load does not emit finish cues. Extensions
+  own their playback. A thrown or rejected callback is reported without interrupting
+  the board or other contributors. Removing an extension removes its callbacks immediately.
+  A manifest using this slot declares `^1.34.0`.
+- **`api.onConnect(fn)`** (1.34.0) subscribes to subsequent control-socket connections,
+  so a client can refresh shared state after reconnecting. Returns an unsubscribe function;
+  disabling or removing the extension drops its listeners. It does not fire immediately on
+  registration: a module should also request its initial state when it registers.
 - **`api.settings()`** (1.13.0) returns the extension's own current setting
   values in the browser (a fresh copy, read from `graph.extensions[].settingValues`
   at call time; unset keys absent). It is what lets a `dispatch.field` PREFILL

@@ -1,3 +1,4 @@
+import { createSoundMigration } from './sound-migration.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
@@ -62,7 +63,6 @@ import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
 import { createIntentImages } from './intent-images.js';
 import { createExtImageStaging } from './ext-image-staging.js';
-import { playSound } from './sound.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
@@ -297,6 +297,8 @@ function openTaskInBoard(taskId) {
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
 // is only read on first render, by which point the classic vendor <script> has run.
 let renderMarkdown;
+const migrateSoundPreference = createSoundMigration();
+
 const extApi = {
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
@@ -713,6 +715,7 @@ function applyGraph(graph) {
   // mount or an unmount. After `latestGraph` is assigned, because the render it
   // can ask for reads that — and before the renderPanel further down, so the
   // panel is drawn against the contributions that survive this tick.
+  if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
   syncClientExtensions();
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
@@ -2891,7 +2894,7 @@ function trackJustFinished(sessions) {
     const settled = settledStatus(s, prev);
     if (prev === 'working' && settled === 'idle') {
       justFinished.add(s.sessionId); jfChanged = true;
-      if (!playFinishCue && getSetting('soundOnFinish') && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+      if (!playFinishCue && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
     }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
@@ -2912,7 +2915,7 @@ function trackJustFinished(sessions) {
   if (jfChanged) persistJustFinished();
   prevStatusById = nextSettled;
   lastRawById = nextRaw;
-  if (playFinishCue) playSound('finished');
+  if (playFinishCue) slots.notificationCue('finished', extApi);
 }
 
 // Post-archive toast with an immediate Resume action; drops the selection if the
@@ -6429,7 +6432,7 @@ function connect() {
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
-  ws.onopen = () => { if (currentView === 'search') onEnterSearchView(); };
+  ws.onopen = () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); };
   ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
@@ -6696,9 +6699,7 @@ function focusSuppresses(scope, ownerId) {
 function notify(session) {
   if (focusSuppresses('session', session.sessionId)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
-  // Same opt-in as the finish chime (one setting, two tones) — this path is
-  // already focus-suppressed above, so it needs no gate of its own.
-  if (getSetting('soundOnFinish')) playSound('needs-you');
+  slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification('Claude needs you', { body });
     n.onclick = () => { window.focus(); selectSession(session.sessionId); };

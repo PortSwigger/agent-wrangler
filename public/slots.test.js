@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1509,4 +1509,35 @@ test('api.keys.bind with no registry reports instead of throwing', () => {
   const off = slots.forExtension('x').api.keys.bind({ combo: 'ctrl+k', scope: 'global', run: () => {} });
   assert.equal(typeof off, 'function');
   assert.match(errors.at(-1), /no keybinding registry/);
+});
+
+test('notification cues reach enabled contributors and stop on removal', async () => {
+  const { slots, errors } = harness();
+  const received = [];
+  const api = { source: 'board' };
+  slots.forExtension('sound', api).register('notification.cue', {
+    id: 'sound', cue: (kind, bound) => received.push([kind, bound.source]),
+  });
+  slots.notificationCue('finished', api);
+  assert.deepEqual(received, [['finished', 'board']]);
+  slots.register('notification.cue', 'broken', { id: 'throw', cue() { throw Error('broken'); } });
+  slots.register('notification.cue', 'rejected', { id: 'reject', cue() { return Promise.reject(Error('blocked')); } });
+  slots.notificationCue('needs-you', api);
+  await new Promise(setImmediate);
+  assert.deepEqual(received[1], ['needs-you', 'board']);
+  assert.equal(errors.length, 2);
+  slots.removeExtension('sound');
+  slots.notificationCue('finished', api);
+  assert.equal(received.length, 2);
+});
+
+test('connection listeners refresh extension state on reconnect and disappear on disable', () => {
+  const { slots } = harness();
+  let refreshed = 0;
+  slots.forExtension('sounds').api.onConnect(() => refreshed++);
+  slots.connected(); slots.connected();
+  assert.equal(refreshed, 2);
+  slots.removeExtension('sounds');
+  slots.connected();
+  assert.equal(refreshed, 2);
 });

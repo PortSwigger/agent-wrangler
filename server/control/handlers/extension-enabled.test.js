@@ -165,3 +165,19 @@ test('toggling a quarantined extension writes config and touches the registry no
     assert.equal(c.calls.rebuild, 1);
   });
 });
+
+test('one-time browser migrations preserve an explicit extension choice', async () => {
+  await withConfig({ extensions: { checklist: false } }, async () => {
+    const c = ctx([manifest('checklist')], { extensions: { checklist: false } });
+    await extensionEnabledHandler.handler({ id: 'checklist', enabled: true, onlyIfUnset: true }, c);
+    assert.equal(readConfig().extensions.checklist, false);
+    assert.deepEqual(c.calls.activated, []);
+  });
+  await withConfig({}, async () => {
+    const c = ctx([manifest('checklist', { defaultEnabled: false })]);
+    await extensionEnabledHandler.handler({ id: 'checklist', enabled: true, onlyIfUnset: true }, c);
+    assert.equal(readConfig().extensions.checklist, true);
+    await extensionEnabledHandler.handler({ id: 'checklist', enabled: false, onlyIfUnset: true }, c);
+    assert.equal(readConfig().extensions.checklist, true);
+  });
+});

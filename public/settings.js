@@ -91,13 +91,6 @@ export const SETTINGS = [
     default: false,
   },
   {
-    id: 'soundOnFinish',
-    type: 'toggle',
-    label: 'Play a sound when a session finishes',
-    help: 'A short rising chime when a session stops working, and a lower double-beep when one starts waiting on you. Per-browser rather than shared, since it is the machine you are sitting at that should make the noise; while focus mode is on, other tasks stay silent like their toasts do.',
-    default: false,
-  },
-  {
     id: 'childFullViewByDefault',
     type: 'toggle',
     scope: 'server',
@@ -158,7 +151,7 @@ export const SETTINGS_TABS = [
     id: 'sessions',
     label: 'Sessions',
     settingIds: [
-      'subagentsExpandedByDefault', 'soundOnFinish',
+      'subagentsExpandedByDefault',
       'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd',
     ],
   },

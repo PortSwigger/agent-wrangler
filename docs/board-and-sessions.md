@@ -102,11 +102,12 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 **Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
-- Child-card and Chat defaults, the default folder for new sessions, and completion sounds.
+- Child-card and Chat defaults, and the default folder for new sessions.
 - PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
-- Extension installation, enablement, updates, and extension-specific settings. The per-session
-  checklist is a builtin extension, so its on/off switch lives here (an older `checklistEnabled: false`
-  is carried over automatically).
+- Extension installation, enablement, updates, and extension-specific settings. Sounds offers
+  shared audio cues, uploaded audio files, and previews. The per-session checklist is a builtin
+  extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
+  automatically).
 - Board-navigation axis preference and the complete keyboard-shortcut reference.
 
 ## Keyboard shortcuts

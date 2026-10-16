@@ -71,7 +71,7 @@ import { parseCombo } from './keybindings.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip'];
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -81,7 +81,7 @@ export const HIDE_CHIPS_CAPABILITY = 'cards:hideChips';
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue' };
 
 // The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
 // presentation attributes. Anything else (scripts, handlers, urls, foreign
@@ -159,6 +159,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // that type, so one extension can never hear another's frames however the
   // payload is shaped.
   const listeners = new Map();
+  const connectionListeners = new Map();
   // `extId:name` pairs already reported by hiddenDispatchFields(), so an
   // undeclared veto prints once for the life of the page rather than once per
   // recompute.
@@ -304,6 +305,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           baseApi.send?.(frame);
         },
         onMessage: (fn) => subscribe(extId, fn),
+        onConnect: (fn) => {
+          if (typeof fn !== 'function') throw Error('onConnect requires a function');
+          if (!connectionListeners.has(extId)) connectionListeners.set(extId, new Set());
+          connectionListeners.get(extId).add(fn);
+          return () => connectionListeners.get(extId)?.delete(fn);
+        },
         openSession: (sessionId) => {
           if (typeof sessionId !== 'string' || !sessionId) {
             onError(`[ext:${extId}] openSession refused: expected a session id, got ${JSON.stringify(sessionId)}`);
@@ -795,6 +802,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       return {
         register: (slotName, contribution) => this.register(slotName, extId, contribution),
         onMessage: (fn) => subscribe(extId, fn),
+        onConnect: (fn) => {
+          if (typeof fn !== 'function') throw Error('onConnect requires a function');
+          if (!connectionListeners.has(extId)) connectionListeners.set(extId, new Set());
+          connectionListeners.get(extId).add(fn);
+          return () => connectionListeners.get(extId)?.delete(fn);
+        },
         get api() { return apiFor(extId, baseApi); },
       };
     },
@@ -811,6 +824,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // subscription dies with the module that took it and a later re-enable
       // re-imports and re-subscribes.
       listeners.delete(extId);
+      connectionListeners.delete(extId);
       settingsListeners.delete(extId);
       agentsListeners.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
@@ -1216,6 +1230,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         };
       }
       return null;
+    },
+
+    connected() {
+      for (const [extId, callbacks] of connectionListeners) {
+        for (const fn of callbacks) {
+          try { fn(); } catch (err) { onError(`[ext:${extId}] connection callback failed`, err); }
+        }
+      }
+    },
+
+    notificationCue(kind, baseApi) {
+      for (const c of [...slotList('notification.cue')]) {
+        const failed = (err) => onError(`[ext:${c.extId}] ${c.id} notification cue failed`, err);
+        try {
+          Promise.resolve(c.cue(kind, apiFor(c.extId, baseApi))).catch(failed);
+        } catch (err) { failed(err); }
+      }
     },
 
     contributions(slotName) {
