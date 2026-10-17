@@ -83,3 +83,43 @@ test('a failed upload is toasted; replies for other tokens are not ours', async 
   assert.deepEqual(toasts, ['That image is over 10 MB.']);
   assert.deepEqual(ii.names(), []);
 });
+
+test('adopt renders already-staged names as removable chips after any pasted ones', async () => {
+  const { ii, input, listEl, sent } = setup();
+  input.fire('paste', paste([png()]));
+  await tick();
+  ii.onResult({ token: sent[0].token, ok: true, name: 'paste-1-aaaa.png' });
+  ii.adopt(['paste-2-bbbb.png', 'paste-3-cccc.png']);
+  assert.deepEqual(ii.names(), ['paste-1-aaaa.png', 'paste-2-bbbb.png', 'paste-3-cccc.png']);
+  assert.equal(listEl.hidden, false);
+  assert.equal(listEl.children.length, 3);
+  // The second chip's remove button drops just that name.
+  listEl.children[1].children[1].fire('click');
+  assert.deepEqual(ii.names(), ['paste-1-aaaa.png', 'paste-3-cccc.png']);
+  assert.equal(sent.length, 1, 'an adopted name is never uploaded again');
+});
+
+test('adopt honours the attachment cap, counting in-flight uploads, and toasts the overflow', async () => {
+  const { ii, input, toasts } = setup();
+  input.fire('paste', paste([png()]));
+  await tick();
+  const many = Array.from({ length: 9 }, (_, i) => `paste-${i}-abcd.png`);
+  ii.adopt(many);
+  assert.deepEqual(ii.names(), many.slice(0, 7), 'one slot is held by the pending upload');
+  assert.deepEqual(toasts, ['2 images were skipped — a first prompt holds 8.']);
+  ii.adopt(['paste-99-abcd.png']);
+  assert.equal(ii.names().length, 7);
+  assert.equal(toasts[1], '1 image was skipped — a first prompt holds 8.');
+});
+
+test('adopt after reset survives; a later reset clears adopted names too', () => {
+  const { ii, listEl } = setup();
+  ii.reset();
+  ii.adopt(['paste-1-abcd.png', 'paste-1-abcd.png']);
+  assert.deepEqual(ii.names(), ['paste-1-abcd.png'], 'a duplicate name is one chip');
+  ii.reset();
+  assert.deepEqual(ii.names(), []);
+  assert.equal(listEl.hidden, true);
+  ii.adopt([]);
+  assert.equal(listEl.hidden, true);
+});

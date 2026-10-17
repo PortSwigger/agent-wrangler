@@ -349,12 +349,15 @@ const extApi = {
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
 };
 
-// api.openDispatch({ taskId, intent, lockTask }): open the dispatch modal as
-// openDispatch does; resolves with the `dispatched` ack once the human launches,
-// null if they cancel or a later call supersedes this one, and rejects when a
-// launch is already awaiting its ack (see dispatch-waiter.js).
-function openDispatchAcked({ taskId = null, intent = '', lockTask = false } = {}) {
-  return dispatchWaiter.open(() => openDispatch(taskId, { ...(intent ? { intent } : {}), lockTask }));
+// api.openDispatch({ taskId, intent, lockTask, cwd, images }): open the dispatch
+// modal as openDispatch does; resolves with the `dispatched` ack once the human
+// launches, null if they cancel or a later call supersedes this one, and rejects
+// when a launch is already awaiting its ack (see dispatch-waiter.js). `cwd`
+// prefills the folder and `images` (names from api.images.stage) become chips.
+function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {
+  return dispatchWaiter.open(() => openDispatch(taskId, {
+    ...(intent ? { intent } : {}), ...(cwd ? { cwd } : {}), ...(images.length ? { images } : {}), lockTask,
+  }));
 }
 
 // Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
@@ -5501,6 +5504,8 @@ function openDispatch(taskId = null, opts = {}) {
   // The source session's exact folder must win over openModal's task-dominant cwd.
   if (opts.cwd) document.getElementById('m-cwd').value = opts.cwd;
   if (opts.addDirs) additionalFolders.reset(opts.addDirs);
+  // Already-staged images (api.openDispatch), after openModal's reset cleared the last ones.
+  if (opts.images) intentImages.adopt(opts.images);
   // Implicit nesting context (e.g. a review's source session) — not a user toggle,
   // so it isn't reflected in any dialog control; just carried through to dispatch.
   if (opts.parentSession) parentSessionId = opts.parentSession;

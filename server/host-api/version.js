@@ -288,7 +288,13 @@ import semver from 'semver';
 // that needs it declares `^1.34.0`.
 //
 // 1.35.0 adds notification.cue, api.onConnect and per-request extension handler replies.
-export const HOST_API_VERSION = '1.35.0';
+//
+// 1.36.0 adds `cwd` and `images` to the client `api.openDispatch`: prefill the
+// dialog's folder and attach images already staged with `api.images.stage`, as
+// chips the human can remove. An older client drops both silently, so the
+// modal opens on the task's folder with no images; a manifest that needs them
+// declares `^1.36.0`.
+export const HOST_API_VERSION = '1.36.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

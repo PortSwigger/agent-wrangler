@@ -39,6 +39,10 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
     });
   }
 
+  function skipped(n) {
+    if (n > 0) toast(`${n} image${n === 1 ? ' was' : 's were'} skipped — a first prompt holds ${MAX_ATTACHMENTS}.`, false);
+  }
+
   function take(e, dt) {
     if (!enabled()) return;
     const { sources, text } = imageSources(dt);
@@ -50,7 +54,7 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
     }
     const room = Math.max(0, Math.min(MAX_IMAGES_PER_PASTE, MAX_ATTACHMENTS - names.length - pending.size));
     const chosen = sources.slice(0, room);
-    if (sources.length > chosen.length) toast(`${sources.length - chosen.length} image${sources.length - chosen.length === 1 ? ' was' : 's were'} skipped — a first prompt holds ${MAX_ATTACHMENTS}.`, false);
+    skipped(sources.length - chosen.length);
     for (const source of chosen) {
       const token = `dispatch#${era}#${++seq}`;
       pending.add(token);
@@ -82,6 +86,16 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
       names = [];
       pending.clear();
       era += 1;
+      render();
+    },
+    // Attach names that are ALREADY staged (an extension's api.images.stage,
+    // handed to api.openDispatch) as if they had just been pasted: same chips,
+    // same cap. Call it after the open's reset(), which would otherwise drop them.
+    adopt(list) {
+      const incoming = [...new Set(list)].filter((n) => !names.includes(n));
+      const chosen = incoming.slice(0, Math.max(0, MAX_ATTACHMENTS - names.length - pending.size));
+      skipped(incoming.length - chosen.length);
+      names.push(...chosen);
       render();
     },
     // True when the reply was ours.

@@ -803,3 +803,40 @@ test('dispatch waits while an intent image is still uploading', () => {
   assert.throws(() => app.submitDispatchFromExt(), /blocked/);
   assert.equal(sent.length, 0);
 });
+
+// ── api.openDispatch's cwd and images (1.36.0) ──────────────────────────────
+// The real openDispatchAcked and openDispatch against a stub modal: openModal
+// is reduced to the resets it performs, so the test can see that the
+// extension's folder and images land AFTER them.
+function openDispatchHarness() {
+  const log = [];
+  const els = { 'm-task': { disabled: false }, 'm-cwd': { value: '' }, 'm-intent': { value: '' } };
+  const document = { getElementById: (id) => els[id] };
+  const intentImages = { reset: () => log.push('reset'), adopt: (names) => log.push(['adopt', names]) };
+  const dispatchWaiter = { open: (show) => { show(); return Promise.resolve(null); } };
+  const app = loadApp(
+    ["function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {", 'function openDispatch(taskId = null, opts = {}) {'],
+    ['openDispatchAcked'],
+    `const openModal = ({ taskId }) => { log.push(['openModal', taskId]); document.getElementById('m-cwd').value = '/task/default'; intentImages.reset(); };
+     const additionalFolders = { reset: () => {} };
+     let parentSessionId = null; let reviewMode = false;
+     const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');`,
+    { document, intentImages, dispatchWaiter, log },
+  );
+  return { els, log, ...app };
+}
+
+test('api.openDispatch prefills the folder and adopts staged images after the open resets', async () => {
+  const { els, log, openDispatchAcked } = openDispatchHarness();
+  await openDispatchAcked({ taskId: 't1', intent: 'look', cwd: '/work/project', images: ['paste-1-abcd.png'] });
+  assert.equal(els['m-cwd'].value, '/work/project');
+  assert.equal(els['m-intent'].value, 'look');
+  assert.deepEqual(log, [['openModal', 't1'], 'reset', ['adopt', ['paste-1-abcd.png']], 'refreshWorktreeDefaults']);
+});
+
+test('api.openDispatch without cwd or images leaves the task default and adopts nothing', async () => {
+  const { els, log, openDispatchAcked } = openDispatchHarness();
+  await openDispatchAcked({ taskId: null });
+  assert.equal(els['m-cwd'].value, '/task/default');
+  assert.deepEqual(log, [['openModal', null], 'reset']);
+});
