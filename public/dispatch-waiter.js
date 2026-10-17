@@ -1,4 +1,4 @@
-// The promise behind `api.openDispatch({ taskId, intent, lockTask })`: the
+// The promise behind `api.openDispatch(...)`: the
 // dispatch modal as an awaitable. Pure state, no DOM, so the rules unit-test.
 //
 // One call is "pending" from the moment the modal opens. It resolves with the

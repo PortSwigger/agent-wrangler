@@ -1302,8 +1302,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `staged` path as the dispatch dialog's intent box (magic-byte sniff, mime
   allowlist, 10 MB cap) and resolves `{ name }`, a server-minted name, never a
   path; `api.openDispatch({ images })` (1.36.0) attaches such names in the dispatch
-  dialog for the human to launch. `host.sessions.spawn({ images: [name, ...] })` (at most 8) launches with
-  the prompt held back and then pastes each image ahead of the prompt text once
+  dialog for the human to launch. `host.sessions.spawn({ images: [name, ...] })`
+  (at most 8) launches with the prompt held back and then pastes each image ahead of the prompt text once
   the TUI has booted, as `runDispatch` does; a name that is not a minted name, or
   is neither staged nor kept, throws before anything launches. Staged names are
   single-use (the session takes the file) and pruned after a week, so work that
