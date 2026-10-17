@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { waitForComposerReady, ensureSubmitted, composerHoldsText } from './pane-ready.js';
+import { waitForComposerReady, ensureSubmitted, composerHoldsText, pasteImages, composerImageCount } from './pane-ready.js';
 
 const ESC = '';
 // Byte-exact against ghost-suggestion.js's own markers — paneComposerIsEmpty
@@ -311,4 +311,63 @@ test('startup readiness accepts a numbered Codex draft and selection hints quote
   assert.equal(await waitForComposerReady('p', '', 'codex', {
     requireEmpty: false, capture: async () => pane, timeoutMs: 0,
   }), true);
+});
+
+test('composerImageCount reads only the live composer, not echoed turns', () => {
+  const pane = [`${ESC}[0m❯ look at [Image #1]`, '⏺ ok', '─────', `${ESC}[0m❯ [Image #2] [Image #3]`, '─────'].join('\n');
+  assert.equal(composerImageCount(pane), 2);
+  assert.equal(composerImageCount(`${ESC}[0m❯ `), 0);
+  assert.equal(composerImageCount(booting), null);
+});
+
+test('pasteImages holds each paste until its marker appears, counting from a draft', async () => {
+  const log = [];
+  let composer = '❯ draft [Image #4]';
+  let pending = null;
+  let polls = 0;
+  const ok = await pasteImages('cc_a', '/s', 'claude', ['/p/1.png', '/p/2.png'], {
+    prefill: async (n, p) => { log.push(p); pending = p; polls = 0; },
+    // Each image attaches on the third poll after its paste.
+    capture: async () => {
+      if (pending && (polls += 1) === 3) { composer += ` [Image #${5 + log.filter((l) => l.startsWith('/')).indexOf(pending)}]`; pending = null; }
+      return composer;
+    },
+    sleep: async () => log.push(`wait:${composer.match(/\[Image/g).length}`),
+  });
+  assert.equal(ok, true);
+  assert.deepEqual(log, ['/p/1.png', 'wait:1', 'wait:1', '/p/2.png', 'wait:2', 'wait:2'],
+    'the second image is not pasted until the first has attached');
+  assert.equal(composer, '❯ draft [Image #4] [Image #5] [Image #6]');
+});
+
+test('pasteImages gives up on a marker that never comes, but still pastes every image', async () => {
+  const pasted = [];
+  let now = 0;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const ok = await pasteImages('cc_a', '/s', 'claude', ['/p/1.png', '/p/2.png'], {
+      timeoutMs: 1000,
+      prefill: async (n, p) => { pasted.push(p); },
+      capture: async () => '❯ ',
+      sleep: async (ms) => { now += ms; },
+    });
+    assert.equal(ok, false);
+    assert.deepEqual(pasted, ['/p/1.png', '/p/2.png']);
+  } finally { Date.now = realNow; }
+});
+
+test('pasteImages does not wait on Codex or on a pane it cannot read', async () => {
+  for (const [agent, pane] of [['codex', codexEmpty], ['claude', '']]) {
+    const pasted = [];
+    let slept = 0;
+    const ok = await pasteImages('x', '/s', agent, ['/p/1.png'], {
+      prefill: async (n, p) => { pasted.push(p); },
+      capture: async () => pane,
+      sleep: async () => { slept += 1; },
+    });
+    assert.deepEqual(pasted, ['/p/1.png']);
+    assert.equal(slept, 0);
+    assert.equal(ok, agent === 'codex');
+  }
 });

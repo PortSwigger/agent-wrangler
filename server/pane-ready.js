@@ -1,4 +1,4 @@
-import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
+import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
 import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
@@ -8,6 +8,7 @@ const SUBMIT_WINDOW_MS = 2000;
 const SUBMIT_POLL_MS = 300;
 const COMPACT_TIMEOUT_MS = 300000;
 const COMPACT_POLL_MS = 1000;
+const IMAGE_TIMEOUT_MS = 15000;
 
 // Hold a paste until the freshly-relaunched agent's TUI has actually painted its
 // composer — the fix for a silent, measured message loss.
@@ -162,6 +163,55 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   const mark = agent === 'codex' ? '\u203a' : '\u276f';
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
+}
+
+// Paste each image path as its own block, holding the next paste (and so the
+// caller's prose and Enter) until Claude Code has turned this one into an
+// `[Image #N]` marker. Claude Code attaches a pasted image asynchronously: it
+// shows `Pasting…` while it reads and downsizes the file, and only then writes
+// the marker into the composer. Measured on a live pane with a 4 MB 3200x1800
+// PNG: the marker landed ~1.6s after the paste, so the prose and Enter that
+// followed 120ms later were submitted WITHOUT the image, and the marker then
+// appeared on its own in the freshly emptied composer, unsent, while the turn
+// ran. Codex keeps a pasted path as literal text and attaches it on submit, so
+// it has nothing to wait for.
+//
+// Counted from what the composer already holds, because a live chat message can
+// land on a draft that has markers of its own. Returns true only when every
+// image was seen attached. A timeout or a pane it cannot read still pastes the
+// rest, which is no worse than not waiting at all.
+export async function pasteImages(name, socket, agent, paths, {
+  timeoutMs = IMAGE_TIMEOUT_MS,
+  pollMs = READY_POLL_MS,
+  prefill = prefillPane,
+  capture = capturePaneStyled,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  let seen = agent === 'codex' ? null : composerImageCount(await capture(name, 60, socket));
+  let attached = seen !== null;
+  for (const p of paths) {
+    await prefill(name, p, socket);
+    if (seen === null) continue;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const n = composerImageCount(await capture(name, 60, socket));
+      if (n !== null && n > seen) { seen = n; break; }
+      if (n === null || Date.now() >= deadline) { seen = n; attached = false; break; }
+      await sleep(pollMs);
+    }
+  }
+  return agent === 'codex' || attached;
+}
+
+// How many `[Image #N]` markers Claude Code's composer holds: everything from
+// the last prompt mark down, since earlier marks are submitted turns echoed into
+// the scrollback. Null when there is no composer to read.
+export function composerImageCount(paneText) {
+  const lines = stripAnsi(String(paneText || '')).split('\n');
+  let i = lines.length - 1;
+  while (i >= 0 && !lines[i].includes('\u276f')) i -= 1;
+  if (i < 0) return null;
+  return lines.slice(i).join('\n').match(/\[Image #\d+\]/g)?.length ?? 0;
 }
 
 // A pane that is compacting its context does not take a prompt: the paste is

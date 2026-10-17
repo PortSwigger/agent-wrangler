@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
-import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd } from './pane-ready.js';
+import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd, pasteImages as defaultPasteImages } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
 
 const STARTUP_WINDOW_MS = 60000;
@@ -47,15 +47,17 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   const waitForComposerReady = deps.waitForComposerReady ?? defaultWaitForComposerReady;
   const ensureSubmitted = deps.ensureSubmitted ?? defaultEnsureSubmitted;
   const waitForCompactionEnd = deps.waitForCompactionEnd ?? defaultWaitForCompactionEnd;
+  const pasteImages = deps.pasteImages ?? defaultPasteImages;
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the
-  // whole message, images and prose together, as ONE turn.
+  // whole message, images and prose together, as ONE turn. pasteImages holds
+  // each paste until Claude Code has attached it, so the Enter cannot beat it.
   // Ordered: clear first, then attachments, then the prose. Clearing after an
   // attachment would throw the attachment away with it.
-  const attach = async (tmux, socket) => {
+  const attach = async (tmux, socket, agent) => {
     if (wantClear) await clearComposer(tmux, socket);
-    for (const p of imagePaths) await prefillPane(tmux, p, socket);
+    if (imagePaths.length) await pasteImages(tmux, socket, agent, imagePaths, { prefill: prefillPane });
   };
 
   const target = tmuxFor(id);
@@ -78,7 +80,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
         return { mode: 'error', outcome: 'rejected', error: 'The agent is still starting, so the message was not sent. Send it again once the terminal is ready.' };
       }
     } else if (compaction === 'finished') await waitForComposerReady(target, socket, entry?.agent);
-    await attach(target, socket);
+    await attach(target, socket, entry?.agent);
     await sendText(target, text, socket);
     if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: entry?.agent })) {
       return { mode: 'live', outcome: 'unknown', error: 'Sent the message after compaction but could not confirm it started a turn — check the terminal before sending again.' };
@@ -145,7 +147,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
       if (!await waitForComposerReady(tmux, socket, fresh.agent)) {
         return { mode: 'dormant', outcome: 'unknown', error: 'Woke the session but its terminal input is not ready — check the terminal before sending again.' };
       }
-      await attach(tmux, socket);
+      await attach(tmux, socket, fresh.agent);
       await sendText(tmux, text, socket);
       // Then confirm the send actually became a turn, repairing a dropped CR with a
       // bare Enter — never a re-paste, which would fuse a second copy onto the text
