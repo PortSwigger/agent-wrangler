@@ -820,7 +820,9 @@ function openDispatchHarness() {
     `const openModal = ({ taskId }) => { log.push(['openModal', taskId]); document.getElementById('m-cwd').value = '/task/default'; intentImages.reset(); };
      const additionalFolders = { reset: () => {} };
      let parentSessionId = null; let reviewMode = false;
-     const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');`,
+     const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');
+     const syncWorktreeFields = () => log.push('syncWorktreeFields');
+     const requestFolderBrowse = () => log.push('requestFolderBrowse');`,
     { document, intentImages, dispatchWaiter, log },
   );
   return { els, log, ...app };
@@ -831,7 +833,9 @@ test('api.openDispatch prefills the folder and adopts staged images after the op
   await openDispatchAcked({ taskId: 't1', intent: 'look', cwd: '/work/project', images: ['paste-1-abcd.png'] });
   assert.equal(els['m-cwd'].value, '/work/project');
   assert.equal(els['m-intent'].value, 'look');
-  assert.deepEqual(log, [['openModal', 't1'], 'reset', ['adopt', ['paste-1-abcd.png']], 'refreshWorktreeDefaults']);
+  // A prefilled folder is re-checked exactly as typing into the field does, so
+  // the worktree box reflects the new folder rather than the task default.
+  assert.deepEqual(log, [['openModal', 't1'], 'reset', 'syncWorktreeFields', 'requestFolderBrowse', ['adopt', ['paste-1-abcd.png']], 'refreshWorktreeDefaults']);
 });
 
 test('api.openDispatch without cwd or images leaves the task default and adopts nothing', async () => {

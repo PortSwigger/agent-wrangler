@@ -5502,7 +5502,13 @@ function openDispatch(taskId = null, opts = {}) {
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
   openModal({ mode: 'launch', taskId });
   // The source session's exact folder must win over openModal's task-dominant cwd.
-  if (opts.cwd) document.getElementById('m-cwd').value = opts.cwd;
+  if (opts.cwd) {
+    document.getElementById('m-cwd').value = opts.cwd;
+    // Re-check the folder as typing into the field does, so the worktree box
+    // reflects this folder rather than the one openModal filled in.
+    syncWorktreeFields();
+    requestFolderBrowse();
+  }
   if (opts.addDirs) additionalFolders.reset(opts.addDirs);
   // Already-staged images (api.openDispatch), after openModal's reset cleared the last ones.
   if (opts.images) intentImages.adopt(opts.images);
