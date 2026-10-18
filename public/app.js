@@ -63,6 +63,7 @@ import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
 import { createIntentImages } from './intent-images.js';
 import { createExtImageStaging } from './ext-image-staging.js';
+import { createStagedPreviews } from './staged-previews.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
@@ -6826,12 +6827,19 @@ initStyles();
 const terminalImagePaste = createTerminalImagePaste({ send, toast });
 // The dispatch dialog's intent box. Off for schedules: a staged image is pruned
 // within a week, and a schedule can fire long after that.
-const extImageStaging = createExtImageStaging({ send });
+// Both upload paths share one browser-side preview map, so a name an extension
+// stages and hands to api.openDispatch shows the same thumbnail as a paste.
+const stagedPreviews = createStagedPreviews();
+const extImageStaging = createExtImageStaging({ send, previews: stagedPreviews });
 const intentImages = createIntentImages({
   input: document.getElementById('m-intent'),
   listEl: document.getElementById('m-intent-attachments'),
   send,
   toast,
+  previews: stagedPreviews,
+  // The overlay, not the card: .modal-card scrolls and has a backdrop-filter,
+  // either of which would clip or re-anchor the fixed-position preview.
+  previewHost: modal,
   enabled: () => !scheduleMode() && modalMode !== 'subagent',
 });
 

@@ -1,21 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createIntentImages } from './intent-images.js';
+import { createExtImageStaging } from './ext-image-staging.js';
+import { createStagedPreviews } from './staged-previews.js';
 
 function el() {
   const listeners = {};
   return {
-    hidden: false, children: [], textContent: '', value: '', selectionStart: 0, selectionEnd: 0,
+    hidden: false, children: [], textContent: '', value: '', selectionStart: 0, selectionEnd: 0, attrs: {},
     addEventListener(t, fn) { (listeners[t] ||= []).push(fn); },
     fire(t, e) { for (const fn of listeners[t] || []) fn(e); },
     appendChild(c) { this.children.push(c); return c; },
-    setAttribute() {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
     setRangeText(t) { this.value += t; },
     dispatchEvent() {},
   };
 }
 const doc = { createElement: () => { const e = el(); Object.defineProperty(e, 'textContent', { set() { e.children = []; }, get() { return ''; } }); return e; } };
-function setup({ enabled = () => true } = {}) {
+function fakePreviews() {
+  let n = 0;
+  const revoked = [];
+  const previews = createStagedPreviews({ createObjectURL: () => `blob:fake/${++n}`, revokeObjectURL: (u) => revoked.push(u) });
+  return { previews, revoked };
+}
+function setup({ enabled = () => true, previews, frame = { mime: 'image/png', dataBase64: 'AA==' } } = {}) {
   const input = el();
   const listEl = el();
   Object.defineProperty(listEl, 'textContent', { set() { listEl.children = []; }, get() { return ''; } });
@@ -23,7 +31,7 @@ function setup({ enabled = () => true } = {}) {
   const toasts = [];
   const ii = createIntentImages({
     input, listEl, send: (m) => { sent.push(m); return true; }, toast: (t) => toasts.push(t), enabled,
-    frameOf: async () => ({ mime: 'image/png', dataBase64: 'AA==' }), document: doc,
+    frameOf: async () => frame, document: doc, previews,
   });
   return { ii, input, listEl, sent, toasts };
 }
@@ -122,4 +130,78 @@ test('adopt after reset survives; a later reset clears adopted names too', () =>
   assert.equal(listEl.hidden, true);
   ii.adopt([]);
   assert.equal(listEl.hidden, true);
+});
+
+const thumbOf = (chip) => chip.children.find((c) => c.className === 'chat-attachment-thumb');
+const dropOf = (chip) => chip.children.find((c) => c.className === 'chat-attachment-drop');
+
+test('a pasted image chip shows a thumbnail of what was uploaded, before its label', async () => {
+  const { previews } = fakePreviews();
+  const { ii, input, listEl, sent } = setup({ previews });
+  input.fire('paste', paste([png()]));
+  await tick();
+  ii.onResult({ token: sent[0].token, ok: true, name: 'paste-1-aaaa.png' });
+  assert.equal(previews.urlFor('paste-1-aaaa.png'), 'blob:fake/1');
+  const chip = listEl.children[0];
+  const thumb = thumbOf(chip);
+  assert.ok(thumb, 'a thumbnail is drawn');
+  assert.equal(chip.children[0], thumb);
+  assert.equal(thumb.src, 'blob:fake/1');
+  assert.equal(thumb.alt, 'Image #1');
+  assert.equal(thumb.tabIndex, 0, 'focusable, so the preview is reachable by keyboard');
+});
+
+test('a chip with no preview stays text-only, as does a format the browser cannot draw', async () => {
+  const { previews } = fakePreviews();
+  const { ii, listEl } = setup({ previews });
+  ii.adopt(['paste-9-zzzz.png']);
+  assert.equal(thumbOf(listEl.children[0]), undefined);
+  assert.equal(listEl.children[0].children.length, 2, 'label and remove button, as before');
+  const heic = setup({ previews, frame: { mime: 'image/heic', dataBase64: 'AA==' } });
+  heic.input.fire('paste', paste([new File([new Uint8Array([1])], 'a.heic', { type: 'image/heic' })]));
+  await tick();
+  heic.ii.onResult({ token: heic.sent[0].token, ok: true, name: 'paste-2-heic.heic' });
+  assert.equal(thumbOf(heic.listEl.children[0]), undefined);
+  assert.equal(previews.urlFor('paste-2-heic.heic'), null);
+});
+
+test('a failed or dropped upload remembers no preview', async () => {
+  const { previews } = fakePreviews();
+  const { ii, input, sent } = setup({ previews });
+  input.fire('paste', paste([png(), png()]));
+  await tick();
+  ii.onResult({ token: sent[0].token, ok: false, error: 'Too big' });
+  ii.reset();
+  ii.onResult({ token: sent[1].token, ok: true, name: 'paste-1-late.png' });
+  assert.equal(previews.size(), 0);
+});
+
+test('adopt shows previews for names an extension staged through api.images.stage', async () => {
+  const { previews } = fakePreviews();
+  const extSent = [];
+  const ext = createExtImageStaging({
+    send: (m) => { extSent.push(m); return true; }, previews,
+    frameOf: async () => ({ mime: 'image/png', dataBase64: 'AA==' }),
+  });
+  const staged = ext.stage({ name: 'shot.png', type: 'image/png', size: 1 });
+  await tick();
+  ext.onResult({ token: extSent[0].token, ok: true, name: 'paste-5-ext.png' });
+  await staged;
+  const { ii, listEl } = setup({ previews });
+  ii.reset();
+  ii.adopt(['paste-5-ext.png']);
+  assert.equal(thumbOf(listEl.children[0])?.src, 'blob:fake/1');
+});
+
+test('reset revokes every preview the dialog showed since the last reset, removed chips included, and nothing else', async () => {
+  const { previews, revoked } = fakePreviews();
+  const { ii, listEl } = setup({ previews });
+  for (const n of ['a.png', 'b.png', 'c.png']) previews.remember(n, new Blob([new Uint8Array([1])], { type: 'image/png' }));
+  ii.adopt(['a.png', 'b.png']);
+  dropOf(listEl.children[0]).fire('click');
+  assert.deepEqual(revoked, [], 'removing a chip does not revoke at once');
+  assert.equal(previews.urlFor('a.png'), 'blob:fake/1');
+  ii.reset();
+  assert.deepEqual(revoked.sort(), ['blob:fake/1', 'blob:fake/2']);
+  assert.equal(previews.urlFor('c.png'), 'blob:fake/3', 'staged but never shown: left for its owner (or eviction)');
 });
