@@ -5418,7 +5418,7 @@ function openDispatchExtFields(saved) {
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
-function openModal({ mode, taskId = null, schedule = null }) {
+function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   modalMode = mode;
   editingScheduleId = schedule?.id || null;
   // The action kind (and its dispatch bag) come off schedule.action; a launch is
@@ -5453,7 +5453,8 @@ function openModal({ mode, taskId = null, schedule = null }) {
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
-  intentImages.reset();
+  // Images an openDispatch is about to adopt keep their previews through the reset.
+  intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
@@ -5501,7 +5502,7 @@ function defaultPicker() {
 function openDispatch(taskId = null, opts = {}) {
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
-  openModal({ mode: 'launch', taskId });
+  openModal({ mode: 'launch', taskId, keepImages: opts.images || [] });
   // The source session's exact folder must win over openModal's task-dominant cwd.
   if (opts.cwd) {
     document.getElementById('m-cwd').value = opts.cwd;
@@ -6827,8 +6828,9 @@ initStyles();
 const terminalImagePaste = createTerminalImagePaste({ send, toast });
 // The dispatch dialog's intent box. Off for schedules: a staged image is pruned
 // within a week, and a schedule can fire long after that.
-// Both upload paths share one browser-side preview map, so a name an extension
-// stages and hands to api.openDispatch shows the same thumbnail as a paste.
+// One browser-side preview map for the dialog's chips. A paste is remembered on
+// upload; an extension's staged image only when api.openDispatch hands its name
+// to the dialog (adoptBlob), so the same thumbnail shows either way.
 const stagedPreviews = createStagedPreviews();
 const extImageStaging = createExtImageStaging({ send, previews: stagedPreviews });
 const intentImages = createIntentImages({
@@ -6840,6 +6842,7 @@ const intentImages = createIntentImages({
   // The overlay, not the card: .modal-card scrolls and has a backdrop-filter,
   // either of which would clip or re-anchor the fixed-position preview.
   previewHost: modal,
+  adoptBlob: (name) => extImageStaging.takeBlob(name),
   enabled: () => !scheduleMode() && modalMode !== 'subagent',
 });
 

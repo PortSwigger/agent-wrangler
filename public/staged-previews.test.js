@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStagedPreviews, frameToBlob } from './staged-previews.js';
+import { createStagedPreviews, frameToBlob, MAX_PREVIEW_BYTES } from './staged-previews.js';
 
 function fakeUrls() {
   let n = 0;
@@ -64,4 +64,25 @@ test('frameToBlob decodes a drawable frame and refuses formats the browser canno
   assert.equal(frameToBlob({ mime: 'image/heic', dataBase64: 'AQID' }), null);
   assert.equal(frameToBlob({ mime: 'image/tiff', dataBase64: 'AQID' }), null);
   assert.equal(frameToBlob(null), null);
+});
+
+test('a byte budget evicts the oldest until the total fits', () => {
+  const u = fakeUrls();
+  const p = createStagedPreviews({ ...u, maxBytes: 10 });
+  const sized = (n) => new Blob([new Uint8Array(n)], { type: 'image/png' });
+  p.remember('a', sized(4));
+  p.remember('b', sized(4));
+  p.remember('c', sized(4));
+  assert.equal(p.urlFor('a'), null);
+  assert.equal(p.bytes(), 8);
+  p.forget('b');
+  assert.equal(p.bytes(), 4);
+  p.remember('huge', sized(11));
+  assert.equal(p.urlFor('huge'), null, 'a single blob over budget is not kept');
+  assert.equal(p.urlFor('c'), 'blob:fake/3', 'and does not push out what fits');
+  assert.equal(p.bytes(), 4);
+});
+
+test('the default byte budget is 64 MB', () => {
+  assert.equal(MAX_PREVIEW_BYTES, 64 * 1024 * 1024);
 });

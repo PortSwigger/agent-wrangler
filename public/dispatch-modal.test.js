@@ -229,7 +229,7 @@ test('an extension runtime is Claude-only like every non-local runtime', () => {
 });
 
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
-  const open = appDecl('function openModal({ mode, taskId = null, schedule = null }) {');
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const sync = open.indexOf('syncExtRuntimeOptions()');
   const restore = open.indexOf(".value = d.runtime || 'local'");
   assert.ok(sync >= 0 && restore > sync, 'syncExtRuntimeOptions must run before the runtime prefill');
@@ -310,7 +310,7 @@ test('the worktree veto toggles only #m-worktree-box-row, never the inner .workt
 });
 
 test('openModal fires the per-open hook once, after its last sync and just before the modal is shown', () => {
-  const open = appDecl('function openModal({ mode, taskId = null, schedule = null }) {');
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const calls = open.match(/openDispatchExtFields\(/g) || [];
   assert.equal(calls.length, 1);
   const hook = open.indexOf('openDispatchExtFields(d.ext)');

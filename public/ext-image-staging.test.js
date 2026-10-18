@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createExtImageStaging } from './ext-image-staging.js';
-import { createStagedPreviews } from './staged-previews.js';
 
 const file = (name, type = 'image/png') => ({ name, type, size: 3 });
 const frameOf = async () => ({ mime: 'image/png', dataBase64: 'AA==' });
@@ -39,10 +38,9 @@ test('a reply that never comes rejects after the timeout', async () => {
   await assert.rejects(s.stage(file('a.png')), /did not answer/);
 });
 
-test('a staged image is remembered for preview under its minted name; a refused one is not', async () => {
+test('a staged image keeps its bytes for one takeBlob by name; a refused one keeps none', async () => {
   const sent = [];
-  const previews = createStagedPreviews({ createObjectURL: () => 'blob:fake/1', revokeObjectURL: () => {} });
-  const s = createExtImageStaging({ send: (m) => { sent.push(m); return true; }, frameOf, previews });
+  const s = createExtImageStaging({ send: (m) => { sent.push(m); return true; }, frameOf });
   const ok = s.stage(file('a.png'));
   const bad = s.stage(file('b.png'));
   await new Promise((r) => setImmediate(r));
@@ -50,6 +48,21 @@ test('a staged image is remembered for preview under its minted name; a refused 
   s.onResult({ token: sent[1].token, ok: false, error: 'Too big' });
   await ok;
   await assert.rejects(bad);
-  assert.equal(previews.urlFor('paste-1-aaaa.png'), 'blob:fake/1');
-  assert.equal(previews.size(), 1);
+  const blob = s.takeBlob('paste-1-aaaa.png');
+  assert.equal(blob.type, 'image/png');
+  assert.equal(s.takeBlob('paste-1-aaaa.png'), null, 'handed over once');
+  assert.equal(s.takeBlob('nope'), null);
+});
+
+test('at most 8 staged blobs wait to be adopted; the oldest is dropped', async () => {
+  const sent = [];
+  const s = createExtImageStaging({ send: (m) => { sent.push(m); return true; }, frameOf });
+  const all = Array.from({ length: 10 }, (_, i) => s.stage(file(`${i}.png`)));
+  await new Promise((r) => setImmediate(r));
+  sent.forEach((m, i) => s.onResult({ token: m.token, ok: true, name: `n${i}` }));
+  await Promise.all(all);
+  assert.equal(s.takeBlob('n0'), null);
+  assert.equal(s.takeBlob('n1'), null);
+  assert.ok(s.takeBlob('n2'));
+  assert.ok(s.takeBlob('n9'));
 });

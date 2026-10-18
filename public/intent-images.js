@@ -17,8 +17,11 @@ const MAX_ATTACHMENTS = 8;
 
 // `previews` (optional) is the shared staged-previews map; `previewHost` is where
 // the hover preview is mounted — outside any scrolling or backdrop-filtered card,
-// which would clip a position:fixed child or become its containing block.
-export function createIntentImages({ input, listEl, send, toast, enabled = () => true, frameOf = sourceToFrame, document: doc = globalThis.document, previews = null, previewHost = null }) {
+// which would clip a position:fixed child or become its containing block — and
+// where its Escape and scroll listeners go. `adoptBlob(name)` hands over the
+// bytes of a name staged elsewhere (ext-image-staging's takeBlob), so a preview
+// is only made for a name that actually reaches the dialog.
+export function createIntentImages({ input, listEl, send, toast, enabled = () => true, frameOf = sourceToFrame, document: doc = globalThis.document, previews = null, previewHost = null, adoptBlob = () => null }) {
   let names = [];
   let seq = 0;
   // Bumped on reset, so an upload that finishes after the dialog closed or was
@@ -29,12 +32,18 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
   const blobs = new Map();
   // Preview lifetime: every name that has had a chip since the last reset. A
   // removed chip keeps its URL (an extension may adopt the same name again), and
-  // reset() revokes them all, since after a reset none is attached. reset() runs
-  // on open and right AFTER a launch is sent; the launch carries names only, so
-  // nothing it needs is revoked. Names staged but never shown here are left to
-  // the bounded map's eviction.
+  // reset() revokes them all, since after a reset none is attached — except the
+  // `keep` names an open is about to adopt again. reset() runs on open and right
+  // AFTER a launch is sent; the launch carries names only, so nothing it needs
+  // is revoked. Anything else is left to the bounded map's eviction.
   const shown = new Set();
   const popover = createPreviewPopover(doc, previewHost);
+  // Capture phase on the dialog, so an open preview takes the first Escape
+  // wherever focus is. The dialog's own Escape (a bubbling window binding) is
+  // never reached then; with no preview open, nothing is stopped.
+  previewHost?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && popover.isOpen()) { e.preventDefault(); e.stopPropagation(); popover.hide(); }
+  }, true);
 
   function thumbnail(url, alt) {
     const img = doc.createElement('img');
@@ -42,17 +51,17 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
     img.src = url;
     img.alt = alt;
     img.tabIndex = 0;
+    // Open while hovered OR focused; it closes only when neither holds.
+    let hovered = false;
+    let focused = false;
+    const show = () => popover.show(img, url, alt);
+    const settle = () => { if (!hovered && !focused) popover.hide(img); };
     // An evicted entry's URL is dead; fall back to the plain chip.
-    img.addEventListener('error', () => { popover.hide(); img.remove?.(); });
-    img.addEventListener('mouseenter', () => popover.show(img, url, alt));
-    img.addEventListener('mouseleave', () => popover.hide());
-    img.addEventListener('focus', () => popover.show(img, url, alt));
-    img.addEventListener('blur', () => popover.hide());
-    // Escape closes the preview first; with no preview open it reaches the
-    // dialog's own Escape binding and cancels as usual.
-    img.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && popover.isOpen()) { e.preventDefault(); e.stopPropagation(); popover.hide(); }
-    });
+    img.addEventListener('error', () => { popover.hide(img); img.remove?.(); });
+    img.addEventListener('mouseenter', () => { hovered = true; show(); });
+    img.addEventListener('mouseleave', () => { hovered = false; settle(); });
+    img.addEventListener('focus', () => { focused = true; show(); });
+    img.addEventListener('blur', () => { focused = false; settle(); });
     return img;
   }
 
@@ -126,8 +135,10 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
     names: () => names.slice(),
     // True while an upload is still in flight, so a launch can wait for it.
     busy: () => pending.size > 0,
-    reset() {
-      for (const name of shown) previews?.forget(name);
+    // `keep`: names whose previews survive, because the caller is about to
+    // adopt them again (a reopen with api.openDispatch's images).
+    reset({ keep = [] } = {}) {
+      for (const name of shown) if (!keep.includes(name)) previews?.forget(name);
       shown.clear();
       names = [];
       pending.clear();
@@ -142,6 +153,7 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
       const incoming = [...new Set(list)].filter((n) => !names.includes(n));
       const chosen = incoming.slice(0, Math.max(0, MAX_ATTACHMENTS - names.length - pending.size));
       skipped(incoming.length - chosen.length);
+      for (const name of chosen) if (previews && !previews.urlFor(name)) previews.remember(name, adoptBlob(name));
       names.push(...chosen);
       render();
     },
@@ -163,19 +175,20 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
 // The larger hover/focus preview: one lightweight element, mounted on demand and
 // positioned next to the thumbnail — below it, or above when there is more room
 // there — and kept inside the viewport. pointer-events:none, so it never steals
-// the hover that keeps it open.
+// the hover that keeps it open. A scroll inside the dialog or a window resize
+// would leave it pointing at nothing, so either one closes it.
 function createPreviewPopover(doc, host) {
   let el = null;
   let anchor = null;
   const MARGIN = 8;
+  const win = () => doc.defaultView || globalThis;
 
   function place() {
     if (!el || !anchor) return;
-    const win = doc.defaultView || globalThis;
     const a = anchor.getBoundingClientRect();
     const { width, height } = el.getBoundingClientRect();
-    const vw = win.innerWidth;
-    const vh = win.innerHeight;
+    const vw = win().innerWidth;
+    const vh = win().innerHeight;
     const below = vh - a.bottom;
     const top = below >= height + MARGIN || below >= a.top ? a.bottom + MARGIN / 2 : a.top - height - MARGIN / 2;
     const left = Math.min(Math.max(MARGIN, a.left), Math.max(MARGIN, vw - width - MARGIN));
@@ -183,13 +196,24 @@ function createPreviewPopover(doc, host) {
     el.style.left = `${left}px`;
   }
 
+  // `from` (optional): only close if the preview still belongs to that thumbnail.
+  function hide(from) {
+    if (!el || (from && from !== anchor)) return;
+    host?.removeEventListener('scroll', onAway, true);
+    win().removeEventListener?.('resize', onAway);
+    el.remove();
+    el = null;
+    anchor = null;
+  }
+  const onAway = () => hide();
+
   return {
     isOpen: () => Boolean(el),
     show(target, url, alt) {
       const parent = host || doc.body;
       if (!parent || typeof target.getBoundingClientRect !== 'function') return;
       if (anchor === target && el) return;
-      this.hide();
+      hide();
       anchor = target;
       el = doc.createElement('div');
       el.className = 'chat-attachment-preview';
@@ -199,14 +223,13 @@ function createPreviewPopover(doc, host) {
       img.alt = alt;
       // Its size is only known once decoded; place again then.
       img.addEventListener('load', place);
+      img.addEventListener('error', onAway);
       el.appendChild(img);
       parent.appendChild(el);
+      host?.addEventListener('scroll', onAway, true);
+      win().addEventListener?.('resize', onAway);
       place();
     },
-    hide() {
-      el?.remove();
-      el = null;
-      anchor = null;
-    },
+    hide,
   };
 }

@@ -6,8 +6,9 @@
 // — remember that copy here as an object URL keyed by the minted name, and the
 // dialog's chips look it up. A name with no entry just keeps the text-only chip.
 //
-// Bounded: past `max` entries the oldest is evicted and its URL revoked, so a
-// board left open for days does not hold every image it ever staged.
+// Bounded twice: past `max` entries or `maxBytes` of blobs the oldest is evicted
+// and its URL revoked, so a board left open for days does not hold every image
+// it ever staged. A blob larger than the whole budget is simply not kept.
 
 // What a browser can draw as-is. HEIC and TIFF frames are sent raw for the
 // server to convert (clipboard-images.js), and Chromium cannot draw them, so
@@ -29,30 +30,38 @@ export function frameToBlob(frame) {
 }
 
 export const MAX_PREVIEWS = 32;
+export const MAX_PREVIEW_BYTES = 64 * 1024 * 1024;
 
 export function createStagedPreviews({
   max = MAX_PREVIEWS,
+  maxBytes = MAX_PREVIEW_BYTES,
   createObjectURL = (blob) => URL.createObjectURL(blob),
   revokeObjectURL = (url) => URL.revokeObjectURL(url),
 } = {}) {
-  const urls = new Map(); // name → object URL, oldest first
+  const entries = new Map(); // name → { url, size }, oldest first
+  let total = 0;
 
   function forget(name) {
-    const url = urls.get(name);
-    if (url === undefined) return;
-    urls.delete(name);
-    revokeObjectURL(url);
+    const entry = entries.get(name);
+    if (!entry) return;
+    entries.delete(name);
+    total -= entry.size;
+    revokeObjectURL(entry.url);
   }
 
   return {
     remember(name, blob) {
       if (!name || !blob) return;
       forget(name);
-      urls.set(name, createObjectURL(blob));
-      while (urls.size > max) forget(urls.keys().next().value);
+      const size = blob.size || 0;
+      if (size > maxBytes) return;
+      entries.set(name, { url: createObjectURL(blob), size });
+      total += size;
+      while (entries.size > max || total > maxBytes) forget(entries.keys().next().value);
     },
-    urlFor: (name) => urls.get(name) ?? null,
+    urlFor: (name) => entries.get(name)?.url ?? null,
     forget,
-    size: () => urls.size,
+    size: () => entries.size,
+    bytes: () => total,
   };
 }
