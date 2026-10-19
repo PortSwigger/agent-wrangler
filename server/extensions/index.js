@@ -372,6 +372,14 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       for (const k of ['wrapLaunch', 'buildLaunch', 'preflight', 'readLive', 'analyze', 'cost', 'deliver', 'launchStatus', 'validateModel']) {
         if (rt[k] != null && typeof rt[k] !== 'function') fail(ext, `runtime ${rt.id} ${k} must be a function`);
       }
+      // `agents` (1.37.0): the agent ids it runs. Shape only — this leaf can't
+      // import the adapters to check the ids — and absent means ['claude'].
+      if (rt.agents != null) {
+        if (!Array.isArray(rt.agents) || !rt.agents.length || !rt.agents.every((a) => typeof a === 'string' && a)) {
+          fail(ext, `runtime ${rt.id} agents must be a non-empty array of agent ids`);
+        }
+        if (new Set(rt.agents).size !== rt.agents.length) fail(ext, `runtime ${rt.id} agents has a duplicate`);
+      }
       for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux']) {
         if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
       }
@@ -439,7 +447,9 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // next tick even before its unregister has settled.
     // `ownsModel` (1.33.0): the runtime defines `validateModel`, so a model
     // given with it to api.dispatch.submit rides `ext.<extId>.model`.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel) })),
+    // `agents` (1.37.0): the agent ids it takes, ['claude'] when the manifest
+    // leaves it out; the dialog disables the option for any other agent.
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), agents: [...(agents || ['claude'])] })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -716,7 +726,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function' });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', agents: [...(rt.agents || ['claude'])] });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

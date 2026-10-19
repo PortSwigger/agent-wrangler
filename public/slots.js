@@ -268,7 +268,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             server re-sends it (on connect, and on a catalog refresh), so
   //             an extension never has to mirror the model vocabulary.
   //   runtimes — the dispatch dialog's Runtime options (1.33.0): `[{ id,
-  //             label, ownsModel }]`, built-ins first, as a fresh copy per call.
+  //             label, ownsModel, agents }]`, built-ins first, as a fresh copy
+  //             per call. `agents` (1.37.0) is null for local (every agent).
   //   ui      — rendering helpers the board owns (frozen). `markdownPreview(md)`
   //             returns sanitised HTML for a markdown string, from the same
   //             renderer as the chat view and file preview; a non-string is

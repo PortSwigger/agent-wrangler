@@ -340,7 +340,7 @@ const extApi = {
   openDispatchAcked,
   // Backs `api.dispatch.submit` (throws; slots turns that into a rejection).
   submitDispatchFromExt,
-  // Backs `api.runtimes()`: the Runtime select's options, as offered for a Claude model.
+  // Backs `api.runtimes()`: the Runtime select's options, each with the agents it takes.
   runtimes: listDispatchRuntimes,
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
@@ -5089,22 +5089,29 @@ function syncWorkflow() {
 }
 function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 
-// The runtime picker defaults to Local (host). Every non-local runtime is currently
-// Claude-only (devcontainer's status/cost hooks read Claude paths; codex-in-container
-// isn't wired), so for a non-Claude agent disable each non-local <option> and snap
-// the value back to local — a stale devcontainer selection must not survive an agent
-// swap. Workflow runs ARE supported (the issue-to-pr skill dir is copied into the
-// container). Extensible: a new built-in runtime adds an <option> in index.html, an
-// extension runtime is appended by syncExtRuntimeOptions; the loop below reads
-// rt.options at call time, so the Claude-only gate covers both, and any extra
-// per-runtime constraints slot in alongside.
+// The runtime picker defaults to Local (host), which takes every agent. Each other
+// runtime says which agents it runs: an extension's from its manifest `agents`
+// (graph.extensions[].runtimes, ['claude'] when left out), a built-in's as
+// Claude-only (devcontainer's status/cost hooks read Claude paths). For an agent
+// a runtime doesn't list, disable its <option> and snap the value back to local —
+// a stale selection must not survive an agent swap. Workflow runs ARE supported
+// (the issue-to-pr skill dir is copied into the container). The loop reads
+// rt.options at call time, so it covers the built-ins in index.html and the
+// options syncExtRuntimeOptions appends alike. The server enforces the same rule
+// (runtimeAgentError), so this is the dialog's courtesy, not the guard.
+function runtimeAllowsAgent(opt, agent) {
+  if (!opt || opt.value === 'local') return true;
+  const agents = opt.dataset.ext
+    ? latestExtensions.find((e) => e.id === opt.dataset.ext)?.runtimes?.find((r) => r?.id === opt.value)?.agents
+    : null;
+  return (Array.isArray(agents) ? agents : ['claude']).includes(agent);
+}
+
 function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
   const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   const rt = document.getElementById('m-runtime');
-  for (const opt of rt.options) {
-    if (opt.value !== 'local') opt.disabled = agent !== 'claude';
-  }
+  for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
   const foldersEnabled = rt.value === 'local';
@@ -5290,9 +5297,10 @@ function readCoreDispatchFields() {
   // (the box is also hidden+unchecked in review mode, but don't rely on that alone).
   const wtOn = !wfOn && !reviewMode && document.getElementById('m-worktree').checked && !document.getElementById('m-worktree').disabled;
   // Runtime picker; Local is the default and sent as undefined (the server stores
-  // only non-local). Non-Claude agents are local-only (see syncRuntimeToggle), so
-  // resolve to local for them regardless of a stale selection — a dispatch safety net.
-  const runtime = agent === 'claude' ? document.getElementById('m-runtime').value : 'local';
+  // only non-local). A runtime that doesn't list the agent resolves to local
+  // regardless of a stale selection (see syncRuntimeToggle) — a dispatch safety net.
+  const rtSel = document.getElementById('m-runtime');
+  const runtime = runtimeAllowsAgent(rtSel.options[rtSel.selectedIndex], agent) ? rtSel.value : 'local';
   return {
     cwd: cwdField() || proposedCwd,
     addDirs: additionalFolders.values(),
@@ -5665,13 +5673,16 @@ function submitDispatchFromExt({ model, effort, runtime } = {}) {
   return true;
 }
 
-// [{ id, label, ownsModel }] for every #m-runtime option, whatever the
-// current model's agent disables (a quick launch picks its own model).
+// [{ id, label, ownsModel, agents }] for every #m-runtime option, whatever the
+// current model's agent disables (a quick launch picks its own model). `agents`
+// is the agent ids it offers, from the known ones; null for local (every agent).
 function listDispatchRuntimes() {
+  const agentIds = availableAgents.map((a) => a.id);
   return [...document.getElementById('m-runtime').options].map((o) => ({
     id: o.value,
     label: o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
+    agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
   }));
 }
 

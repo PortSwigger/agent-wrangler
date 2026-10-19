@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   runtimeFor, findRuntime, DEFAULT_RUNTIME, BUILTIN_RUNTIME_IDS,
   registerRuntime, unregisterRuntimesFor, knownRuntimes, relaunchRefusal,
+  runtimeAgents, runtimeAgentError,
 } from './index.js';
 
 test('runtimeFor: absent id resolves to local', () => {
@@ -77,4 +78,25 @@ test('relaunchRefusal: resumable, resumable:false, missing with and without runt
     'This session runs on runtime "cloud", which needs the "cloud" extension. Enable it in Settings → Extensions.',
   );
   assert.match(relaunchRefusal({ runtime: 'cloud' }), /runtime "cloud", which is not available/);
+});
+
+test('runtimeAgents: local takes every agent, devcontainer and an unspecified runtime only claude', () => {
+  assert.equal(runtimeAgents(runtimeFor('local')), null);
+  assert.deepEqual(runtimeAgents(runtimeFor('devcontainer')), ['claude']);
+  assert.deepEqual(runtimeAgents({ id: 'x', label: 'X' }), ['claude']);
+  assert.deepEqual(runtimeAgents({ id: 'x', label: 'X', agents: ['claude', 'codex'] }), ['claude', 'codex']);
+});
+
+test('runtimeAgentError: refuses an agent the runtime does not list, by label', () => {
+  assert.equal(runtimeAgentError(runtimeFor('local'), 'codex'), null);
+  assert.equal(runtimeAgentError(runtimeFor('devcontainer'), 'claude'), null);
+  assert.equal(runtimeAgentError(runtimeFor('devcontainer'), 'codex'), 'The "Devcontainer" runtime can\'t run codex sessions (it supports: claude).');
+  assert.equal(runtimeAgentError({ id: 'sbx', label: 'Sandbox', agents: ['claude', 'codex'] }, 'codex'), null);
+  registerRuntime({ id: 'sbx', label: 'Sandbox', agents: ['codex'], wrapLaunch: async ({ inner }) => inner }, 'sbx-ext');
+  try {
+    assert.deepEqual(knownRuntimes().map((r) => [r.id, r.agents]), [['local', null], ['devcontainer', ['claude']], ['sbx', ['codex']]]);
+    assert.match(runtimeAgentError(findRuntime('sbx')), /"Sandbox" runtime can't run claude sessions \(it supports: codex\)/);
+  } finally {
+    unregisterRuntimesFor('sbx-ext');
+  }
 });

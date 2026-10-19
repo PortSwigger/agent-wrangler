@@ -917,7 +917,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `fields()` merge into the payload as usual.
   **`runtime` (1.33.0)** selects an offered Runtime option first (`local`, a
   built-in, or an extension's), after `model`, so a runtime the model's agent
-  can't use rejects `runtime not offered for this model`. For an extension
+  can't use (one whose `agents` leaves it out) rejects `runtime not offered for this model`. For an extension
   runtime that owns its models (it defines `validateModel`; the client sees
   `ownsModel: true` on `graph.extensions[].runtimes`), `model` is NOT checked
   against the core select: it is sent as `ext.<extId>.model`, merged over that
@@ -1071,10 +1071,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
-  `[{ id, label, ownsModel }]` (`local` and the built-ins first, then enabled
+  `[{ id, label, ownsModel, agents }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
   that defines `validateModel`, whose model `api.dispatch.submit` sends as
-  `ext.<extId>.model`.
+  `ext.<extId>.model`. `agents` (1.37.0) lists the agent ids the runtime takes
+  (`null` for `local`, which takes every agent).
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -1349,6 +1350,7 @@ select while the extension is enabled, and `spawn_session` accepts its id as `ru
 runtimes: [{
   id: 'toyrt',                 // ID_RE; may not collide with a built-in or another extension
   label: 'Toy',                // shown in the Runtime select and in refusals
+  // agents: ['claude', 'codex'], // 1.37.0; the agents it runs, default ['claude']
   wrapLaunch: async ({ inner }) => `echo hi && ${inner}`,
   // preflight: async ({ cwd, agent, workflow, worktree, ext }) => 'refusal' | null,
 }],
@@ -1368,7 +1370,9 @@ define it and the runtime owns its sessions' model vocabulary: `spawn_session` s
 per-agent check, asks this instead, and passes the accepted model as `ext.<yourId>.model`;
 `coreModelError(agent, model)` is core's own check, to reuse),
 `resumable` (default `true`), `skipsHostResumeGuard` and `liveByTmux` (1.34.0, default
-`false`; see below). Every function is also handed
+`false`; see below), and `agents` (1.37.0; the agent ids it runs, default `['claude']`:
+dispatch and `spawn_session` refuse any other agent, and the dialog disables the option
+for one). Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
 narrowed to the extension's own dispatch-field data.
 
@@ -1416,6 +1420,13 @@ Maintainer notes:
   is `findRuntime`, falling back to local for status and cost. A `buildLaunch` card
   whose tmux is alive is kept live by tmux liveness, like a devcontainer bring-up,
   because its pane never runs a `claude` that discovery would match.
+- **`agents` (1.37.0) is enforced at dispatch.** `runtimeAgentError` runs before
+  preflight in `session-manager.js`, and `spawn_session` checks it up front, so a stale
+  dialog selection, a schedule or a script can't put an unlisted agent on the runtime.
+  `local` takes every agent; devcontainer is Claude-only, since its status and cost
+  hooks read Claude paths. The loader checks shape only (a non-empty array of distinct
+  strings), because it can't import the adapters. An older server ignores the key and
+  keeps the runtime Claude-only, so a manifest that needs it declares `^1.37.0`.
 - **`liveByTmux: true` (1.34.0) opts a `wrapLaunch` runtime into that same fallback.**
   Use it when the pane runs a wrapper that hides the agent from process discovery, such
   as `sbx exec -it <sandbox> sh -lc '<agent>'`: without it the card reads as dormant

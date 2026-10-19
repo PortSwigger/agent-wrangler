@@ -294,7 +294,14 @@ import semver from 'semver';
 // chips the human can remove. An older client drops both silently, so the
 // modal opens on the task's folder with no images; a manifest that needs them
 // declares `^1.36.0`.
-export const HOST_API_VERSION = '1.36.0';
+//
+// 1.37.0 adds the optional runtime `agents` (agent ids, default ['claude']):
+// dispatch and spawn_session refuse an agent the runtime doesn't list, the
+// dialog disables its option for one, and graph.extensions[].runtimes and
+// `api.runtimes()` carry it. An older server quarantines no unknown runtime
+// key, but keeps the runtime Claude-only; a manifest that needs it declares
+// `^1.37.0`.
+export const HOST_API_VERSION = '1.37.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

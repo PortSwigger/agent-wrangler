@@ -3031,6 +3031,35 @@ test('dispatch: preflight gets the widened bag, and a refusal throws before any 
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+test('dispatch refuses an agent the runtime does not list, before preflight or any dir', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  let preflighted = false;
+  sm._newSession = async () => { launched = true; };
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rt-agents-'));
+  const target = path.join(base, 'not-yet');
+  await assert.rejects(() => sm.dispatch({ cwd: target, intent: 'x', runtime: 'devcontainer', agent: 'codex' }), /"Devcontainer" runtime can't run codex sessions/);
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner, preflight: async () => { preflighted = true; return null; } }, 'toy', async () => {
+    await assert.rejects(() => sm.dispatch({ cwd: target, intent: 'x', runtime: 'toyrt', agent: 'codex' }), /"Toy" runtime can't run codex sessions \(it supports: claude\)/);
+  });
+  assert.equal(preflighted, false);
+  assert.equal(launched, false);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(sm.map.size, 0);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('dispatch launches a codex session on a runtime that lists codex', async () => {
+  const sm = smForDispatch();
+  let captured;
+  sm._newSession = async (_tmux, _dir, inner) => { captured = inner; };
+  await withRuntime({ id: 'toyrt', label: 'Toy', agents: ['claude', 'codex'], wrapLaunch: async ({ inner }) => `toy && ${inner}` }, 'toy', async () => {
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt', agent: 'codex' });
+    assert.match(captured, /^toy && .*codex/);
+    assert.equal(sm.map.get(sessionId).runtime, 'toyrt');
+  });
+});
+
 test('resume and fork of a resumable:false card refuse with the runtime\'s label and leave its pane alone', async () => {
   const sm = smForDispatch();
   let killed = false;
