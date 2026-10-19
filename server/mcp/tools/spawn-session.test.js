@@ -99,6 +99,24 @@ test('spawn_session refuses an unknown runtime, listing the known ones, without 
   assert.equal(d.calls.dispatch.length, 0);
 });
 
+test('spawn_session refuses an agent the runtime does not list, without dispatching', async () => {
+  const d = deps();
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'devcontainer', agent: 'codex' });
+  assert.equal(out.isError, true);
+  assert.equal(out.content[0].text, 'The "Devcontainer" runtime can\'t run codex sessions (it supports: claude).');
+  registerRuntime({ id: 'toyrt', label: 'Toy', agents: ['codex'], wrapLaunch: async ({ inner }) => inner }, 'toy');
+  try {
+    const claude = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt' });
+    assert.equal(claude.content[0].text, 'The "Toy" runtime can\'t run claude sessions (it supports: codex).');
+    assert.equal(d.calls.dispatch.length, 0);
+    const codex = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'toyrt', agent: 'codex' });
+    assert.equal(codex.isError, undefined);
+    assert.equal(d.calls.dispatch[0].runtime, 'toyrt');
+  } finally {
+    unregisterRuntimesFor('toy');
+  }
+});
+
 test('spawn_session\'s runtime description names the runtimes registered when it is read', () => {
   const describe = () => spawnSessionTool.inputSchema.runtime.description;
   assert.equal(describe(), 'Where the new session runs. Valid values — `local` (default), `devcontainer`.');

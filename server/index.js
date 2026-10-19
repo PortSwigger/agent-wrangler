@@ -418,6 +418,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       registerRuntime({
         id: rt.id,
         label: rt.label,
+        ...(rt.agents === undefined ? {} : { agents: [...rt.agents] }),
         ...(rt.resumable === undefined ? {} : { resumable: rt.resumable }),
         skipsHostResumeGuard: Boolean(rt.skipsHostResumeGuard),
         liveByTmux: Boolean(rt.liveByTmux),

@@ -179,7 +179,7 @@ function runtimeHarness(agent = 'claude') {
     createElement: () => stubOption(),
   };
   const app = loadApp(
-    ['function syncRuntimeToggle() {', 'function syncExtRuntimeOptions() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncExtRuntimeOptions() {'],
     ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
     'let latestExtensions = []; const setExtensions = (v) => { latestExtensions = v; };',
     { document, additionalFolders },
@@ -221,11 +221,31 @@ test('a surviving selection is kept across a reconcile, and a built-in id is nev
   assert.equal(rt.value, 'devcontainer');
 });
 
-test('an extension runtime is Claude-only like every non-local runtime', () => {
+test('an extension runtime with no agents is Claude-only, like devcontainer', () => {
   const { rt, syncExtRuntimeOptions, setExtensions } = runtimeHarness('codex');
   setExtensions([ext()]);
   syncExtRuntimeOptions();
   assert.equal(rt.options.find((o) => o.value === 'sandbox').disabled, true);
+  assert.equal(rt.options.find((o) => o.value === 'devcontainer').disabled, true);
+  assert.equal(rt.options.find((o) => o.value === 'local').disabled, false);
+});
+
+test('an extension runtime is offered to each agent its `agents` lists, and only those', () => {
+  const runtimes = [{ id: 'sandbox', label: 'Sandbox', agents: ['claude', 'codex'] }, { id: 'codexonly', label: 'Codex only', agents: ['codex'] }];
+  const codex = runtimeHarness('codex');
+  codex.setExtensions([ext({ runtimes })]);
+  codex.syncExtRuntimeOptions();
+  assert.deepEqual(codex.rt.options.map((o) => [o.value, o.disabled]), [['local', false], ['devcontainer', true], ['sandbox', false], ['codexonly', false]]);
+  codex.rt.value = 'sandbox';
+  codex.syncRuntimeToggle();
+  assert.equal(codex.rt.value, 'sandbox', 'a listed agent keeps its selection');
+  const claude = runtimeHarness('claude');
+  claude.setExtensions([ext({ runtimes })]);
+  claude.syncExtRuntimeOptions();
+  claude.rt.value = 'codexonly';
+  claude.syncRuntimeToggle();
+  assert.deepEqual(claude.rt.options.map((o) => [o.value, o.disabled]), [['local', false], ['devcontainer', false], ['sandbox', false], ['codexonly', true]]);
+  assert.equal(claude.rt.value, 'local', 'an unlisted agent snaps back to local');
 });
 
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
@@ -398,7 +418,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
     const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
     additionalFolders.reset(['/extra']);
     const app = loadApp(
-      ['function quickLaunch(value) {', 'function syncRuntimeToggle() {', 'function readCoreDispatchFields() {'],
+      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function readCoreDispatchFields() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
       `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
        const autoCompactTokens = undefined; const parentSessionId = null;

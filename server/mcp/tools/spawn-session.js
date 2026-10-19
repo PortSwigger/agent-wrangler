@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { nestedParentError } from '../../dispatch-runner.js';
-import { knownRuntimes, DEFAULT_RUNTIME } from '../../runtimes/index.js';
+import { knownRuntimes, findRuntime, runtimeAgentError, DEFAULT_RUNTIME } from '../../runtimes/index.js';
 
 // e.g. "`local` (default), `devcontainer`, `cloud` (extension)".
 function runtimeChoicesText() {
@@ -112,6 +112,9 @@ export const spawnSessionTool = {
       if (!known.includes(args.runtime)) {
         return errorResult(`Unknown runtime "${args.runtime}". Known runtimes: ${known.join(', ')}.`);
       }
+      // Dispatch refuses it too; checked here so nothing is resolved first.
+      const agentErr = runtimeAgentError(findRuntime(args.runtime), args.agent || 'claude');
+      if (agentErr) return errorResult(agentErr);
     }
 
     return performSpawn({

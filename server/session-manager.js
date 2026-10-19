@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
-import { runtimeFor, findRuntime, relaunchRefusal } from './runtimes/index.js';
+import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
@@ -1831,6 +1831,8 @@ export class SessionManager {
     // extension data (an extension runtime's binding narrows `ext` to its own
     // slice) — and a runtime that doesn't care ignores the extra keys.
     const rt = runtimeFor(runtime);
+    const agentErr = runtimeAgentError(rt, agent);
+    if (agentErr) throw new Error(agentErr);
     const preflightErr = rt.preflight
       ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
       : null;
