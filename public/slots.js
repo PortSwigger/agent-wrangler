@@ -394,13 +394,18 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         claimDrag: (el) => claimDrag(extId, el),
         // Open the dispatch modal (1.15.0) and resolve with the `dispatched`
         // ack, or null when it is cancelled. See app.js openDispatchAcked for
-        // the concurrency rule.
+        // the concurrency rule. `cwd` and `images` (1.36.0) prefill the folder
+        // and attach names from images.stage; only their types are checked
+        // here — the server claims a name at launch only if it is a minted,
+        // still-staged one, and skips any other.
         openDispatch: (opts = {}) => {
           if (typeof baseApi.openDispatchAcked !== 'function') return Promise.reject(new Error(`[ext:${extId}] openDispatch is not available`));
           const o = opts && typeof opts === 'object' ? opts : {};
           if (o.taskId != null && (typeof o.taskId !== 'string' || !o.taskId)) return Promise.reject(new Error(`[ext:${extId}] openDispatch taskId must be a task id string or null`));
           if (o.intent != null && typeof o.intent !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch intent must be a string`));
-          return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask) }));
+          if (o.cwd != null && typeof o.cwd !== 'string') return Promise.reject(new Error(`[ext:${extId}] openDispatch cwd must be a string`));
+          if (o.images != null && (!Array.isArray(o.images) || !o.images.every((n) => typeof n === 'string' && n))) return Promise.reject(new Error(`[ext:${extId}] openDispatch images must be an array of staged image names`));
+          return Promise.resolve(baseApi.openDispatchAcked({ taskId: o.taskId ?? null, intent: o.intent || '', lockTask: Boolean(o.lockTask), cwd: o.cwd || '', images: o.images ? [...o.images] : [] }));
         },
         // Launch the already-open dispatch modal (1.28.0), optionally on an
         // offered model/effort, and (1.33.0) runtime. Resolves once SENT; rejects when the modal is

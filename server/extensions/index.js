@@ -453,11 +453,14 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // path for the same reason.
     settings: (settings || []).map((s) => ({ ...s })),
     settingValues: valuesFor(id),
-    // Only the two fields the row shows, never the whole record: `requires` on
+    // Only the fields the pane shows, never the whole record: `requires` on
     // it is the CONSENTED set, which is an update-flow input and not something
     // the board needs on every tick.
     origin: provenance?.originUrl || '',
     sha: provenance?.sha || '',
+    // The auto-update opt-in, for the detail pane's switch. False for a
+    // builtin or hand-placed entry, which has no record to carry it.
+    autoUpdate: Boolean(provenance?.autoUpdate),
   }));
 }
 

@@ -33,7 +33,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -63,6 +63,7 @@ import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
 import { createIntentImages } from './intent-images.js';
 import { createExtImageStaging } from './ext-image-staging.js';
+import { createStagedPreviews } from './staged-previews.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
@@ -349,12 +350,15 @@ const extApi = {
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
 };
 
-// api.openDispatch({ taskId, intent, lockTask }): open the dispatch modal as
-// openDispatch does; resolves with the `dispatched` ack once the human launches,
-// null if they cancel or a later call supersedes this one, and rejects when a
-// launch is already awaiting its ack (see dispatch-waiter.js).
-function openDispatchAcked({ taskId = null, intent = '', lockTask = false } = {}) {
-  return dispatchWaiter.open(() => openDispatch(taskId, { ...(intent ? { intent } : {}), lockTask }));
+// api.openDispatch({ taskId, intent, lockTask, cwd, images }): open the dispatch
+// modal as openDispatch does; resolves with the `dispatched` ack once the human
+// launches, null if they cancel or a later call supersedes this one, and rejects
+// when a launch is already awaiting its ack (see dispatch-waiter.js). `cwd`
+// prefills the folder and `images` (names from api.images.stage) become chips.
+function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {
+  return dispatchWaiter.open(() => openDispatch(taskId, {
+    ...(intent ? { intent } : {}), ...(cwd ? { cwd } : {}), ...(images.length ? { images } : {}), lockTask,
+  }));
 }
 
 // Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
@@ -5414,7 +5418,7 @@ function openDispatchExtFields(saved) {
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
-function openModal({ mode, taskId = null, schedule = null }) {
+function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   modalMode = mode;
   editingScheduleId = schedule?.id || null;
   // The action kind (and its dispatch bag) come off schedule.action; a launch is
@@ -5449,7 +5453,8 @@ function openModal({ mode, taskId = null, schedule = null }) {
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
-  intentImages.reset();
+  // Images an openDispatch is about to adopt keep their previews through the reset.
+  intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
   if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
@@ -5497,10 +5502,18 @@ function defaultPicker() {
 function openDispatch(taskId = null, opts = {}) {
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
-  openModal({ mode: 'launch', taskId });
+  openModal({ mode: 'launch', taskId, keepImages: opts.images || [] });
   // The source session's exact folder must win over openModal's task-dominant cwd.
-  if (opts.cwd) document.getElementById('m-cwd').value = opts.cwd;
+  if (opts.cwd) {
+    document.getElementById('m-cwd').value = opts.cwd;
+    // Re-check the folder as typing into the field does, so the worktree box
+    // reflects this folder rather than the one openModal filled in.
+    syncWorktreeFields();
+    requestFolderBrowse();
+  }
   if (opts.addDirs) additionalFolders.reset(opts.addDirs);
+  // Already-staged images (api.openDispatch), after openModal's reset cleared the last ones.
+  if (opts.images) intentImages.adopt(opts.images);
   // Implicit nesting context (e.g. a review's source session) — not a user toggle,
   // so it isn't reflected in any dialog control; just carried through to dispatch.
   if (opts.parentSession) parentSessionId = opts.parentSession;
@@ -6102,6 +6115,19 @@ function mountExtensionsPanel(host) {
       if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
+    // Turning it ON is the decision, so only that asks; off never needs one.
+    onAutoUpdate: async (entry, on) => {
+      if (on) {
+        const answer = await confirmDialog({
+          title: `Auto-update ${entry.label || entry.id}?`,
+          body: AUTO_UPDATE_WARNING,
+          okLabel: 'Turn on auto-update',
+          danger: true,
+        });
+        if (answer !== 'ok') return;
+      }
+      send({ type: 'ext-set-auto-update', id: entry.id, on });
+    },
     onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
     settingsEl: extSettingsEl,
   }));
@@ -6511,7 +6537,11 @@ function connect() {
         delete extUpdateStatuses[msg.id];
         if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
         remountUpdatePanel();
-        if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+        // `automatic`: the update tick applied it for an extension that opted
+        // in, and every tab is told, so the restart button is up wherever the
+        // human looks next.
+        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${EXT_RESTART_NOTE}`);
+        else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
       }
@@ -6798,12 +6828,21 @@ initStyles();
 const terminalImagePaste = createTerminalImagePaste({ send, toast });
 // The dispatch dialog's intent box. Off for schedules: a staged image is pruned
 // within a week, and a schedule can fire long after that.
-const extImageStaging = createExtImageStaging({ send });
+// One browser-side preview map for the dialog's chips. A paste is remembered on
+// upload; an extension's staged image only when api.openDispatch hands its name
+// to the dialog (adoptBlob), so the same thumbnail shows either way.
+const stagedPreviews = createStagedPreviews();
+const extImageStaging = createExtImageStaging({ send, previews: stagedPreviews });
 const intentImages = createIntentImages({
   input: document.getElementById('m-intent'),
   listEl: document.getElementById('m-intent-attachments'),
   send,
   toast,
+  previews: stagedPreviews,
+  // The overlay, not the card: .modal-card scrolls and has a backdrop-filter,
+  // either of which would clip or re-anchor the fixed-position preview.
+  previewHost: modal,
+  adoptBlob: (name) => extImageStaging.takeBlob(name),
   enabled: () => !scheduleMode() && modalMode !== 'subagent',
 });
 

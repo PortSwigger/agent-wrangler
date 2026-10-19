@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
-  commitFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText,
+  commitFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING,
 } from './extensions-panel.js';
 import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
 
@@ -899,5 +899,46 @@ test('a textarea with no declared maxLength still gets the server\'s cap nativel
     const entry = { id: 'x', settingValues: {}, settings: [{ key: 'process', type: 'textarea', label: 'Process' }] };
     const [area] = byClass(extensionSettingRowsEl(entry), 'ext-setting-input');
     assert.equal(area.maxLength, MAX_TEXTAREA_LENGTH);
+  });
+});
+
+test('an extension installed from git has an Auto-update switch, off by default, that asks to change', () => {
+  withDom(() => {
+    const asked = [];
+    const panel = showing(EXT1, { onAutoUpdate: (e, on) => asked.push([e.id, on]) });
+    const row = byClass(panel, 'ext-auto-update')[0];
+    assert.ok(row);
+    assert.equal(row.dataset.id, undefined, 'no data-id, so settings.js\'s delegated flip cannot reach it');
+    assert.ok(texts(row).includes('Auto-update'));
+    const toggle = byClass(row, 'setting-toggle')[0];
+    assert.equal(toggle.getAttribute('aria-checked'), 'false');
+    toggle.fire('click');
+    assert.deepEqual(asked, [['ext1', true]]);
+    assert.equal(toggle.getAttribute('aria-checked'), 'false', 'it moves when the graph says so, not on the click');
+    const on = byClass(showing({ ...EXT1, autoUpdate: true }, { onAutoUpdate: (e, v) => asked.push([e.id, v]) }), 'ext-auto-update')[0];
+    byClass(on, 'setting-toggle')[0].fire('click');
+    assert.deepEqual(asked.at(-1), ['ext1', false]);
+  });
+});
+
+test('builtin, hand-placed and just-uninstalled extensions have no Auto-update switch', () => {
+  withDom(() => {
+    assert.equal(byClass(showing(BUILTIN_A), 'ext-auto-update').length, 0);
+    assert.equal(byClass(showing({ ...EXT1, origin: '', sha: '' }), 'ext-auto-update').length, 0);
+    assert.equal(byClass(showing(EXT1, { pendingRemoval: ['ext1'] }), 'ext-auto-update').length, 0);
+  });
+});
+
+test('the auto-update warning names who can push code and that nobody reviews it', () => {
+  assert.match(AUTO_UPDATE_WARNING, /by its owner, or by anyone who gains control of it/);
+  assert.match(AUTO_UPDATE_WARNING, /without you reviewing the code/);
+  assert.match(AUTO_UPDATE_WARNING, /asks for no new capabilities/);
+});
+
+test('an update auto-update left for the human keeps its button and says why', () => {
+  withDom(() => {
+    const status = { ...BEHIND, autoUpdateBlocked: 'it now asks for sessions:kill, which needs your consent' };
+    assert.equal(updateStatusText(status), 'A newer commit is available (bbbbbbbb). Not updated automatically: it now asks for sessions:kill, which needs your consent.');
+    assert.equal(byClass(extensionsPanelEl({ entries: [EXT1], statuses: { ext1: status } }), 'ext-btn-square').length, 1);
   });
 });

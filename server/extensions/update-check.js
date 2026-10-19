@@ -4,9 +4,14 @@ import { readProvenance } from './provenance.js';
 import { lsRemoteHead, countCommitsBehind } from './install.js';
 
 // The background half of "Check all": run by the core update service's
-// scheduled tick in Notify or Auto mode, and NOTIFY ONLY. Nothing here clones,
-// installs or touches a working tree; an extension update always goes through
-// its consent screen from the Extensions panel, whatever the mode.
+// scheduled tick in Notify or Auto mode, and NOTIFY ONLY unless an extension's
+// own record opts in to auto-update. Nothing here clones, installs or touches a
+// working tree; an outdated extension that opted in is handed to `autoUpdate`
+// (index.js wires the install handler's autoUpdateExtension), which applies it
+// only when it needs no re-consent. One it applied leaves the result, since it
+// is no longer behind; one it did not keeps its entry, with the reason as
+// `autoUpdateBlocked` (or `incompatible`, for a host API refusal), so the row
+// still offers the update through its consent screen.
 //
 // Built-in extensions have no remote, and a hand-placed one has no recorded
 // origin, so both are left out of the result entirely rather than reported up
@@ -18,6 +23,7 @@ export function createExtensionUpdateCheck({
   lsRemote = lsRemoteHead,
   count = countCommitsBehind,
   hasGitDir = (dir) => fs.existsSync(path.join(dir, '.git')),
+  autoUpdate = null,
 } = {}) {
   // `id@installed..remote` -> { commits, capped }, so an unmoved remote head is
   // never fetched again: one ls-remote per extension per tick is the steady state.
@@ -51,7 +57,13 @@ export function createExtensionUpdateCheck({
       try {
         const remoteSha = await lsRemote(record.originUrl);
         const behind = remoteSha !== record.sha;
-        extensions.push({ ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha) : {}) });
+        const status = { ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha) : {}) };
+        if (behind && record.autoUpdate && autoUpdate) {
+          const result = await autoUpdate(entry.id);
+          if (result.applied) continue;
+          status[result.incompatible ? 'incompatible' : 'autoUpdateBlocked'] = result.reason;
+        }
+        extensions.push(status);
       } catch (err) {
         extensions.push({ ...base, error: String(err?.message || err) });
       }

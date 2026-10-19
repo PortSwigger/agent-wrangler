@@ -19,9 +19,25 @@ for a newer commit; when one is found, **Update all** appears beside it and the 
 update button in the list. With Settings › Updates on Notify or Auto, the hourly update check also
 checks installed extensions: an outdated one shows its update button and how many changes it is
 missing without pressing Check all, the Extensions tab and the Settings button are badged, and a
-toast says so once per new commit. Extensions are never updated automatically, even on Auto.
+toast says so once per new commit. Extensions are not updated automatically, even on Auto, unless you
+turn on **Auto-update** for that extension (see below).
 Select an extension to see its **Enabled** switch, **Uninstall…** (installed
-only), its **Source** (type, repository and commit) and its **Settings**.
+only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
+commit) and its **Settings**.
+
+### Auto-update an extension
+
+**Auto-update** is off for every extension until you turn it on in that extension's detail pane, and
+there is no switch for all of them. Turning it on asks you to confirm first, because from then on new
+commits pushed to its repository, by its owner or by anyone who gains control of it, are installed and
+run with the extension's capabilities without you reviewing the code. Core extensions and extensions
+placed in the extensions folder by hand have no Auto-update switch.
+
+An extension with Auto-update on is updated by the hourly update check, so only while Settings ›
+Updates is on Notify or Auto. An update is applied only when it asks for no new capabilities and passes
+the same lockfile and host API checks as an update you start yourself. Otherwise it stays an update
+button for you to review, and its detail pane says why it was not applied. The updated code loads at
+the next restart: the panel offers **Restart now** where the wrangler can restart itself.
 
 **+ Add extension** also lists public GitHub repositories tagged with the
 [`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
@@ -323,7 +339,27 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   core update tick in Notify or Auto mode (`extensions/update-check.js`), which the
   user opted into there: the same `ls-remote`, plus a shallow fetch into the
   installed clone to count the missing commits, once per new remote head. It
-  never installs; Off keeps extensions strictly on demand.
+  never installs on its own account; Off keeps extensions strictly on demand.
+- **Auto-update is a PER-EXTENSION opt-in on the provenance record
+  (`autoUpdate`, strictly `true`), off for every install including ones made
+  before it existed, with no global switch.** It lives on the record because
+  only a record with an `originUrl` can be updated at all: `setAutoUpdate` refuses
+  anything else, so a builtin or hand-placed extension cannot hold it, and
+  uninstall removes it with the record. `ext-consent` carries it over on an
+  update and a fresh install starts with it off. Turning it on goes through a
+  confirm carrying `AUTO_UPDATE_WARNING` (`public/extensions-panel.js`), which,
+  like the trust statement, must not be softened. The tick hands an outdated
+  opted-in extension to `autoUpdateExtension` (`extensions-install.js`), which is
+  **`ext-install` then `ext-consent` run back to back through the same handlers**,
+  never a second install path: same clone, lockfile, host API checks and install
+  lock (a held lock skips it until the next tick). The only thing skipped is the
+  modal, and only when it has nothing new to ask: a disclosure with
+  `reconsentNeeded` (or a changed id) is cancelled and the update is left on the
+  row with the reason as `autoUpdateBlocked` (a host API refusal arrives as
+  `incompatible`, as for a human update). Progress frames are kept off the board;
+  only a finished update's `ext-install-done` (`automatic: true`,
+  `restartRequired`) is broadcast, so every tab gets the restart affordance. The
+  restart semantics below are unchanged: updated code loads at the next start.
 - **One install at a time per instance, REFUSED not queued, behind an in-memory
   lock.** The staging dir (`<DATA_DIR>/extensions/.tmp/<tempId>/`) is the only
   durable artefact an interrupted install leaves, and boot sweeps it
@@ -850,13 +886,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   The `todos` extension claims its host only for the length of a row drag (set in
   its `dragstart`, released on `dragend`), so the cell highlight stands aside and
   re-renders hold while a row is in flight.
-- **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
+- **`api.openDispatch({ taskId, intent, lockTask, cwd, images })` (1.15.0)** opens the dispatch
   modal and returns a promise: the `dispatched` ack once the human launches, `null` if
   the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
   second call while the first modal is merely open REPLACES it (the first resolves
   null); while a launch awaits its ack the second call REJECTS, since two acks cannot
   be told apart. An error reply to a launch whose modal is still open makes it
   retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
+  **`cwd` and `images` (1.36.0)**: `cwd` (string) prefills the working-folder field
+  in place of the task's usual folder, and the human can still change it. `images`
+  is an array of names from `api.images.stage` (pass each result's `name`); they
+  appear in the prompt box as chips, exactly as if pasted: removable, and counted
+  against the same limit of 8 per first prompt, so any beyond it are dropped with
+  a toast. A non-string `cwd` or an `images` that is not an array of non-empty
+  strings rejects before the modal opens. The names' shape is not checked in the
+  browser: at launch the server claims only minted, still-staged names and skips
+  the rest. Staged names are single-use, so stage again for each open. Images need
+  a local launch, as for pasted ones.
 - **`api.dispatch.submit({ model?, effort?, runtime? })` (1.28.0)** launches the dispatch
   modal that is ALREADY open, as Launch would, optionally on a given model and
   effort. It works only in launch mode (rejects when the modal is closed, or in
@@ -1255,8 +1301,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `File`/`Blob`, rejects a non-image) uploads through the same `paste-image`
   `staged` path as the dispatch dialog's intent box (magic-byte sniff, mime
   allowlist, 10 MB cap) and resolves `{ name }`, a server-minted name, never a
-  path. `host.sessions.spawn({ images: [name, ...] })` (at most 8) launches with
-  the prompt held back and then pastes each image ahead of the prompt text once
+  path; `api.openDispatch({ images })` (1.36.0) attaches such names in the dispatch
+  dialog for the human to launch. `host.sessions.spawn({ images: [name, ...] })`
+  (at most 8) launches with the prompt held back and then pastes each image ahead of the prompt text once
   the TUI has booted, as `runDispatch` does; a name that is not a minted name, or
   is neither staged nor kept, throws before anything launches. Staged names are
   single-use (the session takes the file) and pruned after a week, so work that

@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
-import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord } from '../../extensions/provenance.js';
+import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
@@ -423,6 +423,9 @@ export const extConsentHandler = {
         // against this record at every boot.
         requires: [...declared.requires],
         dependencies: deps.all,
+        // An update keeps the human's auto-update opt-in; a fresh install
+        // (no record yet) starts with it off.
+        autoUpdate: recordFor(manifest.id)?.autoUpdate === true,
       });
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url} at ${sha.slice(0, 8)}`);
       if (registered) {
@@ -504,3 +507,76 @@ export const extCheckUpdatesHandler = {
     ctx.reply({ type: 'ext-updates', extensions: out });
   },
 };
+
+export const extSetAutoUpdateHandler = {
+  type: 'ext-set-auto-update',
+  async handler(msg, ctx) {
+    const id = String(msg.id || '');
+    const known = ctx.ext.list.find((e) => e.id === id);
+    if (!known) throw new Error(`Unknown extension: ${id}`);
+    if (!known.external) throw new Error(`${id} ships with the wrangler and is updated with it.`);
+    // setAutoUpdate refuses a record-less (hand-placed) extension itself.
+    const record = setAutoUpdate(id, msg.on === true);
+    // The loaded entry's record is what the graph reads, and it was taken at
+    // boot or install; only the flag is carried over, so its commit still
+    // names the code that is running.
+    known.provenance = { ...known.provenance, autoUpdate: record.autoUpdate };
+    log(`[agent-wrangler] extension ${id} auto-update ${record.autoUpdate ? 'on' : 'off'}`);
+    ctx.reply({ type: 'ext-auto-update', id, on: record.autoUpdate });
+    await ctx.rebuild();
+  },
+};
+
+// The update tick's apply path for an extension whose record opts in
+// (provenance.js setAutoUpdate). It is ext-install then ext-consent, run back
+// to back through the SAME handlers, so the clone, the lockfile and host API
+// checks and the install lock are exactly the human path's; the only thing
+// skipped is the modal, and only when it has nothing new to ask: an update
+// whose `requires` does not widen. Anything else is left for the human, with
+// the reason, and the extension keeps its update button.
+//
+// Resolves `{ applied: true, sha }` or `{ applied: false, reason, incompatible? }`
+// and never throws. Progress frames are kept off the board (nobody pressed
+// anything, and the panel would show it as an install of its own); a finished
+// update's `ext-install-done` is broadcast instead, so every tab gets the
+// restart affordance.
+export async function autoUpdateExtension(id, ctx) {
+  const record = recordFor(id);
+  if (!record?.autoUpdate || !record.originUrl) return { applied: false, reason: 'Auto-update is off.' };
+  if (busy) return { applied: false, reason: 'another extension install was running; it is tried again at the next check' };
+  const replies = [];
+  const quiet = {
+    ...ctx,
+    broadcast: (frame) => { if (frame?.type !== 'ext-install-progress') ctx.broadcast?.(frame); },
+    reply: (frame) => {
+      replies.push(frame);
+      if (frame.type === 'ext-install-done' && frame.installed) ctx.broadcast?.({ ...frame, automatic: true });
+    },
+  };
+  const found = (type) => replies.find((f) => f.type === type);
+  const refused = () => {
+    const incompatible = found('ext-install-incompatible');
+    return incompatible ? { applied: false, reason: incompatible.message, incompatible: true } : null;
+  };
+  try {
+    await extInstallHandler.handler({ url: record.originUrl }, quiet);
+    const disclosure = found('ext-install-disclosure');
+    if (!disclosure) return refused() || { applied: false, reason: 'nothing was offered to install' };
+    let reason = null;
+    // A repository that now declares a different id would install as a new
+    // extension, which is never an update.
+    if (!disclosure.update || disclosure.id !== id) reason = `its repository now declares the id "${disclosure.id}"`;
+    else if (disclosure.reconsentNeeded) reason = `it now asks for ${disclosure.addedCapabilities.join(', ')}, which needs your consent`;
+    if (reason) {
+      await extConsentHandler.handler({ tempId: disclosure.tempId, approve: false }, quiet);
+      return { applied: false, reason };
+    }
+    await extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, quiet);
+    const done = found('ext-install-done');
+    if (!done?.installed) return refused() || { applied: false, reason: 'the update did not complete' };
+    log(`[agent-wrangler] extension ${id} auto-updated to ${done.sha.slice(0, 8)}; it loads at the next restart`);
+    return { applied: true, sha: done.sha };
+  } catch (err) {
+    return { applied: false, reason: String(err?.message || err) };
+  }
+}

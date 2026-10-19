@@ -46,6 +46,7 @@ const snapshot = readSnapshot();
 let live = null;
 let liveVersion = 0;
 let derived = null;
+let probeUnsupported = false;
 const listeners = new Set();
 
 function catalog() {
@@ -115,13 +116,25 @@ async function runCodexDebugModels() {
   return JSON.parse(stdout);
 }
 
+// A Codex CLI that predates `debug models` fails with clap's usage error.
+function isUnsupportedSubcommand(err) {
+  return /unrecogni[sz]ed subcommand/i.test(`${err?.stderr || ''}\n${err?.message || ''}`);
+}
+
 // Re-read the catalog from the installed Codex CLI. Returns true when it changed.
 // Never throws — a failed read (no codex, bad output) keeps the current list.
 export async function refreshCodexCatalog({ run = runCodexDebugModels } = {}) {
+  // An old CLI won't grow the subcommand mid-run; the snapshot and Codex's
+  // models cache already cover it, so stop probing until the next restart.
+  if (probeUnsupported) return false;
   let next;
   try {
     next = reduceCodexCatalog(await run());
   } catch (err) {
+    if (isUnsupportedSubcommand(err)) {
+      probeUnsupported = true;
+      return false;
+    }
     // No codex on PATH is the normal state for a Claude-only install.
     if (err.code !== 'ENOENT') logWarn(`[agent-wrangler] codex model catalog refresh failed: ${err.message}`);
     return false;
@@ -148,4 +161,5 @@ export function startCodexCatalogRefresh() {
 export function _resetCodexCatalogForTest() {
   live = null;
   derived = null;
+  probeUnsupported = false;
 }

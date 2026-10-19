@@ -43,6 +43,13 @@ export const MAX_TEXTAREA_LENGTH = 20000;
 
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
 
+// What turning auto-update on gives away, shown in the confirm before it is
+// on. Like TRUST_STATEMENT, not to be softened: the repository's owner, or
+// whoever compromises it, decides what runs next, and nobody reads it first.
+export const AUTO_UPDATE_WARNING = 'New commits pushed to this extension\'s repository — by its owner, or by anyone who gains control of it — will be installed and run inside the wrangler with this extension\'s capabilities and full access to this machine, without you reviewing the code first. Only an update that asks for no new capabilities and passes the lockfile and host API checks is applied; anything else still waits for you. Updated code loads at the next restart.';
+
+export const AUTO_UPDATE_HELP = 'Install new commits at the update check when they ask for no new capabilities. Runs only while Settings › Updates is on Notify or Auto; the new code loads at the next restart.';
+
 // An uninstall gets its OWN note, because "to finish" would be a lie there: the
 // row, tools, handlers, stores, sweeps and client asset are all gone already and
 // the reader can see that. The only thing left is the module Node cannot unload
@@ -199,7 +206,7 @@ function sourceEl(entry) {
 // settings.js's delegated click handler already drives (and where it puts its
 // flip note), so the enable switch has no second flip path.
 export function extensionDetailEl(entry, {
-  status, pendingRemoval, settings, onUninstall,
+  status, pendingRemoval, settings, onUninstall, onAutoUpdate,
 } = {}) {
   const pane = el('div', 'ext-detail-body');
   const head = el('div', 'setting-row ext-detail-head');
@@ -241,9 +248,35 @@ export function extensionDetailEl(entry, {
   if (pendingRemoval) pane.append(noteEl('ext-row-note', `Uninstalled. ${UNINSTALL_RESTART_NOTE}`));
   else if (status) pane.append(noteEl('ext-row-note', updateStatusText(status)));
 
+  // Only an extension with a recorded origin has anything to update from: a
+  // builtin ships with the wrangler and a hand-placed one has no record.
+  if (entry.external && entry.origin && !pendingRemoval) section(pane, 'Updates', autoUpdateRowEl(entry, onAutoUpdate));
   section(pane, 'Source', sourceEl(entry));
   if (settings && !pendingRemoval) section(pane, 'Settings', settings);
   return pane;
+}
+
+// The per-extension auto-update switch. No `data-id`, so settings.js's
+// delegated toggle handler cannot see it (see extensionSettingRowsEl). It does
+// not move itself: turning it on waits for the caller's confirm, and the
+// graph's `autoUpdate` redraws the pane either way.
+function autoUpdateRowEl(entry, onAutoUpdate) {
+  const row = el('div', 'ext-auto-update');
+  const copy = el('div', 'setting-copy');
+  copy.append(el('div', 'setting-label', 'Auto-update'));
+  copy.append(el('div', 'setting-help', AUTO_UPDATE_HELP));
+  const actions = el('div', 'ext-row-actions');
+  const on = Boolean(entry.autoUpdate);
+  const toggle = el('button', `setting-toggle${on ? ' on' : ''}`);
+  toggle.type = 'button';
+  toggle.setAttribute('role', 'switch');
+  toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  toggle.setAttribute('aria-label', `Auto-update ${nameOf(entry)}`);
+  toggle.append(el('span', 'setting-knob'));
+  toggle.addEventListener('click', () => onAutoUpdate?.(entry, !on));
+  actions.append(toggle);
+  row.append(copy, actions);
+  return row;
 }
 
 // "+ Add extension" in the detail pane: the paste-a-git-URL form, then the
@@ -737,7 +770,7 @@ export function extensionsPanelEl({
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
   selectedId = '', filter = '', adding = false, browse = null,
   onSelect, onFilter, onAdd, onInstall, onBrowse, onUninstall, onUpdate, onUpdateAll,
-  onCheckUpdates, onRestart, onSettingChange, settingsEl,
+  onCheckUpdates, onRestart, onSettingChange, onAutoUpdate, settingsEl,
 } = {}) {
   const wrap = el('div', 'ext-split');
   const removing = new Set(pendingRemoval);
@@ -840,6 +873,7 @@ export function extensionsPanelEl({
       pendingRemoval: removing.has(selected.id),
       settings,
       onUninstall,
+      onAutoUpdate,
     }));
   }
   wrap.append(detail);
@@ -858,7 +892,10 @@ export function updateStatusText(status) {
   if (status.error) return `Could not reach the origin: ${status.error}`;
   if (status.incompatible) return status.incompatible;
   if (!status.sha) return 'No installed commit recorded.';
-  return status.behind ? `A newer commit is available (${status.remoteSha.slice(0, 8)}).` : 'Up to date.';
+  if (!status.behind) return 'Up to date.';
+  const newer = `A newer commit is available (${status.remoteSha.slice(0, 8)}).`;
+  // Auto-update is on but left this one for the human, and says why.
+  return status.autoUpdateBlocked ? `${newer} Not updated automatically: ${status.autoUpdateBlocked}.` : newer;
 }
 
 // What the consent modal shows, in this order: the trust statement, then the

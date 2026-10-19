@@ -58,8 +58,9 @@ export function createUpdateService({
   rolledBack = null,
   onStatus = () => {},
   onApplied = () => {},
-  // Installed extensions ride the same tick, notify only: there is no apply
-  // path for them here in any mode (see extensions/update-check.js).
+  // Installed extensions ride the same tick, notify only unless an extension
+  // opted in to auto-update itself, in either mode (see
+  // extensions/update-check.js); this tick's Auto applies the wrangler only.
   checkExtensions = null,
   onExtensions = () => {},
   log = () => {},

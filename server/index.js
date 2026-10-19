@@ -74,6 +74,7 @@ import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-c
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
+import { autoUpdateExtension } from './control/handlers/extensions-install.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight } from './headless-claude.js';
@@ -1249,7 +1250,12 @@ async function main() {
       broadcast({ type: 'update-applied', head: result.head });
       exitForRestart(`updated to ${result.head}`);
     },
-    checkExtensions: createExtensionUpdateCheck({ list: () => ext.list }),
+    // Auto-update runs with the same core-owned bag a control frame gets; only
+    // its outcome is broadcast (see autoUpdateExtension).
+    checkExtensions: createExtensionUpdateCheck({
+      list: () => ext.list,
+      autoUpdate: (id) => autoUpdateExtension(id, { ext: extBag, rebuild, broadcast }),
+    }),
     onExtensions: (summary) => broadcast({ type: 'ext-update-status', ...summary }),
     log,
   });
