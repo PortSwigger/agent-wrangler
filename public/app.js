@@ -51,6 +51,7 @@ import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
+import { createExtFileViewer } from './ext-file-viewer.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
@@ -298,6 +299,7 @@ function openTaskInBoard(taskId) {
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
 // is only read on first render, by which point the classic vendor <script> has run.
 let renderMarkdown;
+let extFileViewer;
 const migrateSoundPreference = createSoundMigration();
 
 const extApi = {
@@ -323,6 +325,8 @@ const extApi = {
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs `api.openFile`; slots has checked the capability and bound the id.
+  openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
   // Backs `api.agents()`; slots hands each caller a deep copy.

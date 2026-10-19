@@ -1316,6 +1316,25 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   same name can go into any number of spawns. Kept images are never pruned; the
   extension removes them. Images need a local launch. A manifest using any of
   these declares `^1.31.0`.
+- **Opening local files** (1.38.0). Capability **`files:view`**, listed with the other
+  capabilities when the extension is installed, lets an extension show the local files its
+  data points at. Server side, `host.files.allow(pathOrPaths)` registers paths (absolute,
+  already normalised, of a viewable type) and returns how many it accepted;
+  `host.files.forget(pathOrPaths)` drops them. The set is per extension, in memory, and
+  capped (oldest dropped first), so an extension re-registers what it reports. Client side,
+  `api.openFile(path)` opens the viewer panel and resolves `{ ok: true }` or
+  `{ ok: false, reason }`; it never rejects. `api.files.canOpen(path)` and `api.files.types()`
+  (`[{ ext, kind, mime }]`) are synchronous and decide by extension alone, with no disk
+  access. `api.files` is undefined on a board older than 1.38.0 and when the manifest does not
+  require `files:view`, so guard with `api.files?.canOpen(path)` and fall back to Copy only.
+  Viewable today: markdown (`.md`, `.markdown`, rendered) and images (`.png`, `.jpg`,
+  `.jpeg`, `.gif`, `.webp`). One table maps extension to kind and mime (`public/file-types.js`);
+  the mime is derived, never sniffed. A read needs the path to be registered by that
+  extension, and the file to be a regular file opened without following symlinks, whose path
+  still resolves to itself, under 2 MB (markdown) or 8 MB (images). `reason` is one of
+  `invalid-path`, `unsupported-type`, `not-permitted` (not registered, or no capability),
+  `not-found`, `changed` (a symlink now sits in the path), `not-a-file`, `too-large`,
+  `unavailable` (not connected) or `error`. A manifest using it declares `^1.38.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and

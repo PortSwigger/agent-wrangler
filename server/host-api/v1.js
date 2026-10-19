@@ -237,6 +237,18 @@ const imagesKeep = ({ id }) => ({
   },
 });
 
+// The paths an extension offers the viewer (client `api.openFile`). Nothing is
+// readable until registered here, and `id` is closed over, so a path registered
+// by one extension never opens for another. allow() takes a path or an array and
+// returns how many it accepted (absolute, normalised, a type the viewer shows);
+// no disk is touched until the human opens one.
+const filesView = ({ id, extFiles }) => ({
+  files: {
+    allow: (paths) => (Array.isArray(paths) ? paths : [paths]).filter((p) => extFiles.allow(id, p)).length,
+    forget: (paths) => (Array.isArray(paths) ? paths : [paths]).filter((p) => extFiles.forget(id, p)).length,
+  },
+});
+
 const tasksRead = ({ core }) => ({
   tasks: {
     // The reserved id of the Unassigned (ad hoc) tile, which participates in
@@ -468,4 +480,5 @@ export const V1_BUILDERS = {
   'sessions:interrupt': sessionsInterrupt,
   'links:write': linksWrite,
   'images:keep': imagesKeep,
+  'files:view': filesView,
 };

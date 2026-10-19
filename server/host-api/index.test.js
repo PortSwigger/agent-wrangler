@@ -6,6 +6,7 @@ import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
 import { createEventBus } from '../events.js';
+import { createExtFiles } from '../ext-files.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
@@ -38,6 +39,7 @@ function wiring(overrides = {}) {
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
     mailStore: { unreadInfo: () => null, list: () => [], append: () => {} },
     scanUsage: async () => ({ sessions: [] }),
+    extFiles: createExtFiles(),
     ...overrides,
   };
 }
@@ -587,4 +589,18 @@ test('images:keep keeps, reads back and removes an extension\'s own copy, and sp
   assert.equal(host.images.remove(name), true);
   assert.equal(host.images.read(name), null);
   assert.equal('images' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
+});
+
+test('files:view registers paths per extension: allow counts the viewable ones, a sibling cannot open them', async () => {
+  const w = wiring();
+  const a = buildHostApi({ id: 'a', requires: ['files:view'], ...w });
+  const b = buildHostApi({ id: 'b', requires: ['files:view'], ...w });
+  assert.equal(a.files.allow(['/x/one.md', '/x/two.txt', 'rel.md']), 1);
+  assert.equal(a.files.allow('/x/pic.png'), 1);
+  assert.equal(w.extFiles.has('a', '/x/one.md'), true);
+  assert.equal(w.extFiles.has('b', '/x/one.md'), false);
+  assert.equal((await w.extFiles.open('b', '/x/one.md')).reason, 'not-permitted');
+  assert.equal(b.files.forget('/x/one.md'), 0);
+  assert.equal(a.files.forget('/x/one.md'), 1);
+  assert.equal('files' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
 });

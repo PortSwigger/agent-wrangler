@@ -41,12 +41,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.34.0 the runtime `liveByTmux` flag,
 // 1.35.0 `notification.cue`, `api.onConnect` and handler `reply`,
 // 1.36.0 `cwd` and `images` on the client `api.openDispatch`,
-// and 1.37.0 the runtime `agents` list,
+// 1.37.0 the runtime `agents` list,
+// and 1.38.0 `files:view`, the client `api.openFile` and `api.files`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.37.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.37.0');
+test('the served version is 1.38.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.38.0');
+  assert.equal(servesRange('^1.38.0'), true);
   assert.equal(servesRange('^1.37.0'), true);
   assert.equal(servesRange('^1.36.0'), true);
   assert.equal(servesRange('^1.35.0'), true);
