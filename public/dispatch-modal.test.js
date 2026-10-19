@@ -229,7 +229,7 @@ test('an extension runtime is Claude-only like every non-local runtime', () => {
 });
 
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
-  const open = appDecl('function openModal({ mode, taskId = null, schedule = null }) {');
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const sync = open.indexOf('syncExtRuntimeOptions()');
   const restore = open.indexOf(".value = d.runtime || 'local'");
   assert.ok(sync >= 0 && restore > sync, 'syncExtRuntimeOptions must run before the runtime prefill');
@@ -310,7 +310,7 @@ test('the worktree veto toggles only #m-worktree-box-row, never the inner .workt
 });
 
 test('openModal fires the per-open hook once, after its last sync and just before the modal is shown', () => {
-  const open = appDecl('function openModal({ mode, taskId = null, schedule = null }) {');
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const calls = open.match(/openDispatchExtFields\(/g) || [];
   assert.equal(calls.length, 1);
   const hook = open.indexOf('openDispatchExtFields(d.ext)');
@@ -802,4 +802,45 @@ test('dispatch waits while an intent image is still uploading', () => {
   const { app, sent } = extSubmitHarness({ images: [], imagesBusy: true });
   assert.throws(() => app.submitDispatchFromExt(), /blocked/);
   assert.equal(sent.length, 0);
+});
+
+// ── api.openDispatch's cwd and images (1.36.0) ──────────────────────────────
+// The real openDispatchAcked and openDispatch against a stub modal: openModal
+// is reduced to the resets it performs, so the test can see that the
+// extension's folder and images land AFTER them.
+function openDispatchHarness() {
+  const log = [];
+  const els = { 'm-task': { disabled: false }, 'm-cwd': { value: '' }, 'm-intent': { value: '' } };
+  const document = { getElementById: (id) => els[id] };
+  const intentImages = { reset: () => log.push('reset'), adopt: (names) => log.push(['adopt', names]) };
+  const dispatchWaiter = { open: (show) => { show(); return Promise.resolve(null); } };
+  const app = loadApp(
+    ["function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {", 'function openDispatch(taskId = null, opts = {}) {'],
+    ['openDispatchAcked'],
+    `const openModal = ({ taskId }) => { log.push(['openModal', taskId]); document.getElementById('m-cwd').value = '/task/default'; intentImages.reset(); };
+     const additionalFolders = { reset: () => {} };
+     let parentSessionId = null; let reviewMode = false;
+     const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');
+     const syncWorktreeFields = () => log.push('syncWorktreeFields');
+     const requestFolderBrowse = () => log.push('requestFolderBrowse');`,
+    { document, intentImages, dispatchWaiter, log },
+  );
+  return { els, log, ...app };
+}
+
+test('api.openDispatch prefills the folder and adopts staged images after the open resets', async () => {
+  const { els, log, openDispatchAcked } = openDispatchHarness();
+  await openDispatchAcked({ taskId: 't1', intent: 'look', cwd: '/work/project', images: ['paste-1-abcd.png'] });
+  assert.equal(els['m-cwd'].value, '/work/project');
+  assert.equal(els['m-intent'].value, 'look');
+  // A prefilled folder is re-checked exactly as typing into the field does, so
+  // the worktree box reflects the new folder rather than the task default.
+  assert.deepEqual(log, [['openModal', 't1'], 'reset', 'syncWorktreeFields', 'requestFolderBrowse', ['adopt', ['paste-1-abcd.png']], 'refreshWorktreeDefaults']);
+});
+
+test('api.openDispatch without cwd or images leaves the task default and adopts nothing', async () => {
+  const { els, log, openDispatchAcked } = openDispatchHarness();
+  await openDispatchAcked({ taskId: null });
+  assert.equal(els['m-cwd'].value, '/task/default');
+  assert.deepEqual(log, [['openModal', null], 'reset']);
 });

@@ -81,6 +81,8 @@ browser or Slack, image files copied in Finder, a selection containing images, o
 URL. BMP and other formats the browser can draw are converted to PNG before upload; HEIC and TIFF are
 converted to PNG by the server, which needs macOS. An image on another site is fetched by your browser
 only if that site allows it; otherwise use Copy Image instead.
+In the new-session dialog, each attached image's chip shows a thumbnail; hover over it or focus it
+for a larger preview. While a preview is open, Escape closes the preview rather than the dialog.
 
 When a message resumes a dormant Codex session, Wrangler waits for its terminal
 input to be ready, including during an active turn. If a draft, dialog or unreadable

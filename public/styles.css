@@ -2911,6 +2911,34 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .chat-attachment-drop::before { content: "\00D7"; }
 .chat-attachment-drop:hover { color: var(--fg); }
+/* A dispatch-dialog chip whose image this page uploaded: a small thumbnail in
+   place of the label's picture glyph, which would only repeat it. Pulled into
+   the chip's left padding, with the corners eased to match. */
+.chat-attachment:has(.chat-attachment-thumb) { padding-left: 3px; border-radius: 9px; }
+.chat-attachment:has(.chat-attachment-thumb) .chat-attachment-label::before { content: none; }
+.chat-attachment-thumb {
+  display: block; height: 32px; width: 32px; object-fit: cover;
+  border-radius: 6px; border: 1px solid var(--border-muted); background: var(--surface);
+}
+.chat-attachment-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Its hover/focus preview. Mounted on #modal (not the scrolling card) and
+   placed by intent-images.js; opaque like .context-menu so a translucent theme
+   cannot show the form through it. */
+.chat-attachment-preview {
+  position: fixed; z-index: 50; padding: 4px; pointer-events: none;
+  background: var(--surface);
+  background:
+    linear-gradient(var(--surface), var(--surface)),
+    linear-gradient(var(--surface), var(--surface)),
+    var(--bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.chat-attachment-preview img {
+  display: block; width: auto; height: auto;
+  max-width: min(480px, 90vw); max-height: min(480px, 70vh);
+  object-fit: contain; border-radius: 5px;
+}
 /* Which model the session is on RIGHT NOW, as opposed to .chat-model, which
    records the model of one past turn. Deliberately a little stronger than that
    one: it is live state, not provenance. */

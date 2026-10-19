@@ -1285,9 +1285,9 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
   const host = harness().document.make();
   slots.mountInto('panel.section', host, { openDispatchAcked: async (o) => { seen.push(o); return { sessionId: 'S' }; } });
   assert.deepEqual(await api.openDispatch({ taskId: 't1', intent: 'do', lockTask: true }), { sessionId: 'S' });
-  assert.deepEqual(seen[0], { taskId: 't1', intent: 'do', lockTask: true });
+  assert.deepEqual(seen[0], { taskId: 't1', intent: 'do', lockTask: true, cwd: '', images: [] });
   await api.openDispatch();
-  assert.deepEqual(seen[1], { taskId: null, intent: '', lockTask: false });
+  assert.deepEqual(seen[1], { taskId: null, intent: '', lockTask: false, cwd: '', images: [] });
   await assert.rejects(api.openDispatch({ taskId: 5 }), /taskId must be/);
   await assert.rejects(api.openDispatch({ intent: 5 }), /intent must be/);
   const { slots: s2 } = harness();
@@ -1295,6 +1295,22 @@ test('api.openDispatch forwards validated options and resolves with the ack; rej
   s2.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api2 = a; } });
   s2.mountInto('panel.section', harness().document.make(), {});
   await assert.rejects(api2.openDispatch({}), /not available/);
+});
+
+test('api.openDispatch (1.36.0) forwards cwd and staged image names, copied, and rejects bad ones', async () => {
+  const { slots } = harness();
+  let api; const seen = [];
+  slots.register('panel.section', 'ext1', { id: 's', mount: (el, a) => { api = a; } });
+  slots.mountInto('panel.section', harness().document.make(), { openDispatchAcked: async (o) => { seen.push(o); return null; } });
+  const images = ['paste-1-abcd.png', 'paste-2-ef01.jpg'];
+  await api.openDispatch({ taskId: 't1', cwd: '/work/project', images });
+  assert.deepEqual(seen[0], { taskId: 't1', intent: '', lockTask: false, cwd: '/work/project', images });
+  assert.notEqual(seen[0].images, images, 'the caller keeps its own array');
+  await assert.rejects(api.openDispatch({ cwd: 5 }), /cwd must be a string/);
+  await assert.rejects(api.openDispatch({ images: 'paste-1-abcd.png' }), /images must be an array of staged image names/);
+  await assert.rejects(api.openDispatch({ images: ['paste-1-abcd.png', ''] }), /images must be an array of staged image names/);
+  await assert.rejects(api.openDispatch({ images: [{ name: 'paste-1-abcd.png' }] }), /images must be an array of staged image names/);
+  assert.equal(seen.length, 1, 'a rejected call never opens the modal');
 });
 
 // ── dispatch.submit (1.28.0) ─────────────────────────────────────────────────

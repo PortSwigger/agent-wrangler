@@ -886,13 +886,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   The `todos` extension claims its host only for the length of a row drag (set in
   its `dragstart`, released on `dragend`), so the cell highlight stands aside and
   re-renders hold while a row is in flight.
-- **`api.openDispatch({ taskId, intent, lockTask })` (1.15.0)** opens the dispatch
+- **`api.openDispatch({ taskId, intent, lockTask, cwd, images })` (1.15.0)** opens the dispatch
   modal and returns a promise: the `dispatched` ack once the human launches, `null` if
   the modal is cancelled or superseded. Concurrency (`public/dispatch-waiter.js`): a
   second call while the first modal is merely open REPLACES it (the first resolves
   null); while a launch awaits its ack the second call REJECTS, since two acks cannot
   be told apart. An error reply to a launch whose modal is still open makes it
   retryable; a closed one resolves null. This replaced core's `pendingTodoConsume`.
+  **`cwd` and `images` (1.36.0)**: `cwd` (string) prefills the working-folder field
+  in place of the task's usual folder, and the human can still change it. `images`
+  is an array of names from `api.images.stage` (pass each result's `name`); they
+  appear in the prompt box as chips, exactly as if pasted: removable, and counted
+  against the same limit of 8 per first prompt, so any beyond it are dropped with
+  a toast. A non-string `cwd` or an `images` that is not an array of non-empty
+  strings rejects before the modal opens. The names' shape is not checked in the
+  browser: at launch the server claims only minted, still-staged names and skips
+  the rest. Staged names are single-use, so stage again for each open. Images need
+  a local launch, as for pasted ones.
 - **`api.dispatch.submit({ model?, effort?, runtime? })` (1.28.0)** launches the dispatch
   modal that is ALREADY open, as Launch would, optionally on a given model and
   effort. It works only in launch mode (rejects when the modal is closed, or in
@@ -1291,8 +1301,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `File`/`Blob`, rejects a non-image) uploads through the same `paste-image`
   `staged` path as the dispatch dialog's intent box (magic-byte sniff, mime
   allowlist, 10 MB cap) and resolves `{ name }`, a server-minted name, never a
-  path. `host.sessions.spawn({ images: [name, ...] })` (at most 8) launches with
-  the prompt held back and then pastes each image ahead of the prompt text once
+  path; `api.openDispatch({ images })` (1.36.0) attaches such names in the dispatch
+  dialog for the human to launch. `host.sessions.spawn({ images: [name, ...] })`
+  (at most 8) launches with the prompt held back and then pastes each image ahead of the prompt text once
   the TUI has booted, as `runDispatch` does; a name that is not a minted name, or
   is neither staged nor kept, throws before anything launches. Staged names are
   single-use (the session takes the file) and pruned after a week, so work that
