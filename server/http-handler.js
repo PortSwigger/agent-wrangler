@@ -32,7 +32,7 @@ const MIME = {
 // holds enabled ids alone) — a disabled extension's client must not be served,
 // and that membership check, not an id regex, is the whole gate. GET-only static
 // content, so no origin gate, same posture as public/.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extensionAssets = () => null }) {
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler, extensionAssets = () => null }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -54,6 +54,11 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
 
     if (req.method === 'GET' && urlPath === '/file') {
       fileHandler(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && urlPath === '/ext-file') {
+      extFileHandler(req, res);
       return;
     }
 

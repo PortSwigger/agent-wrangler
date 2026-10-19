@@ -1,4 +1,5 @@
 import { parseCombo } from './keybindings.js';
+import { canOpenPath, fileTypes } from './file-types.js';
 // The client half of the extensions API: named slots an extension's client
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
@@ -78,6 +79,14 @@ export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view
 // CLIENT_CAPABILITIES) — carried on the announcement and graph.extensions as
 // `requires`, read back through requiresFor.
 export const HIDE_CHIPS_CAPABILITY = 'cards:hideChips';
+
+// Gates `api.files` and `api.openFile`; a server capability (host.files) the
+// browser half also reads back through requiresFor.
+export const FILES_VIEW_CAPABILITY = 'files:view';
+const FILES_API = Object.freeze({
+  canOpen: (p) => canOpenPath(p),
+  types: () => fileTypes(),
+});
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
@@ -288,8 +297,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // since the announcement can arrive after a contribution has mounted.
   function apiFor(extId, baseApi) {
     if (!apis.has(extId)) {
+      // openExtFile takes an extension id; only the bound openFile below may reach it.
+      const { openExtFile: _bound, ...exposed } = baseApi;
       apis.set(extId, {
-        ...baseApi,
+        ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
         // and an api is only ever built once a module has loaded — which cannot
         // happen before that announcement. A function is accepted so the caller
@@ -388,6 +399,25 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             return Promise.resolve(baseApi.stageImage(file));
           },
         }),
+        // Open a local file in the viewer panel (1.38.0). Resolves
+        // { ok:true } or { ok:false, reason }, never rejects; the server reads
+        // only paths this extension registered with host.files.allow.
+        openFile: async (p) => {
+          if (typeof p !== 'string' || !p) return { ok: false, reason: 'invalid-path' };
+          if (!(requiresFor(extId) || []).includes(FILES_VIEW_CAPABILITY)) return { ok: false, reason: 'not-permitted' };
+          if (typeof baseApi.openExtFile !== 'function') return { ok: false, reason: 'unavailable' };
+          try {
+            const r = await baseApi.openExtFile(extId, p);
+            return r && r.ok === true ? { ok: true } : { ok: false, reason: typeof r?.reason === 'string' ? r.reason : 'error' };
+          } catch {
+            return { ok: false, reason: 'error' };
+          }
+        },
+        // Synchronous and extension-only (no disk). Absent on an older board, and
+        // here unless the manifest requires files:view, so a caller falls back.
+        get files() {
+          return (requiresFor(extId) || []).includes(FILES_VIEW_CAPABILITY) ? FILES_API : undefined;
+        },
         // Mark `el` as carrying an extension-owned drag: the board treats any
         // [data-ext-drag] element as "a drag is in progress" and holds its
         // background re-renders (app.js gridEditing) so the gesture is not torn

@@ -301,7 +301,13 @@ import semver from 'semver';
 // `api.runtimes()` carry it. An older server quarantines no unknown runtime
 // key, but keeps the runtime Claude-only; a manifest that needs it declares
 // `^1.37.0`.
-export const HOST_API_VERSION = '1.37.0';
+//
+// 1.38.0 adds the capability `files:view` and the client `api.openFile(path)`
+// and `api.files` (`canOpen(path)`, `types()`). The extension registers the
+// local files it may show with `host.files.allow(paths)`; the human opens one in
+// a viewer panel (markdown rendered, images shown). `api.files` is undefined on
+// an older board, so a manifest that needs it declares `^1.38.0`.
+export const HOST_API_VERSION = '1.38.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
