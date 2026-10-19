@@ -131,26 +131,14 @@
    "output": 15,
    "cacheWrite5m": 3.75,
    "cacheWrite1h": 6,
-   "cacheRead": 0.3,
-   "long": {
-    "threshold": 200000,
-    "input": 6,
-    "output": 22.5,
-    "cacheRead": 0.6
-   }
+   "cacheRead": 0.3
   },
   "claude-sonnet-4-5-20250929": {
    "input": 3,
    "output": 15,
    "cacheWrite5m": 3.75,
    "cacheWrite1h": 6,
-   "cacheRead": 0.3,
-   "long": {
-    "threshold": 200000,
-    "input": 6,
-    "output": 22.5,
-    "cacheRead": 0.6
-   }
+   "cacheRead": 0.3
   },
   "claude-sonnet-4-6": {
    "input": 3,
@@ -183,6 +171,13 @@
    "cacheRead": 0.5
   },
   "computer-use-preview": {
+   "input": 3,
+   "output": 12,
+   "cacheWrite5m": 3.75,
+   "cacheWrite1h": 6,
+   "cacheRead": 0.30000000000000004
+  },
+  "computer-use-preview-2025-03-11": {
    "input": 3,
    "output": 12,
    "cacheWrite5m": 3.75,
@@ -474,7 +469,21 @@
    "cacheWrite1h": 0.3,
    "cacheRead": 0.075
   },
+  "gpt-4o-mini-search-preview-2025-03-11": {
+   "input": 0.15,
+   "output": 0.6,
+   "cacheWrite5m": 0.1875,
+   "cacheWrite1h": 0.3,
+   "cacheRead": 0.075
+  },
   "gpt-4o-search-preview": {
+   "input": 2.5,
+   "output": 10,
+   "cacheWrite5m": 3.125,
+   "cacheWrite1h": 5,
+   "cacheRead": 1.25
+  },
+  "gpt-4o-search-preview-2025-03-11": {
    "input": 2.5,
    "output": 10,
    "cacheWrite5m": 3.125,
@@ -783,6 +792,13 @@
    "cacheWrite1h": 25,
    "cacheRead": 1.25
   },
+  "gpt-5.5-cyber-preview": {
+   "input": 12.5,
+   "output": 75,
+   "cacheWrite5m": 15.625,
+   "cacheWrite1h": 25,
+   "cacheRead": 1.25
+  },
   "gpt-5.5-pro": {
    "input": 30,
    "output": 180,
@@ -954,6 +970,13 @@
    "cacheWrite1h": 1.2,
    "cacheRead": 0.06
   },
+  "gpt-audio-mini-2025-10-06": {
+   "input": 0.6,
+   "output": 2.4,
+   "cacheWrite5m": 0.75,
+   "cacheWrite1h": 1.2,
+   "cacheRead": 0.06
+  },
   "gpt-audio-mini-2025-12-15": {
    "input": 0.6,
    "output": 2.4,
@@ -986,6 +1009,13 @@
     "output": 112.5,
     "cacheRead": 2.5
    }
+  },
+  "gpt-rosalind-discovery": {
+   "input": 5,
+   "output": 25,
+   "cacheWrite5m": 6.25,
+   "cacheWrite1h": 10,
+   "cacheRead": 0.5
   },
   "gpt-rosalind-research": {
    "input": 5,
@@ -1043,6 +1073,13 @@
    "cacheWrite1h": 20,
    "cacheRead": 2.5
   },
+  "o3-deep-research-2025-06-26": {
+   "input": 10,
+   "output": 40,
+   "cacheWrite5m": 12.5,
+   "cacheWrite1h": 20,
+   "cacheRead": 2.5
+  },
   "o3-mini": {
    "input": 1.1,
    "output": 4.4,
@@ -1086,6 +1123,13 @@
    "cacheRead": 0.275
   },
   "o4-mini-deep-research": {
+   "input": 2,
+   "output": 8,
+   "cacheWrite5m": 2.5,
+   "cacheWrite1h": 4,
+   "cacheRead": 0.5
+  },
+  "o4-mini-deep-research-2025-06-26": {
    "input": 2,
    "output": 8,
    "cacheWrite5m": 2.5,
