@@ -103,8 +103,8 @@ export function trustCodexLaunchCwd(cfg = readConfig()) {
 
 // Whether a Claude launch/resume/fork first marks the scratch-session dir
 // (~/.agent-wrangler/sessions, the parent of every blank-cwd launch) trusted in
-// ~/.claude.json, so Claude's "trust this folder?" dialog never appears there.
-// Default on; `trustClaudeLaunchCwd: false` restores the normal prompt.
+// ~/.claude.json, so Claude's "trust this folder?" dialog never appears there,
+// and mirrors a trusted repo's trust onto a worktree cut from it. Default on; `trustClaudeLaunchCwd: false` restores the normal prompt.
 export function trustClaudeLaunchCwd(cfg = readConfig()) {
   return cfg.trustClaudeLaunchCwd !== false;
 }

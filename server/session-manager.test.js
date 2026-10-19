@@ -2184,6 +2184,66 @@ test('dispatch trusts SESSIONS_DIR (never the launch cwd) for a claude session, 
   assert.deepEqual(trusted, [SESSIONS_DIR]);
 });
 
+async function withClaudeTrustSetting(value, fn) {
+  let saved;
+  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
+  try {
+    writeConfig({ trustClaudeLaunchCwd: value });
+    await fn();
+  } finally {
+    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
+    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
+  }
+}
+
+// Launch, resume and fork in a worktree each hand the launch cwd to the trust
+// mirror (which only trusts it when the source repo is trusted), and only while
+// the setting is on.
+async function worktreeTrustMirrorCalls(setting) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-wt-trust-'));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'i');
+  const calls = [];
+  try {
+    await withClaudeTrustSetting(setting, async () => {
+      const sm = smForDispatch();
+      sm.killForSession = async () => [];
+      sm._ensureClaudeTrust = () => {};
+      sm._mirrorWorktreeTrust = async (p) => { calls.push(['mirror', p]); };
+      let launchedDir;
+      sm._newSession = async (_t, d) => { launchedDir = d; };
+      await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
+      const wt = launchedDir;
+      calls.push(['launched', wt]);
+      sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
+      await sm._doResume('c1', wt, {});
+      await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
+      await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'codex', cwd: wt }, cwd: wt });
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  return calls;
+}
+
+test('launch, resume and fork in a worktree mirror its repo\'s Claude trust onto it when the setting is on', async () => {
+  const calls = await worktreeTrustMirrorCalls(true);
+  const wt = calls.find(([k]) => k === 'launched')[1];
+  assert.match(wt, /worktrees\.noindex/);
+  // dispatch, resume, claude fork; never the codex fork.
+  assert.deepEqual(calls.filter(([k]) => k === 'mirror').map(([, p]) => p), [wt, wt, wt]);
+});
+
+test('launch, resume and fork never call the worktree trust mirror when the setting is off', async () => {
+  const calls = await worktreeTrustMirrorCalls(false);
+  assert.deepEqual(calls.filter(([k]) => k === 'mirror'), []);
+});
+
 test('dispatch never calls ensureCodexTrust for a claude session', async () => {
   const sm = smForDispatch();
   let called = false;

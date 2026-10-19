@@ -70,8 +70,8 @@ export const SETTINGS = [
     id: 'trustClaudeLaunchCwd',
     type: 'toggle',
     scope: 'server',
-    label: 'Skip Claude\'s trust-folder prompt for scratch sessions',
-    help: 'Blank-cwd Claude launches run in a fresh folder under ~/.agent-wrangler/sessions, which would ask "Do you trust this folder?" every time. This marks that sessions folder (only that one, never your own project folders or worktrees) as trusted in Claude\'s ~/.claude.json before launch, which also covers every scratch folder inside it. Off restores Claude\'s normal prompt.',
+    label: 'Skip Claude\'s trust-folder prompt for scratch sessions and worktrees',
+    help: 'Blank-cwd Claude launches run in a fresh folder under ~/.agent-wrangler/sessions, which would ask "Do you trust this folder?" every time. This marks that sessions folder as trusted in Claude\'s ~/.claude.json before launch, which also covers every scratch folder inside it. A worktree of a repo you already trust in Claude (the repo or a folder above it) is trusted too, just that worktree, never its parent folder, so jobs and auto-sessions don\'t stall on the prompt. A worktree of a repo you haven\'t trusted, and your own project folders, are never touched. Off restores Claude\'s normal prompt.',
     default: true,
   },
   {
