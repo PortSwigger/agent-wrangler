@@ -78,3 +78,38 @@ test('the published result drops extensions updated or removed since the check',
   assert.deepEqual({ outdated: now.outdated, commitsBehind: now.commitsBehind, checkedAt: now.checkedAt }, { outdated: 1, commitsBehind: 1, checkedAt: 5 });
   assert.equal(currentExtensionUpdates(null, {}), null);
 });
+
+test('an outdated extension that opted in is handed to autoUpdate, and leaves the result once applied', async () => {
+  const optedIn = { ...records, 'jira-links': { ...records['jira-links'], autoUpdate: true }, 'slack-digest': { ...records['slack-digest'], autoUpdate: true } };
+  const asked = [];
+  const { check } = checker({
+    provenance: () => optedIn,
+    autoUpdate: async (id) => {
+      asked.push(id);
+      return id === 'jira-links' ? { applied: true, sha: 'j1' } : { applied: false, reason: 'it now asks for tasks:write, which needs your consent' };
+    },
+  });
+  const summary = await check();
+  // Up-to-date and failed ones are never offered, and one not opted in neither.
+  assert.deepEqual(asked, ['jira-links', 'slack-digest']);
+  assert.equal(summary.extensions.some((e) => e.id === 'jira-links'), false);
+  const left = summary.extensions.find((e) => e.id === 'slack-digest');
+  assert.equal(left.behind, true, 'it keeps its update button');
+  assert.match(left.autoUpdateBlocked, /needs your consent/);
+  assert.equal(summary.outdated, 1);
+});
+
+test('a host API refusal from autoUpdate is reported as the row\'s incompatible line', async () => {
+  const optedIn = { ...records, 'jira-links': { ...records['jira-links'], autoUpdate: true } };
+  const { check } = checker({ provenance: () => optedIn, autoUpdate: async () => ({ applied: false, incompatible: true, reason: 'Jira links requires a newer Agent Wrangler.' }) });
+  const summary = await check();
+  assert.equal(summary.extensions.find((e) => e.id === 'jira-links').incompatible, 'Jira links requires a newer Agent Wrangler.');
+});
+
+test('nothing is auto-updated without the opt-in', async () => {
+  let asked = 0;
+  const { check } = checker({ autoUpdate: async () => { asked += 1; return { applied: true }; } });
+  const summary = await check();
+  assert.equal(asked, 0);
+  assert.equal(summary.outdated, 2);
+});
