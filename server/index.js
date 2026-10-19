@@ -43,6 +43,7 @@ import { bindHost } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createHttpServer } from './http-handler.js';
 import { resolveMarkdownPath } from './file-preview.js';
+import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession } from './shell-session.js';
@@ -264,8 +265,12 @@ const paneDeferral = createPaneDeferral({
 // `archiveSession` and `createTerminal` are composed here rather than in a
 // builder so host-api/ stays a thin bind layer and does not pull the control
 // handlers and the shell plumbing in behind it.
+// The paths extensions have registered through `host.files` (`files:view`); the
+// viewer route below reads only from here.
+const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  extFiles,
   events: coreEvents,
   // `memory.*` is provided by the task-memory extension's store while it is
   // active (host-api/v1.js degrades to "not available" when this is null).
@@ -483,6 +488,7 @@ function deactivateExtension(id) {
     logError(`[ext:${id}] deactivate failed`, err);
   }
   coreEvents.offOwner(id);
+  extFiles.clear(id);
   // Here rather than beside the loader's unregister, so the runtime registry
   // agrees with the loader whichever of the two runs first and a live disable
   // takes the runtime away with no restart. A card already launched on it
@@ -904,6 +910,26 @@ async function fileHandler(req, res) {
   }
 }
 
+// GET /ext-file?ext=<id>&path=… — what api.openFile reads. Same localhost posture
+// as /file (no CORS header). Answers 200 { ok, … } either way: a refusal is
+// { ok:false, reason }, and only the registry (host.files) decides what opens.
+async function extFileHandler(req, res) {
+  const json = (status, body) => {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
+  };
+  try {
+    if (!isAllowedHost(req.headers.host, PORT)) return json(403, { ok: false, reason: 'forbidden' });
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    const id = q.get('ext');
+    const r = hostApis.has(id) ? await extFiles.open(id, q.get('path')) : { ok: false, reason: 'not-permitted' };
+    json(200, r);
+  } catch (err) {
+    logError('[ext-file]', err);
+    if (!res.headersSent) json(200, { ok: false, reason: 'error' });
+  }
+}
+
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
@@ -946,7 +972,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
 });
 

@@ -1370,6 +1370,45 @@ test('api.requestBoardRender calls the base api and tolerates its absence', () =
 });
 
 
+// ── api.openFile / api.files ─────────────────────────────────────────────────
+function filesHarness(requires, base) {
+  const h = harness({ requiresFor: () => requires });
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, base);
+  return { ...h, api: captured };
+}
+
+test('api.files is present with files:view: canOpen by extension, types() a fresh list', () => {
+  const { api } = filesHarness(['files:view'], {});
+  assert.equal(api.files.canOpen('/a/b.md'), true);
+  assert.equal(api.files.canOpen('/a/b.txt'), false);
+  assert.ok(api.files.types().some((t) => t.ext === '.md' && t.kind === 'markdown'));
+  assert.notEqual(api.files.types(), api.files.types());
+});
+
+test('api.files is undefined without files:view, and openFile says not-permitted', async () => {
+  const { api } = filesHarness([], { openExtFile: () => assert.fail('must not reach the base api') });
+  assert.equal(api.files, undefined);
+  assert.deepEqual(await api.openFile('/a/b.md'), { ok: false, reason: 'not-permitted' });
+});
+
+test('api.openFile binds the extension id, passes the reply through and never rejects', async () => {
+  const calls = [];
+  const base = { openExtFile: async (id, p) => { calls.push([id, p]); return p.endsWith('.md') ? { ok: true, junk: 1 } : { ok: false, reason: 'not-found' }; } };
+  const { api } = filesHarness(['files:view'], base);
+  assert.deepEqual(await api.openFile('/a/b.md'), { ok: true });
+  assert.deepEqual(await api.openFile('/a/gone.png'), { ok: false, reason: 'not-found' });
+  assert.deepEqual(calls, [['fake', '/a/b.md'], ['fake', '/a/gone.png']]);
+  assert.equal(api.openExtFile, undefined);
+  assert.deepEqual(await api.openFile(''), { ok: false, reason: 'invalid-path' });
+  assert.deepEqual(await api.openFile(7), { ok: false, reason: 'invalid-path' });
+  const boom = filesHarness(['files:view'], { openExtFile: () => { throw new Error('x'); } }).api;
+  assert.deepEqual(await boom.openFile('/a/b.md'), { ok: false, reason: 'error' });
+  const bare = filesHarness(['files:view'], {}).api;
+  assert.deepEqual(await bare.openFile('/a/b.md'), { ok: false, reason: 'unavailable' });
+});
+
 // ── api.ui.markdownPreview ───────────────────────────────────────────────────
 function uiHarness(base) {
   const h = harness();
