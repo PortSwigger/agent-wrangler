@@ -127,3 +127,12 @@ export function extensionSkillDirs(ext = getExtensions()) {
     .filter((e) => e.extId)
     .map((e) => ({ extId: e.extId, name: e.name, dir: e.dir }));
 }
+
+// The `--skill` paths a pi launch carries: every ACTIVE skill, in-repo and
+// extension-shipped alike. Pi loads a skill directory natively and discloses it
+// progressively, as Claude does a plugin, but has no plugin root to name, so
+// each skill rides on its own — and, unlike Claude's in-repo root, the in-repo
+// skills are gated here too: a skill off for this launch is simply not loaded.
+export function piSkillDirs(skillsRoot = SKILLS_ROOT, { ext = getExtensions(), disabledSkills } = {}) {
+  return activeSkillEntries(skillsRoot, { ext, disabledSkills }).map((e) => e.dir);
+}

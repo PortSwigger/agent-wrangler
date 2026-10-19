@@ -1,5 +1,6 @@
 import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
-import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
+import { paneComposerIsEmpty, paneComposerIsReady, piComposerText } from './ghost-suggestion.js';
+import { adapterFor } from './agents/index.js';
 
 const READY_TIMEOUT_MS = 20000;
 const READY_POLL_MS = 250;
@@ -61,7 +62,7 @@ export async function waitForComposerReady(name, socket, agent, {
     if (requireEmpty) {
       const { status } = classify(pane, { tailLines: 60, strictWorking: true });
       if ((status === 'idle' || status === 'working')
-        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: agent === 'codex' })) return true;
+        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: adapterFor(agent).acceptsInputWhileWorking })) return true;
     } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you'
       && paneComposerIsReady(pane, agent)) {
       return true;
@@ -160,6 +161,8 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   if (typeof paneText !== 'string' || !paneText) return false;
   const probe = String(text).split('\n')[0].trim().slice(0, 40);
   if (!probe) return false;
+  // Pi's composer has no mark: its box is the last two rules, read whole.
+  if (agent === 'pi') return Boolean(piComposerText(paneText)?.includes(probe));
   const mark = agent === 'codex' ? '\u203a' : '\u276f';
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
@@ -187,7 +190,9 @@ export async function pasteImages(name, socket, agent, paths, {
   capture = capturePaneStyled,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
-  let seen = agent === 'codex' ? null : composerImageCount(await capture(name, 60, socket));
+  // Only Claude Code turns a pasted path into a marker; the others keep it as text.
+  const marksImages = (agent || 'claude') === 'claude';
+  let seen = marksImages ? composerImageCount(await capture(name, 60, socket)) : null;
   let attached = seen !== null;
   for (const p of paths) {
     await prefill(name, p, socket);
@@ -200,7 +205,7 @@ export async function pasteImages(name, socket, agent, paths, {
       await sleep(pollMs);
     }
   }
-  return agent === 'codex' || attached;
+  return !marksImages || attached;
 }
 
 // How many `[Image #N]` markers Claude Code's composer holds: everything from

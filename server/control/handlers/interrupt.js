@@ -61,7 +61,7 @@ export const interruptHandler = {
 
     const node = ctx.sessionFromGraph?.(msg.sessionId);
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
-    const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
+    const agent = node?.agent || entry?.agent || 'claude';
 
     // Poll rather than sleep-then-look: when the restore does happen there is no
     // point making the human wait out the rest of the window for it.

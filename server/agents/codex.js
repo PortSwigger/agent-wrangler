@@ -32,6 +32,12 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
   return env;
 }
 
+// Neither Codex nor pi writes a terminal title the board can read (Claude's OSC
+// summary), so both are asked to name their own card. Exported for pi.js.
+export function renameTitlePrompt(sessionId) {
+  return `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
+}
+
 // Flags shared by launch/resume/fork: autonomy, network, the extensions' directory grants, and
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
@@ -52,8 +58,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
   // this always-on text too — the catalog alone doesn't guarantee it's read at
   // session start. The worktree guardrail still appends when present.
-  const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
-  const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
+  const base = [mandatorySkillPrompt(undefined, { disabledSkills }), renameTitlePrompt(sessionId), codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
@@ -68,6 +73,12 @@ export const codex = {
   label: 'Codex',
   tmuxPrefix: 'cx_',
   presetsSessionId: false,
+  transcriptDirDep: 'codexSessionsDir',
+  // Codex takes a prompt typed during a turn as guidance for it, so a
+  // notification need not wait for idle (only for a clear composer).
+  acceptsInputWhileWorking: true,
+  // The lowest auto-compaction threshold the CLI takes (session-manager autoCompactTokensError).
+  autoCompactMinTokens: 50000,
   // `codex resume` takes no trailing prompt, so buildResume can't thread an `intent`
   // into the relaunch (it's a silent no-op). A dormant-wake nudge must instead be
   // pasted into the now-live pane after resume() resolves (see pr-nudge-runner).

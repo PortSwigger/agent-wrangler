@@ -211,7 +211,7 @@ export const chatHandler = {
     // does that the terminal cannot.
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
     const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
-    const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
+    const agent = node?.agent || entry?.agent || 'claude';
 
     // Claude Code's suggested next prompt — the one thing in this view that is
     // not transcript-sourced, because it exists nowhere else (see
@@ -243,9 +243,9 @@ export const chatHandler = {
     // production always calls the real Codex adapter, which reads the real rollout
     // and the real ~/.codex/models_cache.json.
     const analyzeCodex = ctx.analyzeCodex || ((id) => adapterFor('codex').analyze(id));
-    const contextPercent = agent === 'claude'
-      ? (pane ? paneContextPercent(pane) : null)
-      : (await analyzeCodex(convId).catch(() => null))?.contextPercent ?? null;
+    let contextPercent = null;
+    if (agent === 'claude') contextPercent = pane ? paneContextPercent(pane) : null;
+    else if (agent === 'codex') contextPercent = (await analyzeCodex(convId).catch(() => null))?.contextPercent ?? null;
 
     const resolved = await findConversationFiles(convId, agent);
     // Older handler tests inject the single-file seam; production and new chain

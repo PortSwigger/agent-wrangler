@@ -29,6 +29,8 @@ const HOUR = 3600e3;
 const DAY = 24 * HOUR;
 // Time facet → elapsed span; 0 means "Any time" (no since bound).
 const TIME_RANGES = { any: 0, '24h': DAY, '7d': 7 * DAY, '30d': 30 * DAY };
+// The provider chip's text. Search indexes Claude and Codex conversations only.
+const AGENT_LABELS = { claude: 'Claude', codex: 'Codex', pi: 'Pi' };
 
 const state = {
   query: '',
@@ -457,7 +459,7 @@ function groupNode(g) {
 
   if (g.archived) head.appendChild(archivedChip());
   else if (!g.cardId) head.appendChild(externalChip());
-  head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
+  head.appendChild(chip(AGENT_LABELS[g.agent] || g.agent || 'Claude', `chip search-agent search-agent--${g.agent}`));
   if (g.task) head.appendChild(chip(g.task, 'chip search-task'));
   head.appendChild(chip(`${fmtNum(g.matches)} match${g.matches === 1 ? '' : 'es'}`, 'chip search-count'));
 
@@ -509,7 +511,7 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
 
   if (g.archived) head.appendChild(archivedChip());
   else if (!g.cardId) head.appendChild(externalChip());
-  head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
+  head.appendChild(chip(AGENT_LABELS[g.agent] || g.agent || 'Claude', `chip search-agent search-agent--${g.agent}`));
   if (g.task && !hideTaskChip) head.appendChild(chip(g.task, 'chip search-task'));
   if (g.model) head.appendChild(chip(g.model, 'chip search-model'));
   if (g.isWorkflow) head.appendChild(chip('⚙ workflow', 'chip search-wf'));

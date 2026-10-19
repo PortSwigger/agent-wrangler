@@ -1,9 +1,10 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
+import { pi } from './pi.js';
 import { codexContextWindow } from './codex-rollout.js';
 import { logWarn } from '../log.js';
 
-const ALL = [claude, codex];
+const ALL = [claude, codex, pi];
 
 export function adapterFor(id) {
   return ALL.find((a) => a.id === id) || claude;
@@ -222,7 +223,11 @@ export function modelChoicesText() {
 // skill keeps a table after all — generated, never hand-copied.
 export function modelTableMarkdown() {
   return ALL.map((a) => {
-    const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
+    // An agent whose catalog is per-machine (pi lists what ITS user has keys
+    // for) describes the vocabulary rather than listing one machine's models.
+    const rows = a.modelsDoc
+      ? [`- ${a.modelsDoc}`]
+      : a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
     // Efforts ride the same generated block rather than a second one: they are
     // per-adapter vocabulary picked at the same moment as the model, and a
     // hand-written list here is exactly the drift this generator exists to stop.

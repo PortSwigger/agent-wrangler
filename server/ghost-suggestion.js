@@ -113,8 +113,37 @@ function codexComposerIsEmpty(paneText) {
   return rest.map((cell) => cell.ch).join('').trim() === CODEX_PLACEHOLDER;
 }
 
+// Pi draws its composer as a box of two full-width rules with the draft between
+// them and NO prompt mark; while a turn runs, the top rule carries a spinner and
+// the phase ("── ⠏ Working ───"). Below the box sit the status footer lines (cwd,
+// token counts, model), never another rule, so the LAST two rules on the pane
+// are the composer's. Verified against pi 1.2.0 in tmux. Null when the box is not
+// on screen (a dialog, a startup banner still painting).
+const PI_RULE = /^─{2}.*─{10,}$/u;
+const PI_WORKING_RULE = /^──\s*[\u2800-\u28ff]\s+\S.*─{3,}$/u;
+
+function piComposer(paneText) {
+  const lines = paneText.split('\n').map(visible);
+  const rules = lines.map((line, i) => (PI_RULE.test(line) ? i : -1)).filter((i) => i >= 0);
+  if (rules.length < 2) return null;
+  const top = rules.at(-2);
+  const bottom = rules.at(-1);
+  // A rule with text in it can only be the top one: the bottom rule is plain.
+  if (!/^─+$/u.test(lines[bottom])) return null;
+  return { body: lines.slice(top + 1, bottom), working: PI_WORKING_RULE.test(lines[top]) };
+}
+
+// The composer's text, for composerHoldsText (pane-ready.js). Null when there is
+// no composer to read.
+export function piComposerText(paneText) {
+  if (typeof paneText !== 'string' || !paneText) return null;
+  const c = piComposer(paneText);
+  return c ? c.body.filter(Boolean).join(' ') : null;
+}
+
 export function paneComposerIsReady(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText) return false;
+  if (agent === 'pi') return Boolean(piComposer(paneText));
   if (agent === 'codex') {
     const lines = styledLines(paneText);
     const line = lines.filter((cells) => cells[0]?.ch === CODEX_PROMPT_MARK).pop();
@@ -150,6 +179,11 @@ export function paneComposerIsEmpty(paneText, agent = 'claude', { allowWhileWork
     if (!allowWhileWorking && paneHasWorkingStatus(paneText)) return false;
     return codexComposerIsEmpty(paneText);
   }
+  if (agent === 'pi') {
+    const c = piComposer(paneText);
+    // The cursor is a reverse-video space, which `visible` already trims away.
+    return Boolean(c) && (allowWhileWorking || !c.working) && c.body.every((line) => !line);
+  }
   const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
   if (!line) return false;
   const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
@@ -169,7 +203,15 @@ export function paneHasWorkingStatus(paneText) {
   const recent = paneText.replace(ANSI, '').split('\n').filter((line) => line.trim());
   const codexWorking = /^\s*•\s+.+\([^)]*esc to interrupt[^)]*\).*/iu;
   const claudeWorking = /^\s*[✻✳✽✶✢✷✸✹✺✼✾✿·]\s+.+\((?:(?:\s*(?:(?:\d+h\s*)?\d+m\s+)?\d+s\b|[^)]*esc to interrupt)[^)]*)\).*/iu;
-  return recent.some((line) => codexWorking.test(line) || claudeWorking.test(line));
+  return recent.some((line) => codexWorking.test(line) || claudeWorking.test(line) || PI_WORKING_RULE.test(line.trim()));
+}
+
+// Pi's working marker alone, for classify()'s loose (non-strict) check, which
+// otherwise keys on Claude's and Codex's shared "esc to interrupt" footer —
+// text pi never draws.
+export function paneHasPiWorkingRule(paneText) {
+  if (typeof paneText !== 'string') return false;
+  return paneText.replace(ANSI, '').split('\n').some((line) => PI_WORKING_RULE.test(line.trim()));
 }
 
 // The composer's own draft text, reconstructed from the rendered pane, or null.

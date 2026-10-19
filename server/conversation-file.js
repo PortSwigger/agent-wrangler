@@ -1,5 +1,6 @@
 import { findTranscript } from './transcript-reader.js';
 import { findRollout, findRolloutChain, firstSessionId } from './agents/codex-rollout.js';
+import { adapterFor } from './agents/index.js';
 
 // Card conversation id + agent -> the file that conversation is recorded in.
 //
@@ -14,20 +15,23 @@ import { findRollout, findRolloutChain, firstSessionId } from './agents/codex-ro
 // One function rather than an `agent === 'codex'` fork at each call site, so a
 // third read path cannot be added with only half the resolution.
 //
-// `agent` is normalised to 'codex' or 'claude' by both callers before it gets
-// here; anything else falls to the Claude branch, which is the right default for
-// a legacy entry with no agent field at all.
+// A missing `agent` is a legacy Claude entry. An agent the chat parsers cannot
+// read (its adapter says `chatView: false` — pi) resolves to no file, so every
+// read path shows an honest empty view rather than misparsing a foreign format
+// as a Claude transcript.
 //
 // The dirs are forwarded rather than stubbed so tests drive the REAL finders
 // (walk order, filename matching, path caching) against a temp tree. Passing
 // undefined leaves each finder on its own production default.
 export function findConversationFile(convId, agent, { projectsDir, sessionsDir } = {}) {
+  if (adapterFor(agent).chatView === false) return Promise.resolve(null);
   return agent === 'codex' ? findRollout(convId, sessionsDir) : findTranscript(convId, projectsDir);
 }
 
 // Chat consumes every Codex continuation as one stream. The single-file finder
 // remains for paths such as interrupt restore, which want the latest prompt.
 export async function findConversationFiles(convId, agent, { projectsDir, sessionsDir } = {}) {
+  if (adapterFor(agent).chatView === false) return [];
   if (agent === 'codex') {
     const chain = await findRolloutChain(convId, sessionsDir);
     if (chain.length) return chain;

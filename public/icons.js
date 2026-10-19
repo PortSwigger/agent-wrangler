@@ -148,7 +148,10 @@ export const MERGE_ICON =
 // violet --wf accent carries it. CSS (.wf-ico) sizes it.
 export const WORKFLOW_ICON =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="2"></circle><circle cx="12.5" cy="3.5" r="2"></circle><circle cx="12.5" cy="12.5" r="2"></circle><path d="M5.2 7 11 4.2M5.2 9 11 11.8" stroke="currentColor" stroke-width="1.3" fill="none"></path></svg>';
-const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON };
+// Pi's mark is its name: a π, stroked like the Lucide glyphs.
+export const PI_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5c1-1.6 2.4-2 4-2h12"/><path d="M9 5.5c0 6-1 10.5-3 13"/><path d="M15.5 5.5c-.4 5 0 9.5 1.2 11.5.6 1 1.6 1.4 2.8 1"/></svg>';
+const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON, pi: PI_ICON };
 // A mapping entry with no `agent` is Claude (the registry default); any unknown
 // agent falls back to the generic chip rather than masquerading as Claude.
 export function agentIcon(agent) {

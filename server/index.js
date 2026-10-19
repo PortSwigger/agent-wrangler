@@ -71,6 +71,7 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
+import { startPiCatalogRefresh, onPiCatalogChange } from './agents/pi-catalog.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
@@ -986,7 +987,7 @@ function broadcastStylesIfChanged() {
 // every board whenever a model or price catalog refresh changes them.
 async function agentsMessage() {
   const list = await availableAgents();
-  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [] })) });
+  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [], chat: a.chatView !== false })) });
 }
 
 function broadcastAgents() {
@@ -1323,8 +1324,10 @@ async function main() {
   validateDefaultModel();
   onPriceCatalogChange(broadcastAgents);
   onCodexCatalogChange(broadcastAgents);
+  onPiCatalogChange(broadcastAgents);
   startPriceCatalogRefresh();
   startCodexCatalogRefresh();
+  startPiCatalogRefresh();
 
   // A failed bind must end the process. Without this listener the error reaches
   // the last-resort uncaughtException guard above, which only logs — leaving a

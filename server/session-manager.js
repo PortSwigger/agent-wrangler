@@ -10,7 +10,6 @@ import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
-import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
@@ -38,7 +37,8 @@ export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 export function autoCompactTokensError(value, agent = 'claude') {
   if (value == null || value === '') return null;
   if (!Number.isInteger(value)) return 'Auto-compaction threshold must be a whole number of tokens.';
-  const min = agent === 'codex' ? 50000 : 100000;
+  const min = adapterFor(agent).autoCompactMinTokens;
+  if (!min) return `${adapterFor(agent).label} has no auto-compaction threshold to set; leave it at the default.`;
   if (value < min || value > 1000000) return `Auto-compaction threshold must be between ${min} and 1000000 tokens.`;
   return null;
 }
@@ -1146,7 +1146,7 @@ export class SessionManager {
     // only applies to preset-id agents.)
     let plan = { mode: 'resume', resumeId };
     if (adapter.presetsSessionId && !runtime.skipsHostResumeGuard && prev?.forkedFrom) {
-      plan = resumePlan({ entry: prev, resumeId, forkLiveExists: Boolean(await launchCwd(resumeId)) });
+      plan = resumePlan({ entry: prev, resumeId, forkLiveExists: Boolean(await adapter.launchCwd(resumeId)) });
     }
     if (plan.mode === 'refuse') throw new Error(plan.message);
     // Guard the silent-empty-session footgun for preset-id agents (Claude): verify
@@ -1155,8 +1155,8 @@ export class SessionManager {
     // --resume` fail open into a fresh, empty session (see resumeLaunchPlan). Codex
     // discovers its own rollout and isn't cwd-bucketed the same way, so skip it.
     if (adapter.presetsSessionId && !runtime.skipsHostResumeGuard) {
-      const transcript = await findTranscript(plan.resumeId);
-      const launchDir = transcript ? await launchCwd(plan.resumeId) : null;
+      const transcript = await adapter.transcriptPath(plan.resumeId);
+      const launchDir = transcript ? await adapter.launchCwd(plan.resumeId) : null;
       const lp = resumeLaunchPlan({
         transcriptFound: Boolean(transcript),
         launchDir,
@@ -1338,7 +1338,7 @@ export class SessionManager {
   // permanent record. Deliberately NOT folded into `cardForLive`: an abandoned
   // conversation stays unowned so Search can Adopt it onto its own card, which is
   // the only way back to pre-clear work.
-  async noteLiveSessionId(sessionId, liveSessionId, { transcriptFor = findTranscript } = {}) {
+  async noteLiveSessionId(sessionId, liveSessionId, { transcriptFor } = {}) {
     const entry = this.map.get(sessionId);
     if (!entry || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
     // Never take over a conversation another card already owns (or that IS another
@@ -1360,9 +1360,10 @@ export class SessionManager {
     // keeps the guard, which is the safe reading.
     const rt = findRuntime(entry.runtime);
     if (rt?.resumable === false) return false;
-    const needsTranscript = adapterFor(entry.agent || 'claude').presetsSessionId
-      && !rt?.skipsHostResumeGuard;
-    if (needsTranscript && !(await transcriptFor(liveSessionId))) return false;
+    const adapter = adapterFor(entry.agent || 'claude');
+    const needsTranscript = adapter.presetsSessionId && !rt?.skipsHostResumeGuard;
+    const findFile = transcriptFor || ((id) => adapter.transcriptPath(id));
+    if (needsTranscript && !(await findFile(liveSessionId))) return false;
     const prior = new Set(entry.priorLiveSessionIds || []);
     if (entry.liveSessionId) prior.add(entry.liveSessionId);
     prior.delete(liveSessionId); // re-swapping back to a conversation makes it current, not prior

@@ -33,7 +33,7 @@ export const setSessionModelHandler = {
     const fail = (reason) => ctx.reply({ type: 'model-set', sessionId: msg.sessionId, ok: false, reason });
 
     const node = ctx.sessionFromGraph?.(msg.sessionId);
-    const agentId = node?.agent === 'codex' ? 'codex' : 'claude';
+    const agentId = node?.agent || 'claude';
     // Claude only. Codex's model is chosen at launch and its TUI is a different
     // program; sending it a Claude slash command would type nonsense into a
     // prompt. Widening this belongs in the agent adapter, not here.

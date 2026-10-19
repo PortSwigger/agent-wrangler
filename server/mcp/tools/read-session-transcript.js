@@ -33,6 +33,10 @@ export function summariseTranscript(text, agent) {
       ts: e.ts ? new Date(e.ts).toISOString() : null,
       text: clipText(e.text),
     }));
+  return headAndTail(turns);
+}
+
+function headAndTail(turns) {
   const total = turns.length;
   if (total <= HEAD_MESSAGES + TAIL_MESSAGES) return { total, omitted: 0, messages: turns };
   return {
@@ -90,7 +94,7 @@ export const readSessionTranscriptTool = {
     if (!entry) return errorResult(`No session with id ${args.sessionId}.`);
     const agent = entry.agent || 'claude';
     const adapter = adapterFor(agent);
-    const dir = agent === 'codex' ? deps.codexSessionsDir : deps.projectsDir;
+    const dir = deps[adapter.transcriptDirDep];
 
     const transcriptPath = await adapter.transcriptPath(entry.liveSessionId || entry.sessionId, dir);
     if (!transcriptPath) return errorResult(`Session ${args.sessionId} has no transcript on disk yet.`);
@@ -101,9 +105,13 @@ export const readSessionTranscriptTool = {
     }
 
     try {
-      const summary = agent === 'codex'
-        ? await summariseCodexRollout(transcriptPath)
-        : summariseTranscript(await fsp.readFile(transcriptPath, 'utf8'), agent);
+      // An adapter that reads its own format's turns (pi) does so; Claude's and
+      // Codex's go through the chat view's scanners.
+      const summary = adapter.readTurns
+        ? headAndTail((await adapter.readTurns(transcriptPath)).map((t) => ({ ...t, ts: t.ts ? new Date(t.ts).toISOString() : null, text: clipText(t.text) })))
+        : agent === 'codex'
+          ? await summariseCodexRollout(transcriptPath)
+          : summariseTranscript(await fsp.readFile(transcriptPath, 'utf8'), agent);
       const { total, omitted, messages } = summary;
       return transcriptResult({ args, entry, agent, transcriptPath, earlierTranscriptPaths, total, omitted, messages });
     } catch (err) {

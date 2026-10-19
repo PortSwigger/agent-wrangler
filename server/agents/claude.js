@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
-import { analyze, listResumable, activityInRange, findTranscript } from '../transcript-reader.js';
+import { analyze, listResumable, activityInRange, findTranscript, launchCwd } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
@@ -201,6 +201,12 @@ export const claude = {
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,
+  // The deps key (get_session_activity, read_session_transcript) holding this
+  // agent's transcript root; see each adapter's own.
+  transcriptDirDep: 'projectsDir',
+  // The lowest auto-compaction threshold the CLI takes (session-manager autoCompactTokensError).
+  autoCompactMinTokens: 100000,
+  acceptsInputWhileWorking: false,
   // buildResume threads `intent` into the relaunch command (`claude --resume … --
   // <intent>`), so a dormant-wake nudge handed as the resume intent is delivered by
   // the relaunch itself — no post-resume pane paste needed (see pr-nudge-runner).
@@ -285,4 +291,7 @@ export const claude = {
   listResumable(excludeIds, opts) { return listResumable(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRange(liveSid, startMs, endMs, dir); },
   transcriptPath(liveSid, dir) { return findTranscript(liveSid, dir); },
+  // The directory a resume must run in: `claude --resume` only finds a session
+  // from its launch bucket.
+  launchCwd(liveSid) { return launchCwd(liveSid); },
 };

@@ -54,7 +54,7 @@ export const getSessionActivityTool = {
       // card routinely straddles two transcripts (the abandoned ids are recorded on
       // the entry). Reading only the live id would drop whichever half of the day fell
       // on the other side of the clear.
-      const dir = entry.agent === 'codex' ? deps.codexSessionsDir : deps.projectsDir;
+      const dir = deps[adapterFor(entry.agent).transcriptDirDep];
       const ids = [entry.liveSessionId || entry.sessionId, ...(entry.priorLiveSessionIds || [])];
       const parts = [];
       for (const id of ids) {

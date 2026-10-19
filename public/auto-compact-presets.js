@@ -1,7 +1,12 @@
+// Per agent; one with no threshold flag (pi) offers only the Default button.
+const PRESETS = {
+  claude: [100000, 250000, 500000, 1000000],
+  codex: [50000, 100000, 250000],
+  pi: [],
+};
+
 export function autoCompactPresetTokens(agent) {
-  return agent === 'codex'
-    ? [50000, 100000, 250000]
-    : [100000, 250000, 500000, 1000000];
+  return PRESETS[agent] || PRESETS.claude;
 }
 
 export function normalizeAutoCompactPreset(tokens, agent) {

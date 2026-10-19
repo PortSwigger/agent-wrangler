@@ -60,6 +60,10 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.5` — GPT-5.5 · Legacy coding model
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
+**Pi** (`agent: "pi"`):
+- any `provider/id` that `pi --list-models` prints on this machine (only those in pi's `enabledModels` when that is set), e.g. `anthropic/claude-sonnet-5-5`; omit `model` for pi's own default
+- `effort`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
+
 The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->

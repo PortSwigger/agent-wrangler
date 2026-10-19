@@ -9,7 +9,7 @@ import { gentleKill } from './tmux-gentle-kill.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { boundedPs } from './bounded-ps.js';
 import { logWarn } from './log.js';
-import { paneComposerIsEmpty, paneHasWorkingStatus } from './ghost-suggestion.js';
+import { paneComposerIsEmpty, paneHasWorkingStatus, paneHasPiWorkingRule } from './ghost-suggestion.js';
 
 const exec = promisify(execFile);
 
@@ -234,7 +234,7 @@ export function classify(paneText, { tailLines = 12, strictWorking = false } = {
   const update = codexUpdateState(plain);
   if (update) return update;
   const recent = plain.split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
-  if (strictWorking ? paneHasWorkingStatus(recent) : /esc to interrupt/i.test(recent)) return { status: 'working' };
+  if (strictWorking ? paneHasWorkingStatus(recent) : /esc to interrupt/i.test(recent) || paneHasPiWorkingRule(recent)) return { status: 'working' };
   // Verified against the real fresh-container login flow (Group G E2E capture):
   // the method-picker ("Select login method: 1. Claude account with
   // subscription…"), the OAuth URL screen (claude.com/cai/oauth/authorize,

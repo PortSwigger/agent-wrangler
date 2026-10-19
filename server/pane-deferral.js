@@ -1,5 +1,6 @@
 import { sendText as defaultSendText, capturePaneStyled as defaultCapture, classify as defaultClassify } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { adapterFor } from './agents/index.js';
 
 // Hold an AUTOMATED pane notification back while the human is mid-prompt.
 //
@@ -62,7 +63,7 @@ export function createPaneDeferral({
       const agent = agentFor(id);
       // PR notices can reach an active turn. Mail retains its agent-specific
       // timing policy, but both routes require clear input and no dialog.
-      const allowWorking = !deferWhileWorking || (allowWhileWorking && agent === 'codex');
+      const allowWorking = !deferWhileWorking || (allowWhileWorking && adapterFor(agent).acceptsInputWhileWorking);
       const canNotify = (status) => status === 'idle' || (allowWorking && status === 'working');
       const status = statusFor(id);
       if (status != null && !canNotify(status)) return `board status ${status}`;

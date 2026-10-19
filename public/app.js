@@ -2285,7 +2285,7 @@ function openActionsMenu(sessionId, x, y) {
 // inline conditions because the two sides have to agree: a mismatch here shows a
 // menu whose every choice fails.
 function canSwitchModel(s) {
-  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+  return Boolean(s) && (s.agent || 'claude') === 'claude' && s.managed && displayStatus(s) === 'idle';
 }
 
 // What this browser last asked for, per card id. Needed only to break one
@@ -4176,7 +4176,9 @@ function readSessionViews() {
 }
 function viewForSession(sessionId) {
   const stored = readSessionViews()[sessionId];
-  return resolveSessionView(stored, chatViewDefault);
+  const agent = [...latestSessions, ...latestHistory].find((s) => s.sessionId === sessionId)?.agent || 'claude';
+  const chat = availableAgents.find((a) => a.id === agent)?.chat !== false;
+  return resolveSessionView(stored, chatViewDefault, { chat });
 }
 function setSessionView(sessionId, view) {
   const all = readSessionViews();
