@@ -111,6 +111,10 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, and the default folder for new sessions.
 - PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
+  Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the
+  worktree inherits the repo's trust (just that worktree, never its parent folder), so a job or
+  auto-session in a worktree doesn't stall on "Do you trust this folder?". A worktree of an untrusted
+  repo still asks.
 - Extension installation, enablement, updates, and extension-specific settings. Sounds offers
   shared audio cues, uploaded audio files, and previews. The per-session checklist is a builtin
   extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
