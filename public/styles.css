@@ -3228,12 +3228,13 @@ a.ext-row-origin { color: var(--blue-fg); }
 .ext-row-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 /* An extension's own settings, inline in its detail pane. */
 .ext-settings { margin: 0; }
-.ext-setting-row {
+/* The per-extension Auto-update switch is laid out as one more such row. */
+.ext-setting-row, .ext-auto-update {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 9px 2px; border-bottom: 1px solid var(--border-muted);
 }
-.ext-setting-row:last-child { border-bottom: 0; }
-.ext-setting-row .setting-copy { flex: 1; }
+.ext-setting-row:last-child, .ext-auto-update { border-bottom: 0; }
+.ext-setting-row .setting-copy, .ext-auto-update .setting-copy { flex: 1; }
 .ext-setting-input {
   width: 100%; margin-top: 6px; padding: 5px 8px; font: inherit; font-size: 12px;
   background: var(--field-bg); color: var(--fg);

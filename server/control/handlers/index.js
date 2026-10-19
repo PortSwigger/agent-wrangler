@@ -24,7 +24,7 @@ import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
-import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
+import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { extBrowseHandler } from './ext-browse.js';
 import { restartHandler } from './restart.js';
@@ -101,6 +101,7 @@ export const CONTROL_HANDLERS = [
   extConsentHandler,
   extUninstallHandler,
   extCheckUpdatesHandler,
+  extSetAutoUpdateHandler,
   extBrowseHandler,
   restartHandler,
   restartTmuxHandler,

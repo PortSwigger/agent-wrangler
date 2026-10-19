@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler,
+  extSetAutoUpdateHandler, autoUpdateExtension,
   _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
 import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
@@ -517,5 +518,96 @@ test('a range this server serves installs normally', async () => {
   const c = ctx();
   await install(c, { range: `^${HOST_API_VERSION}` });
   assert.equal(reply(c, 'ext-install-done').installed, true);
+  reset();
+});
+
+// Installed, opted in to auto-update, and registered the way boot would have
+// left it, so the next install of it is an update.
+async function installOptedIn(opts = {}) {
+  await install(ctx(), { requires: ['tasks:read'], ...opts });
+  const c = ctx([{ id: 'notes', external: true }]);
+  putRecord({ ...readProvenance().notes, autoUpdate: true });
+  return c;
+}
+
+test('auto-update applies an update that needs no re-consent, keeps the opt-in, and asks for a restart', async () => {
+  reset();
+  const c = await installOptedIn();
+  useFakes({ requires: ['tasks:read'], sha: 'd'.repeat(40) });
+  const result = await autoUpdateExtension('notes', c);
+  assert.deepEqual(result, { applied: true, sha: 'd'.repeat(40) });
+  assert.equal(readProvenance().notes.sha, 'd'.repeat(40));
+  assert.equal(readProvenance().notes.autoUpdate, true, 'an update keeps the opt-in');
+  // Only the outcome reaches the board: no progress, and no disclosure, since
+  // nobody pressed anything.
+  assert.deepEqual(c.calls.replies, []);
+  assert.deepEqual(c.calls.broadcasts.map((b) => b.type), ['ext-install-done']);
+  assert.equal(c.calls.broadcasts[0].restartRequired, true);
+  assert.equal(c.calls.broadcasts[0].automatic, true);
+  assert.deepEqual(c.calls.activated, [], 'updated code waits for the restart');
+  assert.deepEqual(fs.readdirSync(tmpDir()), []);
+  reset();
+});
+
+test('auto-update leaves an update that widens requires for the human, and installs nothing', async () => {
+  reset();
+  const c = await installOptedIn();
+  const before = readProvenance().notes;
+  useFakes({ requires: ['tasks:read', 'sessions:kill'], sha: 'd'.repeat(40) });
+  const result = await autoUpdateExtension('notes', c);
+  assert.equal(result.applied, false);
+  assert.match(result.reason, /now asks for sessions:kill, which needs your consent/);
+  assert.deepEqual(readProvenance().notes, before, 'the installed version and its consent are untouched');
+  assert.deepEqual(c.calls.broadcasts, [], 'nothing is announced');
+  assert.deepEqual(fs.readdirSync(tmpDir()), [], 'the staging clone is discarded');
+  // The lock was released, so the human's own update proceeds.
+  assert.equal((await disclose(ctx([{ id: 'notes', external: true }]), { requires: ['tasks:read', 'sessions:kill'] })).reconsentNeeded, true);
+  reset();
+});
+
+test('auto-update is refused by the same host API and lockfile checks as a human update', async () => {
+  reset();
+  let c = await installOptedIn();
+  useFakes({ requires: ['tasks:read'], range: '^99.0.0', sha: 'd'.repeat(40) });
+  let result = await autoUpdateExtension('notes', c);
+  assert.equal(result.applied, false);
+  assert.equal(result.incompatible, true);
+  assert.match(result.reason, /requires a newer Agent Wrangler/);
+  useFakes({ requires: ['tasks:read'], lock: false, sha: 'd'.repeat(40) });
+  result = await autoUpdateExtension('notes', c);
+  assert.equal(result.applied, false);
+  assert.match(result.reason, /no package-lock\.json/);
+  assert.equal(readProvenance().notes.sha, 'c'.repeat(40));
+  reset();
+});
+
+test('auto-update does nothing without the opt-in, and waits out an install already running', async () => {
+  reset();
+  await install(ctx());
+  let cloned = 0;
+  _setInstallRunnersForTests({ clone: async () => { cloned += 1; } });
+  assert.equal((await autoUpdateExtension('notes', ctx())).applied, false);
+  assert.equal(cloned, 0);
+  putRecord({ ...readProvenance().notes, autoUpdate: true });
+  await disclose(ctx(), { sha: 'e'.repeat(40) });
+  const result = await autoUpdateExtension('notes', ctx());
+  assert.equal(result.applied, false);
+  assert.match(result.reason, /another extension install was running/);
+  reset();
+});
+
+test('ext-set-auto-update persists the opt-in for a git install and refuses builtin and hand-placed ones', async () => {
+  reset();
+  await install(ctx());
+  assert.equal(readProvenance().notes.autoUpdate, false, 'off by default');
+  const c = ctx([{ id: 'notes', external: true }, { id: 'by-hand', external: true }, { id: 'core', label: 'Core' }]);
+  await extSetAutoUpdateHandler.handler({ id: 'notes', on: true }, c);
+  assert.equal(readProvenance().notes.autoUpdate, true);
+  assert.deepEqual(reply(c, 'ext-auto-update'), { type: 'ext-auto-update', id: 'notes', on: true });
+  assert.equal(c.calls.rebuild, 1);
+  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'by-hand', on: true }, c), /not installed from a git URL/);
+  await extSetAutoUpdateHandler.handler({ id: 'notes', on: false }, c);
+  assert.equal(readProvenance().notes.autoUpdate, false);
   reset();
 });

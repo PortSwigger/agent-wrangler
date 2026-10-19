@@ -33,7 +33,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -6102,6 +6102,19 @@ function mountExtensionsPanel(host) {
       if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
+    // Turning it ON is the decision, so only that asks; off never needs one.
+    onAutoUpdate: async (entry, on) => {
+      if (on) {
+        const answer = await confirmDialog({
+          title: `Auto-update ${entry.label || entry.id}?`,
+          body: AUTO_UPDATE_WARNING,
+          okLabel: 'Turn on auto-update',
+          danger: true,
+        });
+        if (answer !== 'ok') return;
+      }
+      send({ type: 'ext-set-auto-update', id: entry.id, on });
+    },
     onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
     settingsEl: extSettingsEl,
   }));
@@ -6511,7 +6524,11 @@ function connect() {
         delete extUpdateStatuses[msg.id];
         if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
         remountUpdatePanel();
-        if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+        // `automatic`: the update tick applied it for an extension that opted
+        // in, and every tab is told, so the restart button is up wherever the
+        // human looks next.
+        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${EXT_RESTART_NOTE}`);
+        else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
       }

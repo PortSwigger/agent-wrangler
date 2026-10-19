@@ -12,6 +12,7 @@ import {
   recordFor,
   putRecord,
   removeRecord,
+  setAutoUpdate,
   ensureDirs,
 } from './provenance.js';
 
@@ -34,6 +35,7 @@ const record = (over = {}) => ({
   installedAt: '2026-01-01T00:00:00.000Z',
   requires: ['sessions:read', 'tasks:write'],
   dependencies: ['left-pad@1.3.0', 'semver@7.6.0'],
+  autoUpdate: false,
   ...over,
 });
 
@@ -108,7 +110,7 @@ test('missing or malformed fields normalise instead of throwing', () => {
   const all = readProvenance();
   assert.deepEqual(Object.keys(all), ['demo']);
   assert.deepEqual(all.demo, {
-    id: 'demo', originUrl: null, sha: null, installedAt: null, requires: [], dependencies: [],
+    id: 'demo', originUrl: null, sha: null, installedAt: null, requires: [], dependencies: [], autoUpdate: false,
   });
   clean();
 });
@@ -128,5 +130,26 @@ test('a corrupt file degrades to {} rather than throwing', () => {
   assert.ok(fs.existsSync(`${FILE}.corrupt`));
   putRecord(record());
   assert.deepEqual(recordFor('demo'), record());
+  clean();
+});
+
+test('setAutoUpdate flips only the opt-in, and a record without it reads as off', () => {
+  clean();
+  const { autoUpdate, ...legacy } = record();
+  fs.writeFileSync(FILE, JSON.stringify({ demo: legacy }));
+  assert.equal(recordFor('demo').autoUpdate, false);
+  assert.deepEqual(setAutoUpdate('demo', true), record({ autoUpdate: true }));
+  assert.equal(recordFor('demo').autoUpdate, true);
+  setAutoUpdate('demo', false);
+  assert.equal(recordFor('demo').autoUpdate, false);
+  clean();
+});
+
+test('setAutoUpdate refuses an id with no record or no origin', () => {
+  clean();
+  assert.throws(() => setAutoUpdate('demo', true), /not installed from a git URL/);
+  putRecord(record({ originUrl: null }));
+  assert.throws(() => setAutoUpdate('demo', true), /not installed from a git URL/);
+  assert.equal(recordFor('demo').autoUpdate, false);
   clean();
 });
