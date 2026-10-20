@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -125,6 +125,14 @@ test('defaultSessionCwd is blank unless a string is set, and is trimmed', () => 
   assert.equal(defaultSessionCwd({}), '');
   assert.equal(defaultSessionCwd({ defaultSessionCwd: '  ~/repos  ' }), '~/repos');
   assert.equal(defaultSessionCwd({ defaultSessionCwd: 42 }), '');
+});
+
+test('defaultRuntime is local unless a non-blank string is set, and is not checked against the registry', () => {
+  assert.equal(defaultRuntime({}), 'local');
+  assert.equal(defaultRuntime({ defaultRuntime: ' devcontainer ' }), 'devcontainer');
+  assert.equal(defaultRuntime({ defaultRuntime: 'sandbox' }), 'sandbox', 'an extension runtime survives its extension being off');
+  assert.equal(defaultRuntime({ defaultRuntime: '  ' }), 'local');
+  assert.equal(defaultRuntime({ defaultRuntime: 7 }), 'local');
 });
 
 // The retired-flag table: a core `<x>Enabled` flag that became an extension is
