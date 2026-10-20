@@ -4,7 +4,10 @@ import { esc } from './util.js';
 // what the extension registered with host.files, and shows markdown rendered by
 // the shared renderer or an image. Resolves { ok:true } once shown, or the
 // server's { ok:false, reason } with nothing opened; never rejects. `opened`
-// guards a slow reply from replacing a file opened after it.
+// guards a slow reply from replacing a file opened after it. The panel is a
+// <dialog> shown with showModal() so it lands in the top layer, in front of any
+// modal <dialog> the extension opened it from; Escape is handled here and kept
+// from reaching the page, so it closes only this viewer.
 export function createExtFileViewer({ document, fetchImpl = (...a) => fetch(...a), renderMarkdown }) {
   const modal = document.getElementById('ext-file-modal');
   const titleEl = document.getElementById('ext-file-title');
@@ -13,10 +16,11 @@ export function createExtFileViewer({ document, fetchImpl = (...a) => fetch(...a
   const closeBtn = document.getElementById('ext-file-close');
   let opened = 0;
 
-  const close = () => { modal.classList.add('hidden'); opened++; };
+  const close = () => { if (modal.open) modal.close(); opened++; };
   closeBtn.addEventListener('click', close);
   modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } });
+  modal.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
 
   function show(r) {
     titleEl.textContent = r.path.split('/').pop() || r.path;
@@ -29,7 +33,7 @@ export function createExtFileViewer({ document, fetchImpl = (...a) => fetch(...a
       img.src = `data:${r.mime};base64,${r.base64}`;
       bodyEl.replaceChildren(img);
     }
-    modal.classList.remove('hidden');
+    if (!modal.open) modal.showModal();
     closeBtn.focus();
   }
 
