@@ -1,3 +1,4 @@
+import { DiffSyntax } from './diff-syntax-client.js';
 import { send, latestSessions, setMaximized, renderGridIfVisible, taskForSession } from './app.js';
 import { toast } from './toast.js';
 import { X_ICON, MAXIMIZE_ICON, MINIMIZE_ICON } from './icons.js';
@@ -18,6 +19,8 @@ import { diffPanelSizing, nextDiffPanelState } from './diff-panel-layout.js';
 // Owns its own DOM wiring + transient state, reaching back into app.js for
 // send/selection (same pattern as modals.js). All git access is server-side —
 // this only renders the `diff` reply and batches inline review comments.
+
+const diffSyntax = new DiffSyntax();
 
 const REFRESH_MS = 3000;
 const PR_REFRESH_MS = 30000;
@@ -165,6 +168,7 @@ export function toggleDiffPanel(sessionId) {
 
 export function closeDiffPanel() {
   if (openSid === null) return;
+  diffSyntax.cancel();
   const closed = openSid;
   openSid = null;
   stopPolling();
@@ -518,6 +522,7 @@ export function onDiffCommentsResult(msg) {
 // --- rendering ---
 
 function renderLoading() {
+  diffSyntax.cancel();
   bodyEl.replaceChildren(noticeEl('Loading diff…'));
   filelistEl.replaceChildren();
 }
@@ -526,6 +531,8 @@ function renderLoading() {
 // via textContent in diff-dom.js — NEVER innerHTML — so agent-generated file
 // content can't inject markup), then swap it in atomically.
 function renderDiff() {
+  diffSyntax.cancel();
+  const syntaxJobs = [];
   if (!lastDiff) { renderLoading(); return; }
   updateSubText(); // lastDiff.baseRef is only known once a branch-mode reply lands
   const prevScroll = bodyEl.scrollTop; // preserve scroll across an in-place refresh
@@ -588,10 +595,13 @@ function renderDiff() {
       } else {
         for (const h of f.hunks || []) {
           section.append(hunkHeadEl(h.header));
+          const targets = [];
+          const collectText = (el, ln, side) => targets.push({ el, ln, side });
+          syntaxJobs.push({ file: f, hunk: h, targets });
           if (diffLayout === 'split') {
-            for (const pair of pairHunkLines(h.lines)) section.append(pairRowEl(f.path, pair, drafts, selectedKeys));
+            for (const pair of pairHunkLines(h.lines)) section.append(pairRowEl(f.path, pair, drafts, selectedKeys, collectText));
           } else {
-            for (const ln of h.lines || []) section.append(lineEl(f.path, ln, drafts, selectedKeys));
+            for (const ln of h.lines || []) section.append(lineEl(f.path, ln, drafts, selectedKeys, collectText));
           }
         }
       }
@@ -610,6 +620,15 @@ function renderDiff() {
   }
   bodyEl.replaceChildren(frag);
   bodyEl.scrollTop = prevScroll;
+  // Spend the bounded budget on hunks in view before off-screen source.
+  const viewport = bodyEl.getBoundingClientRect();
+  const prioritizedJobs = syntaxJobs.map((job) => {
+    const first = job.targets[0]?.el.getBoundingClientRect();
+    const last = job.targets.at(-1)?.el.getBoundingClientRect();
+    return { job, visible: first && last && first.top <= viewport.bottom && last.bottom >= viewport.top };
+  }).sort((a, b) => Number(Boolean(b.visible)) - Number(Boolean(a.visible))).map(({ job }) => job);
+  void diffSyntax.decorate(prioritizedJobs, () => openSid !== null && !activeKey && !dragSelecting &&
+    !document.getSelection()?.toString());
   if (st === 'ok') filelistEl.replaceChildren(fileListEl(lastDiff.files || []));
   else filelistEl.replaceChildren();
   reapplyActiveFileRow();
