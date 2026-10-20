@@ -19,6 +19,31 @@ pull request.
 Switch between inline and side-by-side layouts, comment on lines, then choose **Send to agent**. Drafts
 are sent together with code snapshots and locations. Dormant sessions resume before delivery.
 
+Diff source is syntax coloured in both inline and split layouts. Language is chosen
+only from the filename extension: JavaScript/TypeScript (including JSX/TSX), JSON,
+HTML/XML/SVG, CSS, Bash, Python, YAML and Markdown. Unknown extensions and
+extensionless files stay literal plain text. Highlighting never changes source,
+line numbers, copy text or comment ranges, and works in all three diff modes.
+
+Colours follow live style changes, including bundled and custom styles. Keywords,
+strings, functions/types and comments use quiet theme-derived ink over the existing
+addition, deletion and selection backgrounds. Style authors can set
+`syntax-comment`, `syntax-keyword`, `syntax-string` and `syntax-function` in manifest
+`colors`; these candidates are adjusted toward `fg` when necessary for contrast.
+If a custom theme's foreground itself lacks contrast, source inherits that
+foreground; correct the theme's `fg`/surface colours.
+
+Highlighting runs locally in one lazily loaded worker using bundled Prism 1.30.0
+(MIT); no source is sent to a highlighting service. Each hunk is tokenized as
+separate old/new source, resetting at hunk boundaries. Syntax starting before the
+available context may be ambiguous. Oversized or failed jobs stay plain: limits
+are 64 KiB per side, 8 KiB per line, 512 KiB and 128 side jobs per render (UTF-16
+bytes), 2 seconds to load and 200 ms to tokenize. The worker is terminated on
+timeout. Token depth/segment limits, a 32,000-segment render budget and a 2 MiB
+LRU cache also bound costs. Hunks in view receive highlighting first.
+Text is visible before colour arrives; late decoration waits for the next render
+when a comment gesture, editor or text selection is active.
+
 ## Launch a peer-review session
 
 Choose **Peer review session…** from **Actions**, or press `Control+Command+P`.
