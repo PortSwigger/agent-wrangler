@@ -116,6 +116,17 @@ export const SETTINGS = [
     default: '',
   },
   {
+    id: 'defaultRuntime',
+    type: 'segmented',
+    scope: 'server',
+    // Replaced on every graph push by setRuntimeOptions: the built-ins plus each
+    // enabled extension's runtimes, read off the dispatch dialog's own select.
+    options: [{ value: 'local', label: 'Local (host)' }, { value: 'devcontainer', label: 'Devcontainer' }],
+    label: 'Default runtime for new sessions',
+    help: 'Pre-selects the Runtime field when you start a session. If the runtime is no longer offered (its extension is off) or cannot run the chosen agent, the session starts on Local. Resumed and forked sessions keep their own runtime.',
+    default: 'local',
+  },
+  {
     id: 'terminalSide',
     type: 'segmented',
     options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }],
@@ -152,7 +163,7 @@ export const SETTINGS_TABS = [
     label: 'Sessions',
     settingIds: [
       'subagentsExpandedByDefault',
-      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd',
+      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
     ],
   },
   {
@@ -212,6 +223,14 @@ export function setExtensionDefs(list) {
   // those rows carry this def's id, so the delegated flip handler below still
   // finds them here.
   return defs;
+}
+
+// The Default runtime row's options, [{ value, label }], from whatever the
+// dispatch dialog's Runtime select offers right now. Called on every graph push,
+// like setExtensionDefs; the modal renders on open, so the row is always current.
+export function setRuntimeOptions(list) {
+  const def = byId.get('defaultRuntime');
+  if (def && Array.isArray(list) && list.length) def.options = list;
 }
 
 // One note element per row, created on first flip and rewritten after. Never
@@ -317,9 +336,12 @@ function rowHtml(def) {
       </div>`;
   }
   if (def.type === 'segmented') {
+    // A stored value no option offers (a server-scoped one isn't validated on
+    // read) shows as the default, which is what a consumer falls back to.
+    const cur = def.options.some((o) => o.value === on) ? on : def.default;
     const opts = def.options.map((o) => `<button type="button" role="radio"
-          class="setting-seg-opt${o.value === on ? ' active' : ''}"
-          aria-checked="${o.value === on ? 'true' : 'false'}"
+          class="setting-seg-opt${o.value === cur ? ' active' : ''}"
+          aria-checked="${o.value === cur ? 'true' : 'false'}"
           data-value="${esc(o.value)}">${esc(o.label)}</button>`).join('');
     return `<div class="setting-row" data-id="${esc(def.id)}">
         <div class="setting-copy">

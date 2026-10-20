@@ -251,10 +251,40 @@ test('an extension runtime is offered to each agent its `agents` lists, and only
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
   const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const sync = open.indexOf('syncExtRuntimeOptions()');
-  const restore = open.indexOf(".value = d.runtime || 'local'");
+  const restore = open.indexOf('rtSel.value = wantRuntime;');
   assert.ok(sync >= 0 && restore > sync, 'syncExtRuntimeOptions must run before the runtime prefill');
-  assert.match(open.slice(restore), /if \(rtSel\.value !== \(d\.runtime \|\| 'local'\)\) rtSel\.value = 'local';/);
+  assert.match(open.slice(restore), /if \(rtSel\.value !== wantRuntime\) rtSel\.value = 'local';/);
   assert.match(appDecl('function syncClientExtensions() {'), /syncExtRuntimeOptions\(\);/);
+});
+
+// openModal's real runtime prefill, run against the stub select: a new session
+// takes the Default runtime setting, a schedule keeps its saved runtime, and
+// anything not offered (or not for this agent, via syncRuntimeToggle) is Local.
+function prefillRuntime({ agent = 'claude', exts = [], defaultRuntime, schedule = null, d = {} }) {
+  const h = runtimeHarness(agent);
+  h.setExtensions(exts);
+  h.syncExtRuntimeOptions();
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
+  const from = open.indexOf("  const rtSel = document.getElementById('m-runtime');");
+  const to = open.indexOf("rtSel.value = 'local';", from) + "rtSel.value = 'local';".length;
+  const document = { getElementById: (id) => ({ 'm-runtime': h.rt })[id] };
+  new Function('document', 'defaultRuntime', 'schedule', 'd', open.slice(from, to))(document, defaultRuntime, schedule, d);
+  h.syncRuntimeToggle();
+  return h.rt.value;
+}
+
+test('a new session pre-selects the Default runtime setting, falling back to local when it is not offered or not for this agent', () => {
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer' }), 'devcontainer');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox', exts: [ext()] }), 'sandbox');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox', exts: [ext({ enabled: false })] }), 'local', 'its extension is off');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox' }), 'local', 'its extension is gone');
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer', agent: 'codex' }), 'local', 'devcontainer is Claude-only');
+  assert.equal(prefillRuntime({ defaultRuntime: 'local' }), 'local');
+});
+
+test('a schedule restores its own saved runtime, never the Default runtime setting', () => {
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer', schedule: {}, d: {} }), 'local');
+  assert.equal(prefillRuntime({ defaultRuntime: 'local', schedule: {}, d: { runtime: 'devcontainer' } }), 'devcontainer');
 });
 
 // The real #m-runtime wiring line, the real syncDispatchExtFields /

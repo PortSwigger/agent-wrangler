@@ -23,6 +23,7 @@ import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
+import { defaultRuntimeHandler } from './default-runtime.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
@@ -95,6 +96,7 @@ export const CONTROL_HANDLERS = [
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
   defaultSessionCwdHandler,
+  defaultRuntimeHandler,
   extensionEnabledHandler,
   extSettingSetHandler,
   extInstallHandler,
