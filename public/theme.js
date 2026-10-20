@@ -1,3 +1,4 @@
+import { updateDiffSyntaxPalette } from './diff-syntax-palette.js';
 import { esc } from './util.js';
 
 // Style picker: built-in dark/light + drop-in styles (server-compiled manifests
@@ -105,6 +106,7 @@ function applyStyle(style) {
     for (const k of appliedVarKeys) document.body.style.removeProperty(k);
     appliedVarKeys = Object.keys(vars);
     for (const [k, v] of Object.entries(vars)) document.body.style.setProperty(k, v);
+    updateDiffSyntaxPalette();
     themeChangeHook?.();
   }
   setBackground(style);
