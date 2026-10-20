@@ -8,10 +8,14 @@ import { readableInk, contrast } from './diff-syntax-palette.js';
 
 const context = vm.createContext({ self: { Prism: { manual: true, disableWorkerMessageHandler: true } } });
 context.window = context.self;
-for (const name of ['core', 'markup', 'css', 'clike', 'javascript', 'typescript', 'jsx', 'tsx', 'json', 'bash', 'python', 'yaml', 'markdown']) {
-  vm.runInContext(fs.readFileSync(new URL(`./vendor/prism/prism-${name}.min.js`, import.meta.url), 'utf8'), context);
+// Execute the production loader so missing grammars or dependency order fail here too.
+context.importScripts = (path) => {
+  vm.runInContext(fs.readFileSync(new URL(path, import.meta.url), 'utf8'), context);
   context.Prism = context.self.Prism;
-}
+};
+const worker = fs.readFileSync(new URL('./diff-syntax-worker.js', import.meta.url), 'utf8');
+vm.runInContext(worker.slice(0, worker.indexOf("import('./diff-syntax.js')")), context);
+
 const prism = context.Prism;
 const highlight = (source, language = 'javascript') => tokenLines(prism.tokenize(source, prism.languages[language]), source);
 
@@ -19,7 +23,14 @@ test('explicit extension selection, paths, casing and conservative unknown fallb
   for (const [path, expected] of Object.entries({
     'src/A.JS': 'javascript', 'a.mjs': 'javascript', 'a.cts': 'typescript', 'a.jsx': 'jsx', 'a.tsx': 'tsx',
     'x.json': 'json', 'a.svg': 'markup', 'a.css': 'css', 'a.sh': 'bash', 'a.py': 'python', 'a.yml': 'yaml', 'a.md': 'markdown',
-  })) assert.equal(languageForPath(path), expected);
+    'src/Main.java': 'java', 'src/Program.cs': 'csharp', 'src/main.go': 'go',
+    'a.cjs': 'javascript', 'a.ts': 'typescript', 'a.mts': 'typescript', 'a.html': 'markup',
+    'a.htm': 'markup', 'a.xml': 'markup', 'a.bash': 'bash', 'a.yaml': 'yaml', 'a.markdown': 'markdown',
+  })) {
+    assert.equal(languageForPath(path), expected);
+    assert.equal(languageForPath(path.toUpperCase()), expected);
+    assert.equal(languageForPath(path.replace(/.$/, (c) => c.toUpperCase())), expected);
+  }
   for (const path of ['Dockerfile', 'foo.vue', 'foo.svelte', 'foo.unknown', 'a.js/README', '', '__proto__', 'a.constructor']) {
     assert.equal(languageForPath(path), null);
   }
@@ -29,9 +40,36 @@ test('all bundled grammars reconstruct source exactly, including markup and trai
   for (const [language, source] of Object.entries({
     javascript: 'const text = `<img onerror="oops()">`;\n\n', typescript: 'const x: string = "hi";',
     jsx: 'const x = <Widget title="hi" />;', tsx: 'const x: JSX.Element = <b>hi</b>;', json: '{"x": true}',
+    java: '// café 😀\npublic class Main { String text = "<b>& hello"; }\n\n',
+    csharp: '// café 😀\npublic class Program { string text = $"<b>& {1 + 2}"; }\n\n',
+    go: '// café 😀\npackage main\nfunc main() { text := `<b>& hello`; _ = text }\n\n',
     markup: '<script>alert("safe")</script>', css: 'body { color: red; }', bash: 'echo "$HOME"',
     python: 'def greet():\n    return "hi"', yaml: 'name: hello', markdown: '# Hello\n`<b>`',
   })) assert.ok(validTokenLines(highlight(source, language), source), language);
+});
+
+test('real grammars assign theme roles to keywords, strings and comments', () => {
+  for (const [language, source, keyword, string, comment] of [
+    ['java', 'public class Main { String text = "hello"; /* comment */ }', 'public', '"hello"', '/* comment */'],
+    ['csharp', 'public class Program { string text = "hello"; /* comment */ }', 'public', '"hello"', '/* comment */'],
+    ['go', 'package main\nfunc main() { text := "hello" } // comment', 'package', '"hello"', '// comment'],
+    ['javascript', 'const text = "hello"; // comment', 'const', '"hello"', '// comment'],
+    ['typescript', 'const text: string = "hello"; // comment', 'const', '"hello"', '// comment'],
+    ['python', 'return "hello" # comment', 'return', '"hello"', '# comment'],
+    ['bash', 'if true; then echo "hello"; fi # comment', 'if', '"hello"', '# comment'],
+  ]) {
+    const segments = highlight(source, language).flat();
+    for (const [text, role] of [[keyword, 'keyword'], [string, 'string'], [comment, 'comment']]) {
+      assert.ok(segments.some((s) => s.text === text && s.role === role), `${language}: ${role}`);
+    }
+  }
+  // These grammars use tags, attributes or other roles rather than all three above.
+  for (const [language, source, role] of [
+    ['jsx', 'const x = <Widget />;', 'function'], ['tsx', 'const x: JSX.Element = <Widget />;', 'function'],
+    ['json', '{"message":"hello"}', 'string'], ['markup', '<b title="hello">text</b>', 'function'],
+    ['css', '/* comment */ body { color: red; }', 'comment'],
+    ['yaml', 'message: "hello"', 'string'], ['markdown', '<!-- comment -->', 'comment'],
+  ]) assert.ok(highlight(source, language).flat().some((s) => s.role === role), language);
 });
 
 test('multiline projections keep old/new syntax independent and reset between hunks', () => {

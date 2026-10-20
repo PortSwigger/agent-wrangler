@@ -2,7 +2,7 @@
 self.Prism = { manual: true, disableWorkerMessageHandler: true };
 importScripts('vendor/prism/prism-core.min.js');
 // Fixed order includes grammar dependencies and markup embedded JS/CSS support.
-for (const name of ['markup', 'css', 'clike', 'javascript', 'typescript', 'jsx', 'tsx', 'json', 'bash', 'python', 'yaml', 'markdown']) {
+for (const name of ['markup', 'css', 'clike', 'javascript', 'typescript', 'jsx', 'tsx', 'json', 'bash', 'python', 'yaml', 'markdown', 'java', 'csharp', 'go']) {
   importScripts(`vendor/prism/prism-${name}.min.js`);
 }
 import('./diff-syntax.js').then(({ tokenLines, LIMITS }) => {
