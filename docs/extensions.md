@@ -1335,6 +1335,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `invalid-path`, `unsupported-type`, `not-permitted` (not registered, or no capability),
   `not-found`, `changed` (a symlink now sits in the path), `not-a-file`, `too-large`,
   `unavailable` (not connected) or `error`. A manifest using it declares `^1.38.0`.
+- **Opening file links: the `file.open` client slot** (1.39.0). Capability **`files:open`**
+  (browser-only, disclosed at install) lets an extension take the file links a human clicks in
+  a session's chat or terminal, instead of the board's preview. It is a value slot:
+  `open(file, graph, api)` with `file` = `{ path, sessionId, source }`, where `path` is the
+  resolved absolute path, `sessionId` the session it was clicked in and `source` `'chat'` or
+  `'terminal'`. Returning `true` takes it; anything else leaves it to the next contribution,
+  in extension load order, and then to the board's preview. A throwing `open` is reported and
+  removed, and the link falls through. Registering without `files:open` throws. Only the links
+  core makes today reach it (`.md` and `.markdown` paths). `api.openFile` is unaffected. A
+  manifest using it declares `^1.39.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and

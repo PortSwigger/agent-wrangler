@@ -307,7 +307,14 @@ import semver from 'semver';
 // local files it may show with `host.files.allow(paths)`; the human opens one in
 // a viewer panel (markdown rendered, images shown). `api.files` is undefined on
 // an older board, so a manifest that needs it declares `^1.38.0`.
-export const HOST_API_VERSION = '1.38.0';
+//
+// 1.39.0 adds the client value slot `file.open` and the client-only capability
+// `files:open` that gates it: `open({ path, sessionId, source }, graph, api)`
+// returning true takes a file link clicked in a session's chat or terminal
+// (`source` 'chat' or 'terminal') instead of the board's preview. Contributions
+// are asked in load order and the first true wins. An older board throws on the
+// unknown slot name, so a manifest that uses it declares `^1.39.0`.
+export const HOST_API_VERSION = '1.39.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

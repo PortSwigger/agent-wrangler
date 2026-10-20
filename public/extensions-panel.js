@@ -68,6 +68,7 @@ function el(tag, className, text) {
 // shown as the chip's tooltip, and as a line under the chips in the consent dialog.
 export const CAPABILITY_DESCRIPTIONS = {
   'files:view': 'Open local files the extension names (markdown and images) in a viewer panel when you click them. Only files it registers can be opened, and nothing is changed.',
+  'files:open': 'Open the file links you click in a session\'s chat or terminal itself, instead of the board\'s preview.',
   'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
 };
 

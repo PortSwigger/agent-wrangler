@@ -72,7 +72,7 @@ import { canOpenPath, fileTypes } from './file-types.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue'];
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -88,9 +88,13 @@ const FILES_API = Object.freeze({
   types: () => fileTypes(),
 });
 
+// Gates the `file.open` slot: a browser-only grant (server/extensions
+// CLIENT_CAPABILITIES), since taking over a core action needs the human's consent.
+export const FILES_OPEN_CAPABILITY = 'files:open';
+
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open' };
 
 // The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
 // presentation attributes. Anything else (scripts, handlers, urls, foreign
@@ -818,6 +822,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       }
       if (slotName === 'card.pill' && contribution.label != null && typeof contribution.label !== 'string') throw new Error(`[ext:${extId}] ${contribution.id} label must be a string`);
       if (slotName === 'settings.panel' && contribution.save != null && typeof contribution.save !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} save must be a function`);
+      if (slotName === 'file.open' && !(requiresFor(extId) || []).includes(FILES_OPEN_CAPABILITY)) throw new Error(`[ext:${extId}] ${contribution.id} in file.open needs the ${FILES_OPEN_CAPABILITY} capability`);
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
     },
@@ -1266,6 +1271,21 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         };
       }
       return null;
+    },
+
+    // Offer a clicked file link to the `file.open` contributions in load order;
+    // true when one took it, so core skips its own preview. Only a literal true
+    // claims it, and a throwing open() is removed and the next one asked.
+    fileOpen(file, graph, baseApi) {
+      for (const c of [...slotList('file.open')]) {
+        try {
+          if (c.open({ ...file }, graph, apiFor(c.extId, baseApi)) === true) return true;
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
+          drop('file.open', c);
+        }
+      }
+      return false;
     },
 
     connected() {
