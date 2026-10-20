@@ -21,7 +21,7 @@ are sent together with code snapshots and locations. Dormant sessions resume bef
 
 Diff source is syntax coloured in both inline and split layouts. Language is chosen
 only from the filename extension: JavaScript/TypeScript (including JSX/TSX), JSON,
-HTML/XML/SVG, CSS, Bash, Python, YAML and Markdown. Unknown extensions and
+HTML/XML/SVG, CSS, Bash, Python, YAML, Markdown, Java, C# and Go. Unknown extensions and
 extensionless files stay literal plain text. Highlighting never changes source,
 line numbers, copy text or comment ranges, and works in all three diff modes.
 

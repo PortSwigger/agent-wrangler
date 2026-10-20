@@ -4,6 +4,7 @@ const extensions = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript', mts: 'typescript', cts: 'typescript',
   jsx: 'jsx', tsx: 'tsx', json: 'json', html: 'markup', htm: 'markup', xml: 'markup', svg: 'markup',
   css: 'css', sh: 'bash', bash: 'bash', py: 'python', yaml: 'yaml', yml: 'yaml', md: 'markdown', markdown: 'markdown',
+  java: 'java', cs: 'csharp', go: 'go',
 };
 export function languageForPath(path) {
   const name = String(path ?? '').split('/').pop().toLowerCase();
