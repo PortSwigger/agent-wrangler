@@ -270,3 +270,11 @@ export function refreshSessionsAfterUpdate(cfg = readConfig()) {
 export function defaultSessionCwd(cfg = readConfig()) {
   return typeof cfg.defaultSessionCwd === 'string' ? cfg.defaultSessionCwd.trim() : '';
 }
+
+// The runtime id the dispatch dialog pre-selects for a new session. Not checked
+// against the registry: an extension runtime can be off now and on again later,
+// and the dialog falls back to local for any id it doesn't offer.
+export function defaultRuntime(cfg = readConfig()) {
+  const id = typeof cfg.defaultRuntime === 'string' ? cfg.defaultRuntime.trim() : '';
+  return id || 'local';
+}

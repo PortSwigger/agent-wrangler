@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
+import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
 
 test('settings are grouped into six ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
@@ -24,6 +24,7 @@ test('each registered setting appears in exactly one tab', () => {
     'childFullViewByDefault',
     'chatViewDefault',
     'defaultSessionCwd',
+    'defaultRuntime',
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
@@ -115,4 +116,19 @@ test('extensionFlipNote never throws on a missing pair', () => {
   // it promises nothing.
   assert.equal(typeof extensionFlipNote(), 'string');
   assert.equal(typeof extensionFlipNote({}), 'string');
+});
+
+// The Default runtime row offers whatever the dispatch dialog's Runtime select
+// does, so an extension's runtimes come and go with it; an empty or bad list
+// (no select yet) keeps the last one rather than leaving the row blank.
+test('setRuntimeOptions replaces the Default runtime row\'s options', () => {
+  const def = SETTINGS.find((d) => d.id === 'defaultRuntime');
+  assert.equal(def.scope, 'server');
+  assert.equal(def.default, 'local');
+  const list = [{ value: 'local', label: 'Local (host)' }, { value: 'devcontainer', label: 'Devcontainer' }, { value: 'sandbox', label: 'Sandbox' }];
+  setRuntimeOptions(list);
+  assert.deepEqual(def.options, list);
+  setRuntimeOptions([]);
+  setRuntimeOptions(null);
+  assert.deepEqual(def.options, list);
 });
