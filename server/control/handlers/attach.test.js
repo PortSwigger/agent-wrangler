@@ -58,25 +58,27 @@ test('attachError: null (allowed) for a same-task, non-cyclic, valid pair', () =
   assert.equal(attachError('S1', 'S2', { sessions, taskStore: t }), null);
 });
 
-// Nesting only ever renders one level deep (computeAbsorption in
-// public/workflow.js pops a grandchild back out to top-level). These two
-// checks keep that invariant true of the data, not just the rendering: no
-// Attach may create a session at depth > 1.
-test('attachError: refuses attaching under a target that is itself already nested', () => {
+// Nesting has no depth limit: attaching under a nested target is fine, and a
+// session that has its own children takes them along when it moves.
+test('attachError: allows attaching under a target that is itself already nested', () => {
   const sessions = [{ sessionId: 'A' }, { sessionId: 'B', parentSession: 'A' }, { sessionId: 'S' }];
   const t = taskStore({ A: { id: 'T1', name: 'T' }, B: { id: 'T1', name: 'T' }, S: { id: 'T1', name: 'T' } });
-  const err = attachError('S', 'B', { sessions, taskStore: t });
-  assert.match(err, /itself nested/);
+  assert.equal(attachError('S', 'B', { sessions, taskStore: t }), null);
 });
 
-test('attachError: refuses moving a session that currently has its own same-task children', () => {
+test('attachError: allows moving a session that has its own same-task children', () => {
   const sessions = [{ sessionId: 'S' }, { sessionId: 'Child', parentSession: 'S' }, { sessionId: 'P' }];
   const t = taskStore({ S: { id: 'T1', name: 'T' }, Child: { id: 'T1', name: 'T' }, P: { id: 'T1', name: 'T' } });
-  const err = attachError('S', 'P', { sessions, taskStore: t });
-  assert.match(err, /own nested children/);
+  assert.equal(attachError('S', 'P', { sessions, taskStore: t }), null);
 });
 
-test('attachError: a session\'s children on a DIFFERENT task do not block attaching it (they already render as orphans)', () => {
+test('attachError: still refuses attaching under one of its own deep descendants (cycle)', () => {
+  const sessions = [{ sessionId: 'S' }, { sessionId: 'C', parentSession: 'S' }, { sessionId: 'G', parentSession: 'C' }];
+  const t = taskStore({ S: { id: 'T1', name: 'T' }, C: { id: 'T1', name: 'T' }, G: { id: 'T1', name: 'T' } });
+  assert.match(attachError('S', 'G', { sessions, taskStore: t }), /cycle/);
+});
+
+test('attachError: a session\'s children on a DIFFERENT task do not block attaching it', () => {
   const sessions = [{ sessionId: 'S' }, { sessionId: 'Child', parentSession: 'S' }, { sessionId: 'P' }];
   const t = taskStore({ S: { id: 'T1', name: 'T' }, Child: { id: 'T2', name: 'Other' }, P: { id: 'T1', name: 'T' } });
   assert.equal(attachError('S', 'P', { sessions, taskStore: t }), null);

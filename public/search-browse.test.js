@@ -191,25 +191,55 @@ test('a child in the same bucket as its parent nests under it, not as its own ro
   );
   const p = b.rows.find((r) => r.kind === 'task-group' && r.taskId === 't-p').entries[0];
   assert.equal(p.group.sessionId, 'p');
-  assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
+  assert.deepEqual(p.children.map((c) => c.group.sessionId), ['c']);
 });
 
-test('a grandchild promotes to top-level instead of nesting two deep', () => {
+test('a grandchild nests under its parent, however deep the chain goes', () => {
   const [b] = buildBrowseBuckets(
     [
-      group('p', 3 * HOUR, { cardId: 'card-p', taskId: 't-p', task: 'P task' }),
-      group('c', 2 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
-      group('gc', 1 * HOUR, { cardId: 'card-gc', parentSession: 'card-c', taskId: 't-gc', task: 'GC task' }),
+      group('p', 4 * HOUR, { cardId: 'card-p', taskId: 't-p', task: 'P task' }),
+      group('c', 3 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
+      group('gc', 2 * HOUR, { cardId: 'card-gc', parentSession: 'card-c' }),
+      group('ggc', 1 * HOUR, { cardId: 'card-ggc', parentSession: 'card-gc' }),
     ],
     [], NOW
   );
-  // p absorbs c; c is itself absorbed, so gc (parented on c) promotes to top-level.
   const clusters = b.rows.filter((r) => r.kind === 'task-group' && !r.unassigned);
-  assert.equal(clusters.length, 2);
-  const p = clusters.find((r) => r.taskId === 't-p').entries[0];
-  const gc = clusters.find((r) => r.taskId === 't-gc').entries[0];
-  assert.deepEqual(p.children.map((c) => c.sessionId), ['c']);
-  assert.equal(gc.children, undefined);
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].entries.length, 1);
+  const p = clusters[0].entries[0];
+  assert.deepEqual(p.children.map((c) => c.group.sessionId), ['c']);
+  const c = p.children[0];
+  assert.deepEqual(c.children.map((x) => x.group.sessionId), ['gc']);
+  assert.deepEqual(c.children[0].children.map((x) => x.group.sessionId), ['ggc']);
+  assert.equal(c.children[0].children[0].children, undefined);
+});
+
+test('a grandchild in another bucket than its parent hangs off the nearest same-bucket ancestor chain, else gets a breadcrumb', () => {
+  const buckets = buildBrowseBuckets(
+    [
+      group('p', 3 * HOUR, { cardId: 'card-p', taskId: 't-p', task: 'P task' }),
+      group('c', 2 * HOUR, { cardId: 'card-c', parentSession: 'card-p' }),
+      group('gc', 3 * DAY, { cardId: 'card-gc', parentSession: 'card-c', taskId: 't-gc', task: 'GC task' }),
+    ],
+    [], NOW
+  );
+  const rowOf = (taskId) => buckets.flatMap((bk) => bk.rows).find((r) => r.kind === 'task-group' && r.taskId === taskId).entries[0];
+  assert.equal(rowOf('t-gc').parentTitle != null, true);
+  assert.equal(rowOf('t-gc').children, undefined);
+});
+
+test('a parentSession cycle among archived sessions never hides a row', () => {
+  const [b] = buildBrowseBuckets(
+    [
+      group('a', 2 * HOUR, { cardId: 'card-a', parentSession: 'card-b' }),
+      group('b', 1 * HOUR, { cardId: 'card-b', parentSession: 'card-a' }),
+    ],
+    [], NOW
+  );
+  const entries = b.rows.filter((r) => r.kind === 'task-group').flatMap((r) => r.entries);
+  const ids = entries.flatMap((e) => [e.group.sessionId, ...(e.children || []).map((c) => c.group.sessionId)]).sort();
+  assert.deepEqual(ids, ['a', 'b']);
 });
 
 test('a parent in a different bucket does not nest across the boundary — the child gets a breadcrumb instead', () => {

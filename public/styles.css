@@ -1357,6 +1357,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    flat rail, so the line reads as genuinely attached to each child. */
 .workflow-spine {
   --line-color: var(--wf);
+  --spine-step: 28px;
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
 }
@@ -1370,8 +1371,30 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    (still far more muted than --wf) while actually being visible. */
 .child-spine {
   --line-color: var(--border);
+  --spine-step: 28px;
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
+}
+/* Deeper levels of a spine: nesting has no depth limit, so one spine holds a
+   whole subtree as flat rows (cards.js, workflow.js spineRows). A row steps right
+   by --indent levels (clamped in JS), keeping its own elbow, and `.spine-more`
+   marks a later sibling at its level so that level's trunk keeps running — a
+   structural :last-child can't say so, since the next DOM row may be a descendant
+   or an ancestor's sibling. `.spine-guide` draws the trunk of an ancestor level
+   still running beside a deep row, --up indent steps to the left of the row's own
+   trunk; same -6px reach as the inter-row gap, so consecutive rows join up. The
+   28px step puts a child's trunk (-14px from the child) exactly under its parent's
+   status dot (centre 15px in: 1px border + 10px padding + half the 8px dot), the
+   way a top-level child's trunk sits under its parent card's bar. */
+.worker-row, .spine-full-row { margin-left: calc(var(--indent, 0) * var(--spine-step, 28px)); }
+.spine-guide {
+  position: absolute;
+  left: calc(-14px - var(--up) * var(--spine-step, 28px));
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
 }
 /* A "Full view" child (cards.js childRowHtml) draws a real .session-card in the
    spine instead of a compact .worker-row — this bare wrapper carries the exact
@@ -1397,7 +1420,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   top: -9px;
   height: calc(50% + 9px);
 }
-.spine-full-row:not(:last-child)::after {
+.spine-full-row.spine-more::after {
   content: '';
   position: absolute;
   left: -14px;
@@ -1575,7 +1598,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    continuous line between elbows. Starts at exactly 50% — the same point
    ::before's border-bottom ends at — not 50%+6px, else a gap opens up between
    the elbow and this segment. The last row's line stops at its own turn. */
-.worker-row:not(:last-child)::after {
+.worker-row.spine-more::after {
   content: '';
   position: absolute;
   left: -14px;

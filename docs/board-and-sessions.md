@@ -44,7 +44,9 @@ Use task memory for durable decisions, the checklist for session progress, and `
 ## Read a session card
 
 Cards show status, model, cost, context budget, links, PR/CI state, checklist progress, and native
-sub-agents. Nested children are compact rows unless **Full view** is enabled.
+sub-agents. Nested children are compact rows unless **Full view** is enabled. Nesting has no depth
+limit: a child's own children sit indented beneath it on the same spine, stepping in a level each
+until the indent stops growing after four. Attaching a session moves its children with it.
 
 The **parent** controls board nesting and can change; the **spawner** records who launched the session
 and cannot. **Attach to…** and **Promote to full session** change nesting, not launch lineage.

@@ -1,6 +1,6 @@
 ---
 name: adversarial-pr-review
-description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child (or sibling, if you're already nested) session running the OPPOSITE agent provider (Claude <-> Codex) to review it, and has it raise concerns back to you via mail.
+description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child session running the OPPOSITE agent provider (Claude <-> Codex) to review it, and has it raise concerns back to you via mail.
 ---
 
 # Adversarial PR review
@@ -20,20 +20,11 @@ current branch. Do not guess a PR — if neither source gives you one, ask the u
 PR to review. Either way, hold onto the **repo** (`owner/repo`) as well as the number —
 you'll need to pass it explicitly to the reviewer (see step 4).
 
-## 2. Decide child vs sibling
+## 2. Spawn it as a child
 
-Call `get_session_info`. Nesting is capped at one level deep (see the
-`session-hierarchy` skill), so:
-
-- **`parent` is null** — you're top-level. Spawn a plain **child**: `spawn_session` with
-  `nest: true`.
-- **`parent` is already set** — you're nested, and `spawn_session`'s `nest: true` would be
-  refused (you'd be asking to nest under yourself, and you already have a parent). Spawn
-  a **sibling** instead: call `spawn_session` with `nest` left unset (a plain top-level
-  session), then `attach_session({ session_id: <new id>, parent_session_id: <your own
-  parent> })` to land it next to you, under the same parent.
-
-Either way, leave `into` unset so the reviewer lands on your current task.
+Call `spawn_session` with `nest: true`, however deep you are yourself: nesting has no depth
+limit, so the reviewer lands under you whether you are top-level or already nested. Leave
+`into` unset so it lands on your current task.
 
 ## 3. Choose the opposite agent
 
@@ -81,7 +72,7 @@ of your context. Keep it short; the review method is not yours to write:
 ## 5. Don't wait
 
 The reviewer doesn't need your session id: `AW_SPAWNER_SESSION_ID` already names you,
-even in the sibling case (see the `session-hierarchy` skill), and the tool tells it to
+(see the `session-hierarchy` skill), and the tool tells it to
 mail you there. Carry on with your own work once it is briefed, and read its findings when
 the mail arrives.
 
