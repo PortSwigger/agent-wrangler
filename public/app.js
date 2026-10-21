@@ -2084,6 +2084,13 @@ function mountMenu(items, x, y) {
 // `on`) rather than dismissing the menu; the server round-trip + next graph poll
 // reconcile the persisted state. run gets the click event — its currentTarget is
 // the row button, whose trailing slot holds the tick.
+// Every file link clicked in a session's chat or terminal: a `file.open`
+// extension may take it, otherwise the board's own preview opens.
+function openFile(path, { sessionId, source }) {
+  if (slots.fileOpen({ path, sessionId, source }, latestGraph, extApi)) return;
+  openFilePreview(path);
+}
+
 // `card.action` extension items for one card, in the menu's own item shape.
 // Sits with the per-session settings (auto-fix, auto-merge) in both the card
 // right-click menu and the pane's Actions menu. `hint` is extension TEXT, so it
@@ -4700,7 +4707,7 @@ function openTerminal(s) {
   // looks like an http(s) URL, and vice-versa. s.cwd is the base a relative
   // path (docs/x.md) resolves against.
   try {
-    term.registerLinkProvider(createMarkdownLinkProvider(term, openFilePreview, s.cwd));
+    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { sessionId: s.sessionId, source: 'terminal' }), s.cwd));
   } catch (err) {
     console.error('[term-links]', err);
   }
@@ -6929,7 +6936,7 @@ const chatView = initChatView({
   },
   // The same destination the terminal's .md link provider uses, so a path opens
   // the same preview whichever view it was clicked in.
-  onOpenFile: (path) => openFilePreview(path),
+  onOpenFile: (path, sessionId) => openFile(path, { sessionId, source: 'chat' }),
   // Looked up per click/render rather than pushed in on mount: the chat view only
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.

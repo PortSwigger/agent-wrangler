@@ -170,19 +170,20 @@ async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacInte
   const { initChatView } = await import('./chat-view.js');
   const sent = [];
   const opened = [];
+  const openedFor = [];
   const view = initChatView({
     send: (m) => { sent.push(m); return onSend?.(m) ?? true; },
     onSubagentClick() {},
     onOpenDiff() {},
     onGoTerminal: (id) => onGoTerminal?.(id),
     onPickModel() {},
-    onOpenFile: (p) => opened.push(p),
+    onOpenFile: (p, sid) => { opened.push(p); openedFor.push(sid); },
     cwdFor: () => cwd,
   });
   const input = byId.get('chat-input');
   // Wire the auto-grow listener's dependency the way a browser would.
   return {
-    view, sent, byId, input, opened, document, timers,
+    view, sent, byId, input, opened, openedFor, document, timers,
     fire: (el, type) => el.dispatchEvent({ type }),
     // Only the still-live ones — a cancelled timeout is exactly what a browser
     // would never run.
@@ -668,8 +669,8 @@ test('a failed delivery removes the echo and restores the draft', async () => {
 // never pass through appendItems, so they can only be reached by delegation off
 // the stream — which is what this covers.
 
-test('a click on a markdown-file control opens the preview at its resolved path', async () => {
-  const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
+test('a click on a markdown-file control opens the preview at its resolved path, for the session on screen', async () => {
+  const { view, byId, opened, openedFor, document } = await mountView({ cwd: '/repo' });
   view.mount('sess-1');
   const btn = document.createElement('button');
   btn.dataset.mdPath = '/repo/docs/plan.md';
@@ -677,6 +678,7 @@ test('a click on a markdown-file control opens the preview at its resolved path'
   let prevented = false;
   byId.get('chat-stream').dispatchEvent({ type: 'click', target: btn, preventDefault: () => { prevented = true; } });
   assert.deepEqual(opened, ['/repo/docs/plan.md']);
+  assert.deepEqual(openedFor, ['sess-1']);
   assert.equal(prevented, true);
 });
 

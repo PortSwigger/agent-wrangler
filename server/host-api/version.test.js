@@ -44,11 +44,13 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.37.0 the runtime `agents` list,
 // 1.38.0 `files:view`, the client `api.openFile` and `api.files`,
 // and 1.39.0 `earlyAdopter`, the client `api.earlyAdopter` and `api.onThemeChange`,
+// and 1.40.0 the `file.open` slot and `files:open`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.39.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.39.0');
+test('the served version is 1.40.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.40.0');
+  assert.equal(servesRange('^1.40.0'), true);
   assert.equal(servesRange('^1.39.0'), true);
   assert.equal(servesRange('^1.38.0'), true);
   assert.equal(servesRange('^1.37.0'), true);
