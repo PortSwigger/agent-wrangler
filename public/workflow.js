@@ -76,8 +76,9 @@ export const MAX_SPINE_INDENT = 3;
 // Each row: { session, depth, indent, more, guides }.
 //  - depth: levels below the spine's owner (0 = a direct child).
 //  - indent: depth clamped to MAX_SPINE_INDENT — how far right the row steps.
-//  - more: a later sibling exists at this level, so this level's trunk keeps
-//    running past the row.
+//  - more: this level's trunk keeps running past the row — a later sibling
+//    exists, or the row's own children sit at the same capped indent and so hang
+//    off the very same trunk.
 //  - guides: how many indent steps LEFT of the row's own trunk each ancestor
 //    trunk that is still running sits (an ancestor with later siblings), so a
 //    deep row can draw the lines of the levels it is nested inside. 0 means an
@@ -87,16 +88,17 @@ export function spineRows(children, childrenByParent) {
   const rows = [];
   const walk = (list, depth, ancestorMore) => {
     list.forEach((session, i) => {
-      const more = i < list.length - 1;
+      const sibling = i < list.length - 1;
       const indent = Math.min(depth, MAX_SPINE_INDENT);
+      const kids = childrenByParent.get(session.sessionId) || [];
+      const more = sibling || (kids.length > 0 && indent === MAX_SPINE_INDENT);
       const guides = [];
       ancestorMore.forEach((running, level) => {
         const up = indent - Math.min(level, MAX_SPINE_INDENT);
         if (running && !guides.includes(up)) guides.push(up);
       });
       rows.push({ session, depth, indent, more, guides });
-      const kids = childrenByParent.get(session.sessionId) || [];
-      if (kids.length) walk(kids, depth + 1, [...ancestorMore, more]);
+      if (kids.length) walk(kids, depth + 1, [...ancestorMore, sibling]);
     });
   };
   walk(children, 0, []);

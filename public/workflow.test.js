@@ -177,6 +177,14 @@ test('spineRows: past the clamp a running ancestor trunk is kept as guide 0 so i
   assert.equal(rows.z[3], false);
 });
 
+test('spineRows: a single-child chain keeps its trunk running through every row that has a child at the same capped indent', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const s = [{ sessionId: 'r' }, ...ids.map((id, i) => ({ sessionId: id, parentSession: i ? ids[i - 1] : 'r' }))];
+  const rows = Object.fromEntries(rowShape(s, 'r').map((r) => [r[0], r]));
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e'].map((id) => rows[id][2]), [0, 1, 2, 3, 3]);
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e'].map((id) => rows[id][3]), [false, false, false, true, false]);
+});
+
 test('spineRows: guides collapse onto one trunk once past the clamp', () => {
   const ids = Array.from({ length: MAX_SPINE_INDENT + 3 }, (_, i) => `c${i}`);
   const s = [{ sessionId: 'p' }];
