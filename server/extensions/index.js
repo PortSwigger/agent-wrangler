@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import { isValidBranchName } from '../worktree.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
@@ -265,6 +266,13 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, 'engines.wranglerApi must be a valid semver range');
     }
   }
+  // The branch an opted-in install follows instead of the default (1.39.0),
+  // mirrored in package.json's wranglerExtension block so it is consented to.
+  if (ext.earlyAdopter != null) {
+    if (typeof ext.earlyAdopter !== 'object' || Array.isArray(ext.earlyAdopter) || !isValidBranchName(ext.earlyAdopter.branch)) {
+      fail(ext, 'earlyAdopter must be { branch } with a plain git branch name');
+    }
+  }
   if (ext.stores != null) {
     if (typeof ext.stores !== 'object') fail(ext, 'stores must be an object of factories');
     for (const [name, factory] of Object.entries(ext.stores)) {
@@ -428,7 +436,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField, keybindings,
-    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes,
+    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes, earlyAdopterBranch,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -472,7 +480,14 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // The auto-update opt-in, for the detail pane's switch. False for a
     // builtin or hand-placed entry, which has no record to carry it.
     autoUpdate: Boolean(provenance?.autoUpdate),
+    // Backs the client `api.earlyAdopter`; null when the manifest declares no
+    // branch. The host draws nothing for it.
+    earlyAdopter: earlyAdopterFacts(earlyAdopterBranch, provenance),
   }));
+}
+
+function earlyAdopterFacts(branch, provenance) {
+  return branch ? { branch, enabled: provenance?.earlyAdopter === true } : null;
 }
 
 // Boot-time check for a graph contributor's keys, run once against the real
@@ -602,6 +617,7 @@ function quarantinedEntry(ext, quarantine) {
     external: Boolean(ext?.external),
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
+    earlyAdopterBranch: null,
     quarantine,
   };
 }
@@ -672,6 +688,7 @@ function stageExtension(ext, { cfg, out, reg }) {
     external: Boolean(ext.external),
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
+    earlyAdopterBranch: ext.earlyAdopter?.branch ?? null,
     quarantine: null,
   };
   if (!enabled) {
@@ -782,6 +799,9 @@ function stageExtension(ext, { cfg, out, reg }) {
       // a client-only capability (cards:hideChips) is checked by slots.js, which
       // must know the grant before the first graph. Omitted when empty.
       ...(listEntry.requires.length ? { requires: [...listEntry.requires] } : {}),
+      // api.earlyAdopter, for the same before-the-first-graph reason. Omitted
+      // when the manifest declares no branch.
+      ...(listEntry.earlyAdopterBranch ? { earlyAdopter: earlyAdopterFacts(listEntry.earlyAdopterBranch, ext.provenance) } : {}),
     });
   }
 }

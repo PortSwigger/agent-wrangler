@@ -196,6 +196,9 @@ const extRequires = new Map();
 const extKeybindings = new Map();
 // Extension labels, for the Shortcuts tab's group titles.
 const extLabels = new Map();
+// Each extension's `{ branch, enabled }` early-adopter facts, for api.earlyAdopter.
+// Absent when its manifest declares no branch.
+const extEarlyAdopter = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -208,6 +211,10 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
     if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
     if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
+    if ('earlyAdopter' in e) {
+      if (typeof e.earlyAdopter?.branch === 'string' && e.earlyAdopter.branch) extEarlyAdopter.set(e.id, { branch: e.earlyAdopter.branch, enabled: e.earlyAdopter.enabled === true });
+      else extEarlyAdopter.delete(e.id);
+    }
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -330,6 +337,9 @@ const extApi = {
   openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
+  // Back `api.earlyAdopter`; slots binds the id.
+  earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
+  setEarlyAdopter: setEarlyAdopterAcked,
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
   // Backs slots' per-extension `api.settings()`, which binds the id.
@@ -388,6 +398,34 @@ function setExtSettingAcked(extId, key, value) {
     });
     send({ type: 'ext-setting-set', id: extId, key, value, reqId });
   });
+}
+// api.earlyAdopter.set, the same way: settled by `ext-early-adopter-result`.
+const extEarlyAdopterPending = new Map();
+function setEarlyAdopterAcked(extId, on) {
+  const reqId = `e${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extEarlyAdopterPending.delete(reqId);
+      reject(new Error('Saving the early-adopter choice timed out'));
+    }, 10000);
+    extEarlyAdopterPending.set(reqId, {
+      resolve: (stored) => {
+        const facts = extEarlyAdopter.get(extId);
+        if (facts) extEarlyAdopter.set(extId, { ...facts, enabled: stored });
+        resolve(stored);
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-set-early-adopter', id: extId, on, reqId });
+  });
+}
+function settleEarlyAdopter(msg) {
+  const p = extEarlyAdopterPending.get(msg.reqId);
+  if (!p) return;
+  extEarlyAdopterPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(msg.on === true); else p.reject(new Error(String(msg.error || 'Early-adopter choice refused')));
 }
 function settleExtSetting(msg) {
   const p = extSettingPending.get(msg.reqId);
@@ -6708,6 +6746,7 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
     else if (msg.type === 'restart-tmux-done') {
       tmuxRestarting = false;
       toast('tmux restarted. Resume your sessions to bring them back.');
@@ -6845,7 +6884,10 @@ function onPrComments(msg) {
 }
 // Re-theme a live terminal when the style changes — registered here so theme.js
 // stays decoupled from the terminal's `current` handle.
-onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
+onThemeChange((theme) => {
+  if (current) current.term.options.theme = readTerminalTheme();
+  slots.themeChanged(theme);
+});
 initStyles();
 
 // Constructed once; openTerminal attaches it to each agent terminal it opens.
