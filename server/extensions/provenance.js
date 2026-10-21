@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../data-dir.js';
 import { writeJsonAtomic, readJsonOrLoud } from '../atomic-json.js';
+import { isValidBranchName } from '../worktree.js';
 
 // Where an INSTALLED ("external") extension came from, kept deliberately OUTSIDE
 // config.json: config.json owns the `extensions.<id>` enable/disable flags, which
@@ -10,7 +11,7 @@ import { writeJsonAtomic, readJsonOrLoud } from '../atomic-json.js';
 // hand-edited file in the path of an atomic whole-file rewrite on every install.
 //
 // A record is `{ id, originUrl, sha, installedAt, requires, dependencies,
-// autoUpdate }`, and `requires`/`dependencies` are the whole point of persisting
+// autoUpdate, earlyAdopterBranch, earlyAdopter }`, and `requires`/`dependencies` are the whole point of persisting
 // anything: `requires` is the
 // CONSENTED capability set (a later version's `requires` is diffed against it to
 // decide whether the human must consent again), and `dependencies` is the
@@ -22,10 +23,14 @@ import { writeJsonAtomic, readJsonOrLoud } from '../atomic-json.js';
 // an update that needs no re-consent (see setAutoUpdate); it lives here rather
 // than in config.json because only a record with an origin can be updated at
 // all, and uninstalling removes the record and the opt-in together.
+// `earlyAdopterBranch` is the branch the consented version declared, and
+// `earlyAdopter` the human's opt-in to tracking it (setEarlyAdopter), kept here
+// for the same reasons; trackedBranch reads the two together.
 //
 // This module is a LEAF (see index.js's header): fs/path plus the two state-file
-// leaves, nothing else. It also does no logging — callers own the event lines, and
-// nothing here runs per-tick anyway.
+// leaves and worktree.js's node-only branch-name check, nothing else. It also
+// does no logging — callers own the event lines, and nothing here runs per-tick
+// anyway.
 
 // The same id shape the manifest validator enforces. Exported because install.js
 // checks a third-party manifest's id before it builds any path from it, and two
@@ -115,6 +120,25 @@ export function setAutoUpdate(id, on) {
   return all[id];
 }
 
+// The early-adopter opt-in, the same way: refused for a record with no origin,
+// and for one whose installed version declares no early-adopter branch.
+export function setEarlyAdopter(id, on) {
+  const all = readProvenance();
+  const rec = isValidExtensionId(id) ? all[id] : null;
+  if (!rec?.originUrl) throw new Error(`${id} was not installed from a git URL, so it has no early-adopter builds to follow.`);
+  if (!rec.earlyAdopterBranch) throw new Error(`${id} declares no early-adopter branch.`);
+  all[id] = normalise(id, { ...rec, earlyAdopter: on === true });
+  writeJsonAtomic(provenanceFile(), all, { trailingNewline: true });
+  return all[id];
+}
+
+// The branch an install, update check or update of this record follows instead
+// of the remote's default: its early-adopter branch while opted in, else null.
+// Whether the remote still has that branch is install.js's question.
+export function trackedBranch(rec) {
+  return rec?.earlyAdopter === true && rec.earlyAdopterBranch ? rec.earlyAdopterBranch : null;
+}
+
 // Fixed shape on the way in AND on the way out, so a reader never has to guard
 // `requires`/`dependencies` before diffing them — a missing or non-array value
 // reads as an empty consent/dependency set, which is the conservative direction
@@ -132,6 +156,8 @@ function normalise(id, rec) {
     // Strictly `true`: anything else, including a record written before the
     // flag existed, is off.
     autoUpdate: rec.autoUpdate === true,
+    earlyAdopterBranch: isValidBranchName(rec.earlyAdopterBranch) ? rec.earlyAdopterBranch : null,
+    earlyAdopter: rec.earlyAdopter === true,
   };
 }
 

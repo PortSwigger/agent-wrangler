@@ -446,6 +446,38 @@ test('hasBackgroundShell ignores an unrelated "Running N shell command" tool lin
   assert.equal(hasBackgroundShell(pane), false);
 });
 
+test('hasBackgroundShell detects a monitor-only footer "1 monitor"', () => {
+  const pane = [
+    '❯ ',
+    '  ◆ Sonnet 5 | ⎇ main | 📁 repo',
+    '  ⏵⏵ auto mode on · 1 monitor',
+  ].join('\n');
+  assert.equal(hasBackgroundShell(pane), true);
+});
+
+test('hasBackgroundShell detects the plural footer form "2 monitors"', () => {
+  assert.equal(hasBackgroundShell('  ⏵⏵ auto mode on · 2 monitors · ← for agents'), true);
+});
+
+test('hasBackgroundShell detects a shell and a monitor together', () => {
+  assert.equal(hasBackgroundShell('  ⏵⏵ auto mode on · 1 shell, 1 monitor · ← for agents'), true);
+});
+
+test('hasBackgroundShell detects a monitor footer truncated by a narrow pane', () => {
+  assert.equal(hasBackgroundShell('  ⏵⏵ auto mode on · 1 monitor · ←'), true);
+  assert.equal(hasBackgroundShell('  ⏵⏵ auto mode on · 1 monitor'), true);
+  assert.equal(hasBackgroundShell('  ⏵⏵ auto mode on · 1 shell, 1 mon'), true);
+});
+
+test('hasBackgroundShell ignores unrelated "monitor" text in the scrollback', () => {
+  const pane = [
+    '⏺ Started 1 monitor for the deploy, will check back.',
+    '  The dashboard · 3 monitoring panels are green.',
+    '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+  ].join('\n');
+  assert.equal(hasBackgroundShell(pane), false);
+});
+
 test('hasBackgroundShell is false for empty pane text', () => {
   assert.equal(hasBackgroundShell(''), false);
 });

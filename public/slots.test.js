@@ -1615,3 +1615,42 @@ test('connection listeners refresh extension state on reconnect and disappear on
   slots.connected();
   assert.equal(refreshed, 2);
 });
+
+test('api.earlyAdopter is absent without a declared branch; branch and enabled() read live, set(on) forces the id', async () => {
+  const h = harness();
+  let facts = null;
+  const sent = [];
+  const base = { earlyAdopterFor: (id) => (id === 'a' ? facts : null), setEarlyAdopter: async (id, on) => { sent.push([id, on]); return on; } };
+  const api = h.slots.forExtension('a', base).api;
+  assert.equal(api.earlyAdopter, undefined);
+  facts = { branch: 'next', enabled: false };
+  const ea = api.earlyAdopter;
+  assert.equal(ea.branch, 'next');
+  assert.equal(ea.enabled(), false);
+  assert.equal(api.earlyAdopter, ea, 'built once, so it compares by identity');
+  facts = { branch: 'next', enabled: true };
+  assert.equal(ea.enabled(), true);
+  assert.equal(await ea.set(true), true);
+  assert.deepEqual(sent, [['a', true]]);
+  await assert.rejects(ea.set('yes'), /needs true or false/);
+  assert.equal(h.slots.forExtension('b', base).api.earlyAdopter, undefined, 'another extension sees only its own');
+});
+
+test('api.onThemeChange hears themeChanged until unsubscribed or the extension is removed', () => {
+  const h = harness();
+  const api = h.slots.forExtension('a', {}).api;
+  const seen = [];
+  const off = api.onThemeChange((t) => { seen.push(t); throw new Error('listener bug'); });
+  h.slots.themeChanged({ id: 'light', base: 'light' });
+  h.slots.themeChanged({ id: 'sky', base: 'weird' });
+  assert.deepEqual(seen, [{ id: 'light', base: 'light' }, { id: 'sky', base: 'dark' }]);
+  assert.equal(h.errors.filter((e) => /onThemeChange listener failed/.test(e)).length, 2, 'a throwing listener is reported, not fatal');
+  off();
+  h.slots.themeChanged({ id: 'dark', base: 'dark' });
+  assert.equal(seen.length, 2);
+  h.slots.forExtension('b', {}).api.onThemeChange((t) => seen.push(t));
+  h.slots.removeExtension('b');
+  h.slots.themeChanged({ id: 'dark', base: 'dark' });
+  assert.equal(seen.length, 2);
+  assert.equal(typeof api.onThemeChange('nope'), 'function');
+});

@@ -2216,6 +2216,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-sign { flex: 0 0 12px; text-align: center; user-select: none; color: var(--fg-subtle); }
 .diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 12px; color: var(--fg); }
+/* Only fixed safe-DOM syntax roles; plain punctuation/literals inherit --fg. */
+.diff-text .diff-syntax-comment { color: var(--diff-syntax-comment, var(--fg)); }
+.diff-text .diff-syntax-keyword { color: var(--diff-syntax-keyword, var(--fg)); }
+.diff-text .diff-syntax-string { color: var(--diff-syntax-string, var(--fg)); }
+.diff-text .diff-syntax-function { color: var(--diff-syntax-function, var(--fg)); }
 /* Side-by-side layout. One grid row per pair, so both cells stretch to the taller
    of the two — a long line wrapping on one side can't let the columns drift out of
    step, which is the whole reason the pair is wrapped rather than laid out flat.

@@ -1,3 +1,4 @@
+import { updateDiffSyntaxPalette } from './diff-syntax-palette.js';
 import { esc } from './util.js';
 
 // Style picker: built-in dark/light + drop-in styles (server-compiled manifests
@@ -51,7 +52,8 @@ let currentStyleId = 'dark';
 let appliedVarKeys = [];
 
 // The app registers a callback here to re-theme a live terminal when the style
-// changes — keeps theme.js from importing the terminal's `current` handle.
+// changes — keeps theme.js from importing the terminal's `current` handle. It is
+// called with { id, base }, which app.js also hands to api.onThemeChange.
 let themeChangeHook = null;
 export function onThemeChange(fn) { themeChangeHook = fn; }
 
@@ -105,7 +107,8 @@ function applyStyle(style) {
     for (const k of appliedVarKeys) document.body.style.removeProperty(k);
     appliedVarKeys = Object.keys(vars);
     for (const [k, v] of Object.entries(vars)) document.body.style.setProperty(k, v);
-    themeChangeHook?.();
+    updateDiffSyntaxPalette();
+    themeChangeHook?.({ id: style.id, base: style.base === 'light' ? 'light' : 'dark' });
   }
   setBackground(style);
   setFavicon(style);

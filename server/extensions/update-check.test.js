@@ -113,3 +113,23 @@ test('nothing is auto-updated without the opt-in', async () => {
   assert.equal(asked, 0);
   assert.equal(summary.outdated, 2);
 });
+
+test('an opted-in record is checked and counted against its EA branch; opting out returns it to HEAD', async () => {
+  const rec = { originUrl: 'https://example.invalid/jira.git', sha: 'j0', earlyAdopterBranch: 'next', earlyAdopter: true };
+  const asked = [];
+  const make = (r) => createExtensionUpdateCheck({
+    list: () => [list[1]],
+    provenance: () => ({ 'jira-links': r }),
+    lsRemote: async (url, o) => { asked.push(['ls', o.branch]); return o.branch ? 'jNext' : 'j1'; },
+    count: async (dir, sha, url, o) => { asked.push(['count', o.branch]); return { commits: o.branch ? 4 : 7, capped: false }; },
+    hasGitDir: () => true,
+  });
+  const on = await make(rec)();
+  assert.equal(on.extensions[0].branch, 'next');
+  assert.equal(on.extensions[0].remoteSha, 'jNext');
+  assert.equal(on.commitsBehind, 4);
+  const off = await make({ ...rec, earlyAdopter: false })();
+  assert.equal(off.extensions[0].branch, null);
+  assert.equal(off.extensions[0].remoteSha, 'j1');
+  assert.deepEqual(asked, [['ls', 'next'], ['count', 'next'], ['ls', null], ['count', null]]);
+});

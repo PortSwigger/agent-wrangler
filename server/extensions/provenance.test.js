@@ -13,6 +13,8 @@ import {
   putRecord,
   removeRecord,
   setAutoUpdate,
+  setEarlyAdopter,
+  trackedBranch,
   ensureDirs,
 } from './provenance.js';
 
@@ -36,6 +38,8 @@ const record = (over = {}) => ({
   requires: ['sessions:read', 'tasks:write'],
   dependencies: ['left-pad@1.3.0', 'semver@7.6.0'],
   autoUpdate: false,
+  earlyAdopterBranch: null,
+  earlyAdopter: false,
   ...over,
 });
 
@@ -111,6 +115,7 @@ test('missing or malformed fields normalise instead of throwing', () => {
   assert.deepEqual(Object.keys(all), ['demo']);
   assert.deepEqual(all.demo, {
     id: 'demo', originUrl: null, sha: null, installedAt: null, requires: [], dependencies: [], autoUpdate: false,
+    earlyAdopterBranch: null, earlyAdopter: false,
   });
   clean();
 });
@@ -135,7 +140,7 @@ test('a corrupt file degrades to {} rather than throwing', () => {
 
 test('setAutoUpdate flips only the opt-in, and a record without it reads as off', () => {
   clean();
-  const { autoUpdate, ...legacy } = record();
+  const { autoUpdate, earlyAdopterBranch, earlyAdopter, ...legacy } = record();
   fs.writeFileSync(FILE, JSON.stringify({ demo: legacy }));
   assert.equal(recordFor('demo').autoUpdate, false);
   assert.deepEqual(setAutoUpdate('demo', true), record({ autoUpdate: true }));
@@ -151,5 +156,27 @@ test('setAutoUpdate refuses an id with no record or no origin', () => {
   putRecord(record({ originUrl: null }));
   assert.throws(() => setAutoUpdate('demo', true), /not installed from a git URL/);
   assert.equal(recordFor('demo').autoUpdate, false);
+  clean();
+});
+
+test('setEarlyAdopter flips only the opt-in; trackedBranch names the branch only while it is on', () => {
+  clean();
+  putRecord(record({ earlyAdopterBranch: 'next' }));
+  assert.equal(trackedBranch(recordFor('demo')), null, 'off by default');
+  assert.deepEqual(setEarlyAdopter('demo', true), record({ earlyAdopterBranch: 'next', earlyAdopter: true }));
+  assert.equal(trackedBranch(recordFor('demo')), 'next');
+  setEarlyAdopter('demo', false);
+  assert.equal(trackedBranch(recordFor('demo')), null);
+  clean();
+});
+
+test('setEarlyAdopter refuses a record with no origin or no declared branch; a bad stored branch reads as none', () => {
+  clean();
+  assert.throws(() => setEarlyAdopter('demo', true), /not installed from a git URL/);
+  putRecord(record());
+  assert.throws(() => setEarlyAdopter('demo', true), /declares no early-adopter branch/);
+  fs.writeFileSync(FILE, JSON.stringify({ demo: record({ earlyAdopterBranch: '--upload-pack=x', earlyAdopter: true }) }));
+  assert.equal(recordFor('demo').earlyAdopterBranch, null);
+  assert.equal(trackedBranch(recordFor('demo')), null);
   clean();
 });

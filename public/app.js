@@ -58,7 +58,7 @@ import { createBoardOpen } from './board-open.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -153,6 +153,7 @@ let mailWakesDormant = false;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
+let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
@@ -195,6 +196,9 @@ const extRequires = new Map();
 const extKeybindings = new Map();
 // Extension labels, for the Shortcuts tab's group titles.
 const extLabels = new Map();
+// Each extension's `{ branch, enabled }` early-adopter facts, for api.earlyAdopter.
+// Absent when its manifest declares no branch.
+const extEarlyAdopter = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -207,6 +211,10 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
     if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
     if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
+    if ('earlyAdopter' in e) {
+      if (typeof e.earlyAdopter?.branch === 'string' && e.earlyAdopter.branch) extEarlyAdopter.set(e.id, { branch: e.earlyAdopter.branch, enabled: e.earlyAdopter.enabled === true });
+      else extEarlyAdopter.delete(e.id);
+    }
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -329,6 +337,9 @@ const extApi = {
   openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
+  // Back `api.earlyAdopter`; slots binds the id.
+  earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
+  setEarlyAdopter: setEarlyAdopterAcked,
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
   // Backs slots' per-extension `api.settings()`, which binds the id.
@@ -387,6 +398,34 @@ function setExtSettingAcked(extId, key, value) {
     });
     send({ type: 'ext-setting-set', id: extId, key, value, reqId });
   });
+}
+// api.earlyAdopter.set, the same way: settled by `ext-early-adopter-result`.
+const extEarlyAdopterPending = new Map();
+function setEarlyAdopterAcked(extId, on) {
+  const reqId = `e${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extEarlyAdopterPending.delete(reqId);
+      reject(new Error('Saving the early-adopter choice timed out'));
+    }, 10000);
+    extEarlyAdopterPending.set(reqId, {
+      resolve: (stored) => {
+        const facts = extEarlyAdopter.get(extId);
+        if (facts) extEarlyAdopter.set(extId, { ...facts, enabled: stored });
+        resolve(stored);
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-set-early-adopter', id: extId, on, reqId });
+  });
+}
+function settleEarlyAdopter(msg) {
+  const p = extEarlyAdopterPending.get(msg.reqId);
+  if (!p) return;
+  extEarlyAdopterPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(msg.on === true); else p.reject(new Error(String(msg.error || 'Early-adopter choice refused')));
 }
 function settleExtSetting(msg) {
   const p = extSettingPending.get(msg.reqId);
@@ -672,6 +711,7 @@ function applyGraph(graph) {
   mailWakesDormant = graph.mailWakesDormant === true;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
+  defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
   graphCodeVersion = graph.codeVersion || null;
@@ -725,6 +765,8 @@ function applyGraph(graph) {
   // panel is drawn against the contributions that survive this tick.
   if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
   syncClientExtensions();
+  // After the sync above, so the Settings row offers exactly what #m-runtime does.
+  setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
   // rather than staying blank until the next one — and unconditionally, because
@@ -5479,14 +5521,15 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
-  // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
-  // The extension options go in first so a saved extension runtime can be
-  // selected; one whose extension is now off or gone matches no option (the
-  // select reads back '') and falls back to local.
+  // Restore the saved runtime, or for a new session the Default runtime setting;
+  // syncWorkflow→syncRuntimeToggle re-gates by agent. The extension options go
+  // in first so an extension runtime can be selected; one whose extension is now
+  // off or gone matches no option (the select reads back '') and falls back to local.
   syncExtRuntimeOptions();
   const rtSel = document.getElementById('m-runtime');
-  rtSel.value = d.runtime || 'local';
-  if (rtSel.value !== (d.runtime || 'local')) rtSel.value = 'local';
+  const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
+  rtSel.value = wantRuntime;
+  if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
@@ -6204,6 +6247,7 @@ initSettings({
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
+      if (id === 'defaultRuntime') return defaultRuntime;
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
@@ -6243,6 +6287,9 @@ initSettings({
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
+      } else if (id === 'defaultRuntime') {
+        defaultRuntime = String(value || 'local');
+        send({ type: 'set-default-runtime', runtime: defaultRuntime });
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });
@@ -6706,6 +6753,7 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
     else if (msg.type === 'restart-tmux-done') {
       tmuxRestarting = false;
       toast('tmux restarted. Resume your sessions to bring them back.');
@@ -6843,7 +6891,10 @@ function onPrComments(msg) {
 }
 // Re-theme a live terminal when the style changes — registered here so theme.js
 // stays decoupled from the terminal's `current` handle.
-onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
+onThemeChange((theme) => {
+  if (current) current.term.options.theme = readTerminalTheme();
+  slots.themeChanged(theme);
+});
 initStyles();
 
 // Constructed once; openTerminal attaches it to each agent terminal it opens.

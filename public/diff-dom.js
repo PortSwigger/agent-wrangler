@@ -6,6 +6,7 @@
 // unit-testable under `node --test` with only a minimal `document` stub — the
 // same pure-leaf split as diff.js. Uses the global `document` but never at module
 // scope, so importing it in Node doesn't require a DOM.
+import { LIMITS, SYNTAX_ROLES } from './diff-syntax.js';
 import { lineSide, lineNumberFor, draftKey, draftAnchoredAt, rangeLabel } from './diff.js';
 
 const STATUS_LABEL = {
@@ -209,6 +210,21 @@ export function detachedSectionEl(detached) {
   return sec;
 }
 
+// Accept only fixed role names and exact source reconstruction. Source never
+// passes through an HTML parser, even when the grammar recognizes markup.
+export function decorateTextEl(target, source, segments) {
+  if (!Array.isArray(segments) || segments.length > LIMITS.segments ||
+      segments.some((s) => !s || typeof s.text !== 'string' || (s.role !== '' && !SYNTAX_ROLES.has(s.role))) ||
+      segments.map((s) => s.text).join('') !== source) return false;
+  const frag = document.createDocumentFragment();
+  for (const { text, role } of segments) {
+    frag.append(role ? el('span', `diff-syntax-${role}`, text) : document.createTextNode(text));
+  }
+  target.textContent = '';
+  target.append(frag);
+  return true;
+}
+
 // A single diff line row, followed (in the returned fragment) by a draft block when a
 // draft is ANCHORED at this line (its endLine === this line — so a range's draft hangs
 // under the last line of the span, a single-line draft under its own line). The click
@@ -223,7 +239,7 @@ export function detachedSectionEl(detached) {
 // .diff-line class it hit-tests with .closest) is identical either way, which is what
 // lets findLineRow, highlightRange, paintDragRange and the drag handler stay layout-
 // agnostic.
-export function lineRowEl(file, ln, selectedKeys, gutter = 'both') {
+export function lineRowEl(file, ln, selectedKeys, gutter = 'both', collectText) {
   const side = lineSide(ln.type);
   const num = lineNumberFor(ln);
   const sign = ln.type === 'add' ? '+' : ln.type === 'del' ? '−' : ' ';
@@ -237,13 +253,15 @@ export function lineRowEl(file, ln, selectedKeys, gutter = 'both') {
   row.title = 'Click to comment on this line, or drag to comment on a range';
   if (gutter !== 'new') row.append(el('span', 'diff-gutter diff-gutter-old', ln.oldLine == null ? '' : String(ln.oldLine)));
   if (gutter !== 'old') row.append(el('span', 'diff-gutter diff-gutter-new', ln.newLine == null ? '' : String(ln.newLine)));
-  row.append(el('span', 'diff-sign', sign), el('span', 'diff-text', ln.text));
+  const text = el('span', 'diff-text', ln.text);
+  row.append(el('span', 'diff-sign', sign), text);
+  collectText?.(text, ln, gutter === 'old' ? 'old' : side);
   return row;
 }
 
-export function lineEl(file, ln, drafts, selectedKeys) {
+export function lineEl(file, ln, drafts, selectedKeys, collectText) {
   const frag = document.createDocumentFragment();
-  frag.append(lineRowEl(file, ln, selectedKeys, 'both'));
+  frag.append(lineRowEl(file, ln, selectedKeys, 'both', collectText));
   const anchored = draftAnchoredAt(drafts, file, lineSide(ln.type), lineNumberFor(ln));
   if (anchored) frag.append(draftBlockEl(anchored.key, anchored.draft));
   return frag;
@@ -265,12 +283,12 @@ export function lineEl(file, ln, drafts, selectedKeys) {
 // side from either cell — so its single draft is de-duplicated by key rather than
 // emitted once per cell. A del/add pair legitimately yields two distinct drafts (an
 // old-side note and a new-side one), and both render.
-export function pairRowEl(file, pair, drafts, selectedKeys) {
+export function pairRowEl(file, pair, drafts, selectedKeys, collectText) {
   const frag = document.createDocumentFragment();
   const wrap = el('div', 'diff-row');
   wrap.append(
-    pair.left ? lineRowEl(file, pair.left, selectedKeys, 'old') : el('div', 'diff-cell-empty'),
-    pair.right ? lineRowEl(file, pair.right, selectedKeys, 'new') : el('div', 'diff-cell-empty'),
+    pair.left ? lineRowEl(file, pair.left, selectedKeys, 'old', collectText) : el('div', 'diff-cell-empty'),
+    pair.right ? lineRowEl(file, pair.right, selectedKeys, 'new', collectText) : el('div', 'diff-cell-empty'),
   );
   frag.append(wrap);
 

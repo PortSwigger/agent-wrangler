@@ -40,7 +40,7 @@ function makeDoc() {
 }
 globalThis.document = makeDoc();
 
-const { fileHeaderEl, hunkHeadEl, lineEl, pairRowEl, draftBlockEl, noticeEl, editorEl, fileListEl, orderFilesForDisplay } = await import('./diff-dom.js');
+const { decorateTextEl, fileHeaderEl, hunkHeadEl, lineEl, pairRowEl, draftBlockEl, noticeEl, editorEl, fileListEl, orderFilesForDisplay } = await import('./diff-dom.js');
 
 // Recursively find the first element node carrying `cls` in its className.
 function byClass(node, cls) {
@@ -326,4 +326,32 @@ test('pairRowEl: selectedKeys tints a cell in an active range with .selected', (
   const [leftCell, rightCell] = allByClass(frag.childNodes[0], 'diff-line');
   assert.ok(leftCell.className.split(' ').includes('selected'));
   assert.ok(!rightCell.className.split(' ').includes('selected'));
+});
+
+test('syntax decoration keeps hostile markup literal and preserves source and row anchors', () => {
+  const ln = { type: 'add', text: XSS, oldLine: null, newLine: 7 };
+  const frag = lineEl('a.js', ln, {});
+  const row = frag.childNodes[0], source = byClass(row, 'diff-text');
+  const before = { ...row.dataset };
+  assert.equal(decorateTextEl(source, XSS, [{ role: 'string', text: XSS }]), true);
+  assert.equal(source.textContent, XSS);
+  assert.equal(source.childNodes[0].tagName, 'SPAN');
+  assert.equal(source.childNodes[0].className, 'diff-syntax-string');
+  assert.equal(source.innerHTML, '');
+  assert.deepEqual(row.dataset, before);
+  assert.equal(decorateTextEl(source, XSS, [{ role: 'evil', text: XSS }]), false);
+  assert.equal(decorateTextEl(source, XSS, [{ role: 'string', text: 'wrong' }]), false);
+  assert.equal(source.textContent, XSS);
+});
+
+test('split collectors receive distinct old/new context targets with shared comment addressing', () => {
+  const ln = { type: 'context', text: 'same', oldLine: 3, newLine: 4 };
+  const targets = [];
+  const frag = pairRowEl('a.js', { left: ln, right: ln }, {}, null, (el, line, side) => targets.push({ el, line, side }));
+  assert.deepEqual(targets.map((t) => t.side), ['old', 'new']);
+  assert.ok(targets.every((t) => t.line === ln && t.el.textContent === 'same'));
+  const [left, right] = frag.childNodes[0].childNodes;
+  assert.equal(left.dataset.side, 'new');
+  assert.equal(right.dataset.side, 'new');
+  assert.equal(left.dataset.key, right.dataset.key);
 });

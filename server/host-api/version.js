@@ -308,13 +308,23 @@ import semver from 'semver';
 // a viewer panel (markdown rendered, images shown). `api.files` is undefined on
 // an older board, so a manifest that needs it declares `^1.38.0`.
 //
-// 1.39.0 adds the client value slot `file.open` and the client-only capability
+// 1.39.0 adds the manifest's optional `earlyAdopter: { branch }` (mirrored in
+// package.json's wranglerExtension block) and a per-install opt-in that makes
+// install, the update check and updates follow that branch, falling back to the
+// default branch when the remote lacks it. The host draws no UI for it: the
+// client gets `api.earlyAdopter` (`branch`, `enabled()`, `set(on)`) and
+// `api.onThemeChange(fn)`, so an extension builds its own. An older server
+// ignores the key and an older board has neither api, so a manifest that needs
+// them declares `^1.39.0`.
+//
+// 1.40.0 adds the client value slot `file.open` and the client-only capability
 // `files:open` that gates it: `open({ path, sessionId, source }, graph, api)`
 // returning true takes a file link clicked in a session's chat or terminal
 // (`source` 'chat' or 'terminal') instead of the board's preview. Contributions
 // are asked in load order and the first true wins. An older board throws on the
-// unknown slot name, so a manifest that uses it declares `^1.39.0`.
-export const HOST_API_VERSION = '1.39.0';
+// unknown slot name, so a manifest that uses it declares `^1.40.0`.
+//
+export const HOST_API_VERSION = '1.40.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

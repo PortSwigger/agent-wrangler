@@ -17,7 +17,8 @@ Optional launch controls include:
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
-  host.
+  host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
+  no longer offered or can't run the chosen agent falls back to Local.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
