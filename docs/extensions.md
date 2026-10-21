@@ -39,6 +39,16 @@ the same lockfile and host API checks as an update you start yourself. Otherwise
 button for you to review, and its detail pane says why it was not applied. The updated code loads at
 the next restart: the panel offers **Restart now** where the wrangler can restart itself.
 
+### Early-adopter builds
+
+An extension can publish early builds on a branch of its own repository and declare it as
+`earlyAdopter: { branch }` (see below). Agent Wrangler draws no switch for it: the extension offers
+its own way to opt in. While an install is opted in, reinstalling it, checking it for updates and
+updating it all follow that branch instead of the repository's default branch, and fall back to the
+default branch while the remote has no such branch. Opting out takes effect at the next update,
+which returns to the default branch. Updates from the branch still go through the same review,
+lockfile and host API checks, and through Auto-update only if that is on as well.
+
 **+ Add extension** also lists public GitHub repositories tagged with the
 [`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
 the owner's avatar, description, stars, language and last update. **Install…** on a card goes through
@@ -98,7 +108,8 @@ An installable repository needs `package.json` and an `index.js` with a default 
     "description": "Adds an example capability to Agent Wrangler.",
     "author": "Your team",
     "requires": [],
-    "engines": { "wranglerApi": "^1.31.0" }
+    "engines": { "wranglerApi": "^1.31.0" },
+    "earlyAdopter": { "branch": "next" }
   }
 }
 ```
@@ -111,9 +122,13 @@ export default {
   author: 'Your team',
   requires: [],
   engines: { wranglerApi: '^1.31.0' },
+  earlyAdopter: { branch: 'next' },
   defaultEnabled: true,
 };
 ```
+
+`earlyAdopter` is optional (1.39.0). Its `branch` must be a branch name `git check-ref-format
+--branch` accepts and not start with `-`, and the two copies must match.
 
 To list a public extension under **+ Add extension**, add the `agent-wrangler-extension` topic to its
 GitHub repository.
@@ -152,6 +167,8 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 - Declare `engines.wranglerApi` (optional) in both places: the `package.json` copy lets install and update
   refuse an incompatible version before asking for consent, and the manifest's copy is checked again
   after consent and at every boot.
+- Declare `earlyAdopter.branch` (optional) in both places too: the `package.json` copy is what is
+  consented to and recorded, so a reinstall can clone that branch before any manifest is imported.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
 
@@ -360,6 +377,22 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   only a finished update's `ext-install-done` (`automatic: true`,
   `restartRequired`) is broadcast, so every tab gets the restart affordance. The
   restart semantics below are unchanged: updated code loads at the next start.
+- **Early adopter is a PER-INSTALL opt-in on the provenance record too**
+  (`earlyAdopter`, strictly `true`), next to the branch the consented version
+  declared (`earlyAdopterBranch`, from `readDeclaration`; `ext-consent` refuses a
+  manifest whose `earlyAdopter.branch` differs from it). `setEarlyAdopter`
+  refuses a record with no `originUrl` or no branch, and `trackedBranch(record)`
+  is the one reader: the branch while opted in, else null. Every git path takes
+  it as `{ branch }` (`install.js`): `cloneTo` adds `--branch`, `lsRemoteHead`
+  asks for `HEAD` and `refs/heads/<branch>` in one call and prefers the branch,
+  `countCommitsBehind` fetches `refs/heads/<branch>`, and each falls back to
+  `HEAD` when the remote lacks the branch (`remoteHasBranch`). `ext-install`
+  looks the branch up from the record whose `originUrl` is the frame's URL, never
+  from the frame. `isValidBranchName` (`server/worktree.js`) is checked at the
+  manifest, the declaration, the record and again before git sees the name, which
+  only ever reaches git as one argv element or `refs/heads/<name>`. With no
+  branch every argv is exactly what it was before. The host draws no UI for it;
+  `ext-set-early-adopter` is sent only by the client `api.earlyAdopter.set`.
 - **One install at a time per instance, REFUSED not queued, behind an in-memory
   lock.** The staging dir (`<DATA_DIR>/extensions/.tmp/<tempId>/`) is the only
   durable artefact an interrupted install leaves, and boot sweeps it
@@ -1114,6 +1147,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   own their playback. A thrown or rejected callback is reported without interrupting
   the board or other contributors. Removing an extension removes its callbacks immediately.
   A manifest using this slot declares `^1.35.0`.
+- **`api.earlyAdopter`** (1.39.0) is present only when the manifest declares
+  `earlyAdopter.branch`: `branch` (that name), `enabled()` (this install's opt-in,
+  read live from the announcement and the graph's `extensions[].earlyAdopter`) and
+  `set(on)`, which takes a boolean and resolves with the stored value or rejects
+  with the server's reason (for example a hand-placed install, which has no
+  origin to follow). The board draws nothing for it, so the extension owns its
+  own, typically hidden, switch. Turning it off changes nothing until the next
+  update, which comes from the default branch.
+- **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
+  board applies a different theme palette (`id` the style, `base` `'dark'` or
+  `'light'`). Returns an unsubscribe function; listeners go with the extension. A
+  manifest using either declares `^1.39.0`.
 - **`api.onConnect(fn)`** (1.35.0) subscribes to subsequent control-socket connections,
   so a client can refresh shared state after reconnecting. Returns an unsubscribe function;
   disabling or removing the extension drops its listeners. It does not fire immediately on

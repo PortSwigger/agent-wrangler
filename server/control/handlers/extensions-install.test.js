@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler,
-  extSetAutoUpdateHandler, autoUpdateExtension,
+  extSetAutoUpdateHandler, extSetEarlyAdopterHandler, autoUpdateExtension,
   _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
 import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
@@ -68,13 +68,13 @@ function reply(c, type) {
 function fakeClone({
   id = 'notes', requires = [], lock = true, declaration = true, deps = true,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
-  range = null, declaredRange = range,
+  range = null, declaredRange = range, earlyAdopter = null, declaredEarlyAdopter = earlyAdopter,
 } = {}) {
   return async (_url, dest) => {
     fs.mkdirSync(dest, { recursive: true });
     const body = indexThrows
       ? "throw new Error('index.js executed at disclosure time');\n"
-      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  defaultEnabled: ${JSON.stringify(defaultEnabled)},\n  requires: ${JSON.stringify(requires)},\n${range ? `  engines: { wranglerApi: ${JSON.stringify(range)} },\n` : ''}};\n`;
+      : `export default {\n  id: ${JSON.stringify(id)},\n  label: 'Notes',\n  description: 'Keeps notes.',\n  author: 'A Colleague',\n  defaultEnabled: ${JSON.stringify(defaultEnabled)},\n  requires: ${JSON.stringify(requires)},\n${range ? `  engines: { wranglerApi: ${JSON.stringify(range)} },\n` : ''}${earlyAdopter ? `  earlyAdopter: { branch: ${JSON.stringify(earlyAdopter)} },\n` : ''}};\n`;
     fs.writeFileSync(path.join(dest, 'index.js'), body);
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
@@ -84,6 +84,7 @@ function fakeClone({
         wranglerExtension: {
           id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
           ...(declaredRange ? { engines: { wranglerApi: declaredRange } } : {}),
+          ...(declaredEarlyAdopter ? { earlyAdopter: { branch: declaredEarlyAdopter } } : {}),
         },
       } : {}),
     }));
@@ -609,5 +610,94 @@ test('ext-set-auto-update persists the opt-in for a git install and refuses buil
   await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'by-hand', on: true }, c), /not installed from a git URL/);
   await extSetAutoUpdateHandler.handler({ id: 'notes', on: false }, c);
   assert.equal(readProvenance().notes.autoUpdate, false);
+  reset();
+});
+
+// ── early adopter ────────────────────────────────────────────────────────────
+
+// useFakes, with every clone's `{ branch }` option recorded.
+function useCloneSpy(opts = {}) {
+  const clones = [];
+  const clone = fakeClone(opts);
+  _setInstallRunnersForTests({
+    clone: async (url, dest, o = {}) => { clones.push({ url, branch: o.branch ?? null }); return clone(url, dest); },
+    head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: async () => ({ commits: [], truncated: false }),
+  });
+  return clones;
+}
+
+async function installWith(c, opts) {
+  const clones = useCloneSpy(opts);
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c);
+  await extConsentHandler.handler({ type: 'ext-consent', tempId: reply(c, 'ext-install-disclosure').tempId, approve: true }, c);
+  return clones;
+}
+
+test('an extension with no earlyAdopter block installs and updates from the default branch, its record off', async () => {
+  reset();
+  const first = await installWith(ctx(), {});
+  assert.deepEqual(first, [{ url: URL_NOTES, branch: null }]);
+  assert.equal(readProvenance().notes.earlyAdopterBranch, null);
+  assert.equal(readProvenance().notes.earlyAdopter, false);
+  const update = await installWith(ctx([{ id: 'notes', external: true }]), { sha: 'd'.repeat(40) });
+  assert.deepEqual(update, [{ url: URL_NOTES, branch: null }]);
+  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'notes', on: true }, ctx([{ id: 'notes', external: true }])), /declares no early-adopter branch/);
+  reset();
+});
+
+test('the declared branch is recorded at consent; the opt-in makes a reinstall clone it, and survives the update', async () => {
+  reset();
+  assert.deepEqual(await installWith(ctx(), { earlyAdopter: 'next' }), [{ url: URL_NOTES, branch: null }], 'a fresh install starts on the default branch');
+  assert.equal(readProvenance().notes.earlyAdopterBranch, 'next');
+  assert.equal(readProvenance().notes.earlyAdopter, false);
+  const c = ctx([{ id: 'notes', external: true }]);
+  await extSetEarlyAdopterHandler.handler({ id: 'notes', on: true, reqId: 'r1' }, c);
+  assert.deepEqual(reply(c, 'ext-early-adopter-result'), { type: 'ext-early-adopter-result', reqId: 'r1', ok: true, on: true });
+  assert.equal(c.calls.rebuild, 1);
+  assert.deepEqual(await installWith(ctx([{ id: 'notes', external: true }]), { earlyAdopter: 'next', sha: 'e'.repeat(40) }), [{ url: URL_NOTES, branch: 'next' }]);
+  assert.equal(readProvenance().notes.earlyAdopter, true, 'an update keeps the opt-in');
+  assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
+  // Off again: the next update is from the default branch.
+  await extSetEarlyAdopterHandler.handler({ id: 'notes', on: false }, ctx([{ id: 'notes', external: true }]));
+  assert.deepEqual(await installWith(ctx([{ id: 'notes', external: true }]), { earlyAdopter: 'next' }), [{ url: URL_NOTES, branch: null }]);
+  reset();
+});
+
+test('a manifest whose earlyAdopter branch differs from the disclosed one fails the install', async () => {
+  reset();
+  const c = ctx();
+  useFakes({ earlyAdopter: 'next', declaredEarlyAdopter: 'beta' });
+  await extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c);
+  await assert.rejects(
+    extConsentHandler.handler({ type: 'ext-consent', tempId: reply(c, 'ext-install-disclosure').tempId, approve: true }, c),
+    /early-adopter branch "next" but its package.json disclosed "beta"/,
+  );
+  assert.equal(readProvenance().notes, undefined);
+  reset();
+});
+
+test('ext-check-updates asks for the EA branch only while opted in', async () => {
+  reset();
+  putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'a'.repeat(40), earlyAdopterBranch: 'next', earlyAdopter: true });
+  const asked = [];
+  _setInstallRunnersForTests({ lsRemote: async (url, o = {}) => { asked.push(o.branch ?? null); return 'b'.repeat(40); } });
+  const c = ctx([{ id: 'notes', external: true }]);
+  await extCheckUpdatesHandler.handler({ type: 'ext-check-updates' }, c);
+  assert.equal(reply(c, 'ext-updates').extensions[0].branch, 'next');
+  await extSetEarlyAdopterHandler.handler({ id: 'notes', on: false }, c);
+  await extCheckUpdatesHandler.handler({ type: 'ext-check-updates' }, c);
+  assert.deepEqual(asked, ['next', null]);
+  reset();
+});
+
+test('ext-set-early-adopter replies a refusal on its reqId, and refuses builtin and hand-placed ones', async () => {
+  reset();
+  const c = ctx([{ id: 'by-hand', external: true }, { id: 'core', label: 'Core' }]);
+  await extSetEarlyAdopterHandler.handler({ id: 'by-hand', on: true, reqId: 'r2' }, c);
+  const refused = reply(c, 'ext-early-adopter-result');
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /not installed from a git URL/);
+  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  assert.equal(c.calls.rebuild, 0);
   reset();
 });

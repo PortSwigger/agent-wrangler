@@ -134,3 +134,12 @@ test('palette: a manifest that only repoints its wallpaper does not re-set vars 
   assert.equal(body.style.props.get('--fg'), '#def');
   onThemeChange(null);
 });
+
+test('the re-theme hook is told which style it now is, for api.onThemeChange', () => {
+  const seen = [];
+  onThemeChange((t) => seen.push(t));
+  selectStyle('light');
+  selectStyle('dark');
+  assert.deepEqual(seen, [{ id: 'light', base: 'light' }, { id: 'dark', base: 'dark' }]);
+  onThemeChange(null);
+});

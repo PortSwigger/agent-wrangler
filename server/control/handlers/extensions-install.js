@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
-import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate } from '../../extensions/provenance.js';
+import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
@@ -228,6 +228,9 @@ function assertManifestMatchesDeclaration(manifest, declared) {
   if (manifest.id !== declared.id) {
     throw new Error(`The extension's index.js declares id "${manifest.id}" but its package.json disclosed "${declared.id}" — refusing to install a manifest that does not match what was consented to.`);
   }
+  if ((manifest.earlyAdopter?.branch ?? null) !== declared.earlyAdopterBranch) {
+    throw new Error(`The extension's index.js declares early-adopter branch ${JSON.stringify(manifest.earlyAdopter?.branch ?? null)} but its package.json disclosed ${JSON.stringify(declared.earlyAdopterBranch)} — refusing to install a manifest that does not match what was consented to.`);
+  }
   const consented = new Set(declared.requires);
   const extra = [...new Set((manifest.requires || []).filter((c) => !consented.has(c)))];
   if (extra.length) {
@@ -308,7 +311,11 @@ export const extInstallHandler = {
     try {
       ensureDirs();
       progress(ctx, 'cloning', { url });
-      await runners.clone(url, dir);
+      // An installed extension from this URL that opted in to early-adopter
+      // builds is reinstalled from its EA branch. Looked up server-side from the
+      // record, never taken from the frame.
+      const branch = earlyAdopterBranchFor(url);
+      await runners.clone(url, dir, { branch });
       progress(ctx, 'resolving');
       // Static read — the manifest module is NOT imported until after consent.
       let declared;
@@ -352,7 +359,7 @@ export const extInstallHandler = {
         ...(existing ? updateDiff(existing, declared, deps) : { update: false, reconsentNeeded: true }),
         ...(history ? { commits: history.commits, commitsTruncated: history.truncated } : {}),
       };
-      pending.set(tempId, { url, sha, declared, deps, dir });
+      pending.set(tempId, { url, sha, declared, deps, dir, branch });
       busy.awaitingConsent = true;
       busy.since = Date.now();
       // The lock is HELD across the human's decision, deliberately: the staging
@@ -376,7 +383,7 @@ export const extConsentHandler = {
     const staged = pending.get(msg.tempId);
     if (!staged) throw new Error('That install is no longer pending — start it again.');
     pending.delete(msg.tempId);
-    const { url, sha, declared, deps, dir } = staged;
+    const { url, sha, declared, deps, dir, branch } = staged;
     try {
       if (!msg.approve) {
         rmQuiet(dir);
@@ -423,11 +430,13 @@ export const extConsentHandler = {
         // against this record at every boot.
         requires: [...declared.requires],
         dependencies: deps.all,
-        // An update keeps the human's auto-update opt-in; a fresh install
-        // (no record yet) starts with it off.
+        // An update keeps the human's auto-update and early-adopter opt-ins; a
+        // fresh install (no record yet) starts with both off.
         autoUpdate: recordFor(manifest.id)?.autoUpdate === true,
+        earlyAdopterBranch: declared.earlyAdopterBranch,
+        earlyAdopter: recordFor(manifest.id)?.earlyAdopter === true,
       });
-      log(`[agent-wrangler] extension ${manifest.id} installed from ${url} at ${sha.slice(0, 8)}`);
+      log(`[agent-wrangler] extension ${manifest.id} installed from ${url}${branch ? ` (early-adopter branch ${branch} if present)` : ''} at ${sha.slice(0, 8)}`);
       if (registered) {
         progress(ctx, 'done', { id: manifest.id, restartRequired: true });
         ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, restartRequired: true });
@@ -497,9 +506,10 @@ export const extCheckUpdatesHandler = {
       // `provenance: null` — a hand-dropped directory — has no originUrl to ask
       // about, so it is skipped rather than reported as up to date.
       if (!record?.originUrl) { out.push({ id: entry.id, updatable: false }); continue; }
+      const branch = trackedBranch(record);
       try {
-        const head = await runners.lsRemote(record.originUrl);
-        out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, sha: record.sha || '', remoteSha: head, behind: Boolean(record.sha) && head !== record.sha });
+        const head = await runners.lsRemote(record.originUrl, { branch });
+        out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, branch, sha: record.sha || '', remoteSha: head, behind: Boolean(record.sha) && head !== record.sha });
       } catch (err) {
         out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, error: String(err?.message || err) });
       }
@@ -526,6 +536,43 @@ export const extSetAutoUpdateHandler = {
     await ctx.rebuild();
   },
 };
+
+// api.earlyAdopter.set (1.39.0): the client sends this frame with its own id
+// forced by slots.js, and the outcome is replied as `ext-early-adopter-result`
+// on `reqId` so the promise settles. Nothing is fetched here: the next update
+// check and update follow the new choice, which is how turning it off returns
+// to the default branch.
+export const extSetEarlyAdopterHandler = {
+  type: 'ext-set-early-adopter',
+  async handler(msg, ctx) {
+    const reqId = typeof msg.reqId === 'string' && msg.reqId && msg.reqId.length <= 64 ? msg.reqId : null;
+    let record;
+    try {
+      const id = String(msg.id || '');
+      const known = ctx.ext.list.find((e) => e.id === id);
+      if (!known) throw new Error(`Unknown extension: ${id}`);
+      if (!known.external) throw new Error(`${id} ships with the wrangler and is updated with it.`);
+      record = setEarlyAdopter(id, msg.on === true);
+      known.provenance = { ...known.provenance, earlyAdopter: record.earlyAdopter };
+      log(`[agent-wrangler] extension ${id} early-adopter builds ${record.earlyAdopter ? `on (${record.earlyAdopterBranch})` : 'off'}`);
+    } catch (err) {
+      if (!reqId) throw err;
+      ctx.reply({ type: 'ext-early-adopter-result', reqId, ok: false, error: String(err?.message || err) });
+      return;
+    }
+    if (reqId) ctx.reply({ type: 'ext-early-adopter-result', reqId, ok: true, on: record.earlyAdopter });
+    await ctx.rebuild();
+  },
+};
+
+// The branch a (re)install from `url` clones: the early-adopter branch of an
+// installed extension from that origin that opted in, else null (the default).
+function earlyAdopterBranchFor(url) {
+  for (const record of Object.values(readProvenance())) {
+    if (record.originUrl === url && trackedBranch(record)) return trackedBranch(record);
+  }
+  return null;
+}
 
 // The update tick's apply path for an extension whose record opts in
 // (provenance.js setAutoUpdate). It is ext-install then ext-consent, run back

@@ -25,7 +25,7 @@ import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { defaultRuntimeHandler } from './default-runtime.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
-import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler } from './extensions-install.js';
+import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler, extSetEarlyAdopterHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { extBrowseHandler } from './ext-browse.js';
 import { restartHandler } from './restart.js';
@@ -104,6 +104,7 @@ export const CONTROL_HANDLERS = [
   extUninstallHandler,
   extCheckUpdatesHandler,
   extSetAutoUpdateHandler,
+  extSetEarlyAdopterHandler,
   extBrowseHandler,
   restartHandler,
   restartTmuxHandler,
