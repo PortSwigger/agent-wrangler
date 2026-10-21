@@ -412,6 +412,10 @@ export function trustDialogState(paneText) {
 // the trailing-middot form silently stopped matching once the pane was
 // narrower than the full "· N shell(s) · …" segment, while requiring only the
 // leading middot survives down to the word "shell(s)" itself being cut.
+// A running Monitor tool shows in the same footer ("· 1 monitor", or
+// "· 1 shell, 1 monitor" alongside a shell) and dies with the pane just the
+// same, so it counts as a background job too; it gets the same leading-middot
+// rule, which a monitor-only footer needs because no shell segment precedes it.
 // Codex's "N background terminal(s) running · /ps to view · /stop to close" is
 // distinctive enough on its own (verified against a real `codex` session).
 // Killing the pane kills these jobs regardless of agent; only Claude's CLI
@@ -419,7 +423,7 @@ export function trustDialogState(paneText) {
 // record was found") — Codex degrades gracefully instead — but both leave the
 // job dead all the same, so both are worth the same suspend/archive caution.
 const BACKGROUND_SHELL_PATTERNS = {
-  claude: /·\s*\d+\s+shells?\b/,
+  claude: /·\s*\d+\s+(?:shells?|monitors?)\b/,
   codex: /\d+\s+background terminals?\s+running/i,
 };
 
