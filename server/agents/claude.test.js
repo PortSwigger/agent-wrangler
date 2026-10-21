@@ -357,3 +357,14 @@ test('derivedModels offers an unaliased family by its newest id and skips aliase
     { value: 'claude-zeta-3-2', label: 'Zeta 3.2', pillLabel: 'zeta 3.2', transcriptPrefixes: ['claude-zeta-'] },
   ]);
 });
+
+for (const method of ['buildLaunch', 'buildResume', 'buildFork']) {
+  test(`claude ${method} uses the selected permission mode and defaults to auto`, () => {
+    const opts = { sessionId: 'CARD', resumeId: 'LIVE', sourceId: 'SRC' };
+    assert.match(claude[method](opts), /'--permission-mode' 'auto'/);
+    for (const permissionMode of ['manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+      assert.ok(claude[method]({ ...opts, permissionMode }).includes(`'--permission-mode' '${permissionMode}'`));
+    }
+    assert.throws(() => claude[method]({ ...opts, permissionMode: 'invalid' }), /permission mode/i);
+  });
+}

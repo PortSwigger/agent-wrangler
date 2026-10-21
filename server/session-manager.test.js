@@ -151,7 +151,7 @@ test('forkEntry: inherits parent intent/model, records provenance, no custom nam
   assert.deepEqual(entry, {
     short: 'abcd1234', tmux: 'cc_abcd1234', cwd: '/repo',
     agent: 'claude',
-    intent: 'fix the bug', name: undefined, model: 'sonnet',
+    intent: 'fix the bug', name: undefined, model: 'sonnet', permissionMode: 'auto',
     createdAt: 123, forkedFrom: 'parent-O', liveSessionId: undefined, runtime: undefined, runtimeExt: undefined,
     mailCapable: true,
   });
@@ -3230,4 +3230,33 @@ test('killForSession lists the pane processes before kill-session so the agent i
   };
   await sm.killForSession('CARD');
   assert.deepEqual(verbs, ['list-panes', 'kill-session', 'has-session']);
+});
+
+for (const permissionMode of [undefined, 'bypassPermissions']) {
+  test(`dispatch and resume preserve permission mode ${permissionMode ?? 'auto'}`, async () => {
+    const sm = smForDispatch();
+    let captured = '';
+    sm._newSession = async (_t, _d, inner) => { captured = inner; };
+    sm.killForSession = async () => [];
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', permissionMode });
+    const expected = permissionMode ?? 'auto';
+    assert.equal(sm.map.get(sessionId).permissionMode, expected);
+    assert.ok(captured.includes(`'--permission-mode' '${expected}'`));
+    await withRuntime({ id: 'permission-test', label: 'Test', skipsHostResumeGuard: true, wrapLaunch: async ({ inner }) => inner }, 'permission-test', async () => {
+      sm.map.get(sessionId).runtime = 'permission-test';
+      await sm.resume(sessionId, os.tmpdir());
+      assert.ok(captured.includes(`'--permission-mode' '${expected}'`));
+      assert.equal(sm.map.get(sessionId).permissionMode, expected);
+      const fork = await sm.fork({ sourceId: sm.map.get(sessionId).liveSessionId, parentId: sessionId, parentEntry: sm.map.get(sessionId), cwd: os.tmpdir() });
+      assert.ok(captured.includes(`'--permission-mode' '${expected}'`));
+      assert.equal(sm.map.get(fork.sessionId).permissionMode, expected);
+    });
+  });
+}
+
+test('dispatch rejects invalid and unsupported permission modes before launch', async () => {
+  const sm = smForDispatch();
+  for (const opts of [{ permissionMode: 'invalid' }, { agent: 'codex', permissionMode: 'manual' }]) {
+    await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), ...opts }), /permission mode/i);
+  }
 });

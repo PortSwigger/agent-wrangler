@@ -1,3 +1,4 @@
+import { permissionModeError, runtimePermissionModeError } from './agents/permission-mode.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -217,6 +218,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     intent: parentEntry?.intent || '(forked)',
     name: explicit ? name.trim() : (parentEntry?.name || undefined),
     model: parentEntry?.model ?? null,
+    permissionMode: parentEntry?.permissionMode ?? 'auto',
     ...(parentEntry?.autoCompactTokens === undefined ? {} : { autoCompactTokens: parentEntry.autoCompactTokens }),
     createdAt,
     forkedFrom: parentId,
@@ -312,6 +314,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     nameInherited: prev?.nameInherited,
     model: prev?.model ?? null,
     effort: prev?.effort ?? null,
+    permissionMode: prev?.permissionMode ?? 'auto',
     ...(prev?.autoCompactTokens === undefined ? {} : { autoCompactTokens: prev.autoCompactTokens }),
     createdAt: prev?.createdAt ?? now,
     // When THIS relaunch happened, as distinct from createdAt (the card's birth,
@@ -1190,7 +1193,7 @@ export class SessionManager {
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
-      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, autoCompactTokens: prev?.autoCompactTokens,
+      sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
       addDirs,
       launchContext,
@@ -1285,7 +1288,7 @@ export class SessionManager {
     // fires after this launch, so the parent's card id is how an extension finds it.
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
       launchContext,
       disabledSkills,
@@ -1808,9 +1811,12 @@ export class SessionManager {
     return this._whileLaunching(() => this._doDispatch(opts));
   }
 
-  async _doDispatch({ cwd, intent = '', model, effort, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
+  async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false } = {}) {
+    const modeError = permissionModeError(permissionMode, agent);
+    if (modeError) throw new Error(modeError);
+    permissionMode ??= 'auto';
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
@@ -1838,6 +1844,8 @@ export class SessionManager {
     // extension data (an extension runtime's binding narrows `ext` to its own
     // slice) — and a runtime that doesn't care ignores the extra keys.
     const rt = runtimeFor(runtime);
+    const runtimeModeError = runtimePermissionModeError(permissionMode, rt);
+    if (runtimeModeError) throw new Error(runtimeModeError);
     const agentErr = runtimeAgentError(rt, agent);
     if (agentErr) throw new Error(agentErr);
     const preflightErr = rt.preflight
@@ -1938,7 +1946,7 @@ export class SessionManager {
     const inner = builds
       ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
-        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy }),
+        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
       });
     const launchedAt = Date.now();
@@ -1964,7 +1972,7 @@ export class SessionManager {
     // `mailCapable: false` for a buildLaunch runtime (its command has no
     // --mcp-config, so no read_mail) and for one with `deliver`, which is how
     // send_message routes a peer message to that `deliver` instead.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

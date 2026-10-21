@@ -4310,6 +4310,7 @@ function renderPanel(sessionId) {
   const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
+  if (s.permissionMode && s.agent === 'claude') chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));
