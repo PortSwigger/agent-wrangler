@@ -115,7 +115,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
-    hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, quarantine: null,
+    hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -747,7 +747,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
-    handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, quarantine: 'no index.js',
+    handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1210,4 +1210,21 @@ test('declared keybindings land on the announcement and the graph as copies, omi
   assert.deepEqual(extensionsForGraph(out.list, () => true)[0].keybindings, [{ combo: 'ctrl+cmd+k', scope: 'global' }]);
   const none = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [] })] });
   assert.deepEqual(none.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js' }]);
+});
+
+test('earlyAdopter: a plain branch reaches the graph and the client announcement; anything else quarantines', () => {
+  rejects(manifest({ earlyAdopter: 'next' }), /Extension fake: earlyAdopter must be \{ branch \}/);
+  rejects(manifest({ earlyAdopter: { branch: '--upload-pack=x' } }), /earlyAdopter must be \{ branch \}/);
+  rejects(manifest({ earlyAdopter: {} }), /earlyAdopter must be \{ branch \}/);
+
+  const plain = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js' })] });
+  assert.equal(extensionsForGraph(plain.list)[0].earlyAdopter, null, 'no block, no facts');
+  assert.ok(!('earlyAdopter' in plain.clientManifest[0]), 'and the announcement is unchanged');
+
+  const provenance = { originUrl: 'https://example.invalid/x.git', sha: 'a'.repeat(40), earlyAdopter: true };
+  const ea = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', earlyAdopter: { branch: 'next' }, provenance })] });
+  assert.deepEqual(extensionsForGraph(ea.list)[0].earlyAdopter, { branch: 'next', enabled: true });
+  assert.deepEqual(ea.clientManifest[0].earlyAdopter, { branch: 'next', enabled: true });
+  ea.list[0].provenance = { ...provenance, earlyAdopter: false };
+  assert.deepEqual(extensionsForGraph(ea.list)[0].earlyAdopter, { branch: 'next', enabled: false }, 'the graph reads the live opt-in');
 });

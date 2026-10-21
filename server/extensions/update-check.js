@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readProvenance } from './provenance.js';
+import { readProvenance, trackedBranch } from './provenance.js';
 import { lsRemoteHead, countCommitsBehind } from './install.js';
 
 // The background half of "Check all": run by the core update service's
@@ -17,6 +17,10 @@ import { lsRemoteHead, countCommitsBehind } from './install.js';
 // origin, so both are left out of the result entirely rather than reported up
 // to date. A failed check is kept on its own entry (the row shows it) but never
 // counts towards `outdated`.
+//
+// An extension whose record opts in to early-adopter builds is checked against
+// its EA branch (`branch` on its entry), or the default branch if the remote no
+// longer has it; install.js makes that fallback.
 export function createExtensionUpdateCheck({
   list,
   provenance = readProvenance,
@@ -29,14 +33,14 @@ export function createExtensionUpdateCheck({
   // never fetched again: one ls-remote per extension per tick is the steady state.
   const counted = new Map();
 
-  async function countOnce(entry, record, remoteSha) {
+  async function countOnce(entry, record, remoteSha, branch) {
     const key = `${entry.id}@${record.sha}..${remoteSha}`;
     if (counted.has(key)) return counted.get(key);
     let result;
     try {
       // No .git means git would walk up into whatever repo holds DATA_DIR.
       if (!entry.dir || !hasGitDir(entry.dir)) throw new Error('no clone to count in');
-      result = await count(entry.dir, record.sha, record.originUrl);
+      result = await count(entry.dir, record.sha, record.originUrl, { branch });
     } catch {
       // The heads differ, so it is at least one change; say no more than that.
       return { commits: 1, capped: true };
@@ -53,11 +57,12 @@ export function createExtensionUpdateCheck({
       if (!entry.external) continue;
       const record = records[entry.id];
       if (!record?.originUrl || !record.sha) continue;
-      const base = { id: entry.id, label: entry.label || entry.id, updatable: true, originUrl: record.originUrl, sha: record.sha };
+      const branch = trackedBranch(record);
+      const base = { id: entry.id, label: entry.label || entry.id, updatable: true, originUrl: record.originUrl, sha: record.sha, branch };
       try {
-        const remoteSha = await lsRemote(record.originUrl);
+        const remoteSha = await lsRemote(record.originUrl, { branch });
         const behind = remoteSha !== record.sha;
-        const status = { ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha) : {}) };
+        const status = { ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha, branch) : {}) };
         if (behind && record.autoUpdate && autoUpdate) {
           const result = await autoUpdate(entry.id);
           if (result.applied) continue;

@@ -157,6 +157,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const settingsListeners = new Map();
   // extId -> Set<fn>: api.agents.onChange subscribers, fed by agentsChanged().
   const agentsListeners = new Map();
+  // extId -> Set<fn>: api.onThemeChange subscribers, fed by themeChanged().
+  const themeListeners = new Map();
+  // extId -> its api.earlyAdopter, built once so it compares by identity.
+  const earlyAdopterApis = new Map();
   // Sample-card failures already reported, `extId:id`, so a pill that throws on
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
@@ -322,6 +326,24 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (!connectionListeners.has(extId)) connectionListeners.set(extId, new Set());
           connectionListeners.get(extId).add(fn);
           return () => connectionListeners.get(extId)?.delete(fn);
+        },
+        // The board's theme changed (1.39.0): fn({ id, base }) with the style id
+        // and 'dark' or 'light'. Returns the unsubscribe function.
+        onThemeChange: (fn) => {
+          if (typeof fn !== 'function') {
+            onError(`[ext:${extId}] onThemeChange needs a function`);
+            return () => {};
+          }
+          if (!themeListeners.has(extId)) themeListeners.set(extId, new Set());
+          themeListeners.get(extId).add(fn);
+          return () => themeListeners.get(extId)?.delete(fn);
+        },
+        // This install's early-adopter opt-in (1.39.0), present only while the
+        // manifest declares `earlyAdopter.branch`. The board draws no UI for it.
+        get earlyAdopter() {
+          if (!baseApi.earlyAdopterFor?.(extId)?.branch) return undefined;
+          if (!earlyAdopterApis.has(extId)) earlyAdopterApis.set(extId, earlyAdopterApi(extId, baseApi));
+          return earlyAdopterApis.get(extId);
         },
         openSession: (sessionId) => {
           if (typeof sessionId !== 'string' || !sessionId) {
@@ -602,6 +624,22 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     });
   }
 
+  // `branch` and `enabled()` read the latest announcement or graph, never a
+  // capture. `set(on)` sends core's ext-set-early-adopter with the id forced
+  // from extId, and resolves with the stored flag once the server has it.
+  function earlyAdopterApi(extId, baseApi) {
+    const facts = () => baseApi.earlyAdopterFor?.(extId) || null;
+    return Object.freeze({
+      get branch() { return facts()?.branch || null; },
+      enabled: () => facts()?.enabled === true,
+      set: (on) => {
+        if (typeof on !== 'boolean') return Promise.reject(new Error(`[ext:${extId}] earlyAdopter.set needs true or false`));
+        if (typeof baseApi.setEarlyAdopter !== 'function') return Promise.reject(new Error(`[ext:${extId}] earlyAdopter.set is not available`));
+        return Promise.resolve(baseApi.setEarlyAdopter(extId, on));
+      },
+    });
+  }
+
   function agentsApi(extId, baseApi) {
     const read = () => copyAgents(baseApi.agents?.());
     return Object.assign(read, {
@@ -863,6 +901,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       connectionListeners.delete(extId);
       settingsListeners.delete(extId);
       agentsListeners.delete(extId);
+      themeListeners.delete(extId);
+      earlyAdopterApis.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
       keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
@@ -884,6 +924,16 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // app.js calls this when a graph carries different settingValues for
     // `extId` than the previous one. Each listener gets its own copy; a throwing
     // listener is reported and KEPT, the same rule as dispatchMessage.
+    // theme.js applied a different palette; app.js forwards { id, base }.
+    themeChanged(theme) {
+      const t = { id: String(theme?.id || ''), base: theme?.base === 'light' ? 'light' : 'dark' };
+      for (const [extId, set] of themeListeners) {
+        for (const fn of [...set]) {
+          try { fn({ ...t }); } catch (err) { onError(`[ext:${extId}] onThemeChange listener failed`, err); }
+        }
+      }
+    },
+
     settingsChanged(extId, values) {
       const set = settingsListeners.get(extId);
       if (!set) return 0;

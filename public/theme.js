@@ -52,7 +52,8 @@ let currentStyleId = 'dark';
 let appliedVarKeys = [];
 
 // The app registers a callback here to re-theme a live terminal when the style
-// changes — keeps theme.js from importing the terminal's `current` handle.
+// changes — keeps theme.js from importing the terminal's `current` handle. It is
+// called with { id, base }, which app.js also hands to api.onThemeChange.
 let themeChangeHook = null;
 export function onThemeChange(fn) { themeChangeHook = fn; }
 
@@ -107,7 +108,7 @@ function applyStyle(style) {
     appliedVarKeys = Object.keys(vars);
     for (const [k, v] of Object.entries(vars)) document.body.style.setProperty(k, v);
     updateDiffSyntaxPalette();
-    themeChangeHook?.();
+    themeChangeHook?.({ id: style.id, base: style.base === 'light' ? 'light' : 'dark' });
   }
   setBackground(style);
   setFavicon(style);
