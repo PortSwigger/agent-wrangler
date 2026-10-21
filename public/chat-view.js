@@ -144,7 +144,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const hit = e.target?.closest?.('[data-md-path]');
     if (!hit) return;
     e.preventDefault();
-    onOpenFile?.(hit.dataset.mdPath);
+    onOpenFile?.(hit.dataset.mdPath, sessionId);
   };
   stream.addEventListener('click', openMdPath);
   stream.addEventListener('keydown', (e) => {

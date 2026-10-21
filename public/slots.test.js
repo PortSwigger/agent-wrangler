@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1487,6 +1487,25 @@ test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elem
   api.claimDrag(el2);
   slots.removeExtension('x');
   assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
+});
+
+test('file.open needs files:open, and the first contribution returning true takes the file', () => {
+  const { slots, errors } = harness({ requiresFor: (id) => (id === 'none' ? [] : ['files:open']) });
+  const file = { path: '/r/docs/plan.md', sessionId: 's1', source: 'chat' };
+  assert.equal(slots.fileOpen(file, {}, {}), false, 'nobody registered: the board previews it');
+  assert.throws(() => slots.register('file.open', 'none', { id: 'o', open: () => true }), /needs the files:open capability/);
+  assert.throws(() => slots.register('file.open', 'a', { id: 'o', mount() {} }), /no open function/);
+  const asked = [];
+  slots.register('file.open', 'boom', { id: 'o', open: () => { asked.push('boom'); throw new Error('x'); } });
+  slots.register('file.open', 'pass', { id: 'o', open: (f) => { asked.push(`pass:${f.source}`); return 'yes'; } });
+  slots.register('file.open', 'take', { id: 'o', open: (f) => { asked.push(`take:${f.sessionId}`); return true; } });
+  slots.register('file.open', 'late', { id: 'o', open: () => { asked.push('late'); return true; } });
+  assert.equal(slots.fileOpen(file, {}, {}), true);
+  assert.deepEqual(asked, ['boom', 'pass:chat', 'take:s1'], 'only a literal true claims it, and later ones are not asked');
+  assert.equal(errors.filter((e) => /boom.*open failed/.test(e)).length, 1);
+  asked.length = 0;
+  slots.fileOpen(file, {}, {});
+  assert.deepEqual(asked, ['pass:chat', 'take:s1'], 'a throwing contribution is removed');
 });
 
 test('linkChip returns the first contribution that answers, with its veto key, and a null for a link nobody claims', () => {
