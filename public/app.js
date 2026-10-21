@@ -1689,10 +1689,13 @@ function trayHtml(visible) {
     .filter(Boolean);
   if (!mins.length) return '';
   const pills = mins.map((t) => {
-    const sessions = latestSessions.filter((s) => {
-      const tid = assignedTaskId(s.sessionId);
-      return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
-    });
+    const sessions = sortBucketSessions(
+      latestSessions.filter((s) => {
+        const tid = assignedTaskId(s.sessionId);
+        return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
+      }),
+      t.id
+    );
     const dots = sessions.map((s) => `<span class="switcher-dot ${esc(sessionDotStatus(s))}"></span>`).join('');
     return `<button class="switcher-pill" data-taskid="${esc(t.id)}" title="Restore ${esc(t.name)}">
       <span class="switcher-name">${esc(t.name)}</span><span class="switcher-dots">${dots}</span>
