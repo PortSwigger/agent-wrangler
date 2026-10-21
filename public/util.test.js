@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   esc, truncate, wtSlug, repoRoot, locationLabel, isWorktree,
   branchBadge, tildify, timeAgo, pad2, throbDelayStyle, mostCommonCwd,
-  safeHttpUrl,
+  safeHttpUrl, anyModalOpen,
 } from './util.js';
 
 // ── esc ──────────────────────────────────────────────────────────────────────
@@ -237,4 +237,19 @@ test('safeHttpUrl: rejects dangerous schemes', () => {
 test('safeHttpUrl: rejects unparseable urls', () => {
   assert.equal(safeHttpUrl('not a url'), null);
   assert.equal(safeHttpUrl(''), null);
+});
+
+// ── anyModalOpen ─────────────────────────────────────────────────────────────
+const fakeDoc = (...els) => ({ querySelectorAll: () => els });
+const div = (hidden) => ({ tagName: 'DIV', classList: { contains: (c) => c === 'hidden' && hidden } });
+const dialog = (open) => ({ tagName: 'DIALOG', open, classList: { contains: () => false } });
+test('anyModalOpen: a closed <dialog> modal does not count as open', () => {
+  assert.equal(anyModalOpen(fakeDoc(div(true), dialog(false))), false);
+});
+test('anyModalOpen: an open <dialog> modal counts as open', () => {
+  assert.equal(anyModalOpen(fakeDoc(div(true), dialog(true))), true);
+});
+test('anyModalOpen: a div modal is open unless it has .hidden', () => {
+  assert.equal(anyModalOpen(fakeDoc(div(false))), true);
+  assert.equal(anyModalOpen(fakeDoc(div(true))), false);
 });
