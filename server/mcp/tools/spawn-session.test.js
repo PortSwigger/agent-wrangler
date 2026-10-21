@@ -438,3 +438,35 @@ test('spawn_session on a runtime without launchStatus has no launch field', asyn
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
   assert.equal(out.structuredContent.launch, undefined);
 });
+
+test('spawn_session validates permission_mode before dispatch and passes valid modes', async () => {
+  for (const permission_mode of ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', permission_mode });
+    assert.equal(out.isError, undefined);
+    assert.equal(d.calls.dispatch[0].permissionMode, permission_mode);
+  }
+  for (const args of [{ permission_mode: 'invalid' }, { permission_mode: 'default' }, { agent: 'codex', permission_mode: 'bypassPermissions' }]) {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', ...args });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /permission mode/i);
+    assert.equal(d.calls.dispatch.length, 0);
+  }
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', permission_mode: 'auto' });
+  assert.equal(d.calls.dispatch.length, 1);
+});
+
+test('spawn_session rejects a non-auto permission mode for a runtime supplying its own command', async () => {
+  registerRuntime({ id: 'permission-cloud', label: 'Cloud', resumable: false, buildLaunch: async () => '' }, 'permission-cloud');
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'permission-cloud', permission_mode: 'bypassPermissions' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /own launch command/);
+    assert.equal(d.calls.dispatch.length, 0);
+  } finally {
+    unregisterRuntimesFor('permission-cloud');
+  }
+});
