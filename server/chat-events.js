@@ -411,6 +411,10 @@ function pushClaude(entry, state) {
         // non-empty text, or most real Claude sessions show no thinking
         // indicator at all while Codex ones still would.
         if (typeof b.thinking === 'string' && b.thinking.trim()) think.text = b.thinking.trim();
+        // `thinkingDisplay: 'updates'` is Claude Code's own marker that the pane
+        // shows this thinking as visible text; 'omitted' keeps it hidden there.
+        // The view mirrors that rather than burying the text behind a chip.
+        if (think.text && entry.thinkingDisplay === 'updates') think.visible = true;
         out.push(think);
       }
       if (b?.type === 'tool_use' && b.id && SUBAGENT_TOOLS.has(b.name)) {
