@@ -1,3 +1,4 @@
+import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
@@ -243,11 +244,11 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
-    const args = ['--session-id', liveSessionId || sessionId, '--permission-mode', 'auto'];
+    const args = ['--session-id', liveSessionId || sessionId, ...claudePermissionArgs(permissionMode)];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
@@ -255,27 +256,27 @@ export const claude = {
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, addDirs = [], effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
+  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
     // A scheduled resume may carry an `intent` to queue as the first prompt
     // (buildInnerCommand appends it after `--`); empty for an interactive resume.
     // effort is re-threaded here because it is NOT transcript-restored on resume.
-    const args = ['--resume', resumeId, '--permission-mode', 'auto'];
+    const args = ['--resume', resumeId, ...claudePermissionArgs(permissionMode)];
     for (const d of addDirs) args.push('--add-dir', d);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
     const args = ['--resume', sourceId, '--fork-session'];
     if (liveSessionId) args.push('--session-id', liveSessionId);
-    args.push('--permission-mode', 'auto');
+    args.push(...claudePermissionArgs(permissionMode));
     for (const d of addDirs) args.push('--add-dir', d);
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);

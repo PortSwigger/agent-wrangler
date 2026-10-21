@@ -100,6 +100,8 @@ test('buildMcpServer runs spawn_session through the SDK schema boundary', async 
   // The required `intent` is enforced by the schema at the SDK boundary.
   const missing = await client.callTool({ name: 'spawn_session', arguments: {} });
   assert.equal(missing.isError, true);
+  const invalidMode = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', permission_mode: 'invalid' } });
+  assert.equal(invalidMode.isError, true);
   await server.close();
 });
 

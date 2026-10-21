@@ -39,7 +39,7 @@ import { currentModelValue } from './model-menu.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
-
+  anyModalOpen as anyModalOpenIn,
 } from './util.js';
 import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
@@ -3873,7 +3873,7 @@ function onHintKey(e) {
 // definitions in core-keybindings.js). The gating each one had as a bare
 // window listener lives on in its `when`, unchanged: the registry's scopes
 // pick which bindings are candidates, `when` keeps the exact old conditions.
-const anyModalOpen = () => Boolean(document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)'));
+const anyModalOpen = () => anyModalOpenIn(document);
 // The nav / Enter gate: grid view, no card menu, no modal, and not typing in a
 // real text field (the xterm helper textarea doesn't count — see isTypingTarget).
 const boardIdle = () => currentView === 'grid' && !cardMenuEl && !isTypingTarget(document.activeElement) && !anyModalOpen();
@@ -4312,6 +4312,7 @@ function renderPanel(sessionId) {
   const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
+  if (s.permissionMode && s.agent === 'claude') chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));

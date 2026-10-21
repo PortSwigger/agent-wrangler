@@ -1,3 +1,4 @@
+import { CLAUDE_PERMISSION_MODES, permissionModeError, runtimePermissionModeError } from '../../agents/permission-mode.js';
 import { z } from 'zod';
 import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
@@ -36,7 +37,8 @@ export const spawnSessionTool = {
     + 'For a runtime whose launch can fail after the card is created (e.g. '
     + '`cloud`), the tool waits up to 15 s for the outcome and returns it as `launch` '
     + '(`state`: ok, failed, pending or unknown); a failed launch is returned as an error that '
-    + 'still carries the new session id.',
+    + 'still carries the new session id. `permission_mode` selects Claude permissions (auto by default) '
+    + 'and persists across resume and forks; Codex accepts only auto and keeps its configured policy. Runtimes supplying their own launch command accept only auto.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '
@@ -53,6 +55,7 @@ export const spawnSessionTool = {
       + `launching the SAME agent — a cross-agent spawn falls back to that agent's own default `
       + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
+    permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional().describe('Claude permission mode: auto (default), manual, acceptEdits, plan, dontAsk, bypassPermissions. Codex only accepts auto (its configured approval/sandbox policy). Persisted for resume and forks; not inherited from the spawning caller.'),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe(
       'Extra directories to grant the new session (--add-dir). For Codex these are extra WRITABLE '
@@ -95,6 +98,9 @@ export const spawnSessionTool = {
     const intent = (args.intent ?? '').trim();
     if (!intent) return errorResult('intent is required.');
 
+    const modeError = permissionModeError(args.permission_mode, args.agent || 'claude');
+    if (modeError) return errorResult(modeError);
+
     // This tool dispatches via deps.dispatch → sessionManager.dispatch directly
     // (not runDispatch), so it needs its own call to the shared depth guard —
     // see nestedParentError's comment in dispatch-runner.js.
@@ -117,6 +123,9 @@ export const spawnSessionTool = {
       if (agentErr) return errorResult(agentErr);
     }
 
+    const runtimeModeError = runtimePermissionModeError(args.permission_mode, findRuntime(args.runtime || DEFAULT_RUNTIME));
+    if (runtimeModeError) return errorResult(runtimeModeError);
+
     return performSpawn({
       deps,
       caller,
@@ -132,6 +141,7 @@ export const spawnSessionTool = {
         // nested child. This never sets `workflow` — that field is
         // orchestrator-only.
         intent,
+        permissionMode: args.permission_mode,
         runtime: args.runtime || undefined,
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',

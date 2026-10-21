@@ -1,6 +1,7 @@
 import { DiffSyntax } from './diff-syntax-client.js';
 import { send, latestSessions, setMaximized, renderGridIfVisible, taskForSession } from './app.js';
 import { toast } from './toast.js';
+import { anyModalOpen } from './util.js';
 import { X_ICON, MAXIMIZE_ICON, MINIMIZE_ICON } from './icons.js';
 import {
   buildCommentsPayload, draftCount, parseDrafts, isSaveCommentKey,
@@ -1078,7 +1079,7 @@ document.addEventListener('keydown', (e) => {
   // for Escape, it closed the diff behind the dialog instead of the dialog itself, and
   // a second Escape was needed to actually dismiss it.
   if (document.querySelector('.context-menu')) return;
-  if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+  if (anyModalOpen(document)) return;
   if (e.key === 'Escape') {
     if (activeKey) { e.preventDefault(); e.stopPropagation(); closeEditor(); return; }
     e.preventDefault(); e.stopPropagation();
