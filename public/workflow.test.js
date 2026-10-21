@@ -164,6 +164,19 @@ test('spineRows: indent clamps at MAX_SPINE_INDENT while depth keeps counting', 
   assert.equal(rows[n - 1][2], MAX_SPINE_INDENT);
 });
 
+test('spineRows: past the clamp a running ancestor trunk is kept as guide 0 so it reaches a later sibling', () => {
+  const s = [{ sessionId: 'r' }];
+  const chain = ['a', 'b', 'c'];
+  chain.forEach((id, i) => s.push({ sessionId: id, parentSession: i ? chain[i - 1] : 'r' }));
+  s.push({ sessionId: 'd', parentSession: 'c' }, { sessionId: 'e', parentSession: 'd' }, { sessionId: 'f', parentSession: 'e' }, { sessionId: 'z', parentSession: 'c' });
+  const rows = Object.fromEntries(rowShape(s, 'r').map((r) => [r[0], r]));
+  assert.equal(rows.d[2], MAX_SPINE_INDENT);
+  assert.equal(rows.d[3], true);
+  assert.deepEqual(rows.e[4], [0]);
+  assert.deepEqual(rows.f[4], [0]);
+  assert.equal(rows.z[3], false);
+});
+
 test('spineRows: guides collapse onto one trunk once past the clamp', () => {
   const ids = Array.from({ length: MAX_SPINE_INDENT + 3 }, (_, i) => `c${i}`);
   const s = [{ sessionId: 'p' }];
@@ -174,5 +187,5 @@ test('spineRows: guides collapse onto one trunk once past the clamp', () => {
   const deepest = rowShape(s, 'p').find(([id]) => id === ids[ids.length - 1]);
   assert.equal(deepest[2], MAX_SPINE_INDENT);
   assert.equal(new Set(deepest[4]).size, deepest[4].length);
-  assert.ok(deepest[4].every((up) => up > 0 && up <= MAX_SPINE_INDENT));
+  assert.ok(deepest[4].every((up) => up >= 0 && up <= MAX_SPINE_INDENT));
 });
