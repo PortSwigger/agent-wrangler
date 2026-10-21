@@ -78,21 +78,8 @@ test('parentSession passes through when given, and is undefined when absent', as
   assert.equal(d2.calls.dispatch[0].parentSession, undefined);
 });
 
-// Nesting only ever renders one level deep (see attachError's file comment in
-// server/control/handlers/attach.js) — this guard keeps that true regardless
-// of which path sets a brand-new parentSession (peer-review dispatch,
-// spawn_session nest:true, a scheduled dispatch), not just Attach.
-test('parentSession pointing at an already-nested session is refused before launch', async () => {
+test('parentSession pointing at an already-nested session is allowed (nesting has no depth limit)', async () => {
   const d = deps({ entries: { SRC1: { parentSession: 'ROOT' } } });
-  await assert.rejects(
-    () => runDispatch({ cwd: '/repo', intent: 'x', parentSession: 'SRC1' }, d),
-    /itself nested/,
-  );
-  assert.equal(d.calls.dispatch.length, 0);
-});
-
-test('parentSession pointing at a top-level session is allowed', async () => {
-  const d = deps({ entries: { SRC1: {} } });
   await runDispatch({ cwd: '/repo', intent: 'x', parentSession: 'SRC1' }, d);
   assert.equal(d.calls.dispatch[0].parentSession, 'SRC1');
 });

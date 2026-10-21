@@ -39,28 +39,7 @@ export async function deliverFirstPrompt({ tmux, socket = '', agent, text, image
 //
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
 //          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession, imageNames }
-// Nesting only ever renders one level deep (computeAbsorption in
-// public/workflow.js pops a grandchild back out to top-level) — refuse a
-// brand-new parentSession that would create a session at depth > 1, rather
-// than let the data reach a state the board can't draw. Exported so every
-// place that can mint a NEW parentSession value shares this one check:
-// runDispatch below (the peer-review dispatch dialog, a scheduled dispatch)
-// AND spawn-session.js's `nest: true` handler, which dispatches via
-// deps.dispatch → sessionManager.dispatch directly and does NOT go through
-// runDispatch. Attach has its own equivalent guard in attachError for the
-// one path that moves an EXISTING session instead. TODO: relax once
-// recursive nested rendering ships (see the deferred follow-up plan).
-export function nestedParentError(sessionManager, parentSessionId) {
-  if (!parentSessionId) return null;
-  if (sessionManager.entryFor(parentSessionId)?.parentSession) {
-    return `Cannot nest under ${parentSessionId} — it is itself nested under another session, and the board only renders one level of nesting today.`;
-  }
-  return null;
-}
-
 export async function runDispatch(opts, { sessionManager, taskStore, deliverFirstPrompt: deliver = deliverFirstPrompt }, now = Date.now()) {
-  const nestErr = nestedParentError(sessionManager, opts.parentSession);
-  if (nestErr) throw new Error(nestErr);
   // Both callers can carry an agent/model this install doesn't offer, and both
   // have somewhere to report it: the /ws dispatch handler turns a throw into the
   // dialog's {type:'error'}, and fireSchedule catches it into a `schedule-error`

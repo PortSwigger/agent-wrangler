@@ -1302,9 +1302,8 @@ function sortBucketSessions(sessions, bucketId) {
 
 // Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
 // exactly what renderTileCards (cards.js) draws: computeAbsorption decides which
-// sessions fold into a parent's spine (an orphan, or a chained grandchild whose
-// parent is itself absorbed, renders as its own top-level card instead and must
-// NOT be counted in either number). Takes the same non-asleep subset tileHtml
+// sessions fold into a parent's spine (an orphan renders as its own top-level
+// card instead and must NOT be counted in either number). Takes the same non-asleep subset tileHtml
 // uses (an asleep session is shown as its own flat snoozed row, never nested,
 // regardless of parentSession).
 //
@@ -1328,7 +1327,7 @@ function sortBucketSessions(sessions, bucketId) {
 // they're split out rather than folded into `visible`. Same collapse exemption:
 // a collapsed workflow box's workers draw nothing, full-view or not.
 function childRowCounts(activeSessions) {
-  const { absorbed, childrenByParent } = computeAbsorption(activeSessions);
+  const { absorbed } = computeAbsorption(activeSessions);
   let visible = 0;
   let fullView = 0;
   // Full-view children that are actually drawn (so, same collapse exemption as
@@ -1337,10 +1336,11 @@ function childRowCounts(activeSessions) {
   // this set is what tells that loop such a child isn't zone-less like a plain
   // compact `.worker-row`.
   const drawnFullView = new Set();
-  for (const [parentId, children] of childrenByParent) {
-    const parent = activeSessions.find((s) => s.sessionId === parentId);
-    if (isWorkflowRun(parent) && collapsedWorkflows.has(parentId)) continue;
-    for (const c of children) {
+  // A collapsed workflow box hides its WHOLE subtree, however deep, so the walk
+  // goes per top-level group rather than per parent.
+  for (const { session, descendants } of sessionGroups(activeSessions)) {
+    if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
+    for (const c of descendants) {
       if (isChildFullView(c)) { fullView += 1; drawnFullView.add(c.sessionId); }
       else visible += 1;
     }
@@ -3446,10 +3446,10 @@ function navTargets() {
   for (const id of currentOrder()) {
     const arr = id === ADHOC_ID ? noTask : (byTask.get(id) || []);
     const active = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id);
-    for (const { session, children } of sessionGroups(active)) {
+    for (const { session, descendants } of sessionGroups(active)) {
       targets.push({ tileId: id, sid: session.sessionId });
       if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
-      for (const c of children) targets.push({ tileId: id, sid: c.sessionId });
+      for (const c of descendants) targets.push({ tileId: id, sid: c.sessionId });
     }
     targets.push({ tileId: id, sid: null }); // the tile's "new session" slot
   }

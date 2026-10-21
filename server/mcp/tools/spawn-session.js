@@ -2,7 +2,6 @@ import { CLAUDE_PERMISSION_MODES, permissionModeError, runtimePermissionModeErro
 import { z } from 'zod';
 import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
-import { nestedParentError } from '../../dispatch-runner.js';
 import { knownRuntimes, findRuntime, runtimeAgentError, DEFAULT_RUNTIME } from '../../runtimes/index.js';
 
 // e.g. "`local` (default), `devcontainer`, `cloud` (extension)".
@@ -100,14 +99,6 @@ export const spawnSessionTool = {
 
     const modeError = permissionModeError(args.permission_mode, args.agent || 'claude');
     if (modeError) return errorResult(modeError);
-
-    // This tool dispatches via deps.dispatch → sessionManager.dispatch directly
-    // (not runDispatch), so it needs its own call to the shared depth guard —
-    // see nestedParentError's comment in dispatch-runner.js.
-    if (args.nest && caller) {
-      const nestErr = nestedParentError(deps.sessionManager, caller);
-      if (nestErr) return errorResult(nestErr);
-    }
 
     // Refused by name rather than left to dispatch's `unknown runtime` throw, so
     // the caller learns what it could have asked for. There is no dialog `ext`
