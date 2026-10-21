@@ -292,16 +292,11 @@ test('spawn_session tags parentSession = caller only when nest: true is explicit
   assert.equal(d.calls.dispatch[0].workflow, undefined); // never sets workflow — orchestrator-only
 });
 
-// Nesting only ever renders one level deep — CARD1 is already nested under
-// ORCH here, so nesting a new spawn under CARD1 would land it at depth 2,
-// which the board can't draw. Refused before dispatch, not silently chained.
-test('spawn_session refuses nest:true when the caller is itself already nested (would create depth 2)', async () => {
+test('spawn_session nests under a caller that is itself already nested (no depth limit)', async () => {
   const d = deps({ entries: { CARD1: { agent: 'claude', model: 'sonnet', parentSession: 'ORCH' } } });
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', nest: true });
-  assert.equal(out.isError, true);
-  assert.match(out.content[0].text, /itself nested/);
-  assert.equal(d.calls.dispatch.length, 0);
-  assert.equal(d.calls.rebuild, 0);
+  assert.notEqual(out.isError, true);
+  assert.equal(d.calls.dispatch[0].parentSession, 'CARD1');
 });
 
 test('spawn_session sets no parentSession for a null caller, even with nest: true (nothing to nest under)', async () => {

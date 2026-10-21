@@ -433,6 +433,22 @@ export function workerStatusWord(s, ctx) {
   return STATUS_WORDS[displayStatus(s)] || s.status || '';
 }
 
+// How a row sits on a spine (see workflow.js spineRows): `more` marks a later
+// sibling at the same level so its trunk keeps running past the row, `indent`
+// steps it right, and `guides` draw the trunks of the ancestor levels still
+// running beside it. A row with no `spine` (a team member, a bare call) is the
+// flat depth-0 row it always was.
+function spineClass(spine) {
+  return spine?.more ? ' spine-more' : '';
+}
+function spineStyle(spine, throb = '') {
+  if (!spine?.indent) return throb;
+  return throb ? throb.replace(' style="', ` style="--indent:${spine.indent};`) : ` style="--indent:${spine.indent}"`;
+}
+function spineGuidesHtml(spine) {
+  return (spine?.guides || []).map((up) => `<span class="spine-guide" style="--up:${up}" aria-hidden="true"></span>`).join('');
+}
+
 // One worker on its run's spine: a status dot (coloured by state, same vocabulary
 // as the card bar, carried as its tooltip), the worker's name, and cost. Carries
 // data-sid so a click opens it like any card; not independently draggable — it
@@ -440,7 +456,7 @@ export function workerStatusWord(s, ctx) {
 // sessionCardHtml's `selected` ring so a focused child session reads exactly like
 // a focused top-level one. Automatic completion keeps only the status dot;
 // manual unread and attention/snooze alarms retain their halos (see styles.css).
-export function workerRowHtml(s, ctx) {
+export function workerRowHtml(s, ctx, spine) {
   const state = ctx.cardState(s);
   const doneQuiet = ctx.justFinished.has(s.sessionId) && !ctx.unread?.has(s.sessionId) ? ' done-quiet' : '';
   // Same restarting exemption as the top-level card (sessionCardHtml): a worker/child
@@ -461,7 +477,7 @@ export function workerRowHtml(s, ctx) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
-  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${spineClass(spine)}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
@@ -487,13 +503,14 @@ export function workerRowHtml(s, ctx) {
 // `.worker-row` draws (see styles.css) without borrowing that class's own
 // background/border/padding. Still non-draggable (`nested: true`) — the
 // enclosing `.child-group`/`.workflow-box` wrapper is the actual drag unit.
-function childRowHtml(c, ctx, { focusMode } = {}) {
-  if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx);
-  return `<div class="spine-full-row">${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
+function childRowHtml(row, ctx, { focusMode } = {}) {
+  const c = row.session;
+  if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx, row);
+  return `<div class="spine-full-row${spineClass(row)}"${spineStyle(row)}>${spineGuidesHtml(row)}${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
 }
 
-export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) {
-  const n = workers.length;
+export function workflowBoxHtml(orch, rows, ctx, { focusMode, nested } = {}) {
+  const n = rows.length;
   const collapsed = n > 0 && ctx.collapsedWorkflows.has(orch.sessionId);
   const count = n === 0 ? 'solo' : `${n} worker${n > 1 ? 's' : ''}`;
   const chevron = n > 0 ? `<span class="wf-chevron">${collapsed ? '▸' : '▾'}</span>` : '';
@@ -505,7 +522,7 @@ export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) 
       ${chevron}
     </div>`;
   const spine = n > 0 && !collapsed
-    ? `<div class="workflow-spine">${workers.map((w) => childRowHtml(w, ctx, { focusMode })).join('')}</div>`
+    ? `<div class="workflow-spine">${rows.map((r) => childRowHtml(r, ctx, { focusMode })).join('')}</div>`
     : '';
   return `<div class="workflow-box${collapsed ? ' collapsed' : ''}" data-sid="${esc(orch.sessionId)}" draggable="${nested ? 'false' : 'true'}">
     ${head}
@@ -520,9 +537,9 @@ export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) 
 // childRowHtml verbatim (same row markup as a workflow worker's spine, full-view
 // override included) — nesting reads from position + the connector line's
 // --line-color alone (see styles.css .child-spine), not a distinct accent or class.
-function childSpineHtml(children, ctx, { focusMode } = {}) {
-  if (!children.length) return '';
-  return `<div class="child-spine">${children.map((c) => childRowHtml(c, ctx, { focusMode })).join('')}</div>`;
+function childSpineHtml(rows, ctx, { focusMode } = {}) {
+  if (!rows.length) return '';
+  return `<div class="child-spine">${rows.map((r) => childRowHtml(r, ctx, { focusMode })).join('')}</div>`;
 }
 
 // Claude Code assigns each "agent team" member a colour name (--agent-color).
@@ -544,7 +561,7 @@ function agentAccentVar(color) {
 // session) rather than data-sid. The dot is tinted by the member's Claude colour
 // (identity) and throbs while working; the one-word status reads working/idle
 // only (a team member writes no status file, so there's no needs-you signal).
-export function teammateRowHtml(t, leadSid, now) {
+export function teammateRowHtml(t, leadSid, now, more = false) {
   const status = t.status || 'unknown';
   const word = STATUS_WORDS[status] || status;
   const typeLabel = t.agentType && t.agentType !== t.name ? t.agentType : '';
@@ -552,7 +569,7 @@ export function teammateRowHtml(t, leadSid, now) {
   const title = typeLabel ? `${t.name} · ${typeLabel}` : t.name;
   // Rides on .worker-row for the spine connector + row layout; .team-row marks it
   // as a non-session (own dot colour, no card-menu/attach — see app.js).
-  return `<div class="worker-row team-row ${esc(status)}" data-lead-sid="${esc(leadSid)}" style="--agent-accent:var(${agentAccentVar(t.color)})${throb}" title="${esc(title)}" role="button" tabindex="0">
+  return `<div class="worker-row team-row ${esc(status)}${more ? ' spine-more' : ''}" data-lead-sid="${esc(leadSid)}" style="--agent-accent:var(${agentAccentVar(t.color)})${throb}" title="${esc(title)}" role="button" tabindex="0">
     <span class="team-dot"></span>
     <span class="worker-name">${esc(t.name)}</span>
     ${typeLabel ? `<span class="team-type">${esc(typeLabel)}</span>` : ''}
@@ -566,7 +583,7 @@ export function teammateRowHtml(t, leadSid, now) {
 export function teamSpineHtml(lead, ctx) {
   const team = lead.teammates || [];
   if (!team.length) return '';
-  return `<div class="team-spine">${team.map((t) => teammateRowHtml(t, lead.sessionId, ctx.now)).join('')}</div>`;
+  return `<div class="team-spine">${team.map((t, i) => teammateRowHtml(t, lead.sessionId, ctx.now, i < team.length - 1)).join('')}</div>`;
 }
 
 // A parent card + its plain child-spine, wrapped in one element (mirrors
@@ -587,8 +604,8 @@ export function teamSpineHtml(lead, ctx) {
 // (dropped from the reordered array entirely) and dragging the inner card alone
 // inserts the placeholder into the wrong parent — the two bugs behind a
 // parent-with-children silently sinking to the bottom of its task on any drag.
-function childGroupHtml(card, s, children, ctx, opts = {}) {
-  const spine = childSpineHtml(children, ctx, opts);
+function childGroupHtml(card, s, rows, ctx, opts = {}) {
+  const spine = childSpineHtml(rows, ctx, opts);
   const team = teamSpineHtml(s, ctx);
   return (spine || team) ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${card}${spine}${team}</div>` : card;
 }
@@ -601,31 +618,34 @@ function childGroupHtml(card, s, children, ctx, opts = {}) {
 // follows `active` — the parent's slot fixes where its group lands, and children
 // keep their order within the spine.
 //
-// Nesting renders one level deep (a box/card + its own spine of compact rows) —
-// a spine row has no room to draw its OWN nested spine. Chaining (a child of a
-// child — now possible per the child-sessions design §2) is still handled
-// correctly via workflow.js's computeAbsorption (recursive, cycle-safe): a
-// session only folds into its parent's spine when that parent itself renders
-// top-level. A grandchild whose immediate parent is itself absorbed elsewhere is
-// promoted to its own top-level card (with its own spine, if it has children)
-// instead of being silently dropped — every session in `active` renders exactly
-// once. The same helper feeds layout.js's tile-height weighting (and, via
-// sessionGroups, app.js's keyboard-nav order), so the rendered spine and the
-// height reserved for it — and where the keyboard thinks a row is — can never
-// drift apart.
+// Nesting has no depth limit. A tile draws each top-level session (or workflow
+// box) followed by ONE spine holding its whole subtree as a flat depth-first
+// list of rows (workflow.js spineRows): each row steps right by its depth
+// (clamped, see MAX_SPINE_INDENT) and draws its own elbow plus the trunks of the
+// ancestor levels still running beside it, so a deep chain reads as a tree
+// without a spine nested inside a spine. A session only folds into a parent's
+// spine when that parent is present in the tile; an orphan (parent on another
+// task, or snoozed away) is promoted to its own top-level card, so every session
+// in `active` renders exactly once. The same helper feeds layout.js's
+// tile-height weighting (and, via sessionGroups, app.js's keyboard-nav order),
+// so the rendered spine and the height reserved for it — and where the keyboard
+// thinks a row is — can never drift apart. An orchestrator parent
+// (isWorkflowRun) keeps today's violet workflow box; any other parent gets a
+// plain always-visible child spine. Order follows `active` — the root's slot
+// fixes where its group lands, and rows keep their order within the spine.
 export function renderTileCards(active, ctx, opts = {}) {
-  return sessionGroups(active).map(({ session: s, children }) => {
+  return sessionGroups(active).map(({ session: s, rows }) => {
     // A live agent team hangs off the lead as its own spine, independent of the
     // parentSession child spine (a lead can have both). The workflow box already
     // wraps its own child spine, so a team is appended alongside it in one group.
     const hasTeam = (s.teammates?.length || 0) > 0;
     if (isWorkflowRun(s)) {
-      const box = workflowBoxHtml(s, children, ctx, { ...opts, nested: hasTeam });
+      const box = workflowBoxHtml(s, rows, ctx, { ...opts, nested: hasTeam });
       const team = teamSpineHtml(s, ctx);
       return team ? `<div class="child-group" data-sid="${esc(s.sessionId)}" draggable="true">${box}${team}</div>` : box;
     }
-    const nested = children.length > 0 || hasTeam;
-    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode, nested }), s, children, ctx, opts);
+    const nested = rows.length > 0 || hasTeam;
+    return childGroupHtml(sessionCardHtml(s, ctx, { expanded: opts.focusMode, nested }), s, rows, ctx, opts);
   }).join('');
 }
 
