@@ -28,7 +28,7 @@
 // The modal is split into focused tabs. Appearance includes bespoke widgets owned
 // by theme.js/app.js; Shortcuts renders the keybinding registry via shortcuts.js.
 
-import { esc } from './util.js';
+import { esc, anyModalOpen } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
 import { keybindings } from './keybindings.js';
 
@@ -578,7 +578,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
       e.preventDefault();
       return;
     }
-    if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+    if (anyModalOpen(document)) return;
     e.preventDefault();
     open();
   }, true);
