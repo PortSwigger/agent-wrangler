@@ -67,7 +67,8 @@ otherwise it behaves exactly as a Claude-only board.
   through the restart, and open tabs reload onto the new code. It checks hourly and can install on
   its own (Off / Notify / Auto). Notify and Auto also check installed extensions and say how many
   are out of date and how many changes they're missing; an extension is updated automatically only
-  if you turned on its own Auto-update in Settings › Extensions. If an update can't start, the next restart rolls back to the commit
+  if you turned on its own Auto-update in Settings › Extensions, and the wrangler restarts to load it
+  once idle. If an update can't start, the next restart rolls back to the commit
   it came from. Installing needs the background service below (which also installs changed
   dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
   checkout, such as one managed by a package manager, shows updates as unavailable and never runs

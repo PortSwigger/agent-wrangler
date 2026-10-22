@@ -12,6 +12,8 @@ import { loadExtensions, registerExtension, unregisterExtension } from '../../ex
 import { discoverExternal } from '../../extensions/external.js';
 import { DATA_DIR } from '../../data-dir.js';
 import { HOST_API_VERSION } from '../../host-api/version.js';
+import { createExtensionUpdateCheck } from '../../extensions/update-check.js';
+import { createUpdateService } from '../../update-service.js';
 
 // AW_DATA_DIR is a per-process temp dir (server/test-setup.js), so every path
 // below is throwaway. No git and no npm ever runs: the clone is faked by writing
@@ -594,6 +596,49 @@ test('auto-update does nothing without the opt-in, and waits out an install alre
   const result = await autoUpdateExtension('notes', ctx());
   assert.equal(result.applied, false);
   assert.match(result.reason, /another extension install was running/);
+  reset();
+});
+
+// The whole chain index.js wires: the tick's check hands the opted-in update to
+// autoUpdateExtension, and the update service restarts once to load it. A human
+// update of the same extension goes through the same handlers but is never the
+// check's to report, so it schedules nothing.
+function updateTick(c, remoteSha) {
+  const applied = [];
+  const svc = createUpdateService({
+    check: async () => ({ head: 'h0', remote: 'h0', behind: 0, commits: [], blocked: null }),
+    support: { available: true, canApply: false, reason: null },
+    mode: () => 'notify',
+    canRestart: true,
+    onApplied: (r) => applied.push(r),
+    checkExtensions: createExtensionUpdateCheck({
+      list: () => c.ext.list,
+      lsRemote: async () => remoteSha,
+      hasGitDir: () => false,
+      autoUpdate: (id) => autoUpdateExtension(id, c),
+    }),
+  });
+  return { svc, applied };
+}
+
+test('an auto-applied update restarts the wrangler once; a human update does not', async () => {
+  reset();
+  const c = await installOptedIn();
+  useFakes({ requires: ['tasks:read'], sha: 'd'.repeat(40) });
+  const auto = updateTick(c, 'd'.repeat(40));
+  await auto.svc.tick();
+  assert.deepEqual(auto.applied, [{ extensions: ['notes'] }]);
+  assert.equal(readProvenance().notes.sha, 'd'.repeat(40));
+
+  reset();
+  const human = ctx();
+  await install(human, { requires: ['tasks:read'] });
+  const later = ctx([{ id: 'notes', external: true }]);
+  await install(later, { requires: ['tasks:read'], sha: 'e'.repeat(40) });
+  assert.equal(reply(later, 'ext-install-done').automatic, undefined);
+  const tick = updateTick(later, 'e'.repeat(40));
+  await tick.svc.tick();
+  assert.deepEqual(tick.applied, [], 'nothing to restart for');
   reset();
 });
 
