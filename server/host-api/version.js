@@ -324,7 +324,15 @@ import semver from 'semver';
 // are asked in load order and the first true wins. An older board throws on the
 // unknown slot name, so a manifest that uses it declares `^1.40.0`.
 //
-export const HOST_API_VERSION = '1.40.0';
+// 1.41.0 adds `offBoard` to `host.sessions.spawn()`: `true` stamps the card with
+// the caller's extension id, and the board's grid, keyboard nav and Attach picker
+// leave it out while it stays in the graph, so the extension can show and drive
+// it in its own view. It resumes, archives and bills like any other card, and
+// `sessions:read` reports the stamp as `offBoard`. An older server refuses no
+// unknown spawn option, so the card silently lands on the board; a manifest that
+// needs it declares `^1.41.0`.
+//
+export const HOST_API_VERSION = '1.41.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

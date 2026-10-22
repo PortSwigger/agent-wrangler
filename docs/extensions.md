@@ -1271,6 +1271,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   inside `worktree` included: dispatch is forgiving, so a mistyped option
   silently launches something subtly different (no grants, no worktree, the
   wrong base commit) and the extension author has no stack into core to read.
+- **`host.sessions.spawn({ offBoard: true })` keeps the card off the board** (1.41.0).
+  The entry is stamped with the CALLING extension's id (forced, never
+  caller-named) and the stamp survives resume. The card stays in the graph with
+  `offBoard: '<extId>'`, and `sessions:read` reports the same field, so the
+  extension can show and drive it in its own view; the board's grid, task tiles,
+  minimised-task dots, keyboard nav and Attach picker filter it out
+  (`public/off-board.js`). Nothing else changes: it resumes, archives
+  (`sessions.archive`, or the task's Archive) and bills exactly as a board card
+  does. A manifest using it declares `^1.41.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads

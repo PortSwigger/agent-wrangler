@@ -55,6 +55,7 @@ import { createExtFileViewer } from './ext-file-viewer.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
+import { onBoard } from './off-board.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
@@ -1525,7 +1526,7 @@ function renderGrid() {
   el.classList.remove('focus-mode');
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
@@ -1645,7 +1646,7 @@ function renderFocusedTile(el, id) {
   const isAdhoc = id === ADHOC_ID;
   const sessions = sortAsleepLast(
     sortBucketSessions(
-      latestSessions.filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
+      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
       id
     ),
     phaseOf
@@ -1690,7 +1691,7 @@ function trayHtml(visible) {
   if (!mins.length) return '';
   const pills = mins.map((t) => {
     const sessions = sortBucketSessions(
-      latestSessions.filter((s) => {
+      onBoard(latestSessions).filter((s) => {
         const tid = assignedTaskId(s.sessionId);
         return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
       }),
@@ -2238,7 +2239,7 @@ function attachMenuItems(sessionId) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return [];
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
-  const candidates = orderAttachCandidates(attachCandidates(sessionId, latestSessions, assignedTaskId), s.spawnedBy);
+  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId), s.spawnedBy);
   return candidates.map((c) => {
     const depth = nestingDepth(c, byId);
     const prefix = depth ? '— '.repeat(depth) : '';
@@ -2287,7 +2288,7 @@ function openCardMenu(sessionId, x, y) {
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -2330,7 +2331,7 @@ function openActionsMenu(sessionId, x, y) {
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -3437,7 +3438,7 @@ function focusModeActive() {
 function navTargets() {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid && byTask.has(tid)) byTask.get(tid).push(s);
     else noTask.push(s);
