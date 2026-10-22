@@ -1126,3 +1126,35 @@ test('buildGraph: an empty capture for a claude session on the scrape branch is 
   const graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => '' });
   assert.equal(graph.sessions.find((s) => s.sessionId === entry.sessionId).status, 'unknown');
 });
+
+test('buildGraph captures by the pane target when the session manager provides one', async (t) => {
+  const entry = { sessionId: 'cx-pane', agent: 'codex', liveSessionId: 'thr' };
+  const mgr = makeDormantManager([entry]);
+  mgr.tmuxNameFor = (id) => (id === entry.sessionId ? 'cx_pane' : null);
+  mgr.paneTargetFor = () => '%7';
+  mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid });
+  const targets = [];
+  await buildGraph(mgr, async () => ({}), {
+    discover: async () => [{ tmuxName: 'cx_pane', claudePid: process.pid, agent: 'codex' }],
+    runtimeResolver: () => ({ analyze: async () => ({}) }),
+    capture: async (target) => { targets.push(target); return ''; },
+    codexStatus: async () => ({ status: 'idle', waitingFor: null }),
+  });
+  assert.ok(targets.includes('%7'));
+  assert.ok(!targets.includes('cx_pane'));
+});
+
+test('buildGraph: a discovered session captures by its pane id, else its tmux name', async () => {
+  for (const [paneId, want] of [['%12', '%12'], [undefined, 'cx_disc2']]) {
+    const entry = { sessionId: 'cx-disc2', agent: 'codex', liveSessionId: 'thr' };
+    const mgr = makeDiscoveredManager(entry, 'cx_disc2');
+    const targets = [];
+    await buildGraph(mgr, async () => ({}), {
+      discover: async () => [{ tmuxName: 'cx_disc2', paneId, socket: '', claudePid: 4242, agent: 'codex', command: 'codex' }],
+      runtimeResolver: () => ({ readLive: async () => null, analyze: async () => ({}) }),
+      capture: async (target) => { targets.push(target); return ''; },
+      codexStatus: async () => ({ status: 'idle', waitingFor: null }),
+    });
+    assert.deepEqual(targets, [want]);
+  }
+});

@@ -482,7 +482,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // text regardless — captured once here and reused for both checks rather
     // than scraping twice.
     let status = liveStatusDecision(s.status);
-    const paneText = tmux ? await capture(tmux, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
+    const paneTarget = sessionManager?.paneTargetFor?.(s.sessionId) ?? tmux;
+    const paneText = paneTarget ? await capture(paneTarget, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
     let scrapeWaitingFor = null;
     if (status === 'scrape') {
       if (!tmux) status = 'unknown';
@@ -649,7 +650,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
     let status = live && live.status !== 'unknown' ? live.status : liveStatusDecision(live?.rawStatus);
-    const paneText = await capture(d.tmuxName, 60, d.socket || '');
+    const paneText = await capture(d.paneId || d.tmuxName, 60, d.socket || '');
     // classify() may also carry a hint (e.g. devcontainer bring-up/failure) alongside
     // the status — only meaningful on the scrape branch, since a recognized live
     // status above already has its own waitingFor (needs-you) or none (working/idle).
