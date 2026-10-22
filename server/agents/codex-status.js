@@ -15,7 +15,7 @@ export function codexLiveStatus({ paneStatus, marks, turnEnd, now }) {
     && now - marks.mtimeMs < IN_FLIGHT_STALE_MS;
   if (inFlight) return 'working';
   if (paneStatus === 'idle') return 'idle';
-  return Number.isFinite(marks.startedAt) ? 'idle' : 'unknown';
+  return Number.isFinite(marks.startedAt) && lastEnd != null && lastEnd >= marks.startedAt ? 'idle' : 'unknown';
 }
 
 export async function codexStatus({ liveSid, paneText, now = Date.now(), dataDir, sessionsDir }) {

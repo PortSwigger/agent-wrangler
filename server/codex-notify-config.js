@@ -10,24 +10,41 @@ export function notifyOverride(nodePath, hookPath) {
   return `notify=[${tomlString(nodePath)},${tomlString(hookPath)}]`;
 }
 
-function parseBasicStrings(inner) {
+const SIMPLE_ESCAPES = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+
+function parseStringArray(text) {
   const out = [];
   let i = 0;
-  const skipSpace = () => { while (i < inner.length && /\s/.test(inner[i])) i++; };
+  const skipSpace = () => {
+    for (;;) {
+      while (i < text.length && /\s/.test(text[i])) i++;
+      if (text[i] !== '#') return;
+      while (i < text.length && text[i] !== '\n') i++;
+    }
+  };
   skipSpace();
-  while (i < inner.length) {
-    if (inner[i] !== '"') return null;
+  while (i < text.length && text[i] !== ']') {
+    const quote = text[i];
+    if (quote !== '"' && quote !== "'") return null;
+    if (text.startsWith(quote.repeat(3), i)) return null;
     i++;
     let value = '';
     for (;;) {
-      if (i >= inner.length) return null;
-      const ch = inner[i];
-      if (ch === '"') { i++; break; }
-      if (ch === '\\') {
-        const next = inner[i + 1];
-        if (next !== '"' && next !== '\\') return null;
-        value += next;
-        i += 2;
+      if (i >= text.length || text[i] === '\n') return null;
+      const ch = text[i];
+      if (ch === quote) { i++; break; }
+      if (quote === '"' && ch === '\\') {
+        const next = text[i + 1];
+        if (next in SIMPLE_ESCAPES) {
+          value += SIMPLE_ESCAPES[next];
+          i += 2;
+          continue;
+        }
+        const width = next === 'u' ? 4 : next === 'U' ? 8 : 0;
+        const hex = text.slice(i + 2, i + 2 + width);
+        if (!width || !new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) return null;
+        try { value += String.fromCodePoint(parseInt(hex, 16)); } catch { return null; }
+        i += 2 + width;
         continue;
       }
       value += ch;
@@ -35,19 +52,20 @@ function parseBasicStrings(inner) {
     }
     out.push(value);
     skipSpace();
-    if (i >= inner.length) break;
-    if (inner[i] !== ',') return null;
-    i++;
-    skipSpace();
+    if (text[i] === ',') { i++; skipSpace(); } else if (text[i] !== ']') return null;
   }
+  if (text[i] !== ']') return null;
+  const rest = text.slice(i + 1).split('\n')[0].trim();
+  if (rest && !rest.startsWith('#')) return null;
   return out.length ? out : null;
 }
 
 export function parseNotifyArgv(tomlText) {
-  for (const line of String(tomlText).split(/\r?\n/)) {
-    if (line.trim().startsWith('[')) return null;
-    const m = line.match(/^\s*notify\s*=\s*\[(.*)\]\s*(#.*)?$/);
-    if (m) return parseBasicStrings(m[1]);
+  const lines = String(tomlText).split(/\r?\n/);
+  for (let n = 0; n < lines.length; n++) {
+    if (lines[n].trim().startsWith('[')) return null;
+    const m = lines[n].match(/^\s*notify\s*=\s*\[(.*)$/);
+    if (m) return parseStringArray([m[1], ...lines.slice(n + 1)].join('\n'));
   }
   return null;
 }

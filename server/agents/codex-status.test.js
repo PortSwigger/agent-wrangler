@@ -30,7 +30,15 @@ test('codexLiveStatus: stale in-flight turn falls back to the pane', () => {
   const marks = fresh({ startedAt: t('2026-10-21T21:00:00Z'), mtimeMs: t('2026-10-21T21:00:00Z') });
   assert.ok(now - marks.mtimeMs > IN_FLIGHT_STALE_MS);
   assert.equal(codexLiveStatus({ paneStatus: 'idle', marks, turnEnd: null, now }), 'idle');
-  assert.equal(codexLiveStatus({ paneStatus: 'unknown', marks, turnEnd: null, now }), 'idle');
+  assert.equal(codexLiveStatus({ paneStatus: 'unknown', marks, turnEnd: null, now }), 'unknown');
+});
+
+test('codexLiveStatus: an unknown pane is idle only with evidence the turn ended', () => {
+  const stale = t('2026-10-21T21:00:00Z');
+  const ended = fresh({ startedAt: stale, completedAt: stale + 1000, mtimeMs: stale });
+  assert.equal(codexLiveStatus({ paneStatus: 'unknown', marks: ended, turnEnd: null, now }), 'idle');
+  const unmatched = fresh({ startedAt: stale, mtimeMs: stale });
+  assert.equal(codexLiveStatus({ paneStatus: 'unknown', marks: unmatched, turnEnd: null, now }), 'unknown');
 });
 
 test('codexLiveStatus: pane working, needs-you and dialogs win', () => {

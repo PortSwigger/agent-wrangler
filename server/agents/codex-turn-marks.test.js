@@ -35,6 +35,27 @@ test('readTurnMarks ignores a truncated leading line', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('readTurnMarks finds a turn start that fell outside the tail', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-marks-'));
+  const file = path.join(dir, 'rollout.jsonl');
+  const output = JSON.stringify({ timestamp: '2026-10-22T11:13:00.000Z', type: 'response_item', payload: { type: 'function_call_output', output: 'z'.repeat(5000) } });
+  fs.writeFileSync(file, `${complete('2026-10-22T11:00:00.000Z')}\n${started('2026-10-22T11:12:00.000Z')}\n${output}\n`);
+  const marks = await readTurnMarks(file, { tailBytes: 1000 });
+  assert.equal(marks.startedAt, t('2026-10-22T11:12:00.000Z'));
+  assert.equal(marks.completedAt, t('2026-10-22T11:00:00.000Z'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('readTurnMarks gives up widening at maxBytes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-marks-'));
+  const file = path.join(dir, 'rollout.jsonl');
+  const output = JSON.stringify({ timestamp: '2026-10-22T11:13:00.000Z', type: 'response_item', payload: { type: 'function_call_output', output: 'z'.repeat(5000) } });
+  fs.writeFileSync(file, `${started('2026-10-22T11:12:00.000Z')}\n${output}\n`);
+  const marks = await readTurnMarks(file, { tailBytes: 1000, maxBytes: 2000 });
+  assert.equal(marks.startedAt, null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('readTurnMarks on a missing file is all null', async () => {
   assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, mtimeMs: null });
 });

@@ -105,3 +105,17 @@ test('the hook script does not chain to itself', async () => {
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(codexHome, { recursive: true, force: true });
 });
+
+test('the hook script does not chain to itself through a symlinked spelling', async () => {
+  const dataDir = tmp();
+  const codexHome = tmp();
+  const link = path.join(codexHome, 'stable-hook.js');
+  fs.symlinkSync(hookPath, link);
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), `notify = ["${process.execPath}", "${link}"]\n`);
+  await runHook({ dataDir, codexHome });
+  const first = readTurnRecord('t1', dataDir).endedAt;
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(readTurnRecord('t1', dataDir).endedAt, first);
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(codexHome, { recursive: true, force: true });
+});

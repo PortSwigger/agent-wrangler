@@ -17,23 +17,29 @@ export function parseTurnMarks(text) {
   return marks;
 }
 
-export async function readTurnMarks(rolloutPath, { tailBytes = 65536 } = {}) {
+export async function readTurnMarks(rolloutPath, { tailBytes = 65536, maxBytes = 8 * 1024 * 1024 } = {}) {
   const empty = { startedAt: null, completedAt: null, abortedAt: null, mtimeMs: null };
   if (!rolloutPath) return empty;
   let handle;
   try {
     handle = await fs.promises.open(rolloutPath, 'r');
     const { size, mtimeMs } = await handle.stat();
-    const length = Math.min(size, tailBytes);
-    const start = size - length;
-    const buf = Buffer.alloc(length);
-    await handle.read(buf, 0, length, start);
-    let text = buf.toString('utf8');
-    if (start > 0) {
-      const nl = text.indexOf('\n');
-      text = nl === -1 ? '' : text.slice(nl + 1);
+    let marks;
+    for (let want = tailBytes; ; want *= 2) {
+      const length = Math.min(size, want, maxBytes);
+      const start = size - length;
+      const buf = Buffer.alloc(length);
+      await handle.read(buf, 0, length, start);
+      let text = buf.toString('utf8');
+      if (start > 0) {
+        const nl = text.indexOf('\n');
+        text = nl === -1 ? '' : text.slice(nl + 1);
+      }
+      marks = parseTurnMarks(text);
+      const found = Object.values(marks).some((v) => v != null);
+      if (found || start === 0 || length >= maxBytes) break;
     }
-    return { ...parseTurnMarks(text), mtimeMs };
+    return { ...marks, mtimeMs };
   } catch {
     return empty;
   } finally {
