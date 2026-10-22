@@ -33,7 +33,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -6721,7 +6721,7 @@ function connect() {
         // `automatic`: the update tick applied it for an extension that opted
         // in, and every tab is told, so the restart button is up wherever the
         // human looks next.
-        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${EXT_RESTART_NOTE}`);
+        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${canRestartServer ? EXT_AUTO_RESTART_NOTE : EXT_RESTART_NOTE}`);
         else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
@@ -6745,7 +6745,8 @@ function connect() {
     }
     else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
     else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
-    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
+    // `extensions`: the restart loads auto-applied extension updates only.
+    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; if (msg.extensions) extRestarting = true; remountUpdatePanel(); remountExtensions(); }
     else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
     else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every

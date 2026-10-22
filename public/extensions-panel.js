@@ -43,12 +43,16 @@ export const MAX_TEXTAREA_LENGTH = 20000;
 
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
 
+// An auto-applied update's toast where the wrangler can restart itself: it
+// does, once idle (update-service.js), so asking for a restart would be wrong.
+export const AUTO_RESTART_NOTE = 'The wrangler restarts to load it once it is idle.';
+
 // What turning auto-update on gives away, shown in the confirm before it is
 // on. Like TRUST_STATEMENT, not to be softened: the repository's owner, or
 // whoever compromises it, decides what runs next, and nobody reads it first.
-export const AUTO_UPDATE_WARNING = 'New commits pushed to this extension\'s repository — by its owner, or by anyone who gains control of it — will be installed and run inside the wrangler with this extension\'s capabilities and full access to this machine, without you reviewing the code first. Only an update that asks for no new capabilities and passes the lockfile and host API checks is applied; anything else still waits for you. Updated code loads at the next restart.';
+export const AUTO_UPDATE_WARNING = 'New commits pushed to this extension\'s repository — by its owner, or by anyone who gains control of it — will be installed and run inside the wrangler with this extension\'s capabilities and full access to this machine, without you reviewing the code first. Only an update that asks for no new capabilities and passes the lockfile and host API checks is applied; anything else still waits for you. The wrangler restarts itself to load updated code once it is idle, where it can restart; otherwise the code loads at the next restart.';
 
-export const AUTO_UPDATE_HELP = 'Install new commits at the update check when they ask for no new capabilities. Runs only while Settings › Updates is on Notify or Auto; the new code loads at the next restart.';
+export const AUTO_UPDATE_HELP = 'Install new commits at the update check when they ask for no new capabilities. Runs only while Settings › Updates is on Notify or Auto; the wrangler restarts to load it once idle, or, where it cannot restart itself, at the next restart.';
 
 // An uninstall gets its OWN note, because "to finish" would be a lie there: the
 // row, tools, handlers, stores, sweeps and client asset are all gone already and

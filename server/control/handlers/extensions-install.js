@@ -621,7 +621,7 @@ export async function autoUpdateExtension(id, ctx) {
     await extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, quiet);
     const done = found('ext-install-done');
     if (!done?.installed) return refused() || { applied: false, reason: 'the update did not complete' };
-    log(`[agent-wrangler] extension ${id} auto-updated to ${done.sha.slice(0, 8)}; it loads at the next restart`);
+    log(`[agent-wrangler] extension ${id} auto-updated to ${done.sha.slice(0, 8)}; it loads when the wrangler restarts`);
     return { applied: true, sha: done.sha };
   } catch (err) {
     return { applied: false, reason: String(err?.message || err) };
