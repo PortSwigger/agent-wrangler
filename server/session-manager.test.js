@@ -341,7 +341,7 @@ test('resumeLaunchPlan: transcript found but launch dir unknown falls back to th
   );
 });
 
-test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSession, links, PR-automation toggles, childFullView, and nameInherited across the rebuild', () => {
+test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSession, links, PR-automation toggles, childFullView, offBoard, and nameInherited across the rebuild', () => {
   const prev = {
     intent: 'fix', name: 'My run', model: 'sonnet', createdAt: 100,
     forkedFrom: 'P', spawnedBy: 'SPAWNER1',
@@ -353,6 +353,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     autoFixPrChecks: false,
     autoMergeOnPass: true,
     childFullView: true,
+    offBoard: 'jobs',
     autoCompactTokens: 250000,
     nameInherited: true,
     priorLiveSessionIds: ['CLEARED1'],
@@ -371,6 +372,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.equal(e.autoFixPrChecks, false); // an explicit opt-out must not silently revert to the on-default
   assert.equal(e.autoMergeOnPass, true); // ditto for an explicit opt-in surviving a workflow run's idle-suspend
   assert.equal(e.childFullView, true); // ditto for a child's full-view override
+  assert.equal(e.offBoard, 'jobs'); // an extension-hosted card must not land on the board after resume
   assert.equal(e.autoCompactTokens, 250000);
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
   assert.equal(e.liveSessionId, 'L');
@@ -2041,6 +2043,14 @@ test('dispatch stores parentSession when passed', async () => {
   const sm = smForDispatch();
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', parentSession: 'ORCH1' });
   assert.equal(sm.map.get(sessionId).parentSession, 'ORCH1');
+});
+
+test('dispatch stores offBoard when passed, and leaves it undefined otherwise', async () => {
+  const sm = smForDispatch();
+  const hosted = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', offBoard: 'jobs' });
+  assert.equal(sm.map.get(hosted.sessionId).offBoard, 'jobs');
+  const plain = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y' });
+  assert.equal(sm.map.get(plain.sessionId).offBoard, undefined);
 });
 
 test('dispatch leaves parentSession undefined when not passed', async () => {

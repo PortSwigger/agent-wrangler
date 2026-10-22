@@ -301,7 +301,9 @@ export function shouldReloadWorkflowSkill(workflow) {
 // resume that follows it), the per-session PR-automation toggles (autoFixPrChecks,
 // autoMergeOnPass — an explicit true/false on either must not silently revert to its
 // default across the very idle-suspend cycle a long workflow run is most likely to hit),
-// and the per-child full/compact display override (childFullView — same reasoning);
+// the per-child full/compact display override (childFullView — same reasoning),
+// and the extension hosting an off-board card (offBoard — a resume must not drop it
+// onto the board);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
 // function's own field list, not because callers reliably clearSnooze() before resume
 // — some resume() call sites don't) all survive.
@@ -340,6 +342,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     autoFixPrChecks: prev?.autoFixPrChecks,
     autoMergeOnPass: prev?.autoMergeOnPass,
     childFullView: prev?.childFullView,
+    offBoard: prev?.offBoard,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
     // regardless of what it was launched with originally — stamp it true
@@ -1813,7 +1816,7 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     permissionMode ??= 'auto';
@@ -1972,7 +1975,9 @@ export class SessionManager {
     // `mailCapable: false` for a buildLaunch runtime (its command has no
     // --mcp-config, so no read_mail) and for one with `deliver`, which is how
     // send_message routes a peer message to that `deliver` instead.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    // `offBoard` is the id of the extension hosting this card in its own view
+    // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

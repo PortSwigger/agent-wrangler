@@ -60,6 +60,8 @@ export function projectSession(entry, id, { taskId = null } = {}) {
     parentSession: e.parentSession ?? null,
     spawnedBy: e.spawnedBy ?? null,
     worktree: worktreeSummary(e.worktree),
+    // The extension hosting the card in its own view, null for a board card.
+    offBoard: e.offBoard ?? null,
   });
 }
 
