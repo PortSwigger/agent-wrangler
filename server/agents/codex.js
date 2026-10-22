@@ -9,15 +9,13 @@ import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
+import { tomlString, notifyOverride } from '../codex-notify-config.js';
+import { fileURLToPath } from 'node:url';
+import { installPath } from '../install-root.js';
 
 const exec = promisify(execFile);
 
-// A TOML double-quoted string for a `-c key=value` override. Escapes backslash
-// and double-quote per TOML basic-string rules; the memory prompt has neither
-// today, but escape defensively so a future prompt edit can't break the arg.
-function tomlString(s) {
-  return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
+const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
 
 // Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
@@ -57,6 +55,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
+  args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
   args.push(...launchAddDirArgs(launchContext));
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());

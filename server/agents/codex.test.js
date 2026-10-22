@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { codex } from './codex.js';
+import { fileURLToPath } from 'node:url';
 import { adapterForContainerProcess } from './index.js';
+import { shellQuote } from './claude.js';
 
 // What the task-memory extension's session.launchContext hook answers for Codex
 // (the resolved real path — Codex 0.149+ rejects a symlinked writable root).
@@ -204,4 +206,12 @@ test('codexPolicy approve-for-me emits the flag without -s/-a', () => {
   assert.match(cmd, /'--approve-for-me'/);
   assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
   assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval/);
+});
+
+test('launch, resume and fork all pass the notify hook override', () => {
+  const hook = fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url));
+  const expected = shellQuote(`notify=["${process.execPath}","${hook}"]`);
+  for (const cmd of [codex.buildLaunch({ sessionId: 's' }), codex.buildResume({ sessionId: 's', resumeId: 'r' }), codex.buildFork({ sessionId: 's', sourceId: 'r' })]) {
+    assert.ok(cmd.includes(`'-c' ${expected}`), cmd);
+  }
 });
