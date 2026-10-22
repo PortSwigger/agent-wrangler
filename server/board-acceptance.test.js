@@ -73,13 +73,23 @@ async function launchChrome(chromePath, profile) {
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1400,900',
     'about:blank',
-  ], { stdio: 'ignore' });
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Keep startup failures visible in CI. A missing port file alone cannot tell us
+  // whether Chrome crashed, could not spawn, or stayed alive without opening CDP.
+  let stderr = '', stopped = null;
+  proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-16_384); });
+  proc.on('error', (error) => { stopped = `could not start: ${error.message}`; });
+  proc.on('exit', (code, signal) => { stopped = `exited (${signal ? `signal ${signal}` : `code ${code}`})`; });
   const portFile = join(profile, 'DevToolsActivePort');
   const port = await waitFor(() => {
+    // waitFor swallows read errors while the file is being created. Return a
+    // sentinel on process failure so we can report it immediately after polling.
+    if (stopped) return 'stopped';
     const line = readFileSync(portFile, 'utf8').split('\n')[0].trim();
     return line ? Number(line) : null;
   });
-  return { proc, port };
+  return { proc, port: port === 'stopped' ? null : port,
+    diagnosis: () => `Chrome ${stopped || 'never reported a DevTools port (still running)'}${stderr ? `\n${stderr}` : ''}` };
 }
 
 test('the board loads in a real browser with no console errors', { timeout: 180_000 }, async (t) => {
@@ -111,7 +121,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
 
     const launched = await launchChrome(chromePath, profile);
     chrome = launched.proc;
-    assert.ok(launched.port, 'Chrome never reported a DevTools port');
+    assert.ok(launched.port, launched.diagnosis());
 
     const target = await waitFor(async () => {
       const r = await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
