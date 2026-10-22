@@ -72,6 +72,7 @@ import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 import { keybindings } from './keybindings.js';
 import { registerCoreBindings } from './core-keybindings.js';
+import { createSessionEmbed } from './session-embed.js';
 
 let currentView = 'grid';
 
@@ -223,7 +224,7 @@ function noteExtClientFacts(list) {
 const notifications = createNotifications({ document });
 const slots = createSlots({
   document,
-  onExtensionRemoved: (id) => notifications.clear(id),
+  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); },
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -277,7 +278,11 @@ function landOnCard(sessionId, { diff, onClose }, select) {
   openDiffPanel(sessionId);
 }
 const boardOpen = createBoardOpen();
-onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
+onDiffPanelClosed((sid) => {
+  boardOpen.diffClosed(sid);
+  // An embedded panel's Diff button goes back to Chat/Terminal (api.mountSession).
+  if (sessionEmbed.active() && selectedSessionId === sid) renderPanel(sid);
+});
 
 function scrollTaskIntoView(taskId) {
   const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
@@ -364,7 +369,63 @@ const extApi = {
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
+  // Backs `api.mountSession`; slots has checked the element and the id and
+  // bound the extension. Lent at once if the element's view is on screen
+  // (or not in the document yet), otherwise parked until it is.
+  mountSession: (extId, el, sessionId, { onMaximize = null } = {}) => {
+    const host = extViewHosts.get(currentView);
+    const active = el.isConnected ? Boolean(host?.contains(el)) : isExtView(currentView);
+    return sessionEmbed.mount(el, sessionId, { extId, onMaximize, active });
+  },
 };
+
+// ── api.mountSession: the board's session panel inside an extension view ────
+// session-embed.js moves the nodes; these say what showing and letting go mean.
+// While lent, main.session-embedded keeps the board's resize handle out of it.
+const sessionEmbed = createSessionEmbed({
+  document,
+  parts: () => ({
+    sidebar: document.getElementById('sidebar'),
+    diffPanel: document.getElementById('diff-panel'),
+    diffAnchor: document.getElementById('term-wrap'),
+  }),
+  show: showEmbeddedSession,
+  release: (o) => {
+    if (isDiffPanelOpen()) closeDiffPanel();
+    if (pendingSelect === o.sessionId) pendingSelect = null;
+    if (selectedSessionId) deselectSession(); else hideSidebar();
+    document.querySelector('main').classList.remove('session-embedded');
+  },
+});
+
+// A live session is selected as a card click would; a dormant one is resumed
+// first, as its card does; one that is not on the board at all (archived) is
+// restored and selected when the next graph brings it back (tryFulfillPending).
+function showEmbeddedSession(sessionId, o) {
+  document.querySelector('main').classList.add('session-embedded');
+  o.wrap?.classList.remove('pending');
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s && !s.managed) { resumeDormant(sessionId); return; }
+  if (s) { selectSession(sessionId); return; }
+  if (selectedSessionId) deselectSession();
+  if (isDiffPanelOpen()) closeDiffPanel();
+  o.wrap?.classList.add('pending');
+  showSidebar();
+  document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
+  pendingSelect = sessionId;
+  send({ type: 'resume', sessionId });
+}
+
+// Lend the panel to the current view if it holds the embed's element, take it
+// back otherwise. Called on every view switch and graph tick, so an element
+// dropped without unmount (its view re-drew over it) never strands the panel.
+function syncSessionEmbed() {
+  sessionEmbed.reclaimOrphan();
+  const o = sessionEmbed.owner();
+  if (!o) return;
+  if (extViewHosts.get(currentView)?.contains(o.el)) sessionEmbed.unpark();
+  else sessionEmbed.park();
+}
 
 // api.openDispatch({ taskId, intent, lockTask, cwd, images }): open the dispatch
 // modal as openDispatch does; resolves with the `dispatched` ack once the human
@@ -773,6 +834,7 @@ function applyGraph(graph) {
   // rather than staying blank until the next one — and unconditionally, because
   // a view is a whole pane with no other render path of its own.
   updateExtViews();
+  syncSessionEmbed();
   trackJustFinished(latestSessions);
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
@@ -832,8 +894,9 @@ function applyGraph(graph) {
 function setView(view) {
   if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
-  // The diff panel overlays the board, so leaving grid must dismiss it.
-  if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
+  // The diff panel overlays the board, so leaving grid must dismiss it. An
+  // embedded one is the embed's to keep (syncSessionEmbed below).
+  if (view !== 'grid' && isDiffPanelOpen() && !sessionEmbed.active()) closeDiffPanel();
   document.querySelectorAll('.layouts button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const gridEl = document.getElementById('grid');
   gridEl.classList.toggle('hidden', view !== 'grid');
@@ -848,13 +911,14 @@ function setView(view) {
   // ALL of them on every setView rather than just the pair being swapped, so a
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
+  syncSessionEmbed();
   if (view === 'grid') renderGrid();
   else if (view === 'search') {
     // Search is a no-session view: drop any open terminal so it doesn't dangle
     // behind the results.
     if (selectedSessionId) deselectSession();
     onEnterSearchView();
-  } else if (isExtView(view) && selectedSessionId) {
+  } else if (isExtView(view) && selectedSessionId && !sessionEmbed.active()) {
     // Same rule as Search, for the same reason: an extension view owns the
     // whole board area, so a terminal left attached behind it is invisible and
     // still 80 columns wide when you come back.
@@ -2314,7 +2378,8 @@ function openActionsMenu(sessionId, x, y) {
   const items = [
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
+    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -3395,9 +3460,13 @@ function syncHash() {
 function tryFulfillPending() {
   if (!pendingSelect) return;
   if (!latestSessions.some((x) => x.sessionId === pendingSelect)) return;
-  if (currentView !== 'grid') setView('grid');
   const target = pendingSelect;
+  // An embed's restore lands in the embed, not on the board.
+  const embed = sessionEmbed.active();
+  const embedded = embed?.sessionId === target;
+  if (currentView !== 'grid' && !embedded) setView('grid');
   pendingSelect = null;
+  if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); return; }
   const req = boardOpen.claim(target);
   if (req) landOnCard(target, req, selectSession);
   else selectSession(target);
@@ -4299,6 +4368,14 @@ function renderPanel(sessionId) {
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
   const view = viewForSession(sessionId);
+  // Lent to an extension view (api.mountSession): the diff is a third view in
+  // place rather than a panel over the board, the extension owns leaving (no
+  // Close), and Fullscreen is offered only when it said what that means.
+  const embed = sessionEmbed.active();
+  const diffing = Boolean(embed) && isDiffPanelOpen() && diffPanelSessionId() === sessionId;
+  const segOn = (v) => (diffing ? v === 'diff' : v === view);
+  const showMax = !embed || Boolean(embed.onMaximize);
+  const maxOn = embed ? embed.maximized : maximized;
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
@@ -4347,13 +4424,14 @@ function renderPanel(sessionId) {
           <span class="sess-name" id="session-name" title="Click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
             <span class="chat-seg" role="group" aria-label="Session view">
-              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
-              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+              <button type="button" class="chat-seg-btn${segOn('chat') ? ' on' : ''}" data-view="chat" aria-pressed="${segOn('chat')}">Chat</button>
+              <button type="button" class="chat-seg-btn${segOn('terminal') ? ' on' : ''}" data-view="terminal" aria-pressed="${segOn('terminal')}">Terminal</button>
+              ${embed ? `<button type="button" class="chat-seg-btn${diffing ? ' on' : ''}" data-view="diff" aria-pressed="${diffing}">Diff</button>` : ''}
             </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
-            <span class="sess-acts-divider"></span>
-            <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
-            <button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>
+            ${showMax || !embed ? '<span class="sess-acts-divider"></span>' : ''}
+            ${showMax ? `<button id="panel-maximize" class="icon-ghost${maxOn ? ' active' : ''}" title="${maxOn ? 'Restore' : 'Fullscreen'}${embed ? '' : ` (${KBD_MAXIMIZE})`}">${maxOn ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>` : ''}
+            ${embed ? '' : `<button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>`}
           </span>
         </div>
         <div class="sess-path">
@@ -4388,7 +4466,12 @@ function renderPanel(sessionId) {
   const closeBtn = panel.querySelector('#panel-close');
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   const maxBtn = panel.querySelector('#panel-maximize');
-  if (maxBtn) maxBtn.addEventListener('click', toggleMaximize);
+  if (maxBtn) maxBtn.addEventListener('click', () => {
+    if (!embed) { toggleMaximize(); return; }
+    embed.maximized = !embed.maximized;
+    embed.onMaximize(embed.maximized);
+    renderPanel(sessionId);
+  });
   const nameEl = panel.querySelector('#session-name');
   if (nameEl) nameEl.addEventListener('click', () => beginRename(sessionId));
   const saPill = panel.querySelector('#panel-sa-pill');
@@ -4423,7 +4506,9 @@ function renderPanel(sessionId) {
       // all. Clearing after the return would ignore the one gesture that most
       // needs to be honoured.
       disarmChatHandoff();
-      if (next === viewForSession(sessionId)) return;
+      if (next === 'diff') { openDiffPanel(sessionId); renderPanel(sessionId); return; }
+      if (diffing) closeDiffPanel();
+      if (next === viewForSession(sessionId)) { if (diffing) renderPanel(sessionId); return; }
       setSessionView(sessionId, next);
       applySessionView(sessionId);
       renderPanel(sessionId);
