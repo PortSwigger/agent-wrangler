@@ -1275,6 +1275,11 @@ async function main() {
     rolledBack: readRolledBack(),
     onStatus: (status) => broadcast({ type: 'update-status', ...status }),
     onApplied: (result) => {
+      if (result.extensions) {
+        broadcast({ type: 'update-applied', extensions: result.extensions });
+        exitForRestart(`auto-updated ${result.extensions.join(', ')}`);
+        return;
+      }
       broadcast({ type: 'update-applied', head: result.head });
       exitForRestart(`updated to ${result.head}`);
     },
@@ -1285,6 +1290,7 @@ async function main() {
       autoUpdate: (id) => autoUpdateExtension(id, { ext: extBag, rebuild, broadcast }),
     }),
     onExtensions: (summary) => broadcast({ type: 'ext-update-status', ...summary }),
+    canRestart: restartSupported(),
     log,
   });
   await sessionManager.init();

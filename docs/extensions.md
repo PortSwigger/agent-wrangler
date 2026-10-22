@@ -42,7 +42,11 @@ An extension with Auto-update on is updated by the hourly update check, so only 
 Updates is on Notify or Auto. An update is applied only when it asks for no new capabilities and passes
 the same lockfile and host API checks as an update you start yourself. Otherwise it stays an update
 button for you to review, and its detail pane says why it was not applied. The updated code loads at
-the next restart: the panel offers **Restart now** where the wrangler can restart itself.
+a restart. Where the wrangler can restart itself (it runs as a background service), it restarts on its
+own once it is idle: no headless runs or session launches in flight and no scheduled session due in the
+next two minutes. While it is busy it looks again every minute, and several updates, or an update of
+Agent Wrangler itself in the same check, share one restart. Where it cannot restart itself, the
+updated code loads the next time you restart it.
 
 ### Early-adopter builds
 
@@ -382,6 +386,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   only a finished update's `ext-install-done` (`automatic: true`,
   `restartRequired`) is broadcast, so every tab gets the restart affordance. The
   restart semantics below are unchanged: updated code loads at the next start.
+  The check returns what it applied as `autoApplied`, and `update-service.js`
+  keeps those ids pending and restarts through the same `onApplied` →
+  `exitForRestart` path as a wrangler update, on the same terms: only with
+  `canRestart` (`restartSupported()`) and only while `isQuiet()`, retrying
+  every `restartRetryMs` while busy. It is called at most once per process, so
+  several extensions, or a wrangler auto-apply in the same tick, mean one
+  restart. Without `canRestart` nothing restarts, as before. A human install
+  or update never schedules it.
 - **Early adopter is a PER-INSTALL opt-in on the provenance record too**
   (`earlyAdopter`, strictly `true`), next to the branch the consented version
   declared (`earlyAdopterBranch`, from `readDeclaration`; `ext-consent` refuses a
