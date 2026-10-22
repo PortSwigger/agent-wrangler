@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import { deliverMailNotification } from './mailbox-delivery.js';
 import { createPaneDeferral } from './pane-deferral.js';
+import { composeMailNotification } from './mail-notification.js';
 
 function deps({ live = {}, entries = {}, mcpConnectsAfterPolls = 0, mcpSeenStale = false } = {}) {
   const sent = [];
@@ -54,11 +55,44 @@ function socketDeps({ agent, socket = { socketPath: '/s/x.sock', keyPath: '/s/x.
   return d;
 }
 
+function assertSocketMarker(actual, original) {
+  assert.equal(actual.slice(0, original.length), original);
+  assert.match(actual.slice(original.length), /^\n\[Notification: [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\]$/);
+}
+
+test('Claude socket notifications get fresh UUID markers on every send', async () => {
+  const d = socketDeps({ agent: 'claude' });
+  const text = composeMailNotification([{ from: 'same_sender', body: 'private body' }]);
+  for (let i = 0; i < 3; i += 1) {
+    assert.deepEqual(await deliverMailNotification('CARD1', text, d), { mode: 'live' });
+  }
+  assert.equal(d.socketSent.length, 3);
+  for (const sent of d.socketSent) assertSocketMarker(sent.text, text);
+  assert.equal(new Set(d.socketSent.map((sent) => sent.text)).size, 3);
+  assert.deepEqual(d.sent, []);
+});
+
+for (const [route, options] of [
+  ['Codex', { agent: 'codex' }],
+  ['Claude terminal fallback without a socket', { agent: 'claude', socket: null }],
+  ['Claude terminal fallback after a failed socket send', { agent: 'claude', sendFails: true }],
+]) {
+  test(`${route} retains the original notification text`, async () => {
+    const d = socketDeps(options);
+    const text = composeMailNotification([{ from: 'same_sender', body: 'private body' }]);
+    for (let i = 0; i < 2; i += 1) {
+      assert.deepEqual(await deliverMailNotification('CARD1', text, d), { mode: 'live' });
+    }
+    assert.deepEqual(d.sent.map((sent) => sent.text), [text, text]);
+  });
+}
+
 test('live Claude recipient is delivered over its socket and never pasted', async () => {
   const d = socketDeps({ agent: 'claude' });
   const mode = await deliverMailNotification('CARD1', 'you have mail', d);
   assert.deepEqual(mode, { mode: 'live' });
-  assert.deepEqual(d.socketSent, [{ target: { socketPath: '/s/x.sock', keyPath: '/s/x.key' }, text: 'you have mail' }]);
+  assert.deepEqual(d.socketSent[0].target, { socketPath: '/s/x.sock', keyPath: '/s/x.key' });
+  assertSocketMarker(d.socketSent[0].text, 'you have mail');
   assert.deepEqual(d.socketLookups, ['LIVE1']);
   assert.deepEqual(d.sent, []);
 });
@@ -343,7 +377,9 @@ test('Claude socket mail reaches a working session without touching its draft', 
   d.findSocket = () => socket;
   d.sendSocket = async (target, text) => { sent.push({ target, text }); };
   assert.deepEqual(await deliverMailNotification('CARD1', 'you have mail', d), { mode: 'live' });
-  assert.deepEqual(sent, [{ target: socket, text: 'you have mail' }]);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].target, socket);
+  assertSocketMarker(sent[0].text, 'you have mail');
   assert.deepEqual(d.sent, []);
 });
 

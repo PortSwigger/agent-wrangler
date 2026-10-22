@@ -56,6 +56,72 @@ test('sweepDueSettles: fan-in batch — one notification for the whole batch, no
   assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
 });
 
+// Model a successful socket write whose identical peer content is silently
+// suppressed. Consumption (read_mail's drain) happens separately from sending.
+for (const drainBetweenBatches of [true, false]) {
+  test(`Claude successive equal-count batches survive identical-content suppression: ${drainBetweenBatches ? 'draining between batches' : 'another batch before drain'}`, async (t) => {
+    const file = tmpFile();
+    t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
+    let store = new MailboxStore(file);
+    const d = deps({
+      mailStore: store,
+      live: { CARD1: { tmux: 'cc_one', socket: '/s' } },
+      entries: { CARD1: { agent: 'claude', liveSessionId: 'LIVE1' } },
+    });
+    const seen = new Set();
+    const accepted = [];
+    const attempts = [];
+    d.findSocket = () => ({ socketPath: '/s/claude.sock', keyPath: '/s/claude.key' });
+    d.sendSocket = async (_target, text) => {
+      attempts.push(text);
+      if (seen.has(text)) return; // A completed write does not prove consumption.
+      seen.add(text);
+      accepted.push(text);
+    };
+    const ids = [];
+    const drained = [];
+    const addBatch = (now) => {
+      for (const body of ['first private body', 'second private body']) {
+        ids.push(store.append('CARD1', { from: 'same_sender', body }, now).id);
+      }
+    };
+    const notify = async (now, count) => {
+      const before = accepted.length;
+      assert.equal(await sweepDueSettles(d, now), 1);
+      assert.equal(accepted.length, before + 1, 'Claude must accept each notification despite identical-content suppression');
+      assert.match(accepted.at(-1), new RegExp(`^\\[Agent Wrangler\\] 📬 New mail — ${count} messages\\. Call read_mail now, then continue your work\\.`));
+      assert.doesNotMatch(accepted.at(-1), /same_sender|private body|mail_/);
+      assert.equal(store.unreadMessages('CARD1').length, count, 'sending leaves mail unread');
+      assert.equal(store.boxes.get('CARD1').lastNotifiedAt, now);
+      assert.equal(await sweepDueSettles(d, now + 1), 0, 'no duplicate settle delivery');
+    };
+    const drain = () => {
+      drained.push(...store.drain('CARD1'));
+      assert.equal(store.unreadMessages('CARD1').length, 0);
+      assert.deepEqual(store.drain('CARD1'), [], 'mail is consumed only once');
+    };
+
+    addBatch(0);
+    await notify(SETTLE_MS, 2);
+    if (drainBetweenBatches) drain();
+    addBatch(SETTLE_MS + 1);
+    await notify(2 * SETTLE_MS + 1, drainBetweenBatches ? 2 : 4);
+    drain();
+    // Reload the mailbox between batches, as after a server restart.
+    store = d.mailStore = new MailboxStore(file);
+    addBatch(2 * SETTLE_MS + 2);
+    await notify(3 * SETTLE_MS + 2, 2);
+    // Drain the reloaded store, as the recipient would after restart.
+    drained.push(...d.mailStore.drain('CARD1'));
+    assert.equal(d.mailStore.unreadMessages('CARD1').length, 0);
+    assert.deepEqual(drained.map((m) => m.id), ids);
+    assert.ok(d.mailStore.list('CARD1').every((m) => m.state === 'read'));
+    assert.equal(attempts.length, 3);
+    assert.equal(new Set(attempts).size, 3);
+    assert.deepEqual(d.sent, [], 'the socket path never touches the pane');
+  });
+}
+
 test('Codex mail held for a draft survives restart and delivers once during the same active turn', async () => {
   const file = tmpFile();
   const store = new MailboxStore(file);

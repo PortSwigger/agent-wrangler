@@ -1,6 +1,7 @@
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { resolveResumeDir } from './transcript-reader.js';
 import { findClaudeSocket as defaultFindSocket, sendToClaudeSocket as defaultSendSocket } from './claude-socket.js';
 
@@ -71,7 +72,10 @@ async function liveTransport(id, entry, tmux, text, socket, paneDeferral, before
     if (target) {
       try {
         await beforeSend();
-        await (deps.sendSocket ?? defaultSendSocket)(target, text);
+        // Claude suppresses identical peer content even after a successful
+        // socket write. Give each notification fresh content, including when
+        // successive batches have the same unread count. Keep pane text intact.
+        await (deps.sendSocket ?? defaultSendSocket)(target, `${text}\n[Notification: ${crypto.randomUUID()}]`);
         return 'sent';
       } catch { /* fall back to the paste below */ }
     }
