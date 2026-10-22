@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
+import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
@@ -291,7 +292,7 @@ export async function applyRuntimeCost(runtime, args, enr) {
 
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore, mailDraftBlocked } = {}) {
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
   const now = Date.now();
   // The mail pill's data, keyed on card id like every other per-session field —
   // omitted entirely (undefined) when no mailStore is injected, so a caller that
@@ -482,7 +483,15 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // than scraping twice.
     let status = liveStatusDecision(s.status);
     const paneText = tmux ? await capture(tmux, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
-    if (status === 'scrape') status = tmux ? classify(paneText).status : 'unknown';
+    let scrapeWaitingFor = null;
+    if (status === 'scrape') {
+      if (!tmux) status = 'unknown';
+      else if (agentId === 'codex') {
+        const c = await codexStatus({ liveSid: mapEntry?.liveSessionId, paneText });
+        status = c.status;
+        scrapeWaitingFor = c.waitingFor;
+      } else status = paneText === '' ? 'unknown' : classify(paneText).status;
+    }
     // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
     // live" — it covers both a still-blocking foreground command AND a detached
     // run_in_background job the turn has already ended on; the file can't tell
@@ -514,7 +523,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       status,
       hasBackgroundShell,
       rawStatus: s.status || null,
-      waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || null),
+      waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
       waitingReason: apiError ? apiError.waitingReason : null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
@@ -645,7 +654,13 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // the status — only meaningful on the scrape branch, since a recognized live
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
-    if (status === 'scrape') { const c = classify(paneText); status = c.status; scrapeWaitingFor = c.waitingFor || null; }
+    if (status === 'scrape') {
+      const c = agentId === 'codex'
+        ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
+        : paneText === '' ? { status: 'unknown' } : classify(paneText);
+      status = c.status;
+      scrapeWaitingFor = c.waitingFor || null;
+    }
     // Same override as the managed-session pass above: Claude's 'shell' status
     // can go stale for as long as a detached background job runs, well past the
     // pane's own idle prompt — trust the pane over it. `live.status` above is
