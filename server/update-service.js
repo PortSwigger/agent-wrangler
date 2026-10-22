@@ -57,18 +57,34 @@ export function createUpdateService({
   isQuiet = () => true,
   rolledBack = null,
   onStatus = () => {},
+  // The one way out for a restart, called at most once per process: with the
+  // apply result after a wrangler update, or with `{ extensions }` (the ids
+  // auto-applied) when only extension updates are waiting to load.
   onApplied = () => {},
   // Installed extensions ride the same tick, notify only unless an extension
   // opted in to auto-update itself, in either mode (see
   // extensions/update-check.js); this tick's Auto applies the wrangler only.
   checkExtensions = null,
   onExtensions = () => {},
+  // Whether anything brings this process back after it exits (restart.js
+  // restartSupported). Without it an auto-applied extension update loads
+  // whenever a human next restarts the wrangler.
+  canRestart = false,
+  // How long a restart waiting for the wrangler to go quiet sleeps between
+  // looks, and the timer it sleeps on (replaced in tests).
+  restartRetryMs = 60 * 1000,
+  later = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
   log = () => {},
 } = {}) {
   let busy = false;
   let latest = null;
   let latestExtensions = null;
   let checkingExtensions = false;
+  // Ids of extensions auto-applied in this process: on disk, but the code
+  // running is still the old one until the restart.
+  const awaitingRestart = new Set();
+  let restartArmed = false;
+  let restartTimer = null;
 
   async function exclusive(fn) {
     if (busy) throw new UpdateBusyError();
@@ -102,15 +118,38 @@ export function createUpdateService({
       return result;
     }
     log(`[agent-wrangler] ${automatic ? 'auto-updated' : 'updated from the board'} to ${result.head}; restarting`);
+    // The same restart loads any extension update waiting for one.
+    restartArmed = true;
     onApplied(result);
     return result;
   });
+
+  // An auto-applied extension update loads only at a restart, and gets one on
+  // the wrangler's own auto-apply terms: only where something brings the
+  // process back, and only while it is quiet. While it is not, the restart is
+  // kept pending and looked at again every `restartRetryMs` rather than at the
+  // next hourly tick. However many extensions are waiting, and whether or not
+  // a wrangler update restarts first, onApplied is called once.
+  function restartForExtensions() {
+    restartTimer = null;
+    if (restartArmed || !canRestart || awaitingRestart.size === 0) return;
+    if (busy || !isQuiet()) {
+      restartTimer = later(restartForExtensions, restartRetryMs);
+      return;
+    }
+    restartArmed = true;
+    const extensions = [...awaitingRestart];
+    log(`[agent-wrangler] auto-updated extension${extensions.length === 1 ? '' : 's'} ${extensions.join(', ')}; restarting to load ${extensions.length === 1 ? 'it' : 'them'}`);
+    onApplied({ extensions });
+  }
 
   async function tickExtensions() {
     if (!checkExtensions || checkingExtensions) return;
     checkingExtensions = true;
     try {
-      latestExtensions = { ...(await checkExtensions()), checkedAt: Date.now() };
+      const { autoApplied = [], ...summary } = await checkExtensions();
+      for (const { id } of autoApplied) awaitingRestart.add(id);
+      latestExtensions = { ...summary, checkedAt: Date.now() };
       onExtensions(latestExtensions);
     } catch (err) {
       log(`[agent-wrangler] extension update check failed: ${err?.message || err}`);
@@ -134,11 +173,15 @@ export function createUpdateService({
     }
     // Before any auto-apply, which restarts the process.
     await tickExtensions();
-    if (!status || current !== 'auto' || !canAutoApply(status, rolledBack) || !isQuiet()) return status;
+    if (!status || current !== 'auto' || !canAutoApply(status, rolledBack) || !isQuiet()) {
+      if (!restartTimer) restartForExtensions();
+      return status;
+    }
     try {
       return await runApply({ automatic: true });
     } catch (err) {
       log(`[agent-wrangler] auto-update failed: ${err?.message || err}`);
+      if (!restartTimer) restartForExtensions();
       return null;
     }
   }

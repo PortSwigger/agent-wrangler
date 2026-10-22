@@ -9,9 +9,11 @@ import { lsRemoteHead, countCommitsBehind } from './install.js';
 // working tree; an outdated extension that opted in is handed to `autoUpdate`
 // (index.js wires the install handler's autoUpdateExtension), which applies it
 // only when it needs no re-consent. One it applied leaves the result, since it
-// is no longer behind; one it did not keeps its entry, with the reason as
-// `autoUpdateBlocked` (or `incompatible`, for a host API refusal), so the row
-// still offers the update through its consent screen.
+// is no longer behind, and is listed in `autoApplied` instead (its new code
+// loads only at a restart, which update-service.js schedules); one it did not
+// keeps its entry, with the reason as `autoUpdateBlocked` (or `incompatible`,
+// for a host API refusal), so the row still offers the update through its
+// consent screen.
 //
 // Built-in extensions have no remote, and a hand-placed one has no recorded
 // origin, so both are left out of the result entirely rather than reported up
@@ -53,6 +55,7 @@ export function createExtensionUpdateCheck({
   return async function checkExtensions() {
     const records = provenance();
     const extensions = [];
+    const autoApplied = [];
     for (const entry of list()) {
       if (!entry.external) continue;
       const record = records[entry.id];
@@ -65,7 +68,10 @@ export function createExtensionUpdateCheck({
         const status = { ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha, branch) : {}) };
         if (behind && record.autoUpdate && autoUpdate) {
           const result = await autoUpdate(entry.id);
-          if (result.applied) continue;
+          if (result.applied) {
+            autoApplied.push({ id: entry.id, sha: result.sha });
+            continue;
+          }
           status[result.incompatible ? 'incompatible' : 'autoUpdateBlocked'] = result.reason;
         }
         extensions.push(status);
@@ -73,7 +79,7 @@ export function createExtensionUpdateCheck({
         extensions.push({ ...base, error: String(err?.message || err) });
       }
     }
-    return summarizeExtensionUpdates(extensions);
+    return { ...summarizeExtensionUpdates(extensions), autoApplied };
   };
 }
 

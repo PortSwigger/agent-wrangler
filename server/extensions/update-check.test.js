@@ -79,6 +79,7 @@ test('the published result drops extensions updated or removed since the check',
   assert.equal(currentExtensionUpdates(null, {}), null);
 });
 
+
 test('an outdated extension that opted in is handed to autoUpdate, and leaves the result once applied', async () => {
   const optedIn = { ...records, 'jira-links': { ...records['jira-links'], autoUpdate: true }, 'slack-digest': { ...records['slack-digest'], autoUpdate: true } };
   const asked = [];
@@ -97,6 +98,13 @@ test('an outdated extension that opted in is handed to autoUpdate, and leaves th
   assert.equal(left.behind, true, 'it keeps its update button');
   assert.match(left.autoUpdateBlocked, /needs your consent/);
   assert.equal(summary.outdated, 1);
+  // What it applied is reported, so the update service can restart to load it.
+  assert.deepEqual(summary.autoApplied, [{ id: 'jira-links', sha: 'j1' }]);
+});
+
+test('a check that applied nothing reports no auto-applied extensions', async () => {
+  const { check } = checker({ autoUpdate: async () => ({ applied: true, sha: 'x' }) });
+  assert.deepEqual((await check()).autoApplied, []);
 });
 
 test('a host API refusal from autoUpdate is reported as the row\'s incompatible line', async () => {
