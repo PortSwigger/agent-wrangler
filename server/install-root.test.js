@@ -131,6 +131,7 @@ test('with AW_INSTALL_ROOT set, every session-facing path goes through it', () =
     for (const rel of SESSION_FILES) assert.ok(got.claude.includes(`${stable}/${rel}`), `claude: ${rel}`);
     assert.ok(got.codex.includes(`${stable}/agent-skills/skills/`), 'codex catalog');
     assert.ok(got.codex.includes(`${stable}/server/extensions/builtin/task-memory/skills/task-memory/SKILL.md`), 'codex extension skill');
+    assert.ok(got.codex.includes(`${stable}/server/codex-notify-hook.js`), 'codex notify hook');
     for (const cmd of [got.claude, got.codex]) assert.ok(!cmd.includes(`${SOURCE_ROOT}/`), 'no path through the versioned root');
     assert.equal(got.leaked, null);
   } finally {
@@ -142,6 +143,7 @@ test('unset, the paths are the source root ones; a dev instance ignores the vari
   const unset = sessionPaths(baseEnv());
   for (const rel of SESSION_FILES) assert.ok(unset.claude.includes(`${SOURCE_ROOT}/${rel}`), rel);
   assert.ok(unset.codex.includes(`${SOURCE_ROOT}/agent-skills/skills/`));
+  assert.ok(unset.codex.includes(`${SOURCE_ROOT}/server/codex-notify-hook.js`));
   // A dev checkout started from a pane that still carries a packaged board's
   // AW_INSTALL_ROOT must launch sessions on its own hook and skills.
   const dev = sessionPaths({ ...baseEnv(), AW_DEV: '1', AW_INSTALL_ROOT: '/stable/agent-wrangler' });

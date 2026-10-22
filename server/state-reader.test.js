@@ -1086,3 +1086,75 @@ test('buildGraph: a runtime cost hook overrides usd on a live card', async () =>
   const node = graph.sessions.find((s) => s.sessionId === 'gw-live');
   assert.equal(node.usd, 1.23);
 });
+
+test('buildGraph: a managed codex session takes its status from codexStatus', async (t) => {
+  const entry = { sessionId: 'cx-managed', agent: 'codex', liveSessionId: 'thr' };
+  const mgr = makeDormantManager([entry]);
+  mgr.tmuxNameFor = (id) => (id === entry.sessionId ? 'cx_thr' : null);
+  mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid });
+  const calls = [];
+  const codexStatus = async ({ liveSid, paneText }) => { calls.push([liveSid, paneText]); return { status: 'working', waitingFor: 'a hint' }; };
+  const graph = await buildGraph(mgr, async () => ({}), {
+    discover: async () => [{ tmuxName: 'cx_thr', claudePid: process.pid, agent: 'codex' }],
+    runtimeResolver: () => ({ analyze: async () => ({}) }),
+    capture: async () => 'quiet prompt',
+    codexStatus,
+  });
+  const node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+  assert.equal(node.status, 'working');
+  assert.equal(node.waitingFor, 'a hint');
+  assert.deepEqual(calls, [['thr', 'quiet prompt']]);
+});
+
+test('buildGraph: a discovered codex session takes its status from codexStatus', async () => {
+  const entry = { sessionId: 'cx-disc', agent: 'codex', liveSessionId: 'thr2' };
+  const mgr = makeDiscoveredManager(entry, 'cx_disc');
+  const discover = async () => [{ tmuxName: 'cx_disc', socket: '', claudePid: 4242, agent: 'codex', command: 'codex' }];
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({}) });
+  const calls = [];
+  const codexStatus = async ({ liveSid, paneText }) => { calls.push([liveSid, paneText]); return { status: 'working', waitingFor: null }; };
+  const graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => 'quiet prompt', codexStatus });
+  assert.equal(graph.sessions.find((s) => s.sessionId === entry.sessionId).status, 'working');
+  assert.deepEqual(calls, [['thr2', 'quiet prompt']]);
+});
+
+test('buildGraph: an empty capture for a claude session on the scrape branch is unknown', async () => {
+  const entry = { sessionId: 'cc-empty', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_empty');
+  const discover = async () => [{ tmuxName: 'cc_empty', socket: '', claudePid: 4243, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({}) });
+  const graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => '' });
+  assert.equal(graph.sessions.find((s) => s.sessionId === entry.sessionId).status, 'unknown');
+});
+
+test('buildGraph captures by the pane target when the session manager provides one', async (t) => {
+  const entry = { sessionId: 'cx-pane', agent: 'codex', liveSessionId: 'thr' };
+  const mgr = makeDormantManager([entry]);
+  mgr.tmuxNameFor = (id) => (id === entry.sessionId ? 'cx_pane' : null);
+  mgr.paneTargetFor = () => '%7';
+  mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid });
+  const targets = [];
+  await buildGraph(mgr, async () => ({}), {
+    discover: async () => [{ tmuxName: 'cx_pane', claudePid: process.pid, agent: 'codex' }],
+    runtimeResolver: () => ({ analyze: async () => ({}) }),
+    capture: async (target) => { targets.push(target); return ''; },
+    codexStatus: async () => ({ status: 'idle', waitingFor: null }),
+  });
+  assert.ok(targets.includes('%7'));
+  assert.ok(!targets.includes('cx_pane'));
+});
+
+test('buildGraph: a discovered session captures by its pane id, else its tmux name', async () => {
+  for (const [paneId, want] of [['%12', '%12'], [undefined, 'cx_disc2']]) {
+    const entry = { sessionId: 'cx-disc2', agent: 'codex', liveSessionId: 'thr' };
+    const mgr = makeDiscoveredManager(entry, 'cx_disc2');
+    const targets = [];
+    await buildGraph(mgr, async () => ({}), {
+      discover: async () => [{ tmuxName: 'cx_disc2', paneId, socket: '', claudePid: 4242, agent: 'codex', command: 'codex' }],
+      runtimeResolver: () => ({ readLive: async () => null, analyze: async () => ({}) }),
+      capture: async (target) => { targets.push(target); return ''; },
+      codexStatus: async () => ({ status: 'idle', waitingFor: null }),
+    });
+    assert.deepEqual(targets, [want]);
+  }
+});

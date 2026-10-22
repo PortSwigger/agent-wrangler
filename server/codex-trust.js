@@ -30,7 +30,7 @@ import path from 'node:path';
 // the config.toml already on disk stays valid. A retry is expected to succeed;
 // the race window is a handful of milliseconds.
 
-function codexHome() {
+export function codexHome() {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 

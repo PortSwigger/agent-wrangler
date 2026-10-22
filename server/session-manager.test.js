@@ -2438,8 +2438,8 @@ test('_newSession cd\'s into the dir inside the pane command, not just via tmux 
   let args;
   sm._tmux = async (_socket, a) => { args = args || a; return { stdout: '' }; };
   await sm._newSession('cc_abc', "/tmp/aw dir'x", 'launch --me', '');
-  assert.deepEqual(args.slice(0, 6), ['new-session', '-d', '-s', 'cc_abc', '-c', "/tmp/aw dir'x"]);
-  assert.equal(args[6], `cd '/tmp/aw dir'\\''x' && launch --me`);
+  assert.deepEqual(args.slice(0, 9), ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', 'cc_abc', '-c', "/tmp/aw dir'x"]);
+  assert.equal(args[9], `cd '/tmp/aw dir'\\''x' && launch --me`);
 });
 
 test('worktree dispatch does NOT create a nonexistent cwd (fails as a non-repo, no stray dir)', async () => {
@@ -3269,4 +3269,53 @@ test('dispatch rejects invalid and unsupported permission modes before launch', 
   for (const opts of [{ permissionMode: 'invalid' }, { agent: 'codex', permissionMode: 'manual' }]) {
     await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), ...opts }), /permission mode/i);
   }
+});
+
+test('_newSession returns the new pane id, and null when tmux prints something else', async () => {
+  const sm = new SessionManager();
+  const calls = [];
+  sm._tmux = async (socket, args) => { calls.push(args); return args[0] === 'new-session' ? { stdout: '%7\n' } : {}; };
+  assert.equal(await sm._newSession('cc_x', os.tmpdir(), 'true', ''), '%7');
+  const created = calls.find((a) => a[0] === 'new-session');
+  assert.deepEqual(created.slice(0, 7), ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', 'cc_x']);
+  sm._tmux = async () => ({ stdout: 'oops\n' });
+  assert.equal(await sm._newSession('cc_y', os.tmpdir(), 'true', ''), null);
+  sm._tmux = async () => ({});
+  assert.equal(await sm._newSession('cc_z', os.tmpdir(), 'true', ''), null);
+});
+
+test('dispatch, resume and fork store the launched pane id on the entry', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-pane-id-'));
+  const sm = smForDispatch();
+  sm._newSession = async () => '%7';
+  const { sessionId } = await sm.dispatch({ cwd: dir, intent: 'x' });
+  assert.equal(sm.entryFor(sessionId).paneId, '%7');
+
+  sm.killForSession = async () => [];
+  sm._tmux = async () => ({});
+  sm._newSession = async () => '%8';
+  sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir, paneId: '%1' });
+  await sm._doResume('c1', dir, {});
+  assert.equal(sm.entryFor('c1').paneId, '%8');
+  sm._newSession = async () => null;
+  await sm._doResume('c1', dir, {});
+  assert.equal(sm.entryFor('c1').paneId, undefined);
+
+  sm._newSession = async () => '%9';
+  const forked = await sm.fork({ sourceId: 'L0', parentId: 'PARENT', parentEntry: { agent: 'claude' }, cwd: dir });
+  assert.equal(sm.entryFor(forked.sessionId).paneId, '%9');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('paneTargetFor prefers the pane id and falls back to the tmux name', () => {
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.map.set('a', { tmux: 'cc_a', paneId: '%7' });
+  sm.map.set('b', { tmux: 'cc_b' });
+  sm.map.set('c', { tmux: 'cc_c', paneId: '%9' });
+  sm.alive = new Set(['cc_a', 'cc_b']);
+  assert.equal(sm.paneTargetFor('a'), '%7');
+  assert.equal(sm.paneTargetFor('b'), 'cc_b');
+  assert.equal(sm.paneTargetFor('c'), null);
+  assert.equal(sm.paneTargetFor('missing'), null);
 });

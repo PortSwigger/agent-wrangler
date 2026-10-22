@@ -48,6 +48,11 @@ sub-agents. Nested children are compact rows unless **Full view** is enabled. Ne
 limit: a child's own children sit indented beneath it on the same spine, stepping in a level each
 until the indent stops growing after four. Attaching a session moves its children with it.
 
+A Codex card's working or idle status comes from Codex's own turn-end notification plus its session log,
+with the terminal screen as a tie-breaker. Wrangler sets `notify` when it launches Codex and forwards the
+event to any `notify` command already in `~/.codex/config.toml`. The latest turn end for each thread is
+kept under `~/.agent-wrangler/codex-turns/`.
+
 The **parent** controls board nesting and can change; the **spawner** records who launched the session
 and cannot. **Attach to…** and **Promote to full session** change nesting, not launch lineage.
 

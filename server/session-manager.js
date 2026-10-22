@@ -1215,7 +1215,7 @@ export class SessionManager {
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
-    await this._newSession(tmux, dir, launchCmd, this.socket);
+    const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
@@ -1230,6 +1230,7 @@ export class SessionManager {
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
       ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
+      paneId: paneId || undefined,
       launchedCodeVersion: this.codeVersion || undefined,
     });
     this._save();
@@ -1301,7 +1302,7 @@ export class SessionManager {
       inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext,
     });
     const launchedAt = Date.now();
-    await this._newSession(tmux, dir, launchCmd, this.socket);
+    const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
     const early = this.map.get(sessionId);
@@ -1312,6 +1313,7 @@ export class SessionManager {
     }
     entry.liveSessionId = liveSessionId || undefined;
     entry.socket = this.socket;
+    entry.paneId = paneId || undefined;
     entry.launchedCodeVersion = this.codeVersion || undefined;
     this.map.set(sessionId, entry);
     this._save();
@@ -1591,7 +1593,8 @@ export class SessionManager {
   // moved into a file the pane sources instead (see launch-script.js).
   async _newSession(tmux, dir, inner, socket) {
     const cmd = paneCommand(tmux, `cd ${shellQuote(dir)} && ${inner}`);
-    await this._tmux(socket, ['new-session', '-d', '-s', tmux, '-c', dir, cmd]);
+    const created = await this._tmux(socket, ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', tmux, '-c', dir, cmd]);
+    const paneId = String(created?.stdout ?? '').trim();
     await this._tmux(socket, ['set-option', '-t', tmux, 'remain-on-exit', 'on']).catch(() => {});
     // Hide tmux's status bar: it's purely cosmetic here (nothing reads it) and
     // its row is better spent on Claude's TUI. Scoped per-session so it can't
@@ -1612,6 +1615,7 @@ export class SessionManager {
     // browser addon needs — the default is usually `external` (which also works),
     // but a user's global `set-clipboard off` would silently break browser copy.
     await this._tmux(socket, ['set-option', '-t', tmux, 'set-clipboard', 'on']).catch(() => {});
+    return /^%\d+$/.test(paneId) ? paneId : null;
   }
 
   // A tmux session is only attachable if it still has a live pane. `remain-on-exit`
@@ -1787,6 +1791,12 @@ export class SessionManager {
     return this.alive.has(entry.tmux) ? entry.tmux : null;
   }
 
+  paneTargetFor(sessionId) {
+    const entry = this.map.get(sessionId);
+    if (!entry || !this.alive.has(entry.tmux)) return null;
+    return entry.paneId || entry.tmux;
+  }
+
   attachTargetFor(sessionId) {
     return this.tmuxNameFor(sessionId);
   }
@@ -1954,7 +1964,7 @@ export class SessionManager {
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
       });
     const launchedAt = Date.now();
-    await this._newSession(tmux, cwd, inner, this.socket);
+    const paneId = await this._newSession(tmux, cwd, inner, this.socket);
 
     const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
 
@@ -1978,7 +1988,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
