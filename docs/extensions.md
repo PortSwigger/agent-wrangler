@@ -21,6 +21,11 @@ checks installed extensions: an outdated one shows its update button and how man
 missing without pressing Check all, the Extensions tab and the Settings button are badged, and a
 toast says so once per new commit. Extensions are not updated automatically, even on Auto, unless you
 turn on **Auto-update** for that extension (see below).
+Updated code loads only when the wrangler restarts. Where the wrangler can restart itself, the update's
+consent dialog offers **Update & restart** (**Approve, update & restart** when the update asks for new
+capabilities), which restarts once the update has installed; after **Update all**, it restarts once,
+after the last update. **Update without restarting** applies the update and leaves **Restart now** in
+the panel for later. Elsewhere the dialog offers just **Update**.
 Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
@@ -439,7 +444,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pending extensions must not each draw their own), in
   the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the detail
   pane and the notice above it still say what is waiting on it. The button exists ONLY
-  under a supervisor.** `AW_SUPERVISED=1` is set by whatever brings the process
+  under a supervisor.** Under one, an update's consent modal makes **Update & restart**
+  its primary button (`consentButtonLabels`), so the restart is not a second thing to
+  notice; **Update without restarting** leaves the panel button as the fallback. The
+  client sends `restart-server` only after that update's `done` progress frame, never
+  on the click, so a failed or cancelled update restarts nothing, and an Update all
+  queue restarts once, when it drains, if any update approved with restart landed. `AW_SUPERVISED=1` is set by whatever brings the process
   straight back: `scripts/wrangler-start.sh` (which both the launchd plist and the
   systemd unit exec) and a Homebrew service. So the flag means "something will
   restart me", never "I am on macOS" and never "I may apply a Git update" (that is

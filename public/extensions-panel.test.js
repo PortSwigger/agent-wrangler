@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, updateStatusText, progressText,
+  extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, consentButtonLabels, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
   commitFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING,
 } from './extensions-panel.js';
@@ -637,6 +637,17 @@ test('updateStatusText distinguishes behind, current, unreachable and provenance
   assert.match(updateStatusText({ updatable: false }), /placed here by hand/);
   assert.equal(updateStatusText({ updatable: true, sha: 'a'.repeat(40), remoteSha: 'b'.repeat(40), behind: true, incompatible: 'Two requires a newer Agent Wrangler (needs host API ^2.0.0, this is 1.31.0).' }), 'Two requires a newer Agent Wrangler (needs host API ^2.0.0, this is 1.31.0).');
   assert.equal(updateStatusText(null), '');
+});
+
+test('an update offers Update & restart first only where the wrangler can restart itself', () => {
+  const update = { update: true };
+  assert.deepEqual(consentButtonLabels(update, true), { ok: 'Update & restart', later: 'Update without restarting' });
+  assert.deepEqual(consentButtonLabels({ ...update, reconsentNeeded: true }, true), { ok: 'Approve, update & restart', later: 'Update without restarting' });
+  assert.deepEqual(consentButtonLabels(update, false), { ok: 'Update', later: null });
+  assert.deepEqual(consentButtonLabels({ ...update, reconsentNeeded: true }, false), { ok: 'Approve & update', later: null });
+  // An install goes live without a restart, so it never offers one.
+  assert.deepEqual(consentButtonLabels({}, true), { ok: 'Install', later: null });
+  assert.deepEqual(consentButtonLabels({ reconsentNeeded: true }, true), { ok: 'Approve & install', later: null });
 });
 
 test('progress never claims an install happened before consent ran', () => {
