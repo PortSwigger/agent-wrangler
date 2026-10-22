@@ -11,10 +11,11 @@ import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
 import { fileURLToPath } from 'node:url';
+import { installPath } from '../install-root.js';
 
 const exec = promisify(execFile);
 
-const HOOK_PATH = fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url));
+const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
 
 // Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
