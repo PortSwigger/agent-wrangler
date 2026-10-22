@@ -317,6 +317,17 @@ test('buildGraph carries the launch effort onto board session nodes, null when a
   assert.equal(byId['noeff-sid'].effort, null);
 });
 
+test('buildGraph carries the hosting extension of an off-board card onto its node, null for a board card', async () => {
+  const mgr = makeDormantManager([
+    { sessionId: 'hosted-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'x', offBoard: 'jobs' },
+    { sessionId: 'board-sid', agent: 'claude', cwd: '/nonexistent/c', intent: 'y' },
+  ]);
+  const graph = await buildGraph(mgr, async () => ({}));
+  const byId = Object.fromEntries(graph.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(byId['hosted-sid'].offBoard, 'jobs', 'still in the graph, so the extension can show it');
+  assert.equal(byId['board-sid'].offBoard, null);
+});
+
 test('buildGraph falls back to the launch model when no transcript model is available', async () => {
   const mgr = makeDormantManager([
     { sessionId: 'launch-model-sid', agent: 'codex', cwd: '/nonexistent/c', intent: 'x', model: 'gpt-5.6-sol' },

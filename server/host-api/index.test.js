@@ -339,6 +339,16 @@ test('spawn autoFixPrChecks goes through the setter, since dispatch has no argum
   assert.deepEqual(untouched.seen.autoFix, [], 'absent means "inherit the default", not "off"');
 });
 
+test('spawn offBoard stamps the CALLER\'s id, and absent or false asks for a board card', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', offBoard: true });
+  await host.sessions.spawn({ cwd: '/repo', offBoard: false });
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.equal(seen.dispatch[0].offBoard, 'x', 'forced to the extension\'s own id');
+  assert.equal('offBoard' in seen.dispatch[1], false);
+  assert.equal('offBoard' in seen.dispatch[2], false);
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -354,6 +364,7 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ taskId: '' }, /taskId must be a non-empty task id/],
     [{ autoMergeOnPass: 'true' }, /autoMergeOnPass must be a boolean/],
     [{ autoFixPrChecks: 1 }, /autoFixPrChecks must be a boolean/],
+    [{ offBoard: 'other-ext' }, /offBoard must be a boolean/],
   ];
   for (const [args, re] of bad) {
     await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));
@@ -368,6 +379,21 @@ test('sessions:read hands back projections, never live entries', () => {
   assert.equal(row.sessionId, 'c1');
   assert.ok(Object.isFrozen(row));
   assert.equal(host.sessions.get('nope'), null);
+});
+
+test('sessions:read reports the hosting extension of an off-board card, null for a board card', () => {
+  const entries = { c1: { cwd: '/a' }, c2: { cwd: '/b', offBoard: 'jobs' } };
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring({
+    core: {
+      sessionManager: {
+        activeEntries: () => Object.entries(entries).map(([sessionId, e]) => ({ sessionId, ...e })),
+        entryFor: (id) => entries[id] ?? null,
+      },
+      taskStore: { taskFor: () => null },
+    },
+  }) });
+  assert.deepEqual(host.sessions.list().map((r) => [r.sessionId, r.offBoard]), [['c1', null], ['c2', 'jobs']]);
+  assert.equal(host.sessions.get('c2').offBoard, 'jobs');
 });
 
 test('host.log prefixes the message and keeps an Error its own argument', () => {

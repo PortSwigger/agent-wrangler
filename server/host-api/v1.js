@@ -129,13 +129,13 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
       const addDirsOpt = checkAddDirs(addDirs);
       const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
-      for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks]]) {
+      for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks], ['offBoard', offBoard]]) {
         if (v !== undefined && typeof v !== 'boolean') spawnError(`${name} must be a boolean`);
       }
       const result = await core.sessionManager.dispatch({
@@ -161,6 +161,11 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         // Images need the booted composer, so the intent is held back from the
         // launch command and pasted after them (dispatch-runner.js).
         ...(imageNames.length ? { deferIntent: true } : {}),
+        // A card the extension shows in its own view instead of the board's
+        // grid. The stamp is the caller's id, FORCED like wake's reason, so an
+        // extension can only ever claim a card for itself. Everything else
+        // (resume, archive, billing, mail) treats it as any other card.
+        ...(offBoard ? { offBoard: id } : {}),
         launchReason: 'spawn',
       });
       if (imageNames.length) {
