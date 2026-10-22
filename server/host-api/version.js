@@ -332,7 +332,14 @@ import semver from 'semver';
 // unknown spawn option, so the card silently lands on the board; a manifest that
 // needs it declares `^1.41.0`.
 //
-export const HOST_API_VERSION = '1.41.0';
+// 1.42.0 adds the client `api.mountSession(el, sessionId, { onMaximize })`:
+// the board's session panel (header controls, panel sections, chat, terminal,
+// and the diff as a third view in place) lent to an extension's own element,
+// resuming or restoring the session as openSession does, with a handle to swap
+// the session (`show`) and give the panel back (`unmount`). An older board has
+// no `api.mountSession`, so a manifest that needs it declares `^1.42.0`.
+//
+export const HOST_API_VERSION = '1.42.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -1399,6 +1399,24 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   removed, and the link falls through. Registering without `files:open` throws. Only the links
   core makes today reach it (`.md` and `.markdown` paths). `api.openFile` is unaffected. A
   manifest using it declares `^1.40.0`.
+- **Client `api.mountSession(el, sessionId, { onMaximize })`** (1.42.0) shows the board's own
+  session panel inside the extension's element: the header and its controls (rename, Actions,
+  the session's chips), the `panel.section` strips, Chat, Terminal, and the diff as a third
+  **Diff** view in place of the panel over the grid. It is the same panel the board uses, moved
+  rather than copied, so one element holds it at a time. A dormant session is resumed and one
+  that is not on the board (archived) is restored first, showing "Restoring…" until it is back;
+  either way the selection stays in the extension's view. It returns a handle, or `null` when
+  `el` is not an element or `sessionId` not an id (reported, like a refused `openSession`):
+  `show(id)` swaps the session shown (mounting the same element again does too), `unmount()`
+  gives the panel back to the board (call it when the element goes), and `sessionId` reads
+  `null` once it has. A mount into another element takes the panel over and the older handle
+  goes inert. While the element's view is not on screen the panel is home and the board uses it
+  as usual, and it returns when the view does; an element dropped from the document without
+  `unmount()` is reclaimed on the next graph tick, so the board never loses its panel. The
+  element sets the size and the panel fills it. Embedded, the header has no Close (leaving is the
+  extension's) and shows Fullscreen only when `onMaximize(on)` is given, which is called with
+  the new state on each click so the extension can give the element more room. A manifest using
+  it declares `^1.42.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and
