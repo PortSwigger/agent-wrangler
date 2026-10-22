@@ -9,15 +9,9 @@ import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
+import { tomlString } from '../codex-notify-config.js';
 
 const exec = promisify(execFile);
-
-// A TOML double-quoted string for a `-c key=value` override. Escapes backslash
-// and double-quote per TOML basic-string rules; the memory prompt has neither
-// today, but escape defensively so a future prompt edit can't break the arg.
-function tomlString(s) {
-  return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
 
 // Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
