@@ -462,6 +462,81 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   assert.deepEqual(h.errors, []);
 });
 
+// ── mountSession (1.42.0): the board's panel inside the extension's element ───
+function mountHarness() {
+  const calls = [];
+  const h = harness();
+  const base = {
+    mountSession: (extId, el, sid, opts) => {
+      const call = { extId, el, sid, opts, shown: [sid], unmounted: 0, current: sid };
+      calls.push(call);
+      return {
+        get sessionId() { return call.current; },
+        show: (id) => { call.shown.push(id); call.current = id; return true; },
+        unmount: () => { call.unmounted++; call.current = null; },
+      };
+    },
+  };
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), base);
+  return { ...h, calls, api: captured };
+}
+
+test('mountSession hands the element, the id and the extension to the base api, and returns a handle', () => {
+  const { api, calls, errors } = mountHarness();
+  const el = { nodeType: 1 };
+  const handle = api.mountSession(el, 'abc123');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].extId, 'fake');
+  assert.equal(calls[0].el, el);
+  assert.equal(calls[0].sid, 'abc123');
+  assert.equal(calls[0].opts.onMaximize, null);
+  assert.equal(handle.sessionId, 'abc123');
+  assert.equal(handle.show('def456'), true);
+  assert.equal(handle.sessionId, 'def456');
+  handle.unmount();
+  assert.equal(calls[0].unmounted, 1);
+  assert.equal(handle.sessionId, null);
+  assert.ok(Object.isFrozen(handle));
+  assert.deepEqual(errors, []);
+});
+
+test('mountSession refuses a non-element or a non-id, and the handle refuses a non-id show', () => {
+  const { api, calls, errors } = mountHarness();
+  assert.equal(api.mountSession(null, 'abc123'), null);
+  assert.equal(api.mountSession({}, 'abc123'), null);
+  assert.equal(api.mountSession({ nodeType: 3 }, 'abc123'), null);
+  assert.equal(api.mountSession({ nodeType: 1 }, ''), null);
+  assert.equal(api.mountSession({ nodeType: 1 }, 42), null);
+  assert.equal(calls.length, 0, 'nothing reached the board');
+  assert.equal(errors.length, 5);
+  assert.match(errors[0], /\[ext:fake\] mountSession refused: expected an element/);
+  assert.match(errors[4], /mountSession refused: expected a session id, got 42/);
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123');
+  assert.equal(handle.show(''), false);
+  assert.deepEqual(calls[0].shown, ['abc123']);
+  assert.match(errors[5], /mountSession show refused/);
+});
+
+test('mountSession wraps onMaximize so a throwing one is reported, not thrown into the board', () => {
+  const { api, calls, errors } = mountHarness();
+  const seen = [];
+  api.mountSession({ nodeType: 1 }, 'abc123', { onMaximize: (on) => { seen.push(on); throw new Error('boom'); } });
+  assert.doesNotThrow(() => calls[0].opts.onMaximize(true));
+  assert.deepEqual(seen, [true]);
+  assert.match(errors[0], /\[ext:fake\] mountSession onMaximize threw: boom/);
+});
+
+test('mountSession is null against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), { send() {} });
+  assert.equal(captured.mountSession({ nodeType: 1 }, 'abc123'), null);
+  assert.deepEqual(h.errors, []);
+});
+
 // ── openDiff (1.27.0): openSession plus the card's diff panel ────────────────
 function diffHarness() {
   const opened = [];

@@ -261,6 +261,22 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             panel never opened (a restore the server refused), or if a
   //             later openSession/openDiff superseded the request first. A
   //             throwing onClose is reported, the same as a throwing listener.
+  //   mountSession — the board's own session panel (header and its controls,
+  //             the extension panel sections, chat, terminal and diff) shown
+  //             INSIDE the extension's element instead of beside the grid
+  //             (1.42.0), resuming the session first if it is dormant and
+  //             restoring it if it is not on the board. Returns a handle:
+  //             `show(id)` swaps the session it shows (so does mounting the
+  //             same element again), `unmount()` gives the panel back to the
+  //             board, `sessionId` reads null once it has. One element holds the
+  //             panel at a time — a mount elsewhere takes it over and the older
+  //             handle goes inert. While the element's view is not on screen
+  //             the panel goes home for the board and comes back with the view;
+  //             an element dropped from the document without unmount is
+  //             reclaimed by the next graph tick. `{ onMaximize(on) }` adds the
+  //             header's Fullscreen button and says when it was toggled, for the
+  //             extension to give the element more room. Refused (null) for a
+  //             non-element or a non-id, like openSession.
   //   openTask — the task counterpart of openSession (1.24.0): show this task's
   //             tile, out of the tray if it was minimised, scrolled into view
   //             and pulsed. Returns whether the task is on the live board; an
@@ -366,6 +382,35 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             onClose: onClose && (() => {
               try { onClose(); } catch (err) { onError(`[ext:${extId}] openDiff onClose threw: ${err?.message || err}`); }
             }),
+          });
+        },
+        mountSession: (el, sessionId, opts) => {
+          if (!el || typeof el !== 'object' || el.nodeType !== 1) {
+            onError(`[ext:${extId}] mountSession refused: expected an element to mount into`);
+            return null;
+          }
+          if (typeof sessionId !== 'string' || !sessionId) {
+            onError(`[ext:${extId}] mountSession refused: expected a session id, got ${JSON.stringify(sessionId)}`);
+            return null;
+          }
+          if (typeof baseApi.mountSession !== 'function') return null;
+          const onMaximize = isPlainObject(opts) && typeof opts.onMaximize === 'function' ? opts.onMaximize : null;
+          const handle = baseApi.mountSession(extId, el, sessionId, {
+            onMaximize: onMaximize && ((on) => {
+              try { onMaximize(on); } catch (err) { onError(`[ext:${extId}] mountSession onMaximize threw: ${err?.message || err}`); }
+            }),
+          });
+          if (!handle) return null;
+          return Object.freeze({
+            get sessionId() { return handle.sessionId; },
+            show: (id) => {
+              if (typeof id !== 'string' || !id) {
+                onError(`[ext:${extId}] mountSession show refused: expected a session id, got ${JSON.stringify(id)}`);
+                return false;
+              }
+              return handle.show(id);
+            },
+            unmount: () => handle.unmount(),
           });
         },
         openTask: (taskId) => {

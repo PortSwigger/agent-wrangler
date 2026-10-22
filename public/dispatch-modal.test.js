@@ -602,16 +602,17 @@ test('scheduled focus expires after a failed resume instead of jumping to a late
 });
 
 // ── openSessionInBoard: api.openSession / api.openDiff from an extension view ──
-function boardOpenHarness(sessions = [], { minimised = [], tiles = {} } = {}) {
+function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = null } = {}) {
   const log = [];
   const boardOpen = createBoardOpen();
   const minimisedIds = new Set(minimised);
   const app = loadApp(
     ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {'],
     ['openSessionInBoard', 'tryFulfillPending', 'state'],
-    "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
+    "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
     {
       boardOpen, minimisedIds, CSS: { escape: (x) => x },
+      sessionEmbed: { active: () => embed },
       setView: (v) => { log.push(`view:${v}`); app.state.view = v; },
       send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
       toast: () => {},
@@ -646,6 +647,19 @@ test('openSession on an archived card restores it, then lands on it when the gra
   // selectSession, not focusSession: the card has just been resumed, so it must
   // not be resumed again.
   assert.deepEqual(app.log.slice(2), ['unminimise:adhoc', 'select:S1', 'scroll:S1']);
+});
+
+// api.mountSession restoring an archived session: it lands in the embed, in the
+// extension's own view, and never sends the reader to the board.
+test('a restore an embedded panel asked for lands in the embed, not on the board', () => {
+  const removed = [];
+  const app = boardOpenHarness([], { embed: { sessionId: 'S1', wrap: { classList: { remove: (c) => removed.push(c) } } } });
+  app.state.pending = 'S1';
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, ['select:S1']);
+  assert.deepEqual(removed, ['pending']);
+  assert.equal(app.state.pending, null);
 });
 
 test('openDiff on a live card lands on it, then opens its diff panel and reports the close', () => {
