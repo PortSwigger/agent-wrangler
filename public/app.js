@@ -33,7 +33,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -6159,6 +6159,11 @@ let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
 let extUpdateQueue = [];
+// "Update & restart": set on approval of the update in flight, then promoted to
+// the queue-wide flag only once that update's install reports `done`, so a
+// failed or cancelled one never restarts. The restart waits for the queue.
+let extRestartOnDone = false;
+let extRestartAfterUpdates = false;
 // The GitHub browser in the add pane: searched when the pane is opened and on
 // Refresh, then kept for the life of the page so reopening it costs nothing.
 let extBrowse = null;
@@ -6168,12 +6173,15 @@ let extSettingsPanelHost = null;
 
 const startExtUpdate = (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); };
 
+const restartForExtensions = () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); };
+
 // One update at a time: each goes through its own consent modal, so the next
 // starts only once the last has settled.
 function runNextExtUpdate() {
   if (extInstallBusy) return;
   const next = extUpdateQueue.shift();
   if (next) startExtUpdate(next);
+  else if (extRestartAfterUpdates) { extRestartAfterUpdates = false; restartForExtensions(); }
 }
 
 // The selected extension's Settings section: its own `settings.panel`
@@ -6260,8 +6268,8 @@ function mountExtensionsPanel(host) {
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
-    onUpdate: (entry) => { extUpdateQueue = []; startExtUpdate(entry); },
-    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; runNextExtUpdate(); },
+    onUpdate: (entry) => { extUpdateQueue = []; extRestartAfterUpdates = false; startExtUpdate(entry); },
+    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; extRestartAfterUpdates = false; runNextExtUpdate(); },
     onUninstall: async (entry) => {
       const answer = await confirmDialog({
         title: `Uninstall ${entry.label || entry.id}?`,
@@ -6285,7 +6293,7 @@ function mountExtensionsPanel(host) {
       }
       send({ type: 'ext-set-auto-update', id: entry.id, on });
     },
-    onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
+    onRestart: restartForExtensions,
     settingsEl: extSettingsEl,
   }));
 }
@@ -6300,28 +6308,36 @@ function openExtConsent(payload) {
   body.textContent = '';
   body.append(consentBodyEl(payload));
   const ok = document.getElementById('ext-consent-ok');
+  const later = document.getElementById('ext-consent-later');
   const cancel = document.getElementById('ext-consent-cancel');
   // An update that widens `requires` needs a fresh yes; one that does not is
   // still shown, because a human asked for it and the dependency diff is worth
   // reading — but the button says which of the two this is.
-  ok.textContent = payload.reconsentNeeded ? (payload.update ? 'Approve & update' : 'Approve & install') : (payload.update ? 'Update' : 'Install');
+  const labels = consentButtonLabels(payload, canRestartServer);
+  ok.textContent = labels.ok;
+  later.classList.toggle('hidden', !labels.later);
+  if (labels.later) later.textContent = labels.later;
   modal.classList.remove('hidden');
   cancel.focus();
-  const done = (approve) => {
+  const done = (approve, restart = false) => {
     modal.classList.add('hidden');
     ok.removeEventListener('click', onOk);
+    later.removeEventListener('click', onLater);
     cancel.removeEventListener('click', onCancel);
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
+    extRestartOnDone = restart;
     send({ type: 'ext-consent', tempId: payload.tempId, approve });
   };
-  const onOk = () => done(true);
+  const onOk = () => done(true, Boolean(labels.later));
+  const onLater = () => done(true);
   const onCancel = () => done(false);
   // No Enter-to-approve, unlike confirmDialog: this dialog grants a process
   // full access to the machine, so approving must be a deliberate click.
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
   const onBackdrop = (e) => { if (e.target === modal) done(false); };
   ok.addEventListener('click', onOk);
+  later.addEventListener('click', onLater);
   cancel.addEventListener('click', onCancel);
   modal.addEventListener('keydown', onKey);
   modal.addEventListener('mousedown', onBackdrop);
@@ -6662,6 +6678,10 @@ function connect() {
       extInstallProgress = progressText(msg.phase, msg);
       extInstallPhase = msg.phase;
       if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) {
+        if (msg.phase === 'done' && extRestartOnDone) extRestartAfterUpdates = true;
+        extRestartOnDone = false;
+      }
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
       remountExtensions();
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();

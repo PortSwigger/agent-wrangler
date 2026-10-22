@@ -900,6 +900,17 @@ export function updateStatusText(status) {
   return status.autoUpdateBlocked ? `${newer} Not updated automatically: ${status.autoUpdateBlocked}.` : newer;
 }
 
+// The consent modal's approve buttons. Updated code only loads on a restart,
+// so where the wrangler can restart itself an update's primary button does both
+// and `later` keeps the plain update; an install goes live without one.
+export function consentButtonLabels(payload, canRestart) {
+  if (payload.update && canRestart) {
+    return { ok: payload.reconsentNeeded ? 'Approve, update & restart' : 'Update & restart', later: 'Update without restarting' };
+  }
+  const ok = payload.reconsentNeeded ? (payload.update ? 'Approve & update' : 'Approve & install') : (payload.update ? 'Update' : 'Install');
+  return { ok, later: null };
+}
+
 // What the consent modal shows, in this order: the trust statement, then the
 // capability list (or its diff), then the dependency list (or its diff), then
 // the caller's Approve/Cancel. An UPDATE shows CHANGES only — the decision on

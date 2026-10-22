@@ -567,7 +567,7 @@ main.session-embedded #drag-handle { display: none; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
-#confirm-extra.hidden { display: none; }
+#confirm-extra.hidden, #ext-consent-later.hidden { display: none; }
 /* The native datetime picker chrome (calendar/spinners) follows color-scheme;
    pin it per-theme so it isn't a stark white popup on the dark board. */
 #sn-when, #m-sch-at, #m-sch-time { color-scheme: dark; }
