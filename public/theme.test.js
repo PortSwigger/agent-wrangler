@@ -29,7 +29,7 @@ class FakeImage {
 globalThis.Image = FakeImage;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-const { safeIconUrl, selectStyle, setCustomStyles, onThemeChange } = await import('./theme.js');
+const { safeIconUrl, selectStyle, setCustomStyles, onThemeChange, renderThemeRows } = await import('./theme.js');
 
 // ── safeIconUrl ──────────────────────────────────────────────────────────────
 test('safeIconUrl: allows same-origin absolute paths', () => {
@@ -142,4 +142,32 @@ test('the re-theme hook is told which style it now is, for api.onThemeChange', (
   selectStyle('dark');
   assert.deepEqual(seen, [{ id: 'light', base: 'light' }, { id: 'dark', base: 'dark' }]);
   onThemeChange(null);
+});
+
+// ── a saved style that goes missing ──────────────────────────────────────────
+test('a missing saved style shows Dark without overwriting cm-style, and comes back with its theme', () => {
+  const writes = [];
+  const saved = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => null, setItem: (k, v) => writes.push([k, v]) };
+  const seen = [];
+  onThemeChange((t) => seen.push(t.id));
+  try {
+    setCustomStyles([sky('h.png', { '--fg': '#123' })]);
+    selectStyle('sky');
+    writes.length = 0;
+    seen.length = 0;
+
+    setCustomStyles([]);
+    assert.deepEqual(seen, ['dark']);
+    assert.match(renderThemeRows(), /class="theme-row active" data-id="dark"/);
+    assert.deepEqual(writes, []);
+
+    setCustomStyles([sky('h.png', { '--fg': '#123' })]);
+    assert.deepEqual(seen, ['dark', 'sky']);
+    assert.match(renderThemeRows(), /class="theme-row active" data-id="sky"/);
+    assert.deepEqual(writes, []);
+  } finally {
+    globalThis.localStorage = saved;
+    onThemeChange(null);
+  }
 });

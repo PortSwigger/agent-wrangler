@@ -161,7 +161,31 @@ Supported manifest contributions are:
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
+| Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
+
+### Themes
+
+`themes` (1.43.0) names a directory inside the extension, such as `themes: 'themes'`. Each
+subdirectory is one theme, in the same format as the core `styles/` folder: `<id>/theme.json` with
+`name`, `icon` and `base` (`dark` or `light`), optional `colors`, `font` and `background`, and
+`assets` (`wallpaper`, `iconImage`) naming files beside it. The folder name is the theme's id, which
+is what a browser saves as its choice, so keep it stable across releases.
+
+While the extension is on, its themes appear in Settings › Appearance and in `/api/styles`, and
+their declared assets are served from `/styles/<id>/<file>`. `theme.json` itself and any file the
+manifest does not declare are never served. Turning the extension off removes its themes from
+every open board within a tick. A browser that had one selected shows Dark but keeps its saved
+choice, so turning the extension back on brings the theme back.
+
+When two sources offer the same theme id, the first in this order wins and the others are hidden:
+
+1. The core `styles/` folder.
+2. Extension themes, in extension load order: core extensions first, then installed ones.
+3. Hand-placed themes in `~/.agent-wrangler/custom-styles/`.
+
+A theme with an invalid `theme.json` is skipped and logged, and the next source's theme with that id
+is used instead.
 
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
@@ -623,7 +647,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
+  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles, themes}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
@@ -1439,6 +1463,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension's) and shows Fullscreen only when `onMaximize(on)` is given, which is called with
   the new state on each click so the extension can give the element more room. A manifest using
   it declares `^1.42.0`.
+- **Manifest `themes`** (1.43.0) contributes themes to the Settings theme picker. The loader
+  validates that the path resolves inside the manifest's `dir` and stages `{ id, dir }` on
+  `themeDirs` for an ENABLED extension only, kept in list order so a re-enable does not change
+  which extension wins an id tie. `server/styles.js` `listStyles`/`assetPath` read it with the
+  precedence in [Themes](#themes), so a theme's assets always come from the source that won its
+  id. A toggle's rebuild re-broadcasts the `styles` frame. The client's `setCustomStyles` then
+  shows Dark for a saved theme that has gone, without writing `cm-style`, and redraws the
+  picker's rows if Settings is open. An older server ignores the key, so a manifest using it
+  declares `^1.43.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and

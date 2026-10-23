@@ -35,7 +35,7 @@ import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
-import { listStyles } from './styles.js';
+import { listStyles, STYLES_DIR, CUSTOM_STYLES_DIR } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
@@ -973,6 +973,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 const server = createHttpServer({
   port: PORT, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
+  extensionThemes: () => ext.themeDirs,
 });
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
@@ -1001,7 +1002,7 @@ server.on('upgrade', (req, socket, head) => {
 let lastStylesKey = null;
 
 function broadcastStylesIfChanged() {
-  const styles = listStyles();
+  const styles = listStyles(STYLES_DIR, CUSTOM_STYLES_DIR, ext.themeDirs);
   const key = JSON.stringify(styles);
   if (key === lastStylesKey) return;
   lastStylesKey = key;
