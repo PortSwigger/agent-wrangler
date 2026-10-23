@@ -396,8 +396,9 @@ is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
 an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
 translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a
 manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
-example. All UI colours — including the xterm terminal — flow through these variables, so both
-built-in and custom styles re-theme the whole app live.
+example. Extensions can contribute themes in the same format through their manifest's `themes`
+field; see [Themes](docs/extensions.md#themes). All UI colours — including the xterm terminal —
+flow through these variables, so both built-in and custom styles re-theme the whole app live.
 
 ![The Appearance section's theme picker, showing the built-in and drop-in custom styles](docs/images/theme-picker.png)
 

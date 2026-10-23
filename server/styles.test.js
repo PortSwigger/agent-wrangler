@@ -157,3 +157,38 @@ test('listStyles emits iconImageUrl from assets.iconImage (null when absent)', (
   assert.equal(byId.imgicon.iconImageUrl, '/styles/imgicon/iconImage.png');
   assert.equal(byId.pathicon.iconImageUrl, null);
 });
+
+test('listStyles merges extension themes, tagged with their extension, after bundled and before custom', () => {
+  const bundled = makeStylesDir();
+  const custom = makeStylesDir();
+  const extA = makeStylesDir();
+  const extB = makeStylesDir();
+  seedStyle(bundled, 'core', VALID);
+  seedStyle(extA, 'core', { ...VALID, name: 'Shadowed by bundled' });
+  seedStyle(extA, 'sky', { ...VALID, name: 'Sky A' });
+  seedStyle(extB, 'sky', { ...VALID, name: 'Sky B' });
+  seedStyle(extB, 'sea', { ...VALID, name: 'Sea' });
+  seedStyle(custom, 'sea', { ...VALID, name: 'Custom sea' });
+  seedStyle(custom, 'mine', VALID);
+  const styles = listStyles(bundled, custom, [{ id: 'a', dir: extA }, { id: 'b', dir: extB }]);
+  assert.deepEqual(styles.map((s) => [s.id, s.name, s.extension ?? null, s.editable]), [
+    ['core', 'Jurassic Park', null, false],
+    ['sky', 'Sky A', 'a', false],
+    ['sea', 'Sea', 'b', false],
+    ['mine', 'Jurassic Park', null, true],
+  ]);
+  assert.equal(styles[1].wallpaperUrl, '/styles/sky/wallpaper.png');
+});
+
+test('assetPath serves an extension theme asset from the source listStyles picked', () => {
+  const bundled = makeStylesDir();
+  const custom = makeStylesDir();
+  const ext = makeStylesDir();
+  seedStyle(ext, 'sky', VALID, { 'wallpaper.png': 'x' });
+  seedStyle(custom, 'sky', { ...VALID, assets: { wallpaper: 'other.png' } }, { 'other.png': 'y' });
+  const themes = [{ id: 'a', dir: ext }];
+  assert.equal(assetPath('sky', 'wallpaper.png', bundled, custom, themes), path.join(ext, 'sky', 'wallpaper.png'));
+  assert.equal(assetPath('sky', 'other.png', bundled, custom, themes), null);
+  assert.equal(assetPath('sky', 'theme.json', bundled, custom, themes), null);
+  assert.equal(assetPath('sky', 'wallpaper.png', bundled, custom, []), null);
+});

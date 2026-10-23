@@ -225,6 +225,14 @@ export function setExtensionDefs(list) {
   return defs;
 }
 
+// Re-draw the Appearance tab's theme rows in place when the theme list changes
+// while the modal is open (an extension contributing themes flipped on or off).
+// A closed modal needs nothing: it renders the rows fresh on open.
+export function refreshThemeRows() {
+  const rows = document.querySelector('#settings-modal .theme-rows');
+  if (rows) rows.innerHTML = appearanceBridge.themeRowsHtml();
+}
+
 // The Default runtime row's options, [{ value, label }], from whatever the
 // dispatch dialog's Runtime select offers right now. Called on every graph push,
 // like setExtensionDefs; the modal renders on open, so the row is always current.

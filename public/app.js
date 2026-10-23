@@ -59,7 +59,7 @@ import { onBoard } from './off-board.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -6844,7 +6844,7 @@ function connect() {
       });
     }
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
-    else if (msg.type === 'styles') setCustomStyles(msg.styles);
+    else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
