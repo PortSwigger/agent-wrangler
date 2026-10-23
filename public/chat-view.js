@@ -44,18 +44,26 @@ export function isHumanTypedUserItem(item) {
 
 const LEADING_IMAGE_MARKER = /^\[Image #\d+\]\s*/;
 
+// The TUI records a pasted prompt with its tabs expanded to spaces (a leading
+// tab came back as four spaces in two independent Claude Code sessions), so an
+// echo and its transcript line can differ only in horizontal whitespace. Runs of
+// spaces and tabs collapse to one on both sides before comparing; newlines stay
+// significant so distinct multi-line prompts cannot be confused.
+const flatten = (text) => String(text || '').replace(/[ \t]+/g, ' ').trim();
+
 // Whether a transcript user event is the recording of a locally echoed prompt.
 export function echoMatchesEvent(echo, event) {
   // Mounting reads a window of history, which may hold an older prompt with the
   // same words ("yes", "continue") — only one recorded after the send is ours.
   if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
-  let text = String(event.text || '').trim();
-  if (text === echo.text) return Boolean(text) || echo.images.length === 0 || (Array.isArray(event.images) && event.images.length > 0);
+  let text = flatten(event.text);
+  const sent = flatten(echo.text);
+  if (text === sent) return Boolean(text) || echo.images.length === 0 || (Array.isArray(event.images) && event.images.length > 0);
   // The TUI prepends one `[Image #N]` marker per attachment, so at most that many
   // leading markers are dropped; any the human typed themselves stay in the prose.
   for (let i = 0; i < echo.images.length && LEADING_IMAGE_MARKER.test(text); i += 1) {
     text = text.replace(LEADING_IMAGE_MARKER, '').trim();
-    if (text === echo.text) return true;
+    if (text === sent) return true;
   }
   return false;
 }
@@ -67,7 +75,7 @@ export function echoMatchesEvent(echo, event) {
 export function echoRunMatchingEvent(echoes, event) {
   const recordedAfter = (echo) => !Number.isFinite(event.ts) || event.ts >= echo.sentAt - 2000;
   for (let start = 0; start < echoes.length - 1; start += 1) {
-    let rest = String(event.text || '').trim();
+    let rest = flatten(event.text);
     const run = [];
     for (let i = start; i < echoes.length; i += 1) {
       const echo = echoes[i];
@@ -77,9 +85,10 @@ export function echoRunMatchingEvent(echoes, event) {
         rest = rest.replace(LEADING_IMAGE_MARKER, '');
         markers += 1;
       }
-      if (!echo.text && !markers) break;
-      if (!rest.startsWith(echo.text)) break;
-      rest = rest.slice(echo.text.length).trimStart();
+      const sent = flatten(echo.text);
+      if (!sent && !markers) break;
+      if (!rest.startsWith(sent)) break;
+      rest = rest.slice(sent.length).trimStart();
       run.push(echo);
       if (!rest) return run.length >= 2 ? run : [];
     }
