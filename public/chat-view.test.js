@@ -1203,6 +1203,19 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
 });
 
+test('a pasted tab the TUI expanded to spaces still matches its echo', async () => {
+  const { echoMatchesEvent, echoRunMatchingEvent } = await import('./chat-view.js');
+  const typed = 'error: overwritten by merge:\n\tdocs/nomenclature.md\nAborting';
+  const recorded = 'error: overwritten by merge:\n    docs/nomenclature.md\nAborting';
+  assert.equal(echoMatchesEvent({ text: typed, images: [], sentAt: 1000 }, { text: recorded, ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ text: 'a\tb', images: [], sentAt: 1000 }, { text: 'a b', ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ text: 'a b', images: [], sentAt: 1000 }, { text: 'ab', ts: 1500 }), false);
+  assert.equal(echoMatchesEvent({ text: 'a\nb', images: [], sentAt: 1000 }, { text: 'a b', ts: 1500 }), false);
+  const a = { text: 'one\ttwo', images: [], sentAt: 1000 };
+  const b = { text: '\tthree', images: [], sentAt: 2000 };
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'one  two    three', ts: 4000 }), [a, b]);
+});
+
 test('prompts the agent folded into one message are all matched by it', async () => {
   const { echoRunMatchingEvent } = await import('./chat-view.js');
   const e = (text, sentAt) => ({ text, images: [], sentAt });
