@@ -8,7 +8,7 @@ export const getLinksTool = {
     'Read the links recorded on your current task and/or your session. Returns each '
     + 'link as {type, key?, url?} (e.g. type "jira" or "pr"). Call this before set_links/remove_links so you '
     + 'replace the full list without dropping links you did not know about. scope: '
-    + '"task", "session", or omit for both.',
+    + '"task", "session", or omit for both. This reads stored links, not a fresh GitHub status check; do not repeatedly call it to wait. Read the links skill for notification meanings, limits and the handoff when no wake-up is available.',
   inputSchema: {
     scope: z.enum(['task', 'session']).optional().describe('Which scope to read; omit for both.'),
   },

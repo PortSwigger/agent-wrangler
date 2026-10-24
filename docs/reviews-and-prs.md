@@ -116,7 +116,45 @@ auto-merge results. Notices wait while the terminal holds a draft, shows a dialo
 or cannot be read; once the input clears they arrive together. Board toasts and
 auto-merge actions do not wait for the session's input to clear.
 
+### Waiting without agent polling
+
+Agents receive brief always-on guidance through the mail skill sidecar on both
+providers, with details in the [links skill](../agent-skills/skills/links/SKILL.md).
+After attaching a session PR, they should finish independent work, end their turn
+and yield to notices, avoiding `gh pr checks --watch`, `gh run watch`, sleep
+loops and repeated status queries. One-off diagnostics remain available. This guides agents; it does not
+intercept commands or guarantee model compliance.
+
+| Notice | Meaning |
+| --- | --- |
+| required checks are now failing | A failure is visible; other checks may still be running. |
+| all checks passing, mergeable | GitHub reports the PR mergeable (`passing`); the user's merge workflow still applies. |
+| all checks passing, awaiting review | Checks are green but a required review blocks merging (`awaiting-review`). |
+| changes requested on review | Review action is needed, possibly while checks still run. |
+
+Pane notices require a **session-scope** PR link and effective **Auto-fix PR
+checks** enabled. An explicit session setting overrides the installation default.
+Task links only toast on the board; arbitrary standalone Actions runs are not
+watched. Auto-merge remains a separate setting: if enabled, it can still merge and report
+its outcome with Auto-fix off; do not rely on that as a check-status wake-up.
+
+Notices are deduplicated by status and head commit, not sent after every check
+finishes. An unchanged failure after a same-head rerun may produce no new notice.
+Pending states do not wake the agent, and watcher startup seeds existing state
+without replaying it. Terminal input or dialogs can delay delivery. Silence is
+not success: agents should check current state once when resuming or before a
+consequential decision.
+
+With **Auto-fix PR checks disabled**, no PR pane wake-up is available, including
+for success, failure, review, conflicts, merge or close; board toasts remain.
+Agents should not enable it without authorization. When no reliable wake-up is
+available (also task-only links, standalone Actions or same-head reruns), agents
+should report the URL and pending work, then hand back to the user or an
+already-authorized orchestrator after finishing independent work. They should
+not wait indefinitely or replace the handoff with polling.
+
 ## Auto-merge
 
 **Auto-merge when checks pass** is an off-by-default session option and Workflow launch setting. It
-uses authenticated `gh` to merge the attached PR when required checks become green.
+uses authenticated `gh` to merge the attached session PR when it becomes mergeable
+(`passing`), including the required checks and review gates.
