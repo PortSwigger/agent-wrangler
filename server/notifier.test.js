@@ -63,6 +63,14 @@ test('REGRESSION: passing→pending→passing at the same head notifies only the
   assert.deepEqual(diffCheckStatus([link('passing')]), []);
 });
 
+test('same-head failing rerun: failing → pending → failing sends no second failure notice', () => {
+  const link = (checkStatus, headSha = 'same-head') => L(checkStatus, { ownerId: 'rerun-failure', headSha });
+  assert.equal(diffCheckStatus([link('failing')]).length, 1);
+  assert.deepEqual(diffCheckStatus([link('pending')]), []);
+  assert.deepEqual(diffCheckStatus([link('failing')]), []);
+  assert.equal(diffCheckStatus([link('failing', 'new-head')]).length, 1);
+});
+
 test('a removed then re-attached link notifies again', () => {
   const link = L('passing', { ownerId: 're-attached', headSha: 'sha-same' });
   assert.equal(diffCheckStatus([link]).length, 1);

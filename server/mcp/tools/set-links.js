@@ -13,14 +13,14 @@ export const setLinksTool = {
     + '{type, key?, url?}. scope is required: default to '
     + '"session" (the link belongs to this session); use "task" (shared across every '
     + 'session of the task) only when the user explicitly says so.'
-    + ' PR links are {type:"pr", url:"https://github.com/owner/repo/pull/N"}; the board polls their CI status.'
+    + ' PR links are {type:"pr", url:"https://github.com/owner/repo/pull/N"}; the board polls their CI status. Attach a created PR immediately. For waiting, read the links skill: yield rather than watch/poll. Pane wake-ups require session scope and effective Auto-fix PR checks enabled; task links only toast. If disabled or no reliable wake-up exists, report pending work and hand back rather than wait indefinitely. Standalone Actions runs are not watched; same-head reruns may produce no new notice. One-off diagnostics remain available.'
     + ' Jira links are {type:"jira", key?, url?} with at least one of key/url (url is built from the configured Jira base URL when omitted); record the Jira issue this work belongs to here. Other types exist only while the extension that owns them is enabled.'
     + ' To drop individual links without resending the full list, use remove_links instead.',
   inputSchema: {
     scope: z.enum(['task', 'session']).describe('Which scope to write: "session" (default; this session) or "task" (shared; only when the user says the link belongs to the whole task).'),
     links: z.array(z.object({
       type: z.string().describe('Link type: "pr", or "jira" while the Jira extension is enabled.'),
-      key: z.string().optional().describe('Jira issue key, e.g. ENT-10904 (jira only).'),
+      key: z.string().optional().describe('Jira issue key, e.g. ABC-123 (jira only).'),
       url: z.string().optional().describe('Jira url (optional) or the GitHub pull-request url (required for pr).'),
       checkStatus: z.string().optional(),
       checkStatusFetchedAt: z.string().optional(),
