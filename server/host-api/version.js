@@ -363,7 +363,12 @@ import semver from 'semver';
 // older server ignores the field, so the toggle switches nothing; a manifest
 // that relies on it declares `^1.46.0`.
 //
-export const HOST_API_VERSION = '1.46.0';
+// 1.47.0 adds spawner, extension data and runtime kind to session.prepare;
+// fork parentId and deliberate refusal to session.launchContext; ownLaunch to
+// client runtime metadata; and validate(el, ctx) to dispatch.field. Extensions
+// that depend on these launch contracts declare `^1.47.0`.
+//
+export const HOST_API_VERSION = '1.47.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

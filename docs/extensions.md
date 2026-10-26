@@ -1039,6 +1039,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   to the runtime choice), `syncWorkflow` and `syncClientExtensions`, and in
   `subagent` modalMode it is called with an **EMPTY host list** so contributions
   tear down by omission rather than sitting invisible inside a hidden block.
+  Optional `validate(el, ctx)` (1.47.0) returns a non-empty message to toast and block
+  immediate dispatch, including `api.dispatch.submit`, which rejects with
+  `dispatch blocked by validation`. Blank or non-string answers allow submission;
+  unmounted fields are skipped, and a throwing validator is reported and its
+  contribution removed, as with `fields()`.
   **The veto is TWO keys and fails CLOSED on authority, OPEN on health.** The
   manifest's `hideDispatchField` is the DISCLOSURE — a static array (never a
   function: the board must know what an extension may suppress before any of its
@@ -1163,11 +1168,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
-  `[{ id, label, ownsModel, agents }]` (`local` and the built-ins first, then enabled
+  `[{ id, label, ownsModel, ownLaunch, agents }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
   that defines `validateModel`, whose model `api.dispatch.submit` sends as
   `ext.<extId>.model`. `agents` (1.37.0) lists the agent ids the runtime takes
-  (`null` for `local`, which takes every agent).
+  (`null` for `local`, which takes every agent). `ownLaunch` (1.47.0) marks a
+  runtime that builds its own command; it is `false` for `local` and `devcontainer`.
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -1361,7 +1367,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, host }`, returns `{ env?, addDirs? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, host }`, returns `{ env?, addDirs?, refuse? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1373,14 +1379,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   spawn | assign | adopt`; `assign` (a running session moved to another task) and
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
-  sessions keep their env until relaunched.
+  sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
+  card id on fork, before the child's inherited state is saved; dispatch awaits
+  `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
+  A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
+  without asking later hooks or caching a partial context.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
-  cwd, repoRoot, willCreateWorktree, agent, host }`, returns `void | { abort?:
+  cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host }`, returns `void | { abort?:
   string, warnings?: string[] }` (or a Promise). It runs for a NEW dispatch
   (manual, scheduled, `spawn_session`) after the cwd is resolved and BEFORE the
   worktree is created, so a hook can bring the repo up to date (`git pull
   --ff-only`) and the worktree then branches from it. `repoRoot` is `git
-  rev-parse --show-toplevel` of `cwd`, or `null` outside a repository. Enabled
+  rev-parse --show-toplevel` of `cwd`, or `null` outside a repository. Since 1.47.0,
+  `spawnedBy` is the spawning card id or `null`, and `ext` is this extension's own
+  dispatch-field slice or `null`. `runtime` is the resolved runtime id (`local`
+  by default), and `ownLaunch` says whether it builds its own command. Enabled
   extensions are awaited in order. `abort` fails the dispatch with that message
   through the usual dispatch error path, with no worktree or pane created
   (later extensions are not asked); `warnings` toast on the board and the
@@ -1597,6 +1610,9 @@ Maintainer notes:
   transcript figure. The cost chip, `get_session_cost` and anything reading graph `usd`
   see the override; `host.usage.byCard()` and the `cost-report` skill recompute from
   transcripts and do not.
+- **`ownLaunch` (1.47.0)** on the runtimes announcement and `graph.extensions[].runtimes`
+  is `true` for `buildLaunch` and `false` for `wrapLaunch`; the client exposes it
+  through `api.runtimes()` so dispatch fields can validate runtime combinations.
 - **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
   It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
   that path skips the preset live id, the adapter's command, `wrapLaunch` and live-id
