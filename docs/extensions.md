@@ -187,6 +187,12 @@ When two sources offer the same theme id, the first in this order wins and the o
 A theme with an invalid `theme.json` is skipped and logged, and the next source's theme with that id
 is used instead.
 
+An extension that lists themes in its own UI can draw each one as the picker does with
+`api.themeButtonHtml(style, { active })` (1.44.0): `style` is an `/api/styles` entry, or a theme's
+`theme.json` with its `id` added (for a theme that is switched off and so not listed), and the result
+is a `<button class="theme-row" data-id="…">` with the theme's icon on a tile in its own colours, its
+name and a strip of its accent, green and red. The button handles no clicks itself.
+
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 
@@ -1472,6 +1478,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   shows Dark for a saved theme that has gone, without writing `cm-style`, and redraws the
   picker's rows if Settings is open. An older server ignores the key, so a manifest using it
   declares `^1.43.0`.
+- **Client `api.themeButtonHtml(style, { active })`** (1.44.0) returns `public/theme.js`
+  `themeButtonHtml` (app.js injects it into `createSlots`), the markup Settings › Appearance draws per theme: `aria-pressed` and the
+  `active` class follow `active`, colours are read from the entry's `vars` or a raw `theme.json`'s
+  `colors` (falling back to its `base`'s Dark or Light values) and only plain hex, `rgb[a]()` or `hsl[a]()` values reach the
+  inline style. The board's stylesheet styles `.theme-row`, so the extension adds no CSS. A
+  manifest using it declares `^1.44.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and

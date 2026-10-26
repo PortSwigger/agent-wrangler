@@ -842,19 +842,52 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .appearance-item { margin-bottom: 14px; }
 .appearance-item:last-child { margin-bottom: 0; }
 .appearance-item .setting-label, .appearance-item .setting-help { margin-bottom: 6px; }
-.theme-rows { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Theme picker buttons (theme.js themeButtonHtml). Each icon sits on a tile in
+   its own theme's panel/text colours, so a filled 512-grid silhouette and a
+   24-grid outline read at one size: every icon is drawn in the same box, fills
+   inset a little to match an outline's padding, and outlines get one screen
+   stroke width whatever their viewBox. Selected = accent border + check;
+   keyboard focus = an outer --fg ring, so the two never look alike. */
+.theme-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 8px; }
 .theme-row {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 7px 28px 7px 7px; border-radius: 10px; cursor: pointer; text-align: left;
   background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
   font: inherit; font-size: 13px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
-.theme-row:hover { background: var(--surface-2); color: var(--fg); }
+.theme-row:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); border-color: var(--fg-subtle); color: var(--fg); }
+.theme-row:focus { outline: none; }
+.theme-row:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .theme-row.active {
   color: var(--fg); border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.theme-row .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+.theme-tile {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center;
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,0.28);
+}
+.theme-tile .icon { width: 18px; height: 18px; display: block; }
+.theme-tile .icon-fill { width: 17px; height: 17px; }
+.theme-tile .icon-stroke { stroke-width: 1.6px; }
+.theme-tile .icon-stroke * { vector-effect: non-scaling-stroke; }
+.theme-tile img.icon { object-fit: contain; }
+.theme-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.theme-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+.theme-dots { display: flex; gap: 3px; }
+.theme-dots i {
+  width: 14px; height: 6px; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,0.22);
+}
+.theme-check {
+  position: absolute; top: 50%; right: 8px; width: 14px; height: 14px; margin-top: -7px;
+  padding: 2px; border-radius: 50%; box-sizing: content-box;
+  background: var(--accent); color: var(--accent-fg); opacity: 0; transform: scale(0.6);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.theme-row.active .theme-check { opacity: 1; transform: none; }
 /* A Behavior row's `segmented` control (settings.js) shares these three rules
    rather than forking a fourth pill style — same idiom as the .subagent-pill
    family. It differs only in sitting in a space-between .setting-row, so
