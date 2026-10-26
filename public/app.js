@@ -5828,7 +5828,7 @@ function submitDispatchFromExt({ model, effort, runtime } = {}) {
   return true;
 }
 
-// [{ id, label, ownsModel, agents }] for every #m-runtime option, whatever the
+// [{ id, label, ownsModel, ownLaunch, agents }] for every #m-runtime option, whatever the
 // current model's agent disables (a quick launch picks its own model). `agents`
 // is the agent ids it offers, from the known ones; null for local (every agent).
 function listDispatchRuntimes() {
@@ -5837,8 +5837,14 @@ function listDispatchRuntimes() {
     id: o.value,
     label: o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
+    ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
     agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
   }));
+}
+
+function runtimeOwnLaunch(extId, runtimeId) {
+  const e = latestExtensions.find((x) => x.id === extId);
+  return Boolean(e?.runtimes?.find((r) => r?.id === runtimeId)?.ownLaunch);
 }
 
 function runtimeOwnsModel(extId, runtimeId) {

@@ -959,3 +959,21 @@ test('api.openDispatch without cwd or images leaves the task default and adopts 
   assert.equal(els['m-cwd'].value, '/task/default');
   assert.deepEqual(log, [['openModal', null], 'reset']);
 });
+
+
+test('the client runtime list exposes ownLaunch for extension runtimes and false for built-ins', () => {
+  const runtime = stubSelect(['local', 'devcontainer']);
+  for (const id of ['own', 'wrapped']) {
+    const option = runtime.appendChild(stubOption(id));
+    option.dataset.ext = 'toy';
+  }
+  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {'];
+  const app = loadApp(heads, ['listDispatchRuntimes'], `
+    const availableAgents = [{ id: 'claude' }, { id: 'codex' }];
+    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
+  `, { document: { getElementById: () => runtime } });
+  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
+    { id: 'local', ownLaunch: false }, { id: 'devcontainer', ownLaunch: false },
+    { id: 'own', ownLaunch: true }, { id: 'wrapped', ownLaunch: false },
+  ]);
+});
