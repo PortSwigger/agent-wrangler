@@ -1147,7 +1147,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
 #grid.single-column { align-content: start; }
 #grid.single-column .task-body { flex: 0 0 auto; overflow-y: visible; }
-#grid.hidden { display: none; }
+/* !important: hidden must beat every #grid display rule, e.g. focus mode's flex. */
+#grid.hidden { display: none !important; }
 
 #new-task.armed { border: 1px dashed var(--blue); color: var(--blue-fg); }
 #new-task.drop { background: var(--surface-2); border: 1px dashed var(--blue); color: var(--blue-fg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 30%, transparent); }
