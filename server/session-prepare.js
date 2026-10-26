@@ -1,9 +1,10 @@
-import { getExtensions } from './extensions/index.js';
+import { getExtensions, hookPayloadFor } from './extensions/index.js';
 import { logError } from './log.js';
 
 // The `session.prepare` seam: what extensions run before a NEW session is set
 // up. Each enabled extension's `hooks['session.prepare']` is awaited, in order,
-// with `{ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, host }`
+// with `{ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, spawnedBy,
+// ext, runtime, ownLaunch, host }` (`ext` is this extension's slice)
 // and answers `void | { abort?, warnings? }`:
 //   abort    — a message; the dispatch fails with it, before any worktree or
 //              pane exists. Later extensions are not asked.
@@ -30,7 +31,7 @@ export async function collectPrepare(
   for (const { extId, fn } of ext.hooks?.['session.prepare'] || []) {
     let out;
     try {
-      out = await withTimeout(Promise.resolve().then(() => fn({ ...payload, host: hostApiFor(extId) })), timeoutMs);
+      out = await withTimeout(Promise.resolve().then(() => fn({ ...hookPayloadFor(extId, payload), host: hostApiFor(extId) })), timeoutMs);
     } catch (err) {
       onError(`[ext:${extId}] session.prepare failed — skipped`, err);
       continue;

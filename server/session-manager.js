@@ -1883,8 +1883,10 @@ export class SessionManager {
 
     // Extensions' `session.prepare`, after cwd is settled and before the
     // worktree: an abort fails the dispatch with nothing created.
+    const builds = Boolean(rt.buildLaunch);
     const prepared = await this._prepare({
       sessionId, taskId: taskId || null, cwd, repoRoot: await repoRootOf(cwd), willCreateWorktree: Boolean(worktree), agent,
+      spawnedBy: spawnedBy || null, ext: ext || null, runtime: rt.id, ownLaunch: builds,
     });
     if (prepared?.abort) throw new Error(prepared.abort);
 
@@ -1909,7 +1911,6 @@ export class SessionManager {
     // and we discover it post-launch. A `buildLaunch` runtime replaces the
     // agent's command outright, so there is no local conversation to preset an
     // id for (or to discover one of after launch).
-    const builds = Boolean(rt.buildLaunch);
     const presetLiveId = !builds && adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     // Only an ORCHESTRATOR run loads the issue-to-pr skill plugin; a worker (tagged
     // via `parentSession`, never `workflow`) is briefed via its intent and never

@@ -8,6 +8,7 @@ import { collectPrepare } from './session-prepare.js';
 import { VALUE_HOOKS } from './extensions/index.js';
 import { repoRootOf } from './worktree.js';
 import { SessionManager } from './session-manager.js';
+import { registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
 
 const registry = (...rows) => ({ hooks: { 'session.prepare': rows.map(([extId, fn]) => ({ extId, fn })) } });
 const quiet = () => {
@@ -102,7 +103,7 @@ test('dispatch runs session.prepare before the worktree exists, with the documen
   assert.equal(calls.length, 1);
   assert.deepEqual(
     { ...calls[0], worktrees: undefined },
-    { sessionId, taskId: 'T1', cwd: repo, repoRoot: repo, willCreateWorktree: true, agent: 'claude', worktrees: undefined },
+    { sessionId, taskId: 'T1', cwd: repo, repoRoot: repo, willCreateWorktree: true, agent: 'claude', spawnedBy: null, ext: null, runtime: 'local', ownLaunch: false, worktrees: undefined },
   );
   assert.deepEqual(calls[0].worktrees, ['proj'], 'no sibling worktree folder yet');
   assert.notEqual(launchedCwd, repo, 'the worktree was created after the hook');
@@ -150,4 +151,49 @@ test('resume and fork do not fire session.prepare', async () => {
   await sm.resume('CARD1', os.tmpdir());
   await sm.fork({ sourceId: 'SRC', parentId: 'CARD1', parentEntry: { agent: 'codex', cwd: os.tmpdir() }, cwd: os.tmpdir() });
   assert.equal(n, 0);
+});
+
+
+test('each prepare extension sees only its own ext slice', async () => {
+  const seen = {};
+  const ext = registry(['a', (p) => { seen.a = p.ext; }], ['b', (p) => { seen.b = p.ext; }]);
+  const payload = { sessionId: 's', cwd: '/x', ext: { a: { k: 1 } } };
+  await collectPrepare(payload, { ext, hostApiFor: () => ({}), onError: () => {} });
+  assert.deepEqual(seen.a, { k: 1 });
+  assert.equal(seen.b, null);
+  assert.deepEqual(payload.ext, { a: { k: 1 } });
+});
+
+for (const agent of ['claude', 'codex']) {
+  test(`${agent} dispatch hands prepare the spawner, ext bag and local runtime kind`, async () => {
+    const sm = manager();
+    let seen;
+    sm._prepare = async (p) => { seen = p; return { abort: null, warnings: [] }; };
+    await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent, spawnedBy: 'parent-card', ext: { a: { choice: 'personal' }, other: 1 } });
+    assert.equal(seen.spawnedBy, 'parent-card');
+    assert.deepEqual(seen.ext, { a: { choice: 'personal' }, other: 1 });
+    assert.equal(seen.runtime, 'local');
+    assert.equal(seen.ownLaunch, false);
+  });
+}
+
+test('prepare gets null spawner and ext for a human dispatch', async () => {
+  const sm = manager();
+  let seen;
+  sm._prepare = async (p) => { seen = p; return { abort: null, warnings: [] }; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.equal(seen.spawnedBy, null);
+  assert.equal(seen.ext, null);
+});
+
+test('prepare sees an own-launch runtime before it builds a command', async (t) => {
+  const id = 'prepare-own';
+  registerRuntime({ id, label: 'Own', buildLaunch: async () => { throw new Error('must not build'); }, resumable: false }, 'prepare-test');
+  t.after(() => unregisterRuntimesFor('prepare-test'));
+  const sm = manager();
+  let seen;
+  sm._prepare = async (p) => { seen = p; return { abort: 'refused', warnings: [] }; };
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: id }), /refused/);
+  assert.equal(seen.runtime, id);
+  assert.equal(seen.ownLaunch, true);
 });
