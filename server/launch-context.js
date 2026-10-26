@@ -4,7 +4,8 @@ import { logError } from './log.js';
 
 // The `session.launchContext` seam: what a session's launch needs from the
 // extensions that are on. Each enabled extension's `hooks['session.launchContext']`
-// is asked, per launch, and answers `{ env?, addDirs? }`:
+// is asked, per launch, and answers `{ env?, addDirs?, refuse? }`:
+//   refuse  — a non-empty reason that fails the launch; later hooks are not asked.
 //   env     — extra environment variables for the agent process (task-memory's
 //             AW_TASK_MEMORY). Names must be UPPER_SNAKE (they are written into a
 //             shell command line); values are strings and are quoted by the
@@ -19,6 +20,7 @@ import { logError } from './log.js';
 // the server adopted it at boot); the hook still runs so side effects land and
 // the caller discards the result.
 //
+// Fork payloads include parentId, the parent card id, before inherited state is saved.
 // A hook that throws, or answers something unusable, is logged and skipped:
 // one broken extension must not keep a session from launching.
 export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt'];
@@ -42,7 +44,7 @@ export function _resetLaunchContextForTests() {
 }
 
 export async function collectLaunchContext(
-  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch' } = {},
+  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch', parentId } = {},
   { ext = getExtensions(), hostApiFor = () => undefined, onError = logError } = {},
 ) {
   const env = {};
@@ -51,16 +53,17 @@ export async function collectLaunchContext(
   for (const { extId, fn } of ext.hooks?.['session.launchContext'] || []) {
     let out;
     try {
-      out = await fn({ sid, task, agent, runtime, reason, host: hostApiFor(extId) });
+      out = await fn({ sid, task, agent, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
     } catch (err) {
       onError(`[ext:${extId}] session.launchContext failed — skipped`, err);
       continue;
     }
     if (out == null) continue;
     if (typeof out !== 'object' || Array.isArray(out)) {
-      onError(`[ext:${extId}] session.launchContext must return { env?, addDirs? } — ignored`);
+      onError(`[ext:${extId}] session.launchContext must return { env?, addDirs?, refuse? } — ignored`);
       continue;
     }
+    if (typeof out.refuse === 'string' && out.refuse.trim()) throw new Error(out.refuse.trim());
     for (const [k, v] of Object.entries(out.env || {})) {
       if (!ENV_NAME_RE.test(k) || typeof v !== 'string') {
         onError(`[ext:${extId}] session.launchContext env ${JSON.stringify(k)} dropped (name must match ${ENV_NAME_RE}, value must be a string)`);

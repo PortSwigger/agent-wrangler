@@ -1281,7 +1281,7 @@ export class SessionManager {
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
     const launchContext = await this._launchContext({
-      sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork',
+      sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
     });
     const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
@@ -1921,13 +1921,6 @@ export class SessionManager {
       this._ensureClaudeTrust(SESSIONS_DIR);
       await this._mirrorWorktreeTrust(cwd);
     }
-    // The launch context (env + directory grants from the enabled extensions),
-    // collected before the command is built. dispatch mints sessionId, so the
-    // caller names the task by `taskId` (before its own assign lands) rather than
-    // handing in anything pre-built.
-    const launchContext = await this._launchContext({
-      sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
-    });
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
@@ -1944,6 +1937,13 @@ export class SessionManager {
       sessionId, cwd, agent, intent, model: model || null, effort: effort || null, autoCompactTokens: normalizedAutoCompactTokens || null,
       worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
       ext: ext || null,
+    });
+    // The launch context (env + directory grants from the enabled extensions),
+    // collected before the command is built. dispatch mints sessionId, so the
+    // caller names the task by `taskId` (before its own assign lands) rather than
+    // handing in anything pre-built.
+    const launchContext = await this._launchContext({
+      sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
     });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
