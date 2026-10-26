@@ -151,7 +151,7 @@ function canonCombo(str) {
   return [p.mod, p.meta, p.ctrl, p.shift, p.alt, p.key].join('|');
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null, themeButtonHtml = () => '' }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
   // board hides the UNION (hiddenChips()); a removed extension's set goes with
@@ -358,6 +358,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           themeListeners.get(extId).add(fn);
           return () => themeListeners.get(extId)?.delete(fn);
         },
+        // The Settings theme picker's button (1.44.0), so an extension listing
+        // themes draws them the same way: a theme in, HTML out. Injected by
+        // app.js (theme.js), like `version`, so this module stays a leaf.
+        themeButtonHtml: (style, opts) => themeButtonHtml(style, opts),
         // This install's early-adopter opt-in (1.39.0), present only while the
         // manifest declares `earlyAdopter.branch`. The board draws no UI for it.
         get earlyAdopter() {

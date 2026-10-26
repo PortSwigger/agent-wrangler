@@ -29,7 +29,7 @@ class FakeImage {
 globalThis.Image = FakeImage;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-const { safeIconUrl, selectStyle, setCustomStyles, onThemeChange, renderThemeRows } = await import('./theme.js');
+const { safeIconUrl, selectStyle, setCustomStyles, onThemeChange, renderThemeRows, themeButtonHtml, themeSwatch, safeColour } = await import('./theme.js');
 
 // ── safeIconUrl ──────────────────────────────────────────────────────────────
 test('safeIconUrl: allows same-origin absolute paths', () => {
@@ -170,4 +170,47 @@ test('a missing saved style shows Dark without overwriting cm-style, and comes b
     globalThis.localStorage = saved;
     onThemeChange(null);
   }
+});
+
+// ── themeButtonHtml ──────────────────────────────────────────────────────────
+test('themeSwatch: reads the theme\'s own opaque panel, text and status colours from vars', () => {
+  const sw = themeSwatch({ base: 'dark', vars: { '--bg': 'rgba(1,2,3,0.3)', '--panel-bg': '#1a0e2e', '--fg': '#e7e0ff', '--accent': '#ff2e88', '--green': 'rgb(0, 255, 156)', '--red': '#ff2d4f' } });
+  assert.deepEqual(sw, { tile: '#1a0e2e', ink: '#e7e0ff', dots: ['#ff2e88', 'rgb(0, 255, 156)', '#ff2d4f'] });
+});
+
+test('themeSwatch: a built-in or a theme missing a colour takes its base\'s values', () => {
+  assert.deepEqual(themeSwatch({ base: 'light', vars: {} }), { tile: '#ffffff', ink: '#1f2328', dots: ['#0969da', '#1a7f37', '#cf222e'] });
+  assert.equal(themeSwatch({ base: 'dark', vars: { '--accent': '#abc' } }).tile, '#151b23');
+  assert.equal(themeSwatch({ base: 'dark', vars: { '--surface': '#202020' } }).tile, '#202020');
+});
+
+test('themeSwatch: reads a raw theme.json colors block, for a theme /api/styles does not list', () => {
+  const sw = themeSwatch({ base: 'dark', colors: { bg: 'rgba(1,2,3,0.3)', 'panel-bg': '#10406c', fg: '#eaf6ff', accent: '#22b8e0', green: '#46c98a', red: 'url(x)' } });
+  assert.deepEqual(sw, { tile: '#10406c', ink: '#eaf6ff', dots: ['#22b8e0', '#46c98a', '#f85149'] });
+});
+
+test('safeColour: only plain hex/rgb/hsl values reach a style attribute', () => {
+  assert.equal(safeColour('#ff2e88'), '#ff2e88');
+  assert.equal(safeColour(' hsla(10, 20%, 30%, .5) '), 'hsla(10, 20%, 30%, .5)');
+  for (const bad of ['red;background:url(//x)', '#fff;color:red', 'url(x)', 'var(--accent)', 'expression(1)', '"><img>', 7, null]) {
+    assert.equal(safeColour(bad), null, String(bad));
+  }
+  const html = themeButtonHtml({ id: 'x', name: 'X', base: 'dark', vars: { '--panel-bg': '#000;background-image:url(//evil)' } });
+  assert.doesNotMatch(html, /evil/);
+  assert.match(html, /background:#151b23/);
+});
+
+test('themeButtonHtml: marks the chosen theme active and pressed, escapes text', () => {
+  const s = { id: 'a"b', name: '<Sky>', base: 'light', vars: { '--accent': '#123456' } };
+  const off = themeButtonHtml(s);
+  assert.match(off, /^<button class="theme-row" data-id="a&quot;b" type="button" aria-pressed="false">/);
+  assert.match(off, /&lt;Sky&gt;/);
+  assert.match(off, /<i style="background:#123456"><\/i>/);
+  assert.match(themeButtonHtml(s, { active: true }), /^<button class="theme-row active" data-id="a&quot;b" type="button" aria-pressed="true">/);
+});
+
+test('themeButtonHtml: tags fill and stroke icons so the tile can draw them at one weight', () => {
+  assert.match(themeButtonHtml({ id: 'f', name: 'F', iconFill: true, iconViewBox: '0 0 512 512', icon: 'M0 0h512v512z' }), /class="icon icon-fill" viewBox="0 0 512 512"/);
+  assert.match(themeButtonHtml({ id: 's', name: 'S', icon: 'M1 1L2 2' }), /class="icon icon-stroke" viewBox="0 0 24 24"/);
+  assert.match(themeButtonHtml({ id: 'i', name: 'I', iconImageUrl: '/styles/i/icon.png' }), /<span class="theme-tile"[^>]*><img class="icon" src="\/styles\/i\/icon.png"/);
 });

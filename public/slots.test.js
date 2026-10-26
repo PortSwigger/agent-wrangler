@@ -1711,6 +1711,14 @@ test('api.earlyAdopter is absent without a declared branch; branch and enabled()
   assert.equal(h.slots.forExtension('b', base).api.earlyAdopter, undefined, 'another extension sees only its own');
 });
 
+test('api.themeButtonHtml hands the injected picker button through', () => {
+  const calls = [];
+  const api = harness({ themeButtonHtml: (style, opts) => { calls.push([style, opts]); return '<button>'; } }).slots.forExtension('a', {}).api;
+  assert.equal(api.themeButtonHtml({ id: 'sky' }, { active: true }), '<button>');
+  assert.deepEqual(calls, [[{ id: 'sky' }, { active: true }]]);
+  assert.equal(harness().slots.forExtension('a', {}).api.themeButtonHtml({ id: 'sky' }), '');
+});
+
 test('api.onThemeChange hears themeChanged until unsubscribed or the extension is removed', () => {
   const h = harness();
   const api = h.slots.forExtension('a', {}).api;

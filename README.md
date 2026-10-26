@@ -391,7 +391,7 @@ brought (back) onto the board from the same place you found it.
 ## Themes
 
 The **settings button** (the gear icon on the nav rail) opens **Settings**, whose **Appearance**
-section switches between built-in **dark** and **light** and any drop-in custom styles. A custom style
+section switches between built-in **dark** and **light** and any drop-in custom styles, each shown with its icon and a swatch of its own colours. A custom style
 is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
 an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
 translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a

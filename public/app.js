@@ -43,7 +43,7 @@ import {
 } from './util.js';
 import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
-import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
+import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
@@ -243,6 +243,7 @@ const slots = createSlots({
     queueMicrotask(() => { chipsRenderQueued = false; if (latestGraph) renderGrid(); });
   },
   version: () => hostApiVersion,
+  themeButtonHtml,
 });
 let chipsRenderQueued = false;
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
