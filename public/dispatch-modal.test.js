@@ -783,19 +783,19 @@ test('dispatch.field update sees the cached history on a tick whose graph carrie
 });
 
 // ── submitDispatchFromExt (api.dispatch.submit, 1.28.0) ────────────────────
-function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false, runtimeAgentGate = true } = {}) {
+function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false, runtimeAgentGate = true, slotRegistry = null } = {}) {
   const model = stubSelect(['opus', 'sonnet']);
   const runtime = stubSelect(['local', 'devcontainer']);
   for (const [id, ext] of [['bifrost', 'bifrost'], ['toy', 'toy']]) { const o = runtime.appendChild(stubOption(id)); o.dataset.ext = ext; }
   const effort = stubSelect(['', 'low', 'high']);
   const modalClasses = new Set(hidden ? ['hidden'] : []);
-  const sent = []; const calls = [];
+  const sent = []; const calls = []; const notices = [];
   const state = { cwdBlocked: false, effortsAfterModel: null };
   const els = { 'm-model': model, 'm-effort': effort, 'm-intent': { value: 'x' }, 'm-runtime': runtime };
   const document = { getElementById: (id) => els[id] || { classList: { remove() {}, add() {} } } };
   const app = loadApp(
     ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch(over) {', 'function submitDispatchFromExt({ model, effort, runtime } = {}) {', 'function runtimeOwnsModel(extId, runtimeId) {'],
-    ['submitDispatchFromExt', 'flags'],
+    ['submitDispatch', 'submitDispatchFromExt', 'flags'],
     `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
      let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
      const flags = () => ({ modelEdited, effortEdited });
@@ -807,15 +807,15 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
     {
       document, stubOption, calls, state,
       modal: { classList: { contains: (c) => modalClasses.has(c), add: (c) => modalClasses.add(c) } },
-      slots: { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }) },
+      slots: slotRegistry || { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }), validateDispatch: () => null },
       cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
       additionalFolders: { invalid: () => false },
-      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast() {},
+      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast: (message) => notices.push(message),
       submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},
       intentImages: { busy: () => imagesBusy, names: () => images.slice(), reset: () => { state.imageResets = (state.imageResets || 0) + 1; } },
     },
   );
-  return { app, sent, calls, state, modalClasses };
+  return { app, sent, calls, state, modalClasses, notices };
 }
 
 test('dispatch.submit rejects unless the modal is open in launch mode', () => {
@@ -976,4 +976,25 @@ test('the client runtime list exposes ownLaunch for extension runtimes and false
     { id: 'local', ownLaunch: false }, { id: 'devcontainer', ownLaunch: false },
     { id: 'own', ownLaunch: true }, { id: 'wrapped', ownLaunch: false },
   ]);
+});
+
+
+test('a mounted dispatch field blocks submit, toasts its reason and rejects api.dispatch.submit without sending', async () => {
+  const { slots, syncDispatchExtFields } = await dispatchExtHarness();
+  let blocked = true;
+  const seen = [];
+  slots.register('dispatch.field', 'guard', { id: 'guard', at: 'top', mount() {}, validate(el, ctx) { seen.push(ctx.draft.model); return blocked ? 'blocked' : null; } });
+  syncDispatchExtFields();
+  const { app, sent, notices, modalClasses, state } = extSubmitHarness({ slotRegistry: slots });
+  assert.equal(app.submitDispatch(), false);
+  assert.deepEqual(notices, ['blocked']);
+  assert.deepEqual(sent, []);
+  assert.equal(state.imageResets, undefined);
+  assert.equal(modalClasses.has('hidden'), false);
+  assert.throws(() => app.submitDispatchFromExt(), /dispatch blocked by validation/);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(seen, ['opus', 'opus']);
+  blocked = false;
+  assert.equal(app.submitDispatch(), true);
+  assert.equal(sent.length, 1);
 });

@@ -916,6 +916,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
       if (slotName === 'dispatch.field') {
+        if (contribution.validate != null && typeof contribution.validate !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} validate must be a function`);
         if (!DISPATCH_ANCHORS.includes(contribution.at)) throw new Error(`[ext:${extId}] ${contribution.id} has an unknown dispatch anchor "${contribution.at}" (known: ${DISPATCH_ANCHORS.join(', ')})`);
         // A function `hides` can only be checked when it runs — see
         // hiddenDispatchFields() for what a bad return costs it.
@@ -1215,6 +1216,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           drop('dispatch.field', c);
         }
       }
+    },
+
+    validateDispatch(ctx) {
+      for (const c of [...slotList('dispatch.field')]) {
+        const el = [...c.mounts.values()][0];
+        if (!el || typeof c.validate !== 'function') continue;
+        let message;
+        try {
+          message = c.validate(el, ctx);
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} validate failed — contribution removed`, err);
+          drop('dispatch.field', c);
+          continue;
+        }
+        if (typeof message === 'string' && message.trim()) return message;
+      }
+      return null;
     },
 
     // The payload half: every live contribution's `fields(el, ctx)` return, merged

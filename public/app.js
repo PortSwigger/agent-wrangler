@@ -5762,6 +5762,8 @@ function submitDispatch(over) {
   const imageNames = intentImages.names();
   if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
   if (imageNames.length) fields.imageNames = imageNames;
+  const blocked = slots.validateDispatch(dispatchFieldCtx(fields));
+  if (blocked) { toast(blocked); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
