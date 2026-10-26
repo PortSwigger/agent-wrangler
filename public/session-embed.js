@@ -17,7 +17,7 @@
 // A later mount into another element takes over; the earlier handle goes inert
 // (its sessionId reads null, show and unmount do nothing).
 //
-// `view` (1.44.0, only 'diff' so far) is the view the NEXT show opens on, held on
+// `view` (1.45.0, only 'diff' so far) is the view the NEXT show opens on, held on
 // the owner as `o.view` for app.js to apply and clear: one-shot, so the view
 // coming back on screen (unpark) reopens wherever the human left it, not on it.
 export function createSessionEmbed({ document, parts, show, release }) {

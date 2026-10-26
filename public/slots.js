@@ -151,7 +151,7 @@ function canonCombo(str) {
   return [p.mod, p.meta, p.ctrl, p.shift, p.alt, p.key].join('|');
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null, themeButtonHtml = () => '' }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
   // board hides the UNION (hiddenChips()); a removed extension's set goes with
@@ -276,7 +276,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             reclaimed by the next graph tick. `{ onMaximize(on) }` adds the
   //             header's Fullscreen button and says when it was toggled, for the
   //             extension to give the element more room. `{ view: 'diff' }`
-  //             (1.44.0) opens it on the session's Diff rather than its Chat or
+  //             (1.45.0) opens it on the session's Diff rather than its Chat or
   //             Terminal, and so does `show(id, { view: 'diff' })`; once, for
   //             that show, not every time the view comes back on screen. Any
   //             other view is reported and ignored, so the panel opens as it
@@ -326,7 +326,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // since the announcement can arrive after a contribution has mounted.
   function apiFor(extId, baseApi) {
     if (!apis.has(extId)) {
-      // The view a mountSession show opens on: only 'diff' (1.44.0); null is the
+      // The view a mountSession show opens on: only 'diff' (1.45.0); null is the
       // session's own Chat/Terminal, and anything else is reported and dropped.
       const embedView = (opts, what) => {
         const view = isPlainObject(opts) ? opts.view : undefined;
@@ -374,6 +374,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           themeListeners.get(extId).add(fn);
           return () => themeListeners.get(extId)?.delete(fn);
         },
+        // The Settings theme picker's button (1.44.0), so an extension listing
+        // themes draws them the same way: a theme in, HTML out. Injected by
+        // app.js (theme.js), like `version`, so this module stays a leaf.
+        themeButtonHtml: (style, opts) => themeButtonHtml(style, opts),
         // This install's early-adopter opt-in (1.39.0), present only while the
         // manifest declares `earlyAdopter.branch`. The board draws no UI for it.
         get earlyAdopter() {

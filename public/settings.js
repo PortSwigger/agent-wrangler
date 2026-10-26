@@ -606,7 +606,10 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     const themeRow = e.target.closest('.theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
-      body.querySelectorAll('.theme-row').forEach((r) => r.classList.toggle('active', r === themeRow));
+      body.querySelectorAll('.theme-row').forEach((r) => {
+        r.classList.toggle('active', r === themeRow);
+        r.setAttribute('aria-pressed', String(r === themeRow));
+      });
       return;
     }
     const fontOpt = e.target.closest('.fontsize-opt');

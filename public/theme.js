@@ -65,10 +65,12 @@ function styleIconInner(s) { return s.iconInner ?? `<path d="${esc(s.icon || '')
 // Stroke icons (lucide-style, the default) share the rail's 24-grid + currentColor
 // outline. A theme can instead ship a filled silhouette (iconFill) on its own
 // viewBox — then we fill rather than stroke so a dense path reads as a solid shape.
+// The icon-fill / icon-stroke class lets a container draw every theme's icon at
+// one size and weight whatever its viewBox (see .theme-tile in styles.css).
 function styleIconSvg(s) {
   const vb = esc(s.iconViewBox || '0 0 24 24');
   const paint = s.iconFill ? 'fill="currentColor" stroke="none"' : 'fill="none" stroke="currentColor"';
-  return `<svg class="icon" viewBox="${vb}" ${paint} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${styleIconInner(s)}</svg>`;
+  return `<svg class="icon ${s.iconFill ? 'icon-fill' : 'icon-stroke'}" viewBox="${vb}" ${paint} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${styleIconInner(s)}</svg>`;
 }
 
 // An icon image URL is only ever a same-origin asset path (/styles/...) or a
@@ -184,14 +186,54 @@ export function setCustomStyles(styles) {
   applyStyle(effectiveStyle());
 }
 
-// HTML for the settings modal's theme picker: one row per available style (built-in
-// + custom), current one marked active. Pure — no DOM writes; the caller (settings.js)
-// splices this into the modal body it re-renders on every open.
+// A theme's own colours for its picker button, read from its vars (an
+// /api/styles entry) or its raw theme.json `colors` (a theme that is switched
+// off, which /api/styles leaves out), never the live CSS, so every button shows
+// its theme and not the one on screen.
+// --panel-bg is the opaque one; --bg/--surface are often translucent over a
+// wallpaper. Built-ins carry no vars and take their base's values from
+// styles.css. A value is a hand-placed theme.json string headed for a style
+// attribute, so only plain colour syntax gets through.
+const BASE_SWATCH = {
+  dark: { tile: '#151b23', ink: '#f0f6fc', dots: ['#1f6feb', '#3fb950', '#f85149'] },
+  light: { tile: '#ffffff', ink: '#1f2328', dots: ['#0969da', '#1a7f37', '#cf222e'] },
+};
+const COLOUR_RE = /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/+-]+\))$/i;
+export function safeColour(v) { return typeof v === 'string' && COLOUR_RE.test(v.trim()) ? v.trim() : null; }
+export function themeSwatch(s) {
+  const fallback = BASE_SWATCH[s.base === 'light' ? 'light' : 'dark'];
+  const vars = s.vars || {};
+  const colors = s.colors || {};
+  const pick = (keys, dflt) => keys.map((k) => safeColour(vars[`--${k}`]) || safeColour(colors[k])).find(Boolean) || dflt;
+  return {
+    tile: pick(['panel-bg', 'surface'], fallback.tile),
+    ink: pick(['fg'], fallback.ink),
+    dots: [pick(['accent'], fallback.dots[0]), pick(['green'], fallback.dots[1]), pick(['red'], fallback.dots[2])],
+  };
+}
+
+const CHECK_ICON = '<svg class="theme-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+// One theme's picker button: its icon on a tile in the theme's own panel and
+// text colours, its name, and a strip of its accent/green/red. `style` is an
+// /api/styles entry, a built-in, or a raw theme.json with an `id` added. Exported so an extension can draw the same
+// button (app.js hands it to the client api as api.themeButtonHtml); clicks are the
+// caller's — the markup carries data-id and toggles nothing itself.
+export function themeButtonHtml(style, { active = false } = {}) {
+  const sw = themeSwatch(style);
+  const dots = sw.dots.map((c) => `<i style="background:${c}"></i>`).join('');
+  return `<button class="theme-row${active ? ' active' : ''}" data-id="${esc(style.id)}" type="button" aria-pressed="${active}">`
+    + `<span class="theme-tile" style="background:${sw.tile};color:${sw.ink}">${styleIconMarkup(style)}</span>`
+    + `<span class="theme-meta"><span class="theme-name">${esc(style.name)}</span><span class="theme-dots" aria-hidden="true">${dots}</span></span>`
+    + `${CHECK_ICON}</button>`;
+}
+
+// HTML for the settings modal's theme picker: one button per available style
+// (built-in + custom), current one marked active. Pure — no DOM writes; the
+// caller (settings.js) splices this into the modal body it re-renders on every open.
 export function renderThemeRows() {
   const active = effectiveStyle().id;
-  return allStyles()
-    .map((s) => `<button class="theme-row${s.id === active ? ' active' : ''}" data-id="${esc(s.id)}">${styleIconMarkup(s)}<span>${esc(s.name)}</span></button>`)
-    .join('');
+  return allStyles().map((s) => themeButtonHtml(s, { active: s.id === active })).join('');
 }
 
 // Wire up the persisted (or migrated) built-in style immediately; a persisted
