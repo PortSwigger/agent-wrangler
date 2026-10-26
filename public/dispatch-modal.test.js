@@ -607,7 +607,7 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
   const boardOpen = createBoardOpen();
   const minimisedIds = new Set(minimised);
   const app = loadApp(
-    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {'],
+    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {'],
     ['openSessionInBoard', 'tryFulfillPending', 'state'],
     "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
     {
@@ -623,6 +623,7 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
       document: { querySelector: (sel) => ({ scrollIntoView: () => log.push(`scroll:${sel.match(/data-sid="([^"]+)"/)[1]}`) }) },
       setMaximized: (on) => log.push(`maximized:${on}`),
       openDiffPanel: (sid) => log.push(`diff:${sid}`),
+      renderPanel: (sid) => log.push(`render:${sid}`),
     },
   );
   app.state.sessions = sessions;
@@ -660,6 +661,56 @@ test('a restore an embedded panel asked for lands in the embed, not on the board
   assert.deepEqual(app.log, ['select:S1']);
   assert.deepEqual(removed, ['pending']);
   assert.equal(app.state.pending, null);
+});
+
+test('a restore an embedded panel asked to open on its diff lands on the diff, once', () => {
+  const embed = { sessionId: 'S1', view: 'diff', wrap: null };
+  const app = boardOpenHarness([], { embed });
+  app.state.pending = 'S1';
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, [], 'nothing until the card is back');
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, ['select:S1', 'diff:S1', 'render:S1']);
+  assert.equal(embed.view, null);
+});
+
+// showEmbeddedSession: what a mount or a handle's show does with the session.
+function embedShowHarness(sessions) {
+  const log = [];
+  const app = loadApp(
+    ['function showEmbeddedSession(sessionId, o) {', 'function applyEmbedView(o) {'],
+    ['showEmbeddedSession'],
+    'let pendingSelect = null; let selectedSessionId = null;',
+    {
+      latestSessions: sessions,
+      document: { querySelector: () => ({ classList: { add() {} } }), getElementById: () => ({}) },
+      resumeDormant: (sid) => log.push(`resume:${sid}`),
+      selectSession: (sid) => log.push(`select:${sid}`),
+      deselectSession: () => {},
+      isDiffPanelOpen: () => false,
+      closeDiffPanel: () => {},
+      showSidebar: () => {},
+      send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
+      openDiffPanel: (sid) => log.push(`diff:${sid}`),
+      renderPanel: (sid) => log.push(`render:${sid}`),
+    },
+  );
+  return { ...app, log };
+}
+
+test('an embedded show with view: diff opens a live or dormant session on its diff, and without it on the session\'s own view', () => {
+  const app = embedShowHarness([{ sessionId: 'L', managed: true }, { sessionId: 'D', managed: false }]);
+  const o = { sessionId: 'L', view: 'diff', wrap: null };
+  app.showEmbeddedSession('L', o);
+  assert.deepEqual(app.log, ['select:L', 'diff:L', 'render:L']);
+  assert.equal(o.view, null, 'applied once');
+  app.log.length = 0;
+  app.showEmbeddedSession('L', o);
+  assert.deepEqual(app.log, ['select:L'], 'no view: Chat/Terminal as the session last had it');
+  app.log.length = 0;
+  app.showEmbeddedSession('D', { sessionId: 'D', view: 'diff', wrap: null });
+  assert.deepEqual(app.log, ['resume:D', 'diff:D', 'render:D']);
 });
 
 test('openDiff on a live card lands on it, then opens its diff panel and reports the close', () => {

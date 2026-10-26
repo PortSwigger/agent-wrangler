@@ -468,11 +468,11 @@ function mountHarness() {
   const h = harness();
   const base = {
     mountSession: (extId, el, sid, opts) => {
-      const call = { extId, el, sid, opts, shown: [sid], unmounted: 0, current: sid };
+      const call = { extId, el, sid, opts, shown: [sid], showViews: [], unmounted: 0, current: sid };
       calls.push(call);
       return {
         get sessionId() { return call.current; },
-        show: (id) => { call.shown.push(id); call.current = id; return true; },
+        show: (id, { view } = {}) => { call.shown.push(id); call.showViews.push(view); call.current = id; return true; },
         unmount: () => { call.unmounted++; call.current = null; },
       };
     },
@@ -526,6 +526,38 @@ test('mountSession wraps onMaximize so a throwing one is reported, not thrown in
   assert.doesNotThrow(() => calls[0].opts.onMaximize(true));
   assert.deepEqual(seen, [true]);
   assert.match(errors[0], /\[ext:fake\] mountSession onMaximize threw: boom/);
+});
+
+test('mountSession passes view: \'diff\' through, on mount and on show, and reports any other view', () => {
+  const { api, calls, errors } = mountHarness();
+  calls.length = 0;
+  const base = calls;
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123', { view: 'diff' });
+  assert.equal(base[0].opts.view, 'diff');
+  api.mountSession({ nodeType: 1 }, 'abc123');
+  assert.equal(base[1].opts.view, null, 'no option opens on the session\'s own view');
+  api.mountSession({ nodeType: 1 }, 'abc123', { view: 'terminal' });
+  assert.equal(base[2].opts.view, null);
+  assert.match(errors[0], /\[ext:fake\] mountSession view ignored: expected 'diff', got "terminal"/);
+  assert.deepEqual(errors.length, 1);
+  assert.equal(handle.show('def456', { view: 'diff' }), true);
+  assert.equal(handle.show('ghi789'), true);
+  assert.equal(handle.show('jkl012', { view: 7 }), true);
+  assert.match(errors[1], /mountSession show view ignored: expected 'diff', got 7/);
+  assert.deepEqual(base[0].showViews, ['diff', null, null]);
+});
+
+test('a view that cannot be stringified is still reported and ignored, never thrown', () => {
+  const { api, calls, errors } = mountHarness();
+  const circular = {}; circular.self = circular;
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123', { view: 1n });
+  assert.equal(calls[0].opts.view, null);
+  assert.match(errors[0], /mountSession view ignored: expected 'diff', got bigint/);
+  assert.equal(handle.show('def456', { view: circular }), true);
+  assert.equal(handle.show('ghi789', { view: () => {} }), true);
+  assert.deepEqual(calls[0].showViews, [null, null]);
+  assert.match(errors[1], /mountSession show view ignored: expected 'diff', got object/);
+  assert.match(errors[2], /got \(\) => \{\}/);
 });
 
 test('mountSession is null against a base api that does not supply it', () => {

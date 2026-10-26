@@ -372,10 +372,10 @@ const extApi = {
   // Backs `api.mountSession`; slots has checked the element and the id and
   // bound the extension. Lent at once if the element's view is on screen
   // (or not in the document yet), otherwise parked until it is.
-  mountSession: (extId, el, sessionId, { onMaximize = null } = {}) => {
+  mountSession: (extId, el, sessionId, { onMaximize = null, view = null } = {}) => {
     const host = extViewHosts.get(currentView);
     const active = el.isConnected ? Boolean(host?.contains(el)) : isExtView(currentView);
-    return sessionEmbed.mount(el, sessionId, { extId, onMaximize, active });
+    return sessionEmbed.mount(el, sessionId, { extId, onMaximize, view, active });
   },
 };
 
@@ -405,8 +405,8 @@ function showEmbeddedSession(sessionId, o) {
   document.querySelector('main').classList.add('session-embedded');
   o.wrap?.classList.remove('pending');
   const s = latestSessions.find((x) => x.sessionId === sessionId);
-  if (s && !s.managed) { resumeDormant(sessionId); return; }
-  if (s) { selectSession(sessionId); return; }
+  if (s && !s.managed) { resumeDormant(sessionId); applyEmbedView(o); return; }
+  if (s) { selectSession(sessionId); applyEmbedView(o); return; }
   if (selectedSessionId) deselectSession();
   if (isDiffPanelOpen()) closeDiffPanel();
   o.wrap?.classList.add('pending');
@@ -414,6 +414,15 @@ function showEmbeddedSession(sessionId, o) {
   document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
   pendingSelect = sessionId;
   send({ type: 'resume', sessionId });
+}
+
+// The view a mount or show asked for (`{ view: 'diff' }`), applied once the
+// session is selected and then forgotten, as the panel's own Diff button does.
+function applyEmbedView(o) {
+  if (o.view !== 'diff') return;
+  o.view = null;
+  openDiffPanel(o.sessionId);
+  renderPanel(o.sessionId);
 }
 
 // Lend the panel to the current view if it holds the embed's element, take it
@@ -3466,7 +3475,7 @@ function tryFulfillPending() {
   const embedded = embed?.sessionId === target;
   if (currentView !== 'grid' && !embedded) setView('grid');
   pendingSelect = null;
-  if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); return; }
+  if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); applyEmbedView(embed); return; }
   const req = boardOpen.claim(target);
   if (req) landOnCard(target, req, selectSession);
   else selectSession(target);
