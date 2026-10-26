@@ -17,7 +17,7 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -35,7 +35,7 @@ import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
-import { listStyles, STYLES_DIR, CUSTOM_STYLES_DIR } from './styles.js';
+import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
@@ -973,7 +973,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 const server = createHttpServer({
   port: PORT, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
-  extensionThemes: () => ext.themeDirs,
+  extensionThemes: () => themeSources(ext.themeDirs),
 });
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
@@ -1002,7 +1002,7 @@ server.on('upgrade', (req, socket, head) => {
 let lastStylesKey = null;
 
 function broadcastStylesIfChanged() {
-  const styles = listStyles(STYLES_DIR, CUSTOM_STYLES_DIR, ext.themeDirs);
+  const styles = listStyles(themeSources(ext.themeDirs));
   const key = JSON.stringify(styles);
   if (key === lastStylesKey) return;
   lastStylesKey = key;

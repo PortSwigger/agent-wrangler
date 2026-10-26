@@ -12,6 +12,7 @@ import adversarialReview from './builtin/adversarial-review/index.js';
 import taskMemory from './builtin/task-memory/index.js';
 import jira from './builtin/jira/index.js';
 import sounds from './builtin/sounds/index.js';
+import themes from './builtin/themes/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -46,7 +47,7 @@ import sounds from './builtin/sounds/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira` and `sounds` are the shipped set. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira`, `sounds` and `themes` are the shipped set. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
 export const BUILTIN = [
   checklist,
@@ -55,6 +56,7 @@ export const BUILTIN = [
   taskMemory,
   jira,
   sounds,
+  themes,
 ];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
@@ -283,6 +285,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.settings != null) {
     if (!Array.isArray(ext.settings)) fail(ext, 'settings must be an array of setting definitions');
     const keys = new Set();
+    const themeToggles = new Set();
     for (const [i, s] of ext.settings.entries()) {
       if (!s || typeof s !== 'object') fail(ext, `settings[${i}] is not an object`);
       if (typeof s.key !== 'string' || !SETTING_KEY_RE.test(s.key)) fail(ext, `settings[${i}].key must match ${SETTING_KEY_RE} (got ${JSON.stringify(s.key)})`);
@@ -299,6 +302,15 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       // extension manages itself (a settings.panel, api.settings.set) and a
       // human has no row-shaped way to edit. Any type may carry it.
       if (s.hidden != null && typeof s.hidden !== 'boolean') fail(ext, `settings.${s.key}.hidden must be a boolean`);
+      // `theme` (1.45.0) makes a toggle switch one of this manifest's own
+      // `themes`: false leaves it out of the picker and its assets unserved.
+      if (s.theme != null) {
+        if (s.type !== 'toggle') fail(ext, `settings.${s.key}.theme is only valid on a toggle setting`);
+        if (ext.themes == null) fail(ext, `settings.${s.key}.theme requires the manifest's themes`);
+        if (typeof s.theme !== 'string' || !ID_RE.test(s.theme)) fail(ext, `settings.${s.key}.theme must be a theme id matching ${ID_RE}`);
+        if (themeToggles.has(s.theme)) fail(ext, `settings.${s.key}.theme "${s.theme}" is already switched by another setting`);
+        themeToggles.add(s.theme);
+      }
       const badConstraint = validateSettingDef(s);
       if (badConstraint) fail(ext, `settings.${s.key}.${badConstraint}`);
     }
@@ -420,6 +432,17 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
     if (!path.resolve(base, ext.themes).startsWith(base + path.sep)) fail(ext, `themes "${ext.themes}" must resolve inside ${base}`);
   }
   return true;
+}
+
+// The loader's `themeDirs` as server/styles.js reads them: each with `off`, the
+// theme ids whose `theme` toggle is set to false. Read at call time, so a toggle
+// flip reaches /api/styles, the asset route and the next `styles` frame without
+// re-staging; unset counts as on.
+export function themeSources(themeDirs, valuesFor = extensionSettings) {
+  return themeDirs.map(({ id, dir, toggles = {} }) => {
+    const values = valuesFor(id);
+    return { id, dir, off: Object.keys(toggles).filter((t) => values[toggles[t]] === false) };
+  });
 }
 
 // What `graph.extensions` carries every rebuild. Identity/label/help/defaultEnabled
@@ -567,8 +590,10 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     runtimes: [],
     clientManifest: [],
     dirs: {},
-    // `[{ id, dir }]`, one per ENABLED extension with a `themes` dir, in load
-    // order — server/styles.js merges these into the theme list.
+    // `[{ id, dir, toggles }]`, one per ENABLED extension with a `themes` dir,
+    // in load order — server/styles.js merges these into the theme list
+    // through themeSources below. `toggles` maps a theme id to the setting key
+    // that switches it.
     themeDirs: [],
     // The name registry, carried ON the object rather than kept local to this
     // call: a later registerExtension has to claim names against the same sets,
@@ -784,7 +809,8 @@ function stageExtension(ext, { cfg, out, reg }) {
   // index, and must not move its themes behind another extension's on an id tie.
   if (ext.themes) {
     const order = (id) => out.list.findIndex((e) => e.id === id);
-    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, ext.themes) });
+    const toggles = Object.fromEntries((ext.settings || []).filter((d) => d.theme).map((d) => [d.theme, d.key]));
+    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, ext.themes), toggles });
     out.themeDirs.sort((a, b) => order(a.id) - order(b.id));
   }
   // Omitted rather than nulled when absent, so the announcement a stock

@@ -391,16 +391,21 @@ brought (back) onto the board from the same place you found it.
 ## Themes
 
 The **settings button** (the gear icon on the nav rail) opens **Settings**, whose **Appearance**
-section switches between built-in **dark** and **light** and any drop-in custom styles, each shown with its icon and a swatch of its own colours. A custom style
-is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
-an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
-translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a
-manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
-example. Extensions can contribute themes in the same format through their manifest's `themes`
-field; see [Themes](docs/extensions.md#themes). All UI colours — including the xterm terminal —
+section switches between built-in **dark** and **light** and the themes extensions contribute, each shown with its icon and a swatch of its own colours. The core
+**Themes** extension, on by default, adds Cyberpunk, Dolphin, Pink, Pixel Cats and Wrangler, and
+**Settings › Extensions › Themes** switches each one off or on. A browser whose chosen theme is
+switched off, or whose extension is off or not installed, shows Dark until the theme is back, without
+forgetting its choice. Jurassic Park is a community extension:
+[psjamesh/agent-wrangler-jurassic-park-theme](https://github.com/psjamesh/agent-wrangler-jurassic-park-theme).
+
+A theme is a folder with a `theme.json` manifest — a name, an icon, a `dark`/`light` base, and
+CSS-variable overrides — plus optional assets like a wallpaper for translucent themes. See
+`server/extensions/builtin/themes/themes/` for worked examples, and [Themes](docs/extensions.md#themes)
+for shipping one in an extension. The server compiles each manifest to CSS-var overrides and serves
+it through a manifest-gated asset route (raw files are never exposed). All UI colours — including the xterm terminal —
 flow through these variables, so both built-in and custom styles re-theme the whole app live.
 
-![The Appearance section's theme picker, showing the built-in and drop-in custom styles](docs/images/theme-picker.png)
+![The Appearance section's theme picker, showing the built-in and extension themes](docs/images/theme-picker.png)
 
 ## License
 

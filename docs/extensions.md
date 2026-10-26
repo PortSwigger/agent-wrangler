@@ -87,6 +87,7 @@ update from and cannot be uninstalled.
 | **TODOs** | Board TODOs for each task and the Unassigned tile, their MCP tools and the `archive-to-todo` skill. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). | None. |
 | **Jira** | The `jira` link type and its board chip: agents attach a Jira issue to a session or task with `set_links`, and the chip links to the issue. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). Off, stored Jira links are kept (and survive `set_links`) but draw no chip and no new ones can be set. | **Jira base URL**: what a bare issue key is appended to, e.g. `https://yourcompany.atlassian.net/browse/`. Empty uses `AW_JIRA_BASE_URL` if set; a bare key otherwise renders without a link. The old `jiraBaseUrl` config value, or `AW_JIRA_BASE_URL`, is copied into it at boot. |
 | **Sounds** | Browser audio cues when sessions finish or need attention. Focus mode silences other tasks. | Extension enablement controls playback. Audio-file uploads for each cue (up to 1 MB each), preview and reset to built-in tones are shared across browsers. |
+| **Themes** | The Cyberpunk, Dolphin, Pink, Pixel Cats and Wrangler themes in Settings › Appearance. On by default. Off, a browser that had one of them chosen shows Dark until it is back on. | One switch per theme, drawn as the theme picker's buttons: a highlighted theme is offered in the picker, and clicking it turns it off or on. Every theme is on until switched off. |
 | **Adversarial PR review** | The `adversarial-pr-review` skill and its reviewer's `adversarial_review_process` tool. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | **Review process**: what the reviewer checks and how. Empty uses the built-in process; anything written replaces it. |
 
 ### Sound cues
@@ -167,7 +168,7 @@ Supported manifest contributions are:
 ### Themes
 
 `themes` (1.43.0) names a directory inside the extension, such as `themes: 'themes'`. Each
-subdirectory is one theme, in the same format as the core `styles/` folder: `<id>/theme.json` with
+subdirectory is one theme: `<id>/theme.json` with
 `name`, `icon` and `base` (`dark` or `light`), optional `colors`, `font` and `background`, and
 `assets` (`wallpaper`, `iconImage`) naming files beside it. The folder name is the theme's id, which
 is what a browser saves as its choice, so keep it stable across releases.
@@ -180,12 +181,18 @@ choice, so turning the extension back on brings the theme back.
 
 When two sources offer the same theme id, the first in this order wins and the others are hidden:
 
-1. The core `styles/` folder.
-2. Extension themes, in extension load order: core extensions first, then installed ones.
-3. Hand-placed themes in `~/.agent-wrangler/custom-styles/`.
+1. Extension themes, in extension load order: core extensions first, then installed ones.
+2. Hand-placed themes in `~/.agent-wrangler/custom-styles/`.
 
 A theme with an invalid `theme.json` is skipped and logged, and the next source's theme with that id
 is used instead.
+
+To let people switch single themes off, give each one a `toggle` setting whose `theme` (1.45.0) is
+that theme's id. Unset counts as on. Set to false, the theme leaves the picker and `/api/styles`, its
+assets stop being served, and the next source's theme with that id is used instead, as for an
+invalid one. Each theme id can be named by one setting only, and only on a manifest with `themes`.
+The core Themes extension marks its toggles `hidden` and draws them in a `settings.panel` with
+`api.themeButtonHtml`.
 
 An extension that lists themes in its own UI can draw each one as the picker does with
 `api.themeButtonHtml(style, { active })` (1.44.0): `style` is an `/api/styles` entry, or a theme's
@@ -600,7 +607,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   and deliberately NOT `ctx.ext.changed()`, since nothing about the registry
   moved. On the client the rows are drawn inline in the selected extension's detail
   pane under **Settings** (omitted when it declares none), with its own
-  `settings.panel` contributions above them and a **Save** button for those. The
+  `settings.panel` contributions above them and a **Save** button for those that have a `save`. The
   remount signature excludes `settingValues`, so a value landing never rebuilds
   a field someone is typing in. A QUARANTINED extension keeps its Settings section with its rows
   DISABLED, which says "this is what it would want" where a hidden section would
@@ -1245,10 +1252,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   section**, above the manifest rows (`app.js extSettingsEl`). Single-host, via
   `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
   mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
-  **Save writes panel contributions only**: when an extension has a panel a
-  **Save** button follows it. `slots.savePanels` awaits each `save` in turn (a
+  **Save writes panel contributions only**: when an extension has a panel with a
+  `save`, a **Save** button follows it. `slots.savePanels` awaits each `save` in turn (a
   rejection leaves the panel as it is; the extension shows its own error), and
-  `unmountHost` runs every `unmount` before the pane is rebuilt. Manifest rows
+  `unmountHost` runs every `unmount` before the pane is rebuilt. A panel with no
+  `save` commits as it changes (the Themes switches call `api.settings.set`), and
+  with no such panel mounted there is no Save button (`slots.hasPanelSave`). Manifest rows
   commit on change and flash "Saved" (`flashSettingsSaved`). An extension should
   use manifest rows or a panel, not both: the section would carry two save models
   at once.
@@ -1478,6 +1487,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   shows Dark for a saved theme that has gone, without writing `cm-style`, and redraws the
   picker's rows if Settings is open. An older server ignores the key, so a manifest using it
   declares `^1.43.0`.
+- **Setting def `theme`** (1.45.0) is legal only on a `toggle`, only on a manifest
+  with `themes`, and names each theme id once (`validateManifest`). The loader
+  stages `{ themeId: settingKey }` as the `themeDirs` entry's `toggles`, and
+  `themeSources(themeDirs)` adds `off` from the extension's setting values at call
+  time. `server/index.js` passes it to the `styles` broadcast and, as
+  `extensionThemes`, to `/api/styles` and the asset route, so an
+  `ext-setting-set` rebuild re-broadcasts the theme list with no re-staging.
+  `server/styles.js` skips an `off` id in that source, so a lower source can
+  answer it. An older server ignores the field, so a manifest relying on it
+  declares `^1.45.0`.
 - **Client `api.themeButtonHtml(style, { active })`** (1.44.0) returns `public/theme.js`
   `themeButtonHtml` (app.js injects it into `createSlots`), the markup Settings › Appearance draws per theme: `aria-pressed` and the
   `active` class follow `active`, colours are read from the entry's `vars` or a raw `theme.json`'s
@@ -1644,3 +1663,17 @@ it lacks one. At boot the old `jiraBaseUrl` config value, or failing that
 `AW_JIRA_BASE_URL`, is copied into `extensionSettings.jira.baseUrl` when none is set
 (`RETIRED_SETTINGS` in `config-store.js`). Disabling it keeps stored Jira links and
 hides their chips.
+
+## Builtin: themes
+
+`server/extensions/builtin/themes/` (default on) ships the bundled themes beyond
+Dark and Light as its manifest `themes` (`themes/<id>/`), under the ids a browser
+already saves in `cm-style`. Each theme folder gets a hidden `toggle` named for it
+in camelCase (`pixel-cats` → `pixelCats`) with `theme` set, so adding a folder adds
+its switch. The `themes-list` handler replies with every theme's `theme.json`, the
+switched-off ones included, for the `settings.panel` to draw with
+`api.themeButtonHtml`: pressed is on, a click calls `api.settings.set`. Core never
+rewrites `cm-style` for a theme that has gone, so a browser shows Dark until it
+returns. The client also raises a one-time `api.ui.notify` card for a browser
+whose saved theme is `jurassic-park` while nothing offers it, linking the
+community extension that theme moved to.
