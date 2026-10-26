@@ -95,6 +95,16 @@ test('settings card keeps its chrome fixed around a scrolling pane', () => {
   assert.match(css, /\.settings-tab\.active \{[^}]*background: transparent;[^}]*border-bottom-color: var\(--accent\);/s);
 });
 
+test('settings tab row scrolls sideways only, with the divider drawn under the tabs', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const tabs = css.match(/^\.settings-tabs \{([^}]*)\}/m)[1];
+  assert.match(tabs, /overflow-x: auto;/);
+  assert.match(tabs, /overflow-y: hidden;/);
+  assert.match(tabs, /box-shadow: inset 0 -1px 0 var\(--border\);/);
+  assert.doesNotMatch(tabs, /border-bottom/);
+  assert.doesNotMatch(css.match(/^\.settings-tab \{([^}]*)\}/m)[1], /margin-bottom: -/);
+});
+
 // The two outcomes of flipping an extension toggle. Neither asks for an action
 // any more — the registry is live in both directions — but both still need
 // saying: without them "the panel went but my agent still has the tools" and
