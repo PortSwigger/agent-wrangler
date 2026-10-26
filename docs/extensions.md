@@ -1469,6 +1469,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension's) and shows Fullscreen only when `onMaximize(on)` is given, which is called with
   the new state on each click so the extension can give the element more room. A manifest using
   it declares `^1.42.0`.
+- **`view: 'diff'` on `api.mountSession`** (1.45.0): `mountSession(el, sessionId, { view: 'diff' })`
+  and `handle.show(id, { view: 'diff' })` open the panel on that session's **Diff** instead of
+  Chat or Terminal, for a "review this" button that should land on the changes. It applies to
+  that one show: the view coming back on screen later reopens wherever the human left it. Any
+  other `view` is reported and ignored. An older board ignores the option and opens on Chat or
+  Terminal as before, so a manifest that needs it declares `^1.45.0`; one that only prefers it
+  can keep its range and let older boards open as they always have.
 - **Manifest `themes`** (1.43.0) contributes themes to the Settings theme picker. The loader
   validates that the path resolves inside the manifest's `dir` and stages `{ id, dir }` on
   `themeDirs` for an ENABLED extension only, kept in list order so a re-enable does not change
