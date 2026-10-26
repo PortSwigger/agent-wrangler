@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -105,6 +105,13 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
   const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
   writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
+  // A throwaway installed extension with one view, its browser api on window so
+  // the focus-mode check below can redraw the board from inside that view.
+  const probeDir = join(dataDir, 'extensions', 'probe');
+  mkdirSync(join(probeDir, 'public'), { recursive: true });
+  writeFileSync(join(probeDir, 'index.js'), `export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips'], client: 'public/client.js' };`);
+  writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) { window.__probeApi = r.api; r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } }); } };`);
+  writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -304,6 +311,19 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     };
     await action('Focus');
     assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode') && !document.getElementById('grid').classList.contains('single-column')`), 'focus mode must clear single-column sizing');
+    // Focus mode's `display: flex` must never bring the board back beside an
+    // extension view: a board redraw from inside the view (here an extension's
+    // hideChips, which renders on a microtask) used to re-add focus-mode and
+    // split the screen.
+    assert.ok(await waitFor(() => evaluate(`!!document.querySelector('.layouts button[data-view="ext:probe:main"]')`)), 'the probe extension view never registered');
+    await evaluateChecked(`document.querySelector('.layouts button[data-view="ext:probe:main"]').click()`);
+    const gridDisplay = `getComputedStyle(document.getElementById('grid')).display`;
+    assert.equal(await evaluateChecked(gridDisplay), 'none', 'the board must hide behind an extension view');
+    await evaluateChecked(`(async () => { window.__probeApi.cards.hideChips([]); await new Promise((r) => setTimeout(r, 50)); })()`);
+    assert.equal(await evaluateChecked(gridDisplay), 'none', 'a board redraw must not bring focus mode back beside an extension view');
+    assert.ok(!(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode')`)), 'focus-mode must not be re-added while the grid is hidden');
+    await evaluateChecked(`document.querySelector('.layouts button[data-view="grid"]').click()`);
+    assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode')`), 'returning to the board must restore focus mode');
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
     assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column')`)), 'restoring tasks must restore single-column mode');
     for (let i = 0; i < 3; i++) {

@@ -910,10 +910,7 @@ function setView(view) {
   document.querySelectorAll('.layouts button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const gridEl = document.getElementById('grid');
   gridEl.classList.toggle('hidden', view !== 'grid');
-  // #grid.focus-mode carries its own `display: flex`, which ties in CSS
-  // specificity with #grid.hidden — leaving it set while grid is hidden lets
-  // the focused tile win the tie and render alongside Search. renderGrid()
-  // re-adds it whenever focus mode is actually active.
+  // renderGrid() re-adds focus-mode when grid is shown again.
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
@@ -1578,6 +1575,10 @@ function restoreScrollState(el, { grid, bodies, tray }) {
 }
 
 function renderGrid() {
+  // Only the grid view lays the board out: focus mode's `display: flex` would
+  // otherwise bring a hidden board back beside Search or an extension view.
+  // setView('grid') renders it again on the way back.
+  if (currentView !== 'grid') return;
   const el = document.getElementById('grid');
   // Migrate a legacy single-value focus once the task list is known, then prune
   // stale ids. minimisedIds drives everything below: the board shows every tile
