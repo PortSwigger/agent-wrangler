@@ -1039,6 +1039,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // Await `save(el)` of every contribution mounted in `hostEl`, in
     // registration order. A rejection (or throw) propagates, which is the
     // dialog's cue to stay open — the extension shows its own error.
+    // Whether any contribution mounted in `hostEl` has a `save`. A panel whose
+    // controls commit as they change has none, and gets no Save button.
+    hasPanelSave(hostEl, slotName = 'settings.panel') {
+      return slotList(slotName).some((c) => c.mounts.has(hostEl) && typeof c.save === 'function');
+    },
+
     async savePanels(hostEl, slotName = 'settings.panel') {
       for (const c of [...slotList(slotName)]) {
         const el = c.mounts.get(hostEl);

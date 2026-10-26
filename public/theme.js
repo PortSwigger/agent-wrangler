@@ -2,13 +2,12 @@ import { updateDiffSyntaxPalette } from './diff-syntax-palette.js';
 import { esc } from './util.js';
 
 // Style picker: built-in dark/light + drop-in styles (server-compiled manifests
-// from /api/styles — bundled in styles/, or hand-placed under
-// ~/.agent-wrangler/custom-styles/). Self-contained — it owns the theme vars and
+// from /api/styles — contributed by extensions, the core Themes one included, or
+// hand-placed under ~/.agent-wrangler/custom-styles/). Self-contained — it owns the theme vars and
 // the xterm color read; the only outward coupling is a re-theme hook the app
 // registers (onThemeChange) so a style change can re-paint a live terminal without
 // this module importing the terminal's state (keeps the dependency one-way).
-// There is no in-app way to create/edit a style — new ones are added by editing
-// styles/ in the repo.
+// There is no in-app way to create/edit a style — new ones ship in an extension.
 
 // xterm renders to a canvas, so it can't inherit our CSS theme — it needs a JS
 // color object. Read the resolved --term-* custom properties off the body so the
@@ -18,8 +17,8 @@ import { esc } from './util.js';
 // fully transparent so it takes the #term wrapper's bg uniformly (wrapper carries
 // the bg + padding — no double-paint, no frame). Opaque themes keep the real
 // colour. Caveat: a transparent canvas reports black to the program (OSC 11), so
-// the terminal renders dark-theme diffs — correct for our only translucent theme
-// (Jurassic Park is dark-toned); opaque themes report their true lightness so
+// the terminal renders dark-theme diffs — so a translucent theme should be
+// dark-toned; opaque themes report their true lightness so
 // light mode gets light diffs and white-on-white doesn't happen.
 export function readTerminalTheme() {
   const s = getComputedStyle(document.body);
@@ -168,8 +167,10 @@ function setFavicon(style) {
 
 // Select + apply a style by id, and persist the choice. Called both at startup
 // (persisted/migrated id) and from the settings modal's theme row click.
+// An id that is not available is ignored rather than saved as Dark.
 export function selectStyle(id) {
-  const style = allStyles().find((s) => s.id === id) || BUILT_IN_STYLES[0];
+  const style = allStyles().find((s) => s.id === id);
+  if (!style) return;
   currentStyleId = style.id;
   localStorage.setItem('cm-style', currentStyleId);
   applyStyle(style);

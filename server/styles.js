@@ -1,16 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { logError } from './log.js';
 
-// Custom styles live in a top-level `styles/<id>/` (outside the statically-served
-// public/ tree, committable). Each is a theme.json manifest + image assets. The
-// manifest is compiled here to CSS-var overrides and never served raw; only
-// manifest-declared assets are reachable, via assetPath (see server/index.js).
-export const STYLES_DIR = path.join(fileURLToPath(new URL('..', import.meta.url)), 'styles');
-// Themes are added by editing STYLES_DIR in the repo, not through an in-app editor.
-// CUSTOM_STYLES_DIR is read-only support for themes hand-placed there previously.
+// Themes beyond the client's built-in Dark/Light come from extensions (the core
+// Themes extension ships the bundled set) and from CUSTOM_STYLES_DIR. Each is a
+// `<id>/theme.json` manifest + image assets. The manifest is compiled here to
+// CSS-var overrides and never served raw; only manifest-declared assets are
+// reachable, via assetPath (see server/http-handler.js).
+// CUSTOM_STYLES_DIR is read-only support for themes hand-placed there.
 export const CUSTOM_STYLES_DIR = path.join(os.homedir(), '.agent-wrangler', 'custom-styles');
 
 // ansi color names are authored camelCase (`brightRed`) or kebab (`bright-green`);
@@ -63,7 +61,7 @@ function readManifest(dir, id) {
 // Scan one dir for valid style subdirectories; return descriptors tagged with the
 // given `editable` flag (and `extension`, the contributing extension's id, when
 // it came from one). Bad manifests are skipped + logged, never thrown.
-function scanStyles(dir, editable, extension = null) {
+function scanStyles(dir, editable, extension = null, off = []) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -72,7 +70,7 @@ function scanStyles(dir, editable, extension = null) {
   }
   const styles = [];
   for (const e of entries) {
-    if (!e.isDirectory()) continue;
+    if (!e.isDirectory() || off.includes(e.name)) continue;
     const m = readManifest(dir, e.name);
     if (!m) continue;
     const wallpaper = isSafeSegment(m.assets?.wallpaper) ? m.assets.wallpaper : null;
@@ -108,26 +106,26 @@ function isSafeSegment(s) {
     !s.includes('/') && !s.includes('\\') && !s.includes('\0');
 }
 
-// The theme sources in precedence order: bundled (committed, read-only) styles in
-// STYLES_DIR, then each enabled extension's `themes` dir in load order (core
-// extensions before installed ones), then CUSTOM_STYLES_DIR (hand-placed there;
-// there is no in-app way to create these). `extThemes` is the loader's
-// `themeDirs`: `[{ id, dir }]` for enabled extensions only.
-function sources(dir, customDir, extThemes) {
+// The theme sources in precedence order: each enabled extension's `themes` dir
+// in load order (core extensions before installed ones), then CUSTOM_STYLES_DIR
+// (hand-placed there; there is no in-app way to create these). `extThemes` is
+// `[{ id, dir, off? }]` for enabled extensions only (extensions/index.js
+// `themeSources`); `off` lists the theme ids that extension has switched off,
+// which are skipped as if absent, so the next source may answer that id.
+function sources(customDir, extThemes) {
   return [
-    { dir, editable: false },
-    ...extThemes.map((t) => ({ dir: t.dir, editable: false, extension: t.id })),
-    { dir: customDir, editable: true },
+    ...extThemes.map((t) => ({ dir: t.dir, editable: false, extension: t.id, off: t.off || [] })),
+    { dir: customDir, editable: true, off: [] },
   ];
 }
 
 // Every source's styles, first source wins an id collision — so a theme id is
 // only ever answered by one place, and assetPath below resolves the same one.
-export function listStyles(dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR, extThemes = []) {
+export function listStyles(extThemes = [], customDir = CUSTOM_STYLES_DIR) {
   const seen = new Set();
   const out = [];
-  for (const src of sources(dir, customDir, extThemes)) {
-    for (const s of scanStyles(src.dir, src.editable, src.extension)) {
+  for (const src of sources(customDir, extThemes)) {
+    for (const s of scanStyles(src.dir, src.editable, src.extension, src.off)) {
       if (seen.has(s.id)) continue;
       seen.add(s.id);
       out.push(s);
@@ -140,9 +138,10 @@ export function listStyles(dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR, extT
 // style (exact-name match, so traversal can't escape), read from the same source
 // listStyles took that id from, so every theme's wallpaper serves through
 // /styles/<id>/<file>.
-export function assetPath(id, file, dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR, extThemes = []) {
+export function assetPath(id, file, extThemes = [], customDir = CUSTOM_STYLES_DIR) {
   if (!isSafeSegment(id)) return null;
-  for (const src of sources(dir, customDir, extThemes)) {
+  for (const src of sources(customDir, extThemes)) {
+    if (src.off.includes(id)) continue;
     const m = readManifest(src.dir, id);
     if (!m) continue;
     const declared = Object.values(m.assets || {});

@@ -6194,7 +6194,8 @@ function runNextExtUpdate() {
 
 // The selected extension's Settings section: its own `settings.panel`
 // contributions above the manifest rows, and a Save button for those panels
-// (the manifest rows commit on change). Null when it has neither.
+// when any has a `save` (the manifest rows commit on change). Null when it has
+// neither.
 function extSettingsEl(entry) {
   const content = document.createElement('div');
   const panelHost = document.createElement('div');
@@ -6217,7 +6218,7 @@ function extSettingsEl(entry) {
       },
     }));
   }
-  if (panels) {
+  if (panels && slots.hasPanelSave(panelHost)) {
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'ext-btn ext-btn-primary ext-settings-save';

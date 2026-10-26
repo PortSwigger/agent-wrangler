@@ -166,6 +166,14 @@ test('a missing saved style shows Dark without overwriting cm-style, and comes b
     assert.deepEqual(seen, ['dark', 'sky']);
     assert.match(renderThemeRows(), /class="theme-row active" data-id="sky"/);
     assert.deepEqual(writes, []);
+
+    setCustomStyles([]);
+    seen.length = 0;
+    selectStyle('sky');
+    assert.deepEqual(writes, []);
+    assert.deepEqual(seen, []);
+    setCustomStyles([sky('h.png', { '--fg': '#123' })]);
+    assert.deepEqual(seen, ['sky']);
   } finally {
     globalThis.localStorage = saved;
     onThemeChange(null);

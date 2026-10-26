@@ -1238,6 +1238,18 @@ test('settings.panel mounts only the owning extension\'s contribution; save is a
   assert.equal(host.children.length, 0);
 });
 
+test('hasPanelSave is true only when a panel mounted in the host has a save', () => {
+  const h = harness();
+  h.slots.register('settings.panel', 'a', { id: 'p', mount() {}, save: async () => {} });
+  h.slots.register('settings.panel', 'b', { id: 'p', mount() {} });
+  const withSave = h.document.make();
+  const without = h.document.make();
+  h.slots.mountInto('settings.panel', withSave, {}, { onlyExt: 'a' });
+  assert.equal(h.slots.hasPanelSave(withSave), true);
+  h.slots.mountInto('settings.panel', without, {}, { onlyExt: 'b' });
+  assert.equal(h.slots.hasPanelSave(without), false);
+});
+
 test('savePanels propagates a rejecting save', async () => {
   const h = harness();
   h.slots.register('settings.panel', 'a', { id: 'p', mount() {}, save: () => Promise.reject(new Error('nope')) });

@@ -9,7 +9,7 @@ import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension,
-  primeExtensions, extensionsPrimed, _resetExtensionsForTests,
+  primeExtensions, extensionsPrimed, _resetExtensionsForTests, themeSources,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
 import { MAX_TEXT_LENGTH, MAX_TEXTAREA_LENGTH, MAX_PATTERN_LENGTH } from './setting-constraints.js';
@@ -186,8 +186,8 @@ test('BUILTIN: every directory under builtin/ is registered', () => {
 // The real builtin set. Asserted by id so a stray extra manifest (which would
 // register tools and handlers on every install) is noticed, and so the
 // invariants below never quietly pass over an empty list.
-test('BUILTIN: the shipped set is exactly adversarial-review, checklist, jira, sounds, task-memory and todos', () => {
-  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'jira', 'sounds', 'task-memory', 'todos']);
+test('BUILTIN: the shipped set is exactly adversarial-review, checklist, jira, sounds, task-memory, themes and todos', () => {
+  assert.deepEqual(BUILTIN.map((e) => e.id).sort(), ['adversarial-review', 'checklist', 'jira', 'sounds', 'task-memory', 'themes', 'todos']);
 });
 
 const ownedBy = (id, xs) => xs.filter((x) => x.extId === id);
@@ -1242,11 +1242,34 @@ test('an enabled extension\'s themes dir is staged in list order and released on
   const a = manifest({ id: 'a', stores: {}, handlers: [], tools: [], skills: [], graph: undefined, session: undefined, themes: 'themes', dir: path.join(HERE, 'a') });
   const b = { ...a, id: 'b', dir: path.join(HERE, 'b') };
   const out = loadExtensions({ cfg: {}, builtin: [a, b] });
-  assert.deepEqual(out.themeDirs, [{ id: 'a', dir: path.join(HERE, 'a', 'themes') }, { id: 'b', dir: path.join(HERE, 'b', 'themes') }]);
+  assert.deepEqual(out.themeDirs, [{ id: 'a', dir: path.join(HERE, 'a', 'themes'), toggles: {} }, { id: 'b', dir: path.join(HERE, 'b', 'themes'), toggles: {} }]);
   unregisterExtension(out, 'a');
   assert.deepEqual(out.themeDirs.map((t) => t.id), ['b']);
   registerExtension(out, a, { cfg: {} });
   assert.deepEqual(out.themeDirs.map((t) => t.id), ['a', 'b']);
   const off = loadExtensions({ cfg: { extensions: { a: false } }, builtin: [a, b] });
   assert.deepEqual(off.themeDirs.map((t) => t.id), ['b']);
+});
+
+test('a toggle def\'s `theme` must name a theme id on a manifest with themes, once', () => {
+  const toggle = (extra) => ({ key: 'pink', type: 'toggle', label: 'Pink', theme: 'pink', ...extra });
+  assert.ok(validateManifest(manifest({ themes: 'themes', settings: [toggle()] })));
+  rejects(manifest({ settings: [toggle()] }), /settings\.pink\.theme requires the manifest's themes/);
+  rejects(manifest({ themes: 'themes', settings: [toggle({ type: 'text' })] }), /theme is only valid on a toggle setting/);
+  rejects(manifest({ themes: 'themes', settings: [toggle({ theme: 'Pink!' })] }), /theme must be a theme id/);
+  rejects(manifest({ themes: 'themes', settings: [toggle(), toggle({ key: 'pinkToo' })] }), /already switched by another setting/);
+});
+
+test('themeSources stages each theme toggle and reads it at call time: false is off, unset is on', () => {
+  const a = manifest({ id: 'a', stores: {}, handlers: [], tools: [], skills: [], graph: undefined, session: undefined, themes: 'themes', dir: path.join(HERE, 'a'),
+    settings: [{ key: 'pink', type: 'toggle', label: 'Pink', theme: 'pink' }, { key: 'pixelCats', type: 'toggle', label: 'Pixel Cats', theme: 'pixel-cats' }] });
+  const out = loadExtensions({ cfg: {}, builtin: [a] });
+  assert.deepEqual(out.themeDirs[0].toggles, { pink: 'pink', 'pixel-cats': 'pixelCats' });
+  let values = {};
+  const read = () => themeSources(out.themeDirs, (id) => (id === 'a' ? values : {}));
+  assert.deepEqual(read(), [{ id: 'a', dir: path.join(HERE, 'a', 'themes'), off: [] }]);
+  values = { pink: true, pixelCats: false };
+  assert.deepEqual(read()[0].off, ['pixel-cats']);
+  values = { pink: false };
+  assert.deepEqual(read()[0].off, ['pink']);
 });

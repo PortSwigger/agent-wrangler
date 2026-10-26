@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listStyles, assetPath, STYLES_DIR, CUSTOM_STYLES_DIR } from './styles.js';
+import { listStyles, assetPath } from './styles.js';
 import { isAllowedOrigin } from './origin-check.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,8 +33,10 @@ const MIME = {
 // and that membership check, not an id regex, is the whole gate. GET-only static
 // content, so no origin gate, same posture as public/.
 //
-// `extensionThemes()` is the loader's `themeDirs` (enabled extensions only), so a
-// disabled extension's themes drop out of /api/styles and their assets 404.
+// `extensionThemes()` is the loader's `themeDirs` through `themeSources`
+// (enabled extensions only, each with the themes it has switched off), so a
+// disabled extension's or switched-off theme drops out of /api/styles and its
+// assets 404.
 export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
@@ -69,12 +71,12 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
     // theme.json is never served — assetPath only resolves manifest-declared assets.
     if (urlPath === '/api/styles') {
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
-      res.end(JSON.stringify({ styles: listStyles(STYLES_DIR, CUSTOM_STYLES_DIR, extensionThemes()) }));
+      res.end(JSON.stringify({ styles: listStyles(extensionThemes()) }));
       return;
     }
     if (urlPath.startsWith('/styles/')) {
       const [id, ...rest] = urlPath.slice('/styles/'.length).split('/');
-      const asset = assetPath(id, rest.join('/'), STYLES_DIR, CUSTOM_STYLES_DIR, extensionThemes());
+      const asset = assetPath(id, rest.join('/'), extensionThemes());
       if (!asset) {
         res.writeHead(404).end('not found');
         return;

@@ -98,3 +98,11 @@ test('an enabled extension\'s themes are listed and their declared assets served
   assert.equal(gone.some((s) => s.id === 'route-sky'), false);
   assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
 });
+
+test('a theme its extension has switched off is neither listed nor served', async () => {
+  themeDirs = [{ id: 'sky-ext', dir: themeDir, off: ['route-sky'] }];
+  const styles = (await (await fetch(`${base}/api/styles`)).json()).styles;
+  assert.equal(styles.some((s) => s.id === 'route-sky'), false);
+  assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
+  themeDirs = [];
+});

@@ -229,7 +229,7 @@ export function setExtensionDefs(list) {
 // while the modal is open (an extension contributing themes flipped on or off).
 // A closed modal needs nothing: it renders the rows fresh on open.
 export function refreshThemeRows() {
-  const rows = document.querySelector('#settings-modal .theme-rows');
+  const rows = document.querySelector('#settings-modal #settings-panel-appearance .theme-rows');
   if (rows) rows.innerHTML = appearanceBridge.themeRowsHtml();
 }
 
@@ -603,10 +603,12 @@ export function initSettings({ server, appearance, onChange, extensions, updates
       selectTab(body, tab.dataset.tab);
       return;
     }
-    const themeRow = e.target.closest('.theme-row');
+    // The picker's own buttons only: an extension's panel may draw the same
+    // .theme-row markup (api.themeButtonHtml) and handle its clicks itself.
+    const themeRow = e.target.closest('#settings-panel-appearance .theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
-      body.querySelectorAll('.theme-row').forEach((r) => {
+      body.querySelectorAll('#settings-panel-appearance .theme-row').forEach((r) => {
         r.classList.toggle('active', r === themeRow);
         r.setAttribute('aria-pressed', String(r === themeRow));
       });
