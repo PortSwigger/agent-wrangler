@@ -16,6 +16,10 @@
 //              may use it, and unpark() lends it back when the view returns.
 // A later mount into another element takes over; the earlier handle goes inert
 // (its sessionId reads null, show and unmount do nothing).
+//
+// `view` (1.45.0, only 'diff' so far) is the view the NEXT show opens on, held on
+// the owner as `o.view` for app.js to apply and clear: one-shot, so the view
+// coming back on screen (unpark) reopens wherever the human left it, not on it.
 export function createSessionEmbed({ document, parts, show, release }) {
   let owner = null;
 
@@ -49,9 +53,10 @@ export function createSessionEmbed({ document, parts, show, release }) {
     const mine = () => owner === o;
     return Object.freeze({
       get sessionId() { return mine() ? o.sessionId : null; },
-      show: (sessionId) => {
+      show: (sessionId, { view = null } = {}) => {
         if (!mine()) return false;
         o.sessionId = sessionId;
+        o.view = view;
         if (!o.parked) show(sessionId, o);
         return true;
       },
@@ -74,14 +79,14 @@ export function createSessionEmbed({ document, parts, show, release }) {
 
   // `active`: whether the element's view is the one on screen now. Mounting the
   // same element again just switches the session it shows.
-  function mount(el, sessionId, { extId = null, onMaximize = null, active = true } = {}) {
+  function mount(el, sessionId, { extId = null, onMaximize = null, view = null, active = true } = {}) {
     if (owner && owner.el === el) {
       owner.onMaximize = onMaximize;
-      owner.handle.show(sessionId);
+      owner.handle.show(sessionId, { view });
       return owner.handle;
     }
     if (owner) drop();
-    const o = { el, extId, sessionId, onMaximize, maximized: false, parked: true, homes: null, wrap: null };
+    const o = { el, extId, sessionId, onMaximize, view, maximized: false, parked: true, homes: null, wrap: null };
     o.handle = handleFor(o);
     owner = o;
     if (active) { attach(o); show(sessionId, o); }

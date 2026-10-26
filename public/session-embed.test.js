@@ -156,3 +156,28 @@ test('an element dropped from the document is reclaimed, and an extension switch
   assert.equal(h.embed.owner(), null);
   assert.deepEqual(h.ids(h.main), ['grid', 'diff-panel', 'ext-views', 'sidebar']);
 });
+
+test('a view on mount or show is held on the owner for one show, and absent means none', () => {
+  const h = harness();
+  const handle = h.embed.mount(h.viewA, 's1', { view: 'diff' });
+  assert.equal(h.embed.active().view, 'diff');
+  h.embed.active().view = null; // app.js applies it and clears it
+  handle.show('s2');
+  assert.equal(h.embed.active().view, null);
+  handle.show('s3', { view: 'diff' });
+  assert.equal(h.embed.active().view, 'diff');
+  h.embed.mount(h.viewA, 's4');
+  assert.equal(h.embed.active().view, null, 'mounting the same element again resets it');
+  h.embed.mount(h.viewA, 's5', { view: 'diff' });
+  assert.equal(h.embed.active().view, 'diff');
+});
+
+test('a view asked for while parked waits for the view to come back on screen', () => {
+  const h = harness();
+  h.embed.mount(h.viewA, 's1', { view: 'diff', active: false });
+  assert.deepEqual(h.log, []);
+  assert.equal(h.embed.owner().view, 'diff');
+  h.embed.unpark();
+  assert.deepEqual(h.log, ['show s1']);
+  assert.equal(h.embed.active().view, 'diff');
+});

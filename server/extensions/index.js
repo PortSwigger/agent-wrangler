@@ -302,7 +302,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       // extension manages itself (a settings.panel, api.settings.set) and a
       // human has no row-shaped way to edit. Any type may carry it.
       if (s.hidden != null && typeof s.hidden !== 'boolean') fail(ext, `settings.${s.key}.hidden must be a boolean`);
-      // `theme` (1.45.0) makes a toggle switch one of this manifest's own
+      // `theme` (1.46.0) makes a toggle switch one of this manifest's own
       // `themes`: false leaves it out of the picker and its assets unserved.
       if (s.theme != null) {
         if (s.type !== 'toggle') fail(ext, `settings.${s.key}.theme is only valid on a toggle setting`);

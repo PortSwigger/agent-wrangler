@@ -352,13 +352,18 @@ import semver from 'semver';
 // picker. An older board has no `api.themeButtonHtml`, so a manifest that uses
 // it declares `^1.44.0`.
 //
-// 1.45.0 adds `theme` on a toggle setting def: the id of one of the manifest's
+// 1.45.0 adds `view: 'diff'` to the client `api.mountSession` options and to its
+// handle's `show(id, opts)`: the lent panel opens on that session's Diff
+// rather than its Chat or Terminal. An older board ignores the option and opens
+// on Chat or Terminal as before, so a manifest that needs it declares `^1.45.0`.
+//
+// 1.46.0 adds `theme` on a toggle setting def: the id of one of the manifest's
 // own themes, which the toggle switches. False leaves that theme out of the
 // picker and /api/styles and stops serving its assets; unset counts as on. An
 // older server ignores the field, so the toggle switches nothing; a manifest
-// that relies on it declares `^1.45.0`.
+// that relies on it declares `^1.46.0`.
 //
-export const HOST_API_VERSION = '1.45.0';
+export const HOST_API_VERSION = '1.46.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

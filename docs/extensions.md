@@ -187,7 +187,7 @@ When two sources offer the same theme id, the first in this order wins and the o
 A theme with an invalid `theme.json` is skipped and logged, and the next source's theme with that id
 is used instead.
 
-To let people switch single themes off, give each one a `toggle` setting whose `theme` (1.45.0) is
+To let people switch single themes off, give each one a `toggle` setting whose `theme` (1.46.0) is
 that theme's id. Unset counts as on. Set to false, the theme leaves the picker and `/api/styles`, its
 assets stop being served, and the next source's theme with that id is used instead, as for an
 invalid one. Each theme id can be named by one setting only, and only on a manifest with `themes`.
@@ -1478,6 +1478,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension's) and shows Fullscreen only when `onMaximize(on)` is given, which is called with
   the new state on each click so the extension can give the element more room. A manifest using
   it declares `^1.42.0`.
+- **`view: 'diff'` on `api.mountSession`** (1.45.0): `mountSession(el, sessionId, { view: 'diff' })`
+  and `handle.show(id, { view: 'diff' })` open the panel on that session's **Diff** instead of
+  Chat or Terminal, for a "review this" button that should land on the changes. It applies to
+  that one show: the view coming back on screen later reopens wherever the human left it. Any
+  other `view` is reported and ignored. An older board ignores the option and opens on Chat or
+  Terminal as before, so a manifest that needs it declares `^1.45.0`; one that only prefers it
+  can keep its range and let older boards open as they always have.
 - **Manifest `themes`** (1.43.0) contributes themes to the Settings theme picker. The loader
   validates that the path resolves inside the manifest's `dir` and stages `{ id, dir }` on
   `themeDirs` for an ENABLED extension only, kept in list order so a re-enable does not change
@@ -1487,7 +1494,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   shows Dark for a saved theme that has gone, without writing `cm-style`, and redraws the
   picker's rows if Settings is open. An older server ignores the key, so a manifest using it
   declares `^1.43.0`.
-- **Setting def `theme`** (1.45.0) is legal only on a `toggle`, only on a manifest
+- **Setting def `theme`** (1.46.0) is legal only on a `toggle`, only on a manifest
   with `themes`, and names each theme id once (`validateManifest`). The loader
   stages `{ themeId: settingKey }` as the `themeDirs` entry's `toggles`, and
   `themeSources(themeDirs)` adds `off` from the extension's setting values at call
@@ -1496,7 +1503,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `ext-setting-set` rebuild re-broadcasts the theme list with no re-staging.
   `server/styles.js` skips an `off` id in that source, so a lower source can
   answer it. An older server ignores the field, so a manifest relying on it
-  declares `^1.45.0`.
+  declares `^1.46.0`.
 - **Client `api.themeButtonHtml(style, { active })`** (1.44.0) returns `public/theme.js`
   `themeButtonHtml` (app.js injects it into `createSlots`), the markup Settings › Appearance draws per theme: `aria-pressed` and the
   `active` class follow `active`, colours are read from the entry's `vars` or a raw `theme.json`'s

@@ -275,8 +275,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             an element dropped from the document without unmount is
   //             reclaimed by the next graph tick. `{ onMaximize(on) }` adds the
   //             header's Fullscreen button and says when it was toggled, for the
-  //             extension to give the element more room. Refused (null) for a
-  //             non-element or a non-id, like openSession.
+  //             extension to give the element more room. `{ view: 'diff' }`
+  //             (1.45.0) opens it on the session's Diff rather than its Chat or
+  //             Terminal, and so does `show(id, { view: 'diff' })`; once, for
+  //             that show, not every time the view comes back on screen. Any
+  //             other view is reported and ignored, so the panel opens as it
+  //             would without one. Refused (null) for a non-element or a
+  //             non-id, like openSession.
   //   openTask — the task counterpart of openSession (1.24.0): show this task's
   //             tile, out of the tray if it was minimised, scrolled into view
   //             and pulsed. Returns whether the task is on the live board; an
@@ -321,6 +326,17 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // since the announcement can arrive after a contribution has mounted.
   function apiFor(extId, baseApi) {
     if (!apis.has(extId)) {
+      // The view a mountSession show opens on: only 'diff' (1.45.0); null is the
+      // session's own Chat/Terminal, and anything else is reported and dropped.
+      const embedView = (opts, what) => {
+        const view = isPlainObject(opts) ? opts.view : undefined;
+        if (view == null) return null;
+        if (view === 'diff') return view;
+        let shown;
+        try { shown = JSON.stringify(view) ?? String(view); } catch { shown = typeof view; }
+        onError(`[ext:${extId}] ${what} view ignored: expected 'diff', got ${shown}`);
+        return null;
+      };
       // openExtFile takes an extension id; only the bound openFile below may reach it.
       const { openExtFile: _bound, ...exposed } = baseApi;
       apis.set(extId, {
@@ -403,16 +419,17 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             onMaximize: onMaximize && ((on) => {
               try { onMaximize(on); } catch (err) { onError(`[ext:${extId}] mountSession onMaximize threw: ${err?.message || err}`); }
             }),
+            view: embedView(opts, 'mountSession'),
           });
           if (!handle) return null;
           return Object.freeze({
             get sessionId() { return handle.sessionId; },
-            show: (id) => {
+            show: (id, showOpts) => {
               if (typeof id !== 'string' || !id) {
                 onError(`[ext:${extId}] mountSession show refused: expected a session id, got ${JSON.stringify(id)}`);
                 return false;
               }
-              return handle.show(id);
+              return handle.show(id, { view: embedView(showOpts, 'mountSession show') });
             },
             unmount: () => handle.unmount(),
           });
