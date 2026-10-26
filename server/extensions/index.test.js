@@ -1228,3 +1228,25 @@ test('earlyAdopter: a plain branch reaches the graph and the client announcement
   ea.list[0].provenance = { ...provenance, earlyAdopter: false };
   assert.deepEqual(extensionsForGraph(ea.list)[0].earlyAdopter, { branch: 'next', enabled: false }, 'the graph reads the live opt-in');
 });
+
+test('themes must be a path inside the manifest dir', () => {
+  rejects(manifest({ themes: '../themes' }), /themes "\.\.\/themes" must resolve inside .*fake/);
+  rejects(manifest({ themes: '/etc' }), /must resolve inside/);
+  rejects(manifest({ themes: '.' }), /must resolve inside/);
+  rejects(manifest({ themes: 42 }), /themes must be a relative path string/);
+  rejects(manifest({ themes: 'themes', dir: undefined }), /themes requires the manifest to export its absolute `dir`/);
+  assert.ok(validateManifest(manifest({ themes: 'themes' })));
+});
+
+test('an enabled extension\'s themes dir is staged in list order and released on disable', () => {
+  const a = manifest({ id: 'a', stores: {}, handlers: [], tools: [], skills: [], graph: undefined, session: undefined, themes: 'themes', dir: path.join(HERE, 'a') });
+  const b = { ...a, id: 'b', dir: path.join(HERE, 'b') };
+  const out = loadExtensions({ cfg: {}, builtin: [a, b] });
+  assert.deepEqual(out.themeDirs, [{ id: 'a', dir: path.join(HERE, 'a', 'themes') }, { id: 'b', dir: path.join(HERE, 'b', 'themes') }]);
+  unregisterExtension(out, 'a');
+  assert.deepEqual(out.themeDirs.map((t) => t.id), ['b']);
+  registerExtension(out, a, { cfg: {} });
+  assert.deepEqual(out.themeDirs.map((t) => t.id), ['a', 'b']);
+  const off = loadExtensions({ cfg: { extensions: { a: false } }, builtin: [a, b] });
+  assert.deepEqual(off.themeDirs.map((t) => t.id), ['b']);
+});

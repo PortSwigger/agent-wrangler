@@ -410,6 +410,15 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, `${key} "${ext[key]}" must resolve inside ${pubDir}`);
     }
   }
+  // `themes` (1.43.0): a directory of `<id>/theme.json` + assets, read by
+  // server/styles.js. Inside the manifest's own dir but not necessarily public/:
+  // theme.json is compiled, never served, and only declared assets are.
+  if (ext.themes != null) {
+    if (typeof ext.themes !== 'string' || !ext.themes) fail(ext, 'themes must be a relative path string');
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, 'themes requires the manifest to export its absolute `dir`');
+    const base = path.resolve(dir);
+    if (!path.resolve(base, ext.themes).startsWith(base + path.sep)) fail(ext, `themes "${ext.themes}" must resolve inside ${base}`);
+  }
   return true;
 }
 
@@ -558,6 +567,9 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     runtimes: [],
     clientManifest: [],
     dirs: {},
+    // `[{ id, dir }]`, one per ENABLED extension with a `themes` dir, in load
+    // order — server/styles.js merges these into the theme list.
+    themeDirs: [],
     // The name registry, carried ON the object rather than kept local to this
     // call: a later registerExtension has to claim names against the same sets,
     // and a later unregisterExtension has to release them, or a reinstall of the
@@ -768,6 +780,13 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const [k, fn] of Object.entries(ext.hooks || {})) out.hooks[k].push({ extId: ext.id, fn });
   for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
   if (ext.dir) out.dirs[ext.id] = ext.dir;
+  // Kept in list order, not push order: a re-enable re-stages at the row's own
+  // index, and must not move its themes behind another extension's on an id tie.
+  if (ext.themes) {
+    const order = (id) => out.list.findIndex((e) => e.id === id);
+    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, ext.themes) });
+    out.themeDirs.sort((a, b) => order(a.id) - order(b.id));
+  }
   // Omitted rather than nulled when absent, so the announcement a stock
   // install sends is byte-identical to the pre-styles one.
   //
@@ -866,6 +885,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   for (const k of SESSION_HOOKS) loaded.sessionHooks[k] = loaded.sessionHooks[k].filter((h) => h.extId !== id);
   for (const k of VALUE_HOOKS) loaded.hooks[k] = loaded.hooks[k].filter((h) => h.extId !== id);
   delete loaded.dirs[id];
+  loaded.themeDirs = (loaded.themeDirs || []).filter((t) => t.id !== id);
   const skills = new Set(entry?.skills || []);
   loaded.skillIds = loaded.skillIds.filter((s) => !skills.has(s));
   if (remove) {

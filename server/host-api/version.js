@@ -339,7 +339,15 @@ import semver from 'semver';
 // the session (`show`) and give the panel back (`unmount`). An older board has
 // no `api.mountSession`, so a manifest that needs it declares `^1.42.0`.
 //
-export const HOST_API_VERSION = '1.42.0';
+// 1.43.0 adds the manifest's optional `themes`: a directory (inside the
+// manifest's `dir`) of `<id>/theme.json` + assets, the same shape as the core
+// `styles/` folder. An enabled extension's themes join the Settings theme
+// picker and /api/styles, their declared assets serve from /styles/<id>/, and
+// turning the extension off takes them away again. An older server ignores the
+// key, so the extension loads with no themes; a manifest that uses it declares
+// `^1.43.0`.
+//
+export const HOST_API_VERSION = '1.43.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

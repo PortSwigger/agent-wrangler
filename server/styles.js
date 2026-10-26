@@ -61,8 +61,9 @@ function readManifest(dir, id) {
 }
 
 // Scan one dir for valid style subdirectories; return descriptors tagged with the
-// given `editable` flag. Bad manifests are skipped + logged, never thrown.
-function scanStyles(dir, editable) {
+// given `editable` flag (and `extension`, the contributing extension's id, when
+// it came from one). Bad manifests are skipped + logged, never thrown.
+function scanStyles(dir, editable, extension = null) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -91,6 +92,7 @@ function scanStyles(dir, editable) {
       wallpaperUrl: wallpaper ? `/styles/${e.name}/${wallpaper}` : null,
       iconImageUrl: iconImage ? `/styles/${e.name}/${iconImage}` : null,
       editable,
+      ...(extension ? { extension } : {}),
       // The raw parsed manifest, so the client can read any key the editor didn't
       // model (e.g. iconCredit).
       manifest: m,
@@ -106,26 +108,45 @@ function isSafeSegment(s) {
     !s.includes('/') && !s.includes('\\') && !s.includes('\0');
 }
 
-// Bundled (committed, read-only) styles in STYLES_DIR plus any styles in
-// CUSTOM_STYLES_DIR (hand-placed there; there is no in-app way to create these).
-// On an id collision the bundled one wins and stays read-only.
-export function listStyles(dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR) {
-  const bundled = scanStyles(dir, false);
-  const custom = scanStyles(customDir, true);
-  const seen = new Set(bundled.map((s) => s.id));
-  return [...bundled, ...custom.filter((s) => !seen.has(s.id))];
+// The theme sources in precedence order: bundled (committed, read-only) styles in
+// STYLES_DIR, then each enabled extension's `themes` dir in load order (core
+// extensions before installed ones), then CUSTOM_STYLES_DIR (hand-placed there;
+// there is no in-app way to create these). `extThemes` is the loader's
+// `themeDirs`: `[{ id, dir }]` for enabled extensions only.
+function sources(dir, customDir, extThemes) {
+  return [
+    { dir, editable: false },
+    ...extThemes.map((t) => ({ dir: t.dir, editable: false, extension: t.id })),
+    { dir: customDir, editable: true },
+  ];
+}
+
+// Every source's styles, first source wins an id collision — so a theme id is
+// only ever answered by one place, and assetPath below resolves the same one.
+export function listStyles(dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR, extThemes = []) {
+  const seen = new Set();
+  const out = [];
+  for (const src of sources(dir, customDir, extThemes)) {
+    for (const s of scanStyles(src.dir, src.editable, src.extension)) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      out.push(s);
+    }
+  }
+  return out;
 }
 
 // Resolve a servable asset: the file must be a manifest-declared asset of the
-// style (exact-name match, so traversal can't escape). Checks the custom dir then
-// the bundled dir, so wallpapers for both serve through /styles/<id>/<file>.
-export function assetPath(id, file, dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR) {
+// style (exact-name match, so traversal can't escape), read from the same source
+// listStyles took that id from, so every theme's wallpaper serves through
+// /styles/<id>/<file>.
+export function assetPath(id, file, dir = STYLES_DIR, customDir = CUSTOM_STYLES_DIR, extThemes = []) {
   if (!isSafeSegment(id)) return null;
-  for (const base of [customDir, dir]) {
-    const m = readManifest(base, id);
+  for (const src of sources(dir, customDir, extThemes)) {
+    const m = readManifest(src.dir, id);
     if (!m) continue;
     const declared = Object.values(m.assets || {});
-    if (declared.includes(file)) return path.join(base, id, file);
+    return declared.includes(file) ? path.join(src.dir, id, file) : null;
   }
   return null;
 }

@@ -58,6 +58,9 @@ let themeChangeHook = null;
 export function onThemeChange(fn) { themeChangeHook = fn; }
 
 function allStyles() { return [...BUILT_IN_STYLES, ...customStyles]; }
+// The style on screen: the saved one, or Dark while it is unavailable (its
+// extension is off, or /api/styles has not answered yet).
+function effectiveStyle() { return allStyles().find((s) => s.id === currentStyleId) || BUILT_IN_STYLES[0]; }
 function styleIconInner(s) { return s.iconInner ?? `<path d="${esc(s.icon || '')}"/>`; }
 // Stroke icons (lucide-style, the default) share the rail's 24-grid + currentColor
 // outline. A theme can instead ship a filled silhouette (iconFill) on its own
@@ -170,23 +173,24 @@ export function selectStyle(id) {
   applyStyle(style);
 }
 
-// New custom-style set (initial /api/styles fetch). Re-apply the active style if
-// it's a custom one (its colors may have changed on disk); fall back to dark if
-// it was removed. Built-ins are unaffected by the custom set.
+// New custom-style set (the /api/styles fetch, and every `styles` push — a
+// theme dir edited on disk, or an extension contributing themes turned on or
+// off). Re-apply the active style if it's a custom one (its colors may have
+// changed); show Dark while it is missing, WITHOUT persisting that, so the saved
+// choice comes back with its theme. Built-ins are unaffected by the custom set.
 export function setCustomStyles(styles) {
   customStyles = Array.isArray(styles) ? styles : [];
   if (BUILT_IN_STYLES.some((s) => s.id === currentStyleId)) return;
-  const active = customStyles.find((s) => s.id === currentStyleId);
-  if (active) applyStyle(active);
-  else selectStyle('dark');
+  applyStyle(effectiveStyle());
 }
 
 // HTML for the settings modal's theme picker: one row per available style (built-in
 // + custom), current one marked active. Pure — no DOM writes; the caller (settings.js)
 // splices this into the modal body it re-renders on every open.
 export function renderThemeRows() {
+  const active = effectiveStyle().id;
   return allStyles()
-    .map((s) => `<button class="theme-row${s.id === currentStyleId ? ' active' : ''}" data-id="${esc(s.id)}">${styleIconMarkup(s)}<span>${esc(s.name)}</span></button>`)
+    .map((s) => `<button class="theme-row${s.id === active ? ' active' : ''}" data-id="${esc(s.id)}">${styleIconMarkup(s)}<span>${esc(s.name)}</span></button>`)
     .join('');
 }
 
