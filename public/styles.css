@@ -781,14 +781,20 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   display: flex; flex-direction: column;
 }
 .settings-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+/* The divider is an inset shadow, not a border: it paints under the tabs, so the
+   active underline covers it without a negative margin overflowing the scroll box. */
 .settings-tabs {
-  display: flex; flex: 0 0 auto; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 14px;
-  overflow-x: auto;
+  display: flex; flex: 0 0 auto; gap: 4px; box-shadow: inset 0 -1px 0 var(--border); margin: 0 0 14px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
+.settings-tabs::-webkit-scrollbar { height: 6px; }
+.settings-tabs::-webkit-scrollbar-track { background: transparent; }
+.settings-tabs::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 6px; }
 .settings-tab {
   appearance: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
   border-radius: 0; color: var(--fg-muted); font: inherit; font-size: 13px; font-weight: 500;
-  margin-bottom: -1px; padding: 8px 12px; cursor: pointer;
+  flex: 0 0 auto; padding: 8px 12px; cursor: pointer;
 }
 .settings-tab:hover { color: var(--fg); background: var(--surface-2); }
 .settings-tab.active { background: transparent; color: var(--fg); border-bottom-color: var(--accent); }
