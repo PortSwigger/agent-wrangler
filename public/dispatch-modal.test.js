@@ -536,7 +536,7 @@ function scheduledFocusHarness(sessions = []) {
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
+    "let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
     { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
       landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
@@ -607,9 +607,9 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
   const boardOpen = createBoardOpen();
   const minimisedIds = new Set(minimised);
   const app = loadApp(
-    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {'],
+    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
     ['openSessionInBoard', 'tryFulfillPending', 'state'],
-    "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
+    "let selectionBeforeView = null; let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
     {
       boardOpen, minimisedIds, CSS: { escape: (x) => x },
       sessionEmbed: { active: () => embed },
@@ -679,9 +679,9 @@ test('a restore an embedded panel asked to open on its diff lands on the diff, o
 function embedShowHarness(sessions) {
   const log = [];
   const app = loadApp(
-    ['function showEmbeddedSession(sessionId, o) {', 'function applyEmbedView(o) {'],
+    ['function showEmbeddedSession(sessionId, o) {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
     ['showEmbeddedSession'],
-    'let pendingSelect = null; let selectedSessionId = null;',
+    'let selectionBeforeView = null; let pendingSelect = null; let selectedSessionId = null;',
     {
       latestSessions: sessions,
       document: { querySelector: () => ({ classList: { add() {} } }), getElementById: () => ({}) },

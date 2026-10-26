@@ -247,6 +247,7 @@ const slots = createSlots({
 });
 let chipsRenderQueued = false;
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
+  selectionBeforeView = null;
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) {
     const dropped = boardOpen.drop();
@@ -255,7 +256,7 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
     return;
   }
   boardOpen.request(sessionId, { diff, onClose });
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
@@ -413,7 +414,7 @@ function showEmbeddedSession(sessionId, o) {
   o.wrap?.classList.add('pending');
   showSidebar();
   document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
 }
 
@@ -919,18 +920,17 @@ function setView(view) {
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
   syncSessionEmbed();
-  if (view === 'grid') renderGrid();
-  else if (view === 'search') {
-    // Search is a no-session view: drop any open terminal so it doesn't dangle
-    // behind the results.
-    if (selectedSessionId) deselectSession();
-    onEnterSearchView();
-  } else if (isExtView(view) && selectedSessionId && !sessionEmbed.active()) {
-    // Same rule as Search, for the same reason: an extension view owns the
-    // whole board area, so a terminal left attached behind it is invisible and
-    // still 80 columns wide when you come back.
+  if (selectedSessionId && (view === 'search' || (isExtView(view) && !sessionEmbed.active()))) {
+    const previous = selectedSessionId;
     deselectSession();
+    selectionBeforeView = previous;
   }
+  if (view === 'grid') {
+    const previous = selectionBeforeView;
+    selectionBeforeView = null;
+    if (previous && latestSessions.some((s) => s.sessionId === previous)) selectSession(previous);
+    else renderGrid();
+  } else if (view === 'search') onEnterSearchView();
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
@@ -3062,7 +3062,7 @@ function trackJustFinished(sessions) {
 // descendant must be excluded from the "still in use" check too.
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   if (selectedSessionId === sessionId) selectAfterArchive(sessionId);
-  const actions = [{ label: 'Resume', onClick: () => { pendingSelect = sessionId; send({ type: 'resume', sessionId }); } }];
+  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(sessionId); send({ type: 'resume', sessionId }); } }];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -3272,6 +3272,7 @@ function showRestartingPlaceholder() {
 // --- selection / panel ---
 
 export let selectedSessionId = null;
+let selectionBeforeView = null;
 // Keyboard nav can also land on a tile's "new session" slot rather than a session
 // card: this holds that tile's id (a task id, or ADHOC_ID for Unassigned), and is
 // mutually exclusive with selectedSessionId. Enter on it opens the dispatch dialog.
@@ -3284,7 +3285,7 @@ let pendingSelect = null;
 let pendingScheduledFocus = null;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
-export function setPendingSelect(id) { pendingSelect = id; }
+export function setPendingSelect(id) { selectionBeforeView = null; pendingSelect = id; }
 
 // In-app "maximize the agent window" view state: a transient toggle (no
 // persistence) that expands #sidebar to fill the content area, hiding the task
@@ -3333,6 +3334,7 @@ function toggleMaximize() {
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
 function selectSession(sessionId) {
+  selectionBeforeView = null;
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
@@ -3373,7 +3375,7 @@ const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(sessionId) {
   resuming.add(sessionId);
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Resuming…');
   selectSession(sessionId);
@@ -3412,6 +3414,7 @@ function wakeSession(sessionId) {
 // Drop the current selection: close its terminal and hide the sidebar. Used by
 // the Search view (no-session state) and when the selected session is archived.
 export function deselectSession() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   selectedNewSlot = null;
   closeTerminal();
@@ -3472,6 +3475,7 @@ function tryFulfillPending() {
   if (!pendingSelect) return;
   if (!latestSessions.some((x) => x.sessionId === pendingSelect)) return;
   const target = pendingSelect;
+  selectionBeforeView = null;
   // An embed's restore lands in the embed, not on the board.
   const embed = sessionEmbed.active();
   const embedded = embed?.sessionId === target;
@@ -3489,10 +3493,15 @@ window.addEventListener('hashchange', () => {
   // (#view=history) is normalized to what syncHash would write.
   if (view) { if (currentView !== view) setView(view); else syncHash(); return; }
   const id = hashSessionId();
-  if (id === selectedSessionId) return;
-  if (id) { pendingSelect = id; tryFulfillPending(); }
-  else if (currentView !== 'grid') setView('grid');
-  else deselectSession();
+  if (id) {
+    if (id === selectedSessionId) return;
+    setPendingSelect(id);
+    tryFulfillPending();
+  } else {
+    selectionBeforeView = null;
+    if (currentView !== 'grid') setView('grid');
+    else deselectSession();
+  }
 });
 
 // True when the board is collapsed onto a single visible tile (renderGrid's same
@@ -3609,6 +3618,7 @@ function moveSessionFocus(dir) {
 // appended after the last card and can sit just below the tile's fold, which is
 // what made it feel like an invisible element got selected "at the end".
 function selectNewSlot(tileId) {
+  selectionBeforeView = null;
   selectedNewSlot = tileId;
   // Keep the terminal open but blur it: while focused, xterm would ALSO emit a stray
   // \r for the Enter that's meant to launch (the leak openTerminal documents), and
@@ -4927,6 +4937,7 @@ function openTerminal(s) {
 // Close the detail panel + terminal and clear the selection, so the periodic
 // graph refresh doesn't silently re-open the sidebar for the still-selected card.
 function closePanel() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   closeTerminal();
   hideSidebar();
@@ -6625,6 +6636,7 @@ function tryFulfillScheduledFocus() {
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
   setSessionView(target, 'terminal');
+  selectionBeforeView = null;
   if (currentView !== 'grid') setView('grid');
   if (maximized) setMaximized(false);
   boardOpen.drop();
@@ -6836,11 +6848,11 @@ function connect() {
         okLabel: 'Force delete',
       }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
     }
-    else if (msg.type === 'forked') { pendingSelect = msg.sessionId; tryFulfillPending(); }
+    else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
     // Search adopted an off-board conversation onto the board (or found it already
     // had a card). The card id is minted server-side, so this reply is the first
     // moment the view knows what to jump to — same deferred select as a fork.
-    else if (msg.type === 'adopted') { pendingSelect = msg.sessionId; tryFulfillPending(); onAdopted(msg); }
+    else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
     else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
     else if (msg.type === 'resume-needs-dir') {
       const forking = msg.action === 'fork';
@@ -7072,6 +7084,6 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // a #session link is fulfilled once the first graph contains it.
 initSearchView();
 if (hashView()) setView(hashView());
-else pendingSelect = hashSessionId();
+else setPendingSelect(hashSessionId());
 populateModelSelect();
 connect();
