@@ -655,3 +655,47 @@ test('spawn without ext passes no ext key', async () => {
   await host.sessions.spawn({ cwd: '/repo' });
   assert.equal(Object.hasOwn(seen.dispatch[0], 'ext'), false);
 });
+
+function envWiring(fn) {
+  const w = wiring();
+  const task = { id: 't1', name: 'Example' };
+  w.core.taskStore.taskFor = (sid) => sid === 'c1' ? task : null;
+  return { ...w, hostApiFor: (id) => ({ id }), launchContext: async (payload, opts) => {
+    const { collectLaunchContext } = await import('../launch-context.js');
+    return collectLaunchContext(payload, { ...opts, ext: { hooks: { 'session.launchContext': [{ extId: 'context', fn }] } } });
+  } };
+}
+
+test('sessions:env returns hook env for both agents and narrows ext for a card or a cardless run', async () => {
+  const seen = [];
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring((p) => {
+    seen.push(p);
+    return { env: { AW_CONTEXT: p.agent }, addDirs: ['/unrelated'] };
+  }) });
+  for (const agent of ['claude', 'codex']) {
+    assert.deepEqual(await host.sessions.launchEnv({ agent, sessionId: 'c1', ext: { context: { selection: 'secondary' }, other: { hidden: true } } }), { env: { AW_CONTEXT: agent } });
+  }
+  assert.deepEqual(seen[0], { sid: 'c1', task: { id: 't1', name: 'Example' }, agent: 'claude', runtime: 'local', reason: 'headless', ext: { selection: 'secondary' }, host: { id: 'context' } });
+  assert.deepEqual(await host.sessions.launchEnv(), { env: { AW_CONTEXT: 'claude' } });
+  assert.equal(seen[2].sid, null);
+  assert.equal(seen[2].task, null);
+  assert.equal(seen[2].ext, null);
+  await host.sessions.launchEnv({ ext: { context: { selection: 'cardless' } } });
+  assert.deepEqual(seen[3].ext, { selection: 'cardless' });
+  assert.equal('sessions' in buildHostApi({ id: 'none', ...wiring() }), false);
+});
+
+test('sessions:env rejects a launch refusal with its reason', async () => {
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => ({ refuse: 'context unavailable' })) });
+  await assert.rejects(host.sessions.launchEnv({ sessionId: 'c1' }), /context unavailable/);
+});
+
+test('sessions:env rejects malformed agent, sessionId and ext by name before collecting hooks', async () => {
+  let calls = 0;
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => { calls++; }) });
+  for (const agent of ['unknown', '', null, 7]) await assert.rejects(host.sessions.launchEnv({ agent }), /agent must be "claude" or "codex"/);
+  for (const sessionId of [7, [], {}]) await assert.rejects(host.sessions.launchEnv({ sessionId }), /sessionId must be a string or null/);
+  await assert.rejects(host.sessions.launchEnv({ ext: 'bad' }), /ext must be an object keyed by extension id/);
+  await assert.rejects(host.sessions.launchEnv({ ext: { context: 7 } }), /ext\.context must be an object or null/);
+  assert.equal(calls, 0);
+});

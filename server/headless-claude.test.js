@@ -103,3 +103,20 @@ test('the timeout is passed through and the env is stripped of nested-claude var
   assert.equal(f.calls[0].opts.timeout, 5000);
   assert.equal(f.calls[0].opts.env.CLAUDE_CODE_TEST_LEAK, undefined);
 });
+
+test('env option is merged over the clean environment after nested-Claude variables are removed', async () => {
+  const f = fakeExecFile({ stdout: JSON.stringify({ result: 'ok' }) });
+  const previous = process.env.CLAUDECODE;
+  process.env.CLAUDECODE = 'nested';
+  try {
+    await runHeadlessClaude('P', 'x', { execFile: f.execFile, env: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-token', AW_CONTEXT: 'secondary' } });
+    const env = f.calls[0].opts.env;
+    assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'fixture-token');
+    assert.equal(env.AW_CONTEXT, 'secondary');
+    assert.equal(env.CLAUDECODE, undefined);
+    assert.equal(env.PATH, process.env.PATH);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDECODE;
+    else process.env.CLAUDECODE = previous;
+  }
+});

@@ -28,6 +28,7 @@ export function runHeadlessClaude(prompt, stdin, {
   model = 'haiku',
   execFile = defaultExecFile,
   timeoutMs = 120000,
+  env = {},
 } = {}) {
   const liveSessionId = crypto.randomUUID();
   const args = [
@@ -43,7 +44,7 @@ export function runHeadlessClaude(prompt, stdin, {
   return new Promise((resolve) => {
     const child = execFile('claude', args, {
       cwd: os.tmpdir(),
-      env: cleanClaudeEnv(),
+      env: { ...cleanClaudeEnv(), ...env },
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
     }, (err, stdout) => {

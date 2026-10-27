@@ -77,7 +77,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
 // directions — that test is what keeps the two in step without an import, so a
 // new capability is a two-file change by design.
 export const CAPABILITIES = new Set([
-  'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:kill',
+  'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:env', 'sessions:kill',
   'tasks:read', 'tasks:write', 'tasks:archive',
   'memory:read', 'memory:append',
   'events',
@@ -142,7 +142,7 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 
 // Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
-//   session.launchContext({ sid, task, agent, runtime, reason, parentId?, host })
+//   session.launchContext({ sid, task, agent, runtime, reason, parentId?, ext, host })
 //     -> { env?, addDirs?, refuse? } | Promise of it — see server/launch-context.js.
 //   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host })
 //     -> void | { abort?, warnings? } | Promise of it — awaited in order before a
