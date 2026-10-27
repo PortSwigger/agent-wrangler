@@ -70,6 +70,9 @@ export const PROMOTE_ICON =
 // Lucide "link" — the Attach action (nest a session under another).
 export const ATTACH_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+// Lucide "search" — the add pane's search box over the GitHub browser.
+export const SEARCH_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
 // Lucide "chevron-right" — the disclosure arrow on a context-menu row that
 // opens a flyout submenu (e.g. "Attach to…") rather than running an action.
 export const CHEVRON_RIGHT_ICON =

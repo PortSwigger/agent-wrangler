@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, consentButtonLabels, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
-  commitFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING,
+  commitFocusedField, focusedFieldState, restoreFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING,
 } from './extensions-panel.js';
 import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
 
@@ -144,7 +144,7 @@ test('the selected extension is highlighted and shown; clicking another selects 
       const fallback = extensionsPanelEl({ entries: [BUILTIN_A, EXT1], selectedId, browse: { repos: [] } });
       assert.deepEqual(byClass(fallback, 'ext-list-row').map((r) => r.classList.contains('selected')), [false, false]);
       assert.ok(byClass(fallback, 'ext-add-btn')[0].classList.contains('selected'));
-      assert.equal(byClass(detailOf(fallback), 'ext-install-url').length, 1);
+      assert.equal(byClass(detailOf(fallback), 'ext-install-url').length, 0, 'Browse GitHub is the default');
       assert.equal(byClass(detailOf(fallback), 'ext-gh').length, 1);
     }
   });
@@ -328,7 +328,7 @@ test('a caller-supplied settingsEl replaces the default rows, and null omits the
   });
 });
 
-test('+ Add extension opens the install form in the detail pane', () => {
+test('+ Add extension opens the add pane in the detail pane', () => {
   withDom(() => {
     let adds = 0;
     const panel = showing(INSTALLED, { onAdd: () => { adds += 1; } });
@@ -336,7 +336,7 @@ test('+ Add extension opens the install form in the detail pane', () => {
     byClass(panel, 'ext-add-btn')[0].fire('click');
     assert.equal(adds, 1);
     const adding = extensionsPanelEl({ entries: [INSTALLED], adding: true });
-    assert.equal(byClass(detailOf(adding), 'ext-install-url').length, 1);
+    assert.equal(byClass(detailOf(adding), 'chat-seg').length, 1);
     assert.equal(byClass(adding, 'ext-list-row')[0].classList.contains('selected'), false);
   });
 });
@@ -385,6 +385,109 @@ test('the GitHub browser shows loading, error and empty states, and Refresh asks
     assert.ok(texts(empty).includes('Nothing tagged yet.'));
     assert.equal(byClass(extensionsPanelEl({ entries: [INSTALLED], adding: true }), 'ext-gh').length, 0);
   });
+});
+
+const OTHER = {
+  ...REPO, fullName: 'tidepool/cost-guard', name: 'cost-guard', owner: 'tidepool', description: 'Pauses a session over budget.',
+  cloneUrl: 'https://github.com/tidepool/cost-guard.git', htmlUrl: 'https://github.com/tidepool/cost-guard',
+};
+const shownNames = (node) => byClass(node, 'ext-gh-card').filter((c) => !c.hidden).map((c) => texts(byClass(c, 'ext-gh-name')[0])[0]);
+
+test('the add pane switches between Browse GitHub and Git URL, Browse by default', () => {
+  withDom(() => {
+    const modes = [];
+    const browse = { repos: [REPO] };
+    const panel = extensionsPanelEl({ entries: [], adding: true, browse, onAddMode: (m) => modes.push(m) });
+    const [browseBtn, urlBtn] = byClass(panel, 'chat-seg-btn');
+    assert.equal(browseBtn.getAttribute('aria-pressed'), 'true');
+    assert.equal(urlBtn.getAttribute('aria-pressed'), 'false');
+    assert.equal(byClass(panel, 'ext-gh').length, 1);
+    assert.equal(byClass(panel, 'ext-install-url').length, 0);
+    browseBtn.fire('click');
+    urlBtn.fire('click');
+    assert.deepEqual(modes, ['url'], 'only a switch to the other mode is reported');
+    const url = extensionsPanelEl({ entries: [], adding: true, browse, addMode: 'url' });
+    assert.ok(byClass(url, 'chat-seg-btn')[1].classList.contains('on'));
+    assert.equal(byClass(url, 'ext-gh').length, 0);
+    assert.equal(byClass(url, 'ext-install-url')[0].dataset.refocus, 'url');
+    assertNoThirdPartyHtml(url);
+  });
+});
+
+test('the browse search filters the fetched cards in place by name, owner or description', () => {
+  withDom(() => {
+    const queries = [];
+    const installed = { ...INSTALLED, origin: 'https://github.com/charlie/notes' };
+    const panel = extensionsPanelEl({
+      entries: [installed], adding: true, browse: { repos: [MINE, REPO, OTHER] }, onBrowseQuery: (q) => queries.push(q),
+    });
+    const search = byClass(panel, 'ext-gh-search-input')[0];
+    const meta = byClass(panel, 'ext-gh-search-meta')[0];
+    const noMatch = byClass(panel, 'ext-gh-no-match')[0];
+    assert.equal(search.dataset.refocus, 'gh-search');
+    assert.deepEqual(shownNames(panel), ['wrangler-thing', 'cost-guard', 'notes']);
+    assert.equal(meta.textContent, '');
+    assert.equal(noMatch.hidden, true);
+    const type = (v) => { search.value = v; search.fire('input'); };
+    type('COST');
+    assert.deepEqual(shownNames(panel), ['cost-guard'], 'by name, ignoring case');
+    assert.equal(meta.textContent, '1 of 3');
+    type(' charlie ');
+    assert.deepEqual(shownNames(panel), ['notes'], 'by owner; installed cards still filter');
+    type('budget');
+    assert.deepEqual(shownNames(panel), ['cost-guard'], 'by description');
+    type('nothing like this');
+    assert.deepEqual(shownNames(panel), []);
+    assert.equal(meta.textContent, '0 of 3');
+    assert.equal(noMatch.hidden, false);
+    assert.ok(texts(noMatch).includes('No tagged extension matches “nothing like this”.'));
+    type('');
+    assert.equal(shownNames(panel).length, 3);
+    assert.equal(noMatch.hidden, true);
+    assert.deepEqual(queries, ['COST', ' charlie ', 'budget', 'nothing like this', '']);
+    assertNoThirdPartyHtml(panel);
+  });
+});
+
+test('the browse search text comes back on a remount, and stays up through a Refresh', () => {
+  withDom(() => {
+    const again = extensionsPanelEl({ entries: [], adding: true, browse: { repos: [REPO, OTHER] }, browseQuery: 'tidepool' });
+    assert.equal(byClass(again, 'ext-gh-search-input')[0].value, 'tidepool');
+    assert.deepEqual(shownNames(again), ['cost-guard']);
+    assert.equal(byClass(again, 'ext-gh-search-meta')[0].textContent, '1 of 2');
+    const typed = [];
+    const refreshing = extensionsPanelEl({
+      entries: [], adding: true, browse: { loading: true, repos: [REPO] }, browseQuery: 'x', onBrowseQuery: (q) => typed.push(q),
+    });
+    const box = byClass(refreshing, 'ext-gh-search-input')[0];
+    assert.equal(box.value, 'x');
+    box.value = 'xy';
+    box.fire('input');
+    assert.deepEqual(typed, ['xy'], 'typing while Refresh is in flight is kept for the next remount');
+    assert.equal(byClass(refreshing, 'ext-gh-no-match').length, 0, 'no verdict on skeletons');
+    assert.equal(byClass(extensionsPanelEl({ entries: [], adding: true, browse: { repos: [] } }), 'ext-gh-search-input').length, 0);
+  });
+});
+
+test('focusedFieldState and restoreFocusedField put the caret back after a remount', () => {
+  const field = (key) => {
+    const f = { dataset: { refocus: key }, selectionStart: 2, selectionEnd: 4, focused: null, range: null };
+    f.focus = (opts) => { f.focused = opts; };
+    f.setSelectionRange = (a, b) => { f.range = [a, b]; };
+    return f;
+  };
+  const before = field('gh-search');
+  const host = { contains: (n) => n === before };
+  assert.deepEqual(focusedFieldState(host, { activeElement: before }), { key: 'gh-search', start: 2, end: 4 });
+  assert.equal(focusedFieldState(host, { activeElement: { dataset: {} } }), null, 'outside the host');
+  assert.equal(focusedFieldState({ contains: () => true }, { activeElement: { dataset: {} } }), null, 'not a refocus field');
+  const after = field('gh-search');
+  const remounted = { querySelector: (sel) => (sel === '[data-refocus="gh-search"]' ? after : null) };
+  restoreFocusedField(remounted, { key: 'gh-search', start: 2, end: 4 });
+  assert.deepEqual(after.focused, { preventScroll: true });
+  assert.deepEqual(after.range, [2, 4]);
+  restoreFocusedField(remounted, { key: 'url' });
+  restoreFocusedField(remounted, null);
 });
 
 test('normalizeRepoUrl and updatedAgoText', () => {
@@ -514,7 +617,7 @@ test('a finished update that waits on a restart says so above the detail pane', 
 test('the install field submits a trimmed URL on click and on Enter, and never an empty one', () => {
   withDom(() => {
     const urls = [];
-    const panel = extensionsPanelEl({ entries: [], onInstall: (u) => urls.push(u) });
+    const panel = extensionsPanelEl({ entries: [], addMode: 'url', onInstall: (u) => urls.push(u) });
     const input = byClass(panel, 'ext-install-url')[0];
     const go = byClass(panel, 'ext-btn-primary')[0];
     go.fire('click');
@@ -533,8 +636,8 @@ test('the install field submits a trimmed URL on click and on Enter, and never a
 
 test('the install button is disabled while an install is running', () => {
   withDom(() => {
-    assert.equal(byClass(extensionsPanelEl({ busy: true }), 'ext-btn-primary')[0].disabled, true);
-    assert.equal(byClass(extensionsPanelEl({ busy: false }), 'ext-btn-primary')[0].disabled, false);
+    assert.equal(byClass(extensionsPanelEl({ busy: true, addMode: 'url' }), 'ext-btn-primary')[0].disabled, true);
+    assert.equal(byClass(extensionsPanelEl({ busy: false, addMode: 'url' }), 'ext-btn-primary')[0].disabled, false);
   });
 });
 
