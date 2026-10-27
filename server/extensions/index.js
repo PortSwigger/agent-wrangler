@@ -142,9 +142,9 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 
 // Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
-//   session.launchContext({ sid, task, agent, runtime, reason, host })
-//     -> { env?, addDirs? } | Promise of it — see server/launch-context.js.
-//   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, host })
+//   session.launchContext({ sid, task, agent, runtime, reason, parentId?, host })
+//     -> { env?, addDirs?, refuse? } | Promise of it — see server/launch-context.js.
+//   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host })
 //     -> void | { abort?, warnings? } | Promise of it — awaited in order before a
 //     NEW session's worktree is created; see server/session-prepare.js.
 //   links.normalise({ link, host })
@@ -491,7 +491,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // given with it to api.dispatch.submit rides `ext.<extId>.model`.
     // `agents` (1.37.0): the agent ids it takes, ['claude'] when the manifest
     // leaves it out; the dialog disables the option for any other agent.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), agents: [...(agents || ['claude'])] })),
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])] })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -782,7 +782,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', agents: [...(rt.agents || ['claude'])] });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])] });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

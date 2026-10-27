@@ -1781,3 +1781,45 @@ test('api.onThemeChange hears themeChanged until unsubscribed or the extension i
   assert.equal(seen.length, 2);
   assert.equal(typeof api.onThemeChange('nope'), 'function');
 });
+
+
+test('register refuses a dispatch field with a non-function validate', () => {
+  const { slots } = dispatchHarness();
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'bad', at: 'top', mount() {}, validate: true }), /validate must be a function/);
+});
+
+test('validateDispatch returns the first meaningful string in registration order with its mounted element and context', () => {
+  const { document, slots } = dispatchHarness();
+  const seen = [];
+  for (const [id, at, answer] of [['blank', 'top', '  '], ['non-string', 'top', 7], ['first', 'model', 'blocked'], ['later', 'top', 'later']]) {
+    slots.register('dispatch.field', id, { id, at, mount() {}, validate(el, ctx) { seen.push([id, el.dataset.ext, ctx]); return answer; } });
+  }
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }, { host: document.make(), at: 'model' }]);
+  const ctx = { draft: { runtime: 'local' } };
+  assert.equal(slots.validateDispatch(ctx), 'blocked');
+  assert.deepEqual(seen, [['blank', 'blank', ctx], ['non-string', 'non-string', ctx], ['first', 'first', ctx]]);
+});
+
+test('validateDispatch ignores unmounted fields and fields without validation', () => {
+  const { document, slots } = dispatchHarness();
+  slots.register('dispatch.field', 'x', { id: 'unmounted', at: 'model', mount() {}, validate() { throw new Error('must not run'); } });
+  slots.register('dispatch.field', 'y', { id: 'plain', at: 'top', mount() {} });
+  slots.register('dispatch.field', 'y', { id: 'allowed', at: 'top', mount() {}, validate: () => null });
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }]);
+  assert.equal(slots.validateDispatch({}), null);
+  assert.equal(slots.contributions('dispatch.field').length, 3);
+});
+
+test('a throwing validator is reported and removed with its field veto, then validation continues', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', { id: 'broken', at: 'top', hides: ['effort'], mount() {}, validate() { throw new Error('boom'); } });
+  slots.register('dispatch.field', 'b', { id: 'blocker', at: 'model', mount() {}, validate: () => 'blocked after crash' });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: document.make(), at: 'model' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), ['effort']);
+  assert.equal(slots.validateDispatch({}), 'blocked after crash');
+  assert.match(errors.join('\n'), /validate failed — contribution removed/);
+  assert.deepEqual(slots.contributions('dispatch.field').map((c) => c.id), ['blocker']);
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+  assert.equal(top.children.length, 0);
+});

@@ -179,3 +179,34 @@ for (const reason of LAUNCH_REASONS) {
     });
   }
 }
+
+
+test('a hook may deliberately refuse a launch without asking later hooks or caching partial context', async () => {
+  const calls = [];
+  const ext = registry(
+    ['first', () => ({ env: { AW_PARTIAL: 'no' } })],
+    ['refusal', () => ({ refuse: '  stored context is unavailable  ' })],
+    ['later', () => { calls.push('later'); return {}; }],
+  );
+  const { errors, onError } = quiet();
+  await assert.rejects(collectLaunchContext({ sid: 'refused' }, { ext, onError }), { message: 'stored context is unavailable' });
+  assert.deepEqual(calls, []);
+  assert.deepEqual(errors, []);
+  assert.equal(lastLaunchContext('refused'), EMPTY_LAUNCH_CONTEXT);
+});
+
+test('a blank or non-string refusal is ignored', async () => {
+  for (const refuse of ['', '   ', 7, null, false]) {
+    assert.deepEqual(await collectLaunchContext({ sid: 'blank-refusal' }, {
+      ext: registry(['a', () => ({ refuse })]), onError: () => {},
+    }), { env: {}, addDirs: [] });
+  }
+});
+
+test('a fork hook sees the parent card id', async () => {
+  let seen;
+  await collectLaunchContext({ sid: 'child', reason: 'fork', parentId: 'parent' }, {
+    ext: registry(['a', (p) => { seen = p; return {}; }]), onError: () => {},
+  });
+  assert.equal(seen.parentId, 'parent');
+});

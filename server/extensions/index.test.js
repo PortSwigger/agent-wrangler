@@ -1101,19 +1101,19 @@ test('a valid runtime stages: claimed in _reg, tagged on out.runtimes, listed {i
   assert.equal(out.list[0].quarantine, null);
   assert.ok(out._reg.runtimeIds.has('toyrt'));
   assert.deepEqual(out.runtimes.map((r) => [r.id, r.extId, typeof r.wrapLaunch]), [['toyrt', 'fake', 'function']]);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, agents: ['claude'] }]);
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, agents: ['claude'] }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
 });
 
 test('a runtime that defines validateModel is listed with ownsModel: true, for api.dispatch.submit', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime({ validateModel: () => null })] })], ...CORE_RUNTIMES });
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: true, agents: ['claude'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: true, ownLaunch: false, agents: ['claude'] }]);
 });
 
 test('a runtime\'s agents ride to the graph, for the dialog to gate the option by', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime({ agents: ['claude', 'codex'] })] })], ...CORE_RUNTIMES });
   assert.equal(out.list[0].quarantine, null);
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, agents: ['claude', 'codex'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude', 'codex'] }]);
 });
 
 test('a bad runtime agents list quarantines', () => {
@@ -1172,7 +1172,7 @@ test('unregister releases a runtime id, so a re-enable re-stages it', () => {
   assert.deepEqual(out.list[0].runtimes, []);
   registerExtension(out, manifest({ runtimes: [toyRuntime()] }), { cfg: {} });
   assert.deepEqual(out.runtimes.map((r) => r.id), ['toyrt']);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, agents: ['claude'] }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
 });
 
 test('a disabled extension claims no runtime id', () => {
@@ -1272,4 +1272,19 @@ test('themeSources stages each theme toggle and reads it at call time: false is 
   assert.deepEqual(read()[0].off, ['pixel-cats']);
   values = { pink: false };
   assert.deepEqual(read()[0].off, ['pink']);
+});
+
+
+test('runtime announcement and graph identify own-launch and wrapping runtimes', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [
+    toyRuntime({ id: 'own', label: 'Own', wrapLaunch: undefined, buildLaunch: async () => 'x', resumable: false }),
+    toyRuntime(),
+  ] })], ...CORE_RUNTIMES });
+  assert.equal(out.list[0].quarantine, null);
+  assert.deepEqual(out.list[0].runtimes.map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
+    { id: 'own', ownLaunch: true }, { id: 'toyrt', ownLaunch: false },
+  ]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes.map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
+    { id: 'own', ownLaunch: true }, { id: 'toyrt', ownLaunch: false },
+  ]);
 });

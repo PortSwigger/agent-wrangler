@@ -1,3 +1,4 @@
+import { collectLaunchContext } from './launch-context.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -3014,7 +3015,7 @@ test('fork asks for the FORK\'s new card id but the PARENT\'s task, with reason 
   const asked = recordingContext(sm);
   const { sessionId } = await sm.fork({ sourceId: 'L0', parentId: 'parent', parentEntry: { agent: 'claude' }, cwd: dir });
   assert.equal(asked.length, 1);
-  assert.deepEqual(asked[0], { sid: sessionId, task: { id: 'TP', name: 'p' }, agent: 'claude', runtime: 'local', reason: 'fork' });
+  assert.deepEqual(asked[0], { sid: sessionId, task: { id: 'TP', name: 'p' }, agent: 'claude', runtime: 'local', reason: 'fork', parentId: 'parent' });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -3319,3 +3320,52 @@ test('paneTargetFor prefers the pane id and falls back to the tmux name', () => 
   assert.equal(sm.paneTargetFor('c'), null);
   assert.equal(sm.paneTargetFor('missing'), null);
 });
+
+
+for (const agent of ['claude', 'codex']) {
+  test(`${agent} dispatch collects launch context after before-dispatch bindings are persisted`, async () => {
+    const sm = smForDispatch();
+    let bound = false;
+    let command;
+    sm._fireExtHooks = async (name) => { if (name === 'onBeforeDispatch') bound = true; };
+    sm._launchContext = async () => ({ env: bound ? { AW_BOUND: 'yes' } : {}, addDirs: [] });
+    sm._newSession = async (_t, _d, inner) => { command = inner; };
+    await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent });
+    assert.match(command, /AW_BOUND='yes'/);
+  });
+
+  test(`${agent} fork launch context gets the parent before onFork`, async () => {
+    const sm = smForDispatch();
+    sm._resolveLiveId = async () => 'live';
+    let seen;
+    const order = [];
+    sm._launchContext = async (ctx) => { seen = ctx; order.push('context'); return { env: {}, addDirs: [] }; };
+    sm._fireExtHooks = async (name) => { if (name === 'onFork') order.push('fork'); };
+    await sm.fork({ sourceId: 'source', parentId: 'parent', parentEntry: { agent }, cwd: os.tmpdir() });
+    assert.equal(seen.parentId, 'parent');
+    assert.equal(seen.reason, 'fork');
+    assert.deepEqual(order, ['context', 'fork']);
+  });
+
+  for (const phase of ['dispatch', 'resume', 'fork']) {
+    test(`${agent} ${phase} refuses deliberately without launching a pane`, async () => {
+      const sm = smForDispatch();
+      sm._resolveLiveId = async () => 'live';
+      sm.killForSession = async () => [];
+      let launched = false;
+      sm._newSession = async () => { launched = true; };
+      sm._launchContext = (payload) => collectLaunchContext(payload, {
+        ext: { hooks: { 'session.launchContext': [{ extId: 'guard', fn: () => ({ refuse: 'context unavailable' }) }] } },
+        onError: () => {},
+      });
+      const entry = { agent, cwd: os.tmpdir(), tmux: 'refused-pane', liveSessionId: 'live' };
+      if (agent === 'claude' && phase === 'resume') entry.runtime = 'devcontainer';
+      sm.map.set('parent', entry);
+      const launch = phase === 'dispatch' ? () => sm.dispatch({ cwd: os.tmpdir(), agent })
+        : phase === 'resume' ? () => sm.resume('parent', os.tmpdir())
+        : () => sm.fork({ sourceId: 'live', parentId: 'parent', parentEntry: entry, cwd: os.tmpdir() });
+      await assert.rejects(launch(), /context unavailable/);
+      assert.equal(launched, false);
+    });
+  }
+}

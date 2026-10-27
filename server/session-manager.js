@@ -1281,7 +1281,7 @@ export class SessionManager {
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
     const launchContext = await this._launchContext({
-      sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork',
+      sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
     });
     const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
@@ -1883,8 +1883,10 @@ export class SessionManager {
 
     // Extensions' `session.prepare`, after cwd is settled and before the
     // worktree: an abort fails the dispatch with nothing created.
+    const builds = Boolean(rt.buildLaunch);
     const prepared = await this._prepare({
       sessionId, taskId: taskId || null, cwd, repoRoot: await repoRootOf(cwd), willCreateWorktree: Boolean(worktree), agent,
+      spawnedBy: spawnedBy || null, ext: ext || null, runtime: rt.id, ownLaunch: builds,
     });
     if (prepared?.abort) throw new Error(prepared.abort);
 
@@ -1909,7 +1911,6 @@ export class SessionManager {
     // and we discover it post-launch. A `buildLaunch` runtime replaces the
     // agent's command outright, so there is no local conversation to preset an
     // id for (or to discover one of after launch).
-    const builds = Boolean(rt.buildLaunch);
     const presetLiveId = !builds && adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     // Only an ORCHESTRATOR run loads the issue-to-pr skill plugin; a worker (tagged
     // via `parentSession`, never `workflow`) is briefed via its intent and never
@@ -1920,13 +1921,6 @@ export class SessionManager {
       this._ensureClaudeTrust(SESSIONS_DIR);
       await this._mirrorWorktreeTrust(cwd);
     }
-    // The launch context (env + directory grants from the enabled extensions),
-    // collected before the command is built. dispatch mints sessionId, so the
-    // caller names the task by `taskId` (before its own assign lands) rather than
-    // handing in anything pre-built.
-    const launchContext = await this._launchContext({
-      sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
-    });
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
@@ -1943,6 +1937,13 @@ export class SessionManager {
       sessionId, cwd, agent, intent, model: model || null, effort: effort || null, autoCompactTokens: normalizedAutoCompactTokens || null,
       worktree: worktreeEntry || null, workflow: workflowOpt, spawnedBy, parentSession,
       ext: ext || null,
+    });
+    // The launch context (env + directory grants from the enabled extensions),
+    // collected before the command is built. dispatch mints sessionId, so the
+    // caller names the task by `taskId` (before its own assign lands) rather than
+    // handing in anything pre-built.
+    const launchContext = await this._launchContext({
+      sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
     });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
