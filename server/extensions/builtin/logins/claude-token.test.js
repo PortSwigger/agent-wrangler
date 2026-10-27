@@ -19,8 +19,10 @@ test('captures once, cleans scratch state and can be cancelled', async (t) => {
   const capture = path.join(loginDir, 'claude-capture.txt');
   fs.writeFileSync(capture, 'waiting');
   const got = [];
-  const done = new Promise((resolve) => {
-    const stop = watchCapture({ loginDir, intervalMs: 5, onToken: (value) => { got.push(value); resolve(); } });
+  const done = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for Claude token capture')), 5000);
+    t.after(() => clearTimeout(timeout));
+    const stop = watchCapture({ loginDir, intervalMs: 5, onToken: (value) => { got.push(value); resolve(); }, onError: reject });
     t.after(stop);
   });
   fs.writeFileSync(capture, token);
