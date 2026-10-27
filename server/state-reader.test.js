@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, applyRuntimeCost, resolveRuntimeForGraph } from './state-reader.js';
+import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, apiErrorReason, applyRuntimeCost, resolveRuntimeForGraph } from './state-reader.js';
 import { SessionManager } from './session-manager.js';
 import { workerStatusWord } from '../public/cards.js';
 import { SESSIONS_DIR as HOOK_SESSIONS_DIR } from './claude-paths.js';
@@ -553,12 +553,72 @@ test('buildGraph prefers the runtime analyze hook for a devcontainer entry; loca
 // running session off readSessions()/~/.claude/sessions — no injection seam —
 // so the promotion logic is pulled out into its own exported function purely
 // to stay testable.
-test('apiErrorPromotion: promotes an idle/unknown status to needs-you with a structured waitingReason', () => {
-  assert.deepEqual(apiErrorPromotion('idle', true), {
+test('apiErrorPromotion: promotes an idle/unknown status to needs-you, carrying the error text as waitingFor', () => {
+  const text = 'API Error: Your computer went to sleep mid-response. The response above may be incomplete.';
+  assert.deepEqual(apiErrorPromotion('idle', true, text), {
     status: 'needs-you',
-    waitingFor: 'API error — connection closed mid-response',
+    waitingFor: text,
     waitingReason: 'api-error',
   });
+});
+
+test('apiErrorPromotion: a login error is promoted as api-error-blocking', () => {
+  assert.deepEqual(apiErrorPromotion('idle', true, 'Login expired · Please run /login'), {
+    status: 'needs-you',
+    waitingFor: 'Login expired · Please run /login',
+    waitingReason: 'api-error-blocking',
+  });
+});
+
+test('apiErrorPromotion: an error with no text is blocking, under a generic waitingFor', () => {
+  assert.deepEqual(apiErrorPromotion('unknown', true), {
+    status: 'needs-you',
+    waitingFor: 'API error',
+    waitingReason: 'api-error-blocking',
+  });
+});
+
+// Claude Code's own wording for each error, copied from its bundle and from real
+// transcripts. Transient ones are worth retrying once the machine is awake and
+// online again; everything else needs a person (or a different prompt).
+const TRANSIENT_API_ERROR_TEXTS = [
+  'API Error: The response stopped arriving. The response above may be incomplete.',
+  'API Error: Server error mid-response. The response above may be incomplete.',
+  'API Error: Part of the response never arrived. The response above may be incomplete.',
+  'API Error: The response stream was malformed. The response above may be incomplete.',
+  'API Error: Your computer went to sleep mid-response. The response above may be incomplete.',
+  'API Error: Connection lost mid-response. The response above may be incomplete.',
+  'API Error: Connection closed mid-response. The response above may be incomplete.',
+  'API Error: The response stalled before a response was produced. Try again.',
+  'API Error: Part of the response never arrived and no response was produced. Try again.',
+  'API Error: The response stream was malformed and no response was produced. Try again.',
+  'API Error: Your computer went to sleep before a response was produced. Try again.',
+  'API Error: Connection lost before a response was produced. Try again.',
+  "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+  'API Error: Request timed out.',
+  'API Error: Repeated 529 Overloaded errors',
+  'API Error: Connection error.',
+];
+
+const BLOCKING_API_ERROR_TEXTS = [
+  'Login expired · Please run /login',
+  'API Error: 401 Invalid API key · Please run /login',
+  'Credit balance is too low',
+  "You've hit your usage limit · resets 3pm",
+  'Prompt is too long',
+  'API Error: 400 orphaned tool_result in conversation history.',
+  'API Error: 400 duplicate tool_use ID in conversation history.',
+  'API Error: 400 due to tool use concurrency issues. Run /rewind to recover the conversation.',
+  'API Error: Something nobody has seen before',
+];
+
+test('apiErrorReason: each transient message is api-error', () => {
+  for (const text of TRANSIENT_API_ERROR_TEXTS) assert.equal(apiErrorReason(text), 'api-error', text);
+});
+
+test('apiErrorReason: login, auth, credit, usage-limit, prompt-too-long, 400 and unknown errors are api-error-blocking', () => {
+  for (const text of BLOCKING_API_ERROR_TEXTS) assert.equal(apiErrorReason(text), 'api-error-blocking', text);
+  assert.equal(apiErrorReason(null), 'api-error-blocking');
 });
 
 test('apiErrorPromotion: no-op when there is no apiError', () => {
@@ -772,12 +832,27 @@ test('buildGraph: an apiError from a discovered live session carries a structure
   const mgr = makeDiscoveredManager(entry, 'cc_errdisc');
   const discover = async () => [{ tmuxName: 'cc_errdisc', socket: '', claudePid: 9999, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
   const capture = async () => 'nothing interesting here';
-  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({ apiError: true }) });
+  const text = 'API Error: Your computer went to sleep mid-response. The response above may be incomplete.';
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({ apiError: true, apiErrorText: text }) });
   const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
   const node = graph.sessions.find((s) => s.sessionId === 'err-disc');
   assert.ok(node, 'discovered node present');
   assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingFor, text);
   assert.equal(node.waitingReason, 'api-error');
+});
+
+test('buildGraph: a login api-error from a discovered live session is api-error-blocking', async () => {
+  const entry = { sessionId: 'err-login', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cc_errlogin');
+  const discover = async () => [{ tmuxName: 'cc_errlogin', socket: '', claudePid: 9999, agent: 'claude', cwd: '/nonexistent/repo', command: 'claude', paneTitle: '' }];
+  const capture = async () => 'nothing interesting here';
+  const runtimeResolver = () => ({ readLive: async () => null, analyze: async () => ({ apiError: true, apiErrorText: 'Login expired · Please run /login' }) });
+  const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture });
+  const node = graph.sessions.find((s) => s.sessionId === 'err-login');
+  assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingFor, 'Login expired · Please run /login');
+  assert.equal(node.waitingReason, 'api-error-blocking');
 });
 
 // `/clear` starts a fresh conversation (new id, new transcript) inside the same pane,
