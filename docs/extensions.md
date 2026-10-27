@@ -1183,11 +1183,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. **`api.agents.onChange(fn)`**
+  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  (1.49.0) is the level the agent runs it at when a launch passes no effort
+  ("Auto"), read from the user's and organization's settings (Claude: managed
+  settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
+  then the model's documented default; Codex: `config.toml`, then the model's
+  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
-  connect, and when a catalog refresh changes it. It returns the unsubscribe
+  connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
