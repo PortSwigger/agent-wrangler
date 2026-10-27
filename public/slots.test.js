@@ -1823,3 +1823,120 @@ test('a throwing validator is reported and removed with its field veto, then val
   assert.deepEqual(slots.hiddenDispatchFields(), []);
   assert.equal(top.children.length, 0);
 });
+
+test('hosted dispatch fields keep independent state, read, validate, restore saved slices and unmount', () => {
+  const { document, slots, errors } = harness();
+  const opens = [];
+  const unmounted = [];
+  slots.register('dispatch.field', 'context', {
+    id: 'choice', at: 'model',
+    mount(el, api, ctx) { el.value = 'board'; el.ctx = ctx; el.owner = api.storage; },
+    open(el, ctx) { opens.push(ctx); el.value = ctx.saved?.selection || el.value; },
+    ext: (el) => ({ selection: el.value }),
+    fields: (el) => ({ effort: el.value, model: undefined }),
+    validate: (el) => el.value === 'bad' ? 'selection unavailable' : null,
+    update(el, ctx, graph) { el.updated = [ctx, graph]; },
+    hides() { throw new Error('host must ignore hides'); },
+    unmount(el) { unmounted.push(el); },
+  });
+  const board = document.make();
+  slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+  const root = document.make();
+  const baseApi = { agents: () => [{ id: 'codex' }] };
+  const ctx = { mode: 'job', draft: { agent: 'codex' } };
+  const handle = slots.forExtension('launcher', baseApi).api.dispatchFields.mount(root, ctx, {
+    saved: { context: { selection: 'saved' }, other: { private: true } },
+  });
+  assert.deepEqual(root.children[0].ctx, { ...ctx, agents: [{ id: 'codex' }] });
+  assert.deepEqual(opens[0].saved, { selection: 'saved' });
+  opens[0].saved.selection = 'mutated';
+  assert.deepEqual(handle.read(), { effort: 'saved', ext: { context: { selection: 'saved' } } });
+  assert.deepEqual(slots.dispatchFields(ctx), { effort: 'board', ext: { context: { selection: 'board' } } });
+  assert.equal(handle.validate(), null);
+  root.children[0].value = 'bad';
+  assert.equal(handle.validate(), 'selection unavailable');
+  assert.equal(slots.validateDispatch(ctx), null);
+  const graph = { revision: 2 };
+  handle.update({ ...ctx, draft: { agent: 'claude' } }, graph);
+  assert.deepEqual(root.children[0].updated, [{ mode: 'job', draft: { agent: 'claude' }, agents: [{ id: 'codex' }] }, graph]);
+  slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+  slots.update('dispatch.field', { mode: 'launch' }, { revision: 3 });
+  assert.equal(root.children.length, 1);
+  assert.equal(root.children[0].updated[0].mode, 'job');
+  handle.unmount();
+  handle.unmount();
+  assert.equal(root.children.length, 0);
+  assert.deepEqual(handle.read(), {});
+  assert.equal(handle.validate(), null);
+  assert.equal(unmounted.length, 1);
+  assert.equal(board.children.length, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('hosted fields mount in anchor order, merge payloads, validate first message and exclude later registrations', () => {
+  const { document, slots, errors } = harness();
+  const order = [];
+  for (const [id, at, answer] of [['last', 'advanced', 'last block'], ['first', 'top', ''], ['middle', 'model', 'first block']]) {
+    slots.register('dispatch.field', 'context', {
+      id, at, mount() { order.push(id); },
+      ext: () => ({ [id]: true }),
+      fields: () => ({ effort: id, model: undefined }),
+      validate: () => answer,
+    });
+  }
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(document.make(), { mode: 'job' });
+  assert.deepEqual(order, ['first', 'middle', 'last']);
+  assert.deepEqual(h.read(), { effort: 'middle', ext: { context: { last: true, first: true, middle: true } } });
+  assert.equal(h.validate(), 'last block');
+  assert.equal(errors.length, 2);
+  slots.register('dispatch.field', 'late', { id: 'late', at: 'top', mount() {}, fields: () => ({ late: true }) });
+  assert.equal(h.read().late, undefined);
+});
+
+for (const phase of ['mount', 'open', 'update', 'fields', 'ext', 'validate']) {
+  test(`a throwing hosted ${phase} removes the contribution from every host`, () => {
+    const { document, slots, errors } = harness();
+    let broken = false;
+    slots.register('dispatch.field', 'context', {
+      id: 'choice', at: 'model', mount() {},
+      [phase]() { if (broken) throw new Error('broken field'); },
+    });
+    const board = document.make();
+    slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+    const api = slots.forExtension('launcher').api;
+    const one = document.make();
+    const first = api.dispatchFields.mount(one, { mode: 'job' });
+    broken = true;
+    const two = document.make();
+    const second = api.dispatchFields.mount(two, { mode: 'job' });
+    if (phase === 'update') second.update({ mode: 'job' }, {});
+    if (phase === 'fields' || phase === 'ext') second.read();
+    if (phase === 'validate') second.validate();
+    assert.deepEqual(slots.contributions('dispatch.field'), []);
+    assert.equal(board.children.length + one.children.length + two.children.length, 0);
+    assert.deepEqual(first.read(), {});
+    assert.match(errors[0], new RegExp(`${phase} failed`));
+  });
+}
+
+test('removing the hosting extension tears down its dispatch handles', () => {
+  const { document, slots } = harness();
+  slots.register('dispatch.field', 'context', { id: 'choice', at: 'model', mount() {}, ext: () => ({ choice: true }) });
+  const root = document.make();
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(root, { mode: 'job' });
+  slots.removeExtension('launcher');
+  assert.equal(root.children.length, 0);
+  assert.deepEqual(h.read(), {});
+  assert.equal(slots.contributions('dispatch.field').length, 1);
+});
+
+test('hosted payload and validation use the board registration order across anchors', () => {
+  const { document, slots } = harness();
+  for (const [id, at] of [['advanced', 'advanced'], ['top', 'top']]) {
+    slots.register('dispatch.field', id, { id, at, mount() {}, fields: () => ({ effort: id }), validate: () => `${id} block` });
+  }
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }, { host: document.make(), at: 'advanced' }]);
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(document.make(), { mode: 'job' });
+  assert.deepEqual(h.read(), slots.dispatchFields({ mode: 'launch' }));
+  assert.equal(h.validate(), slots.validateDispatch({ mode: 'launch' }));
+});

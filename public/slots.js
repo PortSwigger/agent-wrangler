@@ -169,6 +169,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
   const apis = new Map();
+  const dispatchHosts = new Set();
   // extId -> Set<fn>: the INBOUND half of the per-extension api, the mirror of
   // the bound `send` below. A server-side `host.broadcast` forces its frame's
   // type to `ext:<id>` (host-api/v1.js), and dispatchMessage() below is the only
@@ -229,6 +230,136 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 
   function teardown(c) {
     for (const host of [...c.mounts.keys()]) teardownAt(c, host);
+    for (const h of dispatchHosts) teardownHostedField(h, c);
+  }
+
+  function readDispatchFields(entries, ctx) {
+    const out = {};
+    const writer = new Map();
+    for (const [c, el] of [...entries]) {
+      if (!el) continue;
+      if (typeof c.ext === 'function') {
+        let data;
+        try {
+          data = c.ext(el, ctx);
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
+          drop('dispatch.field', c);
+          continue;
+        }
+        if (data !== undefined) {
+          out.ext ||= {};
+          const prev = out.ext[c.extId];
+          out.ext[c.extId] = isPlainObject(prev) && isPlainObject(data) ? { ...prev, ...data } : data;
+        }
+      }
+      if (typeof c.fields !== 'function') continue;
+      let got;
+      try {
+        got = c.fields(el, ctx);
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      if (!got || typeof got !== 'object') continue;
+      for (const [key, value] of Object.entries(got)) {
+        if (value === undefined) continue;
+        // `ext` is the namespaced bag above, never a field a contribution
+        // may write whole — that would let it overwrite a sibling's slice.
+        if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el, ctx)`); continue; }
+        const prev = writer.get(key);
+        if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
+        writer.set(key, `[ext:${c.extId}] ${c.id}`);
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  function validateDispatchFields(entries, ctx) {
+    for (const [c, el] of [...entries]) {
+      if (!el || typeof c.validate !== 'function') continue;
+      let message;
+      try {
+        message = c.validate(el, ctx);
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} validate failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      if (typeof message === 'string' && message.trim()) return message;
+    }
+    return null;
+  }
+
+  function openDispatchFields(entries, ctx, savedExt = null) {
+    for (const [c, el] of [...entries]) {
+      if (!el || typeof c.open !== 'function') continue;
+      const slice = isPlainObject(savedExt) ? savedExt[c.extId] : undefined;
+      try {
+        c.open(el, { ...ctx, saved: slice === undefined ? null : structuredClone(slice) });
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
+        drop('dispatch.field', c);
+      }
+    }
+  }
+
+  function boardDispatchFields() {
+    return slotList('dispatch.field').map((c) => [c, [...c.mounts.values()][0]]);
+  }
+
+  function teardownHostedField(h, c) {
+    const el = h.elements.get(c);
+    h.elements.delete(c);
+    if (!el) return;
+    try { c.unmount?.(el); } catch (err) { onError(`[ext:${c.extId}] ${c.id} unmount failed`, err); }
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function mountDispatchFields(owner, baseApi, root, ctx, { saved = null } = {}) {
+    const context = (value) => ({ ...value, agents: value?.agents ?? copyAgents(baseApi.agents?.()) });
+    let current = context(ctx);
+    const h = { owner, elements: new Map(), unmount: null };
+    const entries = () => slotList('dispatch.field').filter((c) => h.elements.has(c)).map((c) => [c, h.elements.get(c)]);
+    const handle = {
+      read: () => readDispatchFields(entries(), current),
+      validate: () => validateDispatchFields(entries(), current),
+      update(ctx, graph) {
+        current = context(ctx);
+        for (const [c, el] of [...h.elements]) {
+          if (typeof c.update !== 'function') continue;
+          try { c.update(el, current, graph); } catch (err) {
+            onError(`[ext:${c.extId}] ${c.id} update failed — contribution removed`, err);
+            drop('dispatch.field', c);
+          }
+        }
+      },
+      unmount() {
+        for (const c of [...h.elements.keys()]) teardownHostedField(h, c);
+        dispatchHosts.delete(h);
+      },
+    };
+    h.unmount = handle.unmount;
+    dispatchHosts.add(h);
+    const contributions = [...slotList('dispatch.field')].sort((a, b) => DISPATCH_ANCHORS.indexOf(a.at) - DISPATCH_ANCHORS.indexOf(b.at));
+    for (const c of contributions) {
+      if (!slotList('dispatch.field').includes(c)) continue;
+      const el = document.createElement('div');
+      el.className = 'ext-slot';
+      el.dataset.ext = c.extId;
+      el.dataset.contrib = c.id;
+      root.appendChild(el);
+      h.elements.set(c, el);
+      try { c.mount(el, apiFor(c.extId, baseApi), current); } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} mount failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      openDispatchFields([[c, el]], current, saved);
+    }
+    return handle;
   }
 
   // The per-extension `api` — the VERSIONED client half of the host façade, and
@@ -480,6 +611,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
+        dispatchFields: Object.freeze({
+          mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
+        }),
         // The dispatch dialog's Runtime options (1.33.0), fresh per call.
         runtimes: () => copyAgents(baseApi.runtimes?.()),
         // Upload an image into paste-image's staging dir (1.31.0); resolves
@@ -959,6 +1093,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     },
 
     removeExtension(extId) {
+      for (const h of [...dispatchHosts]) if (h.owner === extId) h.unmount();
       for (const [, list] of bySlot) {
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
@@ -1205,43 +1340,18 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // sent nothing" rather than "apply your default". A throwing `open` REMOVES
     // the contribution, the mount/update rule; the caller re-runs the veto.
     openDispatchFields(ctx, savedExt = null) {
-      for (const c of [...slotList('dispatch.field')]) {
-        const el = [...c.mounts.values()][0];
-        if (!el || typeof c.open !== 'function') continue;
-        const slice = isPlainObject(savedExt) ? savedExt[c.extId] : undefined;
-        try {
-          c.open(el, { ...ctx, saved: slice === undefined ? null : structuredClone(slice) });
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
-          drop('dispatch.field', c);
-        }
-      }
+      return openDispatchFields(boardDispatchFields(), ctx, savedExt);
     },
 
     validateDispatch(ctx) {
-      for (const c of [...slotList('dispatch.field')]) {
-        const el = [...c.mounts.values()][0];
-        if (!el || typeof c.validate !== 'function') continue;
-        let message;
-        try {
-          message = c.validate(el, ctx);
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} validate failed — contribution removed`, err);
-          drop('dispatch.field', c);
-          continue;
-        }
-        if (typeof message === 'string' && message.trim()) return message;
-      }
-      return null;
+      return validateDispatchFields(boardDispatchFields(), ctx);
     },
 
     // The payload half: every live contribution's `fields(el, ctx)` return, merged
     // over each other in REGISTRATION order and spread over core's own read by
     // the caller (app.js readDispatchFields).
     //
-    // A dispatch.field contribution has at most ONE element — its `at` matches
-    // exactly one anchor host — so the single entry of `c.mounts` is taken
-    // rather than looped over silently.
+    // Each host reads only its own element for a dispatch.field contribution.
     //
     // `undefined` VALUES are dropped: a contribution saying "no opinion" must
     // not blank a core field. `null` is a real value and is kept — `|| undefined`
@@ -1265,48 +1375,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // its own slice (onBeforeDispatch's `ext`). Plain objects from several
     // contributions of one extension merge shallowly; `undefined` is dropped.
     dispatchFields(ctx) {
-      const out = {};
-      const writer = new Map();
-      for (const c of [...slotList('dispatch.field')]) {
-        const el = [...c.mounts.values()][0];
-        if (!el) continue;
-        if (typeof c.ext === 'function') {
-          let data;
-          try {
-            data = c.ext(el, ctx);
-          } catch (err) {
-            onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
-            drop('dispatch.field', c);
-            continue;
-          }
-          if (data !== undefined) {
-            out.ext ||= {};
-            const prev = out.ext[c.extId];
-            out.ext[c.extId] = isPlainObject(prev) && isPlainObject(data) ? { ...prev, ...data } : data;
-          }
-        }
-        if (typeof c.fields !== 'function') continue;
-        let got;
-        try {
-          got = c.fields(el, ctx);
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
-          drop('dispatch.field', c);
-          continue;
-        }
-        if (!got || typeof got !== 'object') continue;
-        for (const [key, value] of Object.entries(got)) {
-          if (value === undefined) continue;
-          // `ext` is the namespaced bag above, never a field a contribution
-          // may write whole — that would let it overwrite a sibling's slice.
-          if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el, ctx)`); continue; }
-          const prev = writer.get(key);
-          if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
-          writer.set(key, `[ext:${c.extId}] ${c.id}`);
-          out[key] = value;
-        }
-      }
-      return out;
+      return readDispatchFields(boardDispatchFields(), ctx);
     },
 
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a

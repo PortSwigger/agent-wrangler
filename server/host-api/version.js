@@ -368,7 +368,13 @@ import semver from 'semver';
 // client runtime metadata; and validate(el, ctx) to dispatch.field. Extensions
 // that depend on these launch contracts declare `^1.47.0`.
 //
-export const HOST_API_VERSION = '1.47.0';
+// 1.48.0 adds ext to sessions.spawn, client dispatchFields.mount for extension-
+// owned dialogs, and sessions:env / sessions.launchEnv for headless environments.
+// Launch-context hooks receive their own ext slice and reason 'headless';
+// one-shot Claude runs merge the resulting env after cleaning the process env.
+// Extensions that depend on these launch surfaces declare `^1.48.0`.
+//
+export const HOST_API_VERSION = '1.48.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
