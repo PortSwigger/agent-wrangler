@@ -5,6 +5,7 @@ import { ADHOC } from '../task-store.js';
 import { linkMatches } from '../mcp/links.js';
 import { MAX_ATTACHMENTS_PER_MESSAGE, isPasteFileName } from '../paste-image.js';
 import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeKeptPaste } from '../paste-store.js';
+import { collectLaunchContext } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
@@ -100,6 +101,21 @@ function checkAddDirs(addDirs) {
   return { addDirs };
 }
 
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function checkExt(ext, fail = spawnError) {
+  if (ext === undefined) return {};
+  if (!isPlainObject(ext)) fail('ext must be an object keyed by extension id');
+  for (const [id, slice] of Object.entries(ext)) {
+    if (slice !== null && !isPlainObject(slice)) fail(`ext.${id} must be an object or null`);
+  }
+  return { ext };
+}
+
 // Names, never paths: each must be a name this server minted, held in the
 // staging dir (client `api.images.stage`) or in this extension's own kept store.
 // Checked BEFORE the launch, because a session started without the images its
@@ -115,6 +131,21 @@ function checkImages(extId, images) {
   return images.slice();
 }
 
+const sessionsEnv = ({ core, hostApiFor, launchContext = collectLaunchContext }) => ({
+  sessions: {
+    launchEnv: async ({ agent = 'claude', sessionId = null, ext = null } = {}) => {
+      const fail = (message) => { throw new TypeError(`sessions.launchEnv: ${message}`); };
+      if (agent !== 'claude' && agent !== 'codex') fail('agent must be "claude" or "codex"');
+      if (sessionId !== null && typeof sessionId !== 'string') fail('sessionId must be a string or null');
+      if (ext !== null) checkExt(ext, fail);
+      const task = sessionId === null ? null : core.taskStore.taskFor(sessionId);
+      const runtime = sessionId === null ? 'local' : core.sessionManager.entryFor(sessionId)?.runtime || 'local';
+      const { env } = await launchContext({ sid: sessionId, task, agent, runtime, reason: 'headless', ext }, { hostApiFor });
+      return { env };
+    },
+  },
+});
+
 const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPrompt }) => ({
   sessions: {
     // `parentSession` may name a card this extension did not create. Deliberate,
@@ -129,10 +160,11 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
       const addDirsOpt = checkAddDirs(addDirs);
+      const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
       for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks], ['offBoard', offBoard]]) {
@@ -148,6 +180,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         parentSession,
         ...worktreeOpts,
         ...addDirsOpt,
+        ...extOpt,
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option
@@ -465,6 +498,7 @@ export const V1_BUILDERS = {
   'sessions:wake': sessionsWake,
   'sessions:archive': sessionsArchive,
   'sessions:spawn': sessionsSpawn,
+  'sessions:env': sessionsEnv,
   'sessions:kill': sessionsKill,
   'tasks:read': tasksRead,
   'tasks:write': tasksWrite,

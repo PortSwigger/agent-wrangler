@@ -19,7 +19,7 @@ const quiet = () => {
 };
 
 test('LAUNCH_REASONS is the documented closed set', () => {
-  assert.deepEqual(LAUNCH_REASONS, ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt']);
+  assert.deepEqual(LAUNCH_REASONS, ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless']);
 });
 
 test('no hooks: an empty context', async () => {
@@ -84,13 +84,13 @@ test('the hook gets the full context and ITS OWN host; an async hook is awaited 
     { ext, hostApiFor: (id) => hosts[id], onError: () => {} },
   );
   assert.deepEqual(out.env, { AW_LATE: 'x' });
-  assert.deepEqual(seen, [{ sid: 'S1', task: { id: 'T1', name: 'n' }, agent: 'codex', runtime: 'devcontainer', reason: 'resume', host: { id: 'host-a' } }]);
+  assert.deepEqual(seen, [{ sid: 'S1', task: { id: 'T1', name: 'n' }, agent: 'codex', runtime: 'devcontainer', reason: 'resume', ext: null, host: { id: 'host-a' } }]);
 });
 
 test('defaults: claude, local, dispatch, no task', async () => {
   let got;
   await collectLaunchContext({ sid: 's' }, { ext: registry(['a', (c) => { got = c; }]), onError: () => {} });
-  assert.deepEqual({ ...got, host: undefined }, { sid: 's', task: null, agent: 'claude', runtime: 'local', reason: 'dispatch', host: undefined });
+  assert.deepEqual({ ...got, host: undefined }, { sid: 's', task: null, agent: 'claude', runtime: 'local', reason: 'dispatch', ext: null, host: undefined });
 });
 
 test('the last answer is remembered per session (what paste-store reads), and an unknown session reads as empty', async () => {
@@ -98,6 +98,21 @@ test('the last answer is remembered per session (what paste-store reads), and an
   assert.equal(lastLaunchContext('nope'), EMPTY_LAUNCH_CONTEXT);
   await collectLaunchContext({ sid: 'remembered' }, { ext: registry(['a', () => ({ addDirs: ['/granted'] })]), onError: () => {} });
   assert.deepEqual(lastLaunchContext('remembered').addDirs, ['/granted']);
+});
+
+test('headless collection preserves the interactive directory grants and never caches a headless-only card', async () => {
+  const sid = 'headless-cache';
+  const interactive = await collectLaunchContext({ sid }, {
+    ext: registry(['a', () => ({ addDirs: ['/interactive'] })]),
+  });
+  for (const card of [sid, 'headless-only']) {
+    const headless = await collectLaunchContext({ sid: card, reason: 'headless' }, {
+      ext: registry(['a', () => ({ env: { AW_CONTEXT: 'headless' }, addDirs: ['/headless'] })]),
+    });
+    assert.deepEqual(headless, { env: { AW_CONTEXT: 'headless' }, addDirs: ['/headless'] });
+  }
+  assert.equal(lastLaunchContext(sid), interactive);
+  assert.equal(lastLaunchContext('headless-only'), EMPTY_LAUNCH_CONTEXT);
 });
 
 test('helpers tolerate a launch that carries no context at all', () => {
@@ -143,7 +158,7 @@ const BUILDERS = {
   }),
 };
 
-for (const reason of LAUNCH_REASONS) {
+for (const reason of LAUNCH_REASONS.filter((r) => r !== 'headless')) {
   for (const [name, build] of Object.entries(BUILDERS)) {
     const isCodex = name.startsWith('codex');
     const agent = isCodex ? 'codex' : 'claude';
@@ -209,4 +224,30 @@ test('a fork hook sees the parent card id', async () => {
     ext: registry(['a', (p) => { seen = p; return {}; }]), onError: () => {},
   });
   assert.equal(seen.parentId, 'parent');
+});
+
+test('headless launch hooks receive their own narrowed ext slice and the unchanged reason', async () => {
+  const seen = {};
+  const ext = registry(
+    ['context', (p) => { seen.context = p; return { env: { AW_CONTEXT: 'secondary' } }; }],
+    ['other', (p) => { seen.other = p; }],
+  );
+  const result = await collectLaunchContext({ sid: null, reason: 'headless', ext: { context: { selection: 'secondary' } } }, { ext });
+  assert.deepEqual(result.env, { AW_CONTEXT: 'secondary' });
+  assert.equal(seen.context.reason, 'headless');
+  assert.deepEqual(seen.context.ext, { selection: 'secondary' });
+  assert.equal(seen.other.ext, null);
+  assert.ok(LAUNCH_REASONS.includes('headless'));
+});
+
+test('extension data is narrowed on interactive launch reasons too and absent data is null', async () => {
+  for (const reason of ['dispatch', 'resume', 'fork']) {
+    let seen;
+    await collectLaunchContext({ sid: 'card', agent: 'codex', reason, ext: { context: { choice: 1 }, sibling: { hidden: true } } }, {
+      ext: registry(['context', (p) => { seen = p; }]),
+    });
+    assert.deepEqual(seen.ext, { choice: 1 });
+    await collectLaunchContext({ sid: 'card', reason }, { ext: registry(['context', (p) => { seen = p; }]) });
+    assert.equal(seen.ext, null);
+  }
 });

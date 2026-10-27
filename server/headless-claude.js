@@ -28,8 +28,11 @@ export function runHeadlessClaude(prompt, stdin, {
   model = 'haiku',
   execFile = defaultExecFile,
   timeoutMs = 120000,
+  env = {},
 } = {}) {
   const liveSessionId = crypto.randomUUID();
+  const childEnv = cleanClaudeEnv({ ...process.env, ...env });
+  if (Object.hasOwn(env, 'CLAUDE_CODE_OAUTH_TOKEN')) childEnv.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
   const args = [
     '-p', '--model', model,
     '--strict-mcp-config',
@@ -43,7 +46,7 @@ export function runHeadlessClaude(prompt, stdin, {
   return new Promise((resolve) => {
     const child = execFile('claude', args, {
       cwd: os.tmpdir(),
-      env: cleanClaudeEnv(),
+      env: childEnv,
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
     }, (err, stdout) => {

@@ -217,7 +217,7 @@ sessionManager._prepare = async (payload) => {
 // writes it; keeps SessionManager itself free of that dependency, and every test
 // that doesn't stub _archiveReview stays a no-op by construction.
 sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
-  runArchiveReview(sessionId, entry, task, { events: coreEvents, ...extraDeps });
+  runArchiveReview(sessionId, entry, task, { events: coreEvents, launchContext: sessionManager._launchContext, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops

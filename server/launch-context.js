@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { getExtensions } from './extensions/index.js';
+import { getExtensions, hookPayloadFor } from './extensions/index.js';
 import { logError } from './log.js';
 
 // The `session.launchContext` seam: what a session's launch needs from the
@@ -15,7 +15,7 @@ import { logError } from './log.js';
 // The hook may be async and may do work (task-memory binds the session's
 // by-session symlink here), so callers AWAIT collectLaunchContext before they
 // build the launch command. Reasons a launch asks:
-//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt
+//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt | headless
 // `assign` and `adopt` are not launches (a running session was re-pointed, or
 // the server adopted it at boot); the hook still runs so side effects land and
 // the caller discards the result.
@@ -23,7 +23,7 @@ import { logError } from './log.js';
 // Fork payloads include parentId, the parent card id, before inherited state is saved.
 // A hook that throws, or answers something unusable, is logged and skipped:
 // one broken extension must not keep a session from launching.
-export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt'];
+export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
 
 export const EMPTY_LAUNCH_CONTEXT = Object.freeze({ env: Object.freeze({}), addDirs: Object.freeze([]) });
 
@@ -44,7 +44,7 @@ export function _resetLaunchContextForTests() {
 }
 
 export async function collectLaunchContext(
-  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch', parentId } = {},
+  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch', parentId, ext: dispatchExt = null } = {},
   { ext = getExtensions(), hostApiFor = () => undefined, onError = logError } = {},
 ) {
   const env = {};
@@ -53,7 +53,7 @@ export async function collectLaunchContext(
   for (const { extId, fn } of ext.hooks?.['session.launchContext'] || []) {
     let out;
     try {
-      out = await fn({ sid, task, agent, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
+      out = await fn({ ...hookPayloadFor(extId, { ext: dispatchExt }), sid, task, agent, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
     } catch (err) {
       onError(`[ext:${extId}] session.launchContext failed — skipped`, err);
       continue;
@@ -82,7 +82,7 @@ export async function collectLaunchContext(
     }
   }
   const result = { env, addDirs };
-  if (sid) lastBySession.set(sid, result);
+  if (sid && reason !== 'headless') lastBySession.set(sid, result);
   return result;
 }
 
