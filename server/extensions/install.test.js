@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
+  assertAllowedUrl, authHint, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
   MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
@@ -254,6 +254,64 @@ test('countCommitsBehind caps the count when the installed commit is out of reac
     return { stdout: '' };
   };
   assert.deepEqual(await countCommitsBehind('/installed', 'a'.repeat(40), 'https://github.com/org/repo.git', { git }), { commits: 50, capped: true });
+});
+
+// What execFile rejects with when git exits non-zero: a long "Command failed"
+// message with stderr appended, and stderr on its own.
+function gitFailure(stderr) {
+  return Object.assign(new Error(`Command failed: git clone -- url /dest\n${stderr}`), { code: 128, stderr });
+}
+
+test('authHint recognises git auth failures on github.com URLs', () => {
+  for (const stderr of [
+    "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/org/repo.git/'",
+    "remote: Repository not found.\nfatal: repository 'https://github.com/org/repo.git/' not found",
+    'git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.',
+  ]) {
+    assert.match(authHint('https://github.com/org/repo.git', gitFailure(stderr)) || '', /gh auth login.*gh auth setup-git/, stderr);
+  }
+  // The message alone is enough when stderr is not attached.
+  assert.ok(authHint('https://github.com/org/repo', new Error('fatal: Authentication failed')));
+});
+
+test('authHint stays out of failures that are not GitHub auth', () => {
+  const auth = gitFailure('fatal: Authentication failed');
+  assert.equal(authHint('https://gitlab.example.com/org/repo.git', auth), null);
+  assert.equal(authHint('https://notgithub.com/org/repo.git', auth), null);
+  assert.equal(authHint('https://github.com/org/repo.git', gitFailure('fatal: unable to access: Could not resolve host: github.com')), null);
+  assert.equal(authHint('https://github.com/org/repo.git', null), null);
+});
+
+test('authHint points an SSH URL at its https:// form rather than at keys', () => {
+  const err = gitFailure('git@github.com: Permission denied (publickey).');
+  for (const url of ['git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git']) {
+    assert.match(authHint(url, err), /install from its https:\/\/ URL instead/);
+  }
+  assert.match(authHint('https://github.com/org/repo.git', err), /and try again\.$/);
+});
+
+test('a GitHub auth failure on clone, ls-remote or fetch carries the hint and git\'s own line', async () => {
+  const stderr = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+  const git = async () => { throw gitFailure(stderr); };
+  const url = 'https://github.com/org/private.git';
+  for (const call of [
+    () => cloneTo(url, '/dest', { git }),
+    () => cloneTo(url, '/dest', { git, branch: 'next' }),
+    () => lsRemoteHead(url, { git }),
+    () => countCommitsBehind('/installed', 'a'.repeat(40), url, { git }),
+  ]) {
+    await assert.rejects(call, (err) => {
+      assert.equal(err.message, `Could not read ${url} (${stderr}). It may be a private repository: run gh auth login, then gh auth setup-git, and try again.`);
+      assert.equal(err.cause.stderr, stderr);
+      return true;
+    });
+  }
+});
+
+test('any other git failure is rethrown untouched', async () => {
+  const original = gitFailure('fatal: unable to access: Could not resolve host: github.com');
+  await assert.rejects(() => cloneTo('https://github.com/org/repo.git', '/dest', { git: async () => { throw original; } }), (err) => err === original);
 });
 
 test('countCommitsBehind refuses a disallowed origin before running git', async () => {

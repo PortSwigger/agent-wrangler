@@ -12,6 +12,10 @@ Open **Settings → Extensions**, choose **+ Add extension**, switch to **Git UR
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
+Git runs without a prompt, so a private GitHub repository needs a credential helper. Run
+`gh auth login`, then `gh auth setup-git`, and install from its `https://` URL. When a clone or
+update check fails that way, the Extensions tab says so.
+
 The tab is a list beside a detail pane, and opens on the **+ Add extension** pane. The list groups **Core** extensions (they ship with the
 wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
 **Filter** narrows it by name. **Check all** in the Installed heading checks every installed extension
