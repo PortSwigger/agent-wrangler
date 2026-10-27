@@ -218,6 +218,13 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
 
+### Session launch capabilities
+
+| Capability | Host surface |
+| --- | --- |
+| `sessions:spawn` | `host.sessions.spawn(options)` launches a session with the supplied dispatch fields. |
+| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects an environment for a headless run, rejecting a deliberate hook refusal. |
+
 The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
 `server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
 
@@ -1017,6 +1024,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   runtime's preflight validates it. Without `runtime` the modal's current
   selection is used, which may be a runtime the dialog restored from the last
   launch — pass `runtime: 'local'` to be sure.
+- **`api.dispatchFields.mount(el, ctx, { saved = null } = {})` (1.48.0)** hosts the
+  live `dispatch.field` contributions in an extension's own dialog, in anchor order,
+  with independent element state and no `hides` veto; `ctx` carries the host's own
+  `mode` (for example `job`), `draft: { agent?, model?, runtime?, cwd? }` and optional
+  `agents` (defaulting to the board's current list).
+  The returned `{ read(), validate(), update(ctx, graph), unmount() }` uses the board's
+  registration-order payload merge and first validation message, passes each `open`
+  only its own cloned slice of `saved`, and tears down on `unmount` (`read()` then
+  returns `{}`); later registrations wait for a re-mount, and a throwing contribution
+  is reported and removed from every host.
 - **Graph `effort` (1.28.0).** Board session nodes and `graph.history` nodes
   carry `effort`, the effort the session was launched with (`null` when none
   was recorded, e.g. the agent's default or an adopted session). Resume and
@@ -1044,6 +1061,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `dispatch blocked by validation`. Blank or non-string answers allow submission;
   unmounted fields are skipped, and a throwing validator is reported and its
   contribution removed, as with `fields()`.
+  A contribution can be mounted once per host (1.48.0), including the board's dialog
+  and extension-owned dialogs; keep all field state on the supplied element.
   **The veto is TWO keys and fails CLOSED on authority, OPEN on health.** The
   manifest's `hideDispatchField` is the DISCLOSURE — a static array (never a
   function: the board must know what an extension may suppress before any of its
@@ -1338,6 +1357,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   inside `worktree` included: dispatch is forgiving, so a mistyped option
   silently launches something subtly different (no grants, no worktree, the
   wrong base commit) and the extension author has no stack into core to read.
+- **`host.sessions.spawn({ ext })` (1.48.0)** forwards a whole dispatch data bag,
+  a plain object keyed by extension id whose slices are plain objects or `null`;
+  malformed data is refused by name (`ext` or `ext.<id>`) before dispatch.
+  The same narrowing reaches `session.prepare`, `onBeforeDispatch` and runtime
+  `preflight`/`buildLaunch`, while `spawnedBy` remains core-managed and unpassable.
+- **`host.sessions.launchEnv({ agent = 'claude', sessionId = null, ext = null })`
+  (1.48.0, `sessions:env`)** returns `{ env }` from the enabled launch-context hooks
+  with `reason: 'headless'`, resolving the task and runtime for a supplied card or
+  using the supplied `ext` bag for a run with no card.
+  `agent` must be `claude` or `codex`, `sessionId` a string or `null`, and a non-null
+  `ext` follows spawn's validation; a deliberate refusal rejects with its reason,
+  so the caller must skip the run rather than fall back to another environment.
 - **`host.sessions.spawn({ offBoard: true })` keeps the card off the board** (1.41.0).
   The entry is stamped with the CALLING extension's id (forced, never
   caller-named) and the stamp survives resume. The card stays in the graph with
@@ -1367,7 +1398,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, parentId?, host }`, returns `{ env?, addDirs?, refuse? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1376,7 +1407,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   command; the Claude and Codex adapters and the devcontainer runtime (which
   copies each granted dir into the container) read the result through the same
   helpers. `reason` is one of `dispatch | resume | fork | message | snooze-wake |
-  spawn | assign | adopt`; `assign` (a running session moved to another task) and
+  spawn | assign | adopt | headless`; `assign` (a running session moved to another task) and
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
   sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
@@ -1384,6 +1415,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
+  `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
+  every reason, including `headless` runs on behalf of a card or stored launch.
+  Core's `runHeadlessClaude` accepts an `env` option merged over `cleanClaudeEnv()`;
+  archive memory review collects the card's headless context before running and logs
+  a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
   cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host }`, returns `void | { abort?:
   string, warnings?: string[] }` (or a Promise). It runs for a NEW dispatch
