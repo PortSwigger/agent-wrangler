@@ -264,9 +264,33 @@ function withForkMark(label, entry) {
 // waitingFor text, and exported so it's unit-testable directly: readSessions()
 // reads a real ~/.claude/sessions file with no injection seam, so this can't be
 // reached via buildGraph without a live process on the test machine.
-export function apiErrorPromotion(status, apiError) {
+//
+// waitingReason splits the errors by whether waiting can fix them: 'api-error'
+// for a dropped or stalled connection (Claude Code's own wording, listed below)
+// that the same prompt can simply be retried after, and 'api-error-blocking'
+// for everything else — login, auth, credit, usage limit, prompt too long, a
+// 400 over the conversation's own history, and any error not recognised here.
+const TRANSIENT_API_ERRORS = [
+  /The response stopped arriving\./,
+  /Server error mid-response\./,
+  /Part of the response never arrived/,
+  /The response stream was malformed/,
+  /Your computer went to sleep (mid-response|before a response was produced)/,
+  /Connection (lost|closed) (mid-response|before a response was produced)/,
+  /The response stalled before a response was produced/,
+  /Can.t reach the API server|ENOTFOUND/,
+  /Request timed out/,
+  /Repeated 529 Overloaded errors/,
+  /Connection error\./,
+];
+
+export function apiErrorReason(text) {
+  return text && TRANSIENT_API_ERRORS.some((re) => re.test(text)) ? 'api-error' : 'api-error-blocking';
+}
+
+export function apiErrorPromotion(status, apiError, apiErrorText) {
   if (!apiError || status === 'working' || status === 'needs-you') return null;
-  return { status: 'needs-you', waitingFor: 'API error — connection closed mid-response', waitingReason: 'api-error' };
+  return { status: 'needs-you', waitingFor: apiErrorText || 'API error', waitingReason: apiErrorReason(apiErrorText) };
 }
 
 // Build the folder + session graph from the raw state, enriched by the
@@ -506,7 +530,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // status file reports idle/unknown even though the response is incomplete —
     // surface it as needs-you instead of a silent "done" (see transcript-reader's
     // apiError tracking). Skipped when the file already says working/needs-you.
-    const apiError = apiErrorPromotion(status, enrichment?.apiError);
+    const apiError = apiErrorPromotion(status, enrichment?.apiError, enrichment?.apiErrorText);
     if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
@@ -669,7 +693,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     if (live?.rawStatus === 'shell' && classify(paneText).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
-    const apiError = apiErrorPromotion(status, enr?.apiError);
+    const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
     if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
