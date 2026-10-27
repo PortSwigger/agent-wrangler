@@ -630,3 +630,28 @@ test('files:view registers paths per extension: allow counts the viewable ones, 
   assert.equal(a.files.forget('/x/one.md'), 1);
   assert.equal('files' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
 });
+
+test('spawn forwards ext to dispatch whole without accepting spawnedBy', async () => {
+  const { seen, host } = spawnWiring();
+  const ext = { context: { selection: 'secondary' }, other: null };
+  await host.sessions.spawn({ cwd: '/repo', intent: 'x', ext, spawnedBy: 'untrusted' });
+  assert.deepEqual(seen.dispatch[0].ext, ext);
+  assert.equal(Object.hasOwn(seen.dispatch[0], 'spawnedBy'), false);
+});
+
+test('spawn refuses malformed ext by name before dispatch', async () => {
+  const { seen, host } = spawnWiring();
+  for (const ext of ['secondary', [], null, new Date()]) {
+    await assert.rejects(host.sessions.spawn({ cwd: '/repo', ext }), /ext must be an object keyed by extension id/);
+  }
+  for (const value of ['secondary', [], new Date(), 3]) {
+    await assert.rejects(host.sessions.spawn({ cwd: '/repo', ext: { context: value } }), /ext\.context must be an object or null/);
+  }
+  assert.deepEqual(seen.dispatch, []);
+});
+
+test('spawn without ext passes no ext key', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.equal(Object.hasOwn(seen.dispatch[0], 'ext'), false);
+});

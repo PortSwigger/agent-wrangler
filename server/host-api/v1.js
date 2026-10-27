@@ -100,6 +100,21 @@ function checkAddDirs(addDirs) {
   return { addDirs };
 }
 
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function checkExt(ext, fail = spawnError) {
+  if (ext === undefined) return {};
+  if (!isPlainObject(ext)) fail('ext must be an object keyed by extension id');
+  for (const [id, slice] of Object.entries(ext)) {
+    if (slice !== null && !isPlainObject(slice)) fail(`ext.${id} must be an object or null`);
+  }
+  return { ext };
+}
+
 // Names, never paths: each must be a name this server minted, held in the
 // staging dir (client `api.images.stage`) or in this extension's own kept store.
 // Checked BEFORE the launch, because a session started without the images its
@@ -129,10 +144,11 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
       const addDirsOpt = checkAddDirs(addDirs);
+      const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
       for (const [name, v] of [['autoMergeOnPass', autoMergeOnPass], ['autoFixPrChecks', autoFixPrChecks], ['offBoard', offBoard]]) {
@@ -148,6 +164,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         parentSession,
         ...worktreeOpts,
         ...addDirsOpt,
+        ...extOpt,
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option
