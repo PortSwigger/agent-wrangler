@@ -8,7 +8,7 @@ only trusted code and dependencies.
 
 ## Install and manage an extension
 
-Open **Settings → Extensions**, choose **+ Add extension**, paste a git URL, and review the identity, dependencies, and
+Open **Settings → Extensions**, choose **+ Add extension**, switch to **Git URL**, paste a git URL, and review the identity, dependencies, and
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
 
@@ -58,11 +58,12 @@ default branch while the remote has no such branch. Opting out takes effect at t
 which returns to the default branch. Updates from the branch still go through the same review,
 lockfile and host API checks, and through Auto-update only if that is on as well.
 
-**+ Add extension** also lists public GitHub repositories tagged with the
+**+ Add extension** opens on **Browse GitHub**, which lists public GitHub repositories tagged with the
 [`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
 the owner's avatar, description, stars, language and last update. **Install…** on a card goes through
 the same review as a pasted URL; repositories you already have are marked **Installed**. The list is
-searched the first time the tab opens and on **Refresh**. Anyone can tag a repository, so a listing is not a
+searched the first time the tab opens and on **Refresh**; the search box above the cards narrows that list by
+name, owner or description without asking GitHub again. Anyone can tag a repository, so a listing is not a
 review or an endorsement; check the code and its author before installing.
 
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when

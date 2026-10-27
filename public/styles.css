@@ -3245,10 +3245,12 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-kv-open { color: var(--blue-fg); white-space: nowrap; }
 .ext-install-form { display: flex; gap: 8px; align-items: center; }
 .ext-install-form .ext-install-url { flex: 1; min-width: 0; }
+.ext-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.ext-url-pane { display: flex; flex-direction: column; gap: 8px; }
+.ext-url-pane .setting-help { margin-top: 0; }
 .ext-settings-save { margin-top: 10px; }
-/* The GitHub browser under the add form: a heading row, the unvetted notice,
-   then one card per tagged repository. */
-.ext-gh { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-muted); }
+/* The GitHub browser under the Browse | Git URL switch: a heading row, the
+   unvetted notice, the search box, then one card per tagged repository. */
 .ext-gh-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .ext-gh-heading { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; }
 .ext-gh-heading .icon { width: 16px; height: 16px; }
@@ -3271,6 +3273,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   border-left: 3px solid var(--warn);
 }
 .ext-gh-notice-lead { font-weight: 600; color: var(--warn-fg); }
+.ext-gh-search { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ext-gh-search-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.ext-gh-search-field .icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; color: var(--fg-subtle); pointer-events: none; }
+.modal-card .ext-gh-search-input { flex: 1; min-width: 0; padding-left: 28px; }
+.ext-gh-search-meta { flex: 0 0 auto; font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 .ext-gh-list { display: flex; flex-direction: column; gap: 8px; }
 .ext-gh-card {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px;
@@ -3279,6 +3286,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .ext-gh-card:hover { border-color: var(--fg-subtle); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12); }
 .ext-gh-card.installed { background: var(--surface-2); }
+.ext-gh-card[hidden] { display: none; }
 .ext-gh-avatar {
   position: relative; flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
   display: flex; align-items: center; justify-content: center;

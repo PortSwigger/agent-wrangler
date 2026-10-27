@@ -33,7 +33,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
@@ -6181,11 +6181,14 @@ function clearExtTransientLater() {
   }, EXT_TRANSIENT_MS);
 }
 
-// The selected extension, the filter text, the add form and the "Update all"
-// queue — kept here so a remount on the next graph keeps them.
+// The selected extension, the filter text, the add pane's mode and search
+// text, and the "Update all" queue — kept here so a remount on the next graph
+// keeps them.
 let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
+let extAddMode = 'browse';
+let extBrowseQuery = '';
 let extUpdateQueue = [];
 // "Update & restart": set on approval of the update in flight, then promoted to
 // the queue-wide flag only once that update's install reports `done`, so a
@@ -6261,6 +6264,7 @@ function extSettingsEl(entry) {
 // the first thing it shows; remounts after that keep whatever was picked since.
 function openExtensionsPanel(host) {
   extAdding = true;
+  extAddMode = 'browse';
   if (!extBrowse) searchExtBrowse();
   mountExtensionsPanel(host);
 }
@@ -6268,6 +6272,7 @@ function openExtensionsPanel(host) {
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
+  const refocus = focusedFieldState(host);
   commitFocusedField(host);
   if (extSettingsPanelHost) {
     slots.unmountHost('settings.panel', extSettingsPanelHost);
@@ -6290,8 +6295,16 @@ function mountExtensionsPanel(host) {
     filter: extFilter,
     adding: extAdding,
     browse: extBrowse,
+    addMode: extAddMode,
+    browseQuery: extBrowseQuery,
     onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
     onFilter: (text) => { extFilter = text; },
+    onBrowseQuery: (text) => { extBrowseQuery = text; },
+    onAddMode: (mode) => {
+      extAddMode = mode;
+      remountExtensions();
+      restoreFocusedField(host, { key: mode === 'url' ? 'url' : 'gh-search' });
+    },
     onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
     onBrowse: () => { searchExtBrowse(); remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
@@ -6325,6 +6338,7 @@ function mountExtensionsPanel(host) {
     onRestart: restartForExtensions,
     settingsEl: extSettingsEl,
   }));
+  restoreFocusedField(host, refocus);
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
