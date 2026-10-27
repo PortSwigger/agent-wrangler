@@ -103,7 +103,8 @@ includes example prompts for every built-in Wrangler skill.
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
   on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
-  `gh auth login` once so it's authenticated)
+  `gh auth login` once so it's authenticated, and `gh auth setup-git` too if you install
+  extensions from private GitHub repositories)
 
 **Windows** isn't supported natively, but works via WSL2 — WSL2 runs a real Linux kernel, so the
 Linux path above applies unmodified once you're inside it. Keep your checkout on the WSL2 side of

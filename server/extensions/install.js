@@ -62,6 +62,36 @@ export function assertAllowedUrl(url) {
   throw new Error(`Refusing repository URL ${url} — only https://, ssh:// and git@host:path are allowed (ext:: runs an arbitrary command; file:// and local paths have no remote to verify or update against).`);
 }
 
+// What git prints when github.com would not let it read the repository: no
+// credential helper (it cannot prompt), credentials without access, or an SSH
+// key GitHub does not know. GitHub answers a private repo it will not show you
+// with "Repository not found", so that is read as an auth failure too.
+const GITHUB_URL = /^(?:(?:https|ssh):\/\/(?:[^@/]+@)?|[A-Za-z0-9._-]+@)github\.com[:/]/i;
+const AUTH_FAILURE = /could not read Username|Authentication failed|Repository not found|Permission denied \(publickey\)|Invalid username or (?:password|token)/i;
+
+// The hint added to a git failure on a github.com URL that looks like auth, or
+// null. `gh auth setup-git` makes gh git's HTTPS credential helper, so an SSH
+// URL is pointed at its https:// form rather than at SSH keys.
+export function authHint(url, err) {
+  if (!GITHUB_URL.test(String(url || ''))) return null;
+  if (!AUTH_FAILURE.test(`${err?.stderr || ''}\n${err?.message || ''}`)) return null;
+  const retry = /^https:/i.test(url) ? 'try again' : 'install from its https:// URL instead';
+  return `It may be a private repository: run gh auth login, then gh auth setup-git, and ${retry}.`;
+}
+
+// Runs a git command that reaches `url`, replacing an auth failure's long
+// "Command failed: git -c …" message with git's own last line and the hint.
+async function gitRemote(git, url, args, opts) {
+  try {
+    return await git(args, opts);
+  } catch (err) {
+    const hint = authHint(url, err);
+    if (!hint) throw err;
+    const said = String(err?.stderr || err?.message || '').trim().split('\n').pop().trim();
+    throw new Error(`Could not read ${url} (${said}). ${hint}`, { cause: err });
+  }
+}
+
 // `--` is what stops a URL beginning with `-` being read as an option. The two
 // `protocol.*.allow=never` flags are belt-and-braces BEHIND assertAllowedUrl: a
 // clone can follow a submodule URL or an HTTP redirect to a URL this process
@@ -76,7 +106,7 @@ export function assertAllowedUrl(url) {
 export async function cloneTo(url, destDir, { git = defaultGit, branch = null } = {}) {
   assertAllowedUrl(url);
   const track = branch != null && await remoteHasBranch(url, branch, { git });
-  await git([
+  await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
     'clone', '--depth', '1', '--no-recurse-submodules', '--no-local',
@@ -91,7 +121,7 @@ export async function cloneTo(url, destDir, { git = defaultGit, branch = null } 
 export async function remoteHasBranch(url, branch, { git = defaultGit } = {}) {
   assertAllowedUrl(url);
   assertBranch(branch);
-  const { stdout } = await git([
+  const { stdout } = await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
     'ls-remote', '--heads', '--', url, `refs/heads/${branch}`,
@@ -126,7 +156,7 @@ export async function readHead(dir, { git = defaultGit } = {}) {
 export async function lsRemoteHead(url, { git = defaultGit, branch = null } = {}) {
   assertAllowedUrl(url);
   if (branch != null) assertBranch(branch);
-  const { stdout } = await git([
+  const { stdout } = await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
     'ls-remote', '--', url, 'HEAD', ...(branch != null ? [`refs/heads/${branch}`] : []),
@@ -178,7 +208,7 @@ export async function commitsSince(dir, priorSha, { git = defaultGit, limit = CO
 export async function countCommitsBehind(dir, priorSha, url, { git = defaultGit, limit = COMMIT_LIMIT, branch = null } = {}) {
   assertAllowedUrl(url);
   const ref = branch != null && await remoteHasBranch(url, branch, { git }) ? `refs/heads/${branch}` : 'HEAD';
-  await git([
+  await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
     'fetch', '--quiet', `--depth=${limit}`, '--no-tags', '--no-recurse-submodules', '--', url, ref,
