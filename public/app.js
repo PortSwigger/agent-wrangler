@@ -845,6 +845,7 @@ function applyGraph(graph) {
   // rather than staying blank until the next one — and unconditionally, because
   // a view is a whole pane with no other render path of its own.
   updateExtViews();
+  slots.update('settings.panel', null, latestGraph);
   syncSessionEmbed();
   trackJustFinished(latestSessions);
   detectNewTask();
@@ -6225,6 +6226,7 @@ function extSettingsEl(entry) {
   panelHost.className = 'ext-settings-panel';
   content.append(panelHost);
   const panels = slots.mountInto('settings.panel', panelHost, extApi, { onlyExt: entry.id });
+  slots.update('settings.panel', null, latestGraph);
   if (panels) extSettingsPanelHost = panelHost;
   else panelHost.remove();
   const hasRows = (entry.settings || []).some((d) => !d.hidden);

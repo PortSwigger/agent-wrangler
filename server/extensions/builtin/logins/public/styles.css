@@ -1,0 +1,14 @@
+.logins-field { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.logins-field-label { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.logins-field select { flex: 1; min-width: 0; }
+.logins-field-message, .logins-expiry-warning { color: var(--warning, #c78b26); font-size: 12px; }
+.login-pill { white-space: nowrap; }
+.logins-panel { display: flex; flex-direction: column; gap: 12px; }
+.logins-entry { padding: 12px; border: 1px solid var(--border, #555); border-radius: 6px; }
+.logins-heading, .logins-provider, .logins-paste, .logins-add { display: flex; align-items: center; gap: 10px; }
+.logins-heading { justify-content: space-between; margin-bottom: 8px; }
+.logins-provider { justify-content: space-between; margin: 8px 0; }
+.logins-paste input, .logins-add input { flex: 1; min-width: 0; }
+.logins-button { cursor: pointer; white-space: nowrap; }
+.logins-field select:not(.dd-native) { background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.logins-field label > .search-dd { flex: 1; min-width: 0; }

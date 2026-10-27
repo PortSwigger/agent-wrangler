@@ -103,6 +103,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
+  writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ extensions: { logins: true } }));
   const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
   writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
   // A throwaway installed extension with one view, its browser api on window so
@@ -408,6 +409,23 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
     assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');
 
+
+    await evaluateChecked(`(() => {
+      document.getElementById('settings-btn').click();
+      document.getElementById('settings-tab-extensions').click();
+      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Logins').click();
+      const input = document.querySelector('.logins-add input');
+      input.value = 'Browser fixture';
+      document.querySelector('.logins-add button').click();
+      return true;
+    })()`);
+    assert.ok(await waitFor(() => evaluate(`document.querySelector('.logins-panel')?.textContent.includes('Browser fixture')`)), 'a settings panel must receive graph updates after adding a login');
+    await evaluateChecked(`(() => {
+      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Sounds').click();
+      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Logins').click();
+      return true;
+    })()`);
+    assert.ok(await evaluateChecked(`document.querySelector('.logins-panel')?.textContent.includes('Browser fixture')`), 'a remounted settings panel must receive the current graph immediately');
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {
