@@ -12,6 +12,7 @@ import adversarialReview from './builtin/adversarial-review/index.js';
 import taskMemory from './builtin/task-memory/index.js';
 import jira from './builtin/jira/index.js';
 import sounds from './builtin/sounds/index.js';
+import logins from './builtin/logins/index.js';
 import themes from './builtin/themes/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
@@ -47,7 +48,7 @@ import themes from './builtin/themes/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira`, `sounds` and `themes` are the shipped set. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira`, `sounds`, `logins` and `themes` are the shipped set. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
 export const BUILTIN = [
   checklist,
@@ -56,6 +57,7 @@ export const BUILTIN = [
   taskMemory,
   jira,
   sounds,
+  logins,
   themes,
 ];
 
