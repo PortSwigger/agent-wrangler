@@ -223,7 +223,7 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 | Capability | Host surface |
 | --- | --- |
 | `sessions:spawn` | `host.sessions.spawn(options)` launches a session with the supplied dispatch fields. |
-| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects an environment for a headless run, rejecting a deliberate hook refusal. |
+| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects a headless environment for any card, including credentials from other extensions, rejecting a deliberate hook refusal. |
 
 The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
 `server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
@@ -1369,6 +1369,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `agent` must be `claude` or `codex`, `sessionId` a string or `null`, and a non-null
   `ext` follows spawn's validation; a deliberate refusal rejects with its reason,
   so the caller must skip the run rather than fall back to another environment.
+  This capability permits reading the merged environment for any card, including
+  credentials contributed by other extensions; it is not restricted to cards the
+  caller created. Keep the returned environment in the subprocess only: never
+  expose it in logs, graph data, settings or other persisted launch metadata.
 - **`host.sessions.spawn({ offBoard: true })` keeps the card off the board** (1.41.0).
   The entry is stamped with the CALLING extension's id (forced, never
   caller-named) and the stamp survives resume. The card stays in the graph with
@@ -1417,7 +1421,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   without asking later hooks or caching a partial context.
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
-  Core's `runHeadlessClaude` accepts an `env` option merged over `cleanClaudeEnv()`;
+  Headless requests must leave the card's live session bindings unchanged; hooks
+  should only resolve the requested environment, and core does not cache their
+  directory grants. Task memory contributes nothing to a headless run.
+  Core's `runHeadlessClaude` merges an `env` option over the process environment,
+  then strips nested-Claude markers, preserving an explicitly supplied
+  `CLAUDE_CODE_OAUTH_TOKEN` for the selected login;
   archive memory review collects the card's headless context before running and logs
   a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,

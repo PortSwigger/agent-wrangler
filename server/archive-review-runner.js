@@ -180,7 +180,7 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   return runQueued(async () => {
     let env;
     try {
-      ({ env } = await launchContext({ sid: sessionId, task, agent: 'claude', reason: 'headless' }));
+      ({ env } = await launchContext({ sid: sessionId, task, agent: 'claude', runtime: entry?.runtime || 'local', reason: 'headless' }));
     } catch (err) {
       onError(`archive review skipped for ${sessionId}: ${err.message}`);
       return 'skipped';

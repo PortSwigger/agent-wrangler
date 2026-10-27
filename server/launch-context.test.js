@@ -100,6 +100,21 @@ test('the last answer is remembered per session (what paste-store reads), and an
   assert.deepEqual(lastLaunchContext('remembered').addDirs, ['/granted']);
 });
 
+test('headless collection preserves the interactive directory grants and never caches a headless-only card', async () => {
+  const sid = 'headless-cache';
+  const interactive = await collectLaunchContext({ sid }, {
+    ext: registry(['a', () => ({ addDirs: ['/interactive'] })]),
+  });
+  for (const card of [sid, 'headless-only']) {
+    const headless = await collectLaunchContext({ sid: card, reason: 'headless' }, {
+      ext: registry(['a', () => ({ env: { AW_CONTEXT: 'headless' }, addDirs: ['/headless'] })]),
+    });
+    assert.deepEqual(headless, { env: { AW_CONTEXT: 'headless' }, addDirs: ['/headless'] });
+  }
+  assert.equal(lastLaunchContext(sid), interactive);
+  assert.equal(lastLaunchContext('headless-only'), EMPTY_LAUNCH_CONTEXT);
+});
+
 test('helpers tolerate a launch that carries no context at all', () => {
   assert.deepEqual(launchEnvOf(undefined), {});
   assert.deepEqual(launchAddDirsOf(null), []);
@@ -143,7 +158,7 @@ const BUILDERS = {
   }),
 };
 
-for (const reason of LAUNCH_REASONS) {
+for (const reason of LAUNCH_REASONS.filter((r) => r !== 'headless')) {
   for (const [name, build] of Object.entries(BUILDERS)) {
     const isCodex = name.startsWith('codex');
     const agent = isCodex ? 'codex' : 'claude';

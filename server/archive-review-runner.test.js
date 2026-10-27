@@ -273,3 +273,23 @@ test('a refusing launch hook skips archive review without stamping or emitting',
   assert.deepEqual(d.appended, []);
   assert.match(logs[0], /archive review skipped for c1: context Secondary has no Claude environment/);
 });
+
+test('archive review resolves its headless environment for the archived card runtime', async () => {
+  for (const runtime of [undefined, 'devcontainer']) {
+    const calls = [];
+    const d = deps({
+      launchContext: async (payload) => {
+        if (payload.runtime !== (runtime || 'local')) throw new Error('unsupported runtime');
+        return { env: { AW_RUNTIME: payload.runtime } };
+      },
+      review: async (excerpt, opts) => {
+        calls.push(opts);
+        return { text: 'NONE', liveSessionId: 'R1', error: null };
+      },
+      onError: () => {},
+    });
+    assert.equal(await runArchiveReview('runtime-card', { ...ENTRY, runtime }, TASK, d), 'none');
+    assert.deepEqual(calls, [{ env: { AW_RUNTIME: runtime || 'local' } }]);
+    assert.equal(d.stamps.length, 1);
+  }
+});

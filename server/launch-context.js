@@ -82,7 +82,7 @@ export async function collectLaunchContext(
     }
   }
   const result = { env, addDirs };
-  if (sid) lastBySession.set(sid, result);
+  if (sid && reason !== 'headless') lastBySession.set(sid, result);
   return result;
 }
 
