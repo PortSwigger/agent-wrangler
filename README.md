@@ -20,8 +20,6 @@ otherwise it behaves exactly as a Claude-only board.
   boxes — organize it however makes sense to you.
 - **Cost and status at a glance** — per-session and sub-agent spend, live status colours, and a
   needs-you flag the moment a session is blocked on you.
-- **Stored second logins** — enable Logins to run a session on another Claude or Codex login;
-  resumes, forks and spawned children retain it. [Manage logins](docs/board-and-sessions.md#run-a-session-on-another-login).
 - **A checklist you and the agent share** — each session gets a short checklist beside its terminal.
   You add, edit, tick, reorder and delete items from the board; the session writes to the same list
   through its own tools, so a glance tells you what it is working through without reading the pane.

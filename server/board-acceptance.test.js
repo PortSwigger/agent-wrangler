@@ -103,16 +103,37 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
-  writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ extensions: { logins: true } }));
   const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
   writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
   // A throwaway installed extension with one view, its browser api on window so
   // the focus-mode check below can redraw the board from inside that view.
   const probeDir = join(dataDir, 'extensions', 'probe');
   mkdirSync(join(probeDir, 'public'), { recursive: true });
-  writeFileSync(join(probeDir, 'index.js'), `export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips'], client: 'public/client.js' };`);
-  writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) { window.__probeApi = r.api; r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } }); } };`);
-  writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
+  writeFileSync(join(probeDir, 'index.js'), `let value = 'Initial graph'; export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips', 'board:rebuild'], client: 'public/client.js',
+    graph: () => ({ probe: { value } }),
+    handlers: [{ type: 'probe-update', async handler(msg, host) { value = 'Live graph'; await host.rebuild(); } }],
+  };`);
+  writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) {
+    window.__probeApi = r.api;
+    r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } });
+    r.register('settings.panel', {
+      id: 'graph',
+      mount(el, api) {
+        el.className = 'probe-settings-panel';
+        const title = document.createElement('h3');
+        title.textContent = 'Settings graph probe';
+        const value = document.createElement('p');
+        value.className = 'probe-graph-value';
+        const button = document.createElement('button');
+        button.textContent = 'Update graph';
+        button.onclick = () => api.send({ type: 'probe-update' });
+        el.append(title, value, button);
+        window.__probePanel = el;
+      },
+      update(el, ctx, graph) { el.querySelector('.probe-graph-value').textContent = graph.probe.value; },
+    });
+  } };`);
+  writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips', 'board:rebuild'] } }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -413,19 +434,30 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await evaluateChecked(`(() => {
       document.getElementById('settings-btn').click();
       document.getElementById('settings-tab-extensions').click();
-      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Logins').click();
-      const input = document.querySelector('.logins-add input');
-      input.value = 'Browser fixture';
-      document.querySelector('.logins-add button').click();
       return true;
     })()`);
-    assert.ok(await waitFor(() => evaluate(`document.querySelector('.logins-panel')?.textContent.includes('Browser fixture')`)), 'a settings panel must receive graph updates after adding a login');
+    assert.ok(await waitFor(() => evaluate(`document.querySelector('.ext-gh-list[aria-busy="false"]') !== null`)), 'the extension catalogue response must settle before testing panel updates');
     await evaluateChecked(`(() => {
-      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Sounds').click();
-      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Logins').click();
+      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Probe').click();
       return true;
     })()`);
-    assert.ok(await evaluateChecked(`document.querySelector('.logins-panel')?.textContent.includes('Browser fixture')`), 'a remounted settings panel must receive the current graph immediately');
+    assert.equal(await evaluateChecked(`document.querySelector('.probe-graph-value')?.textContent`), 'Initial graph', 'a newly mounted settings panel must receive the current graph immediately');
+    await evaluateChecked(`(() => {
+      window.__initialProbePanel = window.__probePanel;
+      document.querySelector('.probe-settings-panel button').click();
+      return true;
+    })()`);
+    assert.ok(await waitFor(() => evaluate(`document.querySelector('.probe-graph-value')?.textContent === 'Live graph'`)), 'a mounted settings panel must receive live graph updates');
+    assert.ok(await evaluateChecked(`window.__probePanel === window.__initialProbePanel`), 'live graph updates must reach the existing panel without remounting it');
+    await evaluateChecked(`(() => {
+      document.getElementById('settings-close').click();
+      document.getElementById('settings-btn').click();
+      document.getElementById('settings-tab-extensions').click();
+      [...document.querySelectorAll('.ext-list-name')].find((el) => el.textContent === 'Probe').click();
+      return true;
+    })()`);
+    assert.ok(await evaluateChecked(`window.__probePanel !== window.__initialProbePanel`), 'reopening the extension must mount a fresh settings panel');
+    assert.equal(await evaluateChecked(`document.querySelector('.probe-graph-value')?.textContent`), 'Live graph', 'a remounted settings panel must receive the current graph immediately');
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {

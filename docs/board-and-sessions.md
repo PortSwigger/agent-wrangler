@@ -25,40 +25,6 @@ Optional launch controls include:
 Discoverable sessions launched elsewhere also appear. They can be searched and adopted, but gain an
 attachable terminal only after being resumed through the board.
 
-## Run a session on another login
-
-Enable **Settings → Extensions → Logins**, enter a name and choose **Add login**. Each login
-can hold Claude credentials, Codex credentials, or both. The CLIs’ own login is **Default**.
-
-For either provider, choose **Log in** to open a terminal with the command filled in, then press
-Enter and complete the browser flow. Codex signs in to the login's mirror home. Claude runs
-`setup-token` in a scratch configuration directory; the extension captures the resulting token.
-If capture fails, use **Paste token** with the setup-token output. The panel never displays stored
-tokens. Claude tokens last one year; the panel shows expiry and warns during the last month.
-These Claude tokens support model requests and local MCP servers, but not Remote Control or
-claude.ai connectors.
-
-In **New session**, select **Login**. It starts on **Default** each time. A stored login must
-have credentials for the selected model's provider. Runtimes that supply their own launch command
-cannot use a stored login; both the dialog and server refuse the combination with a named reason.
-Local and wrapping runtimes can use it. Extensions that host the dispatch fields offer the same
-Login choice.
-
-The card's login pill stays across resume, fork and every child the session spawns. A child
-inherits its parent's login, including **Default**; an agent cannot choose another login. A
-cross-provider child requires both providers in that login. Archive memory reviews use its Claude
-credentials or skip with a named refusal when those credentials are missing.
-
-**Forget** removes one provider's credentials; **Remove** deletes the login. Running sessions
-continue, but relaunches that need the removed credentials are refused. A removed login keeps its
-named card bindings until those cards are purged, and its name stays reserved during that time.
-Credentials live under `~/.agent-wrangler/logins/`, outside extension settings and configuration;
-Claude token files have mode `0600`. Logins does not change the CLIs’ Default credentials.
-
-Turning Logins off hides the controls and pill. Every dispatch, resume and fork then uses
-**Default**. Stored logins and bindings are kept; turning it back on restores the login at the
-next relaunch.
-
 ## Organise work with tasks
 
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
