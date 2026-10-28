@@ -118,6 +118,12 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 - Make the service restart the process after any exit, including a clean one. **Restart the
   wrangler** exits with status 0, so a service that restarts only after a crash (Homebrew's
   `keep_alive crashed: true`) would leave the board stopped. Use `keep_alive true`.
+- On macOS, give the service an interactive process type (`process_type :interactive` in a Homebrew
+  `service` block, `ProcessType` `Interactive` in a launchd plist). Without one, launchd runs it as
+  a background daemon with a lower CPU priority and throttled disk access, and every session
+  inherits that, so sessions lag whenever something else keeps the CPU busy.
+  `scripts/wrangler-start.sh` adds the key to a checkout's own plist, but never touches a package
+  manager's (`AW_INSTALL_MANAGER` set), because the package manager writes that plist.
 - Never set `AW_GIT_UPDATES`. A package's start path has no checkout rollback or dependency sync.
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).
 - Restart the service straight after an upgrade repoints `AW_INSTALL_ROOT`, so the running server

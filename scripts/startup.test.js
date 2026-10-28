@@ -15,7 +15,7 @@ function fixture(t) {
   for (const dir of ['bin', 'scripts', 'server', 'node_modules/.bin', 'home', 'logs', 'brew node/bin']) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
-  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/update-rollback.sh', 'scripts/trim-service-logs.sh', 'scripts/setup-locale.sh']) {
+  for (const file of ['bin/agent-wrangler', 'scripts/wrangler-start.sh', 'scripts/sync-deps.sh', 'scripts/update-rollback.sh', 'scripts/trim-service-logs.sh', 'scripts/launchd-process-type.sh', 'scripts/setup-locale.sh']) {
     fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
   }
   const node = path.join(root, 'brew node/bin/node');
@@ -129,6 +129,74 @@ test('checkout service, and only it, grants Git updates after rollback and sync'
   assert.equal(bare.status, 0, bare.stderr);
   assert.deepEqual(JSON.parse(bare.stdout.trim()), { s: '1' });
 });
+
+// launchd runs a plist with no ProcessType as a throttled background daemon, and
+// every session inherits that. The checkout service gives its own plist (named
+// after XPC_SERVICE_NAME, the label launchd exports) ProcessType Interactive,
+// leaving the rest of the file as it was. plutil is macOS-only.
+const plutilSkip = process.platform !== 'darwin' && 'plutil is macOS-only';
+const templatePath = path.join(sourceRoot, 'scripts/net.portswigger.agent-wrangler.plist.example');
+const processTypeBlock = /\n\n *<!--[^\n]*-->\n *<key>ProcessType<\/key>\n *<string>Interactive<\/string>/;
+const olderTemplate = fs.readFileSync(templatePath, 'utf8').replace(processTypeBlock, '');
+const processType = file => spawnSync('plutil', ['-extract', 'ProcessType', 'raw', file], { encoding: 'utf8' }).stdout.trim();
+
+function serviceWithPlist(t, text) {
+  const { root, env } = fixture(t);
+  fs.writeFileSync(path.join(root, 'bin/npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(root, 'server/cli.js'), 'console.log("server-started");');
+  const plist = path.join(env.HOME, 'Library/LaunchAgents/test.agent-wrangler.plist');
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  fs.writeFileSync(plist, text);
+  const start = (extra = {}) => {
+    const result = run(root, { ...env, PATH: `${root}/bin:${env.PATH}`, XPC_SERVICE_NAME: 'test.agent-wrangler', ...extra }, 'scripts/wrangler-start.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /server-started/);
+    return result;
+  };
+  return { plist, start };
+}
+
+test('plist template runs the service as an Interactive launchd job', { skip: plutilSkip }, () => {
+  assert.equal(processType(templatePath), 'Interactive');
+  assert.doesNotMatch(olderTemplate, /ProcessType/);
+});
+
+test('checkout service adds ProcessType Interactive to its own launchd plist, once', { skip: plutilSkip }, t => {
+  const { plist, start } = serviceWithPlist(t, olderTemplate);
+  const first = start();
+  assert.match(first.stdout, /added ProcessType Interactive to \S+\/test\.agent-wrangler\.plist; launchd applies it from your next login/);
+  assert.equal(processType(plist), 'Interactive');
+  const added = fs.readFileSync(plist, 'utf8');
+  assert.equal(added.replace(processTypeBlock, ''), olderTemplate, 'only the key and its comment are added');
+  const second = start();
+  assert.doesNotMatch(second.stdout + second.stderr, /ProcessType/);
+  assert.equal(fs.readFileSync(plist, 'utf8'), added);
+});
+
+const leftAlone = [
+  { name: 'one that sets its own ProcessType', text: () => fs.readFileSync(templatePath, 'utf8').replace('<string>Interactive</string>', '<string>Standard</string>') },
+  { name: 'a package-managed install', env: { AW_INSTALL_MANAGER: 'homebrew' } },
+  { name: 'a start outside launchd', env: { XPC_SERVICE_NAME: '' } },
+  { name: 'one it cannot write', mode: 0o444, warns: true, skip: process.getuid?.() === 0 && 'root can write anything' },
+  {
+    name: 'a binary plist it cannot edit as text',
+    warns: true,
+    text: () => spawnSync('plutil', ['-convert', 'binary1', '-o', '-', '-'], { input: olderTemplate }).stdout,
+  },
+];
+
+for (const { name, text = () => olderTemplate, env: extra, mode, warns = false, skip } of leftAlone) {
+  test(`checkout service leaves a launchd plist alone: ${name}`, { skip: plutilSkip || skip }, t => {
+    const before = text();
+    const { plist, start } = serviceWithPlist(t, before);
+    if (mode) fs.chmodSync(plist, mode);
+    const result = start(extra);
+    assert.deepEqual(fs.readFileSync(plist), Buffer.from(before));
+    assert.doesNotMatch(result.stdout, /added ProcessType/);
+    if (warns) assert.match(result.stderr, /test\.agent-wrangler\.plist sets no ProcessType, so launchd runs this service as a background daemon/);
+    else assert.doesNotMatch(result.stderr, /ProcessType/);
+  });
+}
 
 for (const supervised of [false, true]) {
   test(`direct launcher ${supervised ? 'trims supervised' : 'preserves interactive'} logs`, t => {
