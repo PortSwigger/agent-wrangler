@@ -33,6 +33,7 @@ export function reduceCodexCatalog(raw) {
       visibility: m.visibility || 'list',
       priority: Number.isFinite(m.priority) ? m.priority : 1000,
       efforts: (m.supported_reasoning_levels || []).map((l) => l?.effort).filter(Boolean),
+      defaultEffort: typeof m.default_reasoning_level === 'string' ? m.default_reasoning_level : null,
       contextWindow: Number.isFinite(m.context_window) ? m.context_window : null,
     }))
     .sort((a, b) => a.priority - b.priority);
@@ -99,6 +100,12 @@ export function defaultCodexModel() {
 // refresh (callers then fall back to Codex's on-disk models cache).
 export function liveCodexContextWindow(slug) {
   return live?.find((m) => m.slug === slug)?.contextWindow ?? null;
+}
+
+// The effort Codex runs this model at when neither the launch nor config.toml
+// names one (its catalog's default_reasoning_level), or null when unknown.
+export function codexDefaultEffort(slug) {
+  return catalog().find((m) => m.slug === slug)?.defaultEffort ?? null;
 }
 
 // Bumps whenever a refresh changes the catalog — fold into caches of derived values.
